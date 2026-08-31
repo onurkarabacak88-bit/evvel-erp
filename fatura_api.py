@@ -3515,6 +3515,21 @@ _KISI_ADLARI = {"mehmet", "ahmet", "ali", "mustafa", "hasan", "huseyin",
                 "emre", "onur", "fethi", "kemal", "kadir", "adem", "yaren"}
 
 
+def _tam_kelime_var(tok: str, metin_katli: str) -> bool:
+    """🔤 KELİME SINIRI — tek tanım (Codex denetimi :7114, 2026-09-01).
+
+    Alt-dize araması sahte eşleşme üretir: tedarikçi "AGIT" iken ödeme metni
+    "...DAGITIM..." geçiyorsa `"agit" in metin` DOĞRU döner ve yanlış fatura
+    ÖDENMİŞ görünür. `_odeme_eslesir` bu tuzağı kapatmıştı ama `_odeme_izi`
+    kendi alt-dize kontrolünü yazdığı için tuzak yeni yoldan geri gelmişti —
+    aynı kural iki yerde ayrı yazılınca biri mutlaka sapıyor.
+    """
+    if not tok:
+        return False
+    return bool(re.search(r"(?<![a-z0-9])" + re.escape(tok) + r"(?![a-z0-9])",
+                          metin_katli or ""))
+
+
 def _odeme_eslesir(ad: str, metin: str) -> bool:
     """Ödeme metni bu tedarikçiye mi? Marka tokeni aranır; token kişi adıysa
     ikinci kelime (soyadı) da ZORUNLU. Aday eşleşmedir — kesin mutabakat değil."""
@@ -7265,7 +7280,9 @@ def mutabakat_zinciri() -> dict:
             if gf > 10:
                 continue
             _m = _cari_katla(o.get("metin") or "")
-            if any(w in _m for w in _tok):
+            # ⚠️ ALT-DİZE DEĞİL, KELİME SINIRI: "AGIT" tedarikçisi
+            # "...DAGITIM..." ödemesiyle eşleşiyordu (Codex :7114).
+            if any(_tam_kelime_var(w, _m) for w in _tok):
                 return True
         return False
 

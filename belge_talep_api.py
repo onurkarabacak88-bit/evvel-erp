@@ -1598,16 +1598,34 @@ def fatura_bagla_uygula(cur, talep_id: str, fatura_id: str, onay_kaynagi: str,
         damga = (f"[TARİH-YÖNÜ OVERRIDE: {zorla_gerekce}]" if tarih_ihlali
                  else f"[ÇOKLU-ADAY OVERRIDE: {zorla_gerekce}]")
     yeni_aciklama = f"{bt['kapanis_aciklama']} {damga}".strip()[:1000] if damga else None
-    cur.execute(
-        """UPDATE belge_talep
-           SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s, kapanis_tipi='fatura',
-               fatura_tutar_tl = COALESCE(%s, fatura_tutar_tl),
-               tutar_fark_tl = CASE WHEN %s IS NOT NULL AND beklenen_tutar_tl IS NOT NULL
-                                    THEN %s - beklenen_tutar_tl ELSE tutar_fark_tl END,
-               kapanis_aciklama = COALESCE(%s, kapanis_aciklama)
-           WHERE id=%s""",
-        (fid, ftl, ftl, ftl, yeni_aciklama, tid),
-    )
+    # ⚠️ YARIŞ → 409, 500 DEĞİL (Codex denetimi :1541, 2026-09-01):
+    # Yukarıdaki "başka teslimata bağlı mı" kontrolü KİLİTSİZ okuma. İki
+    # paralel `fatura-bagla` aynı fatura_id ile gelirse ikisi de kontrolü BOŞ
+    # görür; biri kazanır, öteki tekillik indeksine çarpar. Indeks doğru
+    # çalışıyor (sessiz çift bağ artık imkânsız) ama kaybeden tarafa 500
+    # dönüyordu: personel "sistem çöktü" sanıp tekrar deniyordu. Oysa doğru
+    # cevap bellidir — bu fatura AZ ÖNCE başka teslimata bağlandı.
+    try:
+        with savepoint(cur, "sp_fatura_bagla"):
+            cur.execute(
+                """UPDATE belge_talep
+                   SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s,
+                       kapanis_tipi='fatura',
+                       fatura_tutar_tl = COALESCE(%s, fatura_tutar_tl),
+                       tutar_fark_tl = CASE WHEN %s IS NOT NULL
+                                             AND beklenen_tutar_tl IS NOT NULL
+                                            THEN %s - beklenen_tutar_tl
+                                            ELSE tutar_fark_tl END,
+                       kapanis_aciklama = COALESCE(%s, kapanis_aciklama)
+                   WHERE id=%s""",
+                (fid, ftl, ftl, ftl, yeni_aciklama, tid),
+            )
+    except Exception as _e_bag:  # noqa: BLE001
+        if "belge_talep_fatura_tekil" in str(_e_bag) or            "unique" in str(_e_bag).lower():
+            raise HTTPException(
+                409, "Bu fatura AZ ÖNCE başka bir teslimata bağlandı "
+                     "(eşzamanlı işlem). Ekranı yenileyip tekrar bakın.") from _e_bag
+        raise
     # 📜 APPEND-ONLY İZ: HER bağ, kaynağıyla birlikte deftere yazılır. Öneri
     # onayından gelen bağ da (onay_kaynagi='oneri-onayi') "kim/neye dayanarak
     # bağladı" sorusunu cevaplayabilmeli — yalnız override'ı damgalamak yetmez.
@@ -2503,17 +2521,13 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
             except Exception as _e_ty:  # noqa: BLE001
                 logger.warning("fatura-yukle tarih yonu okunamadi (kapanis surer): %s",
                                str(_e_ty)[:120])
-        if _tarih_ters:
-            conn.commit()          # belge KAYDEDİLDİ; yalnız kapanış yapılmadı
-            return {
-                "ok": True, "kapandi": False, "fatura_idler": fatura_idler,
-                "uyari": "tarih_yonu_ters",
-                "not": ("Belge kaydedildi AMA teslimat KAPATILMADI: fatura, "
-                        "teslimattan önce kesilmiş görünüyor. Bu teslimatın "
-                        "faturası olmayabilir. Doğruysa Belge Merkezi'nden "
-                        "gerekçeli olarak bağlayın."),
-            }
-        cur.execute(
+        # ⚠️ ERKEN return YOKTU EDİLDİ (Codex denetimi :2498, 2026-09-01):
+        # Burada `return` etmek KAPANIŞI durdurmakla kalmıyor, fonksiyonun
+        # SONUNDAKİ OCR başlatmayı da atlıyordu. Sonuç: belge kaydedilir ama
+        # HİÇ OKUNMAZ — `ocr_bekliyor`da sonsuza dek takılı kalır, tutar/tarih
+        # hiç çıkmaz. Fren yalnız KAPANIŞA basmalıydı, okumaya değil.
+        if not _tarih_ters:
+            cur.execute(
             """UPDATE belge_talep
                SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s, kapanis_tipi='fatura',
                    fatura_tutar_tl = COALESCE(%s, fatura_tutar_tl),
@@ -2523,7 +2537,7 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
                WHERE id=%s""",
             (_ilk_fid,
              _fatura_tutar, _fatura_tutar, _fatura_tutar, tid),
-        )
+            )
         conn.commit()
 
     # FAZ 0: omurga olayı (fatura ile kapanış) — hata-yutar, ana akışı etkilemez
@@ -2541,7 +2555,18 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
     for fid in ocr_calisacak:
         threading.Thread(target=_ocr_calistir, args=(fid,), daemon=True).start()
 
-    return {"ok": True, "durum": "pdf_geldi", "fatura_idler": fatura_idler, "ocr": len(ocr_calisacak)}
+    if _tarih_ters:
+        # Kapanış YAPILMADI ama belge kaydedildi ve OCR sıraya girdi.
+        return {
+            "ok": True, "kapandi": False, "fatura_idler": fatura_idler,
+            "ocr": len(ocr_calisacak), "uyari": "tarih_yonu_ters",
+            "not": ("Belge kaydedildi ve okumaya alındı AMA teslimat "
+                    "KAPATILMADI: fatura, teslimattan önce kesilmiş "
+                    "görünüyor. Bu teslimatın faturası olmayabilir. "
+                    "Doğruysa Belge Merkezi'nden gerekçeli olarak bağlayın."),
+        }
+    return {"ok": True, "durum": "pdf_geldi", "fatura_idler": fatura_idler,
+            "kapandi": True, "ocr": len(ocr_calisacak)}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -2661,9 +2686,19 @@ def belge_talep_zincir_izi(tedarikci: str = "", gun: int = 120, sube: str = ""):
             #    kalır, yalnız "kopuk" damgası kalkar.
             # ⚠️ kapanis_tipi BOŞ olan kapanış buraya girmez — gerekçesiz
             #    kapanış bir karar değildir, "bağlanmamış" olarak kalır.
-            elif str(d.get("kapanis_tipi") or "").strip() in ("manuel", "irsaliye"):
+            # ⚠️ AÇIKLAMA DA ARANIR (Codex denetimi :2656, 2026-09-01):
+            #    yorum "açıklama zorunlu" diyordu ama KOD bakmıyordu. Kural
+            #    sonradan konduğu için ESKİ satırlarda kapanis_tipi='manuel'
+            #    ve kapanis_aciklama=NULL birlikte var — bunlar sahte yeşile
+            #    boyanıyordu. Gerekçesiz kapanış bir KARAR değildir; kendi
+            #    adıyla görünür ve /gerekce-ekle ile çözülür.
+            elif (str(d.get("kapanis_tipi") or "").strip() in ("manuel", "irsaliye")
+                  and str(d.get("kapanis_aciklama") or "").strip()):
                 kopuk = None
                 sayac["faturasiz_kapandi"] = sayac.get("faturasiz_kapandi", 0) + 1
+            elif str(d.get("kapanis_tipi") or "").strip() in ("manuel", "irsaliye"):
+                kopuk = "GEREKCESIZ KAPANIS"
+                sayac["gerekcesiz_kapanis"] = sayac.get("gerekcesiz_kapanis", 0) + 1
             elif not d.get("fatura_id"):
                 kopuk = "FATURA BAGLANMAMIS"; sayac["bag_yok"] += 1
             else:
@@ -2707,7 +2742,9 @@ def belge_talep_zincir_izi(tedarikci: str = "", gun: int = 120, sube: str = ""):
                 "cozum": (
                     None if kopuk else (
                         "FATURASIZ KAPANDI (%s)" % d.get("kapanis_tipi")
-                        if str(d.get("kapanis_tipi") or "").strip() in ("manuel", "irsaliye")
+                        if (str(d.get("kapanis_tipi") or "").strip()
+                            in ("manuel", "irsaliye")
+                            and str(d.get("kapanis_aciklama") or "").strip())
                         else ("IPTAL" if str(d.get("siparis_durum") or "") == "iptal"
                               else "ZINCIR TAM")
                     )

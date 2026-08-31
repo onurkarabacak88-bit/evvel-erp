@@ -11189,7 +11189,14 @@ def ops_toptanci_siparis_iptal(ts_id: str):
     kapatildi = False
     kuyruga_dondu = False
     with db() as (conn, cur):
-        cur.execute("SELECT id, talep_id, durum FROM toptanci_siparis WHERE id=%s", (sid,))
+        # 🔒 KİLİT ŞART (Codex denetimi :11183, 2026-09-01): fren kilitsiz
+        # okuyup KOŞULSUZ yazıyordu. Yarış: A satırı 'gonderildi' diye okur,
+        # B araya girip 'teslim_alindi' yapar, sonra A'nın UPDATE'i basar ve
+        # TESLİM ALINMIŞ gönderim iptal olur — korumanın tam delindiği yer.
+        # FOR UPDATE ile satır kilitlenir; UPDATE ayrıca durumu ŞART koşar
+        # (kilit alınamayan bir yolda bile ikinci savunma kalsın).
+        cur.execute("SELECT id, talep_id, durum FROM toptanci_siparis "
+                    "WHERE id=%s FOR UPDATE", (sid,))
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "Toptancı siparişi bulunamadı")
@@ -11214,7 +11221,15 @@ def ops_toptanci_siparis_iptal(ts_id: str):
                 "takibi öksüz kalır ve aynı mal ikinci kez sipariş edilebilir. "
                 "Yanlış teslim girildiyse önce teslimi geri alın.")
         if _mevcut != "iptal":
-            cur.execute("UPDATE toptanci_siparis SET durum='iptal' WHERE id=%s", (sid,))
+            cur.execute("UPDATE toptanci_siparis SET durum='iptal' "
+                        "WHERE id=%s AND COALESCE(durum,'') <> 'teslim_alindi'",
+                        (sid,))
+            if not (cur.rowcount or 0):
+                # Satır kilit beklerken teslim alınmış: sessizce "iptal ettim"
+                # demek YANLIŞ olurdu — çağıran gerçeği görsün.
+                raise HTTPException(
+                    409, "Bu gönderim iptal edilirken TESLİM ALINDI — iptal "
+                         "uygulanmadı. Ekranı yenileyip tekrar bakın.")
             audit(cur, "toptanci_siparis", sid, "OPS_TOPTANCI_SIPARIS_IPTAL")
 
         # Mükerrer iptal sonrası TALEP TAMAMLANMA RE-CHECK: bekleyen gönderim kalmadı +
