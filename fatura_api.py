@@ -6357,6 +6357,23 @@ def mutabakat_zinciri() -> dict:
                     WHERE id = ANY(%s)""",
                 (_bagli_idler,))
             fatura_by_id = {str(dict(r)["id"]): dict(r) for r in cur.fetchall() or []}
+        # ══════════════════════════════════════════════════════════════════
+        # 💳 ÖDEME KANITI ÖNCE TAHSİS DEFTERİNDEN (canlı ölçüm, 2026-08-31)
+        # ══════════════════════════════════════════════════════════════════
+        # Zincir "bu faturanın BOYUTUNDA bir ödeme var mı?" diye soruyordu.
+        # İş böyle yürümüyor: cariye TOPLU ödeme yapılıp faturalara FIFO
+        # tahsis ediliyor. Canlı: FEZ'e 70.000 ₺ "cari borç ödemesi" var,
+        # fatura 67.387 ₺ — %3,9 fark, tutar toleransının (±%2) hemen
+        # dışında. Yani ödeme VARDI, soru yanlıştı.
+        # Sistemin kendi defteri (`cari_odeme_tahsis`) bu sorunun KESİN
+        # cevabını tutuyor; heuristik tutar eşleşmesi yalnız YEDEK olmalı.
+        _kapatilan: dict = {}
+        if _bagli_idler:
+            try:
+                _kapatilan = _cari_kapatilan_toplam(cur, _bagli_idler)
+            except Exception as _e_kap:  # noqa: BLE001
+                logger.warning("tahsis defteri okunamadi (heuristige dusuluyor): %s",
+                               str(_e_kap)[:150])
         # Ödeme izi penceresi (3 kanal, türetilmişler hariç) — tek sorgu
         cur.execute(
             # 🏷️ TEDARİKÇİ METNİ DE OKUNUR (2026-08-31): eskiden yalnız
@@ -6455,8 +6472,23 @@ def mutabakat_zinciri() -> dict:
                 halka["bagli_fatura_kopya"] = True
             f0 = fl[0] if fl else None
             if f0 and f0["tutar"] > 0:
-                halka["odeme_izi"] = _odeme_izi(
-                    f0["tutar"], f0["tarih"], s.get("tedarikci_ad") or "")
+                # 1) KESİN KANIT: tahsis defteri. Toplu ödeme faturaya
+                #    dağıtılmışsa borç kapanmıştır — tutar tahmini gerekmez.
+                _kap = float(_kapatilan.get(str(f0.get("id") or "")) or 0)
+                if _kap > 0:
+                    halka["kapatilan_tl"] = round(_kap, 2)
+                if _kap >= float(f0["tutar"]) - 0.01:
+                    halka["odeme_izi"] = True
+                    halka["odeme_kaniti"] = "tahsis_defteri"
+                else:
+                    # 2) YEDEK: tutar+tarih+tedarikçi heuristiği. Kısmi tahsis
+                    #    varsa da buraya düşer — yarım kapanış "ödendi" değildir.
+                    halka["odeme_izi"] = _odeme_izi(
+                        f0["tutar"], f0["tarih"], s.get("tedarikci_ad") or "")
+                    if halka["odeme_izi"]:
+                        halka["odeme_kaniti"] = "tutar_tarih_tahmini"
+                    elif _kap > 0:
+                        halka["odeme_kaniti"] = "kismi_tahsis"
         if not halka["teslim"]:
             eksik = "teslim_yok"
         elif not halka["fatura"] and s.get("belge_durum") == "bekliyor":
