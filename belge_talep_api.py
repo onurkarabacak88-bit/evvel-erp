@@ -2053,6 +2053,64 @@ def belge_talep_kapat(talep_id: str, body: KapatBody = None):
     return {"ok": True, "durum": durum, "kapanis_tipi": tip}
 
 
+class GerekceBody(BaseModel):
+    kapanis_tipi: str = "manuel"      # manuel | irsaliye
+    aciklama: str                      # ZORUNLU
+
+
+@router.post("/{talep_id}/gerekce-ekle")
+def belge_talep_gerekce_ekle(talep_id: str, body: GerekceBody):
+    """🖊️ KAPANMIŞ ama GEREKÇESİZ bir teslimata kapanış gerekçesi yazar.
+
+    ── NEDEN (2026-08-31) ───────────────────────────────────────────────────
+    Eski kayıtlarda `durum='kapandi'` ama `kapanis_tipi` BOŞ olabiliyor
+    (gerekçe zorunluluğu sonradan geldi). Zincir raporu gerekçesiz kapanışı
+    bilinçli bir karar SAYMAZ — haklı olarak "FATURA BAĞLANMAMIŞ" der ve
+    kayıt sonsuza kadar bulgu listesinde kalır. Kapatmanın da düzeltmenin de
+    yolu yoktu: `/kapat` yalnız `durum='bekliyor'` satırda çalışır.
+
+    ⚠️ ÜZERİNE YAZMAZ: gerekçesi ZATEN olan kayda dokunmaz (409 döner).
+       Geçmişteki bir insan kararını sonradan değiştirmek, kaydı değil
+       TARİHİ değiştirmek olurdu.
+    ⚠️ Yalnız KAPANMIŞ kayda çalışır: açık teslimatın kapanışı `/kapat`
+       ucundan geçer ki kapanış olayı ve etiketi doğru yazılsın.
+    """
+    tid = (talep_id or "").strip()
+    tip = (body.kapanis_tipi or "manuel").strip().lower()
+    if tip not in ("manuel", "irsaliye"):
+        raise HTTPException(400, "kapanis_tipi: manuel | irsaliye")
+    acik = (body.aciklama or "").strip()
+    if not acik:
+        raise HTTPException(400, "aciklama zorunlu — kapanış kanıtsız olmaz.")
+    with db() as (_, cur):
+        _ensure(cur)
+        cur.execute(
+            "SELECT durum, kapanis_tipi FROM belge_talep WHERE id=%s", (tid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Belge talebi bulunamadı")
+        d = dict(r)
+        if str(d.get("durum") or "") == "bekliyor":
+            raise HTTPException(
+                409, "Bu teslimat hâlâ açık — kapatmak için /kapat ucunu kullanın.")
+        if str(d.get("kapanis_tipi") or "").strip():
+            raise HTTPException(
+                409, "Bu kaydın kapanış gerekçesi zaten var — üzerine yazılmaz.")
+        cur.execute(
+            """UPDATE belge_talep
+                  SET kapanis_tipi=%s,
+                      kapanis_aciklama=COALESCE(NULLIF(kapanis_aciklama,''), %s)
+                WHERE id=%s AND COALESCE(kapanis_tipi,'')=''
+                RETURNING ts_id, tedarikci_ad""",
+            (tip, acik, tid),
+        )
+        _g = cur.fetchone()
+    if not _g:
+        raise HTTPException(409, "Gerekçe yazılamadı — kayıt bu arada değişmiş olabilir.")
+    return {"ok": True, "kapanis_tipi": tip,
+            "not": "Kapanış gerekçesi yazıldı; kayıt artık kopuk halka sayılmaz."}
+
+
 @router.post("/{talep_id}/fatura-yukle")
 async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...)):
     """Toptancı WhatsApp'tan faturayı yolladı → sahip cep'ten yükler. Dosya mevcut FATURA
