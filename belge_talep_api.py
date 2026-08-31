@@ -2249,8 +2249,12 @@ def belge_talep_zincir_izi(tedarikci: str = "", gun: int = 120, sube: str = ""):
         TESLIM ALINMAMIS        sipariş gitti, şube teslim almadı
         BELGE TALEBI ACILMAMIS  teslim alındı ama fatura kovalama kaydı YOK
         FATURA BEKLENIYOR       talep açık, fatura gelmedi
-        FATURA BAGLANMAMIS      talep kapandı ama hangi faturayla belli değil
-        (yok)                   zincir tam
+        FATURA BAGLANMAMIS      talep GEREKÇESİZ kapandı, fatura da bağlı değil
+        (yok)                   `cozum` alanına bakılır:
+                                  ZINCIR TAM        fatura bağlı
+                                  FATURASIZ KAPANDI insan kanıtıyla kapattı
+                                                    (kapanis_aciklama'da gerekçe)
+                                  IPTAL             sipariş iptal edilmiş
 
     ⚠️ ÖNERİ-ONLY — hiçbir kayıt yazılmaz. Kopuk halka her zaman hata değildir
     (yeni sipariş henüz teslim edilmemiş olabilir); yaş günü birlikte verilir ki
@@ -2274,7 +2278,8 @@ def belge_talep_zincir_izi(tedarikci: str = "", gun: int = 120, sube: str = ""):
                    COALESCE(ts.tedarikci_ad, td.ad) AS tedarikci_ad,
                    ts.tedarikci_id, s.ad AS sube_adi,
                    bt.id AS bt_id, bt.durum AS bt_durum, bt.fatura_id,
-                   bt.kapanis_tipi, bt.kapanma_ts, bt.beklenen_tutar_tl::float AS beklenen_tutar,
+                   bt.kapanis_tipi, bt.kapanma_ts, bt.kapanis_aciklama,
+                   bt.beklenen_tutar_tl::float AS beklenen_tutar,
                    f.fatura_no, f.fatura_tarih::text AS fatura_tarih,
                    COALESCE(f.toplam_tutar,0)::float AS fatura_tutar,
                    f.tedarikci_ad AS fatura_tedarikci_ad
@@ -2319,6 +2324,23 @@ def belge_talep_zincir_izi(tedarikci: str = "", gun: int = 120, sube: str = ""):
                 kopuk = "BELGE TALEBI ACILMAMIS"; sayac["talep_yok"] += 1
             elif d.get("bt_durum") == "bekliyor":
                 kopuk = "FATURA BEKLENIYOR"; sayac["fatura_yok"] += 1
+            # ⛔ BİLEREK KAPATILAN İŞ BULGU DEĞİLDİR (Fable denetimi, 2026-08-31)
+            # `kapanis_tipi='manuel'` demek: bir insan bu teslimatı KANITIYLA
+            # kapattı (açıklama zorunlu — bkz. /kapat ucu). Buna rağmen zincir
+            # onu `fatura_id` boş diye SONSUZA KADAR "FATURA BAĞLANMAMIŞ"
+            # sayıyordu. Canlıda 5 kayıt tam bu haldeydi: iş bitmiş, alarm
+            # sürüyordu. Kapanmış işi listede tutan duyu, sahibe "hiçbir şey
+            # değişmedi" der ve güvenilirliğini yitirir (iptal kararında da
+            # aynı dersi almıştık).
+            # ⚠️ GİZLEME DEĞİL, AYIRMA: satır listede KALIR, kendi adıyla
+            #    ("FATURASIZ KAPANDI") ve kendi sayacıyla görünür; tutarı ve
+            #    kapanış gerekçesi de yanında durur. Para sorusu cevaplanabilir
+            #    kalır, yalnız "kopuk" damgası kalkar.
+            # ⚠️ kapanis_tipi BOŞ olan kapanış buraya girmez — gerekçesiz
+            #    kapanış bir karar değildir, "bağlanmamış" olarak kalır.
+            elif str(d.get("kapanis_tipi") or "").strip() in ("manuel", "irsaliye"):
+                kopuk = None
+                sayac["faturasiz_kapandi"] = sayac.get("faturasiz_kapandi", 0) + 1
             elif not d.get("fatura_id"):
                 kopuk = "FATURA BAGLANMAMIS"; sayac["bag_yok"] += 1
             else:
@@ -2350,6 +2372,19 @@ def belge_talep_zincir_izi(tedarikci: str = "", gun: int = 120, sube: str = ""):
                         not in str(d.get("fatura_tedarikci_ad")).upper())
                     else None),
                 "kopuk_halka": kopuk,
+                # 🟢 KOPUK DEĞİLSE NEDEN DEĞİL — okuyucu sebebi görsün diye.
+                # Boş "kopuk_halka" iki ayrı şey demek olabilirdi: "zincir tam"
+                # ya da "faturasız kapatıldı". İkisini ayırmazsak faturasız
+                # kapanan teslimat, faturalı olanla aynı yeşile boyanırdı.
+                "cozum": (
+                    None if kopuk else (
+                        "FATURASIZ KAPANDI (%s)" % d.get("kapanis_tipi")
+                        if str(d.get("kapanis_tipi") or "").strip() in ("manuel", "irsaliye")
+                        else ("IPTAL" if str(d.get("siparis_durum") or "") == "iptal"
+                              else "ZINCIR TAM")
+                    )
+                ),
+                "kapanis_aciklama": d.get("kapanis_aciklama"),
                 "yas_gun": None,
             })
         # yaş: zincirin KOPTUĞU andan bugüne
