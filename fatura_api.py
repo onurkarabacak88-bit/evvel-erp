@@ -1049,16 +1049,56 @@ def cari_tahsis_onizle(tedarikci: str = "") -> dict:
     sozler = list(e.get("bekleyen_vadeler") or [])
     sozler.sort(key=lambda s: (str(s.get("vade") or "9999-12-31"), str(s.get("id") or "")))
     kuyruk = round(float(e.get("bekleyen_vade_toplam") or 0), 2)
-    # Kuyruk gerçek açıktan NE KADAR fazla? Fazlalık = kuyruğa işlenmemiş ödeme.
     fazla = round(kuyruk - max(0.0, acik_cari), 2)
-    kapanacak, kalan_fazla = [], fazla
+
+    # ══════════════════════════════════════════════════════════════════════
+    # ⛔ "KUYRUK FAZLASI = ÖDENMİŞ" KURALI YANLIŞTI (canlı kanıt, 2026-08-31)
+    # ══════════════════════════════════════════════════════════════════════
+    # İlk sürüm, kuyruğun cariden fazla olan kısmını "kuyruğa işlenmemiş
+    # ödeme" sayıp FIFO kapatıyordu. BEYSU bu varsayımı çürüttü:
+    #   söz 22.300 ₺ = Fatura BYS…4234 (11.100, ÖDENDİ)
+    #                 + Fatura BYS…1616 (23.03.2026, "e-fatura elden,
+    #                   arşive işlenmemişti") — HİÇ ÖDENMEMİŞ eski borç
+    # Cari bu ikinciyi görmüyor (faturası sistem öncesi, BEYSU'nun devri yok).
+    # Yani FAZLALIK "ödenmiş" değil, "carinin GÖRMEDİĞİ borç" da olabilir.
+    # Toplam aritmetiğiyle kapatmak 11.200 ₺ gerçek borcu SİLERDİ.
+    #
+    # Kural artık KANIT bazlı: bir söz ancak KENDİ tutarına eşleşen bir ödeme
+    # izi varsa kapatılır (self-heal'in kanıt kuralı, ama cari≈0 şartı
+    # olmadan). Her ödeme EN FAZLA BİR sözü kapatır — yoksa tek ödeme birden
+    # çok sözü kapatırdı.
+    # ⚠️ Bu kural MUHAFAZAKÂR: toplu ödemenin hangi sözleri kapattığı
+    #    kanıtlanamıyorsa hiçbiri kapatılmaz. Bilinmeyeni "ödenmiş" saymak,
+    #    bu projede en pahalı hatadır.
+    _odemeler = [dict(o) for o in (e.get("odeme_adaylari") or [])]
+    _kullanilan = set()
+    kapanacak, kanitsiz = [], []
     for s in sozler:                       # FIFO — en eski vade önce
-        t = round(float(s["tutar"] or 0), 2)
-        if t <= 0 or kalan_fazla < t - 0.01:
+        t = round(float(s.get("tutar") or 0), 2)
+        if t <= 0:
             continue
-        kapanacak.append({"id": s["id"], "tutar": t, "vade": s.get("vade"),
-                          "aciklama": (s.get("aciklama") or "")[:70]})
-        kalan_fazla = round(kalan_fazla - t, 2)
+        _es = None
+        for i, o in enumerate(_odemeler):
+            if i in _kullanilan:
+                continue
+            ot = round(float(o.get("tutar") or 0), 2)
+            if not ot or abs(ot - t) > max(5.0, t * 0.02):
+                continue
+            _es = i
+            break
+        if _es is None:
+            kanitsiz.append({"tutar": t, "vade": s.get("vade"),
+                             "aciklama": (s.get("aciklama") or "")[:70]})
+            continue
+        _kullanilan.add(_es)
+        kapanacak.append({
+            "id": s["id"], "tutar": t, "vade": s.get("vade"),
+            "aciklama": (s.get("aciklama") or "")[:70],
+            "kanit_odeme": {"tarih": _odemeler[_es].get("tarih"),
+                            "tutar": _odemeler[_es].get("tutar"),
+                            "kanal": _odemeler[_es].get("kanal"),
+                            "aciklama": (_odemeler[_es].get("aciklama") or "")[:60]},
+        })
     return {
         "tedarikci": ara,
         "cari_acik": acik_cari,
@@ -1066,14 +1106,20 @@ def cari_tahsis_onizle(tedarikci: str = "") -> dict:
         "kuyrukta_fazla": fazla,
         "kapanacak_soz_adet": len(kapanacak),
         "kapanacak_tutar": round(sum(k["tutar"] for k in kapanacak), 2),
-        "kapanamayan_artik": round(kalan_fazla, 2),
         "kapanacak": kapanacak,
+        # 👁️ SESSİZ ELEME YASAK: kanıt bulunamayan sözler de adıyla döner —
+        # "hiçbir şey yok" ile "kanıtlayamadım" ayrı şeylerdir.
+        "kanitsiz_soz_adet": len(kanitsiz),
+        "kanitsiz_tutar": round(sum(k["tutar"] for k in kanitsiz), 2),
+        "kanitsiz": kanitsiz,
         "not": (
-            "SALT OKUR — hiçbir kayıt değişmedi. Yalnız TAM karşılanan sözler "
-            "kapatılır; artık kalırsa o söz BÖLÜNMESİ gerektiği için elde "
-            "bırakılır (yarım kapanış kapanış değildir). Kapanış durumu "
-            "'mahsup': kuyruğa da ödeme izine de girmez, böylece aynı para "
-            "ikinci kez düşmez. Geri almak için söz durumu 'bekliyor' yapılır."
+            "SALT OKUR — hiçbir kayıt değişmedi. Bir söz ancak KENDİ tutarına "
+            "eşleşen bir ödeme izi varsa kapatılır; her ödeme en fazla bir "
+            "sözü kapatır. Kuyruğun cariden fazla olması TEK BAŞINA kanıt "
+            "DEĞİLDİR — fazlalık, carinin görmediği eski borç da olabilir "
+            "(BEYSU vakası: 22.300 ₺'lik sözün 11.200 ₺'si hiç ödenmemiş "
+            "Mart faturası). Kapanış durumu 'mahsup': kuyruğa da ödeme izine "
+            "de girmez. Geri almak için söz durumu 'bekliyor' yapılır."
         ),
     }
 
