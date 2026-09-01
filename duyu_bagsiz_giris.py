@@ -123,14 +123,36 @@ def _bagsiz_girisleri_bul(cur, gun: int) -> List[Dict[str, Any]]:
                -- 1) kaynak_id ile doğrudan bağ
                EXISTS (SELECT 1 FROM toptanci_siparis ts
                         WHERE ts.id::text = h.kaynak_id)            AS bag_kaynak_id,
-               -- 2) teslim zamanı + şube ile bağ
+               -- 2) teslim zamanı + şube ile toptancı siparişi bağı
                (SELECT ts.id::text FROM toptanci_siparis ts
                  WHERE ts.sube_id = h.sube_id
                    AND ts.teslim_ts IS NOT NULL
                    AND ts.teslim_ts BETWEEN h.zaman - (%s * INTERVAL '1 minute')
                                         AND h.zaman + (%s * INTERVAL '1 minute')
                  ORDER BY ABS(EXTRACT(EPOCH FROM (ts.teslim_ts - h.zaman)))
-                 LIMIT 1)                                           AS bag_ts_id
+                 LIMIT 1)                                           AS bag_ts_id,
+               -- 3) DOĞRUDAN TESLİM KAYDI (2026-09-02 ölçümü sonrası eklendi)
+               -- ⚠️ İlk sürüm yalnız (1) ve (2)'ye bakıyordu ve 830 girişin
+               -- 716'sını (%%86) "bağsız" saydı — SAHTE KALABALIK. Sebep:
+               -- şube "Ürün Teslim Al" ekranından toptancı siparişi OLMADAN da
+               -- mal kabul ediyor; o kayıt `operasyon_defter`e URUN_SEVK olarak
+               -- tedarikçisiyle birlikte yazılıyor. Tedarikçi ORADA duruyorsa
+               -- giriş öksüz DEĞİLDİR. Bir duyu, gürültü üretirse ölçmüyor
+               -- demektir (bu denetimin kendi D-7 dersi).
+               -- ⚠️ `aciklama` metni 'URUN_SEVK_JSON:{...}' onekiyle baslar;
+               -- dogrudan ::jsonb cast'i PATLAR. Onek once kesilir.
+               (SELECT NULLIF(TRIM(COALESCE(
+                          (substr(d.aciklama, 16))::jsonb->>'tedarikci_id',
+                          (substr(d.aciklama, 16))::jsonb->>'tedarikci',
+                          (substr(d.aciklama, 16))::jsonb->>'tedarikci_ad')), '')
+                  FROM operasyon_defter d
+                 WHERE d.etiket = 'URUN_SEVK'
+                   AND d.sube_id = h.sube_id
+                   AND d.olay_ts BETWEEN h.zaman - (%s * INTERVAL '1 minute')
+                                     AND h.zaman + (%s * INTERVAL '1 minute')
+                   AND d.aciklama LIKE 'URUN_SEVK_JSON:%%'
+                 ORDER BY ABS(EXTRACT(EPOCH FROM (d.olay_ts - h.zaman)))
+                 LIMIT 1)                                           AS bag_defter
           FROM sube_depo_stok_hareket h
           LEFT JOIN subeler s      ON s.id = h.sube_id
           LEFT JOIN siparis_urun su ON su.id::text = h.kalem_kodu
@@ -139,14 +161,17 @@ def _bagsiz_girisleri_bul(cur, gun: int) -> List[Dict[str, Any]]:
            AND h.hareket_turu = ANY(%s)
          ORDER BY h.zaman DESC
         """,
-        (BAG_PENCERE_DK, BAG_PENCERE_DK, gun, list(TEDARIKCI_GIRIS_TURLERI)),
+        (BAG_PENCERE_DK, BAG_PENCERE_DK, BAG_PENCERE_DK, BAG_PENCERE_DK,
+         gun, list(TEDARIKCI_GIRIS_TURLERI)),
     )
     out: List[Dict[str, Any]] = []
     for r in (cur.fetchall() or []):
         d = dict(r)
-        bagli = bool(d.get("bag_kaynak_id")) or bool(d.get("bag_ts_id"))
+        # 3 KANIT — herhangi biri yeterli. Sira: en gucluden en zayifa.
+        bagli = bool(d.get("bag_kaynak_id") or d.get("bag_ts_id") or d.get("bag_defter"))
         kanit = ("kaynak_id" if d.get("bag_kaynak_id")
-                 else ("teslim_ts" if d.get("bag_ts_id") else None))
+                 else "teslim_ts" if d.get("bag_ts_id")
+                 else "teslim_kaydi" if d.get("bag_defter") else None)
         bf = d.get("birim_fiyat")
         mik = float(d.get("miktar") or 0)
         out.append({
@@ -160,6 +185,7 @@ def _bagsiz_girisleri_bul(cur, gun: int) -> List[Dict[str, Any]]:
             "bagli": bagli,
             "bag_kanit": kanit,
             "bag_ts_id": d.get("bag_ts_id"),
+            "bag_defter_ted": d.get("bag_defter"),
             "yas_gun": int(d.get("yas_gun") or 0),
             "tahmini_tutar": (round(float(bf) * mik, 2) if bf else None),
             "tutar_kaynagi": ("katalog" if bf else "yok"),
@@ -180,8 +206,16 @@ def bagsiz_giris_olc(gun: int = Query(90, ge=1, le=730)):
         satirlar = _bagsiz_girisleri_bul(cur, gun)
     bagsiz = [s for s in satirlar if not s["bagli"]]
     _tutarli = [s for s in bagsiz if s["tahmini_tutar"] is not None]
+    # 📊 HAM DAĞILIM — hangi kanıt kaç kez tuttu. Bu olmadan "bağsız" sayısı
+    # yorumlanamaz: oran yüksekse duyu değil KURAL yanlıştır (ilk sürüm 830'un
+    # 716'sını bağsız saydı çünkü doğrudan teslim kaydını hiç görmüyordu).
+    _dagilim: Dict[str, int] = {}
+    for _s in satirlar:
+        _k = _s.get("bag_kanit") or "BAGSIZ"
+        _dagilim[_k] = _dagilim.get(_k, 0) + 1
     return {
         "gun": gun,
+        "kanit_dagilimi": _dagilim,
         "bag_penceresi_dk": BAG_PENCERE_DK,
         "kapsanan_hareket_turleri": list(TEDARIKCI_GIRIS_TURLERI),
         "toplam_giris": len(satirlar),
