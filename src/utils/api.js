@@ -85,6 +85,19 @@ export async function api(path, opts = {}) {
   } catch {
     /* ignore */
   }
+  // 🔐 ADMIN OTURUM JETONU (2026-09-02) — her istege eklenir.
+  // Sunucu tarafinda halka acik yuzeydeki yonetim uclari artik bu jetonu
+  // istiyor (is-basvurusu: liste/okuma/ise-al/silme). Jeton yoksa baslik da
+  // yok: halka acik uclar (basvuru formu) etkilenmez.
+  try {
+    const jeton =
+      typeof localStorage !== 'undefined'
+        ? (localStorage.getItem('evvel_oturum') || '').trim()
+        : '';
+    if (jeton) headers['X-Evvel-Oturum'] = jeton;
+  } catch {
+    /* ignore */
+  }
   let res;
   try {
     res = await fetch(`${BASE}/api${path}`, {

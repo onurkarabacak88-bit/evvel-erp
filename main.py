@@ -407,26 +407,13 @@ class _AdminGirisBody(BaseModel):
 ADMIN_OTURUM_GUN = 30
 
 
-def _admin_jeton_uret(gun: int = ADMIN_OTURUM_GUN) -> str:
-    bitis = int(time.time()) + gun * 86400
-    imza = hmac.new(ADMIN_SIFRE.encode("utf-8"), str(bitis).encode("ascii"),
-                    hashlib.sha256).hexdigest()[:32]
-    return f"{bitis}.{imza}"
-
-
-def _admin_jeton_gecerli(jeton: str):
-    """(gecerli_mi, kalan_saniye) — biçim/imza/süre üçünü de doğrular."""
-    try:
-        bitis_s, imza = (jeton or "").split(".", 1)
-        bitis = int(bitis_s)
-    except Exception:
-        return False, 0
-    beklenen = hmac.new(ADMIN_SIFRE.encode("utf-8"), str(bitis).encode("ascii"),
-                        hashlib.sha256).hexdigest()[:32]
-    if not hmac.compare_digest(imza, beklenen):
-        return False, 0
-    kalan = bitis - int(time.time())
-    return (kalan > 0), max(0, kalan)
+# ⚠️ TEK MERKEZ (2026-09-02): jeton mantigi `admin_oturum.py`e tasindi.
+# Sebep: bir router'a kapi koymak isteyen modul (is_basvuru_api) `main`i
+# import EDEMEZ — main zaten o router'i import ediyor, dongu olur. Mantigi
+# kopyalamak da olmaz: kopya gun gelir ayrisir ve o gun kapi SESSIZCE acilir.
+# Buradaki iki ad geriye-uyum icin duruyor, govde ortak modulden gelir.
+from admin_oturum import jeton_uret as _admin_jeton_uret
+from admin_oturum import jeton_gecerli as _admin_jeton_gecerli
 
 
 @app.post("/api/admin-giris")

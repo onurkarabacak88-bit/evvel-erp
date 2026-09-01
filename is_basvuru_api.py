@@ -1,5 +1,5 @@
 """İş Başvurusu API — CV toplama, listeleme, durum güncelleme, IK skor motoru."""
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, HTTPException, Query, Depends
 from pydantic import BaseModel
 from typing import Optional, List
 import uuid, io
@@ -7,7 +7,20 @@ from datetime import datetime
 from database import db
 from tr_saat import dt_now_tr
 
+# 🔐 YÖNETİM KAPISI (2026-09-02, defter: BASVURU-001/004/005/006 · P0)
+# ⚠️ Bu router HALKA AÇIK bir yüzeydir: iş başvurusu formu (POST "") kimlik
+# istemez ve istememeli. Ama AYNI router'daki yönetim uçları — başvuruları
+# LİSTELEME, okuma, durum değiştirme, İŞE ALMA, SİLME — de kimliksizdi.
+# Yani adayların ad/telefon/PII verisi ve işe alma eylemi, URL'i bilen
+# herkese açıktı. Genel "API auth yok" maddesi SAHİP KARARIYLA proje sonuna
+# ertelenmiş durumda; bu ise o kararın DOKTRİN İSTİSNASI: ertelenen şey
+# İÇ yüzeylerdi, bu DIŞ yüzey.
+# Kapı tek merkezden gelir (admin_oturum.py) — kopyalanmaz, ayrışmasın.
+from admin_oturum import admin_kapisi
+
 router = APIRouter(prefix="/api/is-basvurusu", tags=["is-basvurusu"])
+# Yönetim uçlarında kullanılır; POST "" (başvuru gönderimi) BİLEREK hariç.
+YONETIM = [Depends(admin_kapisi)]
 
 
 # ── Modeller ─────────────────────────────────────────────────────────────────
@@ -671,7 +684,7 @@ def basvuru_gonder(body: BasvuruGonder):
     return {"success": True, "id": bid}
 
 
-@router.get("")
+@router.get("", dependencies=YONETIM)
 def basvuru_listele(
     durum: Optional[str] = Query(None),
     arsivli: Optional[bool] = Query(None),
@@ -701,7 +714,7 @@ def basvuru_listele(
     return [_row_to_dict(r) for r in rows]
 
 
-@router.get("/ozet")
+@router.get("/ozet", dependencies=YONETIM)
 def basvuru_ozet():
     with db() as (conn, cur):
         _ensure_table(cur)
@@ -727,7 +740,7 @@ def basvuru_ozet():
     return ozet
 
 
-@router.get("/qr/indir")
+@router.get("/qr/indir", dependencies=YONETIM)
 def basvuru_qr():
     """İş başvurusu QR kodunu PNG olarak döndür."""
     try:
@@ -749,7 +762,7 @@ def basvuru_qr():
         raise HTTPException(500, "qrcode kütüphanesi yüklü değil.")
 
 
-@router.get("/{bid}")
+@router.get("/{bid}", dependencies=YONETIM)
 def basvuru_detay(bid: str):
     with db() as (conn, cur):
         _ensure_table(cur)
@@ -760,7 +773,7 @@ def basvuru_detay(bid: str):
     return _row_to_dict(row)
 
 
-@router.patch("/{bid}/gor")
+@router.patch("/{bid}/gor", dependencies=YONETIM)
 def basvuru_goruldu_isaretle(bid: str):
     """Başvuru detayı açıldığında 'yeni' rozetinden düşür."""
     with db() as (conn, cur):
@@ -775,7 +788,7 @@ def basvuru_goruldu_isaretle(bid: str):
     return {"success": True}
 
 
-@router.patch("/{bid}/durum")
+@router.patch("/{bid}/durum", dependencies=YONETIM)
 def basvuru_durum_guncelle(bid: str, body: DurumGuncelle):
     # Durum artık SADECE iş akışı: bekliyor | gorusme | olumlu | olumsuz.
     # Öncelik (/oncelik) ve arşiv (/arsiv) AYRI boyutlar (durum onları ezmez).
@@ -799,7 +812,7 @@ def basvuru_durum_guncelle(bid: str, body: DurumGuncelle):
     return {"success": True}
 
 
-@router.patch("/{bid}/oncelik")
+@router.patch("/{bid}/oncelik", dependencies=YONETIM)
 def basvuru_oncelik(bid: str, body: dict):
     """Öncelik işaretle (0=temizle | 1 | 2) — durumu/arşivi EZMEZ, arşivde korunur."""
     try:
@@ -817,7 +830,7 @@ def basvuru_oncelik(bid: str, body: dict):
     return {"success": True, "oncelik": onc}
 
 
-@router.patch("/{bid}/arsiv")
+@router.patch("/{bid}/arsiv", dependencies=YONETIM)
 def basvuru_arsiv(bid: str, body: dict = None):
     """Arşivle / arşivden çıkar (durum + öncelik KORUNUR — silmek değil)."""
     arsivli = True if body is None else bool(body.get("arsivli", True))
@@ -830,7 +843,7 @@ def basvuru_arsiv(bid: str, body: dict = None):
     return {"success": True, "arsivli": arsivli}
 
 
-@router.post("/toplu-arsiv")
+@router.post("/toplu-arsiv", dependencies=YONETIM)
 def basvuru_toplu_arsiv(body: dict):
     """Tiklenen kartları toplu arşivle/çıkar. body: {ids: [...], arsivli: true}."""
     ids = [str(x) for x in (body.get("ids") or []) if x]
@@ -848,7 +861,7 @@ def basvuru_toplu_arsiv(body: dict):
     return {"success": True, "guncellenen": n, "arsivli": arsivli}
 
 
-@router.post("/{bid}/ise-al")
+@router.post("/{bid}/ise-al", dependencies=YONETIM)
 def basvuru_ise_al(bid: str, body: dict = None):
     """Başvuruyu işe al: personel kaydı oluştur + başvuruya 'işe alındı' işaretle.
     İdempotent: zaten işe alınmışsa mevcut personel_id'yi döner (çift kayıt yok)."""
@@ -880,7 +893,7 @@ def basvuru_ise_al(bid: str, body: dict = None):
     return {"success": True, "personel_id": pid, "ad_soyad": ad}
 
 
-@router.delete("/{bid}")
+@router.delete("/{bid}", dependencies=YONETIM)
 def basvuru_sil(bid: str):
     with db() as (conn, cur):
         _ensure_table(cur)
