@@ -15,11 +15,47 @@ uygulanmayanlar ayrı başlıkta gerekçesiyle yazılı.
 | A-2 | `logger` tanımsız → toptancı teslim kabulü **500** ve tamamı rollback | `import logging` + modül seviyesinde `logger` | `pyflakes sube_panel.py` temiz |
 | A-3 | `yedek_zamani` her zaman `null` | `dt_now_tr().isoformat()` | — |
 | **+A-4** | **`main.py:104/110` `logger` modül yüklenirken kullanılıyor** — izole router import'u patlarsa **uygulama hiç açılmıyordu** | `logger` router kayıtlarından ÖNCEye alındı | `pyflakes main.py` temiz |
-| **+A-5** | **`/cari-odenecekler` rota gölgelenmesi** — `/{fatura_id}` yutuyordu, ödeme ekranının okuduğu uç 404 dönüyordu | Statik rota parametreli yoldan öncede kaydedildi (ince sarmalayıcı) | çalışma zamanı sıra ölçüldü: 41 < 56 |
+| ~~+A-5~~ | ~~`/cari-odenecekler` rota gölgelenmesi~~ | ❌ **YANLIŞ ALARM — geri alındı** (aşağıda) | canlı ölçüm: uç zaten 200 dönüyordu |
 | **+A-6** | `duyu_omurga.py` `date` importsuz · `k1_kart_odeme_tani.py` `logger` tanımsız | İkisi de eklendi | `pyflakes` temiz |
 
-> A-4, A-5, A-6 denetim listesinde YOKTU — düzeltme sırasında aynı sınıf tarama
-> (`pyflakes`, rota sıralaması) tüm repoya uygulanınca çıktı.
+> A-4 ve A-6 denetim listesinde YOKTU — düzeltme sırasında `pyflakes` tüm
+> repoya uygulanınca çıktı. **A-5 ise yanlış alarmdı** (aşağıya bakın).
+
+---
+
+## ❌ A-5 GERİ ALINDI — kendi yanlış alarmım
+
+**İddia:** `/cari-odenecekler`, `/{fatura_id}` tarafından yutuluyor; ödeme
+ekranının okuduğu uç 404 dönüyor.
+
+**Gerçek:** Uç canlıda **çalışıyordu.** `curl` ile ölçüldü: 200 ve doğru gövde
+(FEZ'in 3 açık faturası).
+
+**Hatanın kaynağı:** Rota sırasını **satır numarasından** çıkarmıştım. Oysa
+`fatura_api.py` dosyanın sonunda zaten küresel bir koruma taşıyor:
+
+```python
+router.routes.sort(key=lambda _r: 1 if "{" in getattr(_r, "path", "") else 0)
+```
+
+Parametreli yollar en sona alınıyor. Yani gerçek sıra satırdan okunamaz —
+modül **yüklendikten sonra** `router.routes` okunmalıdır.
+
+**Yapılan:** Eklediğim gereksiz sarmalayıcı geri alındı (yanlış gerekçeli bir
+yorum bırakmak, fazladan koddan daha zararlıdır). Kapının 2. sınıfı **statik
+tahminden çalışma zamanı ölçümüne** çevrildi.
+
+**Yeni ölçüm — 23 router modülü, `router.routes` okunarak:**
+
+```
+TOPLAM CANLI GOLGELENME: 0
+```
+
+Bu sınıf sistemde **hiç yok**. Statik sürüm 1 hayalet üretmişti.
+
+> **Ders:** bu denetimin kendi kuralı bana da işledi — *kendi rakamını sorgula,
+> ölç*. Bir sınıfı "kapattım" demeden önce canlıda bakmak, listeye bakmaktan
+> daha güvenilirdir.
 
 ---
 
@@ -129,3 +165,76 @@ _kalem_merge birim testi (4 senaryo)        → 4/4 geçti
 > DÜŞÜRECEK. Deploy sonrası ilk iş `GET /api/fatura/cari-ode-kanal-etkisi`
 > okunmalı: hangi ödemenin ne kadar düştüğü tedarikçi başına yazılı.
 > Sahibin kuralı: *kapattıktan sonra YENİ rakamı da ölç.*
+
+---
+
+# 🔬 CANLI DOĞRULAMA (2026-09-02, deploy sonrası)
+
+Deploy `03094e8` ile indi. Ölçümler production'a `curl` ile yapıldı.
+
+## Kırık olan iki uç artık ayakta
+
+| Uç | Öncesi | Sonrası |
+|---|---|---|
+| `GET /api/fatura/cari-ozet` | **500** `UnboundLocalError: g_adlar` | **200** |
+| `GET /api/tv-gosterim/etki` | **çöküyordu** (`_satis_taban_map` tanımsız) | **200** |
+
+`cari-ozet`'in 500 gövdesi deploy inmeden önce birebir yakalandı — teşhis
+tahmin değildi:
+
+```
+UnboundLocalError: cannot access local variable 'g_adlar'
+  File "/app/fatura_api.py", line 6399, in cari_ozet
+```
+
+## 4. ödeme kanalının etkisi — ölçüldü
+
+`GET /api/fatura/cari-ode-kanal-etkisi`:
+
+| Tedarikçi | Adet | Toplam | Nakit | Kart |
+|---|---:|---:|---:|---:|
+| FEZ | 1 | 70.000,00 ₺ | 0 | 70.000,00 |
+| MEHMET ATALAY | 1 | 50.000,00 ₺ | 0 | 50.000,00 |
+| **TOPLAM** | **2** | **120.000,00 ₺** | | |
+
+Bu 120.000 ₺, düzeltmeden önce **hiçbir bakiye ucunda görünmüyordu.**
+
+**Çift düşüm kontrolü (kritik):** İkisi de kart ödemesi olduğu için "banka
+ekstresi aynı çekimi zaten getirdiyse iki kez düşer mi?" sorusu soruldu.
+Cari ekstre satır satır okundu:
+
+```
+FEZ            27.07  70.000,00  kanit=aciklama  anlik_gider
+               30.08  70.000,00  kanit=damga     cari_odeme     ← yeni kanal
+MEHMET ATALAY  27.07 108.459,87  kanit=damga     kart
+               30.08  50.000,00  kanit=damga     cari_odeme     ← yeni kanal
+```
+
+Aynı tutarlı FEZ satırları **34 gün arayla** — tekilleştirici ±3 gün
+kullanıyor, doğru davranıp birleştirmedi. Bunlar iki ayrı gerçek ödeme.
+**Çift düşüm yok.**
+
+Deploy sonrası bakiyeler: FEZ 66.965,49 ₺ · MEHMET ATALAY 44.825,43 ₺ ·
+toplam cari açık 727.209,25 ₺.
+
+## Duman testi — dokunulan 14 uç
+
+Hepsi **200**: `cari-ozet` · `cari-odenecekler` · `odenecek-kuyruk` ·
+`ap-mutabakat` · `cari-devir` · `acik-teslimat` · `belge-talep/bekleyen` ·
+`telafi-adaylari` · `kontrol-kulesi` · `sevkiyat-uyumsuzluklar` ·
+`siparis/gecmis` · `v2/siparis-akis` · `toptanci-teslimler` · `tv-gosterim/etki`
+
+## Dürüst not: iki düzeltmenin bugün etkisi yok
+
+| Düzeltme | Canlı sonuç | Yorum |
+|---|---|---|
+| **C-24** tolerans artık karar değil gözlem | `esik_icinde_fark_adedi: 0` | Bugün eşik bandında saklanan tedarikçi **yok** — kural doğru ama bugünkü veride yeni bir şey açığa çıkarmadı |
+| **D-7** yoldakiler ayrı kovaya | `kabul_bekleyen: 0`, gerçek uyumsuzluk 16 | Şu an yolda paket yok; liste zaten temizdi. Fark, yolda paket olduğu günlerde görülecek |
+
+Bu ikisi "yaptım ve şu kadar kazandırdı" diye sunulmamalı — **doğru ama
+bugün ölçülebilir etkisi olmayan** düzeltmelerdir.
+
+## GRNI durumu
+
+`telafi-adaylari: 0` — şu an belge talebi açılmamış teslimat **yok**.
+Gece gözlem halkası (D-10) bu sayı sıfırdan büyüdüğünde duyu olayı basacak.

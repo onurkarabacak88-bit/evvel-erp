@@ -6825,19 +6825,6 @@ def cari_ozet_uc():
     return cari_ozet()
 
 
-@router.get("/cari-odenecekler")
-def cari_odenecekler_uc(tedarikci: str = "", defter_kiyas: int = 1):
-    """🔀 ROTA SIRASI ŞART (2026-09-01 zincir denetimi).
-
-    Asıl gövde aşağıda (`cari_odenecekler`) — burada YALNIZCA ROTA KAYDI var.
-    Sebebi: `@router.get("/{fatura_id}")` bu dosyada ondan ÖNCE tanımlı ve
-    tek segmentli her GET'i yutuyor. Statik yol, parametreli yoldan SONRA
-    kaydedilirse hiç çağrılmaz; uç 404 döner ve "açık fatura yok" sanılır.
-    Parametreli yollar en sona sıralanır — bu sarmalayıcı o kuralı sağlar.
-    """
-    return cari_odenecekler(tedarikci=tedarikci, defter_kiyas=defter_kiyas)
-
-
 @router.get("/cari-ode-kanal-etkisi")
 def cari_ode_kanal_etkisi():
     """🔎 4. ÖDEME KANALININ ETKİSİ — salt-okur ölçüm (2026-09-01).
@@ -8513,12 +8500,14 @@ class CariOdemeModel(BaseModel):
     tahsis: Optional[list] = None
 
 
-# ⚠️ DEKORATÖR BURADAN KALDIRILDI (2026-09-01 zincir denetimi — ROTA
-# GÖLGELENMESİ). Bu satır dosyada `@router.get("/{fatura_id}")`den (s8216)
-# SONRA geldiği için FastAPI `/api/fatura/cari-odenecekler` isteğini
-# `fatura_detay("cari-odenecekler")`e yönlendiriyordu: uç 404 "Fatura
-# bulunamadı" dönüyor ve ödeme ekranı "açık fatura yok" sanıyordu.
-# Kayıt artık parametreli yoldan ÖNCE yapılıyor (yukarıda, ince sarmalayıcı).
+@router.get("/cari-odenecekler")
+# 🔀 ROTA SIRASI: bu uç dosyada `@router.get("/{fatura_id}")`den SONRA
+# tanımlı ama GÖLGELENMİYOR — dosyanın sonundaki `router.routes.sort(...)`
+# parametreli yolları en sona alıyor (aşağıda, "ROTA SIRASI" bloğu).
+# ⚠️ 2026-09-02: bu uç önce "gölgelenmiş" sanılıp gereksiz bir sarmalayıcıya
+# alınmıştı. Yanılgının kaynağı STATİK satır-sırası analiziydi; canlı ölçüm
+# (23 modül, `router.routes` okunarak) hiçbir gölgelenme olmadığını gösterdi.
+# Ders: rota sırası SATIRDAN değil, yüklenmiş router'dan okunur.
 def cari_odenecekler(tedarikci: str = "", defter_kiyas: int = 1):
     """Bu tedarikçinin AÇIK faturaları — FIFO sırasıyla (en eski önce).
     Ödeme ekranı 'bu para hangi faturaları kapatacak' önizlemesini bundan kurar.

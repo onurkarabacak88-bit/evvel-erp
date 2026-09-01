@@ -136,32 +136,57 @@ def _yutar(parametreli: str, statik: str) -> bool:
 
 
 def rota_golgesi(dosyalar: list[str]) -> list[str]:
-    bulgular = []
-    for fn in dosyalar:
-        try:
-            agac = ast.parse(open(os.path.join(KOK, fn), encoding="utf-8").read())
-        except Exception:
-            continue
-        yollar = []
-        for node in ast.walk(agac):
-            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+    """⚠️ ÖLÇÜM, TAHMİN DEĞİL (2026-09-02'de düzeltildi).
+
+    İlk sürüm rotaları AST'ten okuyup SATIR SIRASINA göre kıyaslıyordu ve
+    `/cari-odenecekler` için YANLIŞ ALARM verdi: `fatura_api.py` dosyanın
+    sonunda `router.routes.sort(...)` ile parametreli yolları zaten en sona
+    alıyor. Yani gerçek sıra satırdan okunamaz — modül YÜKLENDİKTEN sonra
+    `router.routes` okunmalıdır. Canlı ölçüm 23 modülde 0 gölgelenme buldu;
+    statik sürüm 1 hayalet üretmişti.
+
+    Ders, denetimin kendi dersiyle aynı: kendi rakamını sorgula, ölç.
+    """
+    bulgular: list[str] = []
+    kok_eski = list(sys.path)
+    sys.path.insert(0, KOK)
+    try:
+        import importlib
+        for fn in dosyalar:
+            if not fn.endswith(".py"):
                 continue
-            for d in node.decorator_list:
-                if (isinstance(d, ast.Call)
-                        and getattr(d.func, "attr", "") in
-                        ("get", "post", "put", "delete", "patch")
-                        and d.args and isinstance(d.args[0], ast.Constant)
-                        and isinstance(d.args[0].value, str)):
-                    yollar.append((d.lineno, d.func.attr, d.args[0].value))
-        yollar.sort()
-        for i, (ln, m, yol) in enumerate(yollar):
-            if "{" not in yol:
+            modul_ad = os.path.basename(fn)[:-3]
+            kaynak_yol = os.path.join(KOK, fn)
+            try:
+                if "APIRouter(" not in open(kaynak_yol, encoding="utf-8").read():
+                    continue                      # router'i yok, konu disi
+            except Exception:
                 continue
-            for ln2, m2, yol2 in yollar[i + 1:]:
-                if m2 == m and "{" not in yol2 and _yutar(yol, yol2):
-                    bulgular.append(
-                        f"{fn}:{ln} {m.upper()} {yol}  YUTUYOR  {yol2} (s{ln2}) "
-                        "— statik rota parametreli yoldan ONCE kaydedilmeli")
+            try:
+                m = importlib.import_module(modul_ad)
+            except Exception:
+                continue                          # yuklenemiyorsa 1. kapi soyler
+            r = getattr(m, "router", None)
+            if r is None:
+                continue
+            rotalar: list[tuple[str, str]] = []
+            for x in getattr(r, "routes", []):
+                yol = getattr(x, "path", None)
+                if not yol:
+                    continue
+                for met in sorted(getattr(x, "methods", []) or []):
+                    rotalar.append((met, yol))
+            for i, (met, yol) in enumerate(rotalar):
+                if "{" not in yol:
+                    continue
+                for met2, yol2 in rotalar[i + 1:]:
+                    if met2 == met and "{" not in yol2 and _yutar(yol, yol2):
+                        bulgular.append(
+                            f"{modul_ad}: {met} {yol}  YUTUYOR  {yol2} "
+                            "— parametreli yollari en sona sirala "
+                            "(`router.routes.sort(...)`, bkz. fatura_api.py sonu)")
+    finally:
+        sys.path[:] = kok_eski
     return bulgular
 
 
