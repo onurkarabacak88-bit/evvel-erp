@@ -880,6 +880,35 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
             kapatir; asagida hangi faturalarin kapanacagini gorursun.
           </div>
 
+          {/* ⚖️ İKİ DEFTERİN FARKI (2026-09-02, C-2 ekran ayağı)
+              Aşağıdaki liste yalnız TAHSİS defterini düşer. Borcun asıl
+              aritmetiği ödeme izlerini (vadeli / anlık gider / kart / cari
+              ödeme) de düşer. Kartla ödenmiş bir fatura bu listede TAM
+              tutarıyla açık durur; FIFO parayı ona yazarsa gerçekten açık
+              olan fatura açık kalır. Fark GİZLENMEZ — tahsis yapmadan önce
+              sahip bunu görmeli. */}
+          {borcAcik && borcAcik.defter_farki != null
+            && Math.abs(sayi(borcAcik.defter_farki)) > 0.01 && (
+            <div style={{
+              fontSize: 11.5, lineHeight: 1.55, marginBottom: 14, padding: '10px 13px',
+              borderRadius: 11, background: 'rgba(217,154,78,.10)',
+              border: `1px solid ${R.bakir}55`, color: R.metin2,
+            }}>
+              <b style={{ color: R.bakir }}>⚖ İki defter ayrışıyor — {fmt(Math.abs(sayi(borcAcik.defter_farki)))}</b>
+              <div style={{ marginTop: 5 }}>
+                Bu listedeki açık toplam <b>{fmt(sayi(borcAcik.acik_toplam))}</b>,
+                ödeme izlerine göre hesaplanan açık ise{' '}
+                <b>{fmt(sayi(borcAcik.kanal_hesaplanan_acik))}</b>.
+              </div>
+              <div style={{ color: R.not2, marginTop: 5 }}>
+                Fark, fatura seviyesinde eşleştirilememiş kanal ödemelerinden gelir
+                (kart / havale izi var ama hangi faturayı kapattığı yazılı değil).
+                Aşağıdaki bazı faturalar aslında ödenmiş olabilir — FIFO'ya
+                bırakmadan önce elle seçmeyi düşünün.
+              </div>
+            </div>
+          )}
+
           <label style={omEtiket}>Odenecek tutar</label>
           <input value={borcModal.tutar} inputMode="decimal" autoFocus placeholder="0"
             onChange={(e) => setBorcModal((m) => ({ ...m, tutar: e.target.value }))}

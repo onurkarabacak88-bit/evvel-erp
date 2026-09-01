@@ -1896,7 +1896,18 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                 baslik={`Cari defter — ${kisalt(cariSecim, 40)}`}
                 // Kronoloji dürüstlüğü (Codex): defter EN YENİ ÜSTTE gösterilir —
                 // "devirle başlar" anlatısıyla çelişmesin diye açıkça yazılır.
-                not={`en yeni üstte · son ${Math.min(40, hareketler.length)} / ${hareketler.length} hareket · yürüyen bakiye ${fmt(sayi(cari.yuruyen_bakiye))}`}
+                /* ⚠️ 2026-09-02 (D-5 + C-1 ekran ayağı): sunucu artık gerçek
+                   hareket sayısını ve kesilip kesilmediğini söylüyor; ayrıca
+                   devir çizgisi elemesinin UYGULANIP uygulanmadığını da.
+                   İkisi de "bu rakam neden bu?" sorusunun cevabı — ekranda
+                   yazılı olmazsa liste tam ekstre sanılır. */
+                not={`en yeni üstte · son ${Math.min(40, hareketler.length)} / ${
+                  sayi(cari.hareket_toplam_adet) || hareketler.length} hareket${
+                  cari.hareketler_kisaltildi ? ' (sunucu kısalttı)' : ''
+                } · yürüyen bakiye ${fmt(sayi(cari.yuruyen_bakiye))}${
+                  cari.devir_cizgisi_uygulandi
+                    ? ` · devir çizgisi ${cari.devir_cizgisi} öncesi elendi`
+                    : ' · devir yok, tüm geçmiş sayıldı'}`}
                 kolonlar={[
                   { ad: 'Tarih' }, { ad: 'Hareket' }, { ad: 'Açıklama' },
                   { ad: 'Borç', sag: 1 }, { ad: 'Alacak', sag: 1 }, { ad: 'Bakiye', sag: 1 },
@@ -1909,10 +1920,21 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                     hucreler: [
                       { v: tarihKisa(h.tarih), mono: true, renk: R.not },
                       {
-                        v: tip.ad,
-                        rozet: h.tip === 'odeme' ? R.yesil : h.tip === 'devir' ? R.mavi : R.bakir,
+                        /* 🏷️ KANIT GÜCÜ (2026-09-02, CE-03 ekran ayağı):
+                           damgasız ödeme satırı bu cariye YALNIZ açıklama
+                           metniyle bağlanıyor — bu bir ADAY eşleşmedir,
+                           kanıt değil. Bakiyeden çıkarmak sahibin kararı;
+                           ama hangi satırın neye dayandığı GÖRÜNMELİ. */
+                        v: tip.ad + (h.tip === 'odeme' && h.damgasiz ? ' ~' : ''),
+                        rozet: h.tip === 'odeme'
+                          ? (h.damgasiz ? R.amber : R.yesil)
+                          : h.tip === 'devir' ? R.mavi : R.bakir,
                       },
-                      { v: kisalt(h.aciklama, 54) || '—', renk: R.metin2 },
+                      {
+                        v: (kisalt(h.aciklama, 54) || '—')
+                           + (h.tip === 'odeme' && h.damgasiz ? '  · tahmin (damgasız)' : ''),
+                        renk: h.tip === 'odeme' && h.damgasiz ? R.not2 : R.metin2,
+                      },
                       { v: tip.borc ? fmt(t) : '—', mono: true, sag: true, renk: tip.borc ? R.krem : R.not3 },
                       { v: tip.borc ? '—' : fmt(t), mono: true, sag: true, renk: tip.borc ? R.not3 : R.yesil },
                       { v: fmt(sayi(h.bakiye)), mono: true, sag: true, kalin: true, renk: sayi(h.bakiye) > 0 ? R.kirmizi : R.yesil },

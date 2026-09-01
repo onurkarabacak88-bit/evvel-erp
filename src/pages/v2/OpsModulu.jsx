@@ -838,6 +838,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // POST /ops/siparis/sevkiyata-gonder. Toptancı akışı (liste+yazdırma) klasik
   // kulede kalır — modaldan köprü verilir (işlev kaybı yasak).
   const [yonForm, setYonForm] = useState(null);   // {sip, mod:'depo'|'toptanci', depo, talimat, tedarikciId, secili:Set, not}
+  // ⚠️ 2026-09-02 (C-11 ekran ayağı): WhatsApp gönderilemediğinde toast
+  //    kayboluyor ve kayıt 'yollandı' görünüyordu — tedarikçi HABERSİZ.
+  //    Sunucu artık `wa_uyari` döndürüyor; bu KALICI uyarı elle kapatılana
+  //    kadar ekranda durur. Sipariş kaydı silinmez, yalnız görünür kalır.
+  const [waUyari, setWaUyari] = useState(null);  // {ted, mesaj, ts}
   const [depolar, setDepolar] = useState([]);
   const [yonMesgul, setYonMesgul] = useState(false);
   // ⛔ Kalem bazında merkez iptali — {sip, kalem, gerekce}
@@ -1369,7 +1374,13 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       // yollanmış" kalemleri eliyor. Sessizce elenirse sahip "hepsini
       // yolladım" sanır — bayat modalda tam da bu oluyordu.
       const elenen = Array.isArray(r?.elenen_kalemler) ? r.elenen_kalemler : [];
+      // 🔴 GÖNDERİM BAŞARISIZSA SESSİZ KALMA (2026-09-02, C-11): telefon VARKEN
+      //    gönderim düşerse eski kod hiçbir şey demiyordu — `waNot` yalnız
+      //    "telefon yok" hâlini yazıyordu. Sipariş kaydı duruyor ama tedarikçi
+      //    mesajı ALMADI: mal hiç gelmez, sistem bekler.
+      if (r?.wa_uyari) setWaUyari({ ted: ted.ad, mesaj: r.wa_uyari, ts: Date.now() });
       onToast?.(`🚚 ${ted.ad} — ${sayi(r?.toplam_adet)} adet yollandı${waNot}${
+        r?.wa_uyari ? ' · ⚠ WhatsApp GİTMEDİ' : ''}${
         r?.tam_gonderildi === false ? ` · ${kalan} adet kuyrukta kaldı` : ''}${
         elenen.length ? ` · ⚠ ${elenen.length} kalem elendi: ${elenen.join(', ')}` : ''}`);
       setYonForm(null);
@@ -3051,6 +3062,26 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         )}
 
         {/* ── YERLİ DEPO YÖNLENDİRME MODALI (köprü kaldırıldı) ── */}
+        {waUyari && (
+          <div style={{
+            position: 'fixed', left: 16, right: 16, bottom: 16, zIndex: 90,
+            padding: '13px 16px', borderRadius: 12,
+            background: 'rgba(214,109,92,.16)', border: `1px solid ${R.kirmizi}77`,
+            color: R.metin2, fontSize: 12.5, lineHeight: 1.55,
+            display: 'flex', gap: 12, alignItems: 'flex-start',
+          }}>
+            <div style={{ flex: 1 }}>
+              <b style={{ color: R.kirmizi }}>⚠ {waUyari.ted} — WhatsApp gönderilemedi</b>
+              <div style={{ marginTop: 4 }}>{waUyari.mesaj}</div>
+            </div>
+            <button onClick={() => setWaUyari(null)} style={{
+              padding: '7px 13px', borderRadius: 9, cursor: 'pointer',
+              border: `1px solid ${R.kirmizi}66`, background: 'transparent',
+              color: R.kirmizi, fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+              whiteSpace: 'nowrap',
+            }}>Gördüm</button>
+          </div>
+        )}
         {yonForm && (
           <div
             onClick={(e) => { if (e.target === e.currentTarget && !yonMesgul) setYonForm(null); }}
@@ -3746,15 +3777,47 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           </div>
         )}
 
+        {/* 📦 KABUL BEKLEYEN KOVASI (2026-09-02, D-7 ekran ayağı)
+            Sunucu artık 'yolda' satırları uyumsuzluk listesinden ÇIKARIYOR
+            (kabul_adet NULL olduğu için hepsi sahte uyumsuzluk sayılıyordu:
+            30 yolda + 2 gerçek fark = 32 satır, gerçekler gürültüde boğuluyordu).
+            Ama KAYBOLMADILAR — kendi kovalarında, yaşlarıyla. */}
+        {uzAlt === 'sevkiyat' && sayi(uzSevk?.kabul_bekleyen_adet) > 0 && (
+          <div style={{
+            fontSize: 11.5, lineHeight: 1.55, marginBottom: 14, padding: '10px 13px',
+            borderRadius: 11, background: 'rgba(217,154,78,.10)',
+            border: `1px solid ${R.bakir}44`, color: R.metin2,
+          }}>
+            <b style={{ color: R.bakir }}>
+              📦 {sayi(uzSevk.kabul_bekleyen_adet)} paket yolda — henüz kabul edilmedi
+            </b>
+            <div style={{ color: R.not2, marginTop: 4 }}>
+              Bunlar uyumsuzluk DEĞİL (kabul edilmedikleri için farkları da yok).
+              Ayrı tutuluyor ki gerçek kabul farkları listede boğulmasın.
+              {(() => {
+                const en = (uzSevk.kabul_bekleyen || [])
+                  .reduce((m, x) => Math.max(m, sayi(x.yolda_gun)), 0);
+                return en > 3 ? ` En eskisi ${en} gündür yolda — takip edin.` : '';
+              })()}
+            </div>
+          </div>
+        )}
         {uzAlt === 'sevkiyat' && (sevkSatir.length === 0 ? (
           <BosDurum tamam baslik="Sevkiyat uyumsuzluğu yok" aciklama="Son 30 günde gönderilen ile kabul edilen adet birbirini tutuyor." />
         ) : (
           <Tablo
             baslik="Sevkiyat uyumsuzlukları · gönderilen ↔ kabul edilen"
             kolonlar={[{ ad: 'Şube' }, { ad: 'Kalem' }, { ad: 'Gönderilen', sag: true }, { ad: 'Kabul', sag: true }, { ad: 'Fark', sag: true }]}
-            not={sevkSatir.length > 40
-              ? `satıra tıkla → uzlaştır · ⚠ ${sevkSatir.length} uyumsuzluğun ilk 40'ı gösteriliyor (${sevkSatir.length - 40} satır listede yok)`
-              : 'satıra tıkla → uzlaştır'}
+            /* ⚠️ ÇİFT KESME (2026-09-02, D-2): ekran ilk 40'ı gösteriyor AMA
+               sunucu da LIMIT'e kesmiş olabilir. İki kesme üst üste binerse
+               "hepsi bu" algısı iki kat yanıltır — ikisi de yazılır. */
+            not={[
+              'satıra tıkla → uzlaştır',
+              sevkSatir.length > 40
+                ? `⚠ ${sevkSatir.length} uyumsuzluğun ilk 40'ı gösteriliyor (${sevkSatir.length - 40} satır listede yok)`
+                : '',
+              uzSevk?.kesildi ? '⚠ sunucu da listeyi kesti — gün/limit aralığını daraltıp tekrar bakın' : '',
+            ].filter(Boolean).join(' · ')}
             satirlar={sevkSatir.slice(0, 40).map((r, i) => {
               const gon = uzSevkAdet(r);
               const kab = uzKabulAdet(r);
