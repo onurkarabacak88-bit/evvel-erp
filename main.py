@@ -110,6 +110,17 @@ try:
     app.include_router(kayit_dosyasi_router)
 except Exception as _e:  # noqa: BLE001
     logger.warning("kayit_dosyasi_api yüklenemedi: %s", _e)
+# 🕳️ BAĞSIZ STOK GİRİŞİ DUYUSU (2026-09-02) — izole, salt-okur.
+# "Depoya mal girdi ama hiçbir tedarikçi zincirine bağlanamıyor" duyusu.
+# ATALAY vakası: 01.08'de ZAFER'e Espresso +10 girmiş, siparişi iptal —
+# belge talebi doğmamış, fatura kovalanmamış, cari oluşmamış ve mevcut
+# duyuların HİÇBİRİ görmüyordu (acik-teslimat belge_talep'e, telafi-adaylari
+# 'teslim_alindi'ye bakıyor; bu kayıt ikisine de düşmüyor).
+try:
+    from duyu_bagsiz_giris import router as bagsiz_giris_router
+    app.include_router(bagsiz_giris_router)
+except Exception as _e:  # noqa: BLE001
+    logger.warning("duyu_bagsiz_giris yüklenemedi: %s", _e)
 # 🔗 TEDARİKÇİ ZİNCİRİ (kimlik kararı + zaman çizgisi, 2026-08-15) — izole.
 try:
     from tedarikci_zinciri_api import router as tedarikci_zinciri_router
@@ -901,6 +912,11 @@ def _gece_yarisi_scheduler():
             # gece SAYAR ve duyu olayı üretir (uygulama yine insan onayıyla).
             _halka("belge_telafi_gozlem",
                    lambda: __import__("belge_talep_api").gece_belge_telafi_gozlem())
+            # 🕳️ Bağsız stok girişi (2026-09-02): tedarikçiye bağlanamayan
+            # depo girişleri. Diğer duyuların KÖR NOKTASI — onlar belge_talep
+            # ya da 'teslim_alindi' damgasına bakıyor; bu kayıtlarda ikisi de yok.
+            _halka("bagsiz_giris",
+                   lambda: __import__("duyu_bagsiz_giris").gece_bagsiz_giris_tara())
             _halka("fiyat_bandi", lambda: __import__("fatura_api").gece_fiyat_bandi_izleme())
             _halka("personel_puan", lambda: __import__("personel_puan_api").gece_personel_puan_tara())
             _halka("agir_onhesap", lambda: __import__("duyu_gorunumler").gece_agir_onhesap())
