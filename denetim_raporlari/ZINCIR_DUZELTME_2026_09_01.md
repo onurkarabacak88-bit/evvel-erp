@@ -292,3 +292,64 @@ para **zaten ödenmiş** faturalara yazılır.
 > **Ölçüm dersi:** uzak dosyayı `curl | python` ile okumak Windows'ta UTF-8'i
 > bozuyor ve "metin yok" yanılgısı üretti. Dosyaya indirip `encoding="utf-8"`
 > ile okumak gerekti — ölçüm aracının kendisi de yanılabilir.
+
+---
+
+# ♻️ D-8 REZERV DENKLEMİ (2026-09-02, deploy `3b68d79`)
+
+Denetimde "ayrı iş" diye bırakılmıştı; kuruldu.
+
+## Değişmez kural (bugüne kadar hiçbir yerde zorlanmıyordu)
+
+```
+sube_depo_stok.rezerve_adet
+    = o depo+kalem için AÇIK taleplerin kalem_durumlari[].tahsis_adet TOPLAMI
+```
+
+## İki kusur — biri tek başına yetmezdi
+
+**1.** Sevk çıkışı rezervi `sevk_adet` kadar düşürüyordu, bu sevkin tahsisli olup
+olmadığına **bakmadan**. Tahsissiz bir sevk, aynı depodaki **başka talebin**
+rezervini yiyordu; `GREATEST(0,…)` taşmayı yuttuğu için iz de kalmıyordu.
+→ Düşüm artık `min(sevk_adet, BU TALEBİN kalan tahsisi)`.
+
+**2.** Sevk `kalem_durumlari`ya **hiç dokunmuyordu**; `tahsis_adet` sonsuza dek
+eski değerinde kalıyordu. Yalnız (1) yapılsaydı **yeni bir kapı açılırdı**:
+`merkez_tahsis_yap` bir sonraki çalışmasında delta'yı bayat değerden hesaplar
+(0−5 = −5) ve rezervi **ikinci kez** düşürürdü — bu kez başkasından.
+→ Tüketilen tahsis deftere yazılır (`tahsis_tuketilen` izi kalır).
+
+## Birim testi iki kez KENDİ hatamı yakaladı
+
+`scripts/test_rezerv_denklemi.py` — gerçek motora karşı, sahte imleçle, 6 senaryo.
+
+| Yakalanan hata | Neydi |
+|---|---|
+| **Rastgele anahtar seçimi** | Harita aynı kalemi birden çok takma adla tutuyordu; sevk yalnız **birini** düşürüyordu ve hangisinin seçileceği `set` sırasına, yani **rastgeleye** bağlıydı → tek kanonik anahtar (sıra numarası) + takma ad indeksi |
+| **Yazan ↔ okuyan asimetrisi** | Harita **ham adı** indeksliyor, arama **normalize adla** yapılıyordu. Kimliği olmayan kalemde eşleşme hiç tutmuyor, hem `istenen` tavanı hem rezerv denklemi **sessizce devre dışı** kalıyordu → ikisi de indeksleniyor |
+
+**6/6 geçti.** Test repoda: `python scripts/test_rezerv_denklemi.py`
+
+## 🔍 Canlı ölçüm — ve dürüst sonuç
+
+Yeni uç: `GET /api/ops/v2/rezerv-denetimi` (salt-okur, düzeltmez).
+
+```
+rezervli satir  : 0
+KAYAN satir     : 0
+```
+
+Kontrol kulesinden teyit: **55 talebin 32'sinde `kalem_durumlari` var ama
+`tahsis_adet > 0` olan HİÇ kalem yok.**
+
+> ### Bulgunun gerçek anlamı
+> **Tahsis/rezerv alt sistemi canlıda tamamen ATIL.** Her sevk "tahsissiz"
+> yapılıyor. Yani D-8'in hatası gerçekti ama **maruziyeti sıfırdı** — çalınacak
+> rezerv yoktu. Yaptığım düzeltme **önleyicidir**, bugün bir şey kurtarmadı.
+>
+> Bunu "şu kadar adet kurtardım" diye sunmak yanlış olurdu.
+
+**Asıl soru sahibe kalıyor:** `merkez_tahsis_yap` / rezerv mekanizması kurulmuş
+ama **hiç kullanılmıyor**. İki yol var — ya kullanılmaya başlanır (artık denklemi
+doğru, güvenli), ya da atıl alt sistem olarak kayda geçip sadeleştirilir.
+Şu hâliyle bakım yükü var, faydası yok.
