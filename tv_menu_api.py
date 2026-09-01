@@ -587,6 +587,46 @@ _ONERI_NEDEN = {
 _SATIS_CACHE = {"ts": 0.0, "map": {}}
 
 
+def _urun_taban_key(ad) -> str:
+    """Ürün adını KIYAS anahtarına çevirir (2026-09-01 kapı taraması).
+
+    ⚠️ Bu fonksiyon ve `_satis_taban_map` HİÇ YAZILMAMIŞTI ama
+    `/tv-gosterim/etki` ucu ikisini de çağırıyordu: uç, erken `return`'leri
+    geçtiği anda `NameError` ile çöküyordu. `pyflakes` taraması yakaladı
+    (tanımsız ad, import anında değil O SATIR ÇALIŞINCA patlar).
+
+    Niyet çağrı yerinden okunuyor: gösterim logundaki ad ile Evo satış
+    kaydındaki ad AYNI ANAHTARA inmeli. Evo adları boy/soğuk eki taşır
+    ("Latte Ice", "Mocha 14oz") — `_kategori_fav`taki `base()` ile AYNI
+    ekler soyulur, yoksa kahveler hiç eşleşmez (bilinen Evo isim tuzağı).
+    Türkçe büyük İ tuzağı için sistemin TEK normalleştiricisi kullanılır.
+    """
+    try:
+        from sevkiyat_helpers import ad_anahtar as _ad_anahtar
+        temel = _ad_anahtar(ad)
+    except Exception:  # noqa: BLE001 — yardımcı yoksa yerel yedek
+        temel = re.sub(r"\s+", " ", str(ad or "").strip().lower())
+    return re.sub(r"\s+(ice|buzlu|8\s*oz|14\s*oz)$", "", temel).strip()
+
+
+def _satis_taban_map(satis) -> dict:
+    """{ürün adı: adet} → {taban anahtar: TOPLAM adet}.
+
+    Varyantlar (Ice / 14oz …) tek anahtarda TOPLANIR — aksi hâlde aynı
+    ürünün satışı ikiye bölünür ve "gösterim etkisi" olduğundan düşük çıkar.
+    """
+    out: dict = {}
+    for ad, adet in (satis or {}).items():
+        anahtar = _urun_taban_key(ad)
+        if not anahtar:
+            continue
+        try:
+            out[anahtar] = out.get(anahtar, 0) + (float(adet) or 0)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
 def _satis_30gun():
     if time.time() - _SATIS_CACHE["ts"] < 1800 and _SATIS_CACHE["map"]:
         return _SATIS_CACHE["map"]
