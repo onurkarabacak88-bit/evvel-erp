@@ -3392,17 +3392,42 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
             _kd_raw = []
     _istenen_map: Dict[str, int] = {}
     _depo_disi_kodlar: Dict[str, str] = {}
+    # ♻️ REZERV DENKLEMİ (2026-09-02, D-8) — bu talebin KENDİ tahsisi.
+    # Değişmez kural: `rezerve_adet` = o depo+kalem için AÇIK taleplerin
+    # `kalem_durumlari.tahsis_adet` TOPLAMI. Sevk bu toplamdan yalnız KENDİ
+    # payını tüketebilir; başkasının rezervine dokunamaz.
+    # ⚠️ TEK KANONİK ANAHTAR (kendi birim testim yakaladı): harita önce her
+    # takma adı (kalem_kodu · urun_id · normalize ad) AYRI AYRI tutuyordu.
+    # Sevk bunlardan yalnız BİRİNİ düşürüyor, geri kalanlar eski değerde
+    # kalıyordu — üstelik hangisinin seçileceği `set` sırasına, yani rastgeleye
+    # bağlıydı. Artık kalan miktar kalemin SIRA NUMARASINDA tutulur; takma
+    # adlar yalnız oraya İŞARET eder.
+    _tahsis_kalan: Dict[int, int] = {}      # kd sırası -> kalan tahsis
+    _tahsis_index: Dict[str, int] = {}      # takma ad  -> kd sırası
     if isinstance(_kd_raw, list):
-        for _e in _kd_raw:
+        for _sira, _e in enumerate(_kd_raw):
             if not isinstance(_e, dict):
                 continue
-            for _anahtar in (_e.get("kalem_kodu"), _e.get("urun_id"), _e.get("urun_ad")):
+            _tah_v = max(0, int(_e.get("tahsis_adet") or 0))
+            if _tah_v:
+                _tahsis_kalan[_sira] = _tah_v
+            # ⚠️ HAM AD + NORMALİZE AD İKİSİ DE İNDEKSLENİR (2026-09-02).
+            # Birim testim yakaladı: harita yalnız HAM adı indeksliyordu
+            # ("FİLTRE KAHVE") ama arama normalize adla yapılıyordu
+            # ("filtre kahve") — kimliği olmayan kalemde eşleşme HİÇ tutmuyor,
+            # hem `istenen` tavanı hem rezerv denklemi sessizce devre dışı
+            # kalıyordu. Sözleşme tek yönlü olamaz: yazan ve okuyan AYNI
+            # anahtar kümesini kullanmalı.
+            for _anahtar in (_e.get("kalem_kodu"), _e.get("urun_id"),
+                             _e.get("urun_ad"), ad_anahtar(_e.get("urun_ad"))):
                 _a = str(_anahtar or "").strip()
                 if not _a:
                     continue
                 _ist_v = max(0, int(_e.get("istenen_adet") or _e.get("talep_adet") or 0))
                 if _ist_v:
                     _istenen_map.setdefault(_a, _ist_v)
+                if _a not in _tahsis_index:
+                    _tahsis_index[_a] = _sira
                 _dur = str(_e.get("durum") or "").strip().lower()
                 if _e.get("depo_disi") or _dur in (
                         "depoya_yonlendirilmedi", "toptanciya_gitti", "merkez_iptal"):
@@ -3552,6 +3577,25 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
         sevk_adet = max(0, int(item.get("sevk_adet") or item.get("adet") or 0))
         if not kalem_kodu or sevk_adet <= 0:
             continue
+        # ♻️ D-8: bu kalemin rezervinden DÜŞÜLECEK pay. Eskiden `sevk_adet`
+        # kadar düşülüyordu — tahsissiz bir sevk, AYNI depodaki BAŞKA talebin
+        # rezervini yiyordu ve `GREATEST(0,…)` taşmayı yuttuğu için iz kalmıyordu.
+        # (Depo: mevcut 20, talep-1 için rezerv 10. Talep-2 tahsissiz 8 sevk
+        #  eder → rezerv 10→2; talep-1'in ayrılmış malı kâğıt üstünde serbest
+        #  kalır ve üçüncü bir sevk onu da götürür.)
+        # Arama SIRASI sabit (kimlik → kimlik → ad): `set` kullanmak hangi
+        # takma adın seçileceğini rastgeleye bırakıyordu.
+        _tahsis_sira = None
+        for _ka in (kalem_kodu,
+                    str(item.get("urun_id") or "").strip(),
+                    ad_anahtar(item.get("urun_ad") or item.get("kalem_adi"))):
+            if _ka and _ka in _tahsis_index:
+                _tahsis_sira = _tahsis_index[_ka]
+                break
+        _kalan_tahsis = _tahsis_kalan.get(_tahsis_sira, 0) if _tahsis_sira is not None else 0
+        _rez_dus = min(sevk_adet, max(0, _kalan_tahsis))
+        if _tahsis_sira is not None:
+            _tahsis_kalan[_tahsis_sira] = max(0, _kalan_tahsis - _rez_dus)
         if kaynak_depo:
             urun_id_item = str(item.get("urun_id") or "").strip()
             # P1 tespiti — sevk öncesi kaynak stoğu oku. Sevke ENGEL OLMAZ (kullanıcı
@@ -3586,7 +3630,7 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                     guncelleme   = NOW()
                 WHERE sube_id = %s AND kalem_kodu = %s
                 """,
-                (sevk_adet, sevk_adet, kaynak_depo, dusulecek_kod),
+                (sevk_adet, _rez_dus, kaynak_depo, dusulecek_kod),
             )
             if cur.rowcount == 0 and urun_id_item and urun_id_item != dusulecek_kod:
                 alt_kod = depo_kalem_kodu_resolve(cur, urun_id_item, kalem_adi)
@@ -3600,7 +3644,7 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                             guncelleme   = NOW()
                         WHERE sube_id = %s AND kalem_kodu = %s
                         """,
-                        (sevk_adet, sevk_adet, kaynak_depo, dusulecek_kod),
+                        (sevk_adet, _rez_dus, kaynak_depo, dusulecek_kod),
                     )
             if cur.rowcount == 0 and _UUID_RE.match(urun_id_item):
                 dusulecek_kod = urun_id_item
@@ -3612,7 +3656,7 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                         guncelleme   = NOW()
                     WHERE sube_id = %s AND kalem_kodu = %s
                     """,
-                    (sevk_adet, sevk_adet, kaynak_depo, dusulecek_kod),
+                    (sevk_adet, _rez_dus, kaynak_depo, dusulecek_kod),
                 )
             # FIX #5: 0 satır etkilendiyse kalem_kodu/depo uyumsuzluğu var — sessizce geçme
             if cur.rowcount == 0:
@@ -3744,7 +3788,7 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                     guncelleme   = NOW()
                 WHERE kalem_kodu = %s
                 """,
-                (sevk_adet, sevk_adet, kalem_kodu),
+                (sevk_adet, _rez_dus, kalem_kodu),
             )
             # FIX #5: merkez stok kartında da kontrol et
             if cur.rowcount == 0:
@@ -3797,6 +3841,39 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                 cur.execute("ROLLBACK TO SAVEPOINT sp_sevk_cikis_iz")
             except Exception:
                 pass
+
+    # ── ♻️ DENKLEMİ KAPAT: TÜKETİLEN TAHSİS DEFTERE YAZILIR (2026-09-02, D-8)
+    # ⚠️ Bu parça olmadan 1. parça tek başına YETMEZ, hatta yeni bir kapı açar:
+    # `sevk_cikti_kaydet` `kalem_durumlari`ya HİÇ dokunmuyordu, yani sevkten
+    # sonra `tahsis_adet` eski değerinde kalıyordu. Rezerv doğru düşse bile
+    # defter "hâlâ 5 ayrılmış" diyordu. `merkez_tahsis_yap` bir sonraki
+    # çalışmasında delta'yı bu BAYAT değerden hesaplar (0 − 5 = −5) ve
+    # rezervi İKİNCİ KEZ düşürür — bu kez BAŞKASININ rezervinden.
+    # Değişmez kural: `rezerve_adet` = açık taleplerin `tahsis_adet` toplamı.
+    # Sevk, kendi payını hem stoktan hem DEFTERDEN düşer.
+    if isinstance(_kd_raw, list) and _kd_raw:
+        _kd_degisti = False
+        for _sira, _e in enumerate(_kd_raw):
+            if not isinstance(_e, dict) or _sira not in _tahsis_kalan:
+                continue
+            _eski_t = max(0, int(_e.get("tahsis_adet") or 0))
+            _yeni_t = max(0, int(_tahsis_kalan[_sira]))
+            if _yeni_t != _eski_t:
+                _e["tahsis_adet"] = _yeni_t
+                _e["tahsis_tuketilen"] = (
+                    max(0, int(_e.get("tahsis_tuketilen") or 0)) + (_eski_t - _yeni_t))
+                _kd_degisti = True
+        if _kd_degisti:
+            try:
+                with savepoint(cur, "sp_sevk_tahsis_tuket"):
+                    cur.execute(
+                        "UPDATE siparis_talep SET kalem_durumlari=%s::jsonb WHERE id=%s",
+                        (json.dumps(_kd_raw, ensure_ascii=False), siparis_talep_id),
+                    )
+            except Exception:
+                logger.exception(
+                    "sevk: tuketilen tahsis deftere yazilamadi (talep=%s) — "
+                    "rezerv ile defter ayrisabilir", siparis_talep_id)
 
     # durum/sevkiyat alanlari cagiran katmanda guncellenir.
     _disiplin_olay_yaz(cur, siparis_talep_id, sube_id, OLAY_SEVK_CIKTI,

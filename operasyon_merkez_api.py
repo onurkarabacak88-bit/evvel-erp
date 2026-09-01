@@ -21010,6 +21010,86 @@ def ops_stok_hareketleri(
     }
 
 
+@router.get("/v2/rezerv-denetimi")
+def ops_v2_rezerv_denetimi(limit: int = Query(200, ge=1, le=1000)):
+    """♻️ REZERV DENKLEMİ DENETİMİ — salt-okur ölçüm (2026-09-02, D-8).
+
+    DEĞİŞMEZ KURAL: bir depo+kalem için
+        `sube_depo_stok.rezerve_adet` = o depoya yönlendirilmiş AÇIK
+        taleplerin `kalem_durumlari[].tahsis_adet` TOPLAMI
+
+    Bu kural bugüne kadar HİÇBİR YERDE zorlanmıyordu:
+      · sevk çıkışı rezervi `sevk_adet` kadar düşürüyordu — tahsisli olup
+        olmadığına bakmadan. Tahsissiz bir sevk, AYNI depodaki BAŞKA talebin
+        rezervini yiyordu ve `GREATEST(0,…)` taşmayı yuttuğu için iz kalmıyordu.
+      · sevk `kalem_durumlari`ya hiç dokunmuyordu; `tahsis_adet` sonsuza dek
+        eski değerinde kalıyordu.
+
+    Motor 2026-09-02'de düzeltildi ama BUGÜNE KADARKİ kayma yerinde duruyor.
+    Bu uç o kaymayı GÖSTERİR — düzeltmez. Sayı yerine gerçeği söylemek,
+    sessizce "onarmak"tan güvenlidir (kuru çalıştırma disiplini).
+    """
+    with db() as (conn, cur):
+        cur.execute(
+            """
+            WITH acik AS (
+              SELECT COALESCE(t.tahsis_kaynak_depo_sube_id,
+                              t.hedef_depo_sube_id, t.sevkiyat_sube_id) AS depo,
+                     COALESCE(NULLIF(TRIM(d->>'kalem_kodu'), ''),
+                              NULLIF(TRIM(d->>'urun_id'), ''),
+                              TRIM(d->>'urun_ad'))                       AS kalem,
+                     COALESCE((d->>'tahsis_adet')::int, 0)               AS tahsis
+                FROM siparis_talep t
+                CROSS JOIN LATERAL jsonb_array_elements(
+                       CASE WHEN jsonb_typeof(t.kalem_durumlari) = 'array'
+                            THEN t.kalem_durumlari ELSE '[]'::jsonb END) AS d
+               WHERE COALESCE(t.durum,'') NOT IN
+                     ('teslim_edildi','iptal','gonderilmedi')
+            ), beklenen AS (
+              SELECT depo, kalem, SUM(tahsis)::int AS beklenen_rezerv
+                FROM acik
+               WHERE depo IS NOT NULL AND depo <> '' AND kalem IS NOT NULL
+               GROUP BY depo, kalem
+            )
+            SELECT s.sube_id, sb.ad AS sube_adi, s.kalem_kodu,
+                   COALESCE(s.kalem_adi, s.kalem_kodu)  AS kalem_adi,
+                   COALESCE(s.mevcut_adet, 0)::int      AS mevcut,
+                   COALESCE(s.rezerve_adet, 0)::int     AS rezerv_defterde,
+                   COALESCE(b.beklenen_rezerv, 0)::int  AS rezerv_beklenen,
+                   (COALESCE(s.rezerve_adet,0) - COALESCE(b.beklenen_rezerv,0))::int AS kayma
+              FROM sube_depo_stok s
+              LEFT JOIN beklenen b
+                     ON b.depo = s.sube_id AND b.kalem = s.kalem_kodu
+              LEFT JOIN subeler sb ON sb.id = s.sube_id
+             WHERE COALESCE(s.rezerve_adet, 0) <> COALESCE(b.beklenen_rezerv, 0)
+             ORDER BY ABS(COALESCE(s.rezerve_adet,0) - COALESCE(b.beklenen_rezerv,0)) DESC
+             LIMIT %s
+            """,
+            (limit,),
+        )
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("SELECT COUNT(*) AS c FROM sube_depo_stok "
+                    "WHERE COALESCE(rezerve_adet,0) > 0")
+        _rez_satir = int((dict(cur.fetchone() or {})).get("c") or 0)
+    _fazla = [s for s in satirlar if s["kayma"] > 0]
+    _eksik = [s for s in satirlar if s["kayma"] < 0]
+    return {
+        "kural": ("rezerve_adet = o depo+kalem icin ACIK taleplerin "
+                  "kalem_durumlari.tahsis_adet toplami"),
+        "rezervli_satir_sayisi": _rez_satir,
+        "kayan_satir_sayisi": len(satirlar),
+        "fazla_rezerv_satiri": len(_fazla),
+        "fazla_rezerv_adet": sum(s["kayma"] for s in _fazla),
+        "eksik_rezerv_satiri": len(_eksik),
+        "eksik_rezerv_adet": abs(sum(s["kayma"] for s in _eksik)),
+        "satirlar": satirlar,
+        "not": ("FAZLA rezerv = stok bosuna kilitli (kimseye ayrilmamis ama "
+                "ayrilmis gorunuyor). EKSIK rezerv = ayrilmis mal korumasiz, "
+                "baska sevk onu goturebilir. Bu uc SALT OKUR — duzeltme "
+                "yapmaz; once liste okunur (kuru calistirma)."),
+    }
+
+
 @router.get("/v2/depo-ozet")
 def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
     """
