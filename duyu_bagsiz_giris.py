@@ -204,6 +204,7 @@ def _bagsiz_girisleri_bul(cur, gun: int) -> List[Dict[str, Any]]:
 @router.get("/bagsiz-giris")
 def bagsiz_giris_olc(gun: int = Query(90, ge=1, le=730),
                      tumu: int = Query(0, ge=0, le=1),
+                     kova: str = Query("tedarikcisiz"),
                      sube: str = Query(""),
                      kalem: str = Query("")):
     """🔎 SALT-OKUR ÖLÇÜM — hiçbir şey yazmaz.
@@ -221,7 +222,13 @@ def bagsiz_giris_olc(gun: int = Query(90, ge=1, le=730),
     # KANITIYLA döndürür. Olmadan "bu giriş neden bağsız sayılmadı" sorusu
     # dolaylı uçlarla kovalanıyor ve cevap bulunamıyordu. Bir duyu, kendi
     # hükmünün gerekçesini gösteremiyorsa denetlenemez.
-    _goster = satirlar if int(tumu or 0) else bagsiz
+    zincir_tam = [x for x in satirlar if x.get("bag_kanit") in ("kaynak_id", "teslim_ts")]
+    belge_dogmaz = [x for x in satirlar if x.get("bag_kanit") == "teslim_kaydi"]
+    tedarikcisiz = [x for x in satirlar if not x.get("bagli")]
+    _goster = (satirlar if int(tumu or 0)
+               else (belge_dogmaz if kova == "belge_talebi_dogmaz"
+                     else zincir_tam if kova == "zincir_tam"
+                     else bagsiz))
     if sube:
         _sl = sube.lower()
         _goster = [x for x in _goster if _sl in str(x.get("sube_adi") or "").lower()]
@@ -235,9 +242,40 @@ def bagsiz_giris_olc(gun: int = Query(90, ge=1, le=730),
     for _s in satirlar:
         _k = _s.get("bag_kanit") or "BAGSIZ"
         _dagilim[_k] = _dagilim.get(_k, 0) + 1
+
+    # ── 🎯 ÜÇ KOVA (2026-09-02, ATALAY vakası beni düzelttikten sonra) ────────
+    # İlk teşhisim YANLIŞTI: "01.08 girişi hiçbir tedarikçiye bağlı değil"
+    # dedim. Duyu kendi kanıtını gösterince görüldü ki giriş ATALAY'a BAĞLI —
+    # şube teslim alırken tedarikçiyi seçmiş, defterde duruyor.
+    # Asıl boşluk daha keskin: TOPTANCI SİPARİŞİ YOKSA `belge_talep` HİÇ
+    # DOĞMAZ (`belge_talep_olustur_izole` yalnız `toptanci_siparis_id` varken
+    # çağrılır) → fatura kovalanmaz → borç tahakkuk etmez → CARİ OLUŞMAZ.
+    # Tedarikçi belli olduğu hâlde zincir orada kopuyor.
     return {
         "gun": gun,
         "kanit_dagilimi": _dagilim,
+        # 🎯 Asıl soru: "hangi giriş cari hesaba dönüşemez?"
+        "kovalar": {
+            "zincir_tam": {
+                "adet": len(zincir_tam),
+                "anlam": ("toptanci siparisi VAR -> belge talebi dogabilir, "
+                          "fatura kovalanir, cari olusur"),
+            },
+            "belge_talebi_dogmaz": {
+                "adet": len(belge_dogmaz),
+                "anlam": ("tedarikci BELLI ama toptanci siparisi YOK -> "
+                          "belge_talep HIC dogmaz -> fatura kovalanmaz -> "
+                          "borc tahakkuk etmez -> CARI OLUSMAZ"),
+                "tahmini_tutar": round(sum(x["tahmini_tutar"] for x in belge_dogmaz
+                                           if x["tahmini_tutar"] is not None), 2),
+                "tutari_bilinmeyen": sum(1 for x in belge_dogmaz
+                                         if x["tahmini_tutar"] is None),
+            },
+            "tedarikcisiz": {
+                "adet": len(tedarikcisiz),
+                "anlam": "hicbir bag yok — karsi taraf bilinmiyor",
+            },
+        },
         "bag_penceresi_dk": BAG_PENCERE_DK,
         "kapsanan_hareket_turleri": list(TEDARIKCI_GIRIS_TURLERI),
         "toplam_giris": len(satirlar),
