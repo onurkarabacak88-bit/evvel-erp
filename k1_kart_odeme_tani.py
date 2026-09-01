@@ -19,6 +19,7 @@
 # İki toplam eşit olmalı. kasa > kart → K1 hasarı (onarılabilir).
 # plan.odenen_tutar sadece BİLGİ alanıdır (tam-ödeme yolları da artırır, otomatik onarıma girmez).
 # ─────────────────────────────────────────────────────────────────────────────
+import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException
@@ -26,6 +27,10 @@ from fastapi import APIRouter, HTTPException
 from database import db
 from kasa_service import audit, kart_plan_guncelle_tx
 from tr_saat import dt_now_tr
+
+# ⚠️ 2026-09-01 denetimi: `logger` tanımsızdı ve bir except gövdesinde
+# kullanılıyordu — hatayı yakalayan blok kendisi NameError atıyordu.
+logger = logging.getLogger(__name__)
 
 router = APIRouter()
 

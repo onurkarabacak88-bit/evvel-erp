@@ -3842,6 +3842,14 @@ def init_db():
                 olusturma             TIMESTAMPTZ NOT NULL DEFAULT NOW()
             )
         """)
+        # 📦 EKSİK KALEMLER YAPILANDIRILMIŞ (2026-09-01 zincir denetimi):
+        # eskiden yalnız `eksik_kategori` + serbest metin `eksik_aciklama`
+        # yazılıyordu. HANGİ kalemden KAÇ adet eksik geldiği hiçbir alana
+        # girmiyordu; "3 koli süt eksik" bilgisi yalnız cümlenin içindeydi ve
+        # hiçbir sorgu "kalan 3 koli geldi mi" diye takip edemiyordu.
+        cur.execute("ALTER TABLE siparis_sevk_eksik "
+                    "ADD COLUMN IF NOT EXISTS eksik_kalemler JSONB "
+                    "NOT NULL DEFAULT '[]'::jsonb")
         cur.execute("""
             CREATE INDEX IF NOT EXISTS idx_siparis_sevk_eksik_sube_tarih
             ON siparis_sevk_eksik (sube_id, tarih, olusturma DESC)

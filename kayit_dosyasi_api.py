@@ -447,10 +447,14 @@ def _belge_cari_odeme(cur, kid):
              FROM cari_odeme_tahsis t
             WHERE t.odeme_id::text=%s
             ORDER BY t.olusturma""", (str(kid),))
+    # ⚠️ `fatura_id IS NULL` = AVANS satırı (2026-09-01): borçtan fazla ödenen
+    # tutar tahsis defterine bu şekilde yazılır. "Fatura" diye gösterilmemeli.
     return [{
-        "tur": "FATURA",
-        "ad": f"Fatura {r.get('fatura_no') or (str(r.get('fid') or '')[:8])}",
-        "detay": f"{str(r.get('fatura_tarih') or '')[:10]} · kapatılan {_tl(r['kapatilan'])}",
+        "tur": "AVANS" if not r.get("fid") else "FATURA",
+        "ad": ("Avans (borçtan fazla ödendi)" if not r.get("fid")
+               else f"Fatura {r.get('fatura_no') or (str(r.get('fid') or '')[:8])}"),
+        "detay": (f"kalan alacak {_tl(r['kapatilan'])}" if not r.get("fid")
+                  else f"{str(r.get('fatura_tarih') or '')[:10]} · kapatılan {_tl(r['kapatilan'])}"),
         "rozet": "OTOMATİK" if r.get("otomatik") else "ELLE",
         **({"url": f"/api/fatura/{r['fid']}/foto"} if r.get("fid") else {}),
     } for r in (cur.fetchall() or [])]

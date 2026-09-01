@@ -79,6 +79,14 @@ from finans_core import (
     kesim_tarihi_hesapla, _safe_date,
 )
 
+# ⚠️ 2026-09-01 denetimi: `logger` bu dosyada 362. satırda tanımlıydı ama
+# 104/110. satırlarda — yani MODÜL YÜKLENİRKEN — kullanılıyordu. İzole router
+# import'ları ("modül patlasa bile uygulama ayakta kalır" sözü) hata verdiğinde
+# except gövdesi `logger.warning` çağırıp NameError atıyor ve UYGULAMA HİÇ
+# AÇILMIYORDU. Tanım router kayıtlarından ÖNCEye alındı; 362'deki basicConfig
+# yapılandırması yerinde duruyor (aynı ada ikinci kez atanması zararsız).
+logger = logging.getLogger("evvel-erp")
+
 app = FastAPI(title="EVVEL ERP", version="2.0")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 app.include_router(sube_panel_router)
@@ -887,6 +895,12 @@ def _gece_yarisi_scheduler():
             _halka("ap_selfheal", lambda: __import__("fatura_api").gece_ap_selfheal())
             # FAZ D (2026-07-18): AP mutabakat sağlığı (cari ↔ kuyruk çift-koşu)
             _halka("ap_mutabakat", lambda: __import__("fatura_api").gece_ap_mutabakat())
+            # 📦 GRNI GÖRÜNÜRLÜĞÜ (2026-09-01 zincir denetimi, D-10): belge
+            # talebi hiç açılmamış teslimatlar hiçbir borç toplamında
+            # görünmüyor. Telafi yolu vardı ama insan çağırmalıydı; artık
+            # gece SAYAR ve duyu olayı üretir (uygulama yine insan onayıyla).
+            _halka("belge_telafi_gozlem",
+                   lambda: __import__("belge_talep_api").gece_belge_telafi_gozlem())
             _halka("fiyat_bandi", lambda: __import__("fatura_api").gece_fiyat_bandi_izleme())
             _halka("personel_puan", lambda: __import__("personel_puan_api").gece_personel_puan_tara())
             _halka("agir_onhesap", lambda: __import__("duyu_gorunumler").gece_agir_onhesap())

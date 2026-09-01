@@ -8,6 +8,8 @@ import logging
 import uuid
 from typing import Any, Dict, List, Optional, Tuple
 
+from database import savepoint
+
 logger = logging.getLogger(__name__)
 
 from sevkiyat_helpers import (
@@ -402,50 +404,53 @@ def siparis_kontrol_kulesi_yukle(
     _dagitim_okunamadi = False
     if _detay_ids:
         try:
-            cur.execute(
-                "SELECT talep_id, kalemler, tedarikci_ad, durum, olusturma "
-                "FROM toptanci_siparis "
-                "WHERE talep_id = ANY(%s) AND durum <> 'iptal' "
-                "ORDER BY olusturma ASC NULLS LAST",
-                (_detay_ids,),
-            )
-            for _dr in cur.fetchall() or []:
-                _d = dict(_dr)
-                _dtid = str(_d.get("talep_id") or "")
-                _dkl = _d.get("kalemler") or []
-                if isinstance(_dkl, str):
-                    try:
-                        _dkl = json.loads(_dkl)
-                    except Exception:
-                        _dkl = []
-                _m = _dagitilan.setdefault(_dtid, {})
-                _h = _kalem_hedef.setdefault(_dtid, {})
-                if str(_d.get("durum") or "").strip() == "gonderildi":
-                    _bekleyen_toptanci[_dtid] = _bekleyen_toptanci.get(_dtid, 0) + 1
-                _ted = str(_d.get("tedarikci_ad") or "").strip() or "toptancı"
-                for _dk in _dkl:
-                    _dad = ad_anahtar((_dk or {}).get("urun_ad"))
-                    if not _dad:
-                        continue
-                    _m[_dad] = _m.get(_dad, 0) + int((_dk or {}).get("adet") or 0)
-                    # Aynı kalem iki tedarikçiye çıkmışsa adlar BİRLEŞTİRİLİR;
-                    # biri yutulursa ekran eksik hedef gösterir.
-                    _mevcut = _h.get(_dad)
-                    if _mevcut and _mevcut.get("tip") == "toptanci":
-                        _adlar = _mevcut.get("adlar") or []
-                        if _ted not in _adlar:
-                            _adlar.append(_ted)
-                        _mevcut["adlar"] = _adlar
-                        _mevcut["ad"] = " + ".join(_adlar)
-                        _mevcut["adet"] = int(_mevcut.get("adet") or 0) + int((_dk or {}).get("adet") or 0)
-                    else:
-                        _h[_dad] = {
-                            "tip": "toptanci",
-                            "ad": _ted,
-                            "adlar": [_ted],
-                            "adet": int((_dk or {}).get("adet") or 0),
-                            "durum": str(_d.get("durum") or "") or None,
-                        }
+            # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+            # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+            with savepoint(cur, "sp_kule_dagitim"):
+                cur.execute(
+                    "SELECT talep_id, kalemler, tedarikci_ad, durum, olusturma "
+                    "FROM toptanci_siparis "
+                    "WHERE talep_id = ANY(%s) AND durum <> 'iptal' "
+                    "ORDER BY olusturma ASC NULLS LAST",
+                    (_detay_ids,),
+                )
+                for _dr in cur.fetchall() or []:
+                    _d = dict(_dr)
+                    _dtid = str(_d.get("talep_id") or "")
+                    _dkl = _d.get("kalemler") or []
+                    if isinstance(_dkl, str):
+                        try:
+                            _dkl = json.loads(_dkl)
+                        except Exception:
+                            _dkl = []
+                    _m = _dagitilan.setdefault(_dtid, {})
+                    _h = _kalem_hedef.setdefault(_dtid, {})
+                    if str(_d.get("durum") or "").strip() == "gonderildi":
+                        _bekleyen_toptanci[_dtid] = _bekleyen_toptanci.get(_dtid, 0) + 1
+                    _ted = str(_d.get("tedarikci_ad") or "").strip() or "toptancı"
+                    for _dk in _dkl:
+                        _dad = ad_anahtar((_dk or {}).get("urun_ad"))
+                        if not _dad:
+                            continue
+                        _m[_dad] = _m.get(_dad, 0) + int((_dk or {}).get("adet") or 0)
+                        # Aynı kalem iki tedarikçiye çıkmışsa adlar BİRLEŞTİRİLİR;
+                        # biri yutulursa ekran eksik hedef gösterir.
+                        _mevcut = _h.get(_dad)
+                        if _mevcut and _mevcut.get("tip") == "toptanci":
+                            _adlar = _mevcut.get("adlar") or []
+                            if _ted not in _adlar:
+                                _adlar.append(_ted)
+                            _mevcut["adlar"] = _adlar
+                            _mevcut["ad"] = " + ".join(_adlar)
+                            _mevcut["adet"] = int(_mevcut.get("adet") or 0) + int((_dk or {}).get("adet") or 0)
+                        else:
+                            _h[_dad] = {
+                                "tip": "toptanci",
+                                "ad": _ted,
+                                "adlar": [_ted],
+                                "adet": int((_dk or {}).get("adet") or 0),
+                                "durum": str(_d.get("durum") or "") or None,
+                            }
         except Exception:
             _dagitilan = {}
             _kalem_hedef = {}
@@ -463,44 +468,47 @@ def siparis_kontrol_kulesi_yukle(
     # Cozulmemis stok alarmlarini talep bazinda topla (tek sorgu).
     if _detay_ids:
         try:
-            cur.execute(
-                """
-                SELECT siparis_talep_id, tip, kalem_kodu, mesaj, sube_id,
-                       detay, olusturma
-                  FROM sube_operasyon_uyari
-                 WHERE tip IN ('STOK_DUSME_HATASI', 'HAYALET_STOK')
-                   AND okundu IS NOT TRUE
-                   AND siparis_talep_id = ANY(%s)
-                 ORDER BY olusturma DESC NULLS LAST
-                """,
-                (_detay_ids,),
-            )
-            for _ar in cur.fetchall() or []:
-                _a = dict(_ar)
-                _sid = str(_a.get("siparis_talep_id") or "")
-                if not _sid:
-                    continue
-                # Detay JSON'undan sevk adedini cikar — "kac adet dusmedi"
-                # sorusunun cevabi orada. Yoksa None (uydurma sayi YAZILMAZ).
-                _dt = _a.get("detay")
-                if isinstance(_dt, str):
-                    try:
-                        _dt = json.loads(_dt)
-                    except Exception:
+            # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+            # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+            with savepoint(cur, "sp_yut465"):
+                cur.execute(
+                    """
+                    SELECT siparis_talep_id, tip, kalem_kodu, mesaj, sube_id,
+                           detay, olusturma
+                      FROM sube_operasyon_uyari
+                     WHERE tip IN ('STOK_DUSME_HATASI', 'HAYALET_STOK')
+                       AND okundu IS NOT TRUE
+                       AND siparis_talep_id = ANY(%s)
+                     ORDER BY olusturma DESC NULLS LAST
+                    """,
+                    (_detay_ids,),
+                )
+                for _ar in cur.fetchall() or []:
+                    _a = dict(_ar)
+                    _sid = str(_a.get("siparis_talep_id") or "")
+                    if not _sid:
+                        continue
+                    # Detay JSON'undan sevk adedini cikar — "kac adet dusmedi"
+                    # sorusunun cevabi orada. Yoksa None (uydurma sayi YAZILMAZ).
+                    _dt = _a.get("detay")
+                    if isinstance(_dt, str):
+                        try:
+                            _dt = json.loads(_dt)
+                        except Exception:
+                            _dt = {}
+                    if not isinstance(_dt, dict):
                         _dt = {}
-                if not isinstance(_dt, dict):
-                    _dt = {}
-                _stok_alarm.setdefault(_sid, []).append({
-                    "tip": str(_a.get("tip") or ""),
-                    "kalem_kodu": str(_a.get("kalem_kodu") or "") or None,
-                    "kalem_adi": _dt.get("kalem_adi") or _dt.get("urun_ad"),
-                    "adet": _dt.get("sevk_adet"),
-                    "beklenen": _dt.get("beklenen"),
-                    "mevcut": _dt.get("mevcut"),
-                    "depo": str(_a.get("sube_id") or "") or None,
-                    "mesaj": str(_a.get("mesaj") or ""),
-                    "ts": str(_a.get("olusturma") or "")[:16],
-                })
+                    _stok_alarm.setdefault(_sid, []).append({
+                        "tip": str(_a.get("tip") or ""),
+                        "kalem_kodu": str(_a.get("kalem_kodu") or "") or None,
+                        "kalem_adi": _dt.get("kalem_adi") or _dt.get("urun_ad"),
+                        "adet": _dt.get("sevk_adet"),
+                        "beklenen": _dt.get("beklenen"),
+                        "mevcut": _dt.get("mevcut"),
+                        "depo": str(_a.get("sube_id") or "") or None,
+                        "mesaj": str(_a.get("mesaj") or ""),
+                        "ts": str(_a.get("olusturma") or "")[:16],
+                    })
         except Exception:
             # Kolon/tablo farkliysa akis DURMAZ ama sessiz de kalmaz.
             logger.warning("kule: stok alarm sayimi yapilamadi")
@@ -513,15 +521,18 @@ def siparis_kontrol_kulesi_yukle(
     # ⚠️ Birim tanımsızsa None kalır; ekran "birim?" der, ADET DEMEZ.
     _birim_harita: Dict[str, Any] = {}
     try:
-        cur.execute("SELECT id, ad, birim, koli_ic_adet FROM siparis_urun")
-        for _br in cur.fetchall() or []:
-            _b = dict(_br)
-            _v = {"birim": _b.get("birim"), "koli_ic_adet": _b.get("koli_ic_adet")}
-            if _b.get("id"):
-                _birim_harita[str(_b["id"])] = _v
-            _adn = ad_anahtar(_b.get("ad"))
-            if _adn and _adn not in _birim_harita:
-                _birim_harita[_adn] = _v
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut515"):
+            cur.execute("SELECT id, ad, birim, koli_ic_adet FROM siparis_urun")
+            for _br in cur.fetchall() or []:
+                _b = dict(_br)
+                _v = {"birim": _b.get("birim"), "koli_ic_adet": _b.get("koli_ic_adet")}
+                if _b.get("id"):
+                    _birim_harita[str(_b["id"])] = _v
+                _adn = ad_anahtar(_b.get("ad"))
+                if _adn and _adn not in _birim_harita:
+                    _birim_harita[_adn] = _v
     except Exception:
         logger.warning("kule: birim haritasi okunamadi — ekran 'birim?' gosterecek")
         _birim_harita = {}
@@ -731,37 +742,40 @@ def siparis_kontrol_kulesi_yukle(
         # kalan YOKSA çalışır → açık (gerçekten kısmi) talepleri etkilemez.
         if _disp and not z["kalan_kalemler"] and str(z.get("durum") or "") == "bekliyor":
             try:
-                cur.execute(
-                    """
-                    UPDATE siparis_talep
-                    SET durum='gonderildi',
-                        sevkiyat_durumu='toptanciya_yonlendirildi',
-                        sevkiyat_durum='toptanciya_yonlendirildi',
-                        sevkiyat_ts=COALESCE(sevkiyat_ts, NOW())
-                    WHERE id=%s AND durum='bekliyor'
-                    """,
-                    (str(r.get("id") or ""),),
-                )
-                # ⚠️ RAPOR, YAZMANIN SONUCUNU İZLER (Codex denetimi, 2026-08-31)
-                # Eskiden bu satırlar KOŞULSUZ çalışıyordu: UPDATE hiçbir satırı
-                # etkilemese bile ekrana "gonderildi" yazılıyordu. WHERE'de
-                # `durum='bekliyor'` koşulu var; arada başkası durumu
-                # değiştirdiyse güncelleme 0 satır eder ve ekran, veritabanında
-                # OLMAYAN bir durumu gösterirdi. Yenilenince geri dönerdi ve
-                # kimse neden değiştiğini anlamazdı.
-                # Artık yalnız gerçekten yazıldıysa rapor edilir.
-                if (cur.rowcount or 0) > 0:
-                    z["durum"] = "gonderildi"
-                    z["sevkiyat_durumu"] = "toptanciya_yonlendirildi"
-                    z["asama"] = siparis_asama_hesapla(
-                        "gonderildi", "toptanciya_yonlendirildi", z.get("kabul_durum")
+                # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+                # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+                with savepoint(cur, "sp_yut733"):
+                    cur.execute(
+                        """
+                        UPDATE siparis_talep
+                        SET durum='gonderildi',
+                            sevkiyat_durumu='toptanciya_yonlendirildi',
+                            sevkiyat_durum='toptanciya_yonlendirildi',
+                            sevkiyat_ts=COALESCE(sevkiyat_ts, NOW())
+                        WHERE id=%s AND durum='bekliyor'
+                        """,
+                        (str(r.get("id") or ""),),
                     )
-                    z["asama_metni"] = _asama_metni(z["asama"], "toptanciya_yonlendirildi")
-                    # 👁️ Sessiz düzeltme YOK: okuma ucu bir kaydı değiştirdiyse
-                    # bunu SÖYLER. Aksi halde sahip, sipariş durumunun kendi
-                    # kendine değiştiğini görür ve nedenini hiçbir yerde bulamaz.
-                    z["kendi_duzeldi"] = True
-                    _self_heal_sayisi += 1
+                    # ⚠️ RAPOR, YAZMANIN SONUCUNU İZLER (Codex denetimi, 2026-08-31)
+                    # Eskiden bu satırlar KOŞULSUZ çalışıyordu: UPDATE hiçbir satırı
+                    # etkilemese bile ekrana "gonderildi" yazılıyordu. WHERE'de
+                    # `durum='bekliyor'` koşulu var; arada başkası durumu
+                    # değiştirdiyse güncelleme 0 satır eder ve ekran, veritabanında
+                    # OLMAYAN bir durumu gösterirdi. Yenilenince geri dönerdi ve
+                    # kimse neden değiştiğini anlamazdı.
+                    # Artık yalnız gerçekten yazıldıysa rapor edilir.
+                    if (cur.rowcount or 0) > 0:
+                        z["durum"] = "gonderildi"
+                        z["sevkiyat_durumu"] = "toptanciya_yonlendirildi"
+                        z["asama"] = siparis_asama_hesapla(
+                            "gonderildi", "toptanciya_yonlendirildi", z.get("kabul_durum")
+                        )
+                        z["asama_metni"] = _asama_metni(z["asama"], "toptanciya_yonlendirildi")
+                        # 👁️ Sessiz düzeltme YOK: okuma ucu bir kaydı değiştirdiyse
+                        # bunu SÖYLER. Aksi halde sahip, sipariş durumunun kendi
+                        # kendine değiştiğini görür ve nedenini hiçbir yerde bulamaz.
+                        z["kendi_duzeldi"] = True
+                        _self_heal_sayisi += 1
             except Exception:
                 # Sessiz kalmaz: self-heal bir talebin AŞAMASINI değiştiriyor.
                 # Düşerse talep kuyrukta "hayalet" kalır ve kimse nedenini
@@ -928,8 +942,11 @@ def siparis_davranis_gunluk_gozlemle(cur: Any, pencere_gun: int = 7) -> Dict[str
     """
     pencere = max(1, min(90, int(pencere_gun or 7)))
     try:
-        cur.execute("SELECT id::text AS id, ad FROM subeler WHERE aktif = TRUE")
-        subeler = [dict(r) for r in (cur.fetchall() or [])]
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut930"):
+            cur.execute("SELECT id::text AS id, ad FROM subeler WHERE aktif = TRUE")
+            subeler = [dict(r) for r in (cur.fetchall() or [])]
     except Exception:
         return {"yazilan": 0, "pencere_gun": pencere}
 

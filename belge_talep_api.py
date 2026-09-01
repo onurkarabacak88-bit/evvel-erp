@@ -29,6 +29,9 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 from pydantic import BaseModel
 
 from database import db, savepoint
+# Ad normalleştirici TEK merkezden: sipariş/sevkiyat tarafıyla AYNI anahtar
+# kullanılmazsa "aynı firma" iki yerde iki farklı şey demek olur (2026-09-01).
+from sevkiyat_helpers import ad_anahtar
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/belge-talep", tags=["belge-talep"])
@@ -59,6 +62,15 @@ def _ensure(cur) -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_belge_talep_durum ON belge_talep (durum, olusturma DESC)")
     # Yüklenen faturanın izi (hangi tedarikci_fatura kaydı bu teslimatı kapattı)
     cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS fatura_id TEXT")
+    # ── 📄 ÇOKLU FATURA (2026-09-01 zincir denetimi, B-11) ──────────────────
+    # Bir PDF'ten birden çok `tedarikci_fatura` doğabiliyor. Eskiden hepsinin
+    # TOPLAMI teslimatın `fatura_tutar_tl`ine yazılıyor ama `fatura_id` olarak
+    # yalnız İLKİ kaydediliyordu. Kalan faturalar sistemce "bağlı değil"
+    # görünüyor ve BAŞKA bir teslimata da bağlanabiliyordu: aynı tutar iki kez
+    # sayılırdı. Bağın tamamı burada tutulur; `fatura_id` (tekil indeksin
+    # dayandığı alan) geriye-uyum için birincil faturayı göstermeye devam eder.
+    cur.execute("ALTER TABLE belge_talep ADD COLUMN IF NOT EXISTS "
+                "fatura_idler JSONB NOT NULL DEFAULT '[]'::jsonb")
     # ══════════════════════════════════════════════════════════════════════
     # 🔒 BİR FATURA = BİR TESLİMAT (Codex denetimi, 2026-08-31)
     # ══════════════════════════════════════════════════════════════════════
@@ -409,6 +421,45 @@ def belge_talep_telafi_adaylari(gun: int = 400):
     }
 
 
+def gece_belge_telafi_gozlem() -> dict:
+    """🌙 GECE GÖZLEMİ — telafi adayları varsa YÜZEYE ÇIKAR (2026-09-01, D-10).
+
+    ⚠️ Neden gerekti (zincir denetimi): `belge_talep` YALNIZ teslim-al
+    tetiğinden doğuyor ve `belge_talep_olustur_izole` her hatayı bilerek
+    yutuyor (teslim-al akışı bozulmasın — doğru karar). Ama doğmayan kayıt
+    HİÇBİR bakiyeye girmiyor: `acik-teslimat` parasal özeti ve GRNI yalnız
+    var olan `belge_talep` satırlarından hesaplanıyor. Telafi mekanizması
+    vardı ama İNSAN ÇAĞIRMALIYDI — kimse çağırmazsa teslimat sonsuza dek
+    sıfır liralık görünmez borç olarak kalıyordu (canlıda 7 gönderim,
+    72-75 gün).
+
+    Bu fonksiyon HİÇBİR ŞEY YAZMAZ; yalnız sayar ve duyu olayı üretir.
+    Uygulama yine `/telafi-uygula` ile, insan onayıyla yapılır.
+    """
+    try:
+        _ozet = belge_talep_telafi_adaylari(gun=730)
+        _adet = len(_ozet.get("adaylar") or _ozet.get("satirlar") or [])
+        if _adet > 0:
+            try:
+                from duyu_omurga import duyu_olay_yaz
+                duyu_olay_yaz(
+                    "acik_teslimat", "tedarik.belge.telafi_bekliyor",
+                    f"telafi_{_adet}",
+                    entity_scope="sistem", entity_id=None,
+                    signal_name="Belge talebi açılmamış teslimat var",
+                    payload={"aday_adet": _adet,
+                             "not": ("Bu teslimatlar hiçbir GRNI/borç toplamında "
+                                     "görünmüyor. /belge-talep/telafi-adaylari ile "
+                                     "inceleyip /telafi-uygula ile kurun.")},
+                )
+            except Exception:  # noqa: BLE001
+                pass
+        return {"ok": True, "aday_adet": _adet}
+    except Exception as e:  # noqa: BLE001
+        logger.warning("gece belge telafi gozlemi dustu (yutuldu): %s", str(e)[:150])
+        return {"ok": False, "hata": str(e)[:150]}
+
+
 @router.post("/telafi-uygula")
 def belge_talep_telafi_uygula(gun: int = 400, en_fazla: int = 100):
     """🩹 Yukarıdaki adaylar için belge talebini AÇAR. İdempotent.
@@ -520,14 +571,17 @@ def belge_talep_elle(body: ElleTalepBody):
         tel = None
         ted_id = None
         try:
-            cur.execute("SELECT id, telefon FROM tedarikciler WHERE aktif=TRUE AND LOWER(TRIM(ad))=LOWER(TRIM(%s)) LIMIT 1", (ad,))
-            r = cur.fetchone()
-            if not r:
-                cur.execute("SELECT id, telefon FROM tedarikciler WHERE aktif=TRUE AND (LOWER(ad) LIKE LOWER(%s) OR LOWER(%s) LIKE '%%'||LOWER(TRIM(ad))||'%%') LIMIT 1",
-                            ("%" + ad + "%", ad))
+            # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+            # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+            with savepoint(cur, "sp_yut522"):
+                cur.execute("SELECT id, telefon FROM tedarikciler WHERE aktif=TRUE AND LOWER(TRIM(ad))=LOWER(TRIM(%s)) LIMIT 1", (ad,))
                 r = cur.fetchone()
-            if r:
-                ted_id, tel = dict(r).get("id"), dict(r).get("telefon")
+                if not r:
+                    cur.execute("SELECT id, telefon FROM tedarikciler WHERE aktif=TRUE AND (LOWER(ad) LIKE LOWER(%s) OR LOWER(%s) LIKE '%%'||LOWER(TRIM(ad))||'%%') LIMIT 1",
+                                ("%" + ad + "%", ad))
+                    r = cur.fetchone()
+                if r:
+                    ted_id, tel = dict(r).get("id"), dict(r).get("telefon")
         except Exception:  # noqa: BLE001 — tel sadece kolaylık, yokluğu engel değil
             pass
         tid = "elle-" + str(uuid.uuid4())
@@ -1426,6 +1480,8 @@ def belge_talep_fatura_bag_geri_al(talep_id: str, body: FaturaBagGeriAlBody):
         _ensure(cur)
         cur.execute(
             """SELECT id, fatura_id, durum, kapanis_tipi, fatura_tutar_tl,
+                      talep_id,
+                      COALESCE(fatura_idler,'[]'::jsonb) AS fatura_idler,
                       COALESCE(kapanis_aciklama,'') AS kapanis_aciklama
                  FROM belge_talep WHERE id=%s""", (tid,))
         bt = cur.fetchone()
@@ -1446,7 +1502,8 @@ def belge_talep_fatura_bag_geri_al(talep_id: str, body: FaturaBagGeriAlBody):
         yeni_aciklama = f"{bt['kapanis_aciklama']} {damga}".strip()[:1000]
         cur.execute(
             """UPDATE belge_talep
-                  SET fatura_id=NULL, durum='bekliyor', kapanma_ts=NULL,
+                  SET fatura_id=NULL, fatura_idler='[]'::jsonb, durum='bekliyor',
+                      kapanma_ts=NULL,
                       kapanis_tipi=NULL, fatura_tutar_tl=NULL, tutar_fark_tl=NULL,
                       kapanis_aciklama=%s
                 WHERE id=%s AND fatura_id IS NOT NULL""",
@@ -1454,19 +1511,47 @@ def belge_talep_fatura_bag_geri_al(talep_id: str, body: FaturaBagGeriAlBody):
         if cur.rowcount == 0:
             # Bu sırada başkası çözmüş — sessizce "başarılı" deme.
             raise HTTPException(409, "Bağ bu sırada başka bir yerden çözüldü — listeyi yenileyin.")
+        # ── 🔁 GERİ ALMA SİMETRİK OLMALI (2026-09-01 zincir denetimi, C-3) ───
+        # Bağın İKİ kaydı var: `belge_talep.fatura_id` ve
+        # `tedarikci_fatura.siparis_talep_id`. Geri alma yalnız BİRİNCİSİNİ
+        # temizliyordu; yükleme yolundan basılan damga yaşamaya devam ediyordu.
+        # Çelişkide DAMGA kazandığı için `/gecmis-eslestir` aynı çifti
+        # "Aynı sipariş talebinden doğmuş — başka kanıt gerekmez" diye KESİN
+        # listeye geri koyuyor, yanlış bağ döngüde YENİDEN kuruluyordu.
+        # Kurulan iz, aynı kapsamda geri alınır.
+        _coz_ids = [eski_fid] + [str(x) for x in (bt.get("fatura_idler") or [])
+                                 if str(x) and str(x) != eski_fid]
         try:
-            from kasa_service import audit
-            audit(cur, 'belge_talep', tid, 'FATURA_BAG_GERI_AL',
-                  eski={"fatura_id": eski_fid, "durum": bt.get("durum"),
-                        "kapanis_tipi": bt.get("kapanis_tipi"),
-                        "fatura_tutar_tl": bt.get("fatura_tutar_tl")},
-                  yeni={"fatura_id": None, "durum": "bekliyor", "gerekce": gerekce})
-        except Exception as e:  # noqa: BLE001 — audit düşse de bağ çözülmüş kalır
+            with savepoint(cur, "sp_bag_geri_al_damga"):
+                cur.execute(
+                    """UPDATE tedarikci_fatura SET siparis_talep_id=NULL
+                        WHERE id = ANY(%s) AND COALESCE(siparis_talep_id,'') = %s""",
+                    (_coz_ids, str(bt.get("talep_id") or "")))
+        except Exception:
+            logger.warning("bag geri al: siparis_talep_id damgasi temizlenemedi",
+                           exc_info=True)
+        # 🛟 AUDIT SAVEPOINT İÇİNDE (C-4/H56-2): `audit()` çıplak INSERT'tir.
+        # Savepoint'siz patlarsa transaction ABORT olur ve aşağıdaki
+        # `conn.commit()` PostgreSQL'de sessizce ROLLBACK'e döner — yanıt
+        # "Bağ çözüldü" derken bağ YERİNDE KALIRDI. Koddaki eski yorum
+        # ("audit düşse de bağ çözülmüş kalır") tam tersini söylüyordu.
+        try:
+            with savepoint(cur, "sp_bag_geri_al_audit"):
+                from kasa_service import audit
+                audit(cur, 'belge_talep', tid, 'FATURA_BAG_GERI_AL',
+                      eski={"fatura_id": eski_fid, "durum": bt.get("durum"),
+                            "kapanis_tipi": bt.get("kapanis_tipi"),
+                            "fatura_tutar_tl": bt.get("fatura_tutar_tl")},
+                      yeni={"fatura_id": None, "durum": "bekliyor", "gerekce": gerekce})
+        except Exception as e:  # noqa: BLE001 — savepoint sayesinde tx TEMİZ
             logger.warning("fatura bag geri al audit atlandi: %s", str(e)[:120])
         conn.commit()
     return {"ok": True, "belge_talep_id": tid, "cozulen_fatura_id": eski_fid,
+            "cozulen_fatura_idler": _coz_ids,
             "durum": "bekliyor",
             "not": "Bağ çözüldü. Fatura kaydı SİLİNMEDİ — tekrar bağlanabilir. "
+                   "Faturadaki sipariş damgası da temizlendi (yanlış bağın "
+                   "'kesin eşleşme' olarak dirilmesini önler). "
                    "Geri alma izi kapanış açıklamasına damgalandı."}
 
 
@@ -1538,17 +1623,59 @@ def fatura_bagla_uygula(cur, talep_id: str, fatura_id: str, onay_kaynagi: str,
     bt = dict(bt)
     if bt.get("fatura_id"):
         raise HTTPException(409, "Bu teslimatın belgesi zaten bağlı.")
+    # ⚠️ 2026-09-01 zincir denetimi (B-12) — P0: seçilen faturadan yalnız
+    # `id/tutar/tarih/fatura_no` okunuyor, TEDARİKÇİ KİMLİĞİ hiç
+    # doğrulanmıyordu. Operatör yanlış `fatura_id` girdiğinde fatura BAŞKA
+    # TEDARİKÇİYE ait olsa bile (daha önce bağlanmamışsa ve tarih yönü ters
+    # değilse) bağ kuruluyordu: teslimat yanlış faturayla kapanıyor, tutar ve
+    # borç yanlış belgeye dayanıyordu. Tedarikçi adı da okunur ve karşılaştırılır.
     cur.execute(
         """SELECT id, COALESCE(toplam_tutar,0)::float AS tutar,
-                  fatura_tarih::text AS fatura_tarih, COALESCE(fatura_no,'') AS fno
+                  fatura_tarih::text AS fatura_tarih, COALESCE(fatura_no,'') AS fno,
+                  COALESCE(tedarikci_ad,'') AS ted_ad,
+                  COALESCE(siparis_talep_id,'') AS bagli_talep
              FROM tedarikci_fatura WHERE id=%s""", (fid,))
     f = cur.fetchone()
     if not f:
         raise HTTPException(404, "Fatura bulunamadı")
     f = dict(f)
-    cur.execute("SELECT 1 FROM belge_talep WHERE fatura_id=%s", (fid,))
+    # B-11: tekillik kontrolü ÇOKLU listeyi de görür — bir PDF'ten doğan
+    # kardeş faturalar "bağsız" sanılıp ikinci teslimata bağlanamasın.
+    cur.execute(
+        """SELECT 1 FROM belge_talep
+            WHERE fatura_id=%s
+               OR COALESCE(fatura_idler,'[]'::jsonb) @> %s::jsonb
+            LIMIT 1""",
+        (fid, json.dumps([str(fid)])))
     if cur.fetchone():
         raise HTTPException(409, "Bu fatura başka bir teslimata bağlı.")
+
+    # ── F2-0: KİMLİK GUARD'I (B-12) ─────────────────────────────────────
+    # Kanıt sıralamasında KİMLİK, tutardan da tarihten de güçlüdür. Adlar
+    # kelime-sınırlı marka kuralıyla karşılaştırılır (şehir/unvan gürültüsü
+    # eşleşmeyi bozmasın); uyuşmuyorsa gerekçeli override şart.
+    _bt_ted = str(bt.get("tedarikci_ad") or "").strip()
+    _f_ted = str(f.get("ted_ad") or "").strip()
+    if _bt_ted and _f_ted and not (
+            ad_anahtar(_bt_ted) == ad_anahtar(_f_ted)
+            or ad_anahtar(_bt_ted) in ad_anahtar(_f_ted)
+            or ad_anahtar(_f_ted) in ad_anahtar(_bt_ted)):
+        if not zorla:
+            raise HTTPException(
+                422,
+                f"Tedarikçi uyuşmuyor: teslimat '{_bt_ted}', fatura '{_f_ted}'. "
+                "Kimlik, tutar ve tarihten daha güçlü bir kanıttır — yanlış "
+                "firmanın faturasını bağlamak borcu yanlış cariye yazar. "
+                "Doğruysa override=true & override_gerekce ile zorlayın.")
+    # Fatura BAŞKA bir sipariş talebine damgalıysa uyar (yükleme yolu damgalar).
+    _bagli = str(f.get("bagli_talep") or "").strip()
+    if _bagli and str(bt.get("talep_id") or "") and _bagli != str(bt.get("talep_id")):
+        if not zorla:
+            raise HTTPException(
+                422,
+                f"Bu fatura başka bir sipariş talebine damgalı ({_bagli[:10]}…). "
+                "İki bağ çelişirse hangisinin doğru olduğu sonradan ayırt "
+                "edilemez. Doğruysa override=true ile zorlayın.")
 
     # ── F2-a: TARİH YÖNÜ GUARD'I ────────────────────────────────────────
     ft_s, tt_s = str(f.get("fatura_tarih") or ""), str(bt.get("teslim_tarihi") or "")
@@ -1565,21 +1692,34 @@ def fatura_bagla_uygula(cur, talep_id: str, fatura_id: str, onay_kaynagi: str,
     # (Ağır aday motoru burada çağrılmaz — hafif, tek sorgu.)
     rakipler = []
     try:
-        cur.execute(
-            """SELECT COALESCE(fatura_no,'') AS fno, fatura_tarih::text AS ft
-                 FROM tedarikci_fatura tf
-                WHERE tf.id <> %s
-                  AND COALESCE(tf.durum,'') <> 'kopya'
-                  AND tf.tedarikci_ad IS NOT NULL AND %s IS NOT NULL
-                  AND UPPER(TRIM(tf.tedarikci_ad)) = UPPER(TRIM(%s))
-                  AND tf.fatura_tarih BETWEEN %s::date - 7 AND %s::date + 7
-                  AND COALESCE(tf.toplam_tutar,0) > 0
-                  AND ABS(COALESCE(tf.toplam_tutar,0) - %s) <= GREATEST(1, %s * 0.15)
-                  AND NOT EXISTS (SELECT 1 FROM belge_talep b WHERE b.fatura_id = tf.id)
-                ORDER BY tf.fatura_tarih DESC LIMIT 5""",
-            (fid, bt.get("tedarikci_ad"), bt.get("tedarikci_ad"), tt_s or None, tt_s or None,
-             float(bt.get("beklenen_tutar_tl") or 0), float(bt.get("beklenen_tutar_tl") or 0)))
-        rakipler = [dict(r) for r in (cur.fetchall() or [])]
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut1567"):
+            cur.execute(
+                """SELECT COALESCE(fatura_no,'') AS fno, fatura_tarih::text AS ft
+                     FROM tedarikci_fatura tf
+                    WHERE tf.id <> %s
+                      AND COALESCE(tf.durum,'') <> 'kopya'
+                      AND tf.tedarikci_ad IS NOT NULL AND %s IS NOT NULL
+                      AND UPPER(TRIM(tf.tedarikci_ad)) = UPPER(TRIM(%s))
+                      AND tf.fatura_tarih BETWEEN %s::date - 7 AND %s::date + 7
+                      AND COALESCE(tf.toplam_tutar,0) > 0
+                      -- ⚠️ 2026-09-01 zincir denetimi (B-12b): beklenen tutar
+                      -- 0/NULL olan teslimatta bu bant ±1 TL'ye iniyor ve
+                      -- HİÇBİR rakip yakalanmıyordu — guard sessizce devre
+                      -- dışı kalıyordu. En korumaya muhtaç kayıt (tutarı
+                      -- bilinmeyen teslimat) en az korunan kayıt oluyordu.
+                      -- Beklenen bilinmiyorsa tutar şartı DÜŞER: rakip
+                      -- araması yalnız tedarikçi + tarih penceresiyle yapılır.
+                      AND (%s <= 0 OR
+                           ABS(COALESCE(tf.toplam_tutar,0) - %s) <= GREATEST(1, %s * 0.15))
+                      AND NOT EXISTS (SELECT 1 FROM belge_talep b WHERE b.fatura_id = tf.id)
+                    ORDER BY tf.fatura_tarih DESC LIMIT 5""",
+                (fid, bt.get("tedarikci_ad"), bt.get("tedarikci_ad"), tt_s or None, tt_s or None,
+                 float(bt.get("beklenen_tutar_tl") or 0),
+                 float(bt.get("beklenen_tutar_tl") or 0),
+                 float(bt.get("beklenen_tutar_tl") or 0)))
+            rakipler = [dict(r) for r in (cur.fetchall() or [])]
     except Exception as e:  # noqa: BLE001 — guard düşse bağ akışı yaşar
         logger.warning("coklu aday guard atlandi: %s", str(e)[:120])
         rakipler = []
@@ -2202,6 +2342,25 @@ def belge_talep_kapat(talep_id: str, body: KapatBody = None):
             acik = "(eski istemci — açıklamasız manuel kapanış)"
     with db() as (_, cur):
         _ensure(cur)
+        # ── 🧾 'FATURA' KAPANIŞI FATURA İSTER (2026-09-01 zincir denetimi, C-5)
+        # Boş gövdeli tek POST `durum='pdf_geldi'` → `tip='fatura'` üretiyordu:
+        # `fatura_id` ne isteniyor ne doğrulanıyordu. Yani GRNI (belgesiz borç
+        # tahakkuku) KANITSIZ düşüyor, kayıt "fatura ile kapandı" diyor ama
+        # bağlı fatura OLMUYORDU. "Üç kanıttan biri" ilkesinin fatura kanadı
+        # kanıt istemiyordu. Fatura kanadı YALNIZ bağla/yükle uçlarından
+        # (gerçek `fatura_id` ile) gelebilir; bu uç irsaliye/manuel içindir.
+        if tip == "fatura":
+            cur.execute("SELECT fatura_id FROM belge_talep WHERE id=%s", (tid,))
+            _fr = cur.fetchone()
+            if not (_fr and str(dict(_fr).get("fatura_id") or "").strip()):
+                raise HTTPException(
+                    400,
+                    "Fatura ile kapatma bu uçtan yapılamaz: bağlı fatura yok. "
+                    "Faturayı /belge-talep/{id}/fatura-yukle ile yükleyin veya "
+                    "/belge-talep/{id}/fatura-bagla ile bağlayın. Belgesiz "
+                    "kapatacaksanız kapanis_tipi='irsaliye' veya 'manuel' "
+                    "seçip açıklama yazın — kanıtsız 'fatura' kapanışı, "
+                    "faturasız borcu görünmez yapar.")
         cur.execute(
             """UPDATE belge_talep
                SET durum=%s, kapanma_ts=NOW(), kapanis_tipi=%s,
@@ -2482,14 +2641,17 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
         # Çoklu fatura (PDF birden çok fatura içeriyorsa) hepsinin toplamı alınır.
         _fatura_tutar = None
         try:
-            if fatura_idler:
-                cur.execute(
-                    """SELECT COALESCE(SUM(COALESCE(toplam_tutar,0)),0)::float AS t
-                       FROM tedarikci_fatura WHERE id = ANY(%s)""",
-                    (fatura_idler,),
-                )
-                _ft = float((dict(cur.fetchone() or {}) or {}).get("t") or 0)
-                _fatura_tutar = _ft if _ft > 0 else None
+            # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+            # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+            with savepoint(cur, "sp_yut2484"):
+                if fatura_idler:
+                    cur.execute(
+                        """SELECT COALESCE(SUM(COALESCE(toplam_tutar,0)),0)::float AS t
+                           FROM tedarikci_fatura WHERE id = ANY(%s)""",
+                        (fatura_idler,),
+                    )
+                    _ft = float((dict(cur.fetchone() or {}) or {}).get("t") or 0)
+                    _fatura_tutar = _ft if _ft > 0 else None
         except Exception as _e_ft:  # noqa: BLE001
             logger.warning("fatura tutari okunamadi (kapanis surer): %s", str(_e_ft)[:120])
 
@@ -2508,16 +2670,19 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
         _tarih_ters = False
         if _ilk_fid:
             try:
-                cur.execute(
-                    "SELECT fatura_tarih::text AS ft FROM tedarikci_fatura WHERE id=%s",
-                    (_ilk_fid,))
-                _fr = cur.fetchone()
-                cur.execute(
-                    "SELECT teslim_tarihi::text AS tt FROM belge_talep WHERE id=%s", (tid,))
-                _br = cur.fetchone()
-                _tarih_ters = _tarih_yonu_ihlali(
-                    (dict(_fr).get("ft") if _fr else None),
-                    (dict(_br).get("tt") if _br else None))
+                # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+                # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+                with savepoint(cur, "sp_yut2510"):
+                    cur.execute(
+                        "SELECT fatura_tarih::text AS ft FROM tedarikci_fatura WHERE id=%s",
+                        (_ilk_fid,))
+                    _fr = cur.fetchone()
+                    cur.execute(
+                        "SELECT teslim_tarihi::text AS tt FROM belge_talep WHERE id=%s", (tid,))
+                    _br = cur.fetchone()
+                    _tarih_ters = _tarih_yonu_ihlali(
+                        (dict(_fr).get("ft") if _fr else None),
+                        (dict(_br).get("tt") if _br else None))
             except Exception as _e_ty:  # noqa: BLE001
                 logger.warning("fatura-yukle tarih yonu okunamadi (kapanis surer): %s",
                                str(_e_ty)[:120])
@@ -2530,14 +2695,31 @@ async def belge_talep_fatura_yukle(talep_id: str, dosya: UploadFile = File(...))
             cur.execute(
             """UPDATE belge_talep
                SET durum='pdf_geldi', kapanma_ts=NOW(), fatura_id=%s, kapanis_tipi='fatura',
+                   fatura_idler = %s::jsonb,
                    fatura_tutar_tl = COALESCE(%s, fatura_tutar_tl),
                    tutar_fark_tl = CASE
                        WHEN %s IS NOT NULL AND beklenen_tutar_tl IS NOT NULL
                        THEN %s - beklenen_tutar_tl ELSE tutar_fark_tl END
                WHERE id=%s""",
-            (_ilk_fid,
+            (_ilk_fid, json.dumps([str(x) for x in fatura_idler], ensure_ascii=False),
              _fatura_tutar, _fatura_tutar, _fatura_tutar, tid),
             )
+            # 🔗 B-11: bu yüklemeden doğan TÜM faturalar bu teslimata damgalanır.
+            # Damgasız kalan fatura "bağlı değil" görünüp ikinci bir teslimata
+            # da bağlanabiliyor ve aynı tutar iki kez sayılıyordu.
+            if fatura_idler and bt.get("talep_id"):
+                try:
+                    with savepoint(cur, "sp_coklu_fatura_damga"):
+                        cur.execute(
+                            """UPDATE tedarikci_fatura
+                                  SET siparis_talep_id = %s
+                                WHERE id = ANY(%s)
+                                  AND (siparis_talep_id IS NULL OR siparis_talep_id = '')""",
+                            (str(bt.get("talep_id")), [str(x) for x in fatura_idler]),
+                        )
+                except Exception:
+                    logger.warning("coklu fatura damgasi yazilamadi (kapanis surer)",
+                                   exc_info=True)
         conn.commit()
 
     # FAZ 0: omurga olayı (fatura ile kapanış) — hata-yutar, ana akışı etkilemez

@@ -196,17 +196,20 @@ def fatura_foto_temizle(cur) -> int:
     sonucu + kalemler KALIR (denetim izi sürer); sadece ağır görüntü düşer.
     Dönüş: temizlenen fatura sayısı."""
     try:
-        _ensure_tablolar(cur)
-        cur.execute(
-            """
-            UPDATE tedarikci_fatura
-            SET foto = NULL
-            WHERE foto IS NOT NULL
-              AND olusturma < NOW() - (%s * INTERVAL '1 month')
-            """,
-            (int(FATURA_FOTO_SAKLAMA_AY),),
-        )
-        return cur.rowcount or 0
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut198"):
+            _ensure_tablolar(cur)
+            cur.execute(
+                """
+                UPDATE tedarikci_fatura
+                SET foto = NULL
+                WHERE foto IS NOT NULL
+                  AND olusturma < NOW() - (%s * INTERVAL '1 month')
+                """,
+                (int(FATURA_FOTO_SAKLAMA_AY),),
+            )
+            return cur.rowcount or 0
     except Exception:
         return 0
 
@@ -513,29 +516,32 @@ def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
     _kopya_no = (str(j.get("fatura_no") or "").strip())
     if len(_kopya_no) >= 8:
         try:
-            cur.execute(
-                """SELECT id FROM tedarikci_fatura
-                   WHERE id <> %s AND COALESCE(durum,'') <> 'kopya'
-                     AND UPPER(REGEXP_REPLACE(COALESCE(fatura_no,''),
-                                              '[^A-Za-z0-9]','','g'))
-                         = UPPER(REGEXP_REPLACE(%s,'[^A-Za-z0-9]','','g'))
-                   -- ASIL SEÇİMİ FIX (2026-07-25, ATALAY NPE...432 vakası): asıl,
-                   -- SAĞLIKLI nüsha olmalı — eskiden salt olusturma sırası, OCR
-                   -- hatalı/tutarsız kaydı asıl bırakıp okunmuşları kopyalıyordu
-                   -- → borç kuyruğu hiç doğmuyordu.
-                   ORDER BY (CASE WHEN durum IN ('ocr_tamam','okundu')
-                                   AND COALESCE(toplam_tutar,0) > 0 THEN 0 ELSE 1 END),
-                            olusturma LIMIT 1""", (fatura_id, _kopya_no))
-            _asil = cur.fetchone()
-            if _asil:
+            # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+            # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+            with savepoint(cur, "sp_yut515"):
                 cur.execute(
-                    """UPDATE tedarikci_fatura SET durum='kopya',
-                           ocr_hata='aynı faturanın ikinci nüshası (foto+PDF) — asıl: '
-                                    || %s
-                       WHERE id=%s""", (str(dict(_asil)["id"]), fatura_id))
-                cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s",
-                            (fatura_id,))
-                return 0
+                    """SELECT id FROM tedarikci_fatura
+                       WHERE id <> %s AND COALESCE(durum,'') <> 'kopya'
+                         AND UPPER(REGEXP_REPLACE(COALESCE(fatura_no,''),
+                                                  '[^A-Za-z0-9]','','g'))
+                             = UPPER(REGEXP_REPLACE(%s,'[^A-Za-z0-9]','','g'))
+                       -- ASIL SEÇİMİ FIX (2026-07-25, ATALAY NPE...432 vakası): asıl,
+                       -- SAĞLIKLI nüsha olmalı — eskiden salt olusturma sırası, OCR
+                       -- hatalı/tutarsız kaydı asıl bırakıp okunmuşları kopyalıyordu
+                       -- → borç kuyruğu hiç doğmuyordu.
+                       ORDER BY (CASE WHEN durum IN ('ocr_tamam','okundu')
+                                       AND COALESCE(toplam_tutar,0) > 0 THEN 0 ELSE 1 END),
+                                olusturma LIMIT 1""", (fatura_id, _kopya_no))
+                _asil = cur.fetchone()
+                if _asil:
+                    cur.execute(
+                        """UPDATE tedarikci_fatura SET durum='kopya',
+                               ocr_hata='aynı faturanın ikinci nüshası (foto+PDF) — asıl: '
+                                        || %s
+                           WHERE id=%s""", (str(dict(_asil)["id"]), fatura_id))
+                    cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s",
+                                (fatura_id,))
+                    return 0
         except Exception:  # noqa: BLE001
             pass
     # 📑 NO'SUZ MÜKERRER (2026-07-25, APS/RedBull vakası): OCR fatura no'yu
@@ -547,39 +553,45 @@ def _fatura_json_db_yaz(cur, fatura_id: str, j: Dict[str, Any]) -> int:
     _ted = (str(j.get("tedarikci") or "").strip())
     if len(_kopya_no) < 8 and _tut and _tut > 0 and len(_ted) >= 3:
         try:
-            cur.execute(
-                """SELECT id FROM tedarikci_fatura
-                   WHERE id <> %s AND COALESCE(durum,'') <> 'kopya'
-                     AND LENGTH(COALESCE(fatura_no,'')) >= 8
-                     AND ABS(COALESCE(toplam_tutar,0) - %s) < 0.01
-                     AND UPPER(REGEXP_REPLACE(COALESCE(tedarikci_ad,''),'[^A-Za-zÇĞİÖŞÜçğıöşü0-9]','','g'))
-                         LIKE UPPER(REGEXP_REPLACE(%s,'[^A-Za-zÇĞİÖŞÜçğıöşü0-9]','','g')) || '%%'
-                   ORDER BY olusturma LIMIT 1""",
-                (fatura_id, _tut, _ted[:20]))
-            _asil2 = cur.fetchone()
-            if _asil2:
+            # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+            # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+            with savepoint(cur, "sp_yut549"):
                 cur.execute(
-                    """UPDATE tedarikci_fatura SET durum='kopya',
-                           ocr_hata='no''suz nüsha — aynı tedarikçi+tutar, asıl: ' || %s
-                       WHERE id=%s""", (str(dict(_asil2)["id"]), fatura_id))
-                cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s",
-                            (fatura_id,))
-                return 0
+                    """SELECT id FROM tedarikci_fatura
+                       WHERE id <> %s AND COALESCE(durum,'') <> 'kopya'
+                         AND LENGTH(COALESCE(fatura_no,'')) >= 8
+                         AND ABS(COALESCE(toplam_tutar,0) - %s) < 0.01
+                         AND UPPER(REGEXP_REPLACE(COALESCE(tedarikci_ad,''),'[^A-Za-zÇĞİÖŞÜçğıöşü0-9]','','g'))
+                             LIKE UPPER(REGEXP_REPLACE(%s,'[^A-Za-zÇĞİÖŞÜçğıöşü0-9]','','g')) || '%%'
+                       ORDER BY olusturma LIMIT 1""",
+                    (fatura_id, _tut, _ted[:20]))
+                _asil2 = cur.fetchone()
+                if _asil2:
+                    cur.execute(
+                        """UPDATE tedarikci_fatura SET durum='kopya',
+                               ocr_hata='no''suz nüsha — aynı tedarikçi+tutar, asıl: ' || %s
+                           WHERE id=%s""", (str(dict(_asil2)["id"]), fatura_id))
+                    cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s",
+                                (fatura_id,))
+                    return 0
         except Exception:  # noqa: BLE001
             pass
     # 🔐 PARMAK İZİ ANINDA (2026-07-23): gece backfill'i bekleme — OCR biter bitmez
     # kimlik damgalanır ki mükerrer taraması/duyusu aynı gün çalışsın (katman-2)
     try:
-        cur.execute(
-            """SELECT tedarikci_vkn, fatura_no, fatura_tarih, toplam_tutar, tedarikci_ad
-               FROM tedarikci_fatura WHERE id=%s""", (fatura_id,))
-        _fr = dict(cur.fetchone() or {})
-        if _fr:
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut572"):
             cur.execute(
-                "UPDATE tedarikci_fatura SET parmak_izi=%s WHERE id=%s",
-                (_belge_parmak_izi(_fr.get("tedarikci_vkn"), _fr.get("fatura_no"),
-                                   _fr.get("fatura_tarih"), _fr.get("toplam_tutar"),
-                                   _fr.get("tedarikci_ad")), fatura_id))
+                """SELECT tedarikci_vkn, fatura_no, fatura_tarih, toplam_tutar, tedarikci_ad
+                   FROM tedarikci_fatura WHERE id=%s""", (fatura_id,))
+            _fr = dict(cur.fetchone() or {})
+            if _fr:
+                cur.execute(
+                    "UPDATE tedarikci_fatura SET parmak_izi=%s WHERE id=%s",
+                    (_belge_parmak_izi(_fr.get("tedarikci_vkn"), _fr.get("fatura_no"),
+                                       _fr.get("fatura_tarih"), _fr.get("toplam_tutar"),
+                                       _fr.get("tedarikci_ad")), fatura_id))
     except Exception:  # noqa: BLE001
         pass
     # DUYU OMURGASI kancası (2026-07-06): fatura işlendi = Katman-2 olay (hata-yutar,
@@ -819,8 +831,25 @@ def _teslimat_eslesme_onerisi(fatura_idler, kaynak: str) -> None:
         logger.warning("teslimat-fatura oneri kopru hatasi (%s): %s", kaynak, str(e)[:150])
 
 
-def _fatura_kuyruk_uret(fatura_id: str) -> str:
+def _fatura_kuyruk_uret(fatura_id: str, *, zorla: int = 0) -> str:
+    """Faturadan vadeli_alimlar SÖZÜ üretir.
+
+    🚪 KAPI BURADADIR (2026-09-01 zincir denetimi). Eskiden
+    `SOZ_DEFTERI_URETIMI_ACIK` YALNIZ `/kuyruk-tara` ucunun girişinde
+    okunuyordu; motorun kendisinde kapı yoktu. OCR tamamlanınca ve
+    `yukle-pdf` FAZ A'da bu fonksiyon DOĞRUDAN çağrılıyor ve
+    `main.vadeli_ekle` ile yeni söz doğuruyordu. Sonuç: sahibin
+    "söz mantığı devre dışı, ödenecekler cariden türetilir" kararı
+    yalnız gece yolunda geçerliydi; ölü defter fatura yüklendikçe
+    kendini dolduruyor ve aynı borç İKİ TEMSİLLE yaşıyordu
+    (cari türetimi + söz) — `ap_mutabakat` her gece sapma basıyordu.
+
+    Kapı artık TEK merkezde: hangi yoldan çağrılırsa çağrılsın geçerli.
+    `zorla=1` bilinçli tekrar açar (kayda geçer).
+    """
     from datetime import date as _d, timedelta as _td
+    if not SOZ_DEFTERI_URETIMI_ACIK and not int(zorla or 0):
+        return "atlandi_soz_uretimi_kapali"
     try:
         with db() as (conn, cur):
             cur.execute("ALTER TABLE tedarikci_fatura ADD COLUMN IF NOT EXISTS "
@@ -994,7 +1023,9 @@ def fatura_kuyruk_tara(gun: int = 30, zorla: int = 0):
         idler = [r["id"] for r in cur.fetchall() or []]
     ozet: Dict[str, int] = {}
     for fid in idler:
-        s = _fatura_kuyruk_uret(fid)
+        # `zorla` motorun kendi kapısına da GEÇİRİLİR — kapı artık orada
+        # (2026-09-01); geçirilmezse zorla=1 dış kapıyı açar ama iç kapı keser.
+        s = _fatura_kuyruk_uret(fid, zorla=int(zorla or 0))
         ozet[s] = ozet.get(s, 0) + 1
     return {"taranan": len(idler), "ozet": ozet, "damga_temizlenen": temizlenen}
 
@@ -1135,13 +1166,22 @@ def odenecek_kuyruk(sadece_acik: int = 1) -> dict:
             # demek olurdu.
             "faturasiz_teslimat": grni,
             "devir": round(float(t.get("devir") or 0), 2),
+            # ⚠️ 2026-09-01 zincir denetimi (D-14): alan adları `..._6ay`
+            # tarihseldir; değer artık DEVİR ÇİZGİSİNDEN BUGÜNE kadar olan
+            # TAMAMIDIR (kayan pencere yok — B2'de kapatıldı). Ama bu uçta
+            # sade `fatura_toplam` / `odeme_toplam` adlarıyla sunulunca
+            # okuyan "hangi dönem?" diye tahmin etmek zorunda kalıyordu.
+            # Alan artık kendini açıklar; pencere de yanıtta yazılı.
             "fatura_toplam": round(float(t.get("fatura_toplam_6ay") or 0), 2),
             "odeme_toplam": round(float(t.get("odeme_izi_toplam_6ay") or 0), 2),
+            "pencere": (oz.get("pencere_anlami") or "devir_cizgisinden_bugune_tamami"),
+            "pencere_baslangic": oz.get("pencere_baslangic"),
             # Aritmetiği satırda GÖSTER: "neden bu rakam" sorusu ekranda cevaplansın.
             "hesap": (f"{float(t.get('devir') or 0):.2f} devir "
                       f"+ {float(t.get('fatura_toplam_6ay') or 0):.2f} fatura "
                       f"− {float(t.get('odeme_izi_toplam_6ay') or 0):.2f} ödeme "
-                      f"= {acik:.2f}"),
+                      f"= {acik:.2f}  "
+                      f"(pencere: {oz.get('pencere_baslangic') or '—'} → bugün)"),
             "sinif": t.get("sinif"),
         })
     satirlar.sort(key=lambda x: -x["acik_bakiye"])
@@ -1680,7 +1720,8 @@ def cari_ode_geri_al(body: CariOdemeGeriAlBody) -> dict:
         _ensure_cari_odeme_tablolar(cur)
         cur.execute(
             """SELECT id, tedarikci_ad, tutar::float AS tutar, plan_id,
-                      COALESCE(iptal, FALSE) AS iptal
+                      COALESCE(iptal, FALSE) AS iptal,
+                      COALESCE(geri_alma_tamam, FALSE) AS geri_alma_tamam
                  FROM cari_odeme WHERE id=%s""", (oid,))
         r = cur.fetchone()
         if not r:
@@ -1694,6 +1735,15 @@ def cari_ode_geri_al(body: CariOdemeGeriAlBody) -> dict:
         # görünmeye sonsuza dek devam ederdi.
         # Artık: damga varsa 1-2 ATLANIR, doğrudan 3'e geçilir (idempotent).
         _yarim_tamamla = bool(o.get("iptal"))
+        # ⚠️ 2026-09-01 zincir denetimi (C-23): BİTİŞİN KAYDI YOKTU. Başarılı
+        # tam geri almadan sonra `iptal=TRUE` ve `plan_id` DOLU kalıyordu; bu
+        # kapı yalnız `plan_id` boşsa kapanıyordu, yani HİÇ kapanmıyordu.
+        # Uç ikinci kez çağrılırsa (çift tık / liste yenilenmemiş) 3. adım
+        # zaten geri alınmış plana TEKRAR uygulanıyordu — sonuç
+        # `odeme_plani_sil`in idempotanslığına emanetti. Artık bitiş açıkça
+        # damgalanır ve ikinci çağrı 409 alır.
+        if _yarim_tamamla and bool(o.get("geri_alma_tamam")):
+            raise HTTPException(409, "Bu ödeme zaten geri alınmış (tamamlandı damgası var).")
         if _yarim_tamamla and not str(o.get("plan_id") or "").strip():
             # Plan yoksa yapacak 3. adım da yok — gerçekten bitmiş.
             raise HTTPException(409, "Bu ödeme zaten geri alınmış.")
@@ -1744,6 +1794,16 @@ def cari_ode_geri_al(body: CariOdemeGeriAlBody) -> dict:
                     "çıkışı gösteriyor. AYNI UCU TEKRAR ÇAĞIRIN: yarım kalan "
                     "adım tamamlanır (ilk iki adım tekrarlanmaz)."),
         }
+    # ✅ BİTİŞ DAMGASI (2026-09-01, C-23): üç adım da bitti — ikinci çağrı
+    # artık 409 alır ve `odeme_plani_sil` bir daha koşturulmaz.
+    try:
+        with db() as (conn3, cur3):
+            cur3.execute(
+                "UPDATE cari_odeme SET geri_alma_tamam=TRUE WHERE id=%s", (oid,))
+            conn3.commit()
+    except Exception:
+        logger.warning("cari ode geri al: bitis damgasi yazilamadi (oid=%s)", oid,
+                       exc_info=True)
     return {
         "ok": True, "odeme_id": oid, "tedarikci": o.get("tedarikci_ad"),
         "tutar": o.get("tutar"),
@@ -2109,6 +2169,35 @@ def _ocr_calistir_icerik(fatura_id: str) -> None:
             kalem_say = _fatura_json_db_yaz(cur, fatura_id, j)
             conn.commit()
         logger.info("fatura OCR tamam: %s (%d kalem)", fatura_id, kalem_say)
+        # ── 💰 GERÇEK TUTARI TESLİMATA GERİ YAZ (2026-09-01 zincir denetimi, C-6)
+        # `fatura-yukle` teslimatı ANINDA kapatıyor ama o an `toplam_tutar`
+        # genelde NULL (OCR arka planda). `fatura_tutar_tl` boş kalıyor,
+        # `tutar_fark_tl` hiç doğmuyor ve "beklenen ↔ gerçek sapma" denetimi
+        # (`acik-teslimat`) bu kayıtları HİÇ görmüyordu — üstelik en çok
+        # kullanılan yolda. Sistemde bu alanı sonradan dolduran TEK yazıcı
+        # yoktu; artık OCR bittiğinde bağlı teslimata geri yazılır.
+        try:
+            with db() as (conn2, cur2):
+                cur2.execute(
+                    """UPDATE belge_talep bt
+                          SET fatura_tutar_tl = tf.toplam_tutar,
+                              tutar_fark_tl = CASE
+                                  WHEN bt.beklenen_tutar_tl IS NOT NULL
+                                  THEN tf.toplam_tutar - bt.beklenen_tutar_tl
+                                  ELSE bt.tutar_fark_tl END
+                         FROM tedarikci_fatura tf
+                        WHERE tf.id = %s
+                          AND bt.fatura_id = tf.id
+                          AND COALESCE(tf.toplam_tutar,0) > 0
+                          AND bt.fatura_tutar_tl IS DISTINCT FROM tf.toplam_tutar""",
+                    (fatura_id,))
+                _bf = cur2.rowcount or 0
+                conn2.commit()
+            if _bf:
+                logger.info("belge_talep tutari OCR sonrasi dolduruldu: fatura=%s", fatura_id)
+        except Exception as _e_bf:  # noqa: BLE001
+            logger.warning("OCR sonrasi belge_talep tutar geri yazimi atlandi: %s",
+                           str(_e_bf)[:120])
         # FAZ A: okunan fatura ödeme kuyruğuna bağlanır (hata-yutar, idempotent)
         _fatura_kuyruk_uret(fatura_id)
         # F5: kimlik/tutar/kalemler ARTIK DOLU → teslimat eşleşmesi burada gerçek
@@ -2502,6 +2591,33 @@ def fatura_sil(fatura_id: str):
                 "Faturanın teslimat bağı çözülemedi — silme yapılmadı. "
                 "Yarım silme, olmayan bir faturayı 'bağlı' göstermeye devam ederdi.",
             ) from _e_bag
+        # ── 🧾 ÖKSÜZ SÖZ TEMİZLİĞİ (2026-09-01 zincir denetimi, C-22) ────────
+        # Silme, teslimat bağını örnek biçimde çözüyordu ama `kuyruk_vadeli_id`
+        # ile bu faturadan DOĞMUŞ `vadeli_alimlar` sözüne hiç dokunmuyordu.
+        # Damga hijyeni yalnız TERS yönü kapatıyordu (vadeli silinmiş → damga
+        # sıfırla). Sonuç: "yanlış okunmuş / mükerrer" ilan edilen faturanın
+        # sözü, kaynağı olmadan yaşamaya devam ediyor; doğru fatura yüklenince
+        # kendi sözünü de doğuruyor ve AYNI BORÇ İÇİN İKİ SÖZ oluyordu.
+        # Söz SİLİNMEZ (append-only doktrini) — iptal edilir, izi kalır.
+        _oksuz_soz = 0
+        try:
+            with savepoint(cur, "sp_fatura_sil_soz_iptal"):
+                cur.execute(
+                    "SELECT kuyruk_vadeli_id FROM tedarikci_fatura WHERE id=%s", (fid,))
+                _vr = cur.fetchone()
+                _vid = str((dict(_vr).get("kuyruk_vadeli_id") if _vr else "") or "").strip()
+                if _vid and not _vid.startswith("("):     # sentinel değilse
+                    cur.execute(
+                        """UPDATE vadeli_alimlar
+                              SET durum='iptal',
+                                  aciklama = COALESCE(aciklama || ' | ', '')
+                                             || 'Kaynak fatura silindi (' || %s || ')'
+                            WHERE id=%s AND COALESCE(durum,'') = 'bekliyor'""",
+                        (fid, _vid))
+                    _oksuz_soz = cur.rowcount or 0
+        except Exception:
+            logger.warning("fatura sil: oksuz vadeli soz iptal edilemedi (fid=%s)", fid,
+                           exc_info=True)
         cur.execute("DELETE FROM tedarikci_fatura_kalem WHERE fatura_id=%s", (fid,))
         cur.execute("DELETE FROM tedarikci_fatura WHERE id=%s", (fid,))
         n = cur.rowcount or 0
@@ -2512,8 +2628,12 @@ def fatura_sil(fatura_id: str):
     return {
         "ok": True, "silinen": fid,
         "cozulen_teslimat_bagi": _cozulen,
-        "not": (f"{_cozulen} teslimatın fatura bağı çözüldü ve talebi yeniden açıldı."
-                if _cozulen else "Bu faturaya bağlı teslimat yoktu."),
+        "iptal_edilen_vadeli_soz": _oksuz_soz,
+        "not": ((f"{_cozulen} teslimatın fatura bağı çözüldü ve talebi yeniden açıldı."
+                 if _cozulen else "Bu faturaya bağlı teslimat yoktu.")
+                + (f" Bu faturadan doğmuş {_oksuz_soz} vadeli söz de iptal edildi "
+                   "(öksüz söz aynı borcu ikinci kez temsil ederdi)."
+                   if _oksuz_soz else "")),
     }
 
 
@@ -3326,7 +3446,12 @@ def _cift_kanal_tekille(odemeler: List[dict], gun_tol: int = 3,
 
     Döner: (kalan, elenen) — elenen GİZLENMEZ, çağıran ekranda gösterir.
     """
-    _sistem = [r for r in odemeler if (r.get("kanal") or "") in ("vadeli_alim", "anlik_gider")]
+    # 💳 `cari_odeme` de bir SİSTEM kaydıdır (2026-09-01): kartla yapılan cari
+    # ödemenin ham banka satırı ekstre indiğinde 'ekstre_import' olarak gelir
+    # ve elenmezse AYNI ödeme iki kez düşerdi. Sistem kaydı hangi tedarikçiye
+    # ait olduğunu kesin bilir; ham satır elenir.
+    _sistem = [r for r in odemeler
+               if (r.get("kanal") or "") in ("vadeli_alim", "anlik_gider", "cari_odeme")]
     if not _sistem:
         return odemeler, []
     _kullanildi, kalan, elenen = set(), [], []
@@ -3691,18 +3816,21 @@ def belge_sinifi_coz(cur, fatura_id: str, tedarikci_ad: str, kalem_adlari=None) 
     Elle düzeltilmiş sınıf (sinif_kaynak='elle') KORUNUR — heuristik onu ezmez.
     """
     try:
-        cur.execute("SELECT belge_sinifi, sinif_kaynak FROM tedarikci_fatura WHERE id=%s", (fatura_id,))
-        r = cur.fetchone()
-        if r and (r.get("sinif_kaynak") or "") == "elle" and r.get("belge_sinifi"):
-            return r["belge_sinifi"]
-        kanit = kalem_sinif_kaniti(kalem_adlari)
-        s = kanit or tedarikci_sinif(tedarikci_ad)
-        kaynak = "kalem_kaniti" if kanit else "ad_heuristik"
-        cur.execute(
-            "UPDATE tedarikci_fatura SET belge_sinifi=%s, sinif_kaynak=%s WHERE id=%s",
-            (s, kaynak, fatura_id),
-        )
-        return s
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut3693"):
+            cur.execute("SELECT belge_sinifi, sinif_kaynak FROM tedarikci_fatura WHERE id=%s", (fatura_id,))
+            r = cur.fetchone()
+            if r and (r.get("sinif_kaynak") or "") == "elle" and r.get("belge_sinifi"):
+                return r["belge_sinifi"]
+            kanit = kalem_sinif_kaniti(kalem_adlari)
+            s = kanit or tedarikci_sinif(tedarikci_ad)
+            kaynak = "kalem_kaniti" if kanit else "ad_heuristik"
+            cur.execute(
+                "UPDATE tedarikci_fatura SET belge_sinifi=%s, sinif_kaynak=%s WHERE id=%s",
+                (s, kaynak, fatura_id),
+            )
+            return s
     except Exception as e:  # noqa: BLE001 — damga başarısız olsa da fatura kaydı yaşar
         logger.warning("belge_sinifi_coz atlandı (%s): %s", fatura_id, e)
         return tedarikci_sinif(tedarikci_ad)
@@ -3781,16 +3909,19 @@ def _karar_yaz(cur, hareket_id, onceki, yeni, karar, aktor="sahip",
     kid = str(uuid.uuid4())
     try:
         # Aynı harekete ait son karar → supersedes zinciri kurulur
-        cur.execute("""SELECT id FROM cari_eslesme_karar
-                       WHERE hareket_id=%s ORDER BY ts DESC LIMIT 1""", (hareket_id,))
-        r = cur.fetchone()
-        cur.execute(
-            """INSERT INTO cari_eslesme_karar
-                 (id, hareket_id, onceki_deger, yeni_deger, karar, guven,
-                  dayanak, aktor, supersedes, tutar, hareket_tarih)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-            (kid, str(hareket_id), onceki, yeni, karar, guven, dayanak, aktor,
-             (r["id"] if r else None), tutar, hareket_tarih))
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut3782"):
+            cur.execute("""SELECT id FROM cari_eslesme_karar
+                           WHERE hareket_id=%s ORDER BY ts DESC LIMIT 1""", (hareket_id,))
+            r = cur.fetchone()
+            cur.execute(
+                """INSERT INTO cari_eslesme_karar
+                     (id, hareket_id, onceki_deger, yeni_deger, karar, guven,
+                      dayanak, aktor, supersedes, tutar, hareket_tarih)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (kid, str(hareket_id), onceki, yeni, karar, guven, dayanak, aktor,
+                 (r["id"] if r else None), tutar, hareket_tarih))
     except Exception as e:  # noqa: BLE001 — defter yazılamazsa işlem sürsün, ama LOGLA
         logger.warning("eşleşme karar defteri yazılamadı (%s): %s", hareket_id, str(e)[:140])
     return kid
@@ -4727,7 +4858,7 @@ def kart_izi_onayla(body: KartIziOnayModel):
     # Bakiye zaten doğru; tahsis yalnız yaşlandırma/raporlama içindir.
     tahsisler, kalan = [], toplam
     try:
-        acik = cari_odenecekler(tedarikci=ted)["acik_faturalar"]
+        acik = cari_odenecekler(tedarikci=ted, defter_kiyas=0)["acik_faturalar"]
         with db() as (conn, cur):
             _ensure_cari_odeme_tablolar(cur)
             for a in acik:
@@ -5882,11 +6013,16 @@ def para_zinciri_rontgen():
                COUNT(*) FILTER (WHERE belgesiz)::int AS belgesiz_adet,
                MIN(tarih)::text AS ilk, MAX(tarih)::text AS son
         FROM cari_odeme""")
+    # ⚠️ `fatura_id IS NULL` satırları AVANS'tır (2026-09-01): borçtan fazla
+    # ödenen tutar. Fatura kapatmaz — "kapatılan toplam"a KARIŞMAMALI.
     _sor("tahsis_defteri", """
         SELECT COUNT(*)::int AS satir,
                COUNT(DISTINCT odeme_id)::int AS odeme,
                COUNT(DISTINCT fatura_id)::int AS kapatilan_fatura,
-               COALESCE(SUM(kapatilan),0)::float AS kapatilan_toplam,
+               COALESCE(SUM(kapatilan) FILTER (WHERE fatura_id IS NOT NULL),0)::float
+                   AS kapatilan_toplam,
+               COALESCE(SUM(kapatilan) FILTER (WHERE fatura_id IS NULL),0)::float
+                   AS avans_toplam,
                COUNT(*) FILTER (WHERE NOT otomatik)::int AS elle_dagitim
         FROM cari_odeme_tahsis""")
 
@@ -6264,9 +6400,12 @@ def cari_ozet() -> dict:
                FROM vadeli_alimlar WHERE durum='bekliyor'
                ORDER BY vade_tarihi""")
         vadeler = [dict(r) for r in cur.fetchall() or []]
-        # BİZİM TARAF ödeme izleri (3 kanal, türetilmişler hariç) — kasa izi
+        # BİZİM TARAF ödeme izleri (4 kanal, türetilmişler hariç) — kasa izi
         # felsefesi: iz varsa borçtan düşer, iz yoksa borç BİRİKİR (cari artar).
         # Pencere = fatura penceresiyle AYNI kesit (sistem başlangıcı korumalı).
+        # `cari_odeme` tablosu tembel yaratılıyor; sorgudan ÖNCE garanti et,
+        # yoksa tablosu olmayan kurulumda bu uç 500 verirdi.
+        _ensure_cari_odeme_tablolar(cur)
         cur.execute(
             """SELECT tarih::text AS tarih, tutar::float AS tutar, metin, kanal FROM (
                  -- 💸 Ödeme izinin tarihi VADE değil ÖDEME tarihidir (2026-08-09).
@@ -6277,8 +6416,15 @@ def cari_ozet() -> dict:
                         COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'') AS metin,
                         'vadeli_alim' AS kanal
                  FROM vadeli_alimlar
-                 WHERE durum='odendi' AND COALESCE(odeme_tarihi, vade_tarihi) >= %s::date
-                   AND COALESCE(odeme_tarihi, vade_tarihi) <= CURRENT_DATE
+                 -- ⚠️ 2026-09-01 zincir denetimi (B-19): `odeme_tarihi` NULL
+                 -- olan 'odendi' satirlar VADE gununde odenmis sayilip borcu
+                 -- dusuruyordu — oysa paranin o gun ciktigina dair hicbir iz
+                 -- yok. Tarihi bilinmeyen odeme, odeme IZI degildir; kayit
+                 -- duzeltilene kadar borc acik durur (borcu oldugundan KUCUK
+                 -- gostermemek icin).
+                 WHERE durum='odendi' AND odeme_tarihi IS NOT NULL
+                   AND odeme_tarihi >= %s::date
+                   AND odeme_tarihi <= CURRENT_DATE
                  UNION ALL
                  SELECT tarih, tutar,
                         COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''), 'anlik_gider'
@@ -6292,8 +6438,24 @@ def cari_ozet() -> dict:
                  -- SAPMIŞTI ('(ilgisiz)' damgası ve ekstre_import istisnası
                  -- yalnız burada vardı). Vakalar sabitin yanında yazılı.
                  WHERE """ + KART_ODEME_IZI_SARTI + """
-                   AND tarih >= %s::date) x""",
-            (kesit_6ay, kesit_6ay, kesit_6ay))
+                   AND tarih >= %s::date
+                 UNION ALL
+                 -- 💳 4. KANAL — CARİ ÖDEME (2026-09-01 zincir denetimi)
+                 -- Sistemin KANONİK cari ödeme kapısı `/fatura/cari-ode` idi
+                 -- ama üç kanalın HİÇBİRİ onu görmüyordu:
+                 --   · nakit  → `kasa_hareketleri`'ne yazılır (hiçbir kanal değil)
+                 --   · kart   → kaynak_tablo='cari_odeme' + kaynak_id DOLU satır
+                 --              yazılır, KART_ODEME_IZI_SARTI onu ELER
+                 --   · `cari_odeme` tablosunu hiçbir bakiye ucu okumazdı
+                 -- Sonuç: sahip ödüyor, borç kuyrukta durmaya devam ediyor ve
+                 -- İKİNCİ KEZ ödenmeye çağırıyordu. İptal damgalı ödeme sayılmaz.
+                 SELECT tarih, tutar,
+                        COALESCE(tedarikci_ad,'') || ' ' || COALESCE(aciklama,''),
+                        'cari_odeme'
+                 FROM cari_odeme
+                 WHERE COALESCE(iptal, FALSE) = FALSE
+                   AND tarih >= %s::date AND tarih <= CURRENT_DATE) x""",
+            (kesit_6ay, kesit_6ay, kesit_6ay, kesit_6ay))
         odeme_izleri = [dict(r) for r in cur.fetchall() or []]
         # 📜 sistem-öncesi açılış beyanları — OKUNAMAZSA BAKİYE ÜRETİLMEZ.
         # Devirsiz hesaplanan bakiye, devri olan tedarikçide olduğundan
@@ -6389,6 +6551,16 @@ def cari_ozet() -> dict:
     ozet = []
     for g in gruplar.values():
         fl = _cari_zincir(g["faturalar"])
+        # 🔤 ALIAS LİSTESİ — devir atamasından da ÖNCE kurulmalı.
+        # ⚠️ 2026-09-01 denetimi: `devir_top` bloğu buraya taşınırken `g_adlar`
+        # aşağıda (vade eşleşmesinden hemen önce) tanımlı kalmıştı. Sonuç:
+        #   · İLK grup iterasyonunda değişken hiç bağlanmamış → UnboundLocalError
+        #     → aktif bir cari_devir varsa /cari-ozet 500 veriyordu.
+        #   · Sonraki iterasyonlarda ÖNCEKİ grubun alias listesi okunuyordu →
+        #     devir YANLIŞ tedarikçiye yapışıyor, `_atandi` yüzünden doğru
+        #     sahibine bir daha gidemiyordu.
+        # Tanım tek yerde ve EN ÜSTTE; aşağıdaki vade bloğu da bunu kullanır.
+        g_adlar = _es_adlari(g["tedarikci"])
         # 📜 AÇILIŞ DEVRİ ATAMASI — son6'dan ÖNCE yapılmalı, çünkü devir
         # çizgisi elemesinin MEŞRU olup olmadığı devrin VARLIĞINA bağlı.
         # Tek-atama semantiği korunur (ilk eşleşen grup alır; sıra değişmedi).
@@ -6420,7 +6592,7 @@ def cari_ozet() -> dict:
         # VADE SÖZÜ eşleşmesi (ATALAY vakası 2026-07-14: 'ATALAY KAHVE' sözü
         # 'MEHMET ATALAY' cari satırına bağlanmıyordu) — marka-token eşleşmesi;
         # her vade TEK gruba atanır (çift sayım yok, ilk eşleşen alır).
-        g_adlar = _es_adlari(g["tedarikci"])
+        # (`g_adlar` yukarıda, devir atamasından önce kuruldu — tek tanım.)
         v_top, v_yakin = 0.0, None
         for v in vadeler:
             if v.get("_atandi"):
@@ -6650,6 +6822,66 @@ def cari_ozet_uc():
     return cari_ozet()
 
 
+@router.get("/cari-odenecekler")
+def cari_odenecekler_uc(tedarikci: str = "", defter_kiyas: int = 1):
+    """🔀 ROTA SIRASI ŞART (2026-09-01 zincir denetimi).
+
+    Asıl gövde aşağıda (`cari_odenecekler`) — burada YALNIZCA ROTA KAYDI var.
+    Sebebi: `@router.get("/{fatura_id}")` bu dosyada ondan ÖNCE tanımlı ve
+    tek segmentli her GET'i yutuyor. Statik yol, parametreli yoldan SONRA
+    kaydedilirse hiç çağrılmaz; uç 404 döner ve "açık fatura yok" sanılır.
+    Parametreli yollar en sona sıralanır — bu sarmalayıcı o kuralı sağlar.
+    """
+    return cari_odenecekler(tedarikci=tedarikci, defter_kiyas=defter_kiyas)
+
+
+@router.get("/cari-ode-kanal-etkisi")
+def cari_ode_kanal_etkisi():
+    """🔎 4. ÖDEME KANALININ ETKİSİ — salt-okur ölçüm (2026-09-01).
+
+    `cari_odeme` ödeme izi evrenine 4. kanal olarak eklendi. Bu bir OKUMA
+    değişikliğidir: uygulanmadan önce "kuru çalıştırılıp listesi okunacak"
+    bir toplu işlem yok, ama etkisi yine de para rakamını değiştirir. Bu uç
+    o etkiyi GÖSTERİR: hangi ödemeler artık borçtan düşüyor, tedarikçi başına
+    ne kadar. Sahip bu listeyi kendi bildiğiyle karşılaştırıp doğrulayabilir.
+
+    Kural (sahibin dersi): kapattıktan sonra YENİ rakamı da ölç.
+    """
+    with db() as (conn, cur):
+        _ensure_cari_odeme_tablolar(cur)
+        cur.execute(
+            """SELECT COALESCE(TRIM(tedarikci_ad),'(adsız)') AS tedarikci,
+                      COUNT(*)                          AS adet,
+                      SUM(tutar)::float                 AS toplam,
+                      MIN(tarih)::text                  AS ilk,
+                      MAX(tarih)::text                  AS son,
+                      SUM(CASE WHEN COALESCE(odeme_yontemi,'nakit')='nakit'
+                               THEN tutar ELSE 0 END)::float AS nakit,
+                      SUM(CASE WHEN COALESCE(odeme_yontemi,'nakit')<>'nakit'
+                               THEN tutar ELSE 0 END)::float AS kart
+               FROM cari_odeme
+               WHERE COALESCE(iptal, FALSE) = FALSE
+                 AND tarih >= %s::date AND tarih <= CURRENT_DATE
+               GROUP BY 1 ORDER BY 3 DESC""",
+            (EVVEL_SISTEM_BASLANGIC,))
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute(
+            """SELECT COUNT(*) AS c, COALESCE(SUM(tutar),0)::float AS t
+               FROM cari_odeme WHERE COALESCE(iptal, FALSE) = TRUE""")
+        _ipt = dict(cur.fetchone() or {})
+    return {
+        "pencere_baslangic": EVVEL_SISTEM_BASLANGIC,
+        "tedarikci_sayisi": len(satirlar),
+        "toplam_dusen_tutar": round(sum(s["toplam"] or 0 for s in satirlar), 2),
+        "satirlar": satirlar,
+        "iptal_edilmis": {"adet": int(_ipt.get("c") or 0),
+                          "tutar": round(float(_ipt.get("t") or 0), 2)},
+        "not": ("Bu tutarlar 2026-09-01'den itibaren tedarikçi açık bakiyesinden "
+                "DÜŞÜYOR. Öncesinde hiçbir bakiye ucu bu ödemeleri görmüyordu — "
+                "borç ödenmiş olduğu hâlde kuyrukta duruyordu."),
+    }
+
+
 # ── FAZ D: AP MUTABAKAT DUYUSU (2026-07-18, sahip 'FAZ D'; Codex çift-koşu) ──
 # Vadeli Alımlar'ı tamamen kaldırmadan ÖNCEKİ güvenlik ağı: her gece
 # "tedarikçi CARİ açığı (fatura − ödeme izi + devir) ↔ ÖDEME KUYRUĞU (bekleyen
@@ -6660,20 +6892,37 @@ def ap_mutabakat() -> dict:
     oz = cari_ozet()
     satirlar, uyumsuz = [], 0
     for t in oz.get("tedarikciler", []):
-        acik = round(max(0.0, float(t.get("hesaplanan_acik") or 0)), 2)
+        # ⚠️ 2026-09-01 zincir denetimi (B-20): negatif acik (avans/alacak)
+        # `max(0.0, ...)` ile SIFIRA KESILIYORDU. Ayni kesilmis deger `fark`,
+        # `toplam_cari_acik` ve `saglikli` hesabina giriyordu: 1.200 TL'lik
+        # alacak bakiyesi rapordan sessizce dusuyor, satir "uyumlu" gorunuyordu.
+        # Ham deger korunur; negatif taraf ayri alanda ACIKCA tasinir.
+        _ham_acik = round(float(t.get("hesaplanan_acik") or 0), 2)
+        acik = round(max(0.0, _ham_acik), 2)
+        alacak = round(abs(min(0.0, _ham_acik)), 2)
         kuyruk = round(float(t.get("bekleyen_vade_toplam") or 0), 2)
         # cari açık VAR ama kuyruk YOK → fatura kuyruğa bağlanmamış (asıl risk);
         # kuyruk VAR ama açık YOK → söz fazlası/ödenmiş fatura kalmış
         fark = round(kuyruk - acik, 2)
+        # ⚠️ 2026-09-01 zincir denetimi (C-24): tolerans "uyumlu" KARARINI
+        # veriyordu ve `saglikli` bayragi buna bagliydi — 2.000 TL borcta
+        # 399 TL'lik GERCEK fark "sorun yok" diye geciyordu. Tolerans artik
+        # ayri bir GOZLEM alanidir; uyumluluk SIFIR fark demektir.
         esik = max(500.0, acik * 0.05)
-        uyumlu = abs(fark) <= esik
+        uyumlu = abs(fark) <= 0.01
+        esik_icinde = abs(fark) <= esik    # gozlem sinyali: "kucuk fark"
         if not uyumlu:
             uyumsuz += 1
         satirlar.append({
             "tedarikci": t.get("tedarikci"), "cari_acik": acik,
+            # B-20: kesilen negatif taraf artık GÖRÜNÜR — bizim alacağımız.
+            "cari_alacak": alacak,
+            "ham_bakiye": _ham_acik,
             "kuyruk_toplam": kuyruk, "fark": fark, "uyumlu": uyumlu,
-            "yon": ("kuyruk_eksik" if fark < -esik else
-                    "kuyruk_fazla" if fark > esik else "uyumlu"),
+            # C-24: tolerans artık KARAR değil GÖZLEM — "küçük ama gerçek fark".
+            "esik_icinde": esik_icinde, "esik": round(esik, 2),
+            "yon": ("uyumlu" if uyumlu else
+                    "kuyruk_eksik" if fark < 0 else "kuyruk_fazla"),
         })
     satirlar.sort(key=lambda x: -abs(x["fark"]))
     # UYUMSUZ olanlar için duyu olayı (hata-yutar; source_ref=tedarikçi → idempotent)
@@ -6731,8 +6980,14 @@ def ap_mutabakat() -> dict:
         "tedarikciler": satirlar[:30],
         "uyumsuz_adet": uyumsuz,
         "toplam_cari_acik": round(sum(s["cari_acik"] for s in satirlar), 2),
+        # B-20: sıfıra kesilen alacak tarafı ayrı toplanır — kaybolmaz.
+        "toplam_cari_alacak": round(sum(s.get("cari_alacak") or 0 for s in satirlar), 2),
         "toplam_kuyruk": round(sum(s["kuyruk_toplam"] for s in satirlar), 2),
         "saglikli": uyumsuz == 0,
+        # C-24: eşik içinde kalan (küçük ama GERÇEK) fark sayısı — eskiden
+        # bunlar "uyumlu" sayılıp hiç görünmüyordu.
+        "esik_icinde_fark_adedi": sum(
+            1 for s in satirlar if not s["uyumlu"] and s.get("esik_icinde")),
         "not": ("Cari açık (fatura−ödeme izi+devir) ile ödeme kuyruğu (bekleyen "
                 "vade sözü) aynı borcu ölçer; sapma = kuyruğa bağlanmamış fatura / "
                 "kapanmamış söz / çift kayıt. Vadeli Alımlar tam kaldırılmadan önce "
@@ -6797,10 +7052,30 @@ def cari_devir_kaydet(body: CariDevirBody):
             # tedarikçiye yeni devir girilirse ON CONFLICT satırı günceller ama
             # aktif=FALSE kalırdı → sahip devri girer, ekranda GÖRÜNMEZ. Soft-delete
             # eklerken doğan tuzak; yeniden beyan devri diriltir.
+            # ⚠️ 2026-09-01 zincir denetimi (C-20): satır yerinde güncellenip
+            # `iptal_ts`/`iptal_neden` TEMİZLENİYORDU. Böylece iptal edilmiş
+            # beyanın ne zaman ve NİÇİN kapatıldığı — ayrıca ÖNCEKİ TUTAR —
+            # yeni aktif kaydın altında KAYBOLUYOR, `/cari-devir-iptaller`
+            # o geçmişi bir daha göstermiyordu. Devir bir BİLANÇO BEYANIDIR;
+            # üzerine yazılırken eskisi iz bırakmadan silinemez.
+            # Eski değerler açıklamaya damgalanır (tablo append-only değil,
+            # ama beyan tarihçesi okunabilir kalır).
             """INSERT INTO cari_devir (tedarikci, tutar, aciklama)
                VALUES (%s,%s,%s)
                ON CONFLICT (tedarikci)
-               DO UPDATE SET tutar=EXCLUDED.tutar, aciklama=EXCLUDED.aciklama,
+               DO UPDATE SET tutar=EXCLUDED.tutar,
+                             aciklama = CASE
+                               WHEN COALESCE(cari_devir.aktif, TRUE) = FALSE
+                                 THEN COALESCE(EXCLUDED.aciklama,'')
+                                      || ' | [ÖNCEKİ BEYAN: '
+                                      || cari_devir.tutar::text || ' TL'
+                                      || COALESCE(', iptal ' || cari_devir.iptal_ts::date::text, '')
+                                      || COALESCE(', neden: ' || cari_devir.iptal_neden, '')
+                                      || ' — yeniden beyan edildi]'
+                               ELSE COALESCE(EXCLUDED.aciklama,'')
+                                    || ' | [ÖNCEKİ TUTAR: '
+                                    || cari_devir.tutar::text || ' TL]'
+                             END,
                              aktif=TRUE, iptal_ts=NULL, iptal_neden=NULL""",
             (ad, round(body.tutar, 2), (body.aciklama or "").strip() or None))
         conn.commit()
@@ -6830,6 +7105,15 @@ def cari_devir_sil(devir_id: str, neden: str = ""):
                RETURNING id, tedarikci, tutar::float AS tutar""",
             ((neden or "").strip()[:200], devir_id, devir_id))
         iptal = [dict(r) for r in (cur.fetchall() or [])]
+        # ⚠️ 2026-09-01 zincir denetimi (C-21): hiç satır eşleşmese bile
+        # `ok:true` dönüyordu. Yanlış kimlik, tekrar silme veya zaten pasif
+        # kayıtta bakiye DEĞİŞMEZKEN çağıran işlemi başarılı sanıyordu.
+        # No-op'u başarı olarak raporlamak "sildim ama düşmedi" tipi güven
+        # kaybının kaynağıdır.
+        if not iptal:
+            raise HTTPException(
+                404, "İptal edilecek AKTİF açılış devri bulunamadı "
+                     "(yanlış kimlik ya da zaten iptal edilmiş).")
         conn.commit()
     return {"ok": True, "iptal_edilen": len(iptal), "kayitlar": iptal,
             "not": "Kayıt SİLİNMEDİ — iptal damgası kondu, cari hesaba girmiyor. "
@@ -6894,7 +7178,12 @@ def _faturasiz_teslimat_ozet(cur, es_adlar) -> Dict[str, Any]:
                ORDER BY teslim_tarihi DESC NULLS LAST""")
         tum = [dict(r) for r in (cur.fetchall() or [])]
     except Exception as e:  # noqa: BLE001
-        return {"adet": 0, "toplam_tl": 0.0, "hata": str(e)[:120]}
+        # ⚠️ 2026-09-01 zincir denetimi (D-6): hata yutulup SIFIR dönüyordu.
+        # Üst uç normal cevap veriyor, kullanıcı "GRNI yok" sanıyordu — oysa
+        # ölçüm hiç yapılamamıştı. Sıfır ile "ölçemedim" AYNI ŞEY DEĞİLDİR.
+        # Sayı yerine ölçülemedi bayrağı döner; tüketici "—" gösterir.
+        return {"adet": None, "toplam_tl": None, "olculemedi": True,
+                "hata": str(e)[:120]}
     ait = [t for t in tum
            if any(_odeme_eslesir(a, t.get("tedarikci_ad") or "") for a in (es_adlar or []))
            or any(_odeme_eslesir(t.get("tedarikci_ad") or "", a) for a in (es_adlar or []))]
@@ -6955,7 +7244,7 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
                FROM tedarikci_fatura
                WHERE COALESCE(durum,'') <> 'kopya'
                ORDER BY COALESCE(fatura_tarih, olusturma::date), olusturma""")
-        _ara_tok = set(_cari_kanonik(None, ara).split())
+        # (`_ara_tok` alt-küme eşleşmesi 2026-09-01'de kaldırıldı — bkz. aşağıda)
         _tum = [dict(r) for r in cur.fetchall() or []]
         _sec = []
         for r in _tum:
@@ -6964,10 +7253,18 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
             ad = (r.get("tedarikci_ad") or "")
             if ad.strip().upper() in _es_upper:  # 🔗 eşleştirme tablosu eşdeğeri
                 _sec.append(r); continue
-            if ara.lower() in ad.lower():
-                _sec.append(r); continue
-            ft = set(_cari_kanonik(None, ad).split())
-            if _ara_tok and ft and (_ara_tok <= ft or ft <= _ara_tok):
+            # ⚠️ 2026-09-01 zincir denetimi (P0) — İKİ GEVŞEK KAPI KAPATILDI:
+            #   · `ara.lower() in ad.lower()`  → DÜZ ALT-DİZE: "FEZ" ⊂ "FEZA GIDA"
+            #   · `_ara_tok <= ft or ft <= _ara_tok` → ÇİFT YÖNLÜ ALT-KÜME:
+            #     "ATALAY KAHVE" → {atalay} ⊂ "ATALAY TEKSTİL SAN."
+            # Bu liste yalnız ekranı değil `cari-odenecekler` FIFO HAVUZUNU ve
+            # `/cari-ode` TAHSİSİNİ besliyor: yanlış eşleşme, FEZ'in parasıyla
+            # FEZA'nın faturasını "kapatıldı" yazıyordu — para tahsisi hatası.
+            # Kelime-sınırlı marka kuralı (`_odeme_eslesir`) TEK ölçüttür; aynı
+            # kural ödeme eşleşmesinde zaten kullanılıyordu, fatura seçimi ondan
+            # sapmıştı. Çift yön korunur (kısa marka ↔ uzun unvan), ama her iki
+            # yönde de kelime sınırı aranır.
+            if _odeme_eslesir(ara, ad) or _odeme_eslesir(ad, ara):
                 _sec.append(r)
         faturalar = _cari_zincir(_sec)
         # DENETİM P1-3: kişi-adlı tedarikçide ('MEHMET ATALAY') tek token
@@ -6991,6 +7288,7 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
             if _es_es(f"{r['ted']} {r['aciklama'] or ''}")
             or any(_odeme_eslesir(r["ted"], a) for a in _es_adlar)]  # ters yön: 'ATALAY KAHVE' sözü ↔ 'MEHMET ATALAY'
         _ensure_kart_izi_tablolar(cur)   # cari_tedarikci damga kolonu garanti
+        _ensure_cari_odeme_tablolar(cur)  # 4. kanal tablosu garanti (tembel yaratılıyor)
         cur.execute(
             """SELECT kanal, tarih, tutar, aciklama, damga FROM (
                  -- 💸 ödeme tarihi ≠ vade tarihi; gelecek tarihli "ödendi" para
@@ -7001,8 +7299,15 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
                         LEFT(COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),80) AS aciklama,
                         NULL::text AS damga
                  FROM vadeli_alimlar
-                 WHERE durum='odendi' AND COALESCE(odeme_tarihi, vade_tarihi) >= %s::date
-                   AND COALESCE(odeme_tarihi, vade_tarihi) <= CURRENT_DATE
+                 -- ⚠️ 2026-09-01 zincir denetimi (B-19): `odeme_tarihi` NULL
+                 -- olan 'odendi' satirlar VADE gununde odenmis sayilip borcu
+                 -- dusuruyordu — oysa paranin o gun ciktigina dair hicbir iz
+                 -- yok. Tarihi bilinmeyen odeme, odeme IZI degildir; kayit
+                 -- duzeltilene kadar borc acik durur (borcu oldugundan KUCUK
+                 -- gostermemek icin).
+                 WHERE durum='odendi' AND odeme_tarihi IS NOT NULL
+                   AND odeme_tarihi >= %s::date
+                   AND odeme_tarihi <= CURRENT_DATE
                  UNION ALL
                  SELECT 'anlik_gider', tarih::text, tutar::float,
                         LEFT(COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),80),
@@ -7028,9 +7333,22 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
                    -- düşmez (tek kanal: kart satırı).
                    AND (h.kaynak_id IS NULL OR COALESCE(h.kaynak_tablo,'') = 'ekstre_import')
                    AND COALESCE(h.harcama_tipi,'belirsiz') <> 'sahsi'
-                   AND h.tarih >= %s::date) x
+                   AND h.tarih >= %s::date
+                 UNION ALL
+                 -- 💳 4. KANAL — CARİ ÖDEME (2026-09-01 zincir denetimi).
+                 -- Ekstre de özetle AYNI evreni okumalı; aksi hâlde iki uç
+                 -- aynı tedarikçi için iki farklı bakiye söyler. Tedarikçi adı
+                 -- DAMGA olarak verilir: bu kanalda karşı taraf KESİN bilinir,
+                 -- zayıf açıklama-metni eşleşmesine düşmeye gerek yok.
+                 SELECT 'cari_odeme', tarih::text, tutar::float,
+                        LEFT(COALESCE(tedarikci_ad,'') || ' ' || COALESCE(aciklama,''),80),
+                        tedarikci_ad
+                 FROM cari_odeme
+                 WHERE COALESCE(iptal, FALSE) = FALSE
+                   AND tarih >= %s::date AND tarih <= CURRENT_DATE) x
                ORDER BY tarih""",
-            (EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC))
+            (EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC, EVVEL_SISTEM_BASLANGIC,
+             EVVEL_SISTEM_BASLANGIC))
         # DAMGA ÖNCELİĞİ (2026-08-08): sahip bir kart çekimini bir tedarikçiye
         # bağladıysa ad eşleşmesi ARANMAZ — damga konuşur. '(ilgisiz)' damgası
         # satırı tümden eler (sahip "bu bizim toptancı ödememiz değil" dedi).
@@ -7045,6 +7363,16 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
 
         odeme_adaylari = [r for r in (dict(x) for x in cur.fetchall() or [])
                           if _odeme_dahil(r)]
+        # 🏷️ KANIT GÜCÜ GÖRÜNÜR OLSUN (2026-09-01 zincir denetimi).
+        # Damgasız satırlar yalnız AÇIKLAMA METNİYLE bu cariye bağlanıyor —
+        # `_odeme_eslesir`in kelime sınırı korumasına rağmen bu bir ADAY
+        # eşleşmedir, kanıt değil. Bakiyeden çıkarmak sahibin kararıdır
+        # (borç bir anda büyür), ama hangi satırın neye dayandığı EKRANDA
+        # görünmeliydi — görünmüyordu. Artık her satır kanıtını taşır.
+        for _r in odeme_adaylari:
+            _d = (_r.get("damga") or "").strip()
+            _r["kanit"] = "damga" if _d else "aciklama"
+            _r["damgasiz"] = not _d
         odeme_adaylari, _cift_elenen = _cift_kanal_tekille(odeme_adaylari)
         try:
             _devirler = _cari_devirler(cur)
@@ -7112,7 +7440,12 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
         if str(o["tarih"]) >= EVVEL_SISTEM_BASLANGIC:
             hareketler.append({"tip": "odeme", "tarih": str(o["tarih"]),
                                "tutar": round(float(o["tutar"] or 0), 2),
-                               "aciklama": f"{o.get('kanal')}: {(o.get('aciklama') or '')[:40]}"})
+                               "aciklama": f"{o.get('kanal')}: {(o.get('aciklama') or '')[:40]}",
+                               # 🏷️ kanıt gücü: 'damga' = sahip bu çekimi bu
+                               # tedarikçiye bağladı · 'aciklama' = yalnız metin
+                               # eşleşmesine dayanan ADAY (2026-09-01).
+                               "kanit": o.get("kanit") or "aciklama",
+                               "damgasiz": bool(o.get("damgasiz"))})
     # Aynı günde fatura önce işlenir (bakiye sezgisel yürüsün)
     hareketler.sort(key=lambda h: (h["tarih"], 0 if h["tip"] == "fatura" else 1))
     # 📜 Ekstre DEVİRLE başlar (Codex teyitli dünya pratiği: açılış fişi) —
@@ -7132,11 +7465,23 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
     # Pencere sistem başlangıcından önceye TAŞMAZ (Haziran 2026 öncesi veri yok).
     # ⚠️ 2026-09-01: KAYMAYAN devir çizgisi — kayan pencere Kasım'dan itibaren
     # Haziran faturalarını sessizce düşürüp borcu küçük gösterirdi (B2).
+    # ── 📜 ELEME YALNIZ DEVRİ VARSA — TEK DOKTRİN (2026-09-01, C-1) ────────
+    # `cari_ozet` ve `/cari-odenecekler` bu kuralı uyguluyordu (METRO vakası,
+    # 2026-09-01) ama EKSTRE hâlâ KOŞULSUZ kesiyordu. Sonuç: devirsiz +
+    # sistem-öncesi faturalı tedarikçide özet borcu TAM sayıyor, ekstre EKSİK
+    # sayıyordu — aynı firmaya iki farklı `hesaplanan_acik`. Üstelik
+    # `cari-kuyruk-hizala-onizle` ve `cari-tahsis-onizle` hedefi EKSTREDEN
+    # okuduğu için hizalama KÜÇÜK (yanlış) hedefe kuruluyordu.
+    # Çizginin gerekçesi devrin VARLIĞIDIR: "o dönem zaten tek satırlık devirle
+    # temsil ediliyor". Devir yoksa gerekçe de yoktur ve eleme ASİMETRİ üretir.
     _kesit = _cari_bakiye_kesiti()
-    fatura_toplam = round(sum(f["tutar"] for f in faturalar
-                              if str(f["tarih"]) >= _kesit), 2)
-    odeme_toplam = round(sum(o["tutar"] for o in odeme_adaylari
-                             if str(o["tarih"]) >= _kesit), 2)
+    _devir_var = bool(devir)
+    _fatura_sec = [f for f in faturalar
+                   if (not _devir_var) or str(f["tarih"]) >= _kesit]
+    _odeme_sec = [o for o in odeme_adaylari
+                  if (not _devir_var) or str(o["tarih"]) >= _kesit]
+    fatura_toplam = round(sum(f["tutar"] for f in _fatura_sec), 2)
+    odeme_toplam = round(sum(o["tutar"] for o in _odeme_sec), 2)
     return {
         "arama": ara,
         "fatura_adet": len(faturalar),
@@ -7150,13 +7495,23 @@ def cari_ekstre(tedarikci: str = "", tam_fatura: int = 0):
         # ↩️ İade ayrı raporlanır: bakiyeyi düşürür ama ÖDEME DEĞİLDİR.
         # fatura_toplam_6ay negatifleri zaten içerir (net); bu alan yalnız
         # "ne kadarı iade" sorusunu cevaplar — ödeme izi rakamını şişirmez.
-        "iade_toplam_6ay": round(sum(f["tutar"] for f in faturalar
-                                     if str(f["tarih"]) >= _kesit
-                                     and float(f["tutar"] or 0) < 0), 2),
+        "iade_toplam_6ay": round(sum(f["tutar"] for f in _fatura_sec
+                                     if float(f["tutar"] or 0) < 0), 2),
+        # 📜 Hangi doktrinle hesaplandığı GÖRÜNÜR olsun — üç uç aynı cümleyi
+        # söylemeli, tüketici tahmin etmemeli (2026-09-01, C-1).
+        "devir_cizgisi_uygulandi": _devir_var,
+        "devir_cizgisi": (_kesit if _devir_var else None),
         "odeme_izi_toplam_6ay": odeme_toplam,
         "hesaplanan_acik": round(devir + fatura_toplam - odeme_toplam, 2),
         "aylik": aylik_liste,
+        # ⚠️ 2026-09-01 zincir denetimi (D-5): yürüyen bakiye TAM hareket
+        # setiyle hesaplanıp yanıta yalnız SON 80 satır konuyordu; kesildiğini
+        # söyleyen bir bayrak da yoktu. Görünen ilk satırın bakiyesi, görünmeyen
+        # 50 hareket işlenmiş gibi başlıyordu — denetçi listeyi tam ekstre
+        # sanarsa iz kaybı olur. Kesme artık AÇIKÇA bildirilir.
         "hareketler": hareketler[-80:],
+        "hareket_toplam_adet": len(hareketler),
+        "hareketler_kisaltildi": len(hareketler) > 80,
         "yuruyen_bakiye": (hareketler[-1]["bakiye"] if hareketler else 0.0),
         # 📦 GRNI — MAL ALINDI, FATURA GELMEDİ (2026-08-08, sahip: "toptancılara
         # sipariş geçilmiş, ürün teslim olmuş ama faturası gelmemiş ürünler borç
@@ -8098,6 +8453,11 @@ def _ensure_cari_odeme_tablolar(cur) -> None:
         cur.execute("ALTER TABLE cari_odeme ADD COLUMN IF NOT EXISTS iptal BOOLEAN DEFAULT FALSE")
         cur.execute("ALTER TABLE cari_odeme ADD COLUMN IF NOT EXISTS iptal_ts TIMESTAMP")
         cur.execute("ALTER TABLE cari_odeme ADD COLUMN IF NOT EXISTS iptal_gerekce TEXT")
+        # ✅ GERİ ALMANIN BİTİŞ DAMGASI (2026-09-01, C-23): üç adımın da
+        # tamamlandığını söyleyen tek alan. Olmadan ikinci çağrı 3. adımı
+        # tekrar koşturuyordu.
+        cur.execute("ALTER TABLE cari_odeme ADD COLUMN IF NOT EXISTS "
+                    "geri_alma_tamam BOOLEAN NOT NULL DEFAULT FALSE")
         cur.execute("CREATE INDEX IF NOT EXISTS ix_cari_odeme_ted ON cari_odeme (tedarikci_ad)")
         cur.execute("CREATE INDEX IF NOT EXISTS ix_cari_tahsis_odeme ON cari_odeme_tahsis (odeme_id)")
         cur.execute("CREATE INDEX IF NOT EXISTS ix_cari_tahsis_fatura ON cari_odeme_tahsis (fatura_id)")
@@ -8150,10 +8510,21 @@ class CariOdemeModel(BaseModel):
     tahsis: Optional[list] = None
 
 
-@router.get("/cari-odenecekler")
-def cari_odenecekler(tedarikci: str = ""):
+# ⚠️ DEKORATÖR BURADAN KALDIRILDI (2026-09-01 zincir denetimi — ROTA
+# GÖLGELENMESİ). Bu satır dosyada `@router.get("/{fatura_id}")`den (s8216)
+# SONRA geldiği için FastAPI `/api/fatura/cari-odenecekler` isteğini
+# `fatura_detay("cari-odenecekler")`e yönlendiriyordu: uç 404 "Fatura
+# bulunamadı" dönüyor ve ödeme ekranı "açık fatura yok" sanıyordu.
+# Kayıt artık parametreli yoldan ÖNCE yapılıyor (yukarıda, ince sarmalayıcı).
+def cari_odenecekler(tedarikci: str = "", defter_kiyas: int = 1):
     """Bu tedarikçinin AÇIK faturaları — FIFO sırasıyla (en eski önce).
-    Ödeme ekranı 'bu para hangi faturaları kapatacak' önizlemesini bundan kurar."""
+    Ödeme ekranı 'bu para hangi faturaları kapatacak' önizlemesini bundan kurar.
+
+    `defter_kiyas=0`: tahsis defteri ile kanal aritmetiği kıyası ATLANIR.
+    ⚠️ Kıyas `cari_ozet()` çağırır ve o AYRI bir bağlantı açar. `/cari-ode`
+    bu fonksiyonu KENDİ transaction'ı açıkken çağırıyor; orada kıyas yapmak
+    havuzdan ikinci bağlantı ister (maxconn=15, panel açılışta ~13 uç) ve
+    havuz tükenmesine yol açardı — havuz dersi 2026-08-08."""
     ara = (tedarikci or "").strip()
     if len(ara) < 3:
         raise HTTPException(400, "tedarikci parametresi en az 3 karakter")
@@ -8206,10 +8577,42 @@ def cari_odenecekler(tedarikci: str = ""):
                 "kapatilan": kap, "kalan": kalan,
             })
     acik.sort(key=lambda x: (x["tarih"] or "", x["fatura_no"] or ""))
+    # ── ⚖️ İKİ DEFTERİN FARKI GÖRÜNÜR OLSUN (2026-09-01 zincir denetimi, C-2)
+    # Buradaki "kalan" YALNIZ `cari_odeme_tahsis` defterini düşer. Oysa borcun
+    # asıl aritmetiği (devir + fatura − ödeme izi) `vadeli_alim`, `anlik_gider`,
+    # `kart` ve (2026-09-01'den beri) `cari_odeme` kanallarını da düşer.
+    # Kartla ödenmiş bir fatura bu havuzda TAM tutarıyla açık durur; yeni para
+    # gönderildiğinde FIFO onu "zaten ödenmiş" faturaya tahsis eder ve
+    # `acik_toplam` ile `hesaplanan_acik` KALICI olarak ayrışır.
+    # Kanal izleri fatura seviyesinde bağlanamaz (banka satırında fatura no
+    # yoktur) — o yüzden fark GİZLENMEZ, adıyla raporlanır: sahip "bu 12.000 ₺
+    # neyle açıklanıyor" sorusunun cevabını ekranda görür.
+    _acik_toplam = round(sum(a["kalan"] for a in acik), 2)
+    _kanal_acik = None
+    try:
+        if not int(defter_kiyas or 0):
+            raise RuntimeError('defter_kiyas kapali')
+        _oz = cari_ozet()
+        for _t in (_oz.get("tedarikciler") or []):
+            if _odeme_eslesir(ara, str(_t.get("tedarikci") or "")) or \
+               _odeme_eslesir(str(_t.get("tedarikci") or ""), ara):
+                _kanal_acik = round(float(_t.get("hesaplanan_acik") or 0), 2)
+                break
+    except Exception:
+        _kanal_acik = None
     return {
         "tedarikci": ara,
         "acik_faturalar": acik,
-        "acik_toplam": round(sum(a["kalan"] for a in acik), 2),
+        "acik_toplam": _acik_toplam,
+        # C-2: tahsis defteri ↔ kanal aritmetiği kıyası (None = ölçülemedi)
+        "kanal_hesaplanan_acik": _kanal_acik,
+        "defter_farki": (None if _kanal_acik is None
+                         else round(_acik_toplam - _kanal_acik, 2)),
+        "defter_farki_notu": (
+            "acik_toplam yalnız TAHSİS defterini düşer; kanal_hesaplanan_acik "
+            "ödeme izlerini (vadeli/anlık gider/kart/cari ödeme) de düşer. "
+            "Fark, fatura seviyesinde eşleştirilememiş kanal ödemelerinden "
+            "gelir — FIFO tahsisi yapmadan önce bu farka bakın."),
         # 📜 Devir çizgisinin dışında bırakılanlar GÖRÜNÜR kalır — "neden bu
         # kadar az?" sorusunun cevabı yanıtın içinde olsun.
         "devir_oncesi_elenen_adet": len(_devir_oncesi),
@@ -8274,37 +8677,70 @@ def cari_ode(body: CariOdemeModel):
     # faturası" tanımı doğururdu. Karar defteri boşsa davranış bugünküyle AYNI.
     # ⚠️ Açılış devri (cari_devir) bu havuzda YOK — ödeme legacy devire otomatik
     #    dağıtılmaz; devir kapsama kararı sahibindir (BİRLEŞTİRME ≠ MAHSUP).
-    acik = cari_odenecekler(tedarikci=ted)["acik_faturalar"]
-
-    # ── TAHSİS: elle mi, FIFO mu ──────────────────────────────────────────
-    kalanlar = {str(a["fatura_id"]): a for a in acik if a.get("fatura_id")}
-    dagitim, kalan_para = [], tutar
-    if body.tahsis:
-        for t in body.tahsis:
-            fid = str(t.get("fatura_id") or "")
-            pay = round(float(t.get("tutar") or 0), 2)
-            a = kalanlar.get(fid)
-            if not a or pay <= 0:
-                continue
-            pay = min(pay, a["kalan"], kalan_para)
-            if pay <= 0:
-                continue
-            dagitim.append({**a, "kapatilan": pay, "otomatik": False})
-            kalan_para = round(kalan_para - pay, 2)
-    else:
-        for a in acik:                       # zaten FIFO sıralı (en eski önce)
-            if kalan_para <= 0.01:
-                break
-            pay = min(a["kalan"], kalan_para)
-            dagitim.append({**a, "kapatilan": pay, "otomatik": True})
-            kalan_para = round(kalan_para - pay, 2)
-
-    # ── 1) Ödeme kaydı + plan satırı ──────────────────────────────────────
+    # 🔒 TEDARİKÇİ KİLİDİ (2026-09-01 zincir denetimi) — P0.
+    # Havuz kilitsiz okunuyor, sonra hiçbir yeniden-doğrulama olmadan tahsis
+    # yazılıyordu: aynı anda gelen iki ödeme AYNI `kalan`ı görüp AYNI faturayı
+    # iki kez kapatabiliyordu (kalan 100 iken 100+100 = 200 kapanır, sonraki
+    # okumada negatif kalan `> 0.01` filtresine takılıp fatura sessizce kaybolur).
+    # Advisory lock transaction sonunda kendiliğinden serbest kalır.
     oid = str(uuid.uuid4())
     pid = str(uuid.uuid4())
-    belgesiz = len(acik) == 0            # kapatacak fatura yok → belgesiz ödeme
     with db() as (conn, cur):
         _ensure_cari_odeme_tablolar(cur)
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f"cari_ode_{_cari_katla(ted)}",))
+        acik = cari_odenecekler(tedarikci=ted, defter_kiyas=0)["acik_faturalar"]
+
+        # ── TAHSİS: elle mi, FIFO mu ──────────────────────────────────────
+        kalanlar = {str(a["fatura_id"]): a for a in acik if a.get("fatura_id")}
+        dagitim, kalan_para = [], tutar
+        if body.tahsis:
+            # ⚠️ 2026-09-01: (a) aynı `fatura_id` iki satırla gelirse ikisi de
+            # ORİJİNAL `kalan`dan hesaplanıyordu → tek istekte FAZLA KAPAMA
+            # (kalan 100 iken 60+60 = 120). Artık kalan istek içinde DÜŞÜLÜR.
+            # (b) geçersiz/kapalı fatura_id ve tutar<=0 satırları sessizce
+            # `continue` ile atlanıp yine `ok:True` dönüyordu — kullanıcının
+            # "şu faturayı kapat" niyeti sessizce avansa dönüşüyordu. Artık 400.
+            _yerel_kalan: Dict[str, float] = {}
+            for t in body.tahsis:
+                fid = str(t.get("fatura_id") or "").strip()
+                pay = round(float(t.get("tutar") or 0), 2)
+                a = kalanlar.get(fid)
+                if not a:
+                    raise HTTPException(
+                        400, f"Tahsis satırı geçersiz: '{fid}' bu tedarikçinin "
+                             "açık faturaları arasında değil. Ödeme KAYDEDİLMEDİ.")
+                if pay <= 0:
+                    raise HTTPException(
+                        400, f"Tahsis satırında tutar sıfır/eksi: fatura={fid}. "
+                             "Ödeme KAYDEDİLMEDİ.")
+                _kalan_simdi = _yerel_kalan.get(fid, float(a["kalan"]))
+                pay = min(pay, _kalan_simdi, kalan_para)
+                if pay <= 0:
+                    raise HTTPException(
+                        400, f"Fatura {fid} için kapatılacak bakiye kalmadı "
+                             "(aynı fatura birden çok satırda mı?). Ödeme KAYDEDİLMEDİ.")
+                _yerel_kalan[fid] = round(_kalan_simdi - pay, 2)
+                dagitim.append({**a, "kapatilan": pay, "otomatik": False})
+                kalan_para = round(kalan_para - pay, 2)
+        else:
+            for a in acik:                   # zaten FIFO sıralı (en eski önce)
+                if kalan_para <= 0.01:
+                    break
+                pay = min(a["kalan"], kalan_para)
+                dagitim.append({**a, "kapatilan": pay, "otomatik": True})
+                kalan_para = round(kalan_para - pay, 2)
+
+        # ── 1) Ödeme kaydı + plan satırı + TAHSİS DEFTERİ (TEK TRANSACTION) ──
+        # ⚠️ 2026-09-01 zincir denetimi (P0): bu üç yazım ÜÇ AYRI transaction'daydı
+        # ve sıra şuydu: plan+ödeme commit → para (odeme_yap) → tahsis commit.
+        # Temizlik yalnız `except HTTPException` için vardı. Tahsis INSERT'i
+        # patlarsa: kasada PARA ÇIKMIŞ, planda ödeme var, ama fatura HÂLÂ AÇIK
+        # görünüyordu (`cari-odenecekler` yalnız tahsis defterini okur).
+        # Artık tahsis PARADAN ÖNCE, aynı transaction'da yazılır: para yazımı
+        # düşerse üçü birden geri alınır, para çıktıktan sonra yazılacak
+        # hiçbir şey kalmaz.
+        belgesiz = len(acik) == 0        # kapatacak fatura yok → belgesiz ödeme
         cur.execute(
             """INSERT INTO odeme_plani
                  (id, kart_id, tarih, referans_ay, odenecek_tutar, asgari_tutar,
@@ -8320,22 +8756,6 @@ def cari_ode(body: CariOdemeModel):
                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
             (oid, ted, tutar, tarih, body.odeme_yontemi,
              body.kart_id, body.aciklama, pid, belgesiz))
-        conn.commit()
-
-    # ── 2) PARA YAZMA: mevcut tek yazıcıya delege ─────────────────────────
-    from main import odeme_yap, VadeliOdeModel as _VOM
-    try:
-        odeme_yap(pid, tutar, _VOM(odeme_yontemi=body.odeme_yontemi, kart_id=body.kart_id))
-    except HTTPException:
-        # Para yazılamadıysa ödeme kaydı da kalmasın (yetim kayıt üretme)
-        with db() as (conn2, cur2):
-            cur2.execute("DELETE FROM cari_odeme WHERE id=%s", (oid,))
-            cur2.execute("DELETE FROM odeme_plani WHERE id=%s AND durum='bekliyor'", (pid,))
-            conn2.commit()
-        raise
-
-    # ── 3) Tahsis defteri (append-only) ───────────────────────────────────
-    with db() as (conn, cur):
         for d in dagitim:
             cur.execute(
                 """INSERT INTO cari_odeme_tahsis
@@ -8343,7 +8763,37 @@ def cari_ode(body: CariOdemeModel):
                    VALUES (%s,%s,%s,%s,%s,%s,%s)""",
                 (str(uuid.uuid4()), oid, d.get("fatura_id"), d.get("fatura_no"),
                  d.get("tarih"), d["kapatilan"], d.get("otomatik", True)))
+        # 💰 AVANS SATIRI (2026-09-01) — borçtan FAZLA ödenen tutar eskiden
+        # yalnız yanıt JSON'undaki `avans_kalan` alanında yaşıyordu: pencere
+        # kapanınca "tedarikçide alacağımız var" bilgisine hiçbir uçtan
+        # ulaşılamıyordu. Artık tahsis defterine `fatura_id=NULL` avans satırı
+        # olarak yazılır — append-only defterin doğal yeri.
+        if kalan_para > 0.01:
+            cur.execute(
+                """INSERT INTO cari_odeme_tahsis
+                     (id, odeme_id, fatura_id, fatura_no, fatura_tarih, kapatilan, otomatik)
+                   VALUES (%s,%s,NULL,%s,NULL,%s,TRUE)""",
+                (str(uuid.uuid4()), oid, "(avans)", round(kalan_para, 2)))
         conn.commit()
+
+    # ── 2) PARA YAZMA: mevcut tek yazıcıya delege ─────────────────────────
+    from main import odeme_yap, VadeliOdeModel as _VOM
+    try:
+        odeme_yap(pid, tutar, _VOM(odeme_yontemi=body.odeme_yontemi, kart_id=body.kart_id))
+    except Exception:
+        # Para yazılamadıysa ödeme kaydı da kalmasın (yetim kayıt üretme).
+        # ⚠️ 2026-09-01: eskiden yalnız `except HTTPException` yakalanıyordu —
+        # beklenmedik bir hata (DB/kod) yetim ödeme + tahsis bırakıyordu.
+        # Tahsis defteri de temizlenir: bu ödeme hiç olmadı.
+        try:
+            with db() as (conn2, cur2):
+                cur2.execute("DELETE FROM cari_odeme_tahsis WHERE odeme_id=%s", (oid,))
+                cur2.execute("DELETE FROM cari_odeme WHERE id=%s", (oid,))
+                cur2.execute("DELETE FROM odeme_plani WHERE id=%s AND durum='bekliyor'", (pid,))
+                conn2.commit()
+        except Exception:
+            logger.exception("cari-ode geri alma da basarisiz: odeme_id=%s plan=%s", oid, pid)
+        raise
 
     return {
         "ok": True,

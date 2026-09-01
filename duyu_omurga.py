@@ -35,6 +35,7 @@ from __future__ import annotations
 import json
 import logging
 import uuid
+from datetime import date
 from typing import Any, Optional
 
 from fastapi import APIRouter, Query

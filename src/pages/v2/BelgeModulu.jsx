@@ -304,8 +304,14 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
     if (talepMesgul) return;   // 🔁 (2026-08-12) çift-tık: mükerrer kapatma önle
     setTalepMesgul(true);
     try {
-      const body = tip === 'fatura' ? { durum: 'pdf_geldi', kapanis_tipi: 'fatura' }
-        : tip === 'irsaliye' ? { durum: 'kapandi', kapanis_tipi: 'irsaliye' }
+      // ⚠️ 'fatura' tipi bu uçtan GÖNDERİLMEZ (2026-09-01): sunucu bağlı
+      // fatura yoksa 400 döner — kanıtsız fatura kapanışı artık yasak.
+      if (tip === 'fatura') {
+        onToast?.('Fatura ile kapatma için faturayı yükleyin veya bağlayın');
+        setTalepMesgul(false);
+        return;
+      }
+      const body = tip === 'irsaliye' ? { durum: 'kapandi', kapanis_tipi: 'irsaliye' }
         : { durum: 'kapandi', kapanis_tipi: 'manuel', aciklama: aciklama.trim() };
       await api(`/belge-talep/${t.id}/kapat`, { method: 'POST', body });
       onToast?.(`${t.tedarikci_ad} talebi kapatıldı`);
@@ -1425,7 +1431,8 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                       }}>
                         💬 Fatura iste
                       </button>
-                      <button onClick={() => setKapatForm({ t, tip: sayi(t.gelen_fatura_adet) > 0 ? 'fatura' : 'irsaliye', aciklama: '' })} style={{
+                      <button onClick={() => /* varsayılan artık hep 'irsaliye' — 'fatura' seçeneği kaldırıldı (2026-09-01) */
+                      setKapatForm({ t, tip: 'irsaliye', aciklama: '' })} style={{
                         padding: '6px 12px', borderRadius: 9, cursor: 'pointer',
                         border: `1px solid ${R.cizgi3}`, background: 'transparent',
                         color: R.metin2, fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
@@ -1507,8 +1514,12 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                 {kapatForm.t.tedarikci_ad} — kapanış kanıtı nedir?
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 9 }}>
+                {/* ⚠️ 2026-09-01 zincir denetimi (C-5): "Fatura geldi" seçeneği
+                    KALDIRILDI. Bu uç faturayı ne istiyor ne doğruluyordu; tek tıkla
+                    GRNI (belgesiz borç) kanıtsız düşüyor, kayıt "fatura ile kapandı"
+                    diyor ama bağlı fatura olmuyordu. Fatura kapanışı artık yalnız
+                    gerçek belgeyle: "Fatura yükle" veya "Faturayı bağla". */}
                 {[
-                  ['fatura', '📄 Fatura geldi', 'PDF/foto arşivde — KDV kanıtı tamam'],
                   ['irsaliye', '📋 İrsaliye alındı', 'fatura sonra gelecek, teslim kanıtı var'],
                   ['manuel', '✍️ Diğer (açıklama yaz)', 'iade, iptal, hatalı kayıt vb.'],
                 ].map(([tip, ad, aciklama]) => (

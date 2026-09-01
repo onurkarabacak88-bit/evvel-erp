@@ -7,6 +7,7 @@ X rapor OCR: OPENAI_API_KEY, isteğe OPENAI_X_RAPOR_MODEL (varsayılan gpt-4o-mi
 """
 import base64
 import json
+import logging
 import os
 import pathlib
 import re
@@ -19,7 +20,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, Upload
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
 
-from database import db
+from database import db, savepoint
 from tr_saat import (
     bugun_tr,
     is_gunu_tr,
@@ -56,6 +57,13 @@ from personel_panel_auth import (
     list_personel_panel_secim,
     panel_pin_hash,
 )
+
+# ⚠️ 2026-09-01 denetimi: bu dosyada `logger` HİÇ tanımlı değildi ama
+# `sube_urun_sevk` içindeki belge-talebi hata bloğu `logger.warning(...)`
+# çağırıyordu. Yani hatayı YAKALAYAN blok kendisi NameError atıyordu ve
+# "teslim-al akışı ASLA bozulmaz" sözü çürüyordu: teslim kabulü 500 veriyor,
+# aynı transaction'daki `toptanci_siparis` damgası da geri alınıyordu.
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-panel"])
 
@@ -1207,13 +1215,16 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
             _pid = (getattr(body, "personel_id", "") or "").strip()
             if _pid:
                 try:
-                    cur.execute(
-                        "SELECT COALESCE(erken_acilis_izni, FALSE) AS izin, ad_soyad "
-                        "FROM personel WHERE id=%s AND aktif = TRUE",
-                        (_pid,),
-                    )
-                    _ir = cur.fetchone()
-                    _izinli = bool(_ir and dict(_ir).get("izin"))
+                    # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+                    # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+                    with savepoint(cur, "sp_yut1217"):
+                        cur.execute(
+                            "SELECT COALESCE(erken_acilis_izni, FALSE) AS izin, ad_soyad "
+                            "FROM personel WHERE id=%s AND aktif = TRUE",
+                            (_pid,),
+                        )
+                        _ir = cur.fetchone()
+                        _izinli = bool(_ir and dict(_ir).get("izin"))
                 except Exception:
                     # ⚠️ Sorgu düşerse İZİN VERİLMEZ (fail-closed): kuralı
                     #    hatanın gevşetmesi, kuralı hiç koymamak demektir.
@@ -3248,84 +3259,87 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             # talebi) düş. Böylece "5 istedim 6 sipariş ettim" zincirinde kabul
             # DOĞRU referansla (6) karşılaştırılır, yanlış fazla/eksik alarmı olmaz.
             try:
-                import json as _j2
-                _ref_kaynak = "N1_talep"
-                _orig_kalemler = None
-                # En kesin referans: belirli toptancı siparişinin (bu tedarikçiye
-                # giden) kendi N2 kalemleri. Split'te aggregate yanıltır; satır kesin.
-                if toptanci_siparis_id:
-                    cur.execute(
-                        "SELECT kalemler FROM toptanci_siparis WHERE id=%s AND talep_id=%s",
-                        (toptanci_siparis_id, siparis_talep_id),
-                    )
-                    _ts_row = cur.fetchone()
-                    if _ts_row:
-                        _orig_kalemler = dict(_ts_row).get("kalemler")
-                        _ref_kaynak = "N2_toptanci_siparis"
-                if not _orig_kalemler:
-                    _orig_kalemler = _talep.get("merkez_karar_kalemleri")
-                    if _orig_kalemler:
-                        _ref_kaynak = "N2_merkez"
-                    else:
-                        # N1 = şube talebi kalemleri. 'kalemler_ozet' bir DB kolonu
-                        # DEĞİL (kalemler'den hesaplanan görünüm alanı) → gerçek
-                        # kolon 'kalemler' kullanılır (UndefinedColumn fix 2026-06-16).
-                        _orig_kalemler = _talep.get("kalemler") or []
-                if isinstance(_orig_kalemler, str):
-                    _orig_kalemler = _j2.loads(_orig_kalemler)
-                _orig_map = {}
-                for _ok in (_orig_kalemler or []):
-                    _ad = str(_ok.get("urun_ad") or "").strip().lower()
-                    if _ad:
-                        _orig_map[_ad] = _orig_map.get(_ad, 0) + int(_ok.get("adet") or 0)
-                _kabul_map = {}
-                for _kk in kalemler:
-                    _ad = str(_kk.get("urun_ad") or "").strip().lower()
-                    if _ad:
-                        _kabul_map[_ad] = _kabul_map.get(_ad, 0) + int(_kk.get("adet") or 0)
-                _uyusmazlik_satirlar = []
-                for _ad, _ist in _orig_map.items():
-                    _kab = _kabul_map.get(_ad, 0)
-                    if _kab != _ist:
-                        _satir = {
-                            "urun_ad": _ad, "istenen": _ist, "kabul": _kab, "fark": _kab - _ist,
-                        }
-                        if _varyans_not_map.get(_ad):
-                            _satir["aciklama"] = _varyans_not_map[_ad]
-                        _uyusmazlik_satirlar.append(_satir)
-                # Sadece sipariş listesinde olmayan ekstra ürün de uyarı (fazladan ürün?)
-                for _ad, _kab in _kabul_map.items():
-                    if _ad not in _orig_map:
-                        _satir = {
-                            "urun_ad": _ad, "istenen": 0, "kabul": _kab, "fark": _kab,
-                            "ekstra": True,
-                        }
-                        if _varyans_not_map.get(_ad):
-                            _satir["aciklama"] = _varyans_not_map[_ad]
-                        _uyusmazlik_satirlar.append(_satir)
-                if _uyusmazlik_satirlar:
-                    import json as _j3
-                    _uyari_id = str(uuid.uuid4())
-                    cur.execute(
-                        """
-                        INSERT INTO sube_operasyon_uyari
-                            (id, sube_id, tarih, tip, seviye, mesaj, detay_json,
-                             kapanis_personel_id, kapanis_personel_ad)
-                        VALUES (%s, %s, CURRENT_DATE, 'TOPTANCI_KABUL_FARKI', 'uyari', %s, %s::jsonb, %s, %s)
-                        """,
-                        (
-                            _uyari_id, sube_id,
-                            f"Toptancı teslim kabulü uyuşmazlık ({len(_uyusmazlik_satirlar)} kalem)",
-                            _j3.dumps({
-                                "siparis_talep_id": siparis_talep_id,
-                                "uyusmazlik_satirlar": _uyusmazlik_satirlar,
-                                "referans_kaynak": _ref_kaynak,
-                                "tedarikci_id": tedarikci_id,
-                                "tedarikci_ad": tedarikci_ad,
-                            }, ensure_ascii=False),
-                            pid_panel, onay_ad,
-                        ),
-                    )
+                # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+                # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+                with savepoint(cur, "sp_yut3258"):
+                    import json as _j2
+                    _ref_kaynak = "N1_talep"
+                    _orig_kalemler = None
+                    # En kesin referans: belirli toptancı siparişinin (bu tedarikçiye
+                    # giden) kendi N2 kalemleri. Split'te aggregate yanıltır; satır kesin.
+                    if toptanci_siparis_id:
+                        cur.execute(
+                            "SELECT kalemler FROM toptanci_siparis WHERE id=%s AND talep_id=%s",
+                            (toptanci_siparis_id, siparis_talep_id),
+                        )
+                        _ts_row = cur.fetchone()
+                        if _ts_row:
+                            _orig_kalemler = dict(_ts_row).get("kalemler")
+                            _ref_kaynak = "N2_toptanci_siparis"
+                    if not _orig_kalemler:
+                        _orig_kalemler = _talep.get("merkez_karar_kalemleri")
+                        if _orig_kalemler:
+                            _ref_kaynak = "N2_merkez"
+                        else:
+                            # N1 = şube talebi kalemleri. 'kalemler_ozet' bir DB kolonu
+                            # DEĞİL (kalemler'den hesaplanan görünüm alanı) → gerçek
+                            # kolon 'kalemler' kullanılır (UndefinedColumn fix 2026-06-16).
+                            _orig_kalemler = _talep.get("kalemler") or []
+                    if isinstance(_orig_kalemler, str):
+                        _orig_kalemler = _j2.loads(_orig_kalemler)
+                    _orig_map = {}
+                    for _ok in (_orig_kalemler or []):
+                        _ad = str(_ok.get("urun_ad") or "").strip().lower()
+                        if _ad:
+                            _orig_map[_ad] = _orig_map.get(_ad, 0) + int(_ok.get("adet") or 0)
+                    _kabul_map = {}
+                    for _kk in kalemler:
+                        _ad = str(_kk.get("urun_ad") or "").strip().lower()
+                        if _ad:
+                            _kabul_map[_ad] = _kabul_map.get(_ad, 0) + int(_kk.get("adet") or 0)
+                    _uyusmazlik_satirlar = []
+                    for _ad, _ist in _orig_map.items():
+                        _kab = _kabul_map.get(_ad, 0)
+                        if _kab != _ist:
+                            _satir = {
+                                "urun_ad": _ad, "istenen": _ist, "kabul": _kab, "fark": _kab - _ist,
+                            }
+                            if _varyans_not_map.get(_ad):
+                                _satir["aciklama"] = _varyans_not_map[_ad]
+                            _uyusmazlik_satirlar.append(_satir)
+                    # Sadece sipariş listesinde olmayan ekstra ürün de uyarı (fazladan ürün?)
+                    for _ad, _kab in _kabul_map.items():
+                        if _ad not in _orig_map:
+                            _satir = {
+                                "urun_ad": _ad, "istenen": 0, "kabul": _kab, "fark": _kab,
+                                "ekstra": True,
+                            }
+                            if _varyans_not_map.get(_ad):
+                                _satir["aciklama"] = _varyans_not_map[_ad]
+                            _uyusmazlik_satirlar.append(_satir)
+                    if _uyusmazlik_satirlar:
+                        import json as _j3
+                        _uyari_id = str(uuid.uuid4())
+                        cur.execute(
+                            """
+                            INSERT INTO sube_operasyon_uyari
+                                (id, sube_id, tarih, tip, seviye, mesaj, detay_json,
+                                 kapanis_personel_id, kapanis_personel_ad)
+                            VALUES (%s, %s, CURRENT_DATE, 'TOPTANCI_KABUL_FARKI', 'uyari', %s, %s::jsonb, %s, %s)
+                            """,
+                            (
+                                _uyari_id, sube_id,
+                                f"Toptancı teslim kabulü uyuşmazlık ({len(_uyusmazlik_satirlar)} kalem)",
+                                _j3.dumps({
+                                    "siparis_talep_id": siparis_talep_id,
+                                    "uyusmazlik_satirlar": _uyusmazlik_satirlar,
+                                    "referans_kaynak": _ref_kaynak,
+                                    "tedarikci_id": tedarikci_id,
+                                    "tedarikci_ad": tedarikci_ad,
+                                }, ensure_ascii=False),
+                                pid_panel, onay_ad,
+                            ),
+                        )
             except Exception:
                 pass  # Uyuşmazlık tespit hatası kabul'u engellemez
 
@@ -3462,9 +3476,12 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 _gelen_kod = str(it.get("kalem_kodu") or "").strip()
                 if _gelen_kod:
                     try:
-                        cur.execute("SELECT 1 FROM siparis_urun WHERE id::text=%s LIMIT 1", (_gelen_kod,))
-                        if cur.fetchone():
-                            urun_id = _gelen_kod
+                        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+                        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+                        with savepoint(cur, "sp_yut3472"):
+                            cur.execute("SELECT 1 FROM siparis_urun WHERE id::text=%s LIMIT 1", (_gelen_kod,))
+                            if cur.fetchone():
+                                urun_id = _gelen_kod
                     except Exception:
                         pass
             if urun_id:
@@ -3488,14 +3505,17 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             # kanonik depo "artmadı" görünür (ozel__ kopya tuzağı).
             kalem_kodu = None
             try:
-                cur.execute(
-                    "SELECT id FROM siparis_urun WHERE lower(btrim(ad))=lower(btrim(%s)) "
-                    "ORDER BY (depo_stok_kalem_kodu IS NULL) DESC LIMIT 1",
-                    (urun_ad,),
-                )
-                _ur = cur.fetchone()
-                if _ur:
-                    kalem_kodu = depo_kalem_kodu_resolve(cur, str(dict(_ur)["id"]), urun_ad) or None
+                # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+                # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+                with savepoint(cur, "sp_yut3498"):
+                    cur.execute(
+                        "SELECT id FROM siparis_urun WHERE lower(btrim(ad))=lower(btrim(%s)) "
+                        "ORDER BY (depo_stok_kalem_kodu IS NULL) DESC LIMIT 1",
+                        (urun_ad,),
+                    )
+                    _ur = cur.fetchone()
+                    if _ur:
+                        kalem_kodu = depo_kalem_kodu_resolve(cur, str(dict(_ur)["id"]), urun_ad) or None
             except Exception:
                 kalem_kodu = None
             if not kalem_kodu:
@@ -3503,34 +3523,108 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             sube_depo_stok_depo_giris_ekle(cur, sube_id, kalem_kodu, urun_ad, adet_i)
 
         if teslim_durumu == "eksik_var":
-            cur.execute(
-                """
-                SELECT id, personel_id, personel_ad
-                FROM siparis_talep
-                WHERE sube_id=%s AND tarih=CURRENT_DATE
-                ORDER BY olusturma DESC
-                LIMIT 1
-                """,
-                (sube_id,),
-            )
-            sr = cur.fetchone()
-            sip_tid = None
+            # 🎯 TALEP BAĞI TAHMİN DEĞİL, GERÇEK (2026-09-01 zincir denetimi).
+            # Kayıt "bu şubenin BUGÜNKÜ EN SON talebi"ne iliştiriliyordu.
+            # Şube sabah A, öğlen B siparişi verdiyse ve akşam A'nın malı eksik
+            # geldiyse eksik B'ye ve B'yi açan PERSONELE yazılıyordu — yanlış
+            # kişi, yanlış sipariş. Teslim ekranı `siparis_talep_id`yi ZATEN
+            # gönderiyor; önce o kullanılır, yoksa eski tahmine düşülür.
+            sip_tid = siparis_talep_id
             sip_pid = None
             sip_pad = None
-            if sr:
-                sd = dict(sr)
-                sip_tid = sd.get("id")
-                sip_pid = sd.get("personel_id")
-                sip_pad = sd.get("personel_ad")
+            if sip_tid:
+                cur.execute(
+                    "SELECT personel_id, personel_ad FROM siparis_talep WHERE id=%s",
+                    (sip_tid,),
+                )
+                sr = cur.fetchone()
+                if sr:
+                    sd = dict(sr)
+                    sip_pid = sd.get("personel_id")
+                    sip_pad = sd.get("personel_ad")
+                else:
+                    sip_tid = None      # gönderilen id geçersizse bağ kurma
+            if not sip_tid:
+                cur.execute(
+                    """
+                    SELECT id, personel_id, personel_ad
+                    FROM siparis_talep
+                    WHERE sube_id=%s AND tarih=CURRENT_DATE
+                    ORDER BY olusturma DESC
+                    LIMIT 1
+                    """,
+                    (sube_id,),
+                )
+                sr = cur.fetchone()
+                if sr:
+                    sd = dict(sr)
+                    sip_tid = sd.get("id")
+                    sip_pid = sd.get("personel_id")
+                    sip_pad = sd.get("personel_ad")
+            # 📦 EKSİK KALEMLER YAPILANDIRILMIŞ YAZILIR: teslim ekranı kalem
+            # kalem "kaç geldi" diyor; istenen ile gelen arasındaki fark
+            # doğrudan buradan türer. Serbest metin artık TEK kaynak değil.
+            # `kalemler` GELEN adetleri taşır (istenen yok). İstenen adet
+            # talebin kendi kaydından okunur; fark burada türer.
+            _eksik_kalemler: List[Dict[str, Any]] = []
+            try:
+                with savepoint(cur, "sp_eksik_kalem_turet"):
+                    _gelen_map: Dict[str, int] = {}
+                    _gelen_ad: Dict[str, str] = {}
+                    for _k in (kalemler or []):
+                        if not isinstance(_k, dict):
+                            continue
+                        _ad_k = _ad_anahtar_tr(_k.get("urun_ad"))
+                        _id_k = str(_k.get("urun_id") or "").strip()
+                        _key = _id_k or _ad_k
+                        if not _key:
+                            continue
+                        _gelen_map[_key] = _gelen_map.get(_key, 0) + int(_k.get("adet") or 0)
+                        _gelen_ad[_key] = str(_k.get("urun_ad") or "").strip()
+                        if _id_k and _ad_k:
+                            _gelen_map.setdefault(_ad_k, _gelen_map[_key])
+                    _istenen_kaynak = []
+                    if sip_tid:
+                        cur.execute(
+                            "SELECT kalemler FROM siparis_talep WHERE id=%s", (sip_tid,))
+                        _tr2 = cur.fetchone()
+                        if _tr2:
+                            _ik = dict(_tr2).get("kalemler") or []
+                            if isinstance(_ik, str):
+                                _ik = json.loads(_ik)
+                            if isinstance(_ik, list):
+                                _istenen_kaynak = _ik
+                    for _ik1 in _istenen_kaynak:
+                        if not isinstance(_ik1, dict) or _ik1.get("iptal"):
+                            continue
+                        _ist = int(_ik1.get("adet") or 0)
+                        if _ist <= 0:
+                            continue
+                        _id1 = str(_ik1.get("urun_id") or "").strip()
+                        _ad1 = _ad_anahtar_tr(_ik1.get("urun_ad"))
+                        _gel = _gelen_map.get(_id1) if _id1 in _gelen_map else _gelen_map.get(_ad1, 0)
+                        _gel = max(0, int(_gel or 0))
+                        if _gel < _ist:
+                            _eksik_kalemler.append({
+                                "urun_id": _id1 or None,
+                                "urun_ad": str(_ik1.get("urun_ad") or "").strip() or None,
+                                "istenen_adet": _ist,
+                                "gelen_adet": _gel,
+                                "eksik_adet": _ist - _gel,
+                            })
+            except Exception:
+                logger.warning("eksik kalem listesi turetilemedi (kayit yine acilir)",
+                               exc_info=True)
             cur.execute(
                 """
                 INSERT INTO siparis_sevk_eksik
                     (sube_id, tarih, tedarikci_id, tedarikci_ad, teslim_durumu,
-                     eksik_kategori, eksik_aciklama, siparis_talep_id, siparis_personel_id,
+                     eksik_kategori, eksik_aciklama, eksik_kalemler,
+                     siparis_talep_id, siparis_personel_id,
                      siparis_personel_ad, bildiren_personel_id, bildiren_personel_ad)
                 VALUES
                     (%s, CURRENT_DATE, %s, %s, %s,
-                     %s, %s, %s, %s,
+                     %s, %s, %s::jsonb, %s, %s,
                      %s, %s, %s)
                 """,
                 (
@@ -3540,6 +3634,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                     teslim_durumu,
                     eksik_kat,
                     eksik_acik,
+                    json.dumps(_eksik_kalemler, ensure_ascii=False),
                     sip_tid,
                     sip_pid,
                     sip_pad,
@@ -4551,10 +4646,19 @@ def _siparis_kalem_ozet_from_json(kalemler: Any) -> List[Dict[str, Any]]:
     for x in kms:
         if not isinstance(x, dict):
             continue
+        # 🚫 İPTAL BAYRAĞI OKUNUR (2026-09-01 zincir denetimi).
+        # `kalem-iptal` kalemi SİLMİYOR, `iptal:true` damgalıyor (doğru karar —
+        # iz kalsın). Ama bu özet bayrağa hiç bakmıyordu: merkez iptal ettiği
+        # hâlde şube ekranı kalemi adediyle "istenmiş" gösteriyor ve şube malı
+        # beklemeye devam ediyordu. `bekliyor` aşamasındaki iptalin başka
+        # görünür izi yok (kalem_durumlari yalnız yönlendirme SONRASI doğar).
+        _iptalli = bool(x.get("iptal"))
         ozet.append(
             {
                 "urun_ad": (x.get("urun_ad") or "").strip(),
-                "adet": int(x.get("adet") or 0),
+                "adet": 0 if _iptalli else int(x.get("adet") or 0),
+                "istenen_adet": int(x.get("adet") or 0),
+                "iptal": _iptalli,
                 "tek_sefer": bool(x.get("ozel_tek_sefer")),
             }
         )
@@ -4601,7 +4705,11 @@ def _siparis_kalem_duzenle_panel(
                 match = kd
                 mj = j
                 break
-            if (not uid or not kd_uid) and uad and kd_ad == uad:
+            # ⚠️ 2026-09-01 zincir denetimi: ID yoksa eşleşme BİREBİR
+            # `kd_ad == uad` idi — büyük/küçük harf, çift boşluk ve özellikle
+            # Türkçe 'İ' farkında eşleşme kaçıyor, kalem `bekliyor` /
+            # `gonderilen_adet=0` tarafına düşüyor ve "tamamı eksik" sayılıyordu.
+            if (not uid or not kd_uid) and uad and _ad_anahtar_tr(kd_ad) == _ad_anahtar_tr(uad):
                 match = kd
                 mj = j
                 break
@@ -4611,7 +4719,11 @@ def _siparis_kalem_duzenle_panel(
         if not dur:
             dur = "var" if not kd_list else "bekliyor"
         gon = int((match.get("gonderilen_adet") if match else 0) or 0)
-        if not for_kalan and dur == "var" and gon <= 0 and ist > 0:
+        # ⚠️ 2026-09-01 (P0): bu tamamlama YALNIZ `for_kalan=False` dalında
+        # yapılıyordu. Aynı veri normal görünümde "10 gönderildi", "kalan"
+        # görünümünde "10 eksik" oluyordu — operatör aynı 10 adedi ikinci kez
+        # sevke çıkarabiliyordu. Normalizasyon TEK yerde ve HER İKİ görünümde.
+        if dur == "var" and gon <= 0 and ist > 0:
             gon = ist
         notu = None
         if match:
@@ -4667,6 +4779,15 @@ def _depo_kalan_kalemleri_listesi(
                 continue
             gon = int(row.get("gonderilen_adet") or 0)
             dur = str(row.get("durum") or "").strip().lower()
+            # 🔀 DEPO DIŞI KALEM "KALAN" DEĞİLDİR (2026-09-01 zincir denetimi).
+            # Kısmi yönlendirmede merkez, depoya göndermediği kalemleri iz
+            # kalsın diye kayıtta BIRAKIYOR (`gonderilen_adet=0` ile). Bu
+            # satırlar depo panelinde "eksik kalan" olarak DİRİLİYOR ve depocu
+            # toptancıdan gelecek ya da iptal edilmiş malı "benim borcum"
+            # sanıyordu — topladığında aynı mal iki kanaldan geliyordu.
+            # Çift-kanal freninin engellemeye çalıştığı şey arka kapıdan olurdu.
+            if dur in ("merkez_iptal", "toptanciya_gitti", "depoya_yonlendirilmedi"):
+                continue
             kalan = max(0, ist - gon)
             if kalan <= 0:
                 continue
@@ -5207,6 +5328,22 @@ def sube_siparis_akisi(
             depo_hazirlik_toplam = len(depo_hazirlik)
 
         depo_kalan_kalemleri = _depo_kalan_kalemleri_listesi(cur, sube_id, gun_i, lim)
+        # 📏 SESSİZ KESME DÜRÜSTLÜĞÜ (2026-09-01 zincir denetimi): liste
+        # LIMIT'e kesiliyor ama cevapta ne toplam ne `has_more` vardı — panel
+        # ilk sayfayı "tüm eksikler" gibi sunabiliyordu. Kesildiyse söylenir.
+        try:
+            with savepoint(cur, "sp_depo_kalan_toplam"):
+                cur.execute(
+                    """SELECT COUNT(*) AS c FROM siparis_talep t
+                        WHERE COALESCE(t.hedef_depo_sube_id, t.sevkiyat_sube_id) = %s
+                          AND t.tarih >= CURRENT_DATE - (%s * INTERVAL '1 day')
+                          AND t.durum IN ('hazirlaniyor','gonderildi')""",
+                    (sube_id, max(1, min(90, int(gun_i)))),
+                )
+                _dk_toplam = int((dict(cur.fetchone() or {})).get("c") or 0)
+        except Exception:
+            _dk_toplam = len(depo_kalan_kalemleri)
+        depo_kalan_kesildi = _dk_toplam > len(depo_kalan_kalemleri)
 
         cur.execute(
             f"""
@@ -5252,6 +5389,8 @@ def sube_siparis_akisi(
         "depo_hazirlik_sayisi": depo_hazirlik_toplam,
         "depo_gonderilenler": depo_gonderilenler,
         "depo_kalan_kalemleri": depo_kalan_kalemleri,
+        "depo_kalan_talep_toplam": _dk_toplam,
+        "depo_kalan_kesildi": depo_kalan_kesildi,
     }
 
 
@@ -5290,12 +5429,21 @@ def sube_siparis_teslim_kabul(sube_id: str, body: SubeSiparisTeslimKabulBody):
                 400,
                 f"Teslim onayı bu sipariş durumunda yapılamaz (şu an: {st or '—'})",
             )
+        # 🔒 KİLİT (2026-09-01 zincir denetimi): talep durumu ve bekleyen
+        # paketler yalnız OKUNUYORDU — FOR UPDATE, advisory lock veya yazma
+        # noktasında ikinci bir tekrar-işleme kontrolü yoktu. İki eşzamanlı
+        # istek (çift tık / mobil yeniden gönderim) AYNI paketleri görüp
+        # ikisi de motora sokabiliyordu. Kilit talep bazında alınır ve
+        # transaction bitince kendiliğinden serbest kalır.
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    (f"siparis_teslim_kabul_{tid}",))
         cur.execute(
             """
             SELECT id, kalem_kodu, kalem_adi, sevk_adet
             FROM stok_yolda
             WHERE siparis_talep_id=%s AND sube_id=%s AND durum='yolda'
             ORDER BY sevk_ts ASC NULLS LAST, id ASC
+            FOR UPDATE
             """,
             (tid, sube_id),
         )
@@ -5306,11 +5454,23 @@ def sube_siparis_teslim_kabul(sube_id: str, body: SubeSiparisTeslimKabulBody):
                 "Yolda bekleyen paket kalemi yok — depo sevk çıkışı tamamlanmamış olabilir.",
             )
         bekleyen_ids = {str(r.get("id") or "") for r in bekleyen_yolda}
-        gonderilen_ids = {
-            str((k.yolda_id or "").strip())
-            for k in body.kabul
-            if str((k.yolda_id or "").strip())
-        }
+        # ⚠️ MÜKERRER SATIR REDDİ (2026-09-01 zincir denetimi).
+        # Doğrulama `set` üzerinden yapıldığı için aynı `yolda_id`nin birden
+        # çok kez gelmesi GÖRÜNMÜYORDU; kontrol yalnız "DB'de olmayan ID var mı"
+        # sorusunu ölçüyordu. Yinelenen satırlar temizlenmeden motora aynen
+        # geçiyor ve aynı paket iki ayrı kabul girdisi olarak işlenebiliyordu.
+        _gonderilen_liste = [str((k.yolda_id or "").strip())
+                             for k in body.kabul
+                             if str((k.yolda_id or "").strip())]
+        _tekrar = {x for x in _gonderilen_liste
+                   if _gonderilen_liste.count(x) > 1}
+        if _tekrar:
+            raise HTTPException(
+                400,
+                f"Aynı paket kabul listesinde birden çok kez var "
+                f"({len(_tekrar)} paket) — çift tık olabilir. Sayfayı yenileyin.",
+            )
+        gonderilen_ids = set(_gonderilen_liste)
         # Sadece DB'de olmayan yabancı ID'leri reddet; eksik veya kısmi gönderim
         # sube_kabul_kaydet() içindeki dual-matching (ID → kalem_kodu) tarafından
         # graceful işlenir ve gerekirse kabul_uyusmazlik kaydı açılır.
@@ -5490,6 +5650,14 @@ def _siparis_bekliyor_yonlendirilmemis(cur, sube_id: str) -> Optional[Dict]:
           AND durum = 'bekliyor'
           AND (hedef_depo_sube_id IS NULL OR hedef_depo_sube_id = '')
           AND (sevkiyat_sube_id   IS NULL OR sevkiyat_sube_id   = '')
+          -- ⏳ TARİH PENCERESİ (2026-09-01 zincir denetimi): filtre YOKTU.
+          -- Merkezde unutulmuş, günler önce açılmış bir talep hâlâ
+          -- "yönlendirilmemiş bekliyor" olduğu için merge hedefi oluyordu;
+          -- şubenin bekleyen-listesi ise yalnız `tarih=CURRENT_DATE`
+          -- gösterdiğinden şube eklediği kalemleri EKRANDA GÖREMİYORDU.
+          -- 2 günlük pencere: aynı/dünkü siparişe eklemek meşru, haftalık
+          -- bir zombi talebe eklemek değil.
+          AND tarih >= CURRENT_DATE - INTERVAL '2 day'
         ORDER BY olusturma DESC
         LIMIT 1
         FOR UPDATE
@@ -5500,29 +5668,61 @@ def _siparis_bekliyor_yonlendirilmemis(cur, sube_id: str) -> Optional[Dict]:
     return dict(row) if row else None
 
 
+def _ad_anahtar_tr(s: Any) -> str:
+    """Türkçe-duyarlı ad normalleştirici (2026-09-01 zincir denetimi).
+
+    ⚠️ Ham `.lower()` iki ayrı yerde kalemi kaybettiriyordu:
+      · Python'da `'İ'.lower()` → `'i'` + U+0307 (birleştirici nokta), yani
+        "FİLTRE KAHVE".lower() ≠ "Filtre Kahve".lower() — aynı ürün iki satır.
+      · Çift boşluk / noktalama farkı da ayrı anahtar üretiyordu.
+    Sunucunun sipariş tarafında zaten `ad_anahtar()` var; şube tarafı ondan
+    sapmıştı. Burada aynı davranış yerelde kurulur (import döngüsü olmasın).
+    """
+    m = str(s or "").replace("I", "ı").replace("İ", "i").lower()
+    m = re.sub(r"[^0-9a-zçğıöşü]+", " ", m)
+    return " ".join(m.split())
+
+
 def _kalem_merge(mevcut: List[Dict], yeni: List[Dict]) -> List[Dict]:
     """
     İki kalem listesini birleştirir.
     Aynı ürün (urun_id öncelikli, yoksa urun_ad normalize) varsa adet toplanır.
+
+    ⚠️ 2026-09-01 zincir denetimi (P0): anahtar `urun_id or urun_ad.lower()` idi.
+    Aynı ürünün bir kaydı ID'li, diğeri ID'siz gelirse anahtarlar HİÇ kesişmiyor
+    ("u-42" vs "filtre kahve") ve adetler TOPLANMIYORDU — talep iki satır olup
+    depo aynı ürünü iki kalem sanıyordu. Artık her kayıt HEM kimliğiyle HEM
+    normalize adıyla indekslenir; ID'siz gelen kayıt ID'li kardeşini bulur.
     """
     sonuc: Dict[str, Dict] = {}
-    for k in mevcut:
-        anahtar = (str(k.get("urun_id") or "").strip()
-                   or str(k.get("urun_ad") or "").strip().lower())
-        if not anahtar:
-            continue
-        sonuc[anahtar] = dict(k)
+    ad_index: Dict[str, str] = {}   # normalize ad -> sonuc anahtarı
 
-    for k in yeni:
+    def _yerlestir(k: Dict, topla: bool) -> None:
         uid = str(k.get("urun_id") or "").strip()
-        uad = str(k.get("urun_ad") or "").strip()
-        anahtar = uid or uad.lower()
-        if not anahtar:
-            continue
-        if anahtar in sonuc:
-            sonuc[anahtar]["adet"] = int(sonuc[anahtar].get("adet") or 0) + int(k.get("adet") or 0)
-        else:
+        uad = _ad_anahtar_tr(k.get("urun_ad"))
+        # Mevcut kaydı önce KİMLİKLE, bulunamazsa NORMALİZE ADLA ara.
+        anahtar = uid if (uid and uid in sonuc) else (ad_index.get(uad) if uad else None)
+        if anahtar is None:
+            anahtar = uid or uad
+            if not anahtar:
+                return
             sonuc[anahtar] = dict(k)
+            if uad:
+                ad_index[uad] = anahtar
+            return
+        if topla:
+            sonuc[anahtar]["adet"] = (int(sonuc[anahtar].get("adet") or 0)
+                                      + int(k.get("adet") or 0))
+            # Kimlik sonradan geldiyse kaydı zenginleştir (ID'li hâli daha güçlü).
+            if uid and not str(sonuc[anahtar].get("urun_id") or "").strip():
+                sonuc[anahtar]["urun_id"] = uid
+        if uad:
+            ad_index.setdefault(uad, anahtar)
+
+    for k in mevcut:
+        _yerlestir(k, topla=False)
+    for k in yeni:
+        _yerlestir(k, topla=True)
 
     return list(sonuc.values())
 
@@ -5597,10 +5797,18 @@ def sube_siparis_kalem_ekle(sube_id: str, body: SiparisOnayBody):
                 for k in temiz
             }
 
+            # 🔢 `kalem_surum` ARTIRILIR (2026-09-01 zincir denetimi).
+            # Merkezin bayat-pencere kilidi (`sevkiyata-gonder`, kalem_surum
+            # karşılaştırması) BU alana dayanıyor ama kalem eklerken sürüm
+            # artmıyordu: operatörün ekranı bayatladığı hâlde sürüm eşleşiyor,
+            # 409 çalışmıyordu. Sonuç: sonradan eklenen kalem operatörün eski
+            # seçiminde olmadığı için 'depoya_yonlendirilmedi' damgalanıyor ve
+            # `atlanan.secilmedi` içinde kayboluyordu — şube o ürünü bekliyordu.
             cur.execute(
                 """
                 UPDATE siparis_talep
                 SET kalemler       = %s::jsonb,
+                    kalem_surum    = COALESCE(kalem_surum, 0) + 1,
                     not_aciklama   = CASE
                                        WHEN not_aciklama IS NULL THEN %s
                                        ELSE not_aciklama || ' | ' || %s
@@ -5662,11 +5870,17 @@ def sube_siparis_kalem_ekle(sube_id: str, body: SiparisOnayBody):
                 personel_id=pid_panel, personel_ad=onay_ad,
                 bildirim_saati=saat,
             )
+            # 🛟 SAVEPOINT ŞART (2026-09-01 denetimi): bu çağrı içeride SQL
+            # koşturur. Savepoint'siz yutulan bir SQL hatası transaction'ı
+            # ABORT eder; aşağıdaki `conn.commit()` PostgreSQL'de sessizce
+            # ROLLBACK'e döner ve uç yine "yeni_siparis" + talep_id döner.
+            # Yani şube "sipariş verildi" görürken kuyrukta HİÇBİR ŞEY olmaz.
             try:
-                from operasyon_stok_motor import siparis_olustu_kaydet
-                siparis_olustu_kaydet(cur, tid, sube_id, temiz, pid_panel, onay_ad)
+                with savepoint(cur, "sp_siparis_olustu_merge"):
+                    from operasyon_stok_motor import siparis_olustu_kaydet
+                    siparis_olustu_kaydet(cur, tid, sube_id, temiz, pid_panel, onay_ad)
             except Exception:
-                pass
+                traceback.print_exc()
             conn.commit()
             return {
                 "islem":              "yeni_siparis",
@@ -5788,17 +6002,22 @@ def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
             bildirim_saati=saat,
         )
         # Davranış kontrol motoru: GEREKSIZ_SIPARIS + FAZLA_FREKANS
+        # 🛟 SAVEPOINT ŞART — bkz. merge dalındaki aynı gerekçe: yutulan SQL
+        # hatası transaction'ı abort eder ve `db()` çıkışındaki commit sessiz
+        # ROLLBACK olur; uç yine {"success": true, "talep_id": ...} döner.
         try:
-            from operasyon_stok_motor import siparis_olustu_kaydet
-            siparis_olustu_kaydet(cur, tid, sube_id, temiz, pid_panel, onay_ad)
+            with savepoint(cur, "sp_siparis_olustu_onay"):
+                from operasyon_stok_motor import siparis_olustu_kaydet
+                siparis_olustu_kaydet(cur, tid, sube_id, temiz, pid_panel, onay_ad)
         except Exception:
             traceback.print_exc()
         # Eksik kullanım kontrolü: stok var ama sipariş geliyorsa uyar
         try:
-            from operasyon_stok_motor import eksik_kullanim_kontrol
-            eksik_kullanim_kontrol(cur)
+            with savepoint(cur, "sp_eksik_kullanim"):
+                from operasyon_stok_motor import eksik_kullanim_kontrol
+                eksik_kullanim_kontrol(cur)
         except Exception:
-            pass
+            traceback.print_exc()
         out: Dict[str, Any] = {
             "success": True,
             "talep_id": tid,
@@ -5839,6 +6058,15 @@ def sube_siparis_yoklama(sube_id: str, body: SiparisYoklamaBody):
 
     with db() as (conn, cur):
         _sube_getir(cur, sube_id)
+        # 🚪 AYNI KAPILAR (2026-09-01 zincir denetimi): PIN'li üç uç
+        # (/siparis-onay, /siparis-kalem-ekle, /siparis-ozel-talep) hem kasa
+        # hem şube açılış kapısından geçiyordu; QR yolu HİÇBİRİNDEN geçmiyordu.
+        # Bir uç kapıyı atlıyorsa kapı yoktur: "kasa açılmadan sipariş verilemez"
+        # kuralı QR'dan deliniyordu. Kural tek olmalı.
+        if not _bugun_kasa_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Önce günlük kasa kilidini PIN ile açmalısınız.")
+        if not _bugun_sube_acildi_mi(cur, sube_id):
+            raise HTTPException(403, "Şube açılışı tamamlanmadan sipariş verilemez.")
         # Yoklama kontrolü — QR oturumu geçerli mi?
         cur.execute("""
             SELECT id FROM gorev_yoklama
@@ -5887,9 +6115,11 @@ def sube_siparis_yoklama(sube_id: str, body: SiparisYoklamaBody):
         operasyon_defter_ekle(cur, sube_id, "SIPARIS_YOKLAMA",
             f"QR sipariş — personel={onay_ad} kalem={len(temiz)} adet={toplam}",
             personel_id=pid_in, personel_ad=onay_ad, bildirim_saati=saat)
+        # 🛟 SAVEPOINT ŞART — yoklama yolunda da aynı sessiz-kayıp riski var.
         try:
-            from operasyon_stok_motor import siparis_olustu_kaydet
-            siparis_olustu_kaydet(cur, tid, sube_id, temiz, pid_in, onay_ad)
+            with savepoint(cur, "sp_siparis_olustu_yoklama"):
+                from operasyon_stok_motor import siparis_olustu_kaydet
+                siparis_olustu_kaydet(cur, tid, sube_id, temiz, pid_in, onay_ad)
         except Exception:
             traceback.print_exc()
         conn.commit()

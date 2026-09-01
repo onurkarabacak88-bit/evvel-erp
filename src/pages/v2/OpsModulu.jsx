@@ -1777,12 +1777,27 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         not_aciklama: '',
       };
     });
-    // Daha önce kaydedilmiş hazırlık varsa üstüne yaz (aynı eşleme kuralı:
-    // urun_id + urun_ad — SevkiyatHazirlama.jsx ile birebir)
+    // Daha önce kaydedilmiş hazırlık varsa üstüne yaz.
+    // ⚠️ 2026-09-01 zincir denetimi: eşleşme "urun_id VE urun_ad birebir eşit"
+    // idi. Ürün adı değişince (ops/siparis/urun-ad · sync-urun-adlari) iki
+    // JSONB ayrışıyor, findIndex -1 dönüyor ve KAYDEDİLMİŞ HAZIRLIK SESSİZCE
+    // ATILIYORDU: `depo_disi` damgalı kalem ("toptancıya gitti"/"merkez iptal")
+    // varsayılana düşüp "var, tam adet" görünüyor ve İKİNCİ KEZ sevk ediliyordu.
+    // Sunucu tarafı `ad_anahtar()` ile normalize ediyor; ekran ondan katıydı.
+    // Artık: önce KİMLİK, kimlik yoksa NORMALİZE AD (Türkçe-duyarlı).
+    const _adAnahtar = (s) => String(s || '')
+      .toLocaleLowerCase('tr')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim();
     (seciliTalep.kalem_durumlari || []).forEach((d) => {
-      const idx = (seciliTalep.kalemler || []).findIndex(
-        (k) => (k?.urun_id || '') === (d?.urun_id || '') && (k?.urun_ad || '') === (d?.urun_ad || ''),
-      );
+      const dId = String(d?.urun_id || '').trim();
+      const dAd = _adAnahtar(d?.urun_ad);
+      let idx = dId
+        ? (seciliTalep.kalemler || []).findIndex((k) => String(k?.urun_id || '').trim() === dId)
+        : -1;
+      if (idx < 0 && dAd) {
+        idx = (seciliTalep.kalemler || []).findIndex((k) => _adAnahtar(k?.urun_ad) === dAd);
+      }
       if (idx >= 0) {
         // ── 🔀 SEVK DIŞI KALEM (kısmi yönlendirme, 2026-08-29) ─────────────
         // Merkez siparişin yalnız bir kısmını depoya yolladıysa geri kalan

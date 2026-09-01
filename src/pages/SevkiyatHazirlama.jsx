@@ -110,8 +110,23 @@ export default function SevkiyatHazirlama() {
       const key = `${k?.urun_id || ''}:${k?.urun_ad || ''}:${i}`;
       next[key] = { urun_id: k?.urun_id || null, urun_ad: k?.urun_ad || null, durum: 'var', gonderilen_adet: Number(k?.adet || 0), not_aciklama: '' };
     });
+    // ⚠️ 2026-09-01 zincir denetimi: eşleşme "urun_id VE urun_ad birebir eşit"
+    // idi; ürün adı değişince iki JSONB ayrışıp kaydedilmiş hazırlık sessizce
+    // atılıyor, `depo_disi` kalem "var, tam adet" olarak dirilip ikinci kez
+    // sevk edilebiliyordu. Önce KİMLİK, kimlik yoksa NORMALİZE AD.
+    const _adAnahtar = (s) => String(s || '')
+      .toLocaleLowerCase('tr')
+      .replace(/[^\p{L}\p{N}]+/gu, ' ')
+      .trim();
     (secili.kalem_durumlari || []).forEach((d) => {
-      const idx = (secili.kalemler || []).findIndex((k) => (k?.urun_id || '') === (d?.urun_id || '') && (k?.urun_ad || '') === (d?.urun_ad || ''));
+      const _dId = String(d?.urun_id || '').trim();
+      const _dAd = _adAnahtar(d?.urun_ad);
+      let idx = _dId
+        ? (secili.kalemler || []).findIndex((k) => String(k?.urun_id || '').trim() === _dId)
+        : -1;
+      if (idx < 0 && _dAd) {
+        idx = (secili.kalemler || []).findIndex((k) => _adAnahtar(k?.urun_ad) === _dAd);
+      }
       const key = idx >= 0 ? `${secili.kalemler[idx]?.urun_id || ''}:${secili.kalemler[idx]?.urun_ad || ''}:${idx}` : `${d?.urun_id || ''}:${d?.urun_ad || ''}:${Math.random()}`;
       next[key] = {
         urun_id: d?.urun_id || null,

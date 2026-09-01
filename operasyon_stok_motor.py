@@ -825,8 +825,11 @@ def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
     # 1) Aktif katalog ürünleri: id → ad haritası (UUID tabanlı key için)
     aktif_urun_map: Dict[str, str] = {}
     try:
-        cur.execute("SELECT id, ad FROM siparis_urun WHERE aktif = TRUE")
-        aktif_urun_map = {str(r["id"]): str(r["ad"]) for r in cur.fetchall()}
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut827"):
+            cur.execute("SELECT id, ad FROM siparis_urun WHERE aktif = TRUE")
+            aktif_urun_map = {str(r["id"]): str(r["ad"]) for r in cur.fetchall()}
     except Exception:
         pass
 
@@ -923,16 +926,19 @@ def merkez_stok_kart_guncelle(cur: Any) -> List[Dict[str, Any]]:
     aktif_kodlar = {r["kalem_kodu"] for r in rows}
     # Stale satırları temizle: katalog__ (eski format) ve urun__ (yeni format) dahil
     try:
-        cur.execute(
-            "SELECT kalem_kodu FROM merkez_stok_kart WHERE kalem_kodu LIKE 'katalog__%' OR kalem_kodu LIKE 'urun__%'"
-        )
-        eski = {row["kalem_kodu"] for row in cur.fetchall()}
-        silincekler = (eski - aktif_kodlar) | set(MERKEZ_GIZLI_KODLAR)
-        if silincekler:
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut925"):
             cur.execute(
-                "DELETE FROM merkez_stok_kart WHERE kalem_kodu = ANY(%s)",
-                (list(silincekler),),
+                "SELECT kalem_kodu FROM merkez_stok_kart WHERE kalem_kodu LIKE 'katalog__%' OR kalem_kodu LIKE 'urun__%'"
             )
+            eski = {row["kalem_kodu"] for row in cur.fetchall()}
+            silincekler = (eski - aktif_kodlar) | set(MERKEZ_GIZLI_KODLAR)
+            if silincekler:
+                cur.execute(
+                    "DELETE FROM merkez_stok_kart WHERE kalem_kodu = ANY(%s)",
+                    (list(silincekler),),
+                )
     except Exception:
         pass
 
@@ -988,17 +994,20 @@ def sevk_vs_ac_uyarilari(cur: Any, sube_id: str) -> List[Dict[str, Any]]:
             )
             fark = float(a - s)
             try:
-                cur.execute(
-                    """
-                    INSERT INTO sube_operasyon_uyari (id, sube_id, tarih, tip, seviye, fark_tl, mesaj)
-                    VALUES (%s, %s, CURRENT_DATE, 'URUN_AC_UYUMSUZLUK', 'kritik', %s, %s)
-                    ON CONFLICT (id) DO UPDATE SET
-                        mesaj   = EXCLUDED.mesaj,
-                        fark_tl = EXCLUDED.fark_tl,
-                        okundu  = FALSE
-                    """,
-                    (uid, sube_id, fark, msg),
-                )
+                # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+                # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+                with savepoint(cur, "sp_yut990"):
+                    cur.execute(
+                        """
+                        INSERT INTO sube_operasyon_uyari (id, sube_id, tarih, tip, seviye, fark_tl, mesaj)
+                        VALUES (%s, %s, CURRENT_DATE, 'URUN_AC_UYUMSUZLUK', 'kritik', %s, %s)
+                        ON CONFLICT (id) DO UPDATE SET
+                            mesaj   = EXCLUDED.mesaj,
+                            fark_tl = EXCLUDED.fark_tl,
+                            okundu  = FALSE
+                        """,
+                        (uid, sube_id, fark, msg),
+                    )
             except Exception:
                 pass  # DB yazımı başarısız olsa da sanal liste dönmeye devam eder
             out.append({
@@ -1013,10 +1022,13 @@ def sevk_vs_ac_uyarilari(cur: Any, sube_id: str) -> List[Dict[str, Any]]:
         else:
             # Uyumsuzluk giderildi — günün kaydını temizle
             try:
-                cur.execute(
-                    "DELETE FROM sube_operasyon_uyari WHERE id=%s",
-                    (uid,),
-                )
+                # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+                # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+                with savepoint(cur, "sp_yut1015"):
+                    cur.execute(
+                        "DELETE FROM sube_operasyon_uyari WHERE id=%s",
+                        (uid,),
+                    )
             except Exception:
                 pass
     return out
@@ -2541,6 +2553,96 @@ def siparis_rezerve_kaynak_depoya_tasi(
             (yeni, kk, kalem_adi, ta),
         )
 
+def tahsis_rezerv_iade(cur: Any, siparis_talep_id: str,
+                        kalem_anahtarlari: List[str],
+                        *, sebep: str = "merkez_iptal") -> Dict[str, Any]:
+    """İptal edilen kalemin AYRILMIŞ REZERVİNİ geri verir. (2026-09-01)
+
+    ⚠️ Neden gerekti (zincir denetimi B-14/B-15): `/siparis/kalem-iptal`
+    yalnız `kalemler` JSONB'sine `iptal:true` yazıyordu. `kalem_durumlari`,
+    tahsis alanları ve rezerv İADESİ bu kolda hiç güncellenmiyordu — iptal
+    edilen kalemin 6 adedi stokta REZERVE kalmaya devam ediyor, ne aktif
+    siparişe dönüyor ne de başka talebe verilebiliyordu.
+
+    ⚠️ Anahtar SİMETRİK aranır: `kalem_kodu` yoksa `urun_id`, o da yoksa
+    normalize `urun_ad`. Tahsis okuması yalnız `urun_id`ye bakınca
+    `urun_id`'siz kalemin rezervi SESSİZCE eski kaynakta asılı kalıyordu.
+
+    Salt-hedefli: yalnız verilen kalemlere dokunur, diğerlerini değiştirmez.
+    """
+    _anahtar = {str(a or "").strip() for a in (kalem_anahtarlari or []) if str(a or "").strip()}
+    _anahtar |= {ad_anahtar(a) for a in (kalem_anahtarlari or []) if ad_anahtar(a)}
+    if not _anahtar:
+        return {"iade_edilen": 0, "kalemler": []}
+
+    cur.execute(
+        """
+        SELECT COALESCE(tahsis_kaynak_depo_sube_id,
+                        hedef_depo_sube_id, sevkiyat_sube_id) AS kaynak_depo,
+               kalem_durumlari
+          FROM siparis_talep WHERE id=%s FOR UPDATE
+        """,
+        (siparis_talep_id,),
+    )
+    row = cur.fetchone()
+    if not row:
+        return {"iade_edilen": 0, "kalemler": []}
+    rd = dict(row)
+    kaynak_depo = str(rd.get("kaynak_depo") or "").strip() or None
+    kd = rd.get("kalem_durumlari") or []
+    if isinstance(kd, str):
+        try:
+            kd = json.loads(kd)
+        except Exception:
+            kd = []
+    if not isinstance(kd, list):
+        return {"iade_edilen": 0, "kalemler": []}
+
+    iade: List[Dict[str, Any]] = []
+    degisti = False
+    for e in kd:
+        if not isinstance(e, dict):
+            continue
+        _kodlar = {str(e.get("kalem_kodu") or "").strip(),
+                   str(e.get("urun_id") or "").strip(),
+                   ad_anahtar(e.get("urun_ad"))}
+        if not (_kodlar & _anahtar):
+            continue
+        _tahsis = max(0, int(e.get("tahsis_adet") or 0))
+        _kk = (str(e.get("kalem_kodu") or "").strip()
+               or str(e.get("urun_id") or "").strip())
+        if _tahsis > 0 and _kk:
+            if kaynak_depo:
+                cur.execute(
+                    """UPDATE sube_depo_stok
+                          SET rezerve_adet = GREATEST(0, COALESCE(rezerve_adet,0) - %s),
+                              guncelleme = NOW()
+                        WHERE sube_id=%s AND kalem_kodu=%s""",
+                    (_tahsis, kaynak_depo, _kk),
+                )
+            else:
+                cur.execute(
+                    """UPDATE merkez_stok_kart
+                          SET rezerve_adet = GREATEST(0, COALESCE(rezerve_adet,0) - %s),
+                              guncelleme = NOW()
+                        WHERE kalem_kodu=%s""",
+                    (_tahsis, _kk),
+                )
+            iade.append({"kalem": _kk, "adet": _tahsis})
+        if _tahsis or str(e.get("durum") or "") != sebep:
+            e["tahsis_adet"] = 0
+            e["durum"] = sebep
+            e["depo_disi"] = True
+            e["gonderilen_adet"] = 0
+            degisti = True
+    if degisti:
+        cur.execute(
+            "UPDATE siparis_talep SET kalem_durumlari=%s::jsonb WHERE id=%s",
+            (json.dumps(kd, ensure_ascii=False), siparis_talep_id),
+        )
+    return {"iade_edilen": sum(i["adet"] for i in iade), "kalemler": iade}
+
+
 def merkez_tahsis_yap(cur: Any, siparis_talep_id: str,
                        tahsis_listesi: List[Dict[str, Any]],
                        yapan_id: Optional[str] = None,
@@ -2967,20 +3069,23 @@ def siparis_talep_merkez_iptal(
     except Exception:
         pass
     try:
-        mesaj = (
-            "Sipariş talebiniz operasyon merkezi tarafından iptal edildi "
-            f"(talep {aid[:10]}…)."
-        )
-        if ac:
-            mesaj += f" Neden: {ac}"
-        cur.execute(
-            """
-            INSERT INTO sube_operasyon_uyari
-                (id, sube_id, tarih, tip, seviye, mesaj, siparis_talep_id)
-            VALUES (%s, %s, %s::date, 'SIPARIS_MERKEZ_IPTAL', 'uyari', %s, %s)
-            """,
-            (str(uuid.uuid4()), sube_id, str(bugun_tr()), mesaj, aid),
-        )
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        with savepoint(cur, "sp_iptal_bildirim_a"):
+            mesaj = (
+                "Sipariş talebiniz operasyon merkezi tarafından iptal edildi "
+                f"(talep {aid[:10]}…)."
+            )
+            if ac:
+                mesaj += f" Neden: {ac}"
+            cur.execute(
+                """
+                INSERT INTO sube_operasyon_uyari
+                    (id, sube_id, tarih, tip, seviye, mesaj, siparis_talep_id)
+                VALUES (%s, %s, %s::date, 'SIPARIS_MERKEZ_IPTAL', 'uyari', %s, %s)
+                """,
+                (str(uuid.uuid4()), sube_id, str(bugun_tr()), mesaj, aid),
+            )
     except Exception:
         pass
 
@@ -3168,20 +3273,23 @@ def siparis_talep_akisi_iptal(
     except Exception:
         pass
     try:
-        mesaj = (
-            "Sipariş talebiniz operasyon merkezi tarafından iptal edildi "
-            f"(talep {aid[:10]}…)."
-        )
-        if ac:
-            mesaj += f" Neden: {ac}"
-        cur.execute(
-            """
-            INSERT INTO sube_operasyon_uyari
-                (id, sube_id, tarih, tip, seviye, mesaj, siparis_talep_id)
-            VALUES (%s, %s, %s::date, 'SIPARIS_AKIS_IPTAL', 'uyari', %s, %s)
-            """,
-            (str(uuid.uuid4()), sube_id, str(bugun_tr()), mesaj, aid),
-        )
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        with savepoint(cur, "sp_iptal_bildirim_b"):
+            mesaj = (
+                "Sipariş talebiniz operasyon merkezi tarafından iptal edildi "
+                f"(talep {aid[:10]}…)."
+            )
+            if ac:
+                mesaj += f" Neden: {ac}"
+            cur.execute(
+                """
+                INSERT INTO sube_operasyon_uyari
+                    (id, sube_id, tarih, tip, seviye, mesaj, siparis_talep_id)
+                VALUES (%s, %s, %s::date, 'SIPARIS_AKIS_IPTAL', 'uyari', %s, %s)
+                """,
+                (str(uuid.uuid4()), sube_id, str(bugun_tr()), mesaj, aid),
+            )
     except Exception:
         pass
 
@@ -3251,7 +3359,7 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
         """
         SELECT sube_id,
                COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS kaynak_depo_sube_id,
-               durum
+               durum, kalem_durumlari
         FROM siparis_talep WHERE id=%s
         FOR UPDATE
         """,
@@ -3264,6 +3372,70 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
     already_gonderildi = str(rd.get("durum") or "").strip() == "gonderildi"
     sube_id = str(rd.get("sube_id") or "")
     kaynak_depo = str(rd.get("kaynak_depo_sube_id") or "").strip() or None
+
+    # ══════════════════════════════════════════════════════════════════════
+    # 📏 İSTENEN TAVANI KAYNAKTAN OKUNUR (2026-09-01 zincir denetimi) — P0
+    # ══════════════════════════════════════════════════════════════════════
+    # Çift-sevk freni `istenen_adet`i ÇAĞIRANIN göndermesine bağlıydı ve
+    # kadife (v2) ucunun modeli (`SevkItem`) o alanı hiç taşımıyordu:
+    #   · ilk sevkte tavan HİÇ çalışmıyordu (fren yalnız zaten 'yolda' satırı
+    #     olan kalemde devreye giriyordu) → istenen 5 iken 500 sevk edilebiliyordu,
+    #   · ikinci partide `_ist=0` dalına düşüp ValueError fırlatıyordu (v2'de 500).
+    # Tavan artık TALEBİN KENDİ KAYDINDAN türer: hangi uç çağırırsa çağırsın
+    # aynı fren çalışır. Çağıran yine `istenen_adet` gönderebilir; gönderilen
+    # değerle kayıttaki değerin KÜÇÜĞÜ geçerlidir (daha gevşek olan kazanamaz).
+    _kd_raw = rd.get("kalem_durumlari")
+    if isinstance(_kd_raw, str):
+        try:
+            _kd_raw = json.loads(_kd_raw)
+        except Exception:
+            _kd_raw = []
+    _istenen_map: Dict[str, int] = {}
+    _depo_disi_kodlar: Dict[str, str] = {}
+    if isinstance(_kd_raw, list):
+        for _e in _kd_raw:
+            if not isinstance(_e, dict):
+                continue
+            for _anahtar in (_e.get("kalem_kodu"), _e.get("urun_id"), _e.get("urun_ad")):
+                _a = str(_anahtar or "").strip()
+                if not _a:
+                    continue
+                _ist_v = max(0, int(_e.get("istenen_adet") or _e.get("talep_adet") or 0))
+                if _ist_v:
+                    _istenen_map.setdefault(_a, _ist_v)
+                _dur = str(_e.get("durum") or "").strip().lower()
+                if _e.get("depo_disi") or _dur in (
+                        "depoya_yonlendirilmedi", "toptanciya_gitti", "merkez_iptal"):
+                    _depo_disi_kodlar.setdefault(_a, _dur or "depo_disi")
+    for _it in (sevk_kalemleri or []):
+        if not isinstance(_it, dict):
+            continue
+        _k = str(_it.get("kalem_kodu") or _it.get("urun_id") or "").strip()
+        _kay = _istenen_map.get(_k)
+        if _kay:
+            _gelen = max(0, int(_it.get("istenen_adet") or 0))
+            _it["istenen_adet"] = min(_gelen, _kay) if _gelen else _kay
+
+    # 🔀 DEPO DIŞI KALEM SEVK EDİLEMEZ — merkez bu kalemi toptancıya yolladı
+    # ya da iptal etti. Ekran tarafındaki eşleşme kaçarsa (ad kayması) kalem
+    # "var, tam adet" görünüp buraya kadar gelebiliyordu: aynı mal hem
+    # toptancıdan hem depodan geliyor, fatura toptancının carisine yazılıyordu.
+    # Son savunma hattı MOTORDA olmalı — ekrana güvenilemez.
+    _disi_gelen = []
+    for _it in (sevk_kalemleri or []):
+        if not isinstance(_it, dict):
+            continue
+        if max(0, int(_it.get("sevk_adet") or _it.get("adet") or 0)) <= 0:
+            continue
+        _k = str(_it.get("kalem_kodu") or _it.get("urun_id") or "").strip()
+        if _k and _k in _depo_disi_kodlar:
+            _disi_gelen.append(f"{_it.get('kalem_adi') or _k} ({_depo_disi_kodlar[_k]})")
+    if _disi_gelen:
+        raise ValueError(
+            "Bu kalemler depoya yönlendirilmedi, sevk edilemez: "
+            + ", ".join(_disi_gelen[:6])
+            + " — merkez bunları toptancıya yolladı veya iptal etti."
+        )
 
     # ══════════════════════════════════════════════════════════════════════
     # 🔒 ÇİFT SEVK FRENİ (Fable denetimi, 2026-08-29)
@@ -3338,19 +3510,31 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
         _asan: List[str] = []
         for _it in (sevk_kalemleri or []):
             _k = str(_it.get("kalem_kodu") or _it.get("urun_id") or "").strip()
-            if not _k or _k not in _yolda_toplam:
+            if not _k:
                 continue
+            _onceki = _yolda_toplam.get(_k, 0)
             _yeni = max(0, int(_it.get("sevk_adet") or _it.get("adet") or 0))
             # 🛡️ Anahtar taşınmazsa SESSİZ KALMA: bu kural `istenen_adet`e
             # dayanıyor; alan gelmezse fren her ikinci partiyi reddediyordu.
+            # (2026-09-01: alan artık kayıttan da dolduruluyor — yukarı bak.)
             _ist = zorunlu_sayi(_it, "istenen_adet", baglam="cift_sevk_freni")
-            _onceki = _yolda_toplam[_k]
-            # Istenen bilinmiyorsa (0) eski korumaya dus: ikinci gonderim supheli.
-            if _ist <= 0 or (_onceki + _yeni) > _ist:
+            # ⚠️ 2026-09-01 (P0): bu döngü eskiden `_k not in _yolda_toplam`
+            # ile İLK SEVKİ TAMAMEN ATLIYORDU — yani tavan yalnız ikinci
+            # partide çalışıyordu. Kadife ucundan istenen 5 iken 500 sevk
+            # edilebiliyordu. Artık ilk sevk de tavana tabidir.
+            # `_ist <= 0` (kayıtta da yoksa) YALNIZ ikinci partide şüphelidir;
+            # ilk sevkte tavan bilinmiyorsa engellemek meşru sevki keserdi.
+            if _ist > 0 and (_onceki + _yeni) > _ist:
                 _asan.append(
-                    f"{_yolda_ad.get(_k, _k)} (zaten {_onceki} yolda"
-                    + (f", istenen {_ist}" if _ist > 0 else "")
-                    + f", simdi {_yeni} daha)"
+                    f"{_yolda_ad.get(_k, _it.get('kalem_adi') or _k)} "
+                    f"(istenen {_ist}"
+                    + (f", zaten {_onceki} yolda" if _onceki else "")
+                    + f", simdi {_yeni})"
+                )
+            elif _ist <= 0 and _onceki > 0:
+                _asan.append(
+                    f"{_yolda_ad.get(_k, _k)} (zaten {_onceki} yolda, "
+                    f"istenen adet bilinmiyor, simdi {_yeni} daha)"
                 )
         if _asan:
             raise ValueError(
@@ -3375,19 +3559,22 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
             # (kaynakta yokken sevk) durumunu BİLDİRMEK için referans değer.
             _mevcut_before = None
             try:
-                _aday_kodlar = [kalem_kodu] + (
-                    [urun_id_item] if (urun_id_item and urun_id_item != kalem_kodu) else []
-                )
-                cur.execute(
-                    "SELECT MAX(COALESCE(mevcut_adet, 0)) AS m FROM sube_depo_stok "
-                    "WHERE sube_id=%s AND kalem_kodu = ANY(%s)",
-                    (kaynak_depo, _aday_kodlar),
-                )
-                _rb = cur.fetchone()
-                if _rb is not None:
-                    _mv = (dict(_rb) if not isinstance(_rb, dict) else _rb).get("m")
-                    if _mv is not None:
-                        _mevcut_before = int(_mv)
+                # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+                # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+                with savepoint(cur, "sp_yut3377"):
+                    _aday_kodlar = [kalem_kodu] + (
+                        [urun_id_item] if (urun_id_item and urun_id_item != kalem_kodu) else []
+                    )
+                    cur.execute(
+                        "SELECT MAX(COALESCE(mevcut_adet, 0)) AS m FROM sube_depo_stok "
+                        "WHERE sube_id=%s AND kalem_kodu = ANY(%s)",
+                        (kaynak_depo, _aday_kodlar),
+                    )
+                    _rb = cur.fetchone()
+                    if _rb is not None:
+                        _mv = (dict(_rb) if not isinstance(_rb, dict) else _rb).get("m")
+                        if _mv is not None:
+                            _mevcut_before = int(_mv)
             except Exception:
                 _mevcut_before = None
             dusulecek_kod = kalem_kodu
@@ -4011,66 +4198,69 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
     #    geliyor, kapanislari kendi akislarinda.
     _eksik_kalan = 0
     try:
-        cur.execute("SELECT kalemler FROM siparis_talep WHERE id=%s", (siparis_talep_id,))
-        _tr2 = cur.fetchone()
-        _istenen = (dict(_tr2).get("kalemler") if _tr2 else None) or []
-        if isinstance(_istenen, str):
-            _istenen = json.loads(_istenen)
-        # Bu talebe ait TUM kabul edilmis adetler (bu ve onceki sevkiyatlar)
-        # ⚠️ 'kabul_uyusmazlik' DA SAYILIR (Fable mantik denetimi B4, 2026-09-01):
-        # kismi kabulde satir 'kabul_uyusmazlik' olur AMA mal deftere YAZILIR
-        # (yukarida _stoga_yazilan). Sayilmazsa: sube 10 ister, depo 10 sevk
-        # eder, sube 8 kabul eder -> defter +8, ama sistem "hic gelmedi, 10
-        # eksik" gorur -> merkez 10 DAHA yollar -> fiziksel cift sevk ve
-        # defter 18'e cikar. Iki freni (tavan + karsilanmayan-kapanmaz)
-        # birbirinin kor noktasindaydi.
-        # ⚠️ LEAST(kabul, sevk): tavan kurali geregi deftere sevkten fazlasi
-        # YAZILMAZ; sayac da deftere gireni sayar. Sube 500 saydi ama 5 sevk
-        # edildiyse talep ACIK KALIR — bu bilincli: cozulmemis bir uyusmazligi
-        # "karsilandi" sayip kapatmak, hatayi gorunmez yapardi.
-        cur.execute(
-            """
-            SELECT kalem_adi,
-                   COALESCE(SUM(LEAST(COALESCE(kabul_adet,0),
-                                      COALESCE(sevk_adet,0))), 0) AS n
-              FROM stok_yolda
-             WHERE siparis_talep_id = %s
-               AND durum IN ('kabul_edildi', 'uzlasildi', 'kabul_uyusmazlik')
-             GROUP BY kalem_adi
-            """,
-            (siparis_talep_id,),
-        )
-        _gelen = {}
-        for _gr in cur.fetchall() or []:
-            _g = dict(_gr)
-            # ⚠️ ad_anahtar ŞART: .lower() Turkce'de 'İÇECEK' -> icine U+0307
-            # (birlesen nokta) koyar ve 'içecek' ile ASLA eslesmez; kalem
-            # "hic gelmedi" sayilir. Bugun kulede duzeltilen hatanin ikizi.
-            _gelen[ad_anahtar(_g.get("kalem_adi"))] = int(_g.get("n") or 0)
-        # Toptanciya cikmis adlar (baska kanaldan geliyor, eksik sayilmaz)
-        _toptancida = set()
-        cur.execute(
-            "SELECT kalemler FROM toptanci_siparis "
-            "WHERE talep_id = %s AND durum <> 'iptal'",
-            (siparis_talep_id,),
-        )
-        for _tr3 in cur.fetchall() or []:
-            _tk = dict(_tr3).get("kalemler") or []
-            if isinstance(_tk, str):
-                _tk = json.loads(_tk)
-            for _ti in (_tk or []):
-                _tn = ad_anahtar((_ti or {}).get("urun_ad"))
-                if _tn:
-                    _toptancida.add(_tn)
-        for _it in (_istenen or []):
-            if not isinstance(_it, dict) or _it.get("iptal"):
-                continue
-            _ad = ad_anahtar(_it.get("urun_ad"))
-            if not _ad or _ad in _toptancida:
-                continue
-            _ist_adet = max(0, int(_it.get("adet") or 0))
-            if _ist_adet > _gelen.get(_ad, 0):
-                _eksik_kalan += 1
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut4013"):
+            cur.execute("SELECT kalemler FROM siparis_talep WHERE id=%s", (siparis_talep_id,))
+            _tr2 = cur.fetchone()
+            _istenen = (dict(_tr2).get("kalemler") if _tr2 else None) or []
+            if isinstance(_istenen, str):
+                _istenen = json.loads(_istenen)
+            # Bu talebe ait TUM kabul edilmis adetler (bu ve onceki sevkiyatlar)
+            # ⚠️ 'kabul_uyusmazlik' DA SAYILIR (Fable mantik denetimi B4, 2026-09-01):
+            # kismi kabulde satir 'kabul_uyusmazlik' olur AMA mal deftere YAZILIR
+            # (yukarida _stoga_yazilan). Sayilmazsa: sube 10 ister, depo 10 sevk
+            # eder, sube 8 kabul eder -> defter +8, ama sistem "hic gelmedi, 10
+            # eksik" gorur -> merkez 10 DAHA yollar -> fiziksel cift sevk ve
+            # defter 18'e cikar. Iki freni (tavan + karsilanmayan-kapanmaz)
+            # birbirinin kor noktasindaydi.
+            # ⚠️ LEAST(kabul, sevk): tavan kurali geregi deftere sevkten fazlasi
+            # YAZILMAZ; sayac da deftere gireni sayar. Sube 500 saydi ama 5 sevk
+            # edildiyse talep ACIK KALIR — bu bilincli: cozulmemis bir uyusmazligi
+            # "karsilandi" sayip kapatmak, hatayi gorunmez yapardi.
+            cur.execute(
+                """
+                SELECT kalem_adi,
+                       COALESCE(SUM(LEAST(COALESCE(kabul_adet,0),
+                                          COALESCE(sevk_adet,0))), 0) AS n
+                  FROM stok_yolda
+                 WHERE siparis_talep_id = %s
+                   AND durum IN ('kabul_edildi', 'uzlasildi', 'kabul_uyusmazlik')
+                 GROUP BY kalem_adi
+                """,
+                (siparis_talep_id,),
+            )
+            _gelen = {}
+            for _gr in cur.fetchall() or []:
+                _g = dict(_gr)
+                # ⚠️ ad_anahtar ŞART: .lower() Turkce'de 'İÇECEK' -> icine U+0307
+                # (birlesen nokta) koyar ve 'içecek' ile ASLA eslesmez; kalem
+                # "hic gelmedi" sayilir. Bugun kulede duzeltilen hatanin ikizi.
+                _gelen[ad_anahtar(_g.get("kalem_adi"))] = int(_g.get("n") or 0)
+            # Toptanciya cikmis adlar (baska kanaldan geliyor, eksik sayilmaz)
+            _toptancida = set()
+            cur.execute(
+                "SELECT kalemler FROM toptanci_siparis "
+                "WHERE talep_id = %s AND durum <> 'iptal'",
+                (siparis_talep_id,),
+            )
+            for _tr3 in cur.fetchall() or []:
+                _tk = dict(_tr3).get("kalemler") or []
+                if isinstance(_tk, str):
+                    _tk = json.loads(_tk)
+                for _ti in (_tk or []):
+                    _tn = ad_anahtar((_ti or {}).get("urun_ad"))
+                    if _tn:
+                        _toptancida.add(_tn)
+            for _it in (_istenen or []):
+                if not isinstance(_it, dict) or _it.get("iptal"):
+                    continue
+                _ad = ad_anahtar(_it.get("urun_ad"))
+                if not _ad or _ad in _toptancida:
+                    continue
+                _ist_adet = max(0, int(_it.get("adet") or 0))
+                if _ist_adet > _gelen.get(_ad, 0):
+                    _eksik_kalan += 1
     except Exception:
         # Hesap yapilamazsa ESKI davranisa dus (kapat) ama sessiz kalma:
         # yanlislikla acik birakmak da kuyrugu kirletir.
@@ -4211,12 +4401,15 @@ def sube_depo_stok_depo_cikis_dus(
     # hareket defteri için düşüm ÖNCESİ mevcut (temel onarım #1)
     onceki_v = None
     try:
-        cur.execute(
-            "SELECT mevcut_adet FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
-            (sube_id, kk))
-        _r0 = cur.fetchone()
-        if _r0 is not None:
-            onceki_v = float((dict(_r0) if not isinstance(_r0, dict) else _r0).get("mevcut_adet") or 0)
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut4213"):
+            cur.execute(
+                "SELECT mevcut_adet FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
+                (sube_id, kk))
+            _r0 = cur.fetchone()
+            if _r0 is not None:
+                onceki_v = float((dict(_r0) if not isinstance(_r0, dict) else _r0).get("mevcut_adet") or 0)
     except Exception:  # noqa: BLE001
         onceki_v = None
 
@@ -4317,17 +4510,20 @@ def sube_depo_stok_depo_giris_ekle(
     )
     # Hareket kaydı — her teslim al girişi izlenebilir (çoklu yazma teşhisi için)
     try:
-        cur.execute(
-            """
-            INSERT INTO sube_depo_stok_hareket
-                (id, sube_id, kalem_kodu, kalem_adi, hareket_turu,
-                 miktar, onceki_miktar, sonraki_miktar, kaynak_tip, kaynak_id, aciklama)
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
-            """,
-            (str(uuid.uuid4()), sube_id, kk, lab, hareket_turu, float(ad),
-             _onceki, _onceki + ad, kaynak_tip, kaynak_id,
-             f"Teslim al — {lab} +{ad}"),
-        )
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut4319"):
+            cur.execute(
+                """
+                INSERT INTO sube_depo_stok_hareket
+                    (id, sube_id, kalem_kodu, kalem_adi, hareket_turu,
+                     miktar, onceki_miktar, sonraki_miktar, kaynak_tip, kaynak_id, aciklama)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+                """,
+                (str(uuid.uuid4()), sube_id, kk, lab, hareket_turu, float(ad),
+                 _onceki, _onceki + ad, kaynak_tip, kaynak_id,
+                 f"Teslim al — {lab} +{ad}"),
+            )
     except Exception:
         pass  # hareket log kritik değil, ana girişi engelleme
     sube_depo_stok_alarm_sonrasi_temizle(cur, sube_id, kk, lab)
@@ -4336,45 +4532,48 @@ def sube_depo_stok_depo_giris_ekle(
     # Sevkiyat gelince bekleyen URUN_AC_UYUMSUZLUK borçlarını otomatik uygula.
     # (Negatif stok yerine "borç biriktirir, ürün gelince mahsup eder" — Dynamics 365 / NetSuite mantığı)
     try:
-        cur.execute(
-            """
-            SELECT id, detay FROM sube_operasyon_uyari
-            WHERE sube_id = %s AND kalem_kodu = %s
-              AND tarih >= CURRENT_DATE - INTERVAL '7 days'
-              AND tip = 'URUN_AC_UYUMSUZLUK'
-              AND okundu = FALSE
-            ORDER BY tarih ASC
-            """,
-            (sube_id, kk),
-        )
-        borclar = cur.fetchall()
-        toplam_eksik = 0
-        cozulen_ids: List[str] = []
-        for b in borclar:
-            d = b.get("detay") or {}
-            if isinstance(d, str):
-                try:
-                    d = json.loads(d)
-                except Exception:
-                    d = {}
-            toplam_eksik += int(d.get("eksik_miktar") or 0)
-            cozulen_ids.append(str(b["id"]))
-        if toplam_eksik > 0 and cozulen_ids:
-            # Ertelenmiş düşümü uygula (sevkiyattan gelen stoka mahsup et)
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut4338"):
             cur.execute(
                 """
-                UPDATE sube_depo_stok
-                SET mevcut_adet = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
-                    guncelleme  = NOW()
+                SELECT id, detay FROM sube_operasyon_uyari
                 WHERE sube_id = %s AND kalem_kodu = %s
+                  AND tarih >= CURRENT_DATE - INTERVAL '7 days'
+                  AND tip = 'URUN_AC_UYUMSUZLUK'
+                  AND okundu = FALSE
+                ORDER BY tarih ASC
                 """,
-                (toplam_eksik, sube_id, kk),
+                (sube_id, kk),
             )
-            # Borç uyarılarını çözümlendi olarak işaretle
-            cur.execute(
-                "UPDATE sube_operasyon_uyari SET okundu = TRUE WHERE id = ANY(%s)",
-                (cozulen_ids,),
-            )
+            borclar = cur.fetchall()
+            toplam_eksik = 0
+            cozulen_ids: List[str] = []
+            for b in borclar:
+                d = b.get("detay") or {}
+                if isinstance(d, str):
+                    try:
+                        d = json.loads(d)
+                    except Exception:
+                        d = {}
+                toplam_eksik += int(d.get("eksik_miktar") or 0)
+                cozulen_ids.append(str(b["id"]))
+            if toplam_eksik > 0 and cozulen_ids:
+                # Ertelenmiş düşümü uygula (sevkiyattan gelen stoka mahsup et)
+                cur.execute(
+                    """
+                    UPDATE sube_depo_stok
+                    SET mevcut_adet = GREATEST(0, COALESCE(mevcut_adet, 0) - %s),
+                        guncelleme  = NOW()
+                    WHERE sube_id = %s AND kalem_kodu = %s
+                    """,
+                    (toplam_eksik, sube_id, kk),
+                )
+                # Borç uyarılarını çözümlendi olarak işaretle
+                cur.execute(
+                    "UPDATE sube_operasyon_uyari SET okundu = TRUE WHERE id = ANY(%s)",
+                    (cozulen_ids,),
+                )
     except Exception:
         pass  # Reconciliation kritik değil, ana giriş işlemini etkileme
 
@@ -4574,30 +4773,36 @@ def pasta_stored_stok_alarm_temizle(cur: Any) -> int:
     Bu satırlarda kalem_kodu YOK; mesaj 'Depo stok azaldı: <ad> — ...' formatında →
     pasta ürün adlarıyla eşleştirilir. Self-heal: hata-yutar, idempotent."""
     try:
-        cur.execute(
-            """
-            SELECT su.ad FROM siparis_urun su
-            JOIN siparis_kategori sk ON sk.id = su.kategori_id
-            WHERE sk.kod = %s
-            """,
-            (PASTA_KATEGORI_KOD,),
-        )
-        adlar = [str((dict(r) if not isinstance(r, dict) else r).get("ad") or "").strip()
-                 for r in (cur.fetchall() or [])]
+        # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+        # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+        with savepoint(cur, "sp_yut4576"):
+            cur.execute(
+                """
+                SELECT su.ad FROM siparis_urun su
+                JOIN siparis_kategori sk ON sk.id = su.kategori_id
+                WHERE sk.kod = %s
+                """,
+                (PASTA_KATEGORI_KOD,),
+            )
+            adlar = [str((dict(r) if not isinstance(r, dict) else r).get("ad") or "").strip()
+                     for r in (cur.fetchall() or [])]
     except Exception:
         return 0
     silinen = 0
     for ad in [a for a in adlar if a]:
         try:
-            cur.execute(
-                """
-                DELETE FROM sube_operasyon_uyari
-                WHERE tip IN ('STOK_ALARM', 'STOK_BITTI')
-                  AND mesaj ILIKE %s
-                """,
-                (f"Depo stok azaldı: {ad}%",),
-            )
-            silinen += cur.rowcount or 0
+            # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
+            # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
+            with savepoint(cur, "sp_yut4591"):
+                cur.execute(
+                    """
+                    DELETE FROM sube_operasyon_uyari
+                    WHERE tip IN ('STOK_ALARM', 'STOK_BITTI')
+                      AND mesaj ILIKE %s
+                    """,
+                    (f"Depo stok azaldı: {ad}%",),
+                )
+                silinen += cur.rowcount or 0
         except Exception:
             pass
     return silinen
