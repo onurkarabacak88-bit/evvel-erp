@@ -108,8 +108,11 @@ def _bagsiz_girisleri_bul(cur, gun: int) -> List[Dict[str, Any]]:
        döner ve `tutar_kaynagi='yok'` yazılır — sıfır yazmak "borç yok"
        yalanı olurdu ("sıfır ile ölçemedim aynı şey değildir" dersi).
     """
+    # ⚠️ f-STRING DEGIL (2026-09-02): burada hicbir Python yer tutucusu yok;
+    # psycopg2 %s kullaniyor. f-prefix yalnizca SQL yorumlarindaki { } ve
+    # JSON ornekleri yuzunden SyntaxError uretiyordu. Duz string daha guvenli.
     cur.execute(
-        f"""
+        """
         SELECT h.id::text                         AS hareket_id,
                h.zaman                            AS zaman,
                h.sube_id,
@@ -139,12 +142,17 @@ def _bagsiz_girisleri_bul(cur, gun: int) -> List[Dict[str, Any]]:
                -- tedarikçisiyle birlikte yazılıyor. Tedarikçi ORADA duruyorsa
                -- giriş öksüz DEĞİLDİR. Bir duyu, gürültü üretirse ölçmüyor
                -- demektir (bu denetimin kendi D-7 dersi).
-               -- ⚠️ `aciklama` metni 'URUN_SEVK_JSON:{...}' onekiyle baslar;
-               -- dogrudan ::jsonb cast'i PATLAR. Onek once kesilir.
+               -- ⚠️ JSON'A HİÇ ÇEVİRME (canlı 500, 2026-09-02): `aciklama`
+               -- 'URUN_SEVK_JSON:{...}' önekiyle başlıyor AMA bazı satırlarda
+               -- JSON'dan SONRA da metin var ("...} | 3 adet tedarikçi teslimi").
+               -- Öneki kesip ::jsonb cast etmek o satırlarda patlıyor ve TÜM
+               -- ucu 500 yapıyordu. Tedarikçi alanı METİN olarak çekilir —
+               -- ayrıştırma yok, kırılma yok. (POSIX sınıfı kullanılıyor;
+               -- ters-bölü kaçışı Python f-string'inde ayrı bir tuzak.)
                (SELECT NULLIF(TRIM(COALESCE(
-                          (substr(d.aciklama, 16))::jsonb->>'tedarikci_id',
-                          (substr(d.aciklama, 16))::jsonb->>'tedarikci',
-                          (substr(d.aciklama, 16))::jsonb->>'tedarikci_ad')), '')
+                          substring(d.aciklama from '"tedarikci_id"[[:space:]]*:[[:space:]]*"([^"]+)"'),
+                          substring(d.aciklama from '"tedarikci"[[:space:]]*:[[:space:]]*"([^"]+)"'),
+                          substring(d.aciklama from '"tedarikci_ad"[[:space:]]*:[[:space:]]*"([^"]+)"'))), '')
                   FROM operasyon_defter d
                  WHERE d.etiket = 'URUN_SEVK'
                    AND d.sube_id = h.sube_id
