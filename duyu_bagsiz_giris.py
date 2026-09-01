@@ -202,7 +202,10 @@ def _bagsiz_girisleri_bul(cur, gun: int) -> List[Dict[str, Any]]:
 
 
 @router.get("/bagsiz-giris")
-def bagsiz_giris_olc(gun: int = Query(90, ge=1, le=730)):
+def bagsiz_giris_olc(gun: int = Query(90, ge=1, le=730),
+                     tumu: int = Query(0, ge=0, le=1),
+                     sube: str = Query(""),
+                     kalem: str = Query("")):
     """🔎 SALT-OKUR ÖLÇÜM — hiçbir şey yazmaz.
 
     "Depoya mal girdi ama hiçbir tedarikçi zincirine bağlanamıyor" satırları.
@@ -214,6 +217,17 @@ def bagsiz_giris_olc(gun: int = Query(90, ge=1, le=730)):
         satirlar = _bagsiz_girisleri_bul(cur, gun)
     bagsiz = [s for s in satirlar if not s["bagli"]]
     _tutarli = [s for s in bagsiz if s["tahmini_tutar"] is not None]
+    # 🔬 KENDİNİ AÇIKLAYAN DUYU (2026-09-02): `tumu=1` BAĞLI satırları da
+    # KANITIYLA döndürür. Olmadan "bu giriş neden bağsız sayılmadı" sorusu
+    # dolaylı uçlarla kovalanıyor ve cevap bulunamıyordu. Bir duyu, kendi
+    # hükmünün gerekçesini gösteremiyorsa denetlenemez.
+    _goster = satirlar if int(tumu or 0) else bagsiz
+    if sube:
+        _sl = sube.lower()
+        _goster = [x for x in _goster if _sl in str(x.get("sube_adi") or "").lower()]
+    if kalem:
+        _kl = kalem.lower()
+        _goster = [x for x in _goster if _kl in str(x.get("kalem_adi") or "").lower()]
     # 📊 HAM DAĞILIM — hangi kanıt kaç kez tuttu. Bu olmadan "bağsız" sayısı
     # yorumlanamaz: oran yüksekse duyu değil KURAL yanlıştır (ilk sürüm 830'un
     # 716'sını bağsız saydı çünkü doğrudan teslim kaydını hiç görmüyordu).
@@ -233,7 +247,9 @@ def bagsiz_giris_olc(gun: int = Query(90, ge=1, le=730)):
         "bagsiz_tahmini_tutar": round(sum(s["tahmini_tutar"] for s in _tutarli), 2),
         "tutari_bilinmeyen_adet": len(bagsiz) - len(_tutarli),
         "en_eski_gun": max((s["yas_gun"] for s in bagsiz), default=0),
-        "satirlar": bagsiz,
+        "satirlar": _goster,
+        "satirlar_kapsami": ("tum girisler (bagli + bagsiz)" if int(tumu or 0)
+                             else "yalniz bagsiz"),
         "not": ("Bu girişler hicbir tedarikci zincirine baglanamadi: belge talebi "
                 "dogmadi, fatura kovalanmadi, borc tahakkuk etmedi, cariye "
                 "girmedi. Ic sevkiyat (SEVK_GIRIS) BILEREK haric — orada "
