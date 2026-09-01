@@ -2805,7 +2805,15 @@ def belge_talep_zincir_izi(tedarikci: str = "", gun: int = 120, sube: str = ""):
         cur.execute(f"""
             SELECT ts.id AS ts_id, ts.talep_id, ts.olusturma AS siparis_ts,
                    ts.teslim_ts, ts.durum AS siparis_durum, ts.kalemler,
-                   COALESCE(ts.tedarikci_ad, td.ad) AS tedarikci_ad,
+                   -- 🪪 KANONİK AD (2026-09-02): sıra TERSTİ — snapshot
+                   -- kazanıyor, canlı ad yedek kalıyordu. Tedarikçi yeniden
+                   -- adlandırılınca eski satırlar eski metinle donuyor ve
+                   -- ekranda İKİ AYRI TEDARİKÇİ gibi görünüyordu (ATALAY
+                   -- vakası: "ATALAY KAHVE" ↔ "MEHMET ATALAY", `tedarikci_id`
+                   -- İKİSİNDE DE AYNI). Kimlik varsa GÜNCEL ad konuşur.
+                   COALESCE(NULLIF(TRIM(td.ad), ''), ts.tedarikci_ad) AS tedarikci_ad,
+                   -- Tarihçe silinmez: o gün hangi adla sipariş verildiği durur.
+                   ts.tedarikci_ad AS tedarikci_ad_kayit,
                    ts.tedarikci_id, s.ad AS sube_adi,
                    bt.id AS bt_id, bt.durum AS bt_durum, bt.fatura_id,
                    bt.kapanis_tipi, bt.kapanma_ts, bt.kapanis_aciklama,

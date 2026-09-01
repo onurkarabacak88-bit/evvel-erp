@@ -125,3 +125,32 @@ def sevkiyat_durumu_guncelle_params(yeni_durum: str) -> Tuple[str, str]:
     }
     eski = _YENI_TO_ESKI.get(yeni_durum, yeni_durum)
     return yeni_durum, eski
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 🪪 KANONİK TEDARİKÇİ ADI — TEK SQL PARÇASI (2026-09-02)
+# ─────────────────────────────────────────────────────────────────────────────
+# ⚠️ NEDEN (canlı ölçüm, ATALAY vakası):
+# `toptanci_siparis.tedarikci_ad` sipariş ANINDAKİ adın KOPYASIDIR. Tedarikçi
+# sonradan yeniden adlandırılınca eski satırlar eski metinle kalır ve ekranda
+# İKİ AYRI TEDARİKÇİ gibi görünür:
+#     "ATALAY KAHVE"  (06.08 öncesi kayıtlar)
+#     "MEHMET ATALAY" (23.08 sonrası kayıtlar)
+# Oysa `tedarikci_id` İKİSİNDE DE AYNIDIR (ee7e7adf-…): kimlik tekti, ad çiftti.
+# Kullanıcı haklı olarak "çift kimlik" gördü — ama veri değil GÖRÜNTÜ çiftti.
+#
+# Sorgular `COALESCE(ts.tedarikci_ad, td.ad)` yazıyordu: SNAPSHOT kazanıyor,
+# canlı ad yedek kalıyordu. Sıra TERS olmalı — kimlik varsa GÜNCEL ad konuşur.
+# (Sahibin kuralı: kanonik kimliği kaynakta çöz; ad yalnız gösterimdir.)
+#
+# ⚠️ TARİHÇE SİLİNMEZ: snapshot da ayrı alanda döner (`*_ad_kayit`), böylece
+# "o gün bu adla sipariş verildi" bilgisi korunur. Ad değişimini gizlemiyoruz,
+# hangisinin KANONİK olduğunu söylüyoruz.
+#
+# Kullanım (sorguda `tedarikciler td` JOIN'i şart):
+#     f"{TED_AD_KANONIK} AS tedarikci_ad, {TED_AD_KAYIT} AS tedarikci_ad_kayit"
+#     ... FROM toptanci_siparis ts
+#         LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id
+TED_AD_KANONIK = "COALESCE(NULLIF(TRIM(td.ad), ''), ts.tedarikci_ad)"
+TED_AD_KAYIT = "ts.tedarikci_ad"
+# `tedarikciler` JOIN'i eklemek için hazır parça (tekrar yazılmasın):
+TED_JOIN = "LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id"

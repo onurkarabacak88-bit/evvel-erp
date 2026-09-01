@@ -12187,6 +12187,20 @@ def ops_siparis_toptanci_listesi(
         raise HTTPException(400, "sirala: en_son | eski | adet_azalan | urun")
 
     with db() as (conn, cur):
+        # 🪪 KİMLİK → GÜNCEL AD haritası (2026-09-02). Defter payload'ındaki
+        # ad SNAPSHOT'tır; kimlik varsa güncel ad kazanır. Tek sorgu, ucuz.
+        _ted_ad_kanonik: Dict[str, str] = {}
+        try:
+            with savepoint(cur, "sp_ted_ad_kanonik"):
+                cur.execute("SELECT id::text AS id, ad FROM tedarikciler")
+                for _tr in (cur.fetchall() or []):
+                    _td = dict(_tr)
+                    _ad = str(_td.get("ad") or "").strip()
+                    if _td.get("id") and _ad:
+                        _ted_ad_kanonik[str(_td["id"])] = _ad
+        except Exception:
+            logger.warning("tedarikci ad haritasi okunamadi — snapshot ada dusuluyor",
+                           exc_info=True)
         cur.execute(
             """
             SELECT d.id, d.sube_id, s.ad AS sube_adi, d.tarih, d.bildirim_saati,
@@ -12256,7 +12270,17 @@ def ops_siparis_toptanci_listesi(
                 "saat": str(r.get("bildirim_saati") or "")[:8] or None,
                 "olay_ts": olay_iso or None,
                 "sube_adi": str(r.get("sube_adi") or "").strip() or None,
-                "tedarikci_ad": (str(payload.get("tedarikci_ad") or "").strip() or None),
+                # 🪪 KANONİK AD (2026-09-02): defter payload'ı sipariş anındaki
+                # adın KOPYASIDIR ve defter append-only'dir — yeniden yazılmaz.
+                # Ama payload `tedarikci_id` de taşıyor: ad OKURKEN çözülür.
+                # Yoksa tedarikçi yeniden adlandırılınca eski kayıtlar eski
+                # metinle kalıp ekranda İKİ AYRI TEDARİKÇİ gibi görünüyordu
+                # (ATALAY: "ATALAY KAHVE" ↔ "MEHMET ATALAY", kimlik AYNI).
+                "tedarikci_ad": (
+                    _ted_ad_kanonik.get(str(payload.get("tedarikci_id") or "").strip())
+                    or (str(payload.get("tedarikci_ad") or "").strip() or None)),
+                # Tarihçe korunur: o gün deftere hangi ad yazıldı.
+                "tedarikci_ad_kayit": (str(payload.get("tedarikci_ad") or "").strip() or None),
                 "not_aciklama": (str(payload.get("not_aciklama") or "").strip() or None),
                 "talep_id": (str(payload.get("talep_id") or "").strip() or None),
                 "kalem_sayisi": len(kalem_satirlari),
@@ -12359,7 +12383,13 @@ def ops_urun_gelis_gecmisi(urun: str, gun: int = Query(365, ge=7, le=730), sube_
         cur.execute(
             f"""
             SELECT ts.id, ts.sube_id, COALESCE(s.ad, '—') AS sube_adi,
-                   COALESCE(ts.tedarikci_ad, '—') AS tedarikci_ad,
+                   -- 🪪 KANONİK AD (2026-09-02): `ts.tedarikci_ad` siparis ANINDAKI adin
+                   -- kopyasidir. Tedarikci yeniden adlandirilinca eski satirlar
+                   -- eski metinle donuyor ve ekranda IKI AYRI TEDARIKCI gibi
+                   -- gorunuyordu (ATALAY: 'ATALAY KAHVE' ↔ 'MEHMET ATALAY',
+                   -- tedarikci_id IKISINDE DE AYNI). Kimlik varsa GUNCEL ad konusur.
+                   COALESCE(NULLIF(TRIM(td.ad), ''), ts.tedarikci_ad, '—') AS tedarikci_ad,
+                   ts.tedarikci_ad AS tedarikci_ad_kayit,
                    ts.durum, COALESCE(ts.kaynak, 'sube') AS kaynak,
                    (ts.teslim_ts AT TIME ZONE 'Europe/Istanbul') AS teslim_ts,
                    (ts.olusturma AT TIME ZONE 'Europe/Istanbul') AS siparis_ts,
@@ -12369,6 +12399,7 @@ def ops_urun_gelis_gecmisi(urun: str, gun: int = Query(365, ge=7, le=730), sube_
             FROM toptanci_siparis ts
             CROSS JOIN LATERAL jsonb_array_elements(ts.kalemler) k
             LEFT JOIN subeler s ON s.id = ts.sube_id
+            LEFT JOIN tedarikciler td ON td.id = ts.tedarikci_id
             WHERE ts.durum <> 'iptal'
               AND ts.olusturma >= now() - (%s * INTERVAL '1 day')
               AND lower(coalesce(k->>'urun_ad','')) LIKE %s
@@ -12450,6 +12481,17 @@ def ops_toptanci_teslimler(gun: int = 30, sube_id: Optional[str] = None):
     gun = max(1, min(365, int(gun or 30)))
     sid_filtre = (sube_id or "").strip() or None
     with db() as (conn, cur):
+        # 🪪 KİMLİK → GÜNCEL AD haritası (2026-09-02) — bkz. toptanci-listesi.
+        _ted_ad_kanonik2: Dict[str, str] = {}
+        try:
+            with savepoint(cur, "sp_ted_ad_kanonik2"):
+                cur.execute("SELECT id::text AS id, ad FROM tedarikciler")
+                for _tr in (cur.fetchall() or []):
+                    _td = dict(_tr)
+                    if _td.get("id") and str(_td.get("ad") or "").strip():
+                        _ted_ad_kanonik2[str(_td["id"])] = str(_td["ad"]).strip()
+        except Exception:
+            logger.warning("tedarikci ad haritasi (teslimler) okunamadi", exc_info=True)
         params: list = [gun]
         sube_kosul = ""
         if sid_filtre:
@@ -12518,7 +12560,11 @@ def ops_toptanci_teslimler(gun: int = 30, sube_id: Optional[str] = None):
             "id": str(d.get("id") or ""),
             "tarih": str(d.get("tarih") or ""),
             "olay_ts": str(d.get("olay_ts") or "")[:16].replace("T", " "),
-            "tedarikci": str(payload.get("tedarikci") or "").strip() or "—",
+            # 🪪 KANONİK AD (2026-09-02) — defter append-only, ad OKURKEN çözülür.
+            "tedarikci": (
+                _ted_ad_kanonik2.get(str(payload.get("tedarikci_id") or "").strip())
+                or (str(payload.get("tedarikci") or "").strip() or "—")),
+            "tedarikci_kayit": str(payload.get("tedarikci") or "").strip() or "—",
             "tedarikci_id": str(payload.get("tedarikci_id") or "").strip(),
             "kalemler": kalemler_out,
             "teslim_durumu": str(payload.get("teslim_durumu") or "tam_geldi"),
