@@ -238,3 +238,57 @@ bugün ölçülebilir etkisi olmayan** düzeltmelerdir.
 
 `telafi-adaylari: 0` — şu an belge talebi açılmamış teslimat **yok**.
 Gece gözlem halkası (D-10) bu sayı sıfırdan büyüdüğünde duyu olayı basacak.
+
+---
+
+# 🎨 KADİFE EKRAN AYAĞI (2026-09-02, deploy `0c7ff72`)
+
+Zincir düzeltmeleri ~15 yeni yanıt alanı üretmişti ama **hiçbir ekran
+okumuyordu**: veri var, gören yok. Bu, projenin daha önce denetlediği
+"işlev boşluğu" deseninin ta kendisi. Altısı v2'ye bağlandı.
+
+| Ekran | Alan | Ne değişti |
+|---|---|---|
+| **Ops** | `wa_uyari` | WhatsApp gidemezse **kalıcı** kırmızı uyarı ("Gördüm" ile kapanır). Eskiden telefon VARKEN gönderim düşerse toast **hiçbir şey demiyordu** — kayıt "yollandı", tedarikçi habersiz. |
+| **Ops** | `kabul_bekleyen` | D-7 ile uyumsuzluk listesinden çıkarılan 'yolda' paketler **kendi kovasında**, yaşlarıyla. En eskisi 3 günü geçerse uyarı metni. |
+| **Ops** | `kesildi` | **Çift kesme dürüstlüğü**: ekran ilk 40'ı gösteriyor, sunucu da LIMIT'e kesmiş olabilir — ikisi de yazılır. |
+| **Ödeme** | `defter_farki` | FIFO tahsisinden **önce** uyarı: iki defter ayrışıyorsa tutarıyla söylenir. |
+| **Belge** | `kanit` / `damgasiz` | Damgasız ödeme satırı `~ tahmin (damgasız)` olarak **amber** rozetle işaretlenir. Bakiyeden çıkarmak sahibin kararı; ama neye dayandığı görünür. |
+| **Belge** | `devir_cizgisi_uygulandi`, `hareketler_kisaltildi` | Hangi doktrinin çalıştığı ve listenin kesilip kesilmediği yazılı. |
+
+## 🔴 Ekran ayağı canlıda GERÇEK bir çatlak açığa çıkardı
+
+`defter_farki` ölçümü (production):
+
+| Tedarikçi | Tahsis defteri | Kanal aritmetiği | Fark |
+|---|---:|---:|---:|
+| FEZ | 104.574,46 | 66.965,49 | **+37.608,97** |
+| BEYSU | 19.500,00 | 8.400,00 | **+11.100,00** |
+| MEHMET ATALAY | 0,00 | 44.825,43 | **−44.825,43** |
+| SÜTAŞ | 31.907,35 | 31.907,35 | **0,00** ✓ |
+
+**SÜTAŞ'ın 0 çıkması kıyasın anlamlı olduğunu kanıtlıyor** — her yerde
+ayrışmıyor, yani ölçüm gerçek bir şey ölçüyor.
+
+**MEHMET ATALAY en tehlikelisi:** FIFO havuzu **boş**. Ödeme ekranı
+"kapatacak açık fatura yok — avans/belgesiz" derdi; oysa kanal aritmetiğine
+göre **44.825,43 ₺ borç var**. Artık uyarı çıkıyor.
+
+**FEZ ve BEYSU'da ters yön:** havuz borcu **fazla** gösteriyor; bazı
+faturalar kanaldan ödenmiş ama tahsis defteri bilmiyor. FIFO'ya bırakılırsa
+para **zaten ödenmiş** faturalara yazılır.
+
+> 🔴 **SAHİP AKSİYONU:** bu dört tedarikçinin farkı elle incelenmeli.
+> Kanal ödemelerini fatura seviyesinde eşleştirmek (damgalamak) farkı kapatır.
+
+## Doğrulama
+
+- UI'nin okuduğu **her alan** canlı yanıtta var — `curl` ile tek tek teyit edildi.
+- Canlı bundle yerel derlemeyle **birebir aynı** (indirilip karşılaştırıldı);
+  altı yeni ekran metninin hepsi canlıda.
+- ⚠️ **Görsel tur YAPILAMADI** — CFO paneli şifre kapılı. Doğrulama alan
+  varlığı + bundle içeriği düzeyindedir, ekran görüntüsü değil.
+
+> **Ölçüm dersi:** uzak dosyayı `curl | python` ile okumak Windows'ta UTF-8'i
+> bozuyor ve "metin yok" yanılgısı üretti. Dosyaya indirip `encoding="utf-8"`
+> ile okumak gerekti — ölçüm aracının kendisi de yanılabilir.
