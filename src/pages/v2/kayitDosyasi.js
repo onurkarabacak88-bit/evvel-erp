@@ -131,6 +131,38 @@ export function kayitDosyasiYukle({ onCekmece, tip, kaynakTablo, kaynakId, kayit
       ));
     })
     .catch(() => { /* zincir hatası çekmeceyi bozmasın — özet zaten açık */ });
+
+  // ── 🔍 DEĞİŞİKLİK GEÇMİŞİ (SYS-AUDIT, 2026-09-02) ────────────────────────
+  // AYRI çağrı, AYRI merge: kayıt dosyası ucu düşse bile geçmiş gelebilmeli
+  // (ve tersi). İkisini tek Promise.all'a bağlamak, birinin arızasını
+  // diğerinin boşluğu gibi gösterirdi — "hata ≠ boş" kuralının aynısı.
+  //
+  // ⚠️ `iz` ≠ `gecmis`: iz PARANIN hareketi, gecmis KAYDIN değişimi. Denetim
+  // defterinde bu 6 tablonun 5'inin gerçekten izi var (cari_odeme'ye audit()
+  // çağrısı yok — orada dürüst "iz yok" metni çıkar, sahte satır üretilmez).
+  const gecmisMerge = (g) => onCekmece?.((prev) => (
+    prev && prev.tip === tip
+    && prev._kayitId != null && String(prev._kayitId) === beklenen
+      ? { ...prev, gecmis: g }
+      : prev
+  ));
+  gecmisMerge({ durum: 'yukleniyor', satirlar: [] });
+  api(`/denetim-izi/kayit/${encodeURIComponent(kaynakTablo)}`
+      + `/${encodeURIComponent(kaynakId)}?limit=50`)
+    .then((d) => {
+      // Uç 200 dönüp `okunabildi:false` diyebilir (şema geride / sorgu düştü).
+      // Bunu "geçmiş yok" saymak, defterde yazanı ekranda yok göstermektir.
+      if (!d || d.okunabildi === false) {
+        gecmisMerge({ durum: 'hata', satirlar: [], not: d?.not || '' });
+        return;
+      }
+      gecmisMerge({
+        durum: 'tamam',
+        satirlar: Array.isArray(d.satirlar) ? d.satirlar : [],
+        kirpildi: !!d.kirpildi,
+      });
+    })
+    .catch(() => gecmisMerge({ durum: 'hata', satirlar: [] }));
 }
 
 /**

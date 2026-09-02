@@ -111,6 +111,15 @@ try:
     app.include_router(kayit_dosyasi_router)
 except Exception as _e:  # noqa: BLE001
     logger.warning("kayit_dosyasi_api yüklenemedi: %s", _e)
+# 🔍 DENETİM İZİ (SYS-AUDIT okuma boşluğu, 2026-09-02) — izole, SALT OKUR.
+# `audit_log`'a 161+ çağrı noktasından iz YAZILIYORDU ama okuyan tek bir uç
+# yoktu; yazılıp okunamayan iz, iz değildir. Bu modül defteri okutur, ASLA
+# yazmaz/silmez (VERI-011 ile aynı ilke: denetim defteri veriyle gitmez).
+try:
+    from denetim_izi_api import router as denetim_izi_router
+    app.include_router(denetim_izi_router)
+except Exception as _e:  # noqa: BLE001
+    logger.warning("denetim_izi_api yüklenemedi: %s", _e)
 # 🕳️ BAĞSIZ STOK GİRİŞİ DUYUSU (2026-09-02) — izole, salt-okur.
 # "Depoya mal girdi ama hiçbir tedarikçi zincirine bağlanamıyor" duyusu.
 # ATALAY vakası: 01.08'de ZAFER'e Espresso +10 girmiş, siparişi iptal —

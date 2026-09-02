@@ -198,6 +198,13 @@ export const MODULLER = [
     // 🩺 PARA ZİNCİRİ TEŞHİSİ (2026-08-08): fatura→borç→ödeme→cari sağlığını
     // ölçen yedi uç vardı, hiçbiri ekranda değildi.
     { id: 'parazinciri', ad: 'Para Zinciri Teşhisi' },
+    // 🔍 DENETİM İZİ (2026-09-02, SYS-AUDIT okuma boşluğu): `audit_log`'a 161+
+    // yerden iz YAZILIYOR ama okuyan uç/ekran YOKTU — yazılıp okunamayan iz,
+    // iz değildir. Duyu Mutabakatı'ndaki "Müdahale İzi" kutusu bunun DAR
+    // kesitidir (yalnız iptal/geri-al/düzeltme, yalnız toplam sayı); burası
+    // TEKİL SATIRI, kaydın kendi geçmişini ve aktörü gösterir. İkisi mükerrer
+    // değil: biri sinyal, biri sorgu.
+    { id: 'iz', ad: 'Denetim İzi' },
     { id: 'duyu', ad: 'Sinyal İzleme' },
   ]},
   { id: 'rapor', blok: 'Karar', ad: 'Rapor & Defter', kisa: 'Rapor', alt: 'Aylık · işlem izi', ikon: IK.grafik, gorunumler: [

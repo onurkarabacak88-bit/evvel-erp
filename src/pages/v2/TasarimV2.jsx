@@ -3558,6 +3558,12 @@ export default function TasarimV2({ onGit }) {
           // geçmezse sekme NEDEN boş olduğunu söyler — uydurma belge/iz yok.
           belgeler={cekmece?.belgeler}
           iz={cekmece?.iz}
+          // 🔍 DEĞİŞİKLİK GEÇMİŞİ (2026-09-02) — `iz` PARA hareketidir
+          // (ödeme/artış), `gecmis` ise KAYDIN KENDİSİNİN denetim defteri
+          // satırlarıdır (audit_log: kim, ne zaman, hangi alanı değiştirdi).
+          // İkisini aynı listeye karıştırmak "ödendi" ile "düzeltildi"yi aynı
+          // şey gibi gösterirdi — ayrı blok, ayrı başlık.
+          gecmis={cekmece?.gecmis}
           // 📎 Belge yükleme: modül geçerse Belgeler sekmesinde düğme çıkar.
           belgeYukle={cekmece?.belgeYukle}
           dosyaBilgi={cekmece?.dosyaBilgi}

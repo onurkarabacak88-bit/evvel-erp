@@ -134,6 +134,24 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   // Aynı iş (mutabakat), aynı görünüm — ayrı ekran açılmadı.
   // Dört duyu ucu tek blokta — uyanış · müdahale izi · kayıt disiplini · fark profili
   const [duyuKesit, setDuyuKesit] = useState(null);
+  // ── 🔍 DENETİM İZİ (SYS-AUDIT, 2026-09-02) ────────────────────────────────
+  // `audit_log` 161+ yerden YAZILIYOR, hiçbir yerden OKUNMUYORDU. Bu görünüm
+  // defterin okuma ucudur (/denetim-izi/*). Duyu Mutabakatı'ndaki "Müdahale
+  // İzi" kutusu bunun DAR kesiti (yalnız iptal/geri-al türleri, yalnız sayı);
+  // burası tekil satırı, aktörü ve DEĞİŞEN ALANLARI gösterir.
+  const [izOzet, setIzOzet] = useState(null);
+  const [izSonuc, setIzSonuc] = useState(null);
+  const [izYukleniyor, setIzYukleniyor] = useState(false);
+  const [izAcik, setIzAcik] = useState(null);      // açık satırın id'si
+  const [izSayfa, setIzSayfa] = useState(0);
+  // Uygulanan filtre (sorguya giden) — form alanı DEĞİL. İkisini ayırmak,
+  // "yazarken her tuşta sorgu" ile "Ara'ya basınca sorgu"yu ayırır.
+  const [izFiltre, setIzFiltre] = useState({
+    tablo: '', islem: '', aktor: '', q: '', riskli: false, gun: 30,
+  });
+  const [izForm, setIzForm] = useState({
+    tablo: '', islem: '', aktor: '', q: '', riskli: false, gun: 30,
+  });
   const [dortSubeler, setDortSubeler] = useState([]);
   const [dortSube, setDortSube] = useState('');
   const [dortgen, setDortgen] = useState(null);
@@ -490,6 +508,43 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
       .catch(() => {});
   }, []);
 
+  // ── 🔍 DENETİM İZİ yükleyicileri ──────────────────────────────────────────
+  // Özet ve arama AYRI çağrıdır ve ayrı ayrı düşebilir: filtre listesi gelmese
+  // bile arama çalışmalı, arama düşse bile "defterde şu kadar iz var" görünmeli.
+  // Tek Promise.all, birinin arızasını ötekinin boşluğu gibi gösterirdi.
+  const izOzetYukle = useCallback((gun) => {
+    api(`/denetim-izi/ozet?gun=${encodeURIComponent(gun || 30)}`)
+      .then((d) => setIzOzet(d || null))
+      .catch(() => setIzOzet({ okunabildi: false, not: 'Özet ucu yanıt vermedi.' }));
+  }, []);
+
+  const izAra = useCallback((f, sayfa) => {
+    const limit = 100;
+    const s = Math.max(0, Number(sayfa) || 0);
+    const p = new URLSearchParams();
+    p.set('gun', String(f.gun || 30));
+    p.set('limit', String(limit));
+    p.set('offset', String(s * limit));
+    if (f.tablo) p.set('tablo', f.tablo);
+    if (f.islem) p.set('islem', f.islem);
+    if (f.aktor) p.set('aktor', f.aktor);
+    if (f.q) p.set('q', f.q);
+    if (f.riskli) p.set('riskli', 'true');
+    setIzYukleniyor(true);
+    setIzAcik(null);
+    api(`/denetim-izi/ara?${p.toString()}`)
+      .then((d) => setIzSonuc(d || null))
+      // ⚠️ HATA ≠ BOŞ: uç düşerse boş liste GÖSTERİLMEZ. "İz yok" ile
+      // "okunamadı" aynı ekranda aynı görünürse sahip olmayan bir gerçeğe
+      // ikna olur — bu modülün kovaladığı kusurun ta kendisi.
+      .catch((e) => setIzSonuc({
+        okunabildi: false, satirlar: [],
+        not: `Denetim defteri okunamadı${e?.message ? ` (${e.message})` : ''}. `
+             + 'Bu "iz yok" DEMEK DEĞİLDİR.',
+      }))
+      .finally(() => setIzYukleniyor(false));
+  }, []);
+
   useEffect(() => {
     if (gorunum === 'anomali' || gorunum === 'motorlar') truthYukle();
     // Bulgular ekranı iki katman taşır (çıkarım + ham gözlem) — ikisi de yüklenir
@@ -512,8 +567,12 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     if (gorunum === 'bag') bagYukle();
     if (gorunum === 'duyu') duyuYukle();
     if (gorunum === 'strateji') stratejiYukle();
+    // 🔍 Denetim İzi — ekran açılışında özet + ilk sayfa.
+    if (gorunum === 'iz') { izOzetYukle(izFiltre.gun); izAra(izFiltre, 0); }
     // dortSube bağımlılıkta: şube değişince dörtgen yeniden çekilir
-  }, [gorunum, dortSube, truthYukle, olayYukle, mutYukle, bagYukle, duyuYukle, stratejiYukle]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gorunum, dortSube, truthYukle, olayYukle, mutYukle, bagYukle, duyuYukle, stratejiYukle,
+      izOzetYukle, izAra]);
 
   // ════════════════════════ GÖRÜNÜM: BUGÜNKÜ BULGULAR ═══════════════════════
   // ── MUTABAKAT MERKEZİ ────────────────────────────────────────────────────
@@ -1422,6 +1481,22 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
                       <div style={{ fontSize: 10.5, color: R.not, marginTop: 5, fontFamily: F.mono }}>
                         {miTurler.slice(0, 3).map((t) => `${t.islem} ${sayi(t.adet)}`).join(' · ')}
                       </div>
+                    )}
+                    {/* 🔍 Bu kutu SAYIYI verir, satırı vermez. Sahibin bir sonraki
+                        sorusu daima "hangi kayıt, kim yaptı" — o cevabın yeri
+                        Denetim İzi görünümü. Köprü hedefi aynı modülün içinde
+                        olduğu için onGorunum yeterli (tema.js'te id: 'iz'). */}
+                    {onGorunum && (
+                      <button
+                        onClick={() => onGorunum('iz')}
+                        style={{
+                          marginTop: 8, padding: '5px 11px', borderRadius: 8,
+                          border: `1px solid ${R.cizgi3}`, background: 'transparent',
+                          color: R.metin2, fontSize: 10.5, cursor: 'pointer', fontFamily: 'inherit',
+                        }}
+                      >
+                        Tüm izi gör →
+                      </button>
                     )}
                   </div>
                 )}
@@ -2521,6 +2596,292 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
             </div>
           );
         })()}
+      </>
+    );
+  }
+
+  // ═══════════════════════ GÖRÜNÜM: DENETİM İZİ ════════════════════════════
+  // "Bu rakamı KİM, NE ZAMAN değiştirdi?" — `audit_log`'un okuma kapısı.
+  //
+  // NEDEN AYRI GÖRÜNÜM (yerleşim kararı, 2026-09-02):
+  //   Duyu Mutabakatı'ndaki "Müdahale İzi" kutusu aynı tabloyu okur ama SİNYAL
+  //   verir: yalnız iptal/geri-al/düzeltme türlerini, yalnız TOPLAM olarak.
+  //   Burası SORGUdur: her tablo, her işlem, her aktör, tekil satır ve o
+  //   satırda hangi alanın neden neye döndüğü. İkisi mükerrer değil; kutudan
+  //   buraya köprü kuruldu (aşağıdaki "Tüm izi gör →").
+  //
+  // ⛔ BU EKRAN HİÇBİR ŞEY YAZMAZ. Denetim defterini değiştirebilen bir arayüz
+  //   defteri anlamsız kılar (VERI-011'de audit_log'un "sıfırla" listesinden
+  //   çıkarılmasının sebebi aynı).
+  if (gorunum === 'iz') {
+    const sonuc = izSonuc;
+    const satirlar = Array.isArray(sonuc?.satirlar) ? sonuc.satirlar : [];
+    const okunamadi = sonuc && sonuc.okunabildi === false;
+    const ozetOk = izOzet && izOzet.okunabildi !== false;
+    const tabloSec = Array.isArray(izOzet?.tablolar) ? izOzet.tablolar : [];
+    const islemSec = Array.isArray(izOzet?.islemler) ? izOzet.islemler : [];
+
+    const uygula = (yeni) => {
+      const f = { ...izForm, ...(yeni || {}) };
+      setIzForm(f);
+      setIzFiltre(f);
+      setIzSayfa(0);
+      izAra(f, 0);
+      if (yeni && yeni.gun) izOzetYukle(f.gun);
+    };
+    const sayfaGit = (yon) => {
+      const s = Math.max(0, izSayfa + yon);
+      setIzSayfa(s);
+      izAra(izFiltre, s);
+    };
+
+    return (
+      <>
+        <div style={{ ...kartYuzey, padding: '16px 20px', marginBottom: 14 }}>
+          <div style={{ display: 'flex', alignItems: 'baseline', gap: 10, flexWrap: 'wrap' }}>
+            <span style={{ fontFamily: F.baslik, fontSize: 16, fontWeight: 600 }}>Denetim İzi</span>
+            <span style={{ fontSize: 11.5, color: R.not2 }}>
+              “bu rakamı kim, ne zaman değiştirdi” · <b>salt okunur defter</b>
+            </span>
+          </div>
+          {/* Defterin kendi durumu — sahte güven vermemek için AÇIKÇA yazılır. */}
+          <div style={{ fontSize: 11, color: R.not2, marginTop: 6, lineHeight: 1.55 }}>
+            {ozetOk ? (
+              <>
+                Son <b>{izOzet.kesit?.gun}</b> günde <b style={{ fontFamily: F.mono, color: R.krem }}>{sayi(izOzet.toplam)}</b> iz
+                {izOzet.kesit?.son_kayit ? <> · son kayıt <span style={{ fontFamily: F.mono }}>{String(izOzet.kesit.son_kayit).slice(0, 16).replace('T', ' ')}</span></> : null}
+                {izOzet.sema?.aktor_kolonu === false && (
+                  <div style={{ color: R.amber, marginTop: 4 }}>
+                    ⚠️ Defterde aktör kolonu yok (şema migrasyonu kilide takılmış olabilir) —
+                    aktör bilgisi varsa kayıt gövdesinden kurtarılıyor.
+                  </div>
+                )}
+              </>
+            ) : (
+              <span style={{ color: R.amber }}>
+                Defter özeti okunamadı — “iz yok” değil, <b>bilinmiyor</b>. Arama yine de denenebilir.
+              </span>
+            )}
+          </div>
+        </div>
+
+        {/* ── FİLTRELER ─────────────────────────────────────────────────── */}
+        <div style={{ ...kartYuzey, padding: '14px 18px', marginBottom: 14 }}>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ minWidth: 170, flex: '1 1 170px' }}>
+              <label style={dnEtiket}>Tablo</label>
+              <select style={dnAlanStil} value={izForm.tablo}
+                      onChange={(e) => uygula({ tablo: e.target.value })}>
+                <option value="">Hepsi</option>
+                {tabloSec.map((t) => (
+                  <option key={t.tablo} value={t.tablo}>{t.tablo} · {sayi(t.adet)}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ minWidth: 170, flex: '1 1 170px' }}>
+              <label style={dnEtiket}>İşlem</label>
+              <select style={dnAlanStil} value={izForm.islem}
+                      onChange={(e) => uygula({ islem: e.target.value })}>
+                <option value="">Hepsi</option>
+                {islemSec.map((t) => (
+                  <option key={t.islem} value={t.islem}>{t.islem} · {sayi(t.adet)}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ minWidth: 140, flex: '1 1 140px' }}>
+              <label style={dnEtiket}>Aktör</label>
+              <input style={dnAlanStil} value={izForm.aktor} placeholder="ad veya kimlik"
+                     onChange={(e) => setIzForm((f) => ({ ...f, aktor: e.target.value }))}
+                     onKeyDown={(e) => { if (e.key === 'Enter') uygula({}); }} />
+            </div>
+            <div style={{ minWidth: 170, flex: '1 1 170px' }}>
+              <label style={dnEtiket}>Kayıt / değer ara</label>
+              <input style={dnAlanStil} value={izForm.q} placeholder="kayıt kimliği ya da değer"
+                     onChange={(e) => setIzForm((f) => ({ ...f, q: e.target.value }))}
+                     onKeyDown={(e) => { if (e.key === 'Enter') uygula({}); }} />
+            </div>
+            <div style={{ minWidth: 110 }}>
+              <label style={dnEtiket}>Pencere</label>
+              <select style={dnAlanStil} value={izForm.gun}
+                      onChange={(e) => uygula({ gun: Number(e.target.value) })}>
+                {[7, 30, 90, 180, 365].map((g) => <option key={g} value={g}>Son {g} gün</option>)}
+              </select>
+            </div>
+            <button onClick={() => uygula({})} style={{
+              padding: '9px 17px', borderRadius: 10, border: 'none', cursor: 'pointer',
+              background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+              fontSize: 12, fontWeight: 700, fontFamily: 'inherit',
+            }}>Ara</button>
+            <button onClick={() => uygula({ riskli: !izForm.riskli })} style={{
+              padding: '9px 15px', borderRadius: 10, cursor: 'pointer', fontFamily: 'inherit',
+              border: `1px solid ${izForm.riskli ? R.amber : R.cizgi3}`,
+              background: izForm.riskli ? `${R.amber}1A` : 'transparent',
+              color: izForm.riskli ? R.amber : R.metin2, fontSize: 12, fontWeight: 600,
+            }}>⚠ Yalnız müdahaleler</button>
+            {(izFiltre.tablo || izFiltre.islem || izFiltre.aktor || izFiltre.q || izFiltre.riskli) && (
+              <button onClick={() => uygula({ tablo: '', islem: '', aktor: '', q: '', riskli: false })}
+                      style={{
+                        padding: '9px 14px', borderRadius: 10, border: `1px solid ${R.cizgi3}`,
+                        background: 'transparent', color: R.not, fontSize: 12, cursor: 'pointer',
+                        fontFamily: 'inherit',
+                      }}>Filtreyi temizle</button>
+            )}
+          </div>
+          <div style={{ fontSize: 10.5, color: R.not3, marginTop: 9, lineHeight: 1.5 }}>
+            “Yalnız müdahaleler” = iptal · geri alma · düzeltme · ters kayıt · silme · mükerrer.
+            Bu türler <b>sahip dâhil</b> herkes için görünür — hüküm yok, görünürlük var.
+          </div>
+        </div>
+
+        {/* ── SONUÇLAR ──────────────────────────────────────────────────── */}
+        {izYukleniyor && !satirlar.length ? <Yukleniyor /> : null}
+
+        {okunamadi && (
+          <HataBandi mesaj={sonuc?.not || 'Denetim defteri okunamadı.'} />
+        )}
+
+        {!izYukleniyor && !okunamadi && !satirlar.length && (
+          <BosDurum
+            baslik="Bu filtreyle iz bulunamadı"
+            aciklama="Pencereyi genişletin ya da filtreyi temizleyin. Not: iz yalnız denetim çağrısı yapan akışlarda doğar — izsizlik “değişiklik olmadı” anlamına gelmez."
+          />
+        )}
+
+        {satirlar.length > 0 && (
+          <div style={{ ...kartYuzey, overflow: 'hidden', marginBottom: 14 }}>
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '14px 18px 12px', borderBottom: `1px solid ${R.cizgi2}`, flexWrap: 'wrap', gap: 8,
+            }}>
+              <span style={{ fontFamily: F.baslik, fontSize: 15, fontWeight: 600 }}>
+                {satirlar.length} iz · en yeni önce
+              </span>
+              <span style={{ fontSize: 11, color: R.not2 }}>
+                {sonuc?.kesit?.bas} → {sonuc?.kesit?.bit}
+                {izSayfa > 0 ? ` · sayfa ${izSayfa + 1}` : ''}
+              </span>
+            </div>
+            <div style={{ display: 'flex', flexDirection: 'column' }}>
+              {satirlar.map((s) => {
+                const acik = izAcik === s.id;
+                const kim = s.aktor || s.aktor_id || null;
+                return (
+                  <div key={s.id} style={{ borderBottom: `1px solid ${R.cizgi}` }}>
+                    <div
+                      role="button"
+                      tabIndex={0}
+                      onClick={() => setIzAcik(acik ? null : s.id)}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setIzAcik(acik ? null : s.id); }
+                      }}
+                      style={{
+                        display: 'flex', gap: 12, padding: '11px 18px', cursor: 'pointer',
+                        alignItems: 'baseline', flexWrap: 'wrap',
+                        background: acik ? R.girinti : 'transparent',
+                      }}
+                    >
+                      <span style={{ fontFamily: F.mono, fontSize: 11, color: R.not2, minWidth: 108 }}>
+                        {String(s.zaman || '').slice(0, 16).replace('T', ' ') || '—'}
+                      </span>
+                      <span style={{ fontSize: 12.5, fontWeight: 700, color: s.riskli ? R.amber : R.krem }}>
+                        {s.islem || '—'}
+                      </span>
+                      <span style={{ fontFamily: F.mono, fontSize: 11, color: R.not }}>
+                        {s.tablo}
+                      </span>
+                      <span style={{ flex: 1 }} />
+                      {/* Aktör: doğrulanmamış (beyan) ile doğrulanmış AYNI görünmez. */}
+                      {kim ? (
+                        <span style={{
+                          fontSize: 11, color: s.aktor_guvenilir ? R.metin2 : R.not3,
+                          fontStyle: s.aktor_guvenilir ? 'normal' : 'italic',
+                        }}>
+                          {kim}{s.aktor_guvenilir ? '' : ' (doğrulanmamış)'}
+                        </span>
+                      ) : (
+                        <span style={{ fontSize: 11, color: R.not3 }}>aktör yok</span>
+                      )}
+                      {Array.isArray(s.degisen_alanlar) && s.degisen_alanlar.length > 0 && (
+                        <span style={rozetHap(R.bakir)}>{s.degisen_alanlar.length} alan</span>
+                      )}
+                    </div>
+                    {acik && (
+                      <div style={{ padding: '4px 18px 15px', background: R.girinti }}>
+                        <div style={{ fontFamily: F.mono, fontSize: 10.5, color: R.not2, marginBottom: 8 }}>
+                          kayıt: {s.kayit_id || '—'}
+                          {s.aktor_kaynak ? ` · kaynak: ${s.aktor_kaynak}` : ''}
+                          {s.aktor_yedekten ? ' · aktör kayıt gövdesinden kurtarıldı' : ''}
+                        </div>
+                        {Array.isArray(s.degisen_alanlar) && s.degisen_alanlar.length > 0 ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                            {s.degisen_alanlar.map((d, j) => (
+                              <div key={j} style={{ fontFamily: F.mono, fontSize: 11, lineHeight: 1.5 }}>
+                                <span style={{ color: R.not2 }}>{d.alan}: </span>
+                                <span style={{ textDecoration: 'line-through', color: R.not3 }}>{kisalt(String(d.eski ?? '—'), 90)}</span>
+                                <span style={{ color: R.not3 }}> → </span>
+                                <span style={{ color: R.krem }}>{kisalt(String(d.yeni ?? '—'), 90)}</span>
+                              </div>
+                            ))}
+                          </div>
+                        ) : (
+                          // Alan farkı çıkmadıysa HAM gövde gösterilir — "değişiklik
+                          // yok" demek yanlış olurdu: kayıt doğmuş/silinmiş olabilir.
+                          <div style={{ fontFamily: F.mono, fontSize: 10.5, color: R.not, lineHeight: 1.5, wordBreak: 'break-word' }}>
+                            {s.eski_deger ? <div>eski: {kisalt(JSON.stringify(s.eski_deger), 400)}</div> : null}
+                            {s.yeni_deger ? <div>yeni: {kisalt(JSON.stringify(s.yeni_deger), 400)}</div> : null}
+                            {!s.eski_deger && !s.yeni_deger && (
+                              <span style={{ color: R.not3 }}>
+                                Bu iz gövdesiz yazılmış — yalnız işlemin olduğu biliniyor,
+                                hangi değerin değiştiği defterde yok.
+                              </span>
+                            )}
+                          </div>
+                        )}
+                        {/* Kaydın TAM geçmişi — aynı kayda ait tüm izler */}
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            uygula({ tablo: s.tablo, islem: '', aktor: '', q: s.kayit_id || '', riskli: false });
+                          }}
+                          style={{
+                            marginTop: 10, padding: '6px 12px', borderRadius: 9,
+                            border: `1px solid ${R.cizgi3}`, background: 'transparent',
+                            color: R.metin2, fontSize: 11, cursor: 'pointer', fontFamily: 'inherit',
+                          }}
+                        >
+                          Bu kaydın tüm geçmişi →
+                        </button>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+            {/* Sayfalama — SESSİZ KIRPMA YOK: devamı varsa söylenir. */}
+            <div style={{
+              display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+              padding: '11px 18px', gap: 10, flexWrap: 'wrap',
+            }}>
+              <span style={{ fontSize: 10.5, color: R.not3 }}>
+                {sonuc?.devam_var
+                  ? 'Bu pencerede daha fazla iz var — sonraki sayfa.'
+                  : 'Bu pencerenin sonu.'}
+              </span>
+              <span style={{ display: 'flex', gap: 8 }}>
+                <button disabled={izSayfa === 0 || izYukleniyor} onClick={() => sayfaGit(-1)} style={{
+                  padding: '7px 14px', borderRadius: 9, border: `1px solid ${R.cizgi3}`,
+                  background: 'transparent', color: izSayfa === 0 ? R.not3 : R.metin2,
+                  fontSize: 11.5, cursor: izSayfa === 0 ? 'default' : 'pointer', fontFamily: 'inherit',
+                }}>← Önceki</button>
+                <button disabled={!sonuc?.devam_var || izYukleniyor} onClick={() => sayfaGit(1)} style={{
+                  padding: '7px 14px', borderRadius: 9, border: `1px solid ${R.cizgi3}`,
+                  background: 'transparent', color: sonuc?.devam_var ? R.metin2 : R.not3,
+                  fontSize: 11.5, cursor: sonuc?.devam_var ? 'pointer' : 'default', fontFamily: 'inherit',
+                }}>Sonraki →</button>
+              </span>
+            </div>
+          </div>
+        )}
       </>
     );
   }

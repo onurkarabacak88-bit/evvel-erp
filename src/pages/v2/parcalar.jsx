@@ -1385,10 +1385,126 @@ function SekmeBos({ baslik, aciklama }) {
   );
 }
 
+/** 🔍 DEĞİŞİKLİK GEÇMİŞİ — bir kaydın `audit_log` satırları (SYS-AUDIT, 2026-09-02).
+ *
+ *  Üç dürüstlük kuralı buraya gömülüdür:
+ *   1. HATA ≠ BOŞ — sorgu düşerse "değişiklik yok" DENMEZ; okunamadığı yazılır.
+ *      Yoksa arıza, "bu kayda kimse dokunmamış" gibi görünürdü.
+ *   2. İZSİZLİK ≠ DEĞİŞMEDİ — iz yalnız `audit()` çağıran akışlarda doğar.
+ *      Boş liste "hiç değişmedi" değil, "defterde iz yok" demektir; metin bunu
+ *      açıkça söyler.
+ *   3. 'beyan' DOĞRULANMIŞ DEĞİLDİR — istemcinin söylediği ad, PIN/oturumla
+ *      doğrulanmış adla aynı görünmemeli. Doğrulanmamış aktör soluk + '?' ile.
+ */
+function GecmisBlok({ gecmis }) {
+  if (!gecmis) return null;
+  const durum = gecmis.durum || 'tamam';
+  const satirlar = Array.isArray(gecmis.satirlar) ? gecmis.satirlar : [];
+  const baslik = (
+    <div style={{
+      fontSize: 11, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not2,
+      fontWeight: 700, paddingBottom: 9, borderBottom: `1px solid ${R.cizgi}`,
+      marginBottom: 12, marginTop: 22,
+    }}>
+      Değişiklik geçmişi · denetim defteri
+    </div>
+  );
+  if (durum === 'yukleniyor') {
+    return (<div>{baslik}<div style={{ fontSize: 11.5, color: R.not2 }}>Defter okunuyor…</div></div>);
+  }
+  if (durum === 'hata') {
+    return (
+      <div>{baslik}
+        <div style={{ fontSize: 11.5, color: R.kirmizi, lineHeight: 1.55 }}>
+          Denetim defteri okunamadı — bu <b>“değişiklik yok” DEĞİL</b>, bilinmiyor demektir.
+          {gecmis.not ? <div style={{ color: R.not2, marginTop: 4 }}>{gecmis.not}</div> : null}
+        </div>
+      </div>
+    );
+  }
+  if (!satirlar.length) {
+    return (
+      <div>{baslik}
+        <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.55 }}>
+          Bu kayıt için denetim defterinde iz yok. İz yalnız denetim çağrısı yapan
+          akışlarda doğar — izsizlik “hiç değişmedi” anlamına gelmez.
+        </div>
+      </div>
+    );
+  }
+  return (
+    <div>
+      {baslik}
+      <div style={{ display: 'flex', flexDirection: 'column', gap: 11 }}>
+        {satirlar.map((s, i) => {
+          const dogrulanmis = !!s.aktor_guvenilir;
+          const kim = s.aktor || s.aktor_id || null;
+          return (
+            <div key={s.id || i} style={{
+              padding: '9px 11px', borderRadius: 10, background: R.girinti,
+              border: `1px solid ${s.riskli ? `${R.amber}44` : R.cizgi}`,
+            }}>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'baseline', flexWrap: 'wrap' }}>
+                <span style={{
+                  fontSize: 11.5, fontWeight: 700,
+                  color: s.riskli ? R.amber : R.krem, wordBreak: 'break-word',
+                }}>{s.islem || '—'}</span>
+                <span style={{ fontFamily: F.mono, fontSize: 10, color: R.not3 }}>
+                  {String(s.zaman || '').slice(0, 16).replace('T', ' ') || '—'}
+                </span>
+              </div>
+              <div style={{ fontSize: 10.5, color: R.not2, marginTop: 3 }}>
+                {kim ? (
+                  <span style={{ color: dogrulanmis ? R.not : R.not3 }}>
+                    {kim}
+                    {s.aktor_kaynak ? ` · ${s.aktor_kaynak}` : ''}
+                    {dogrulanmis ? '' : ' (doğrulanmamış)'}
+                  </span>
+                ) : (
+                  <span style={{ color: R.not3 }}>aktör kayıtlı değil</span>
+                )}
+              </div>
+              {Array.isArray(s.degisen_alanlar) && s.degisen_alanlar.length > 0 && (
+                <div style={{ marginTop: 6, display: 'flex', flexDirection: 'column', gap: 3 }}>
+                  {s.degisen_alanlar.slice(0, 8).map((d, j) => (
+                    <div key={j} style={{ fontFamily: F.mono, fontSize: 10.5, color: R.not, lineHeight: 1.45 }}>
+                      <span style={{ color: R.not2 }}>{d.alan}: </span>
+                      <span style={{ textDecoration: 'line-through', color: R.not3 }}>{String(d.eski ?? '—')}</span>
+                      <span style={{ color: R.not3 }}> → </span>
+                      <span style={{ color: R.krem }}>{String(d.yeni ?? '—')}</span>
+                    </div>
+                  ))}
+                  {s.degisen_alanlar.length > 8 && (
+                    <div style={{ fontSize: 10, color: R.not3 }}>
+                      +{s.degisen_alanlar.length - 8} alan daha
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+      {gecmis.kirpildi && (
+        <div style={{ fontSize: 10.5, color: R.not3, marginTop: 8 }}>
+          Liste kırpıldı — daha eski izler var. Tamamı için Denetim &amp; Zekâ ▸ Denetim İzi.
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Cekmece({
   acik, tip, baslik, alt, kpi, listeBaslik, satirlar, not,
   aksiyonAd, onAksiyon, aksiyonlar, onKapat,
   belgeler, iz, dosyaBilgi,
+  // 🔍 DEĞİŞİKLİK GEÇMİŞİ (2026-09-02, SYS-AUDIT) — `iz`'den AYRI tutulur.
+  //   iz     = paranın hareketi (ödeme / artış) — kayıt dosyası ucundan
+  //   gecmis = KAYDIN kendi denetim defteri (audit_log): kim, ne zaman, hangi
+  //            alanı ne yaptı. Aynı listeye karıştırmak "ödendi" ile
+  //            "elle düzeltildi"yi aynı olay gibi gösterirdi.
+  // Beklenen biçim: { durum: 'yukleniyor'|'hata'|'tamam', satirlar: [...], not }
+  gecmis,
   // 🔙 GERİ (2026-08-26) — { ad, onTikla }. Çekmece artık katmanlanabildiği için
   // (satır bir kapı olabiliyor) geri dönecek bir yol ŞART: derinleşen kullanıcıyı
   // "kapat"a mahkûm etmek, açtığı bağlamı da kapatmak demektir. Verilmezse
@@ -1597,6 +1713,9 @@ export function Cekmece({
                   aciklama="Bu kayıt tipi için adım adım iz defteri yok. Para hareketleri (ödeme, ciro, kasa) İşlem Defteri'nde değişmez kayıt olarak durur."
                 />
               )}
+
+              {/* Kaydın DENETİM DEFTERİ geçmişi — para izinden ayrı blok. */}
+              <GecmisBlok gecmis={gecmis} />
 
               {dosyaBilgi && (
                 <div>
