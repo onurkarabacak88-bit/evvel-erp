@@ -18,6 +18,11 @@ NİYE KURTARILABİLİYOR:
   hareketi de üretilirse ciro kasaya İKİNCİ KEZ girer ve kasa şişer. Bu modül
   YALNIZ `ciro` tablosuna yazar; `insert_kasa_hareketi` hiç çağrılmaz.
 
+🔓 PIN İSTEĞE BAĞLI (sahip kararı 2026-09-02): bu uç geri yükleyicidir —
+  siler değil yazar, kasaya dokunmaz, idempotenttir. PIN verilirse doğrulanır
+  ve onaylayan deftere yazılır; verilmezse kayıt `sahip_talimati` olarak
+  işaretlenir. Kapı kalktı, İZ KALKMADI.
+
 🧪 KURU ÇALIŞTIRMA ZORUNLU:
   `uygula=true` yalnız daha önce aynı parametrelerle kuru çalıştırma yapılmış
   ve LİSTE OKUNMUŞSA anlamlıdır. Uç her iki modda da satır satır listeyi döner;
@@ -301,8 +306,23 @@ def ciro_kurtar(body: KurtarmaBody) -> Dict[str, Any]:
         if (body.onay or "").strip() != "EVET_KURTAR":
             raise HTTPException(400, "Onay gerekli: onay='EVET_KURTAR'")
 
-        from operasyon_merkez_api import _isletme_onay_dogrula
-        onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
+        # ── YETKİ: PIN İSTEĞE BAĞLI (sahip kararı, 2026-09-02) ──────────────
+        # Bu uç, `sistem-sifirla` gibi YIKICI değil GERİ YÜKLEYİCİDİR:
+        #   · yalnız EKSİK satırı INSERT eder (ON CONFLICT DO NOTHING)
+        #   · hiçbir satırı SİLMEZ veya GÜNCELLEMEZ
+        #   · kasaya YAZMAZ (insert_kasa_hareketi hiç çağrılmaz)
+        #   · idempotenttir — iki kez çalışsa ikinci turda 0 satır yazar
+        #   · verisi kullanıcıdan değil, sistemin KENDİ defterlerinden gelir
+        #     (ciro_taslak · rapor cache · Evo)
+        # Yıkıcı uçtaki PIN'i buraya da koymuştum; sahip "kaldır" dedi ve
+        # gerekçe sağlam: yok edeni durduran kapı, geri getireni durdurmamalı.
+        # ⚠️ Kapı kalkıyor ama İZ KALKMIYOR — kim/nasıl çalıştırdı deftere yazılır.
+        onayci = {"id": None, "ad_soyad": "(PIN'siz — sahip talimatı)"}
+        _yetki_kaynak = "sahip_talimati"
+        if (body.onay_pin or "").strip():
+            from operasyon_merkez_api import _isletme_onay_dogrula
+            onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
+            _yetki_kaynak = "isletme_pin"
 
         yazilan = 0
         for s in plan["satirlar"]:
@@ -323,11 +343,15 @@ def ciro_kurtar(body: KurtarmaBody) -> Dict[str, Any]:
         audit(cur, "ciro", "KURTARMA", "CIRO_KURTARMA",
               yeni={"yazilan": yazilan, "planlanan": plan["yazilacak_adet"],
                     "brut": plan["toplamlar"]["brut"],
-                    "onaylayan": onayci.get("ad_soyad"),
-                    "onaylayan_id": str(onayci.get("id"))})
+                    "kaynak_dagilimi": plan.get("kaynak_dagilimi"),
+                    "kasaya_yazilmadi": True},
+              aktor=onayci.get("ad_soyad"),
+              aktor_id=(str(onayci.get("id")) if onayci.get("id") else None),
+              aktor_kaynak=_yetki_kaynak)
 
         plan["kuru"] = False
         plan["yazilan_adet"] = yazilan
         plan["onaylayan"] = onayci.get("ad_soyad")
+        plan["yetki_kaynak"] = _yetki_kaynak
         plan["mesaj"] = f"{yazilan} ciro satırı geri yazıldı. Kasaya dokunulmadı."
         return plan
