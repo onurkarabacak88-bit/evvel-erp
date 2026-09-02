@@ -9756,12 +9756,19 @@ def reddet(oid: str, body: ReddetModel = ReddetModel(),
             }
             _q = _sube_lookup.get(kt)
             if _q and kid:
+                # 🔴 SAVEPOINT (2026-09-02): burası projenin KENDİ sert kuralını
+                # çiğniyordu — yutulan cur.execute transaction'ı "aborted" yapar.
+                # Buradaki bedeli ağır: blok `db()` içinde ve reddin SON adımı,
+                # yani zehirlenme COMMIT'te patlar → red TAMAMEN geri sarılır
+                # ama uç {"success": true} döner. SAHTE YEŞİL: sahip "reddettim"
+                # sanır, onay hâlâ bekliyordur.
                 try:
-                    cur.execute(_q, (kid,))
-                    _r = cur.fetchone()
-                    _sube_id = str(_r["sid"]) if _r and _r.get("sid") else None
-                except Exception:
-                    pass
+                    with savepoint(cur, "onay_red_sube"):
+                        cur.execute(_q, (kid,))
+                        _r = cur.fetchone()
+                        _sube_id = str(_r["sid"]) if _r and _r.get("sid") else None
+                except Exception:  # noqa: BLE001 — bildirim yan iş, reddi düşürmez
+                    _sube_id = None
 
             if _sube_id:
                 _aciklama = (onay.get("aciklama") or "").strip()
@@ -9773,16 +9780,20 @@ def reddet(oid: str, body: ReddetModel = ReddetModel(),
                 if _neden:
                     _mesaj_parcalari.append(f"Neden: {_neden}")
                 _mesaj = " — ".join(_mesaj_parcalari)
+                # SAVEPOINT (2026-09-02): yukarıdakiyle aynı gerekçe — şubeye
+                # bildirim gönderememek reddi geçersiz kılmamalı, ama yutulan
+                # INSERT transaction'ı zehirleyip commit'i düşürüyordu.
                 try:
-                    cur.execute(
-                        """
-                        INSERT INTO sube_merkez_mesaj
-                            (id, sube_id, mesaj, oncelik, ttl_saat)
-                        VALUES (%s, %s, %s, 'yuksek', 48)
-                        """,
-                        (str(uuid.uuid4()), _sube_id, _mesaj),
-                    )
-                except Exception:
+                    with savepoint(cur, "onay_red_mesaj"):
+                        cur.execute(
+                            """
+                            INSERT INTO sube_merkez_mesaj
+                                (id, sube_id, mesaj, oncelik, ttl_saat)
+                            VALUES (%s, %s, %s, 'yuksek', 48)
+                            """,
+                            (str(uuid.uuid4()), _sube_id, _mesaj),
+                        )
+                except Exception:  # noqa: BLE001 — bildirim yan iş
                     pass
 
     return {"success": True}

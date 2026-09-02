@@ -346,8 +346,33 @@ def gecmis_gun_ciro_gonder(body: GecmisCiroBody):
     sad = f"%{(body.sube_ad or '').strip().lower()}%"
     nakit = float(body.nakit or 0); pos = float(body.pos or 0); online = float(body.online or 0)
     toplam = round(nakit + pos + online, 2)
+    # 🔴 ONAY-001 (2026-09-02): bu uç, taslak→onay hattını TASARIM GEREĞİ atlıyor
+    # (geçmiş gün Evo backfill aracı; `uygula=False` kuru çalıştırma kapısı var).
+    # Sorun bypass değil, GUARD EKSİĞİ: ana ciro uçlarındaki koruma ailesi burada
+    # hiç yoktu, dolayısıyla en zayıf halka burasıydı.
+    # `/onayla` ucundaki not aynen geçerli: "FE engelliyor ama API doğrudan
+    # çağrılabilir — koruma KAYNAKTA olmalı."
+    if nakit < 0 or pos < 0 or online < 0:
+        raise HTTPException(400, "Ciro kanalları negatif olamaz")
+    # PARA-013 çift sayımı: online alanına yanlışlıkla TOPLAM yazılırsa kasa bir
+    # kat şişer. POST/PUT /ciro ve taslak-onayla bunu kesiyordu, burası kesmiyordu.
+    if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.01:
+        raise HTTPException(
+            400,
+            "Online tutarı nakit+POS toplamına eşit — çift sayım. Online yoksa 0 girin.")
     if toplam <= 0:
         raise HTTPException(400, "Tutar 0 — nakit/pos girilmeli")
+    # Gelecek tarih: `ciro_ekle` bunu blokluyor, bu uç blokla­mıyordu → gün bazlı
+    # mutabakatlar bozulurdu. Aynı kaynağı (bugun_tr) kullanıyoruz ki iki uç
+    # farklı "bugün"e inanmasın.
+    from datetime import date as _date
+    from tr_saat import bugun_tr as _bugun_tr
+    try:
+        _gt = _date.fromisoformat((body.tarih or "").strip())
+    except ValueError:
+        raise HTTPException(400, "tarih YYYY-MM-DD biçiminde olmalı") from None
+    if _gt > _bugun_tr():
+        raise HTTPException(400, "Gelecek tarihli ciro girilemez")
     with db() as (conn, cur):
         cur.execute("SELECT id, ad FROM subeler WHERE LOWER(ad) LIKE %s ORDER BY ad LIMIT 1", (sad,))
         s = cur.fetchone()

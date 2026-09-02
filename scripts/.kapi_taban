@@ -44,8 +44,6 @@ main.py::kapanis_hatirlatma_tara
 main.py::kart_plan_mutabakat
 main.py::kasa_ve_faiz_odeme_plani_tam_odeme
 main.py::odeme_yap
-main.py::reddet
-main.py::reddet
 main.py::sabit_gider_sil
 main.py::v2_kisit_kaydet
 motors.py::uyari_motoru
