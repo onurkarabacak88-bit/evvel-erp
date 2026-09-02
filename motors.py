@@ -57,6 +57,28 @@ def _kart_esikleri() -> dict:
     }
 
 
+def _sonraki_vade(bugun, odeme_gunu):
+    """Bir sonraki vade tarihi — AY DEVRİ ve kısa ay kırpması dahil.
+
+    PANEL-009: eski kod `date(bugun.year, bugun.month, odeme_gunu)` ile hep
+    BU AYIN tarihini kuruyordu. Ayın 29'unda `odeme_gunu=5` için 5 Eylül
+    çıkıyor ve −24 gün farkı üretiliyordu; oysa gerçek vade 5 EKİM'dir.
+    Bu dosya kart tarafında (motors.py:370-379) doğru deseni zaten kullanıyor;
+    değişken gider tarafı atlanmıştı — aynı desen buraya taşındı.
+
+    ⚠️ `_safe_date` kısa ayları kırpar: `odeme_gunu=31` → Şubat'ta 28/29.
+    Ham `date()` orada ValueError atıp paneli çökertiyordu.
+    """
+    g = int(odeme_gunu or 1)
+    vade = _safe_date(bugun.year, bugun.month, g)
+    if vade < bugun:
+        if bugun.month == 12:
+            vade = _safe_date(bugun.year + 1, 1, g)
+        else:
+            vade = _safe_date(bugun.year, bugun.month + 1, g)
+    return vade
+
+
 def _asgari_oran() -> float:
     """
     Kart asgari ödeme oranı env'den okunur.
@@ -1367,28 +1389,38 @@ def finans_ozet_motoru():
             })
 
         # ── DEĞİŞKEN GİDER HATIRLATMALARI — kasa etkilenmez, sadece uyarı ──
+        # 🔴 PANEL-009 (2026-09-02): pencere SQL'de HAM GÜN ARİTMETİĞİYLE
+        # kuruluyordu (`odeme_gunu <= EXTRACT(DAY...) + 3`) ve AY DEVRİ YOKTU.
+        # Somut hasar, her ay tekrarlıyordu:
+        #   · Ayın 28'inden itibaren "yaklaşan" sorgusu `odeme_gunu > 31`
+        #     istiyor — hiçbir gün 31'i aşamaz, liste HER AY BOŞALIYORDU.
+        #   · Ayın 29'unda `odeme_gunu=5` (gerçek vade: ertesi ayın 5'i) "bugün"
+        #     penceresine düşüyor, `date(bu_yil, bu_ay, 5)` ile −24 gün farkı
+        #     üretiliyor ve ya "ödenmiş" diye eleniyor ya da SAHTE KRİTİK
+        #     olarak kırmızı yanıyordu.
+        # Düzeltme: gün aritmetiği SQL'den kaldırıldı. Vade tarihi Python'da,
+        # bu dosyanın kart tarafında ZATEN kullandığı desenle hesaplanıyor
+        # (_safe_date + ay devri, motors.py:370-379). Kovalama da tarihe göre.
         cur.execute("""
             SELECT id, gider_adi, kategori, odeme_gunu, tutar
             FROM sabit_giderler
             WHERE aktif = TRUE AND tip = 'degisken'
-            AND odeme_gunu <= EXTRACT(DAY FROM CURRENT_DATE) + 3
         """)
-        for g in cur.fetchall():
-            odeme_gun = int(g['odeme_gunu'] or 1)
-            try:
-                odeme_tarihi = date(bugun.year, bugun.month, odeme_gun)
-            except ValueError:
-                import calendar as _cal
-                odeme_tarihi = date(bugun.year, bugun.month,
-                                    _cal.monthrange(bugun.year, bugun.month)[1])
+        _degisken_satirlar = list(cur.fetchall())
+        for g in _degisken_satirlar:
+            odeme_tarihi = _sonraki_vade(bugun, g['odeme_gunu'])
             gun_farki = (odeme_tarihi - bugun).days
-            # Bu ay fatura ödendi mi — kasa_hareketleri FATURA_ODEMESI ile kontrol
+            # Bu kovaya yalnız 0-3 gün kalanlar girer (eski SQL'in niyeti buydu).
+            if gun_farki > 3:
+                continue
+            # ⚠️ Ödendi kontrolü VADE AYINA bakar, bugünün ayına değil: vade
+            # ertesi aya devrettiyse bu ayın ödemesi onu kapatmaz.
             cur.execute("""
                 SELECT 1 FROM kasa_hareketleri
                 WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
                 AND islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = true AND durum = 'aktif'
                 AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
-            """, (str(g['id']), bugun.year, bugun.month))
+            """, (str(g['id']), odeme_tarihi.year, odeme_tarihi.month))
             if cur.fetchone():
                 continue  # Bu ay zaten ödendi
             # Kart ile ödendi mi kontrol et
@@ -1438,30 +1470,24 @@ def finans_ozet_motoru():
             })
 
         # ── DEĞİŞKEN GİDER — YAKLAŞAN (4-30 gün) ──
+        # PANEL-009: aynı düzeltme — SQL gün aritmetiği kaldırıldı, pencere
+        # gerçek vade tarihine göre Python'da kuruluyor.
         cur.execute("""
             SELECT id, gider_adi, kategori, odeme_gunu, tutar
             FROM sabit_giderler
             WHERE aktif = TRUE AND tip = 'degisken'
-            AND odeme_gunu > EXTRACT(DAY FROM CURRENT_DATE) + 3
-            AND odeme_gunu <= EXTRACT(DAY FROM CURRENT_DATE) + 30
         """)
         for g in cur.fetchall():
-            odeme_gun = int(g['odeme_gunu'] or 1)
-            try:
-                odeme_tarihi = date(bugun.year, bugun.month, odeme_gun)
-            except ValueError:
-                import calendar as _cal
-                odeme_tarihi = date(bugun.year, bugun.month,
-                                    _cal.monthrange(bugun.year, bugun.month)[1])
+            odeme_tarihi = _sonraki_vade(bugun, g['odeme_gunu'])
             gun_farki = (odeme_tarihi - bugun).days
-            if gun_farki <= 0:
+            if gun_farki <= 3 or gun_farki > 30:
                 continue
             cur.execute("""
                 SELECT 1 FROM kasa_hareketleri
                 WHERE kaynak_id = %s AND kaynak_tablo = 'sabit_giderler'
                 AND islem_turu = 'FATURA_ODEMESI' AND kasa_etkisi = true AND durum = 'aktif'
                 AND EXTRACT(YEAR FROM tarih) = %s AND EXTRACT(MONTH FROM tarih) = %s
-            """, (str(g['id']), bugun.year, bugun.month))
+            """, (str(g['id']), odeme_tarihi.year, odeme_tarihi.month))
             if cur.fetchone():
                 continue
             cur.execute("""

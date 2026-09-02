@@ -1,7 +1,8 @@
 """İş Başvurusu API — CV toplama, listeleme, durum güncelleme, IK skor motoru."""
-from fastapi import APIRouter, HTTPException, Query, Depends
-from pydantic import BaseModel
+from fastapi import APIRouter, HTTPException, Query, Depends, Request
+from pydantic import BaseModel, Field
 from typing import Optional, List
+import re
 import uuid, io
 from datetime import datetime
 from database import db
@@ -25,15 +26,56 @@ YONETIM = [Depends(admin_kapisi)]
 
 # ── Modeller ─────────────────────────────────────────────────────────────────
 
+_re_tel = re.compile(r"\D")
+
+
+def _basvuru_tel_norm(ham: str) -> str:
+    """Telefonu tek kanonik biçime indirger: 90XXXXXXXXXX. Çözemezse ''.
+
+    🔴 BASVURU-009 (2026-09-02): telefon YALNIZ `.strip()` ile yazılıyordu.
+    "0532 111 22 33", "+90 532 111 22 33" ve "5321112233" AYRI kayıtlar
+    oluyordu; aynı kişinin üç başvurusu üç farklı aday gibi görünüyordu ve
+    hiçbir dedup mümkün değildi.
+
+    ⚠️ Projede ÜÇ ayrı normalize var ve üçü FARKLI kanonik biçim üretiyor:
+      whatsapp_bildirim.wa_chatid_normalize → 90XXXXXXXXXX@c.us
+      fatura_istek_api._tel_norm            → 90XXXXXXXXXX (12 hane)
+      fire_bildirim._normalize_iade_telefon → 5XXXXXXXXX (10 hane)
+    Dördüncüyü uydurmuyoruz: `_tel_norm` ile AYNI biçim seçildi (12 hane),
+    ileride ortak modüle taşınabilsin diye.
+    """
+    d = _re_tel.sub("", str(ham or ""))
+    if d.startswith("00"):
+        d = d[2:]
+    if len(d) == 11 and d.startswith("0"):
+        d = "90" + d[1:]
+    elif len(d) == 10 and d.startswith("5"):
+        d = "90" + d
+    return d if (len(d) == 12 and d.startswith("905")) else ""
+
+
 class BasvuruGonder(BaseModel):
-    ad_soyad: str
-    telefon: str
-    dogum_yili: Optional[int] = None
-    ilce: Optional[str] = None
+    """🔴 BASVURU-007 (2026-09-02): modelde HİÇ `Field` yoktu — ne max_length
+    ne aralık ne validator. `{"ad_soyad":"x","telefon":"y"}` ile boş bir
+    başvuru geçiyor ve skor motoru onu 50/100 "Orta Aday" diye puanlıyordu.
+    Metin alanlarına megabaytlarca veri gönderilebiliyordu (auth'suz, herkese
+    açık uç — bu bir depolama saldırısı yüzeyidir).
+
+    ⛔ ALANLARI ZORUNLU YAPMIYORUZ: frontend 17 alanı zorunlu tutuyor ama
+    backend'de zorunlu kılmak, kısmi kayıt/taslak akışlarını ve eski
+    istemcileri kırar — bu bir POLİTİKA kararı, sahibin.
+    Yapılan: UZUNLUK ve ARALIK sınırı. Bu, veri kalitesi kararı değil,
+    kötüye kullanım freni.
+    """
+    ad_soyad: str = Field(..., max_length=120)
+    telefon: str = Field(..., max_length=32)
+    # 1900 öncesi / gelecek doğum yılı anlamsız; eskiden -5 de 99999 de geçiyordu.
+    dogum_yili: Optional[int] = Field(None, ge=1940, le=2015)
+    ilce: Optional[str] = Field(None, max_length=80)
     # Adım 1
     yasam_durumu: Optional[str] = None      # aile | yurt | arkadas | tek
     egitim_durumu: Optional[str] = None     # lise | universite | mezun | calisiyor | diger
-    universite_bol: Optional[str] = None
+    universite_bol: Optional[str] = Field(None, max_length=120)
     en_erken_saat: Optional[str] = None     # 07:00 | 08:00 | 09:00 | 10:00 | ogle
     ulasim: Optional[str] = None            # yurume | toplu | arac | bisiklet
     # Adım 2
@@ -41,7 +83,7 @@ class BasvuruGonder(BaseModel):
     calisma_tercihi: Optional[str] = None   # tam | yari | esnek
     musait_gunler: Optional[List[str]] = None
     baslangic: Optional[str] = None         # hemen | 2hafta | 1ay
-    ek_not: Optional[str] = None
+    ek_not: Optional[str] = Field(None, max_length=2000)
     # Adım 3
     kahve_deneyim: Optional[str] = None
     nerede_calistim: Optional[str] = None    # kurumsal | yerel_bagimsiz | sektor_disi | hic_calismadim
@@ -49,9 +91,9 @@ class BasvuruGonder(BaseModel):
     isten_en_iyi: Optional[str] = None       # musteri_insan | tempolu_ortam | ogrenme | ekip | para_bagimsizlik
     isten_en_zor: Optional[str] = None       # uzun_saatler | zor_musteriler | dusuk_ucret | yonetim_sorun | monoton
     # Eski serbest metin alanları — geriye dönük uyumluluk için tutuldu
-    onceki_is: Optional[str] = None
-    onceki_is_ogrenilen: Optional[str] = None
-    onceki_is_iyi_zor: Optional[str] = None
+    onceki_is: Optional[str] = Field(None, max_length=500)
+    onceki_is_ogrenilen: Optional[str] = Field(None, max_length=1000)
+    onceki_is_iyi_zor: Optional[str] = Field(None, max_length=1000)
     # Adım 4 — behavioral (temizlik + esneklik)
     makine_sonrasi: Optional[str] = None    # hemen_siler | vardiya_sonu | kime_duserse | pek_dusunmem
     yogun_duzen: Optional[str] = None       # araliklarda | rush_bitti | oldugu_gibi | fark_etmez
@@ -63,12 +105,12 @@ class BasvuruGonder(BaseModel):
     sabah_hazirlik: Optional[str] = None    # kahve_icer | zor_gelir | izin_dusunur | duruma_gore
     yorucu_an: Optional[str] = None         # beklenmedik | isler_uzayinca | plan_disi | gunun_sonu
     # Adım 6
-    neden_bu_is: Optional[str] = None
+    neden_bu_is: Optional[str] = Field(None, max_length=1000)
     tempo_tercihi: Optional[str] = None     # hizli | sakin | ikisi
     # Adım 7
-    tanitim: Optional[str] = None
-    referans_ad: Optional[str] = None
-    referans_tel: Optional[str] = None
+    tanitim: Optional[str] = Field(None, max_length=500)
+    referans_ad: Optional[str] = Field(None, max_length=120)
+    referans_tel: Optional[str] = Field(None, max_length=32)
     kaynak_sube: Optional[str] = None
     tercih_subeler: Optional[List[str]] = None   # geriye dönük uyumluluk
 
@@ -562,6 +604,15 @@ def _ensure_table(cur):
     """)
     # Migration: eski tablolara eksik kolonları ekle
     for kolon, tip in [
+        # 🔴 BASVURU-009: telefon yalnız strip'lenerek yazılıyordu; "0532...",
+        # "+90 532...", "5321112233" AYRI kayıtlar oluyor ve dedup imkânsız
+        # kalıyordu. Kanonik biçim ayrı kolonda tutulur (ham hâli korunur —
+        # kullanıcının yazdığını silmeyiz).
+        ("telefon_norm","TEXT"),
+        # 🔴 BASVURU-002: uç auth'suz ve SINIRSIZ. IP kaydı yoktu, dolayısıyla
+        # kötüye kullanım ölçülemiyordu bile. IP tek başına kimlik değildir
+        # (NAT/mobil) — bu yüzden BLOKLAMAK için değil, GÖRMEK için tutuluyor.
+        ("basvuru_ip","TEXT"),
         ("yasam_durumu","TEXT"), ("egitim_durumu","TEXT"), ("universite_bol","TEXT"),
         ("en_erken_saat","TEXT"), ("ulasim","TEXT"), ("ek_not","TEXT"),
         ("onceki_is_ogrenilen","TEXT"), ("onceki_is_iyi_zor","TEXT"),
@@ -615,17 +666,49 @@ def _row_to_dict(r):
 # ── Endpoints ────────────────────────────────────────────────────────────────
 
 @router.post("")
-def basvuru_gonder(body: BasvuruGonder):
+def basvuru_gonder(body: BasvuruGonder, request: Request = None):
     """Mobil formdan gelen başvuruyu kaydet."""
     if not body.ad_soyad.strip():
         raise HTTPException(400, "Ad soyad zorunlu.")
     if not body.telefon.strip():
         raise HTTPException(400, "Telefon zorunlu.")
 
+    _tel_n = _basvuru_tel_norm(body.telefon)
+    if not _tel_n:
+        raise HTTPException(
+            400, "Telefon numarası anlaşılamadı — 5XX XXX XX XX biçiminde girin.")
+
+    _ip = None
+    try:
+        if request is not None:
+            _ip = (request.headers.get("x-forwarded-for") or "").split(",")[0].strip() \
+                  or (request.client.host if request.client else None)
+    except Exception:
+        _ip = None
+
     bid = str(uuid.uuid4())
     import json as _j
     with db() as (conn, cur):
         _ensure_table(cur)
+
+        # 🔴 BASVURU-009 + 002: aynı numaradan sınırsız başvuru yazılabiliyordu.
+        # Dedup penceresi 30 gün: iş başvurusu tekrarlanabilir (birkaç ay sonra
+        # yeniden başvurmak meşru) ama aynı ay içinde ikinci kayıt, ya çift
+        # gönderim ya da spam'dir. Silmiyoruz, YAZMIYORUZ ve nedenini söylüyoruz.
+        cur.execute(
+            """SELECT id, olusturma_ts::date::text AS gun
+               FROM is_basvuru
+               WHERE telefon_norm = %s
+                 AND olusturma_ts >= NOW() - INTERVAL '30 days'
+               ORDER BY olusturma_ts DESC LIMIT 1""",
+            (_tel_n,))
+        _onceki = cur.fetchone()
+        if _onceki:
+            raise HTTPException(
+                409,
+                "Bu telefon numarasıyla son 30 gün içinde (%s) zaten başvuru alınmış. "
+                "Başvurunuz sırada — tekrar göndermenize gerek yok."
+                % (dict(_onceki).get("gun") or "yakın tarihte"))
         cur.execute("""
             INSERT INTO is_basvuru (
                 id, ad_soyad, telefon, dogum_yili, ilce,
@@ -637,6 +720,7 @@ def basvuru_gonder(body: BasvuruGonder):
                 sosyal_yaklasim, musteri_bagli, sabah_hazirlik, yorucu_an,
                 neden_bu_is, tempo_tercihi,
                 tanitim, referans_ad, referans_tel, kaynak_sube,
+                telefon_norm, basvuru_ip,
                 durum, olusturma_ts
             ) VALUES (
                 %s,%s,%s,%s,%s,
@@ -648,6 +732,7 @@ def basvuru_gonder(body: BasvuruGonder):
                 %s,%s,%s,%s,
                 %s,%s,
                 %s,%s,%s,%s,
+                %s,%s,
                 'bekliyor',%s
             )
         """, (
@@ -678,6 +763,7 @@ def basvuru_gonder(body: BasvuruGonder):
             (body.referans_ad or "").strip() or None,
             (body.referans_tel or "").strip() or None,
             (body.kaynak_sube or "").strip() or None,
+            _tel_n, _ip,
             dt_now_tr(),
         ))
         conn.commit()
@@ -805,6 +891,20 @@ def basvuru_durum_guncelle(bid: str, body: DurumGuncelle):
             gecerli = {"bekliyor", "gorusme", "olumlu", "olumsuz"}
             if d not in gecerli:
                 raise HTTPException(400, f"Geçersiz durum: {gecerli}")
+            # 🔴 BASVURU-010: işe alınmış bir kaydın durumu serbestçe
+            # 'olumsuz'a çekilebiliyordu — personel çalışırken başvurusu
+            # "olumsuz" görünüyor, işe alım geçmişi kendi kendisiyle çelişiyordu.
+            # İşten çıkış AYRI bir olaydır ve personel tarafında yönetilir;
+            # başvuru kaydı işe alım ANINI belgeler, sonrasını değil.
+            if d != "olumlu":
+                cur.execute("SELECT COALESCE(ise_alindi, FALSE) AS ia FROM is_basvuru WHERE id=%s", (bid,))
+                _d = cur.fetchone()
+                if _d and dict(_d).get("ia"):
+                    raise HTTPException(
+                        409,
+                        "Bu başvurudan personel oluşturulmuş — durumu 'olumlu' dışına "
+                        "çekilemez. İşten çıkış personel ekranından yönetilir; başvuru "
+                        "kaydı işe alım anını belgeler.")
             cur.execute("UPDATE is_basvuru SET durum=%s, guncelleme_ts=%s WHERE id=%s", (d, dt_now_tr(), bid))
         if cur.rowcount == 0:
             raise HTTPException(404, "Başvuru bulunamadı.")
@@ -897,6 +997,25 @@ def basvuru_ise_al(bid: str, body: dict = None):
 def basvuru_sil(bid: str):
     with db() as (conn, cur):
         _ensure_table(cur)
+        # 🔴 BASVURU-010 (2026-09-02): işe alınmış bir başvuru SİLİNEBİLİYORDU.
+        # `is_basvuru.personel_id` ile personel kaydına bağ var ama FK YOK ve
+        # `personel` tarafında başvuruya işaret eden kolon da yok — iz yalnız
+        # `notlar` alanındaki serbest metinde ("İş başvurusundan işe alındı").
+        # Başvuru silinince o bağ KALICI olarak kopar: personelin nereden
+        # geldiği, hangi referansla alındığı, telefonu bir daha bulunamaz.
+        # Silmek yerine ARŞİVLEMEK var; işe alınmışta silme reddediliyor.
+        cur.execute("SELECT COALESCE(ise_alindi, FALSE) AS ise_alindi, personel_id "
+                    "FROM is_basvuru WHERE id=%s", (bid,))
+        _r = cur.fetchone()
+        if not _r:
+            raise HTTPException(404, "Başvuru bulunamadı.")
+        _r = dict(_r)
+        if _r.get("ise_alindi"):
+            raise HTTPException(
+                409,
+                "Bu başvurudan personel oluşturulmuş (id: %s) — silinemez. "
+                "Silinirse personelin hangi başvurudan geldiği kalıcı olarak "
+                "kaybolur. Listeden kaldırmak için ARŞİVLE." % (_r.get("personel_id") or "?"))
         cur.execute("DELETE FROM is_basvuru WHERE id=%s", (bid,))
         if cur.rowcount == 0:
             raise HTTPException(404, "Başvuru bulunamadı.")
