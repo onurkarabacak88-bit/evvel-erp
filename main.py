@@ -7912,6 +7912,32 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None,
                 sonuc["cfo_odeme_plani"] = {"son_odeme": sot, "asgari": asg, "borc": brc}
         elif son4:
             sonuc["eslestrme_notu"] = f"Son 4 hane '{son4}' ile eşleşen kart yok — kart tanımına son 4 haneyi girin."
+    # 🔴 KART-003 kalıcı: her önizleme satırına sıra damgası. TÜM liste
+    # üzerinden ve TÜM enjeksiyon/yeniden-kurmalardan SONRA hesaplanır; bu
+    # fonksiyonun tek dönüş noktası burası, iki yükleme yolu da buradan geçer.
+    # Anahtar, ekstre-import'un anahtarının kart_id'siz AYNASIDIR — tsay/tutar
+    # hesabı oradaki taksit mantığının birebir kopyasıdır, yoksa rütbe kayar.
+    _oz_sayac: dict = {}
+    for _sn, _oi in enumerate(sonuc.get("islemler") or [], start=1):
+        if not isinstance(_oi, dict):
+            continue
+        _ot = str(_oi.get("tip") or "HARCAMA").upper()
+        try:
+            _otsay = int(_oi.get("taksit_sayisi") or 1)
+            _oanap = float(_oi.get("taksit_anapara") or 0)
+            _otut = float(_oi.get("tutar") or 0)
+        except (TypeError, ValueError):
+            _otsay, _oanap, _otut = 1, 0.0, 0.0
+        if _ot == "HARCAMA" and _otsay > 1 and _oanap > 0:
+            _otutar = round(abs(_oanap), 2)
+        else:
+            _otsay = 1
+            _otutar = abs(_otut)
+        _ok = (f"{(_oi.get('tarih') or str(bugun_tr()))[:10]}"
+               f"|{_otutar:.2f}|{_ot}|{_otsay}|{(_oi.get('aciklama') or '')[:40]}")
+        _oz_sayac[_ok] = _oz_sayac.get(_ok, 0) + 1
+        _oi["satir_no"] = _sn
+        _oi["ozdes_sira"] = _oz_sayac[_ok]
     return sonuc
 
 
@@ -8479,6 +8505,14 @@ class EkstreImportIslem(BaseModel):
     kategori: Optional[str] = None      # ekstre kategorisi (Market, Akaryakıt...)
     taksit_sayisi: Optional[int] = None # taksitli alımda toplam taksit (Y)
     taksit_anapara: Optional[float] = None  # taksitli alımın TOPLAM tutarı
+    # 🔴 KART-003 kalıcı (2026-09-02): önizlemede damgalanan sıra bilgisi.
+    #   satir_no   = ekstredeki gerçek satır sırası (iz/arayüz için)
+    #   ozdes_sira = ÖZDEŞ içerikli satırlar arasında kaçıncı — KİMLİĞE giren budur
+    # Ham satir_no BİLEREK kimliğe girmez: bir başlık satırı farklı okunsa TÜM
+    # numaralar kayar, TÜM kimlikler değişir ve ekstre toptan ikinci kez yazılır.
+    # Özdeş-rütbe ise böyle bir kaymadan etkilenmez (küme hep 1..k'dır).
+    satir_no: Optional[int] = None
+    ozdes_sira: Optional[int] = None
 
 
 class EkstreImportBody(BaseModel):
@@ -8524,6 +8558,14 @@ def kart_ekstre_import(body: EkstreImportBody):
         # bağlanır; aynı gün üç özdeş satır ÜÇ kayıttır).
         # İlk tekrar ESKİ anahtarı korur → geçmiş kayıtlarla idempotency bozulmaz.
         _kimlik_sayac: dict = {}
+        # ⚠️ GÖÇ FRENİ: anahtar üretiminden ÖNCE üç `continue` var; biri
+        # "elle girilmiş eşi bulundu, atla" (aşağıda). O satır sayaca hiç
+        # dokunmadığı için ESKİ kodda kardeşi TABAN anahtarı alıyordu.
+        # Mutlak rütbeye geçince aynı kardeş |#2 alır ve DAHA ÖNCE taban
+        # anahtarla yazılmış kaydın MÜKERRERİ oluşur. Bu içerikler işaretlenip
+        # eski (batch sayacı) davranışına bırakılır — mükerrer para kaydı
+        # üretmektense o dar köşede eski davranış yeğdir.
+        _manuel_atlanan_icerik: set = set()
         atlanan_mevcut = []
         _zorla = bool(getattr(body, "zorla", False))
         faiz_donemleri: set = set()  # ekstreden faiz gelen YYYY-MM dönemleri (motor tahmini iptali için)
@@ -8586,11 +8628,29 @@ def kart_ekstre_import(body: EkstreImportBody):
                         {"tarih": tarih, "tutar": tutar, "tip": tip,
                          "mevcut_kayit_tarihi": _es["t"], "mevcut_tutar": _es["tu"],
                          "aciklama": (isl.aciklama or "")[:60]})
+                    _manuel_atlanan_icerik.add(
+                        f"{tarih}|{tutar:.2f}|{tip}|{tsay}|{(isl.aciklama or '')[:40]}")
                     continue
             anahtar = f"{body.kart_id}|{tarih}|{tutar:.2f}|{tip}|{tsay}|{(isl.aciklama or '')[:40]}"
-            # KART-003: batch içindeki n. özdeş satır ayrı kimlik alır (ilki değişmez).
-            _kt_n = _kimlik_sayac.get(anahtar, 0) + 1
-            _kimlik_sayac[anahtar] = _kt_n
+            # 🔴 KART-003 KALICI (2026-09-02) — DAR KENAR KAPANDI.
+            # Geçici çözüm batch içi sayaçtı ve satırların HEP AYNI SIRADA,
+            # TAM LİSTE hâlinde geldiğini varsayıyordu. Oysa dört çağıranın
+            # ÜÇÜ FİLTRELİYOR, biri de kullanıcının CHECKBOX seçimini
+            # gönderiyor (EkstreYukle "içe aktar"). En sert hâli:
+            #   Aynı gün, aynı tutar, aynı satıcıdan İKİ gerçek işlem var.
+            #   İlki daha önce aktarılmış. Kullanıcı yalnız İKİNCİSİNİ seçiyor.
+            #   Batch'te tek satır → sayaç n=1 → TABAN anahtar → DB'deki ilk
+            #   satırla çarpışır → ON CONFLICT DO NOTHING → SESSİZCE atlanır.
+            #   İkinci işlem kart borcuna HİÇ yazılmaz.
+            # Çözüm: rütbe önizlemede TÜM ekstre üzerinden damgalanır
+            # (ozdes_sira) → alt küme seçimi ve sıra değişimi rütbeyi KAYDIRMAZ.
+            # Alanı göndermeyen eski istemci bugünkü sayaca düşer.
+            # |#n biçimi aynı, n=1 eksiz → geçmiş kimlikler DEĞİŞMEZ.
+            _icerik = f"{tarih}|{tutar:.2f}|{tip}|{tsay}|{(isl.aciklama or '')[:40]}"
+            _kt_n = int(isl.ozdes_sira or 0)
+            if _kt_n < 1 or _icerik in _manuel_atlanan_icerik:
+                _kt_n = _kimlik_sayac.get(anahtar, 0) + 1
+            _kimlik_sayac[anahtar] = max(_kimlik_sayac.get(anahtar, 0), _kt_n)
             if _kt_n > 1:
                 anahtar = f"{anahtar}|#{_kt_n}"
             hid = "eks_" + hashlib.md5(anahtar.encode("utf-8")).hexdigest()[:24]

@@ -170,7 +170,10 @@ export default function EkstreYukle() {
         .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama,
                      kategori: x.kategori, harcama_tipi: x.oneri_tipi || undefined,
                      taksit_sayisi: x.taksit_sayisi || undefined,
-                     taksit_anapara: x.taksit_anapara || undefined }));
+                     taksit_anapara: x.taksit_anapara || undefined,
+                     // KART-003: sıra damgası olmadan sunucu batch sayacına düşer.
+                     satir_no: x.satir_no || undefined,
+                     ozdes_sira: x.ozdes_sira || undefined }));
       let yeniBorc = sonuc?.mutabakat?.sistem_borc;
       let impOzet = { yazilan: 0, atlanan_veya_mevcut: 0, atlanan_mevcut_adet: 0 };
       if (islemler.length) {
@@ -230,7 +233,7 @@ export default function EkstreYukle() {
   async function iceAktar() {
     if (!kart?.id) return;
     const islemler = [...secili].map(i => sonuc.islemler[i]).filter(x => x && x.durum === 'yeni')
-      .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama, kategori: x.kategori, harcama_tipi: x.oneri_tipi || undefined, taksit_sayisi: x.taksit_sayisi || undefined, taksit_anapara: x.taksit_anapara || undefined }));
+      .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama, kategori: x.kategori, harcama_tipi: x.oneri_tipi || undefined, taksit_sayisi: x.taksit_sayisi || undefined, taksit_anapara: x.taksit_anapara || undefined, satir_no: x.satir_no || undefined, ozdes_sira: x.ozdes_sira || undefined }));
     if (!islemler.length) return;
     setImpBusy(true); setHata(null);
     try {

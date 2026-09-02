@@ -1156,7 +1156,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                        // satır sınıflandırılmış doğuyor ve sahip hiç görmüyordu.
                        // Artık satır 'belirsiz' doğar, öneri ekranda rozet olarak durur.
                        taksit_sayisi: x.taksit_sayisi || undefined,
-                       taksit_anapara: x.taksit_anapara || undefined }));
+                       taksit_anapara: x.taksit_anapara || undefined,
+                       satir_no: x.satir_no || undefined,           // KART-003
+                       ozdes_sira: x.ozdes_sira || undefined }));
       let yeniBorc = eksSonuc?.mutabakat?.sistem_borc;
       let impOzet = { yazilan: 0, atlanan_veya_mevcut: 0 };
       if (islemler.length) {

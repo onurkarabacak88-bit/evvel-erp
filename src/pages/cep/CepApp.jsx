@@ -3787,7 +3787,8 @@ function CepKartlar({ onGeri }) {
     const islemler = (ekstreSonuc.islemler || [])
       .filter(x => x.durum === 'yeni' && !x.benzer_gider_uyari)
       .map(x => ({ tarih: x.tarih, tutar: x.tutar, tip: x.tip, aciklama: x.aciklama, kategori: x.kategori,
-        harcama_tipi: x.oneri_tipi || undefined, taksit_sayisi: x.taksit_sayisi || undefined, taksit_anapara: x.taksit_anapara || undefined }));
+        harcama_tipi: x.oneri_tipi || undefined, taksit_sayisi: x.taksit_sayisi || undefined, taksit_anapara: x.taksit_anapara || undefined,
+        satir_no: x.satir_no || undefined, ozdes_sira: x.ozdes_sira || undefined }));
     if (!islemler.length) return;
     setImpBusy(true); setEkstreHata('');
     try {
