@@ -4055,6 +4055,16 @@ def init_db():
                 olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
+        # 🔴 SYS-AUDIT (2026-09-02): denetim defterinde AKTÖR kolonu yoktu.
+        # "Ne değişti" yazılıyordu ama "KİM değiştirdi" yazılamıyordu — çünkü
+        # audit() imzası aktör bile almıyordu. Denetim defterinin cevaplaması
+        # gereken ilk soru budur; onsuz defter bir değişiklik listesidir.
+        # ⚠️ NULL bırakılabilir: aktörü GERÇEKTEN bilmediğimiz çağrılarda
+        # uydurma isim yazmak, boş bırakmaktan kötüdür.
+        cur.execute("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS aktor TEXT")
+        cur.execute("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS aktor_id TEXT")
+        cur.execute("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS aktor_kaynak TEXT")
+        cur.execute("CREATE INDEX IF NOT EXISTS ix_audit_log_aktor ON audit_log (aktor_id, olusturma DESC)")
 
         # Trigger kaldırıldı — backend tek sorumlu
         # Eski trigger'ları temizle — mantık tamamen backend'de

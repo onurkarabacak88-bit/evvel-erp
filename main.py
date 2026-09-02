@@ -1,7 +1,7 @@
 import logging
 import time
 import traceback
-from fastapi import FastAPI, HTTPException, UploadFile, File
+from fastapi import FastAPI, HTTPException, UploadFile, File, Depends, Header
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -11,7 +11,7 @@ from typing import Optional, List, Any, Dict
 from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading, hashlib, hmac
 from collections import defaultdict
-from database import db, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural, ensure_kart_devir_islem_turu, ensure_isletmeci, ensure_abonelik, ensure_gider_kanonik, ensure_odeme_plani_odeme_yontemi
+from database import db, savepoint, init_db, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural, ensure_kart_devir_islem_turu, ensure_isletmeci, ensure_abonelik, ensure_gider_kanonik, ensure_odeme_plani_odeme_yontemi
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
@@ -412,7 +412,8 @@ ADMIN_OTURUM_GUN = 30
 # import EDEMEZ — main zaten o router'i import ediyor, dongu olur. Mantigi
 # kopyalamak da olmaz: kopya gun gelir ayrisir ve o gun kapi SESSIZCE acilir.
 # Buradaki iki ad geriye-uyum icin duruyor, govde ortak modulden gelir.
-from admin_oturum import jeton_uret as _admin_jeton_uret
+from admin_oturum import jeton_uret as _admin_jeton_uret, aktor_bilgisi
+from evvel_merkez_guard import merkez_mutasyon_korumasi
 from admin_oturum import jeton_gecerli as _admin_jeton_gecerli
 
 
@@ -9153,8 +9154,10 @@ def _onayla_tx(cur, oid: str):
     return {"success": True}
 
 
-@app.post("/api/onay-kuyrugu/toplu-onayla")
-def toplu_onayla(body: dict):
+@app.post("/api/onay-kuyrugu/toplu-onayla",
+          dependencies=[Depends(merkez_mutasyon_korumasi)])
+def toplu_onayla(body: dict, x_evvel_oturum: Optional[str] = Header(default=None)):
+    _ak_ad, _ak_kaynak = aktor_bilgisi(x_evvel_oturum)
     """
     Seçili onayları tek seferde onayla.
     body: { ids: [id1, id2, ...] }
@@ -9192,16 +9195,32 @@ def toplu_onayla(body: dict):
         "sonuclar": sonuclar,
     }
 
-@app.post("/api/onay-kuyrugu/{oid}/onayla")
-def onayla(oid: str):
+# 🔴 ONAY-002 (2026-09-02): bu üç uç PARA TAŞIR (onay → kasaya/karta yazım)
+# ama hiçbirinde kapı yoktu. `merkez_mutasyon_korumasi` kodda vardı ve
+# sube_panel.py'de kullanılıyordu — main.py onu import bile etmiyordu.
+# ⚠️ DÜRÜST SINIR: bu guard yalnız EVVEL_MERKEZ_MUTASYON_ANAHTARI ortamda
+# TANIMLIYSA ısırır; tanımsızsa davranış değişmez. Yani bu, kapıyı takmaktır —
+# kapıyı KİLİTLEMEK sahibin anahtarı tanımlamasına bağlı (bkz. güvenlik backlog).
+# Kapıdan bağımsız olarak aktör artık HER onayda deftere yazılıyor: jeton
+# geçerliyse 'oturum', değilse 'anonim' — cevapsız soru cevapsız görünsün.
+@app.post("/api/onay-kuyrugu/{oid}/onayla",
+          dependencies=[Depends(merkez_mutasyon_korumasi)])
+def onayla(oid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
+    _ak_ad, _ak_kaynak = aktor_bilgisi(x_evvel_oturum)
     with db() as (conn, cur):
-        return _onayla_tx(cur, oid)
+        _s = _onayla_tx(cur, oid)
+        audit(cur, 'onay_kuyrugu', oid, 'ONAYLANDI',
+              aktor=_ak_ad, aktor_kaynak=_ak_kaynak)
+        return _s
 
 class ReddetModel(BaseModel):
     neden: str = 'hata'  # 'hata' veya 'surec_bitti'
 
-@app.post("/api/onay-kuyrugu/{oid}/reddet")
-def reddet(oid: str, body: ReddetModel = ReddetModel()):
+@app.post("/api/onay-kuyrugu/{oid}/reddet",
+          dependencies=[Depends(merkez_mutasyon_korumasi)])
+def reddet(oid: str, body: ReddetModel = ReddetModel(),
+           x_evvel_oturum: Optional[str] = Header(default=None)):
+    _ak_ad, _ak_kaynak = aktor_bilgisi(x_evvel_oturum)
     with db() as (conn, cur):
         # FIX O5 (2026-07-06): zaten 'onaylandi' (kasaya/karta yazılmış) bir onay reddet ile
         # sessizce iptal edilirse plan iptal olur ama kasa izi kalır → ters kayıt zinciri delinir
@@ -15614,8 +15633,18 @@ def sistem_sifirla(body: dict = {}):
         'siparis_sevk_eksik':   'siparis_sevk_eksik',
         'merkez_stok_sevk':     'merkez_stok_sevk',
         # ── Denetim ──────────────────────────────────────────────────
-        'audit_log':            'audit_log',
+        # 🔴 VERI-011 (2026-09-02): 'audit_log' BU LİSTEDEN ÇIKARILDI.
+        # Veriyi silen düğmenin, o silmenin izini tutan defteri de silebilmesi
+        # denetimin kendisini anlamsız kılar — silinen şeyin silindiğini
+        # söyleyecek tek kayıt oydu. Denetim defteri veriyle birlikte gitmez.
     }
+
+    # ⚠️ KRİTİK ANAHTARLAR — "boş liste = hepsi" kısayoluna DAHİL DEĞİL.
+    # kasa_teslim para emanetinin (custody) zincirini tutar: kimin kasasında
+    # ne kadar para olduğunu söyleyen tek kayıt. Silinebilir kalsın (demo
+    # sıfırlaması meşru), ama ASLA "hepsini temizle" ile yanlışlıkla değil —
+    # adı adıyla istenmeli.
+    KRITIK = {'kasa_teslim'}
 
     # EVV-SIS (2026-08-15, Codex + diff-review 2 katman): v2 `tablolar: []`
     # gönderince 400 dönüyordu ("Sıfırla" fiilen ölüydü). FAIL-CLOSED sıkı hali:
@@ -15627,17 +15656,55 @@ def sistem_sifirla(body: dict = {}):
     _bilinmeyen = [k for k in _istenen_ham if k not in IZINLI]
     if _bilinmeyen:
         raise HTTPException(400, f"Bilinmeyen tablo anahtarı: {', '.join(str(b)[:30] for b in _bilinmeyen[:5])}")
-    istenen = _istenen_ham if _istenen_ham else list(IZINLI.keys())
+    istenen = _istenen_ham if _istenen_ham else [k for k in IZINLI.keys() if k not in KRITIK]
     silincekler = [IZINLI[k] for k in istenen if k in IZINLI]
 
     if not silincekler:
         raise HTTPException(400, "Silinecek tablo seçilmedi")
 
+    # 🔴 VERI-002/012 (2026-09-02): bu ucun TEK koruması istemcinin gönderdiği
+    # `onay:'EVET_SIL'` metniydi. O metin frontend kaynağında yazılı — yani
+    # kapı değil, tabela. Aynı ekrandaki kasa açılışı PIN isterken TRUNCATE
+    # istemiyordu; `ledger-sifirla` ise PIN'liydi. Tutarsızlık kapandı.
+    from operasyon_merkez_api import _isletme_onay_dogrula
+
+    # 🧪 KURU ÇALIŞTIRMA: ne silineceğini ÖNCE saydırıp okumadan yıkıcı
+    # işlem çalıştırılmaz. kuru=true PIN istemez (hiçbir şey silmez).
+    _kuru = bool(body.get('kuru'))
+
     with db() as (conn, cur):
+        if not _kuru:
+            onayci = _isletme_onay_dogrula(cur, body.get('onay_pin'))  # PIN hatalı → 403
+
+        # Sayım: silinmeden ÖNCE, hem kuru modda hem gerçek silmede.
+        sayimlar = {}
+        for _t in silincekler:
+            try:
+                with savepoint(cur, "sp_sayim"):
+                    cur.execute(f"SELECT COUNT(*) AS c FROM {_t}")
+                    sayimlar[_t] = int((cur.fetchone() or {}).get("c") or 0)
+            except Exception:
+                sayimlar[_t] = None   # tablo yoksa sıfır yazmıyoruz — bilinmiyor
+        _toplam = sum(v for v in sayimlar.values() if isinstance(v, int))
+
+        if _kuru:
+            return {"basarili": True, "kuru": True, "silinecek": silincekler,
+                    "satir_sayilari": sayimlar, "toplam_satir": _toplam,
+                    "mesaj": (f"KURU ÇALIŞTIRMA — hiçbir şey silinmedi. "
+                              f"{len(silincekler)} tabloda {_toplam} satır silinecekti.")}
+
+        # İz ÖNCE yazılır: TRUNCATE'ten sonra sayıları okuyacak kimse kalmaz.
+        audit(cur, 'sistem', 'sistem-sifirla', 'SISTEM_SIFIRLA',
+              yeni={'tablolar': silincekler, 'satir_sayilari': sayimlar,
+                    'toplam_satir': _toplam},
+              aktor=onayci.get('ad_soyad'), aktor_id=str(onayci.get('id')),
+              aktor_kaynak='isletme_pin')
         cur.execute(f"TRUNCATE TABLE {', '.join(silincekler)} CASCADE")
 
     return {"basarili": True, "silinen": silincekler,
-            "mesaj": f"{len(silincekler)} tablo temizlendi."}
+            "satir_sayilari": sayimlar, "toplam_satir": _toplam,
+            "onaylayan": onayci.get('ad_soyad'),
+            "mesaj": f"{len(silincekler)} tablo temizlendi ({_toplam} satır)."}
 
 # Şube personel paneli HTML (SPA catch-all'dan önce).
 # Üretim imajında dosya yalnızca static/'tedir (Dockerfile cp). Geliştiricide düzenlenen
