@@ -1,4 +1,5 @@
 import logging
+import logging
 import os
 from database import db
 from datetime import date, timedelta, datetime
@@ -1263,12 +1264,25 @@ def finans_ozet_motoru():
             asg_f = float(r['asgari_tutar'] or r['odenecek_tutar'] * _asgari_oran())
             kid = r.get('kart_id')
             if kid:
+                # 🔴 PANEL-013 (2026-09-02): burası çıplak `except: pass` idi.
+                # `kart_bu_ay_odenen` patlarsa istisna yutuluyor, `continue`
+                # çalışmıyor ve ZATEN ÖDENMİŞ plan "gecikmiş/kritik" listesine
+                # giriyordu. Sahibi olmayan bir borç için alarm üretmek, gerçek
+                # alarmları da güvenilmez kılar (alarm yorgunluğu).
+                # Artık: hata loglanır ve satır "ödeme durumu doğrulanamadı"
+                # diye İŞARETLENİR — sessizce gecikmiş sayılmaz.
+                _asgari_dogrulanamadi = False
                 try:
                     if asg_f > 0 and float(kart_bu_ay_odenen(cur, str(kid))) >= asg_f * 0.999:
                         continue
-                except Exception:
-                    pass
+                except Exception as _e:  # noqa: BLE001
+                    logging.getLogger(__name__).warning(
+                        "kart asgari kontrolü başarısız (kart=%s): %s", kid, _e)
+                    _asgari_dogrulanamadi = True
             row_bo = {
+                # PANEL-013: True ise "ödenmiş olabilir ama doğrulayamadık" —
+                # ekran bunu gecikmiş gibi kesin sunmamalı.
+                'asgari_dogrulanamadi': bool(locals().get('_asgari_dogrulanamadi')),
                 'odeme_id': str(r['id']),
                 'aciklama': r['aciklama'],
                 'tarih': r['tarih'],
@@ -1324,12 +1338,23 @@ def finans_ozet_motoru():
             asg_f = float(r['asgari_tutar'] or r['odenecek_tutar'] * _asgari_oran())
             kid = r.get('kart_id')
             if kid:
+                # 🔴 PANEL-013 (2026-09-02): burası çıplak `except: pass` idi.
+                # `kart_bu_ay_odenen` patlarsa istisna yutuluyor, `continue`
+                # çalışmıyor ve ZATEN ÖDENMİŞ plan "gecikmiş/kritik" listesine
+                # giriyordu. Sahibi olmayan bir borç için alarm üretmek, gerçek
+                # alarmları da güvenilmez kılar (alarm yorgunluğu).
+                # Artık: hata loglanır ve satır "ödeme durumu doğrulanamadı"
+                # diye İŞARETLENİR — sessizce gecikmiş sayılmaz.
+                _asgari_dogrulanamadi = False
                 try:
                     if asg_f > 0 and float(kart_bu_ay_odenen(cur, str(kid))) >= asg_f * 0.999:
                         continue
-                except Exception:
-                    pass
+                except Exception as _e:  # noqa: BLE001
+                    logging.getLogger(__name__).warning(
+                        "kart asgari kontrolü başarısız (kart=%s): %s", kid, _e)
+                    _asgari_dogrulanamadi = True
             yaklasan_odemeler.append({
+                'asgari_dogrulanamadi': bool(locals().get('_asgari_dogrulanamadi')),
                 'odeme_id': str(r['id']),
                 'aciklama': r['aciklama'],
                 'tarih': r['tarih'],

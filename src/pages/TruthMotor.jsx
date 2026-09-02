@@ -965,6 +965,8 @@ function GunlukTeyitKarti({ tarih, subeler }) {
 
   const [gbYukleniyor, setGbYukleniyor] = useState(false);
   const [gbMesaj, setGbMesaj]           = useState('');
+  // TRUTH-009: gerçek senaryo İNSAN tarafından seçilir, modelden alınmaz.
+  const [gercekSenaryoSecim, setGercekSenaryoSecim] = useState('');
 
   const yukle = useCallback(async () => {
     if (!secSubeId || !tarih) return;
@@ -997,6 +999,7 @@ function GunlukTeyitKarti({ tarih, subeler }) {
         body: JSON.stringify({ sube_id: secSubeId, tarih, kategori, gercek_senaryo: gercekSenaryo }),
       });
       setGbMesaj(r?.mesaj || 'Kaydedildi ✓');
+      setGercekSenaryoSecim('');
     } catch (e) {
       setGbMesaj('Hata: ' + String(e.message || e));
     } finally { setGbYukleniyor(false); }
@@ -1152,13 +1155,37 @@ function GunlukTeyitKarti({ tarih, subeler }) {
                 <span style={{ fontWeight: 400, textTransform: 'none', marginLeft: 6 }}>— Motor buradan öğrenir</span>
               </div>
               <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                {/* 🔴 TRUTH-009 (2026-09-02): bu düğme `senaryo.en_senaryo`yu —
+                    yani MODELİN KENDİ en olası tahminini — `gercek_senaryo`
+                    alanına yazıyordu. Model kendi çıktısını "gerçek" diye
+                    öğreniyordu: kapalı döngü. Yanlış bir tanı, onaylandıkça
+                    kendini doğruluyordu.
+                    Artık gerçek senaryoyu İNSAN seçer. Seçim yapılmadan
+                    onay gönderilmez. */}
+                <select
+                  value={gercekSenaryoSecim}
+                  onChange={(e) => setGercekSenaryoSecim(e.target.value)}
+                  className="input"
+                  style={{ fontSize: 11, padding: '4px 6px', maxWidth: 230 }}
+                >
+                  <option value="">Gerçekte ne oldu? (seçin)</option>
+                  {Object.keys(senaryo?.olasiliklar || {}).map((sk) => (
+                    <option key={sk} value={sk}>
+                      {sk === senaryo.en_senaryo ? `${sk} — motorun tahmini` : sk}
+                    </option>
+                  ))}
+                  <option value="BASKA">Listede yok / başka bir şey</option>
+                </select>
                 <button
                   className="btn btn-sm"
-                  disabled={gbYukleniyor}
-                  onClick={() => geriBildirimGonder('onaylandi', senaryo.en_senaryo)}
+                  disabled={gbYukleniyor || !gercekSenaryoSecim}
+                  title={!gercekSenaryoSecim
+                    ? 'Önce gerçekte ne olduğunu seçin — motor kendi tahminini gerçek sayamaz'
+                    : ''}
+                  onClick={() => geriBildirimGonder('onaylandi', gercekSenaryoSecim)}
                   style={{ fontSize: 11, background: 'rgba(34,197,94,0.15)', borderColor: 'rgba(34,197,94,0.4)', color: '#86efac' }}
                 >
-                  ✅ Doğru Tespit
+                  ✅ Doğrula
                 </button>
                 <button
                   className="btn btn-sm"

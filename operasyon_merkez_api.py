@@ -6248,9 +6248,20 @@ def _ops_panel_ozet_from_cur(cur: Any, bugun: str) -> Dict[str, Any]:
     }
 
 
-def _hub_ozet_fallback_panel() -> Dict[str, Any]:
-    """Özet sorguları tamamen patlarsa hub'un yanıt verebilmesi için sıfır gövde."""
+def _hub_ozet_fallback_panel(hata: Optional[str] = None) -> Dict[str, Any]:
+    """Özet sorguları tamamen patlarsa hub'un yanıt verebilmesi için sıfır gövde.
+
+    🔴 OPS-014 (2026-09-02): bu gövde her sayacı 0 döndürüyordu ve yanıtta
+    hiçbir işaret yoktu. Ekran "her şey sıfır, sakin" ile "veri ALINAMADI"yı
+    ayırt edemiyordu — sistem çökmüşken panel huzurlu görünüyordu. Hata yalnız
+    sunucu loguna düşüyordu, yani sahibin göremeyeceği yere.
+    `degraded` ve `hata` alanları artık gövdenin parçası: sıfırların NEDEN
+    sıfır olduğunu yanıtın kendisi söylüyor.
+    """
     return {
+        "degraded": True,
+        "hata": (str(hata)[:300] if hata else "özet sorguları başarısız"),
+        "uyari_metni": "Veriler alınamadı — bu ekrandaki sıfırlar ÖLÇÜM DEĞİL, ARIZADIR.",
         "aktif_sube": 0,
         "siparis_bekleyen": 0,
         "siparis_bekleyen_gun_penceresi": OPS_STOK_DISIPLIN_BEKLEYEN_GUN,
@@ -14183,7 +14194,7 @@ def ops_hub_ozet(skip_alarms: bool = Query(False, description="True ise yalnızc
                     conn.rollback()
                 except Exception:
                     pass
-                oz = _hub_ozet_fallback_panel()
+                oz = _hub_ozet_fallback_panel("özet sorguları başarısız (veritabanı)")
             if skip_alarms:
                 oz["alarm_satirlari"] = []
             else:
@@ -14201,10 +14212,11 @@ def ops_hub_ozet(skip_alarms: bool = Query(False, description="True ise yalnızc
                         pass
                     oz["alarm_satirlari"] = []
             return oz
-    except Exception:
+    except Exception as _e:  # noqa: BLE001
         # DATABASE_URL yok, pool hatası veya bağlantı reddi — arayüz tamamen kırılmasın
         log.exception("hub-ozet: veritabani veya kritik hata")
-        out = _hub_ozet_fallback_panel()
+        # OPS-014: hata ARTIK yanıtta. Ekran "sıfır" ile "ölçemedim"i ayırabilsin.
+        out = _hub_ozet_fallback_panel(_e)
         out["alarm_satirlari"] = []
         return out
 

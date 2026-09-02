@@ -424,7 +424,13 @@ def capraz_boyut_yorumla(taniler: List[Tani]) -> List[Tani]:
 
     # ─── 5. ZIMMET_NAKIT_CEPTE — sayısal korelasyon (kasa eksik + ürün eksik) ───
     # Eksik bardak × ortalama satış fiyatı ≈ kasa eksik → para cebe sinyali
-    ORT_FIYAT = {  # boyut → tahmini ortalama satış fiyatı (₺/adet)
+    # ⚠️ TRUTH-001 (2026-09-02): bu fiyatlar HARDCODE TAHMİNDİR — canlı satış
+    # fiyatına bağlı değil. Zam yapıldığında burası eskir ve "kasa eksiği ≈ ürün
+    # kaybı" eşleşmesi kayar. Eşleşmenin kendisi bir ZİMMET HÜKMÜ ürettiği için,
+    # yanlış fiyat doğrudan yanlış suçlama demektir.
+    # Canlı fiyat kaynağı bağlanana kadar: fiyatın tahmin olduğu ÇIKTIDA yazılı
+    # (detay["fiyat_kaynak"]) ve hüküm dili "şüphe"ye çekildi.
+    ORT_FIYAT = {  # boyut → TAHMİNİ ortalama satış fiyatı (₺/adet)
         "bardak_plastik": 50.0,
         "bardak_buyuk":   60.0,
         "bardak_kucuk":   50.0,
@@ -448,11 +454,22 @@ def capraz_boyut_yorumla(taniler: List[Tani]) -> List[Tani]:
             uyum = min(beklenen_urun_tutari, kasa_eksik) / max(beklenen_urun_tutari, kasa_eksik)
             if uyum >= 0.85:  # %85+ eşleşme
                 kasa.tani = "ZIMMET_NAKIT_CEPTE"
-                kasa.guven_skoru = round(70.0 + uyum * 25.0, 1)
+                # 🔴 TRUTH-001: güven skoru TAHMİNİ FİYATA dayanıyor. Fiyat
+                # tahmin olduğu sürece skorun tavanı da düşürülür — %95 güven,
+                # kaynağı tahmin olan bir hesaptan çıkmamalı.
+                kasa.guven_skoru = round(min(70.0 + uyum * 25.0, 85.0), 1)
+                kasa.detay["fiyat_kaynak"] = "tahmini_sabit_liste"
+                kasa.detay["fiyat_uyarisi"] = (
+                    "Eşleşme, koda gömülü TAHMİNİ satış fiyatlarıyla hesaplandı; "
+                    "güncel fiyatlarla doğrulanmadı."
+                )
                 kasa.detay["capraz"] = (
                     f"Kasa eksik ₺{kasa_eksik:.0f} ≈ ürün kaybı ₺{beklenen_urun_tutari:.0f} "
-                    f"(uyum %{uyum*100:.0f}) — {'; '.join(eslesen_boyutlar)} → "
-                    "satış yapıldı, ürün gitti, para kasaya hiç konmadı"
+                    f"(uyum %{uyum*100:.0f}) — {'; '.join(eslesen_boyutlar)}. "
+                    "Bu tabloyu ÜRETEBİLECEK en olası senaryo: ürün verildi, POS "
+                    "atlandı, para kasaya konmadı. ⚠️ Tek başına KANIT DEĞİLDİR — "
+                    "fiyatlar tahminidir ve aynı tabloyu fire/ikram/sayım hatası "
+                    "birlikte de üretebilir."
                 )
 
     # ─── 6. Çapraz sinyalleri kasa tanısına yansıt ───
@@ -7473,11 +7490,20 @@ def kucuk_tutar_birikim_tespit(cur, sube_id: str = None,
                   AND a.tarih >= CURRENT_DATE - (%s || ' days')::interval
                   {where_sube}
             ),
+            -- 🔴 TRUTH-004 (2026-09-02): AYNI `fark` hem sabahçıya hem akşamcıya
+            -- toplanıyor. Bu bir hata DEĞİL bir BELİRSİZLİKTİR: 100₺'lik açık ya
+            -- akşamcının fazla beyanından ya sabahçının eksik saymasından gelir,
+            -- hangisi olduğunu bu veri SÖYLEYEMEZ. Ama iki satırı bağımsız bulgu
+            -- gibi okumak, tek açığı 200₺ risk gibi gösterir ve İKİ kişiyi birden
+            -- suçlar. Çözüm: satırlar kalsın (ikisi de aday), fakat KARŞI TARAF
+            -- adı taşınsın ve çıktı bunun PAYLAŞILAN sorumluluk olduğunu söylesin.
             sabahci_agg AS (
                 SELECT
                     sube_id,
                     sabahci_ad              AS personel_ad,
                     'sabahci'::text         AS rol,
+                    (array_agg(DISTINCT aksamci_ad) FILTER (WHERE aksamci_ad <> ''))
+                                            AS karsi_taraf,
                     COUNT(*)                AS gun_sayisi,
                     SUM(CASE WHEN fark < -4 THEN 1 ELSE 0 END) AS eksi_gun,
                     ROUND(AVG(fark)::numeric, 2)  AS ort_fark,
@@ -7493,6 +7519,8 @@ def kucuk_tutar_birikim_tespit(cur, sube_id: str = None,
                     sube_id,
                     aksamci_ad              AS personel_ad,
                     'aksamci'::text         AS rol,
+                    (array_agg(DISTINCT sabahci_ad) FILTER (WHERE sabahci_ad <> ''))
+                                            AS karsi_taraf,
                     COUNT(*)                AS gun_sayisi,
                     SUM(CASE WHEN fark < -4 THEN 1 ELSE 0 END) AS eksi_gun,
                     ROUND(AVG(fark)::numeric, 2)  AS ort_fark,
@@ -7513,8 +7541,46 @@ def kucuk_tutar_birikim_tespit(cur, sube_id: str = None,
 
     rows = [dict(r) for r in (cur.fetchall() or [])]
 
+    # ── 5. KRİTER (docstring'de yazıyordu ama UYGULANMIYORDU) ────────────────
+    # "Aynı kişinin aynı dönemde AKSAM_KASAYI_SISIRDI / SABAH_ZIMMET_SUPHE
+    #  tanısı YOK (çifte sayım önleme)"
+    # Sprint G zaten büyük tutarlı olayı yakalıyor; aynı kişiyi burada tekrar
+    # saymak, tek olayı iki ayrı bulguya çeviriyordu. Belgelenmiş ama kurulmamış
+    # bir kriter, kurulmuş sanılır — en sinsi tür.
+    # ⚠️ `truth_motor_kararlar`da personel_ad KOLONU YOK — ad `detay_json`
+    # içinde saklanıyor ve anahtar adı tanıya göre değişiyor (aksamci_ad,
+    # sabahci_ad, personel_ad…). Anahtar adı TAHMİN ETMİYORUZ: JSON'un tüm
+    # metin değerleri toplanıp ada göre eşleştiriliyor. Alan adı tahmini bu
+    # projede tekrar eden bir tuzak.
+    from database import savepoint as _savepoint
+    _zaten_tanili = set()
+    try:
+        with _savepoint(cur, "sp_birikim_kriter5"):
+            cur.execute(
+                """SELECT detay_json FROM truth_motor_kararlar
+                   WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval
+                     AND tani IN ('AKSAM_KASAYI_SISIRDI','SABAH_ZIMMET_SUPHE')""",
+                (gun,))
+            for _r in (cur.fetchall() or []):
+                _dj = dict(_r).get("detay_json")
+                if isinstance(_dj, str):
+                    try:
+                        _dj = json.loads(_dj)
+                    except Exception:
+                        _dj = None
+                if not isinstance(_dj, dict):
+                    continue
+                for _k2, _v2 in _dj.items():
+                    if "ad" in str(_k2).lower() and isinstance(_v2, str) and _v2.strip():
+                        _zaten_tanili.add(_v2.strip().lower())
+    except Exception as e:  # noqa: BLE001
+        # Kriter uygulanamadıysa SESSİZ GEÇMİYORUZ — çıktıda işaretlenecek.
+        log.warning("kucuk_tutar_birikim 5. kriter uygulanamadı: %s", e)
+        _zaten_tanili = None
+
     # ── 2. Kriterleri uygula + maks_seri hesapla ─────────────────────────────
     riskli: List[Dict[str, Any]] = []
+    elenen_kriter5: List[str] = []
 
     for r in rows:
         gun_sayisi  = int(r.get("gun_sayisi")  or 0)
@@ -7539,6 +7605,9 @@ def kucuk_tutar_birikim_tespit(cur, sube_id: str = None,
         if toplam_fark >= -80.0:
             continue
         if not personel_ad:
+            continue
+        if _zaten_tanili and personel_ad.strip().lower() in _zaten_tanili:
+            elenen_kriter5.append(personel_ad)
             continue
 
         # Maks ardışık eksi gün serisi (gaps-and-islands Python'da)
@@ -7572,11 +7641,20 @@ def kucuk_tutar_birikim_tespit(cur, sube_id: str = None,
             f"(%{eksi_oran*100:.0f}). "
             f"Günlük ortalama {ort_fark:.1f}₺ — kümülatif {toplam_fark:.0f}₺. "
             f"En uzun ardışık eksi seri: {maks_seri} gün. "
-            f"Rastlantısal değil — sistematik birikim şüphesi."
+            f"Rastlantısal değil — sistematik birikim ŞÜPHESİ."
         )
+        _karsi = [str(x) for x in (r.get("karsi_taraf") or []) if str(x).strip()]
+        if _karsi:
+            detay += (" ⚖️ Aynı fark karşı vardiyaya da yazılıyor ("
+                      + ", ".join(_karsi[:3])
+                      + ") — hangisinden kaynaklandığı bu veriyle AYIRT EDİLEMEZ.")
 
         riskli.append({
             "personel_ad":  personel_ad,
+            # ⚖️ Aynı günlük fark karşı vardiyaya da atfediliyor. Tüketici bu
+            # iki satırı BAĞIMSIZ bulgu gibi toplamamalı.
+            "karsi_taraf":  _karsi,
+            "paylasilan_sorumluluk": bool(_karsi),
             "sube_id":      sube_id_r,
             "rol":          rol,
             "gun_sayisi":   gun_sayisi,
@@ -7593,10 +7671,17 @@ def kucuk_tutar_birikim_tespit(cur, sube_id: str = None,
     # Kümülatif farka göre en kötüden sırala
     riskli.sort(key=lambda x: x["toplam_fark"])
 
+    # ⚖️ `tespit_sayisi` SATIR sayısıdır, OLAY sayısı değil: bir açık hem
+    # sabahçıya hem akşamcıya satır üretir. Olay sayısı ayrı veriliyor ki
+    # "kaç ayrı sorun var" sorusu yanlış cevaplanmasın.
+    _olay = len({(x["sube_id"], round(x["toplam_fark"], 2)) for x in riskli})
     return {
         "gun":                gun,
         "tespit_sayisi":      len(riskli),
+        "tekil_olay_tahmini": _olay,
         "riskli_personeller": riskli,
+        "kriter5_uygulandi":  _zaten_tanili is not None,
+        "kriter5_elenen":     elenen_kriter5,
     }
 
 
@@ -8051,12 +8136,17 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
             "aksiyon": "Personeli sorgula: ikram mı yoksa kayıt dışı satış mı? Kamera bak. Fire kaydı var mı kontrol et.",
         },
         "evo_teyit.zimmet_nakit": {
-            "anlam": "Stok düştü, Evo eksik, kasa açık — ve sayısal eşleşme var. Bu 'nakit cepde' klasik zimmet üçgenlemesidir: ürün verildi, POS atlandı, para alındı.",
+            # 🔴 TRUTH-001: burada "bu zimmettir" deniyordu. Oysa eşleşme,
+            # koda gömülü TAHMİNİ fiyatlarla kuruluyor ve aynı tabloyu birkaç
+            # masum senaryo da üretebiliyor. Motor şüphe üretir, hüküm vermez;
+            # hükmü veren, kanıta bakan insandır.
+            "anlam": "Stok düştü, Evo eksik, kasa açık — ve üçü sayısal olarak birbirini tutuyor. Bu tabloyu üretebilecek EN OLASI senaryo zimmettir (ürün verildi, POS atlandı, para alındı). ⚠️ Eşleşme TAHMİNİ satış fiyatlarıyla kurulduğu için tek başına kanıt sayılmaz.",
             "nedenler": [
                 "Personel ürünü sattı, POS'a girmedi, parayı cebe koydu",
                 "Kasadan açık alındı ve stok bu açığı haklı kılıyor",
+                "Kayıtsız fire/ikram + ayrı bir kasa sayım hatası aynı anda oldu (masum açıklama)",
             ],
-            "aksiyon": "Kasa baskını + güvenlik kamerası + soruşturma + hukuki süreç hazırlığı.",
+            "aksiyon": "ÖNCE kanıt topla: o günün kamera kaydı, fire/ikram defteri, POS iptal logu ve kasa yeniden sayımı. Tablo bu kanıtlarla da duruyorsa soruşturma başlat. Kişiyle konuşmadan önce sayıları doğrula.",
         },
         "evo_teyit.sabah_hatali": {
             "anlam": "Bu boyutta N1 ile N2 farklı, ve Evo N1'i destekliyor. Yani akşamcının söylediği değer POS verileriyle daha uyumlu — sabahçı saymış ama hata yapmış olabilir.",
@@ -8088,9 +8178,37 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
             "aksiyon": "Evo yetki logları + manuel iade kontrol + kamera.",
         },
         "evo_teyit.motor_yok": {
-            "anlam": "Akıllı motor bu güne henüz çalışmamış. Evo karşılaştırması yapılamıyor. ACILIS tamamlandıktan sonra motor çalıştırılmalı.",
+            "anlam": "Akıllı motor bu güne henüz çalışmamış. Evo karşılaştırması YAPILMADI — bu 'temiz' demek DEĞİL, 'BAKILMADI' demektir.",
             "nedenler": ["Motor henüz tetiklenmedi"],
             "aksiyon": "Panelden 'Çalıştır' butonuna bas veya otomatik zamanlamayı kontrol et.",
+        },
+        # 🔴 TRUTH-011 (2026-09-02): KAOS tanımı "her iki taraf da hatalı, Evo
+        # nötr"dür — yani ÇÖZÜLEMEMİŞ bir durumdur. Buna rağmen hırsızlık
+        # anlatısına (zimmet_nakit) eşlenmişti: aksiyonu "kasa baskını + kamera
+        # + hukuki süreç" diyordu. Belirsizliği suçlamaya çevirmek, motorun
+        # yapabileceği en pahalı hatadır — masum personeli hedef alır.
+        "evo_teyit.kaos": {
+            "anlam": "Sabahçı ve akşamcının beyanları BİRBİRİYLE de Evo ile de tutmuyor. Bu, kimin haklı olduğunu SÖYLEYEMEDİĞİMİZ bir durumdur — hırsızlık kanıtı DEĞİLDİR. Aynı tabloyu sayım hatası, kayıt gecikmesi ve zimmet birlikte üretebilir.",
+            "nedenler": [
+                "Her iki sayım da hatalı olabilir",
+                "Evo verisi o gün için eksik/gecikmeli olabilir",
+                "Gün içinde kayıtsız hareket olmuş olabilir (fire, ikram, transfer)",
+            ],
+            "aksiyon": "Suçlama YAPMA. Üçüncü bağımsız sayım al, Evo verisini tazele, gün içi hareketleri (fire/ikram/transfer) kontrol et. Tablo netleşmeden kişi konuşulmaz.",
+        },
+        # 🔴 TRUTH-013: SABAH_ZIMMET_SUPHE, "sabahçı kasayı düşük beyan etti"
+        # tanısıdır — ama `sabah_hatali` anlatısına eşlenmişti ve orada
+        # "sabahçı saymış ama hata yapmış olabilir · yeniden say" yazıyordu.
+        # Yani ZİMMET ŞÜPHESİ sonraki katmanda SAYIM HATASINA dönüşüyordu:
+        # sinyal severity'de kritik kalıyor ama anlatı onu silikleştiriyordu.
+        "evo_teyit.sabah_zimmet_suphe": {
+            "anlam": "Dün akşamki bardak sayımı ve Evo satışı akşamcının beyanını destekliyor; sabahçının bildirdiği kasa ise bunun ALTINDA. Bu bir ŞÜPHEDİR, hüküm değil — aynı tabloyu para sayma hatası da üretebilir.",
+            "nedenler": [
+                "Sabahçı kasayı eksik saymış olabilir (dürüst hata)",
+                "Devir anında para fiziksel olarak eksik verilmiş olabilir",
+                "Kasadan kayıtsız çıkış yapılmış olabilir",
+            ],
+            "aksiyon": "ÖNCE yeniden say ve devir kaydını kontrol et. Fark doğrulanırsa kamera kaydına bak. Kişiye tek başına dayanan sonuç çıkarma.",
         },
 
         # ── 4. GECE BARDAK DEVAMLILIĞI ─────────────────────────────────────────
@@ -8236,7 +8354,10 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
 
     def _k(kod: str, ad: str, durum: str, state_key: str,
            deger: str = "", detay: str = "", personel: str = None):
-        ikon = {"ok": "✅", "uyari": "⚠️", "kritik": "🚨"}.get(durum, "—")
+        # ⏳ "veri_yok": bakılmadı. ✅ ile aynı görünmemeli — ✅ "baktım, temiz"
+        # demektir; burada bakılmamıştır (TRUTH-012).
+        ikon = {"ok": "✅", "uyari": "⚠️", "kritik": "🚨",
+                "veri_yok": "⏳"}.get(durum, "—")
         yor = _Y.get(state_key) or {}
         kontroller.append({
             "kod":     kod,
@@ -8423,15 +8544,21 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         "AKSAM_HATALI":              ("uyari",  "evo_teyit.aksam_hatali"),
         "SABAH_TOPYEKUN":            ("uyari",  "evo_teyit.sabah_hatali"),
         "AKSAM_TOPYEKUN":            ("uyari",  "evo_teyit.aksam_hatali"),
-        "KAOS":                      ("kritik", "evo_teyit.zimmet_nakit"),
+        # TRUTH-011: belirsizlik hırsızlık değildir — kendi anlatısına bağlandı.
+        # Severity "uyari": ciddiye alınmalı ama suçlama üretmemeli.
+        "KAOS":                      ("uyari",  "evo_teyit.kaos"),
         "COZULMEDI":                 ("uyari",  "evo_teyit.cozulmedi"),
         "POS_SYNC_HATA":             ("uyari",  "evo_teyit.pos_sync"),
         "POS_BYPASS":                ("kritik", "evo_teyit.pos_bypass"),
         "AKSAM_ZIMMET_SINYALI":      ("kritik", "evo_teyit.zimmet_nakit"),
         "AKSAM_KASAYI_SISIRDI":      ("kritik", "evo_teyit.zimmet_nakit"),
-        "SABAH_ZIMMET_SUPHE":        ("kritik", "evo_teyit.sabah_hatali"),
+        # TRUTH-013: zimmet şüphesi, sayım-hatası anlatısına düşmesin.
+        "SABAH_ZIMMET_SUPHE":        ("kritik", "evo_teyit.sabah_zimmet_suphe"),
         "IPTAL_SUPHE":               ("uyari",  "evo_teyit.pos_bypass"),
-        "YETERSIZ_VERI":             ("ok",     "evo_teyit.motor_yok"),
+        # 🔴 TRUTH-012: "veri yok" YEŞİL basılıyordu. Bakılmamış bir şeyi temiz
+        # göstermek, denetimin en tehlikeli yalanıdır — sahip ekranda ✅ görüp
+        # geçer. Ayrı bir durum: ne yeşil ne alarm, "BAKILMADI".
+        "YETERSIZ_VERI":             ("veri_yok", "evo_teyit.motor_yok"),
     }
 
     if r_evo:
@@ -8445,8 +8572,9 @@ def gunluk_teyit_karti(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         )
         _k("evo_teyit", "Evo POS teyidi", evo_du, evo_sk, "", evo_detay)
     else:
-        _k("evo_teyit", "Evo POS teyidi", "ok", "evo_teyit.motor_yok",
-           "", "Motor bu güne henüz çalışmamış — teyit bekliyor")
+        # TRUTH-012: motor çalışmamışsa bu kontrol YEŞİL olamaz — ölçüm yok.
+        _k("evo_teyit", "Evo POS teyidi", "veri_yok", "evo_teyit.motor_yok",
+           "", "Motor bu güne henüz çalışmamış — TEYİT YAPILMADI (temiz demek değil)")
 
     # ────────────────────────────────────────────────────────────────────────
     # 4. GECE BARDAK DEVAMLILIĞI
@@ -9708,22 +9836,30 @@ def gunluk_tam_analiz(
     sprint_h: Dict[str, Any] = {}
     sprint_i: Dict[str, Any] = {}
     sprint_j: Dict[str, Any] = {}
-    try:
-        sprint_g = aksam_kasa_sisirme_tespit(cur, sube_id, tarih)
-    except Exception:
-        pass
-    try:
-        sprint_h = aksam_vardiya_bardak_pnl(cur, sube_id, tarih)
-    except Exception:
-        pass
-    try:
-        sprint_i = kucuk_tutar_birikim_tespit(cur, sube_id, gun=30)
-    except Exception:
-        pass
-    try:
-        sprint_j = aksam_bardak_sisirme_tespit(cur, sube_id, tarih)
-    except Exception:
-        pass
+    # 🔴 TRUTH-007 (2026-09-02): dört sprint de çıplak `except: pass` ile
+    # yutuluyordu. Bir sprint patlarsa sözlüğü BOŞ kalıyor, sinyal vektörüne
+    # "sinyal yok" olarak giriyor ve sonuç "o boyutta sorun bulunmadı" gibi
+    # okunuyordu. Oysa BAKILAMAMIŞTI. Ölçemediğini temiz saymak, denetimin
+    # kendi kendini kandırmasıdır — ve tam da bu motorun yakalaması gereken
+    # şeyin aynısını motor kendi içinde yapıyordu.
+    #
+    # Artık: hata loglanır, boyut `eksik_boyutlar`a yazılır ve sonuç bunu
+    # TAŞIR. Analiz durmaz (kısmi sonuç hiç sonuçtan iyidir) ama "kısmi"
+    # olduğunu SÖYLER.
+    eksik_boyutlar = []
+
+    def _sprint(ad, fn):
+        try:
+            return fn() or {}
+        except Exception as e:  # noqa: BLE001
+            log.warning("gunluk_tam_analiz sprint %s başarısız: %s", ad, e)
+            eksik_boyutlar.append({"boyut": ad, "hata": str(e)[:200]})
+            return {}
+
+    sprint_g = _sprint("kasa_sisirme", lambda: aksam_kasa_sisirme_tespit(cur, sube_id, tarih))
+    sprint_h = _sprint("vardiya_bardak_pnl", lambda: aksam_vardiya_bardak_pnl(cur, sube_id, tarih))
+    sprint_i = _sprint("kucuk_tutar_birikim", lambda: kucuk_tutar_birikim_tespit(cur, sube_id, gun=30))
+    sprint_j = _sprint("bardak_sisirme", lambda: aksam_bardak_sisirme_tespit(cur, sube_id, tarih))
 
     # Evo tani — teyit kontrollerinden çek
     # FIX T8 (2026-07-05): kod "evo" değil "evo_teyit"; ayrıca state_key ("evo_teyit.sweethearting")
@@ -9731,11 +9867,20 @@ def gunluk_tam_analiz(
     # evo sinyali hiç girmiyordu. state_key son ekini kanonik tani koduna eşle.
     kontroller = teyit.get("kontroller") or []
     evo_k    = next((k for k in kontroller if k.get("kod") == "evo_teyit"), {})
+    # ⚠️ TRUTH-013 (2026-09-02): bu harita, ekrana basılan state_key'i TANIYA
+    # geri çevirir. `sabah_zimmet_suphe` burada YOKSA `_evo_sk_son.upper()`
+    # ile "SABAH_ZIMMET_SUPHE"ye döner — doğru. Ama `sabah_hatali` üzerinden
+    # gidildiğinde zimmet şüphesi SAYIM HATASINA dönüşüyordu; anlatı ayrıldığı
+    # için o yol artık kapalı. İki tanı ayrı ayrı yazılı ki gelecekte biri
+    # ötekinin üstünü örtmesin.
     _EVO_SK_TANI = {
         "uyumlu": "UYUMLU", "motor_yok": "YETERSIZ_VERI", "cozulmedi": "YETERSIZ_VERI",
+        "kaos": "KAOS",
         "sweethearting": "SWEETHEARTING_SINYAL", "stok_kacagi": "STOK_KACAGI_BEYANSIZ",
         "ikram_evo_teyit": "IKRAM_EVO_TEYIT", "ikram_unutuldu": "IKRAM_SURDURULEN",
-        "zimmet_nakit": "ZIMMET_IPTAL_MANIPULASYON", "sabah_hatali": "SABAH_HATALI",
+        "zimmet_nakit": "ZIMMET_IPTAL_MANIPULASYON",
+        "sabah_hatali": "SABAH_HATALI",
+        "sabah_zimmet_suphe": "SABAH_ZIMMET_SUPHE",
     }
     _evo_sk_son = (evo_k.get("state_key") or "").split(".")[-1]
     evo_tani = _EVO_SK_TANI.get(_evo_sk_son, (_evo_sk_son.upper() if _evo_sk_son else None))
@@ -9772,6 +9917,10 @@ def gunluk_tam_analiz(
         },
         "sinyal_vektor": sinyal,
         "gozlem_id":     gozlem_id,
+        # 🔴 TRUTH-007: hangi boyuta BAKILAMADI. Boş liste = tam analiz.
+        # Dolu liste = sonuç KISMİ; eksik boyut "temiz" sayılmamalı.
+        "eksik_boyutlar": eksik_boyutlar,
+        "analiz_tam": not eksik_boyutlar,
     }
 
 
