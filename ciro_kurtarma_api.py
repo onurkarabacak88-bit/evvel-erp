@@ -149,7 +149,12 @@ def _plan_uret(cur) -> Dict[str, Any]:
         n, p, o = _f(d.get("c_nakit")), _f(d.get("c_pos")), _f(d.get("c_online"))
         if (n + p + o) <= 0:
             kurtarilamayan.append({
-                "ciro_id": cid, "tarih": d.get("tarih"), "sube_adi": d.get("sube_adi"),
+                "ciro_id": cid, "tarih": d.get("tarih"),
+                # ⚠️ sube_id ŞART: üçüncü kaynak (Evo) bu sözlükten okuyor ve
+                # `ciro.sube_id` yabancı anahtarlıdır. Taşımayı unutunca canlı
+                # ForeignKeyViolation verdi (Key (sube_id)=() bulunamadı).
+                "sube_id": str(d.get("sube_id") or ""),
+                "sube_adi": d.get("sube_adi"),
                 "net": round(_f(d.get("net")), 2),
                 "aciklama": (d.get("aciklama") or "")[:80],
                 "neden": "rapor cache'inde de kırılım yok",
@@ -226,6 +231,19 @@ def _plan_uret(cur) -> Dict[str, Any]:
             kurtarilamayan[:] = _kalan
         except Exception as e:  # noqa: BLE001
             evo_hata = str(e)
+
+    # 🛡️ ŞUBESİZ SATIR YAZILMAZ: `ciro.sube_id` yabancı anahtarlıdır; boş
+    # değer TÜM transaction'ı düşürür ve 279 satırın hiçbiri yazılmaz.
+    # Tek bir çözümsüz satır yüzünden kurtarmanın tamamını kaybetmeyelim —
+    # o satır listeden çıkar, `kurtarilamayan`a nedeniyle düşer.
+    _subesiz = [x for x in ikinci if not str(x.get("sube_id") or "").strip()]
+    for x in _subesiz:
+        kurtarilamayan.append({
+            "ciro_id": x.get("ciro_id"), "tarih": x.get("tarih"),
+            "sube_adi": x.get("sube_adi"), "net": x.get("toplam"),
+            "neden": "şube kimliği yok — ciro.sube_id yabancı anahtarı boş kabul etmez",
+        })
+    ikinci[:] = [x for x in ikinci if str(x.get("sube_id") or "").strip()]
 
     satirlar.extend(sorted(ikinci, key=lambda x: (x["tarih"], str(x["sube_id"]))))
     satirlar.sort(key=lambda x: (x["tarih"], str(x["sube_id"])))
