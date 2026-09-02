@@ -138,3 +138,63 @@ PERS-012/013 · BASVURU-001/004/005/006 · RAPOR-005 · MALIYET-011 · ENT-002
 
 ## HAM ÇIKTILAR
 `tmp/eski_denetim/out_*.txt` (10 koşu) · istemler `tmp/eski_denetim/p_*.txt`
+
+
+---
+
+# 📌 UYGULAMA DURUMU (2026-09-02 · gün sonu)
+
+**156 kalemden 93'ü kapandı ve canlıda doğrulandı.**
+
+## Faz faz kapananlar
+
+| Faz | Konu | Kapanan |
+|---|---|---:|
+| 0 | Para yanlışı | 7 |
+| 1 | Korumasız yıkıcı uç + aktör izi | 6 |
+| 2 | Sahte yeşil / yanlış tanı | 9 |
+| 3 | Aynı metrik iki tanım | 10 |
+| 4 | Aktör istemci beyanı | 7 |
+| 5 | Tarih çıpası / versiyonlama | 12 |
+| 6 | Dayanıklılık / idempotency / ekran | 28 |
+| — | Önceki turda (BAŞVURU auth) | 4 |
+| | **TOPLAM** | **93** |
+
+## Canlı ölçümle doğrulanan etkiler
+
+| Ne | Önce | Sonra |
+|---|---:|---:|
+| Kart zorunlu yükü | 1.210.919 ₺ | **1.039.135 ₺** |
+| "Aylık faiz" (WORLD kartlar) | %51 | **%4,25** |
+| Ciro tablosu | 0 satır | **279 satır** |
+| Kasa bakiyesi (kurtarma sonrası) | 1.711.376,16 ₺ | **değişmedi** |
+| KDV penceresi (temmuz vs bugün) | aynı sayı | **farklı — çıpa çalışıyor** |
+| Depo pivot fiyatı | MAX | **ağırlıklı ortalama** |
+
+## En ağır üç bulgu (hepsi kapandı)
+
+1. **Ağ retry'ı borcu sessizce ikiye katlıyordu** — aynı tedarikçide tek açık
+   borç varsa ikinci istek tutarı üstüne topluyordu (PARA-011).
+2. **Mükerrer ara kasa teslimi ÇİFT PARA taşıyordu** — defterleşmenin
+   idempotency anahtarı teslim ID'sinden türediği için ikinci satırı
+   yakalamıyordu (SUBE-007).
+3. **Ad-hoc ürün tesliminde depo iki kez artıyordu** — stok girişi koşulsuz
+   topluyor, ad-hoc dalda hiç fren yoktu (SUBE-004).
+
+## Kurulan kalıcı araçlar
+
+- `istek_izi.py` — paylaşılan idempotency defteri (main + sube_panel)
+- `personel_kimlik.py` — kanıt seviyeli kimlik çözücü (pin/yoklama/beyan/yok)
+- `admin_oturum.aktor_bilgisi` — kapı değil, kimlik OKUYUCU
+- `ciro_kurtarma_api.py` — üç kaynaklı ciro geri yükleme
+- `gece_kosu_izi` — gece işinde tarih talebi (lider seçimi yerine)
+- `audit_log.aktor / aktor_id / aktor_kaynak` — "kim yaptı" kolonu
+
+## Kapı kontrolü bu oturumda 3 canlı-kırık yakaladı
+- `Depends` / `Header` import edilmeden kullanılmış (6 satır)
+- `_isletme_onay_dogrula` tanımsız (yerel import eksik)
+- `savepoint` import edilmemiş
+
+Ayrıca kapının KENDİ üç kusuru bulundu ve kapatıldı: yanlış bulguyu
+gösteriyordu, satır kaymasında sahte "yeni" üretiyordu, `savepoint as _sp`
+takma adını göremiyordu.
