@@ -5169,6 +5169,30 @@ def anlik_gider_ekle(g: AnlikGider):
             "Şube personel panelinden girin; kayıt onay kuyruğuna düşer, onay sonrası kasaya işlenir.",
         )
     with db() as (conn, cur):
+        # 🔴 PARA-005 (2026-09-02): buradaki 7 günlük "benzer kayıt" kontrolü
+        # ARDIŞIK bir tekrarı yakalar (ilk istek commit olmuşsa), ama EŞZAMANLI
+        # iki isteği yakalamaz: READ COMMITTED'da diğerinin commit edilmemiş
+        # satırı görünmez, ikisi de "benzer yok" der.
+        # Kasa tarafı da kurtarmaz: `insert_kasa_hareketi`in legacy idempotency
+        # anahtarına `kaynak_id` giriyor ve o her istekte TAZE uuid — iki istek
+        # FARKLI anahtar üretir, ON CONFLICT hiç tetiklenmez. Sonuç: iki gider
+        # satırı + iki kasa satırı.
+        #
+        # İki kapı birden:
+        #  1) advisory xact lock — aynı parmak izli istekler SIRAYA girer, ikinci
+        #     istek birincinin commit'ini görür ve 7 günlük kontrol artık işler.
+        #  2) istek izi — birebir aynı istek 180 sn içinde tekrar gelirse yazılmaz.
+        _ag_parmak = _istek_parmak(
+            "anlik_gider", g.tarih, "%.2f" % float(g.tutar), g.kategori,
+            (g.aciklama or ""), getattr(g, "sube", None), getattr(g, "odeme_yontemi", None))
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (_ag_parmak,))
+        if not g.force:
+            _onceki_ag = _istek_izi_tazeyse(cur, _ag_parmak)
+            if _onceki_ag:
+                return {**_onceki_ag, "tekrar": True, "mesaj": (
+                    "Aynı gider az önce kaydedildi — mükerrer kayıt YAZILMADI. "
+                    "Gerçekten ikinci bir gider varsa force=true gönderin.")}
+
         if not g.force:
             cur.execute("""
                 SELECT id FROM anlik_giderler WHERE durum='aktif'
@@ -9551,6 +9575,16 @@ def ciro_ekle(c: CiroModel):
     # (0 satış = KAYIT YOK; "girilmemiş ciro" alarmı yokluğu yakalar.)
     if nakit < 0 or pos < 0 or online < 0:
         raise HTTPException(400, "Ciro alanları negatif olamaz")
+    # 🔴 PARA-013 (2026-09-02): "online ≈ nakit+pos" ÇİFT SAYIM guard'ı taslak
+    # uçlarında (ciro_taslak_api) VAR ama ana ciro uçlarında YOKTU. Şube
+    # panelinden geçen ciro korunuyor, merkezden doğrudan girilen korunmuyordu —
+    # oysa çift sayım riski aynı, hatta merkez girişinde daha yüksek (kalem
+    # kalem kontrol eden kimse yok).
+    # Desen: online alanına yanlışlıkla TOPLAM yazılırsa ciro bir kat şişer.
+    if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.01:
+        raise HTTPException(
+            400,
+            "Online tutarı nakit+POS toplamına eşit — çift sayım. Online yoksa 0 girin.")
     if toplam <= 0:
         raise HTTPException(400, "Ciro toplamı pozitif olmalı")
     # 🟡 P3 (2026-08-13, EVV-PARA-N15): gelecek tarihli ciro anlamsız — henüz
@@ -9636,6 +9670,16 @@ def ciro_guncelle(cid: str, c: CiroModel):
     # 🔴 P1 (2026-08-12): POST ile aynı negatif/sıfır koruması PUT'ta da olmalı.
     if nakit < 0 or pos < 0 or online < 0:
         raise HTTPException(400, "Ciro alanları negatif olamaz")
+    # 🔴 PARA-013 (2026-09-02): "online ≈ nakit+pos" ÇİFT SAYIM guard'ı taslak
+    # uçlarında (ciro_taslak_api) VAR ama ana ciro uçlarında YOKTU. Şube
+    # panelinden geçen ciro korunuyor, merkezden doğrudan girilen korunmuyordu —
+    # oysa çift sayım riski aynı, hatta merkez girişinde daha yüksek (kalem
+    # kalem kontrol eden kimse yok).
+    # Desen: online alanına yanlışlıkla TOPLAM yazılırsa ciro bir kat şişer.
+    if online > 0.001 and nakit > 0.001 and pos > 0.001 and abs(online - (nakit + pos)) < 0.01:
+        raise HTTPException(
+            400,
+            "Online tutarı nakit+POS toplamına eşit — çift sayım. Online yoksa 0 girin.")
     if (nakit + pos + online) <= 0:
         raise HTTPException(400, "Ciro toplamı pozitif olmalı")
 
@@ -13576,6 +13620,35 @@ def ledger(limit: int = 200, islem_turu: Optional[str] = None, ay: str = None):
             (ay_v,),
         )
         oz = dict(cur.fetchone() or {})
+        # 🔴 RAPOR-001/009 (2026-09-02): bu defter YALNIZ `kasa_hareketleri`
+        # okur — tasarımı gereği doğru (kasa defteridir). Sorun, KARTLA yapılan
+        # harcamanın kasaya HİÇ YAZILMAMASI ("Karta HARCAMA yaz — kasaya yazma",
+        # main.py:5205 ve 5 yerde daha) ve ekranın bunu SÖYLEMEMESİ.
+        # Sahip "defter" diye bakıyor, kart harcamaları orada olmadığı için
+        # gideri eksik görüyor ve nedenini bilmiyor.
+        # Defteri kirletmiyoruz (kart harcaması kasadan çıkmaz — doğrusu bu);
+        # ama NE OLMADIĞINI söylüyoruz: aynı ayın kart hareketleri özet olarak
+        # döner, ekran "bu defterde YOK" diye gösterir.
+        _kart_disi = {"harcama": 0.0, "faiz": 0.0, "adet": 0}
+        try:
+            with savepoint(cur, "sp_ledger_kart"):
+                cur.execute("""
+                    SELECT COALESCE(SUM(CASE WHEN islem_turu='HARCAMA' THEN tutar ELSE 0 END),0)::float AS harcama,
+                           COALESCE(SUM(CASE WHEN islem_turu='FAIZ'    THEN tutar ELSE 0 END),0)::float AS faiz,
+                           COUNT(*) AS adet
+                    FROM kart_hareketleri
+                    WHERE COALESCE(durum,'aktif')='aktif'
+                      AND islem_turu IN ('HARCAMA','FAIZ')
+                      AND to_char(tarih, 'YYYY-MM') = %s
+                """, (ay_v,))
+                _kd = dict(cur.fetchone() or {})
+                _kart_disi = {"harcama": float(_kd.get("harcama") or 0),
+                              "faiz": float(_kd.get("faiz") or 0),
+                              "adet": int(_kd.get("adet") or 0)}
+        except Exception:
+            # Ölçülemezse SIFIR YAZMIYORUZ — "kart harcaması yok" yalanı olurdu.
+            _kart_disi = None
+
         return {
             "rows": rows,
             "ozet": {
@@ -13583,6 +13656,8 @@ def ledger(limit: int = 200, islem_turu: Optional[str] = None, ay: str = None):
                 "toplam_gider": float(oz.get("toplam_gider") or 0),
                 "toplam_iptal": float(oz.get("toplam_iptal") or 0),
             },
+            # Bu defterde OLMAYAN para — kart borcuna yazılıp kasadan çıkmayanlar.
+            "bu_defterde_olmayan": _kart_disi,
         }
 
 # ── EXCEL IMPORT ───────────────────────────────────────────────

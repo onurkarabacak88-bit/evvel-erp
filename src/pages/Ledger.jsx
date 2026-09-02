@@ -48,11 +48,17 @@ export default function Ledger() {
   const [sekme, setSekme] = useState('hareketler'); // 'hareketler' | 'breakdown'
   const [breakdown, setBreakdown] = useState(null);
   const [ay, setAy] = useState(buGununAyi()); // YYYY-MM | 'hepsi'
+  // RAPOR-001: bu defterde OLMAYAN para (kart harcaması/faizi).
+  // undefined = sunucu henüz söylemedi · null = ölçülemedi · nesne = ölçüldü.
+  const [defterDisi, setDefterDisi] = useState(undefined);
 
   useEffect(() => {
     api(`/ledger?limit=500&ay=${encodeURIComponent(ay)}`).then(data => {
-      if (Array.isArray(data)) { setRows(data); setOzet({}); }
-      else { setRows(data.rows || []); setOzet(data.ozet || {}); }
+      if (Array.isArray(data)) { setRows(data); setOzet({}); setDefterDisi(undefined); }
+      else {
+        setRows(data.rows || []); setOzet(data.ozet || {});
+        setDefterDisi(data.bu_defterde_olmayan);
+      }
     });
     api('/kasa').then(d => setKasa(d.guncel_bakiye));
     api('/kasa-detay').then(setBreakdown).catch(() => {});
@@ -215,6 +221,37 @@ export default function Ledger() {
                 {Number(breakdown.net_kasa || 0).toLocaleString('tr-TR', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ₺
               </span>
             </div>
+
+            {/* 🔴 RAPOR-001/009 (2026-09-02): bu defter KASA defteridir ve
+                kartla yapılan harcama kasaya HİÇ yazılmaz (tasarım gereği —
+                kart borcuna gider, kasadan çıkmaz). Ama ekran bunu
+                SÖYLEMİYORDU: sahip "defter" diye bakıp gideri eksik görüyor,
+                nedenini bilmiyordu. Defteri kirletmiyoruz; ne OLMADIĞINI
+                yazıyoruz. */}
+            {defterDisi !== undefined && (
+              <div style={{marginTop:14,padding:'10px 12px',borderRadius:8,
+                           background:'rgba(234,179,8,0.09)',
+                           border:'1px solid rgba(234,179,8,0.3)',fontSize:12}}>
+                <div style={{fontWeight:700,color:'#fde68a',marginBottom:4}}>
+                  ⓘ Bu defterde OLMAYAN para
+                </div>
+                {defterDisi === null ? (
+                  <div style={{color:'var(--text3)'}}>
+                    Kart hareketleri ölçülemedi — "kart harcaması yok" anlamına GELMEZ.
+                  </div>
+                ) : (
+                  <div style={{color:'var(--text2)',lineHeight:1.6}}>
+                    Bu ay <b>{Number(defterDisi.harcama || 0).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2})} ₺</b> kart
+                    harcaması{Number(defterDisi.faiz || 0) > 0
+                      ? <> ve <b>{Number(defterDisi.faiz).toLocaleString('tr-TR',{minimumFractionDigits:2,maximumFractionDigits:2})} ₺</b> faiz</>
+                      : null} yapıldı ({defterDisi.adet} hareket).
+                    Bunlar kart borcuna yazıldı, <b>kasadan çıkmadı</b> — o yüzden
+                    yukarıdaki defterde görünmezler. Kasadan çıkan tek kart kalemi
+                    “Kart Ödemesi”dir.
+                  </div>
+                )}
+              </div>
+            )}
           </>)}
         </div>
       )}
