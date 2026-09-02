@@ -52,7 +52,17 @@ export default function KartEkstreAnaliz() {
     if (!window.confirm(`"${kart_adi}" — ${ayEtiket(donem)} dönemine ait ekstre hareketlerini silmek istediğine emin misin?\n\nBu işlem o aya ait harcama/faiz kayıtlarını siler (ödemelere dokunmaz). Sonra "Ekstre Yükle" sekmesinden doğru ekstreyi tekrar yükleyebilirsin.`)) return;
     try {
       const r = await api(`/kartlar/${kart_id}/ekstre-donem/${donem}`, { method: 'DELETE' });
-      setMsg({ t: 'green', m: `✓ ${r.kart_adi} — ${ayEtiket(donem)} dönemi silindi (${r.silinen_hareket} hareket). Şimdi "Ekstre Yükle" ile tekrar yükleyebilirsin.` });
+      // KART-011: elle girilmiş satırlar artık korunuyor — kaçının korunduğu
+      // söylenmezse sahip "hepsi silindi" sanar.
+      const _kor = Number(r?.korunan_manuel_satir || 0);
+      const _plan = Number(r?.iptal_odeme_plani || 0);
+      setMsg({
+        t: _kor ? 'yellow' : 'green',
+        m: `✓ ${r.kart_adi} — ${ayEtiket(donem)} dönemi silindi (${r.silinen_hareket} ekstre satırı)`
+          + (_plan ? ` · ${_plan} ödeme planı iptal edildi` : '')
+          + (_kor ? ` · ⚠ ${_kor} elle girilmiş satır KORUNDU` : '')
+          + `. Şimdi "Ekstre Yükle" ile tekrar yükleyebilirsin.`,
+      });
       arsivYukle();
     } catch (e) {
       setMsg({ t: 'red', m: e.message || 'Silinemedi' });

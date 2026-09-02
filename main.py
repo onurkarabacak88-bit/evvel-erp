@@ -7971,12 +7971,57 @@ def kart_ekstre_donem_sil(kid: str, donem: str):
             [kid] + _pp,
         )
         iptal_anlik = cur.rowcount
+
+        # 🔴 KART-011 (2026-09-02): silme, penceredeki TÜM HARCAMA/FAIZ
+        # satırlarını kaldırıyordu — kaynak ayrımı yoktu. Oysa docstring
+        # "manuel girilen kasa hareketlerine dokunmaz" diyordu; doğruydu ama
+        # yalnız ÖDEME/DEVİR için. ELLE GİRİLMİŞ HARCAMA satırları siliniyordu
+        # ve onlar geri getirilemez (ekstre dosyasından yeniden yüklenemez —
+        # kullanıcı yazmıştı).
+        # Kural: ekstre yüklemesi `kaynak_tablo='ekstre_import'` damgalar; elle
+        # giriş (kart_hareket_ekle) bu alanı hiç yazmaz → NULL kalır.
+        # ⚠️ Damga ÖNCESİ yüklenmiş eski import satırları da NULL olabilir; bu
+        # durumda onlar SİLİNMEDEN kalır. İki riski tarttık:
+        #   · elle girileni silmek  → GERİ ALINAMAZ veri kaybı
+        #   · eski importu bırakmak → kalıntı; görünür ve yeniden silinebilir
+        # Kalıntı, kayıptan iyidir. Ama SESSİZ kalmasın diye korunan satır
+        # sayısı ölçülüp yanıtta bildiriliyor.
+        cur.execute(
+            f"""SELECT COUNT(*) AS n FROM kart_hareketleri
+               WHERE kart_id=%s AND islem_turu IN ('HARCAMA','FAIZ')
+                 AND COALESCE(kaynak_tablo,'') <> 'ekstre_import'{_pencere}""",
+            [kid] + _pp,
+        )
+        korunan_manuel = int((cur.fetchone() or {}).get("n") or 0)
+
         cur.execute(
             f"""DELETE FROM kart_hareketleri
-               WHERE kart_id=%s AND islem_turu IN ('HARCAMA','FAIZ'){_pencere}""",
+               WHERE kart_id=%s AND islem_turu IN ('HARCAMA','FAIZ')
+                 AND COALESCE(kaynak_tablo,'') = 'ekstre_import'{_pencere}""",
             [kid] + _pp,
         )
         silinen_hareket = cur.rowcount
+
+        # 🔴 KART-007: dönem silinince o ekstreden açılmış ÖDEME PLANI satırı
+        # defterde asılı kalıyordu — CFO ekranı olmayan bir ekstre için ödeme
+        # hatırlatmaya devam ediyordu. Plan `referans_ay` ile SON ÖDEME ayına
+        # bağlı (kesim ayına değil), o yüzden snapshot'ın son_odeme_tarihi'nden
+        # bulunuyor. Plan SİLİNMİYOR, İPTAL ediliyor: ödenmiş plan varsa onun
+        # izi kalmalı (append-only #5).
+        cur.execute(
+            "SELECT son_odeme_tarihi FROM kart_ekstre_donem "
+            "WHERE kart_id=%s AND donem = DATE_TRUNC('month', %s::date)", (kid, donem))
+        _sn = cur.fetchone()
+        _sot = dict(_sn or {}).get("son_odeme_tarihi")
+        iptal_plan = 0
+        if _sot:
+            cur.execute(
+                """UPDATE odeme_plani SET durum='iptal'
+                   WHERE kart_id=%s AND durum IN ('bekliyor','onay_bekliyor')
+                     AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)""",
+                (kid, _sot))
+            iptal_plan = cur.rowcount
+
         cur.execute(
             "DELETE FROM kart_ekstre_donem WHERE kart_id=%s AND donem = DATE_TRUNC('month', %s::date)",
             (kid, donem),
@@ -7985,13 +8030,22 @@ def kart_ekstre_donem_sil(kid: str, donem: str):
         # K1: hard-delete artık izli — ne silindiği audit'e yazılır (forensik iz yoktu).
         audit(cur, 'kart_hareketleri', kid, 'EKSTRE_DONEM_SIL',
               yeni={'donem': donem, 'silinen_hareket': silinen_hareket,
-                    'silinen_donem': silinen_donem, 'iptal_anlik_gider': iptal_anlik})
+                    'silinen_donem': silinen_donem, 'iptal_anlik_gider': iptal_anlik,
+                    'korunan_manuel_satir': korunan_manuel, 'iptal_odeme_plani': iptal_plan})
     return {
         "success": True,
         "kart_adi": dict(k)["kart_adi"],
         "silinen_hareket": silinen_hareket,
         "silinen_donem": silinen_donem,
         "iptal_anlik_gider": iptal_anlik,
+        "iptal_odeme_plani": iptal_plan,
+        # Korunan satırlar GİZLENMİYOR: "hepsi silindi" sanılmasın.
+        "korunan_manuel_satir": korunan_manuel,
+        "korunan_not": (
+            f"{korunan_manuel} satır elle girilmiş (ya da damga öncesi yüklenmiş) "
+            "olduğu için SİLİNMEDİ. Ekstreyi yeniden yükledikten sonra çift kayıt "
+            "görürsen bunlar olabilir."
+        ) if korunan_manuel else None,
     }
 
 

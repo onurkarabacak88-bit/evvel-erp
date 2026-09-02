@@ -184,7 +184,17 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     setDonemSilMesgul(true);
     try {
       const r = await api(`/kartlar/${encodeURIComponent(d.kartId)}/ekstre-donem/${encodeURIComponent(d.donem)}`, { method: 'DELETE' });
-      onToast?.(`${r?.kart_adi || d.kartAd} · ${kisaTarih(d.donem)} dönemi silindi — ${sayi(r?.silinen_hareket)} hareket kalktı, şimdi doğru ekstreyi yükleyebilirsin`);
+      // KART-011: sunucu artık ELLE GİRİLMİŞ satırları silmiyor ve kaçını
+      // koruduğunu söylüyor. Bunu göstermezsek sahip "hepsi silindi" sanır ve
+      // ekstreyi yeniden yükleyince çift kaydın nereden geldiğini bilemez.
+      const _kor = Number(r?.korunan_manuel_satir || 0);
+      const _plan = Number(r?.iptal_odeme_plani || 0);
+      onToast?.(
+        `${r?.kart_adi || d.kartAd} · ${kisaTarih(d.donem)} dönemi silindi — `
+        + `${sayi(r?.silinen_hareket)} ekstre satırı kalktı`
+        + (_plan ? ` · ${_plan} ödeme planı iptal edildi` : '')
+        + (_kor ? ` · ⚠ ${_kor} ELLE GİRİLMİŞ satır KORUNDU (silinmedi)` : '')
+        + `, şimdi doğru ekstreyi yükleyebilirsin`);
       setDonemSil(null);
       yukle();
     } catch (e) {
