@@ -62,10 +62,9 @@ const GRUPLAR = [
       ['merkez_stok_sevk', 'merkez stok sevk'],
     ],
   },
-  {
-    baslik: 'Denetim',
-    anahtarlar: [['audit_log', 'denetim günlüğü']],
-  },
+  // 🔴 VERI-011 (2026-09-02): 'Denetim / audit_log' grubu KALDIRILDI.
+  // Veriyi silen ekranın, o silmenin izini tutan defteri de silebilmesi
+  // denetimi anlamsız kılar. Sunucu da bu anahtarı artık reddediyor.
 ];
 
 const TUM_ANAHTARLAR = GRUPLAR.flatMap((g) => g.anahtarlar.map(([k]) => k));
@@ -75,6 +74,8 @@ const ONAY_METNI = 'EVET_SIL';
 export default function VeriTemizle() {
   const [secili, setSecili] = useState(() => new Set());
   const [onay, setOnay] = useState('');
+  const [pin, setPin] = useState('');
+  const [kuru, setKuru] = useState(null);
   const [busy, setBusy] = useState(false);
   const [sonuc, setSonuc] = useState(null);
   const [hata, setHata] = useState(null);
@@ -182,6 +183,7 @@ export default function VeriTemizle() {
   const seciliSayisi = secili.size;
 
   const toggle = (key) => {
+    setKuru(null);   // seçim değişti → sayım bayatladı
     setSecili((prev) => {
       const n = new Set(prev);
       if (n.has(key)) n.delete(key);
@@ -225,6 +227,7 @@ export default function VeriTemizle() {
     ]);
     setSecili(op);
     setSonuc(null);
+    setKuru(null);   // seçim değişti → önceki sayım artık geçersiz
     setHata(null);
   };
 
@@ -245,7 +248,30 @@ export default function VeriTemizle() {
     ]);
     setSecili(fin);
     setSonuc(null);
+    setKuru(null);   // seçim değişti → önceki sayım artık geçersiz
     setHata(null);
+  };
+
+  // 🧪 KURU ÇALIŞTIRMA — ne silineceğini SAYDIRIR, hiçbir şey silmez.
+  // Yıkıcı işlemde önce liste okunur; "kaç satır gidiyor" bilinmeden onay
+  // verilmez. Sunucu bu modda PIN de istemez (hiçbir şey değişmiyor).
+  const kuruCalistir = async () => {
+    setHata(null);
+    setSonuc(null);
+    setKuru(null);
+    if (seciliSayisi === 0) { setHata('En az bir veri grubu seçin.'); return; }
+    setBusy(true);
+    try {
+      const r = await api('/sistem-sifirla', {
+        method: 'POST',
+        body: { onay: ONAY_METNI, tablolar: Array.from(secili), kuru: true },
+      });
+      setKuru(r);
+    } catch (e) {
+      setHata(e.message || 'Sayım başarısız');
+    } finally {
+      setBusy(false);
+    }
   };
 
   const calistir = async () => {
@@ -259,6 +285,14 @@ export default function VeriTemizle() {
       setHata(`Onay kutusuna tam olarak «${ONAY_METNI}» yazın.`);
       return;
     }
+    if (!/^\d{4}$/.test(pin.trim())) {
+      setHata('İşletme onayı için Merve Karabacak\'ın 4 haneli PIN\'i gerekli.');
+      return;
+    }
+    if (!kuru) {
+      setHata('Önce «Kuru çalıştır» ile ne silineceğini görün — sayım okunmadan silme yapılmaz.');
+      return;
+    }
     setBusy(true);
     try {
       const r = await api('/sistem-sifirla', {
@@ -266,9 +300,12 @@ export default function VeriTemizle() {
         body: {
           onay: ONAY_METNI,
           tablolar: Array.from(secili),
+          onay_pin: pin.trim(),
         },
       });
       setSonuc(r);
+      setKuru(null);
+      setPin('');
       setOnay('');
       try {
         publishGlobalDataRefresh('veri-temizleme');
@@ -465,10 +502,59 @@ export default function VeriTemizle() {
             style={{ maxWidth: 280 }}
           />
         </label>
-        <button type="button" className="btn btn-danger" disabled={busy} onClick={calistir}>
-          {busy ? 'Temizleniyor…' : 'Seçilen verileri kalıcı olarak sil'}
-        </button>
+        <label style={{ display: 'block', marginBottom: 10 }}>
+          <span style={{ fontSize: 12, color: 'var(--text3)', display: 'block', marginBottom: 6 }}>
+            İşletme onayı — <strong>Merve Karabacak</strong> PIN (4 hane)
+          </span>
+          <input
+            className="input mono"
+            type="password"
+            inputMode="numeric"
+            maxLength={4}
+            autoComplete="off"
+            placeholder="••••"
+            value={pin}
+            onChange={(e) => setPin(e.target.value.replace(/\D/g, ''))}
+            style={{ maxWidth: 120, letterSpacing: 4 }}
+          />
+        </label>
+
+        <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
+          <button type="button" className="btn btn-secondary" disabled={busy} onClick={kuruCalistir}>
+            {busy ? 'Sayılıyor…' : '🧪 Kuru çalıştır (sayar, silmez)'}
+          </button>
+          <button type="button" className="btn btn-danger" disabled={busy || !kuru} onClick={calistir}>
+            {busy ? 'Temizleniyor…' : 'Seçilen verileri kalıcı olarak sil'}
+          </button>
+        </div>
+        {!kuru && (
+          <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text3)' }}>
+            Silme düğmesi, kuru çalıştırma yapılmadan açılmaz — kaç satırın gideceği
+            görülmeden onay verilmez.
+          </div>
+        )}
       </div>
+
+      {kuru && (
+        <div style={{ marginTop: 14, padding: 12, borderRadius: 8, background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.35)', fontSize: 13 }}>
+          <strong style={{ color: '#fde68a' }}>
+            🧪 Kuru çalıştırma — hiçbir şey silinmedi.
+            {' '}{kuru.silinecek?.length || 0} tabloda <b>{(kuru.toplam_satir ?? 0).toLocaleString('tr-TR')}</b> satır silinecek.
+          </strong>
+          <div style={{ marginTop: 10, maxHeight: 220, overflow: 'auto' }}>
+            {Object.entries(kuru.satir_sayilari || {})
+              .sort((a, b) => (b[1] ?? -1) - (a[1] ?? -1))
+              .map(([t, n]) => (
+                <div key={t} style={{ display: 'flex', justifyContent: 'space-between', gap: 12, padding: '2px 0', fontSize: 12 }}>
+                  <span className="mono" style={{ color: 'var(--text2)' }}>{t}</span>
+                  <span style={{ color: n === null ? 'var(--text3)' : (n > 0 ? '#fca5a5' : 'var(--text3)') }}>
+                    {n === null ? 'bilinmiyor' : n.toLocaleString('tr-TR')}
+                  </span>
+                </div>
+              ))}
+          </div>
+        </div>
+      )}
 
       {hata && (
         <div style={{ marginTop: 14, padding: 12, borderRadius: 8, background: 'rgba(220,38,38,0.12)', color: '#fecaca', fontSize: 13 }}>

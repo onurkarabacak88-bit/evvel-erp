@@ -139,16 +139,76 @@ def insert_kasa_hareketi(cur, tarih, islem_turu, tutar, aciklama,
         raise Exception(f"KASA YAZILMADI — {islem_turu} / {kaynak_id}")
 
 
-def audit(cur, tablo, kayit_id, islem, eski=None, yeni=None):
+# None = henüz ölçülmedi · True/False = şemadan okundu (süreç ömrü boyunca)
+_AUDIT_AKTOR_KOLONU = None
+
+
+def audit(cur, tablo, kayit_id, islem, eski=None, yeni=None,
+          aktor=None, aktor_id=None, aktor_kaynak=None):
+    """Denetim defterine bir satır yazar.
+
+    aktor / aktor_id / aktor_kaynak (SYS-AUDIT, 2026-09-02):
+      Defterin cevaplaması gereken ilk soru "KİM yaptı"dır; imza bunu hiç
+      almıyordu, dolayısıyla hiçbir çağrı yazamıyordu.
+      - aktor        : okunabilir ad ("Merve Karabacak")
+      - aktor_id     : personel/kullanıcı kimliği (ada güvenilmez — ad değişir)
+      - aktor_kaynak : kimliğin NEREDEN geldiği ('isletme_pin' | 'panel_pin' |
+                       'oturum' | 'sistem' | 'beyan'). ⚠️ 'beyan', istemcinin
+                       söylediği ve DOĞRULANMAMIŞ kimliktir — doğrulanmışla
+                       aynı görünmesin diye ayrı işaretlenir.
+      Üçü de NULL kalabilir: aktörü gerçekten bilmediğimiz otomatik akışlarda
+      uydurma isim yazmak, boş bırakmaktan kötüdür.
+    """
     def safe_json(d):
         if not d:
             return None
         return json.dumps({k: str(v) if not isinstance(v, (str, int, float, bool, type(None))) else v
                           for k, v in dict(d).items()})
+    _ak = (str(aktor).strip() or None) if aktor else None
+    _ak_id = (str(aktor_id).strip() or None) if aktor_id else None
+    _ak_kay = (str(aktor_kaynak).strip() or None) if aktor_kaynak else None
+
+    # ⚠️ Şema geride kalabilir: aktör migrasyonu lock_timeout'a takılıp
+    # atlanmış olabilir (bkz. database.ensure_audit_aktor). O durumda denetim
+    # yazımı DURMAMALI — ama aktör de SESSİZCE KAYBOLMAMALI. Kolon yoksa
+    # aktör, yeni_deger JSON'una konur: bilgi defterde kalır, yeri değişir.
+    global _AUDIT_AKTOR_KOLONU
+    if _AUDIT_AKTOR_KOLONU is None:
+        # ⚠️ SAVEPOINT ŞART: yutulan bir `cur.execute` transaction'ı ZEHİRLER —
+        # sonraki her yazım sessizce düşer ve `db()`'nin commit'i fiilen
+        # ROLLBACK olur, uç ise success döner. Yoklama masum görünüyor ama
+        # aynı tuzağın içinde (bu projenin tekrarlayan dersi).
+        # ⚠️ TAKMA AD YOK: `savepoint as _sp` yazınca kapı kontrolü bu bloğu
+        # korumasız sandı (metinde 'savepoint' geçmiyordu). Güvenlik ilkelini
+        # takma adla gizlemek, onu denetleyen aracı da kör eder.
+        from database import savepoint
+        _AUDIT_AKTOR_KOLONU = False
+        try:
+            with savepoint(cur, "sp_audit_kolon"):
+                cur.execute("""SELECT 1 FROM information_schema.columns
+                               WHERE table_name='audit_log' AND column_name='aktor'""")
+                _AUDIT_AKTOR_KOLONU = cur.fetchone() is not None
+        except Exception:
+            _AUDIT_AKTOR_KOLONU = False
+
+    if _AUDIT_AKTOR_KOLONU:
+        cur.execute("""INSERT INTO audit_log
+                (id,tablo,kayit_id,islem,eski_deger,yeni_deger,aktor,aktor_id,aktor_kaynak)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+            (str(uuid.uuid4()), tablo, kayit_id, islem,
+             safe_json(eski), safe_json(yeni), _ak, _ak_id, _ak_kay))
+        return
+
+    _yedek = dict(yeni or {})
+    if _ak or _ak_id or _ak_kay:
+        _yedek["_aktor"] = _ak
+        _yedek["_aktor_id"] = _ak_id
+        _yedek["_aktor_kaynak"] = _ak_kay
+        _yedek["_not"] = "aktor kolonu yok — sema geride"
     cur.execute("""INSERT INTO audit_log (id,tablo,kayit_id,islem,eski_deger,yeni_deger)
         VALUES (%s,%s,%s,%s,%s,%s)""",
         (str(uuid.uuid4()), tablo, kayit_id, islem,
-         safe_json(eski), safe_json(yeni)))
+         safe_json(eski), safe_json(_yedek or None)))
 
 
 # ⚠️ ÇİFT SAYIM DÜZELTMESİ (2026-08-09, canlı ölçümle yakalandı)

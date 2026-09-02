@@ -186,6 +186,43 @@ def ensure_stok_yolda_columns(cur) -> None:
             raise
 
 
+def ensure_audit_aktor(cur) -> None:
+    """audit_log'a aktör kolonları — KENDİ KISA transaction'ında çalışmalı.
+
+    🔴 CANLI DÜŞÜREN HATA (2026-09-02) — bu fonksiyon o hatanın cismidir:
+    Bu üç ALTER önce `init_db()` içine konmuştu. init_db TEK bir transaction'dır
+    (fonksiyonun tamamı bir `with db()` bloğu, arada commit yok). `audit_log`
+    ise sistemin en sıcak tablolarından biri — 161 çağrı yerinden yazılıyor.
+
+    Railway'de dağıtım DEVREDEREK yapılır: yeni kap açılırken ESKİ kap hâlâ
+    trafiği karşılıyor ve audit_log'a yazıyor. Olan şu:
+      1. Yeni kap init_db'ye girer, ALTER için ACCESS EXCLUSIVE kilidi ister.
+      2. Eski kap yazmaya devam ettiği için kilit hemen alınamaz, ALTER SIRAYA girer.
+      3. PostgreSQL'de kilit sırası FIFO'dur: sırada bekleyen ALTER, ondan
+         SONRA gelen HER audit_log erişimini de bloklar → eski kabın istekleri
+         de asılır.
+      4. Her iki kap da yanıt veremez → sağlık kontrolü düşer → Railway kapları
+         öldürüp yeniden başlatır → yeni kap ALTER'ı yeniden sıraya sokar → döngü.
+    Sonuç: uygulama 15+ dakika 502 verdi. Geri alınca anında düzeldi.
+
+    İkinci tuzak: ALTER kilidi alınsa bile init_db TEK transaction olduğu için
+    kilit, kalan ~1400 satır DDL bitene kadar BIRAKILMAZ — o süre boyunca tüm
+    audit yazımları bloklu kalır.
+
+    Doğrusu (bu dosyanın zaten kullandığı desen): migrasyon kendi kısa
+    transaction'ında, startup'ta try/except içinde çalışır ve `lock_timeout`
+    ile SINIRLIDIR — kilidi kapamazsa hızlıca pes eder, uygulamayı düşürmez.
+
+    ⚠️ İNDEKS YOK: aktör bazlı indeks build'i sıcak tabloda yazmayı bloklar.
+    Gerekirse elle `CREATE INDEX CONCURRENTLY` ile açılmalı (transaction dışı).
+    """
+    # Kilidi kapamazsak PES ET — uygulamayı asla bekletme.
+    cur.execute("SET LOCAL lock_timeout = '3s'")
+    cur.execute("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS aktor TEXT")
+    cur.execute("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS aktor_id TEXT")
+    cur.execute("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS aktor_kaynak TEXT")
+
+
 def ensure_dusum_modu(cur) -> None:
     """siparis_urun.dusum_modu + sube_kullanimda_urun — ayrı, kendi
     transaction'ında çalışabilen migrasyon. init_db tek transaction içinde
@@ -4055,6 +4092,11 @@ def init_db():
                 olusturma   TIMESTAMP NOT NULL DEFAULT NOW()
             )
         """)
+        # 🔴 SYS-AUDIT aktör kolonları BURADA DEĞİL — ensure_audit_aktor()'da.
+        # Nedeni yukarıdaki fonksiyonun kendi başlığında yazılı: init_db TEK
+        # transaction'dır. audit_log 161 yerden yazılan en sıcak tablolardan
+        # biri; ACCESS EXCLUSIVE isteyen bir ALTER'ı buraya koymak canlıyı
+        # düşürdü (bkz. ensure_audit_aktor açıklaması).
 
         # Trigger kaldırıldı — backend tek sorumlu
         # Eski trigger'ları temizle — mantık tamamen backend'de

@@ -38,6 +38,8 @@ Tek koşuda CANLIDA KIRIK dört ayrı yer bulundu:
 from __future__ import annotations
 
 import ast
+import collections as _collections
+import re as _re
 import glob
 import os
 import subprocess
@@ -344,32 +346,84 @@ def main() -> int:
             return 1
         print("KAPI ACIK (alt kume) — tam kosu icin argumansiz calistirin.")
         return 0
-    taban = None
+    # 🔴 KAPI KENDI KUYRUGUNU ISIRDI (2026-09-02): taban yalnizca bir SAYIYDI.
+    # Artis olunca kapi `guncel[-artis:]` ile SIRALI listenin SONUNU basiyordu
+    # — yani alfabetik olarak en sondaki dosyayi "yeni bulgu" diye gosteriyordu.
+    # Canli ornek: yeni bulgu kasa_service.py'deydi, kapi tv_menu_api.py:135'i
+    # isaret etti. Yanlis satiri gosteren kapi, yanlis dersi ogretir.
+    # Cozum: taban artik BULGU LISTESI — fark KIMLIK uzerinden alinir.
+    # Sayisal eski taban dosyalari da okunur (geriye uyum).
+    # ⚠️ KIMLIK SATIR NUMARASI OLAMAZ (2026-09-02, öz-test): taban ilk sürümde
+    # ham bulgu metnini (dosya:SATIR [fonksiyon]) saklıyordu. Bir fonksiyonun
+    # üstüne 20 satır eklemek, o dosyadaki TÜM bulguların satırını kaydırıyor
+    # ve kapı hepsini "YENİ" sanıyordu — 86 bulgunun 40'ı birden yeni görünüyordu.
+    # Böyle bir kapı ilk gerçek düzenlemede gürültüye boğulur ve susturulur.
+    # Kimlik artık DOSYA + FONKSIYON; satır yalnız GÖSTERIMDE kullanılır.
+    def _kimlik(b):
+        m = _re.match(r"([^:]+):\d+ \[([^\]]+)\]", b)
+        return "%s::%s" % (m.group(1), m.group(2)) if m else b
+
+    taban_liste, taban = None, None
     if os.path.exists(taban_dosya):
-        try:
-            taban = int(open(taban_dosya, encoding="utf-8").read().strip())
-        except Exception:
-            taban = None
-    if taban is None:
+        ham = open(taban_dosya, encoding="utf-8").read().strip()
+        if ham.isdigit():
+            taban = int(ham)                       # en eski biçim: yalnız sayı
+        else:
+            taban_liste = [x for x in ham.split("\n") if x.strip()]
+            # Geriye uyum: taban satır-numaralı eski biçimdeyse kimliğe indir.
+            if any(":" in x and "[" in x for x in taban_liste):
+                taban_liste = [_kimlik(x) for x in taban_liste]
+            taban = len(taban_liste)
+
+    def _taban_yaz(liste):
         with open(taban_dosya, "w", encoding="utf-8") as fh:
-            fh.write(str(len(guncel)))
+            fh.write("\n".join(sorted(_kimlik(b) for b in liste)))
+
+    if taban is None:
+        _taban_yaz(guncel)
         print("3. SAVEPOINT'SIZ SQL     %d (TABAN yazildi)" % len(guncel))
+    elif taban_liste is None:
+        # Eski sayisal taban: sayi ayniysa listeye YUKSELT, degistiyse uyar.
+        if len(guncel) == taban:
+            _taban_yaz(guncel)
+            print("3. SAVEPOINT'SIZ SQL     %d (taban listeye yukseltildi)" % len(guncel))
+        else:
+            artis = len(guncel) - taban
+            print("3. SAVEPOINT'SIZ SQL     %d (sayisal taban %d, %+d) — hangi bulgu?"
+                  % (len(guncel), taban, artis))
+            print("    (eski taban liste tutmuyordu; adlariyla soyleyemiyorum)")
+            if artis > 0:
+                sert_toplam += artis
     else:
-        artis = len(guncel) - taban
-        if artis == 0:
+        # Çoklu küme: aynı fonksiyonda iki bulgu varsa ikisi de sayılır —
+        # birini kapatıp birini eklemek "değişmedi" görünmemeli.
+        _eski_say = _collections.Counter(taban_liste)
+        _yeni_say = _collections.Counter(_kimlik(b) for b in guncel)
+        _artan = _yeni_say - _eski_say
+        _azalan = _eski_say - _yeni_say
+        # Gösterimde ham satırı (satır numaralı) veriyoruz ki tıklanabilsin.
+        _ham = {}
+        for b in guncel:
+            _ham.setdefault(_kimlik(b), []).append(b)
+        yeni = [x for k, n in _artan.items() for x in (_ham.get(k) or [k])[:n]]
+        kapanan = [k for k, n in _azalan.items() for _ in range(n)]
+        if not yeni and not kapanan:
             print("3. SAVEPOINT'SIZ SQL     %d (taban %d, DEGISMEDI)"
                   % (len(guncel), taban))
-        elif artis > 0:
-            print("3. SAVEPOINT'SIZ SQL     %d (taban %d, +%d YENI)"
-                  % (len(guncel), taban, artis))
-            for b in guncel[-artis:][:15]:
-                print("    - " + b)
-            sert_toplam += artis
+        elif yeni:
+            print("3. SAVEPOINT'SIZ SQL     %d (taban %d, %d YENI)"
+                  % (len(guncel), taban, len(yeni)))
+            for b in yeni[:15]:
+                print("    - YENI: " + b)
+            for b in kapanan[:5]:
+                print("    - (kapanan: %s)" % b)
+            sert_toplam += len(yeni)
         else:
-            print("3. SAVEPOINT'SIZ SQL     %d (taban %d, %d — IYILESME, taban guncellendi)"
-                  % (len(guncel), taban, artis))
-            with open(taban_dosya, "w", encoding="utf-8") as fh:
-                fh.write(str(len(guncel)))
+            print("3. SAVEPOINT'SIZ SQL     %d (taban %d, %d KAPANDI — taban guncellendi)"
+                  % (len(guncel), taban, len(kapanan)))
+            for b in kapanan[:10]:
+                print("    - kapandi: " + b)
+            _taban_yaz(guncel)
 
     print("=" * 68)
     if sert_toplam:
