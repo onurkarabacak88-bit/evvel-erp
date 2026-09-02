@@ -3265,6 +3265,34 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 _vnot = str(_vn.get("not") or _vn.get("aciklama") or "").strip()
                 if _vad and _vnot:
                     _varyans_not_map[_vad] = _vnot[:300]
+        # 🔴 SUBE-004 (2026-09-02): AD-HOC (siparişsiz) teslim alma dalında
+        # HİÇBİR mükerrer koruma yoktu. Toptancı siparişli dalda talep durumu
+        # freni var ("zaten kapatılmış — yeniden teslim alınamaz") ama ad-hoc'ta
+        # o blok hiç çalışmıyor.
+        # Zararı doğrudan stoktur: `sube_depo_stok_depo_giris_ekle`
+        # `mevcut_adet = mevcut + EXCLUDED` ile KOŞULSUZ TOPLAR — aynı POST iki
+        # kez gelirse depo iki kez artar ve fazlalık hiçbir yerde görünmez.
+        # Uçta PIN doğrulanıyor (yani sorun yetki değil), eksik olan idempotency.
+        # Parmak izi: şube + tedarikçi + kalem listesi. Aynı içerik 180 sn
+        # içinde tekrar gelirse ikinci yazım YAPILMAZ.
+        _sevk_parmak = None
+        if not siparis_talep_id:
+            from istek_izi import istek_parmak, istek_izi_tazeyse
+            _kalem_ozet = ";".join(
+                f"{str(k.get('urun_ad') or k.get('kalem_kodu') or '')}:{k.get('adet')}"
+                for k in sorted((body.kalemler or []),
+                                key=lambda x: str(x.get('urun_ad') or x.get('kalem_kodu') or ''))
+            ) if getattr(body, "kalemler", None) else ""
+            _sevk_parmak = istek_parmak(
+                "urun_sevk_adhoc", sube_id, body.tedarikci_id, _kalem_ozet)
+            _onceki_sevk = istek_izi_tazeyse(cur, _sevk_parmak)
+            if _onceki_sevk:
+                raise HTTPException(
+                    409,
+                    "Aynı teslim az önce kaydedildi — mükerrer stok girişi olmasın "
+                    "diye reddedildi. Gerçekten ikinci bir teslim geldiyse 3 dakika "
+                    "sonra tekrar gönderin.")
+
         siparis_kapama_sonucu: Optional[Dict[str, Any]] = None
         if siparis_talep_id:
             cur.execute(
@@ -3702,6 +3730,13 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 ),
             )
 
+        # SUBE-004: yazma BAŞARILI — izi bırak ki 180 sn içindeki tekrar
+        # yukarıdaki kapıya takılsın. İz AYNI transaction'da: iş geri sarılırsa
+        # iz de sarılır, yani "yazılmadı ama iz kaldı" durumu oluşamaz.
+        if _sevk_parmak:
+            from istek_izi import istek_izi_yaz
+            istek_izi_yaz(cur, _sevk_parmak, "urun_sevk_adhoc",
+                          {"defter_id": rid, "delta": delta, "sube_id": sube_id})
     return {"success": True, "defter_id": rid, "delta": delta, "kalemler": kalemler, "tip": "SEVK"}
 
 

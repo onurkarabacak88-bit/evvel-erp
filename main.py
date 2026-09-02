@@ -553,6 +553,52 @@ def _akilli_denetim_telafi(gun_sayisi: int = 3, gecikme_sn: int = 90):
         logger.warning(f"🩺 Telafi koşusu yutuldu: {str(e)[:160]}")
 
 
+# ENT-006: gece işini talep et. True → bu süreç koşacak. False → başkası aldı.
+_GECE_BAYAT_SAAT = 2
+
+
+def _gece_isi_kap(is_adi: str, tarih) -> bool:
+    """Bu gece için işi TALEP ET. Zaten alınmışsa False döner.
+
+    Talep DB'de tutulur (advisory lock değil) — bkz. database.ensure_gece_kosu_izi.
+    Hata olursa True döner: koruma mekanizması, korumak istediği işi
+    ENGELLEMEMELİ. Kilit ölçülemiyorsa iş yapılır, çift koşma riski çift
+    koşmama riskinden iyidir (gece işleri büyük ölçüde idempotenttir).
+    """
+    try:
+        with db() as (conn, cur):
+            from database import ensure_gece_kosu_izi
+            ensure_gece_kosu_izi(cur)
+            cur.execute(
+                """INSERT INTO gece_kosu_izi (is_adi, tarih)
+                   VALUES (%s, %s::date)
+                   ON CONFLICT (is_adi, tarih) DO UPDATE
+                     SET baslangic_ts = NOW(), bitis_ts = NULL
+                     WHERE gece_kosu_izi.bitis_ts IS NULL
+                       AND gece_kosu_izi.baslangic_ts < NOW() - (%s || ' hours')::interval
+                   RETURNING is_adi""",
+                (is_adi, str(tarih), _GECE_BAYAT_SAAT),
+            )
+            return cur.fetchone() is not None
+    except Exception as e:  # noqa: BLE001
+        logger.warning("⏰ gece işi talebi alınamadı (%s) — iş yine de koşacak: %s",
+                       is_adi, e)
+        return True
+
+
+def _gece_isi_bitir(is_adi: str, tarih, sonuc: str = "ok") -> None:
+    """Talebi kapat — bayat sayılıp yeniden koşulmasın."""
+    try:
+        with db() as (conn, cur):
+            cur.execute(
+                "UPDATE gece_kosu_izi SET bitis_ts = NOW(), sonuc = %s "
+                "WHERE is_adi = %s AND tarih = %s::date",
+                (str(sonuc)[:200], is_adi, str(tarih)),
+            )
+    except Exception as e:  # noqa: BLE001
+        logger.warning("⏰ gece işi kapanışı yazılamadı (%s): %s", is_adi, e)
+
+
 def _gece_yarisi_scheduler():
     """
     Her gece yarısı çalışır. Restart bağımlılığını kaldırır.
@@ -574,6 +620,12 @@ def _gece_yarisi_scheduler():
             _time.sleep(max(bekle, 60))  # en az 60 saniye
 
             bugun = bugun_tr()
+            # ENT-006: bu geceyi TALEP ET. Başkası aldıysa (ikinci replica)
+            # bu süreç bu gece hiçbir şey yapmaz — bir sonraki geceyi bekler.
+            if not _gece_isi_kap("gece_zinciri", bugun):
+                logger.info("⏰ Gece zinciri başka bir süreç tarafından alınmış — atlanıyor (%s)",
+                            bugun)
+                continue
             ay_son_gun = calendar.monthrange(bugun.year, bugun.month)[1]
 
             # Ay başı — sabit gider, maaş, taksit vs. (kart asgarisi HARİÇ;
@@ -1176,6 +1228,11 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler operasyon event hatası: {e}")
 
+            # ENT-006: gece zinciri bitti — talebi KAPAT ki bayat sayılıp
+            # yeniden koşulmasın. Hata dalında kapatMIYORUZ: yarıda kalan bir
+            # gece, 2 saat sonra yeniden talep edilebilir olmalı.
+            _gece_isi_bitir("gece_zinciri", bugun, "ok")
+
         except Exception as e:
             logger.error(f"⏰ Scheduler genel hata: {e}")
             import time as _t
@@ -1313,6 +1370,13 @@ def startup():
             _ensure_onay_kimlik_kolonlari(cur)
     except Exception as e:
         logger.warning("ciro_taslak onay kimlik migrasyonu (startup) atlandı: %s", e)
+    # ENT-006: gece koşu talep defteri. Aynı desen — kendi kısa transaction'ı.
+    try:
+        with db() as (conn, cur):
+            from database import ensure_gece_kosu_izi
+            ensure_gece_kosu_izi(cur)
+    except Exception as e:
+        logger.warning("gece_kosu_izi migrasyonu (startup) atlandı: %s", e)
     try:
         with db() as (conn, cur):
             ensure_stok_yolda_columns(cur)
@@ -11911,71 +11975,20 @@ def _vadeli_tedarikci_norm(s: str) -> str:
     return (s or "").strip().lower()
 
 
-# ─────────────────────────────────────────────────────────────────────────
-# 🛡️ İSTEK İZİ — para yazan uçlarda ağ retry'ına karşı idempotency defteri
-#
-# NEDEN (PARA-011, 2026-09-02): vadeli alım ucunda aynı tedarikçide TEK açık
-# borç varsa, ikinci istek "ilave" sayılıp tutarı ÜSTÜNE topluyordu. Yani
-# ağ retry'ı — kullanıcı hiçbir şey yapmadan — borcu SESSİZCE İKİYE KATLIYOR.
-# 7 günlük "benzer kayıt" uyarısı bu dala hiç girmiyordu.
-#
-# Çözüm: ödeme ANLAMINI taşıyan alanlardan parmak izi üret, pencere içinde
-# aynı parmak gelirse İŞLEME, önceki sonucu geri ver. Kullanıcı gerçekten
-# ikinci bir kayıt istiyorsa force=true ile geçebilir — yani kapı kilit değil,
-# BİLİNÇLİ GEÇİŞ gerektiren bir eşik.
-#
-# Pencere neden 180 sn: retry saniyeler içinde olur; 3 dakika arayla girilen
-# birebir aynı borç gerçek bir ikinci kayıttır. Yanlış tarafa düşmenin bedeli
-# asimetrik — mükerrer borç sessizdir, engellenen kayıt ekranda görünür.
-ISTEK_IZI_PENCERE_SN = 180
-
-
-def _ensure_istek_izi(cur):
-    cur.execute("""
-        CREATE TABLE IF NOT EXISTS istek_izi (
-            parmak     TEXT PRIMARY KEY,
-            kapsam     TEXT NOT NULL,
-            sonuc      JSONB,
-            olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
-        )
-    """)
-    cur.execute("CREATE INDEX IF NOT EXISTS ix_istek_izi_ts ON istek_izi (olusturma DESC)")
-
-
-def _istek_parmak(kapsam: str, *parcalar) -> str:
-    ham = kapsam + "|" + "|".join(
-        str(p if p is not None else "").strip().lower() for p in parcalar)
-    return hashlib.md5(ham.encode("utf-8")).hexdigest()
-
-
-def _istek_izi_tazeyse(cur, parmak: str):
-    """Pencere içinde aynı parmak varsa ÖNCEKİ sonucu döner; yoksa None."""
-    _ensure_istek_izi(cur)
-    cur.execute(
-        """SELECT sonuc FROM istek_izi
-           WHERE parmak=%s AND olusturma >= NOW() - (%s || ' seconds')::interval""",
-        (parmak, ISTEK_IZI_PENCERE_SN),
-    )
-    r = cur.fetchone()
-    if not r:
-        return None
-    s = r.get("sonuc")
-    if isinstance(s, dict):
-        return s
-    try:
-        return json.loads(s) if s else {}
-    except Exception:
-        return {}
-
-
-def _istek_izi_yaz(cur, parmak: str, kapsam: str, sonuc: dict):
-    _ensure_istek_izi(cur)
-    cur.execute(
-        """INSERT INTO istek_izi (parmak, kapsam, sonuc, olusturma)
-           VALUES (%s, %s, %s::jsonb, NOW())
-           ON CONFLICT (parmak) DO UPDATE SET sonuc=EXCLUDED.sonuc, olusturma=NOW()""",
-        (parmak, kapsam, json.dumps(sonuc, default=str)),
-    )
+# 🛡️ İSTEK İZİ — tanım `istek_izi.py`'DE (2026-09-02).
+# Defter önce burada doğdu (PARA-011: vadeli alımda ağ retry'ı borcu sessizce
+# ikiye katlıyordu). Sonra aynı desen `sube_panel`de de gerekti (SUBE-004:
+# ad-hoc ürün sevkinde mükerrer POST stoğu iki kez artırıyor) ve o modül
+# `main`i import EDEMEZ — `main` zaten onun router'ını import ediyor, döngü olur.
+# Kopya çıkarmak yerine ortak modüle taşındı: kopyalanan mantık gün gelir
+# ayrışır ve o gün iki uç farklı davranır.
+from istek_izi import (  # noqa: E402
+    ISTEK_IZI_PENCERE_SN,
+    ensure_istek_izi as _ensure_istek_izi,
+    istek_parmak as _istek_parmak,
+    istek_izi_tazeyse as _istek_izi_tazeyse,
+    istek_izi_yaz as _istek_izi_yaz,
+)
 
 
 def _vadeli_bekleyen_ayni_tedarikci(cur, tedarikci: str):

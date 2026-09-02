@@ -186,6 +186,37 @@ def ensure_stok_yolda_columns(cur) -> None:
             raise
 
 
+def ensure_gece_kosu_izi(cur) -> None:
+    """Gece zincirinin GÜNLÜK TALEP defteri — KENDİ kısa transaction'ında.
+
+    🔴 ENT-006 (2026-09-02): gece scheduler'ı süreç-içi bir daemon thread ve
+    her worker/replica kendi kopyasını başlatıyor. Lider seçimi yok; ölçek
+    artarsa aynı gece işi N kez koşar — WhatsApp özeti N kez gider, plan
+    üretimi N kez denenir. Bugün fiilen tek worker var (Dockerfile'da
+    `--workers` yok) yani hata GİZLİ; ama koruma kodda olmadığı için ilk
+    replica eklendiğinde sessizce ortaya çıkar.
+
+    ⚠️ ADVISORY LOCK DEĞİL: advisory lock oturum ömürlüdür; bağlantı düşerse
+    kilit gider ve ikinci replica işe girer. Buradaki gereksinim "işlem
+    boyunca dışlama" değil, "bu gece BİR KEZ koşsun" — yani TARİH ÜZERİNDE
+    TALEP. PK çakışması bunu bağlantıdan bağımsız garanti eder.
+
+    ⚠️ BAYAT TALEP: talep eden süreç yarıda çökerse gece kaybolmasın diye,
+    `bitis_ts` boş ve `baslangic_ts` 2 saatten eskiyse talep yeniden alınabilir.
+    """
+    cur.execute("SET LOCAL lock_timeout = '3s'")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS gece_kosu_izi (
+            is_adi       TEXT NOT NULL,
+            tarih        DATE NOT NULL,
+            baslangic_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            bitis_ts     TIMESTAMPTZ,
+            sonuc        TEXT,
+            PRIMARY KEY (is_adi, tarih)
+        )
+    """)
+
+
 def ensure_audit_aktor(cur) -> None:
     """audit_log'a aktör kolonları — KENDİ KISA transaction'ında çalışmalı.
 

@@ -8330,12 +8330,24 @@ def fatura_kalem_onayla(kalem_id: str, body: FaturaKalemOnayBody):
     with db() as (conn, cur):
         _ensure_tablolar(cur)
         _ensure_maliyet_tablolari(cur)
+        # 🔴 CEP-002 (2026-09-02): `onaylandi` bayrağı EKLENMİŞTİ ama bu uç
+        # onu HİÇ OKUMUYORDU — "zaten onaylandı" reddi ve satır kilidi yoktu.
+        # SELECT (burası) ile UPDATE (aşağıda) arası kilitsizdi.
+        # Zararı: `_kaydet_alis_fiyati` İDEMPOTENT DEĞİL. Önceki kaydı kapatan
+        # UPDATE `gecerli_baslangic < bas` koşullu olduğu için AYNI tarihli ilk
+        # satırı kapatmıyor; `urun_alis_fiyat`ta tekillik kısıtı da yok.
+        # Sonuç: ikinci onay, aynı kalem için `gecerli_bitis IS NULL` olan
+        # İKİNCİ AÇIK FİYAT satırı yazıyordu — maliyet motorunun hangi fiyatı
+        # okuyacağı belirsizleşiyor.
+        # FOR UPDATE: iki eşzamanlı onay isteğini sıraya sokar.
         cur.execute(
             """
-            SELECT k.ocr_ad, k.ocr_urun_kodu, f.fatura_tarih::text AS fatura_tarih
+            SELECT k.ocr_ad, k.ocr_urun_kodu, COALESCE(k.onaylandi, FALSE) AS onaylandi,
+                   f.fatura_tarih::text AS fatura_tarih
             FROM tedarikci_fatura_kalem k
             JOIN tedarikci_fatura f ON f.id = k.fatura_id
             WHERE k.id=%s
+            FOR UPDATE OF k
             """,
             (kalem_id,),
         )
@@ -8343,6 +8355,12 @@ def fatura_kalem_onayla(kalem_id: str, body: FaturaKalemOnayBody):
         if not r:
             raise HTTPException(404, "Kalem bulunamadı")
         r = dict(r)
+        if r.get("onaylandi"):
+            raise HTTPException(
+                409,
+                "Bu kalem zaten onaylanmış. Tekrar onaylamak ikinci bir açık alış "
+                "fiyatı satırı yazar ve maliyet hesabını belirsizleştirir. "
+                "Fiyatı değiştirmek istiyorsanız alış fiyatı ekranından güncelleyin.")
         # Fiyatın geçerlilik başlangıcı = FATURA TARİHİ (sistem otomatik eşleştirir);
         # frontend açıkça verirse onu kullan, yoksa fatura tarihi, o da yoksa bugün.
         bas = body.gecerli_baslangic or (r.get("fatura_tarih") or None) or str(date.today())
