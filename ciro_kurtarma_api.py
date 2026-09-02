@@ -169,6 +169,59 @@ def _plan_uret(cur) -> Dict[str, Any]:
             "dogrulandi": abs(fark) <= 1.0,
         })
 
+    # ═══ ÜÇÜNCÜ KAYNAK: EVO ═════════════════════════════════════════════════
+    # SAHİP KURALI: "ciro şubeden gelmemişse Evo'dan çağırması lazım."
+    # Sistemde bu zaten var (gece `eksik_gun_ciro_tara` sweep'i), ama o yol
+    # ONAY BEKLEYEN TASLAK üretir ve onaylanınca `_ciro_insert_aktif_ve_kasa`
+    # ile KASAYA DA yazar. Burada kasa satırları zaten duruyor — o yolu
+    # kullanmak kasayı İKİYE KATLARDI. Bu yüzden Evo'yu yalnız VERİ KAYNAĞI
+    # olarak okuyoruz: kırılımı Evo söyler, yazımı bu modül yapar (ciro'ya).
+    #
+    # Evo yalnız hâlâ çözülememiş günler için sorgulanır — çalışan kaynak
+    # varken dış servise gitmenin anlamı yok (token kırılgan, bkz. Evo token
+    # senkron arızası). Evo erişilemezse kurtarma DURMAZ; o satır
+    # `kurtarilamayan` listesinde nedeniyle kalır.
+    evo_hata = None
+    if kurtarilamayan:
+        try:
+            from datetime import date as _date
+            from evo_sync import hs_rapor_sube_bazli, _evvel_sube_evo_payload_eslestir
+            _kalan = []
+            for x in kurtarilamayan:
+                try:
+                    _d = _date.fromisoformat(str(x["tarih"])[:10])
+                    _ev = hs_rapor_sube_bazli(_d, _d)
+                    _p = _evvel_sube_evo_payload_eslestir(x.get("sube_adi") or "",
+                                                          (_ev or {}).get("subeler") or {})
+                except Exception as e:  # noqa: BLE001
+                    evo_hata = str(e); _p = None
+                if not _p:
+                    x["neden"] = (x.get("neden") or "") + " · Evo'da da bulunamadı"
+                    _kalan.append(x)
+                    continue
+                _n = float(_p.get("nakit") or 0)
+                _pz = float(_p.get("kart") or 0)
+                if (_n + _pz) <= 0:
+                    x["neden"] = (x.get("neden") or "") + " · Evo'da satış yok"
+                    _kalan.append(x)
+                    continue
+                # ⚠️ Evo `online`ı ayırmaz — kart toplamı `pos`a yazılır.
+                # Bunu GİZLEMİYORUZ: satır `evo_online_ayrismaz` ile işaretli.
+                ikinci.append({
+                    "ciro_id": x["ciro_id"], "tarih": x["tarih"],
+                    "sube_id": x.get("sube_id") or "", "sube_adi": x.get("sube_adi"),
+                    "nakit": round(_n, 2), "pos": round(_pz, 2), "online": 0.0,
+                    "toplam": round(_n + _pz, 2),
+                    "aciklama": "Kurtarma: Evo satış raporu",
+                    "kaynak": "evo",
+                    "evo_online_ayrismaz": True,
+                    "dogrulama_farki": None,
+                    "dogrulandi": False,
+                })
+            kurtarilamayan[:] = _kalan
+        except Exception as e:  # noqa: BLE001
+            evo_hata = str(e)
+
     satirlar.extend(sorted(ikinci, key=lambda x: (x["tarih"], str(x["sube_id"]))))
     satirlar.sort(key=lambda x: (x["tarih"], str(x["sube_id"])))
 
@@ -197,9 +250,13 @@ def _plan_uret(cur) -> Dict[str, Any]:
         "yazilacak_adet": len(satirlar),
         "kaynak_dagilimi": {
             "taslak": sum(1 for x in satirlar if x.get("kaynak") == "taslak"),
-            "rapor_cache": len(ikinci),
-            "rapor_cache_dogrulanamayan": sum(1 for x in ikinci if not x.get("dogrulandi")),
+            "rapor_cache": sum(1 for x in satirlar if x.get("kaynak") == "rapor_cache"),
+            "evo": sum(1 for x in satirlar if x.get("kaynak") == "evo"),
+            "dogrulanamayan": sum(1 for x in satirlar
+                                  if x.get("kaynak") in ("rapor_cache", "evo")
+                                  and not x.get("dogrulandi")),
         },
+        "evo_hata": evo_hata,
         # Hâlâ kurtarılamayanlar GİZLENMEZ: elle girilecek olan tam olarak bunlar.
         "kurtarilamayan": kurtarilamayan,
         "zaten_duran_adet": len(zaten_var),
