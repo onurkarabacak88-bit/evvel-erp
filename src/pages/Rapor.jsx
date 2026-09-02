@@ -406,14 +406,34 @@ export default function Rapor() {
 
           <div className="card">
             <h3 style={{ fontSize: 13, fontWeight: 600, marginBottom: 14 }}>📉 Gider Dağılımı</h3>
-            {[
-              { label: 'Kart Ödemeleri',   val: o.kart_toplam },
-              { label: 'Anlık Giderler',   val: o.anlik_toplam },
-              { label: 'Personel Maaşları',val: o.maas_toplam },
-              { label: 'Sabit Giderler',   val: o.sabit_toplam },
-              { label: 'Vadeli Ödemeler',  val: o.vadeli_toplam },
-              { label: 'Kart Faizi',       val: o.kart_faiz_toplam },
-            ].filter(r => parseFloat(r.val||0) > 0).map(({ label, val }) => (
+            {/* 🔴 RAPOR-008 (2026-09-02): burada 6 kova basılıyordu ama sunucu
+                9 kalem döndürüyor — `borc_taksit_toplam`, `fatura_toplam` ve
+                `pos_kesinti_toplam` HİÇ render edilmiyordu. Alttaki "Toplam
+                gider" ise TÜM giderleri gösteriyordu.
+                Sonuç: kovaları toplayan sahip başlığa varamıyor ve nerede
+                kaybettiğini göremiyordu; yüzdeler de %100'e ulaşmıyordu.
+                Eksik kovalar eklendi + kalan fark KENDİ SATIRI olarak
+                görünüyor ("ayrıştırılmamış"), sıfırlanana kadar gizlenmiyor. */}
+            {(() => {
+              const kovalar = [
+                { label: 'Kart Ödemeleri',   val: o.kart_toplam },
+                { label: 'Anlık Giderler',   val: o.anlik_toplam },
+                { label: 'Personel Maaşları',val: o.maas_toplam },
+                { label: 'Sabit Giderler',   val: o.sabit_toplam },
+                { label: 'Vadeli Ödemeler',  val: o.vadeli_toplam },
+                { label: 'Borç Taksitleri',  val: o.borc_taksit_toplam },
+                { label: 'Fatura Ödemeleri', val: o.fatura_toplam },
+                { label: 'POS Komisyonu',    val: o.pos_kesinti_toplam },
+                { label: 'Kart Faizi',       val: o.kart_faiz_toplam },
+              ];
+              const kovaToplam = kovalar.reduce((a, r) => a + (parseFloat(r.val || 0) || 0), 0);
+              const fark = (parseFloat(o.toplam_gider || 0) || 0) - kovaToplam;
+              // 1 ₺ altı yuvarlama gürültüsüdür; üstü GERÇEK açıktır ve gösterilir.
+              if (Math.abs(fark) >= 1) {
+                kovalar.push({ label: '⚠ Ayrıştırılmamış', val: fark, uyari: true });
+              }
+              return kovalar;
+            })().filter(r => parseFloat(r.val||0) > 0).map(({ label, val }) => (
               <div key={label} style={{ marginBottom: 10 }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 12, marginBottom: 2 }}>
                   <span style={{ color: 'var(--text2)' }}>{label}</span>

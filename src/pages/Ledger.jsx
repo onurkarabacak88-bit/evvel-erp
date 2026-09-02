@@ -179,7 +179,12 @@ export default function Ledger() {
                                 <div style={{display:'flex',gap:10,alignItems:'center'}}>
                                   <span style={{color:'var(--text3)',fontSize:11}}>{r.adet} işlem · %{pct}</span>
                                   <span style={{fontFamily:'var(--font-mono)',fontWeight:600,color:renk}}>
-                                    {parseInt(toplam).toLocaleString('tr-TR')} ₺
+                                    {/* RAPOR-013: parseInt KURUŞU KESİYORDU
+                                        (2.450,75 → 2.450). Kesme aşağı yönlü
+                                        olduğu için kırılım toplamı başlıktan
+                                        sistematik olarak DÜŞÜK çıkıyordu —
+                                        rastgele değil, hep aynı yöne. */}
+                                    {Number(toplam || 0).toLocaleString('tr-TR', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ₺
                                   </span>
                                 </div>
                               </div>
@@ -207,7 +212,7 @@ export default function Ledger() {
                 fontFamily:'var(--font-mono)',fontWeight:700,fontSize:20,
                 color: parseFloat(breakdown.net_kasa) >= 0 ? 'var(--green)' : 'var(--red)'
               }}>
-                {parseInt(breakdown.net_kasa).toLocaleString('tr-TR')} ₺
+                {Number(breakdown.net_kasa || 0).toLocaleString('tr-TR', {minimumFractionDigits: 2, maximumFractionDigits: 2})} ₺
               </span>
             </div>
           </>)}
