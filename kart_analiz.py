@@ -702,21 +702,29 @@ def aktar(body: AktarimBody):
 
         yazilan = 0
         atlanan = 0
+        # 🔴 KART-003 (2026-09-02): "var mı" kontrolü VARLIK soruyordu, ADET
+        # değil — batch'teki İKİNCİ özdeş GERÇEK satırı da yutuyordu.
+        # Artık DB'deki eş sayısı SAYILIR: n eş varsa ilk n özdeş satır atlanır
+        # (yeniden yükleme idempotent kalır), fazlası YAZILIR.
+        _gorulen: dict = {}
         for tx in body.islemler:
             aciklama_tam = tx.aciklama[:180]
             if tx.kategori:
                 aciklama_tam = aciklama_tam + ' [' + tx.kategori + ']'
             aciklama_tam = aciklama_tam[:200]
 
-            # Duplike kontrolü
+            # Duplike kontrolü — ADET bazlı (KART-003)
             cur.execute("""
-                SELECT 1 FROM kart_hareketleri
+                SELECT COUNT(*) AS n FROM kart_hareketleri
                 WHERE kart_id=%s AND tarih=%s AND tutar=%s
                   AND LEFT(aciklama,60) = LEFT(%s,60)
                   AND islem_turu='HARCAMA'
-                LIMIT 1
             """, (body.kart_id, tx.tarih, round(tx.tutar, 2), aciklama_tam))
-            if cur.fetchone():
+            _db_es = int(dict(cur.fetchone())["n"])
+            _dk = (str(tx.tarih), round(tx.tutar, 2), aciklama_tam[:60])
+            _sira = _gorulen.get(_dk, 0)
+            _gorulen[_dk] = _sira + 1
+            if _sira < _db_es:
                 atlanan += 1
                 continue
 

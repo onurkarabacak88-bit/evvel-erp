@@ -6883,6 +6883,12 @@ def _ekstre_txn_map(t: dict) -> dict:
     }
 
 
+# KART-009: kesim tarihi kayma toleransı (gün). Banka tatil kaydırması bunu
+# aşmaz varsayımıyla seçildi; üstü FARKLI bir ekstre sayılır. Bu bir İŞ
+# KURALIDIR — sahip değiştirebilir.
+KART_KESIM_TOLERANS_GUN = 3
+
+
 @app.post("/api/kartlar/ekstre-yukle")
 def kart_ekstre_yukle(dosya: UploadFile = File(...)):
     """Faz E0: Banka kredi kartı ekstresi (PDF) yükle → ayrıştır → mutabakat ÖNİZLEME.
@@ -7661,9 +7667,19 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                     }
 
             # Faiz oranlarını ekstreden GÜNCELLE (her ay otomatik — elle girmeye gerek yok)
+            # 🔴 KART-012a (2026-09-02): GEÇMİŞ dönem ekstresi (devir çizgisi freni
+            # yukarıda devreye girmiş olsa BİLE) kartın GÜNCEL faiz oranını ESKİ
+            # oranla EZİYOR ve geçmiş bir ay için hayalet CFO planı üretebiliyordu.
+            # Fren satır aktarımını durduruyor ama "bugünü değiştiren" bu iki
+            # yazımı durdurmuyordu — yarım fren.
+            # Kural: geçmiş, devirin İÇİNDEDİR (devir çizgisi doktrini); bugünü
+            # yalnız GÜNCEL ekstre değiştirir. Snapshot ise kendi ay kovasına
+            # yazılmaya devam eder — onun arşiv değeri var.
+            _gecmis_ekstre = bool(sonuc.get("devir_cizgisi_uyarisi")
+                                  and not sonuc["devir_cizgisi_uyarisi"].get("hata"))
             akdi = sonuc.get("akdi_faiz_yillik")
             gec = sonuc.get("gecikme_faiz_yillik")
-            if akdi is not None and akdi > 0:
+            if akdi is not None and akdi > 0 and not _gecmis_ekstre:
                 cur.execute(
                     "UPDATE kartlar SET faiz_orani=%s, "
                     "gecikme_faiz_orani=COALESCE(%s, gecikme_faiz_orani) WHERE id=%s",
@@ -7673,7 +7689,40 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
 
             # Aylık ekstre SNAPSHOT'ı kaydet (kesim ayına göre; idempotent upsert)
             kt = sonuc.get("kesim_tarihi")
+            # 🔴 KART-009 (2026-09-02): tekillik (kart_id, donem) ve `donem` bir
+            # TAKVİM AYI kovası (DATE_TRUNC('month')). Kesim günü kayıp aynı
+            # takvim ayına İKİ FARKLI ekstre düşerse ON CONFLICT ikincisiyle
+            # İLKİNİ eziyordu: donem_borcu / asgari / onceki_borc / kesim_tarihi
+            # geri dönüşsüz gidiyor, HİÇBİR iz kalmıyordu.
+            # Aynı ekstrenin yeniden yüklenmesi (okuma düzeltmesi, banka tatil
+            # kaydırması) meşru upsert'tir. Kesim tarihi TOLERANSTAN fazla
+            # farklıysa bu BAŞKA bir ekstredir → ezme, sor.
+            # Kalıcı çözüm zaten kurulu: `kart_donem` UNIQUE (kart_id,
+            # kesim_tarihi) — oraya geçiş ayrı bir iş.
+            _donem_cakisti = False
             if kt:
+                # ⚠️ savepoint ŞART: yutulan cur.execute transaction'ı zehirler
+                # ve fatura bambaşka bir satırda kesilir.
+                try:
+                    with savepoint(cur, "kart009_donem"):
+                        cur.execute(
+                            "SELECT kesim_tarihi FROM kart_ekstre_donem "
+                            "WHERE kart_id=%s AND donem=DATE_TRUNC('month', %s::date)",
+                            (kart["id"], kt))
+                        _mv = dict(cur.fetchone() or {}).get("kesim_tarihi")
+                    if _mv and abs((date.fromisoformat(str(kt)[:10]) - _mv).days) > KART_KESIM_TOLERANS_GUN:
+                        _donem_cakisti = True
+                        sonuc["donem_kaydedildi"] = False
+                        sonuc["donem_cakismasi"] = {
+                            "mevcut_kesim": str(_mv), "yeni_kesim": str(kt)[:10],
+                            "mesaj": "⚠️ Bu takvim ayında FARKLI kesim tarihli bir ekstre "
+                                     "zaten kayıtlı. Özet EZİLMEDİ — hangisinin geçerli "
+                                     "olduğuna siz karar verin (gerekirse dönemi silip "
+                                     "yeniden yükleyin).",
+                        }
+                except Exception:  # noqa: BLE001 — kontrol yüklemeyi kilitlemez
+                    _donem_cakisti = False
+            if kt and not _donem_cakisti:
                 try:
                     cur.execute(
                         """
@@ -7716,7 +7765,7 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
             brc = sonuc.get("donem_borcu")
             # Sistem başlangıcı 2026-06-01: Haziran ÖNCESİ son ödemeli ekstreden plan üretilmez
             # (eski ekstre tekrar yüklense bile hayalet 'vadesi geçmiş' oluşmasın).
-            if sot and (asg or brc) and str(sot)[:10] >= '2026-06-01':
+            if sot and (asg or brc) and str(sot)[:10] >= '2026-06-01' and not _gecmis_ekstre:
                 acik = f"Kart ekstresi: {kart['kart_adi']} — asgari {asg}"
                 cur.execute(
                     """UPDATE odeme_plani SET tarih=%s::date, odenecek_tutar=%s, asgari_tutar=%s,
@@ -7765,6 +7814,8 @@ class ManuelEkstreBody(BaseModel):
     asgari_tutar: Optional[float] = None
     faiz_orani: Optional[float] = None
     gecikme_faiz_orani: Optional[float] = None
+    # KART-009: farklı kesimli ekstreyi bilerek ezmek için açık onay.
+    uzerine_yaz: bool = False
 
 
 @app.post("/api/kartlar/{kid}/manuel-ekstre")
@@ -7797,6 +7848,23 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
                  "Açılış / devreden borç (ekstre bakiyesi)", manid),
             )
         # 2) snapshot
+        # KART-009: PDF yolundaki sessiz ezme BURADA da vardı. Elle girişte
+        # niyet daha nettir, o yüzden burası KİLİTLEMEZ — açık onay ister.
+        try:
+            with savepoint(cur, "kart009_manuel"):
+                cur.execute(
+                    "SELECT kesim_tarihi FROM kart_ekstre_donem "
+                    "WHERE kart_id=%s AND donem=DATE_TRUNC('month', %s::date)",
+                    (kid, kesim))
+                _mv = dict(cur.fetchone() or {}).get("kesim_tarihi")
+        except Exception:  # noqa: BLE001
+            _mv = None
+        if (_mv and not body.uzerine_yaz
+                and abs((date.fromisoformat(kesim) - _mv).days) > KART_KESIM_TOLERANS_GUN):
+            raise HTTPException(409, (
+                f"Bu ayda {_mv} kesimli bir ekstre zaten kayıtlı; siz {kesim} "
+                "girdiniz. Kaydetmek İLKİNİ siler. Emin iseniz 'üzerine yaz' "
+                "işaretleyin."))
         cur.execute(
             """INSERT INTO kart_ekstre_donem
                 (kart_id, donem, kesim_tarihi, son_odeme_tarihi, donem_borcu, asgari_tutar, kaynak)
@@ -8338,6 +8406,16 @@ def kart_ekstre_import(body: EkstreImportBody):
         # bilinçli geçmek için body.zorla=true. Her manuel kayıt EN FAZLA BİR ekstre
         # satırını yutar (aynı güne iki eşit meşru harcama korunur).
         _kullanilan_manuel: set = set()
+        # 🔴 KART-003 (2026-09-02): aynı gün aynı satıcıdan BİREBİR AYNI iki
+        # GERÇEK işlem tek md5 kimliğine çöküyordu → ikincisi ON CONFLICT'e
+        # takılıp "zaten var" diye SESSİZCE atlanıyor, kart borcu o satır kadar
+        # EKSİK kalıyordu. Hata hiçbir yerde görünmüyordu.
+        # ⛔ Bu, 2026-08-24'te kaldırılan içerik-bazlı mükerrer elemenin geri
+        # gelişi DEĞİLDİR: kimlik hâlâ SATIRIN KENDİSİ, sadece "kaçıncı özdeş
+        # satır" bilgisi ekleniyor. Doktrin de bunu söylüyor (kimlik SIRAYA
+        # bağlanır; aynı gün üç özdeş satır ÜÇ kayıttır).
+        # İlk tekrar ESKİ anahtarı korur → geçmiş kayıtlarla idempotency bozulmaz.
+        _kimlik_sayac: dict = {}
         atlanan_mevcut = []
         _zorla = bool(getattr(body, "zorla", False))
         faiz_donemleri: set = set()  # ekstreden faiz gelen YYYY-MM dönemleri (motor tahmini iptali için)
@@ -8402,6 +8480,11 @@ def kart_ekstre_import(body: EkstreImportBody):
                          "aciklama": (isl.aciklama or "")[:60]})
                     continue
             anahtar = f"{body.kart_id}|{tarih}|{tutar:.2f}|{tip}|{tsay}|{(isl.aciklama or '')[:40]}"
+            # KART-003: batch içindeki n. özdeş satır ayrı kimlik alır (ilki değişmez).
+            _kt_n = _kimlik_sayac.get(anahtar, 0) + 1
+            _kimlik_sayac[anahtar] = _kt_n
+            if _kt_n > 1:
+                anahtar = f"{anahtar}|#{_kt_n}"
             hid = "eks_" + hashlib.md5(anahtar.encode("utf-8")).hexdigest()[:24]
             cur.execute(
                 """INSERT INTO kart_hareketleri

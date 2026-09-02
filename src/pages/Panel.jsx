@@ -1713,7 +1713,11 @@ export default function Panel({ onNavigate }) {
                       <div style={{ fontSize: 10, color: 'var(--text3)' }}>asgari: {fmt(u.asgari)}</div>
                       {u.kart_id && (
                         <div style={{ fontSize: 10, color: 'var(--text3)', marginTop: 2 }}>
-                          bu ay ödenen: {fmt(u.bu_ay_odenen || 0)} · asgari kalan:{' '}
+                          {/* BORC-005 (2026-09-02): rakam artık TAKVİM AYI değil AÇIK
+                              KESİM DÖNGÜSÜ. Asgari de o döngüye ait — ikisi aynı
+                              takvimde konuşuyor. Etiketi "bu ay" bırakmak, sayıyı
+                              düzeltip adını yanlış bırakmak olurdu. */}
+                          bu dönemde ödenen: {fmt(u.bu_ay_odenen || 0)} · asgari kalan:{' '}
                           <strong style={{ color: 'var(--red)' }}>{fmt(u.asgari_kalan != null ? u.asgari_kalan : Math.max(0, (u.asgari || 0) - (u.bu_ay_odenen || 0)))}</strong>
                         </div>
                       )}

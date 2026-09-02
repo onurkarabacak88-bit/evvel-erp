@@ -735,17 +735,67 @@ def kart_bakiye_ozeti(cur, kart_id: str, tarih: Optional[date] = None) -> Dict[s
 
 def kart_bu_ay_odenen(cur, kart_id: str) -> float:
     """
-    Bu takvim ayında karta yansıyan toplam ödeme (kart_hareketleri ODEME, aktif).
+    Açık KESİM DÖNGÜSÜNDE karta yansıyan toplam ödeme (ODEME, aktif).
     Panel asgari / borç ile aynı kaynak: plan dışı manuel ödemeler de dahil.
+
+    🔴 BORC-005 (2026-09-02) — İSİM AYNI KALDI, ANLAM DÜZELDİ.
+    Eski hâli `DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)`
+    ile TAKVİM AYI sayıyordu. Ama bu rakamın tek işi asgariyle karşılaştırılmak
+    (`asgari_kalan = asgari − bu_ay_odenen`) ve ASGARİ TAKVİM AYINA AİT DEĞİL,
+    KESİM DÖNGÜSÜNE aittir. İki ölçü farklı takvimde olunca panel yanlış konuşuyordu:
+
+      Kesim 26 Ağustos · son ödeme 5 Eylül · asgari 40.000 ₺
+      3 Eylül'de 40.000 ₺ ödendi (TAM ZAMANINDA, borç kapandı)
+        · Ağustos kovası:  0 ₺ görür → "asgari ödenmedi" (SAHTE KIRMIZI)
+        · Eylül kovası: 40.000 ₺ görür → yeni döngü daha kesilmeden
+          "asgari zaten ödendi" (SAHTE YEŞİL — motors.py'deki
+          `>= asg_f * 0.999` guard'ı yeni ayın planını da ATLAR)
+
+    Yani ödeme kesimden SONRA yapıldığında (ki normal olan budur — insanlar
+    ekstre gelince öder) rakam HER AY iki kez yanılıyordu. Ayrıca her ayın
+    1'inde sayaç sıfırlanıp asgari_kalan tam tutara geri fırlıyordu.
+
+    Doğrusu: pencere son KAPANAN kesimden bugüne. Kesim tarihi bankanın
+    kendi kuralıyla hesaplanır (`kesim_tarihi_hesapla` — kısa ay kırpması +
+    hafta sonu/tatil kayması); ay devri de burada çözülür.
+    `kesim_gunu` yoksa eski takvim ayı davranışına düşülür.
     """
-    cur.execute("""
-        SELECT COALESCE(SUM(tutar), 0) AS odenen
-        FROM kart_hareketleri
-        WHERE kart_id = %s
-          AND islem_turu = 'ODEME'
-          AND durum = 'aktif'
-          AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
-    """, (kart_id,))
+    cur.execute("SELECT kesim_gunu FROM kartlar WHERE id = %s", (kart_id,))
+    _r = cur.fetchone()
+    _kg = dict(_r).get('kesim_gunu') if _r else None
+
+    baslangic = None
+    if _kg:
+        bugun = date.today()
+        _bu_ay_kesim = kesim_tarihi_hesapla(bugun.year, bugun.month, int(_kg))
+        if _bu_ay_kesim <= bugun:
+            # Bu ayın kesimi geçti → açık döngü ondan sonra başladı.
+            baslangic = _bu_ay_kesim
+        elif bugun.month == 1:
+            baslangic = kesim_tarihi_hesapla(bugun.year - 1, 12, int(_kg))
+        else:
+            baslangic = kesim_tarihi_hesapla(bugun.year, bugun.month - 1, int(_kg))
+
+    if baslangic:
+        # `tarih > baslangic`: kesim GÜNÜNDEKİ ödeme kapanan ekstreye aittir,
+        # açık döngüye değil.
+        cur.execute("""
+            SELECT COALESCE(SUM(tutar), 0) AS odenen
+            FROM kart_hareketleri
+            WHERE kart_id = %s
+              AND islem_turu = 'ODEME'
+              AND durum = 'aktif'
+              AND tarih > %s
+        """, (kart_id, baslangic))
+    else:
+        cur.execute("""
+            SELECT COALESCE(SUM(tutar), 0) AS odenen
+            FROM kart_hareketleri
+            WHERE kart_id = %s
+              AND islem_turu = 'ODEME'
+              AND durum = 'aktif'
+              AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
+        """, (kart_id,))
     return float(cur.fetchone()['odenen'])
 
 
