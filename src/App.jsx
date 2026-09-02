@@ -32,6 +32,7 @@ import Tedarikciler from './pages/Tedarikciler';
 import TedarikDosyasi from './pages/TedarikDosyasi';
 import StokSayim from './pages/StokSayim';
 import VeriTemizle from './pages/VeriTemizle.jsx';
+import CiroKurtarma from './pages/CiroKurtarma.jsx';
 import MerkezTemizlik from './pages/MerkezTemizlik.jsx';
 import OperasyonMerkezi from './pages/OperasyonMerkezi';
 import TruthMotor from './pages/TruthMotor';
@@ -164,6 +165,8 @@ const PAGES = {
   'tedarik-dosyasi':  TedarikDosyasi,
   'stok-sayim':       StokSayim,
   'veri-temizle':     VeriTemizle,
+  // 🚑 Acil kurtarma ekrani — #klasik:ciro-kurtarma ile acilir.
+  'ciro-kurtarma':    CiroKurtarma,
   'merkez-temizlik':  MerkezTemizlik,
   'is-basvurusu':     IsBasvuruListesi,
   'ev-tasarim':       EvTasarim,
