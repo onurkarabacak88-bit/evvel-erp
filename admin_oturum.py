@@ -72,20 +72,3 @@ def admin_kapisi(x_evvel_oturum: Optional[str] = Header(default=None)) -> bool:
     if not gecerli:
         raise HTTPException(401, "Oturum gerekli — yönetim paneline giriş yapın.")
     return True
-
-
-def aktor_bilgisi(jeton: Optional[str]) -> Tuple[Optional[str], str]:
-    """(aktor_adi, kaynak) — KAPI DEĞİL, yalnız KİMLİK OKUYUCU.
-
-    Denetim defterine "kim yaptı" yazabilmek için kullanılır (SYS-AUDIT).
-    Geçersiz/eksik jetonda 401 ATMAZ: bu fonksiyonun işi erişimi kesmek değil,
-    aktörün BİLİNİP BİLİNMEDİĞİNİ dürüstçe işaretlemektir.
-
-    Dönen kaynak:
-      'oturum' → geçerli yönetim jetonu vardı, kayıt bir oturuma bağlanabilir
-      'anonim' → jeton yok/geçersiz; defterde "kim" sorusu CEVAPSIZ kalır
-    ⚠️ 'anonim' bir hata değil, bir GERÇEKTİR — ve defterde öyle görünmelidir.
-    Boş bırakıp "bilinmiyor"u gizlemek, yanlış isim yazmakla aynı kapıya çıkar.
-    """
-    gecerli, _ = jeton_gecerli(jeton or "")
-    return ("yönetim (oturum)", "oturum") if gecerli else (None, "anonim")

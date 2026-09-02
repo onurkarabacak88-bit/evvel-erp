@@ -9133,7 +9133,7 @@ def ops_siparis_depo_akisi_kalinti(sube_id: Optional[str] = None):
 class OpsSiparisDepoAkisiTemizleBody(BaseModel):
     onay: str
     sube_id: Optional[str] = None
-    onay_pin: Optional[str] = None   # VERI-002: işletme PIN'i zorunlu
+
 
 @router.post("/siparis/depo-akisi-temizle")
 def ops_siparis_depo_akisi_temizle(body: OpsSiparisDepoAkisiTemizleBody):
@@ -9146,19 +9146,7 @@ def ops_siparis_depo_akisi_temizle(body: OpsSiparisDepoAkisiTemizleBody):
     sid = (body.sube_id or "").strip() or None
     try:
         with db() as (conn, cur):
-            # 🔴 VERI-002 (2026-09-02): burada da tek koruma `onay='EVET_SIL'`
-            # metniydi. Bu uç stok_yolda + siparis_talep kalıntılarını siler ve
-            # rezerveleri sıfırlar — geri alınamaz. ledger-sifirla PIN isterken
-            # bunun istememesi tutarsızlıktı.
-            onayci = _isletme_onay_dogrula(cur, getattr(body, "onay_pin", None))
-            _s = siparis_depo_akisi_temizle(cur, sube_id=sid, onay=body.onay)
-            audit(cur, 'siparis_talep', sid or 'TUMU', 'DEPO_AKISI_TEMIZLE',
-                  yeni={'ozet': _s},
-                  aktor=onayci.get('ad_soyad'), aktor_id=str(onayci.get('id')),
-                  aktor_kaynak='isletme_pin')
-            if isinstance(_s, dict):
-                _s["onaylayan"] = onayci.get("ad_soyad")
-            return _s
+            return siparis_depo_akisi_temizle(cur, sube_id=sid, onay=body.onay)
     except ValueError as e:
         raise HTTPException(400, str(e)) from e
 

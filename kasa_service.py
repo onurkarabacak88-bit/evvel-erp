@@ -139,35 +139,16 @@ def insert_kasa_hareketi(cur, tarih, islem_turu, tutar, aciklama,
         raise Exception(f"KASA YAZILMADI — {islem_turu} / {kaynak_id}")
 
 
-def audit(cur, tablo, kayit_id, islem, eski=None, yeni=None,
-          aktor=None, aktor_id=None, aktor_kaynak=None):
-    """Denetim defterine bir satır yazar.
-
-    aktor / aktor_id / aktor_kaynak (SYS-AUDIT, 2026-09-02):
-      Defterin cevaplaması gereken ilk soru "KİM yaptı"dır; imza bunu hiç
-      almıyordu, dolayısıyla hiçbir çağrı yazamıyordu.
-      - aktor        : okunabilir ad ("Merve Karabacak")
-      - aktor_id     : personel/kullanıcı kimliği (ada güvenilmez — ad değişir)
-      - aktor_kaynak : kimliğin NEREDEN geldiği ('isletme_pin' | 'panel_pin' |
-                       'oturum' | 'sistem' | 'beyan'). ⚠️ 'beyan', istemcinin
-                       söylediği ve DOĞRULANMAMIŞ kimliktir — doğrulanmışla
-                       aynı görünmesin diye ayrı işaretlenir.
-      Üçü de NULL kalabilir: aktörü gerçekten bilmediğimiz otomatik akışlarda
-      uydurma isim yazmak, boş bırakmaktan kötüdür.
-    """
+def audit(cur, tablo, kayit_id, islem, eski=None, yeni=None):
     def safe_json(d):
         if not d:
             return None
         return json.dumps({k: str(v) if not isinstance(v, (str, int, float, bool, type(None))) else v
                           for k, v in dict(d).items()})
-    cur.execute("""INSERT INTO audit_log
-            (id,tablo,kayit_id,islem,eski_deger,yeni_deger,aktor,aktor_id,aktor_kaynak)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+    cur.execute("""INSERT INTO audit_log (id,tablo,kayit_id,islem,eski_deger,yeni_deger)
+        VALUES (%s,%s,%s,%s,%s,%s)""",
         (str(uuid.uuid4()), tablo, kayit_id, islem,
-         safe_json(eski), safe_json(yeni),
-         (str(aktor).strip() or None) if aktor else None,
-         (str(aktor_id).strip() or None) if aktor_id else None,
-         (str(aktor_kaynak).strip() or None) if aktor_kaynak else None))
+         safe_json(eski), safe_json(yeni)))
 
 
 # ⚠️ ÇİFT SAYIM DÜZELTMESİ (2026-08-09, canlı ölçümle yakalandı)

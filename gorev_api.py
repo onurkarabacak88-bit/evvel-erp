@@ -202,20 +202,10 @@ def gorev_tamamla(body: GorevTamamlaBody):
 
 @router.get("/api/gorev/sube-personel/{sube_id}")
 def gorev_sube_personel(sube_id: str):
-    """Tüm aktif personel - şube personeli önce, diğerleri sonra.
-
-    🔴 CEP-004 (2026-09-02): bu uç `telefon` da döndürüyordu ve hiçbir
-    oturum/PIN kapısı yok — yani şube kimliğini bilen herkes TÜM aktif
-    personelin telefon numarasını çekebiliyordu.
-    Uç kapatılMADI: QR yoklama, görev girişi ve stok sayımı ekranları
-    PIN'den ÖNCE bu listeden isim seçtiriyor — kapatmak akışı kırar.
-    Bunun yerine ALAN ÇIKARILDI: üç çağıranın (CepApp, GorevGiris,
-    StokSayim) hiçbiri telefonu kullanmıyordu (grep ile doğrulandı).
-    En ucuz kapı, veriyi hiç göndermemektir.
-    """
+    """Tüm aktif personel - şube personeli önce, diğerleri sonra."""
     with db() as (conn, cur):
         cur.execute("""
-            SELECT p.id::text, p.ad_soyad,
+            SELECT p.id::text, p.ad_soyad, p.telefon,
                    (p.panel_pin_hash IS NOT NULL AND p.panel_pin_salt IS NOT NULL) AS pin_tanimli,
                    (p.sube_id = %s) AS bu_sube,
                    COALESCE(s.ad, '-') AS sube_adi
