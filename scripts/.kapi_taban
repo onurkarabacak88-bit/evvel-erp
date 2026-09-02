@@ -51,7 +51,6 @@ main.py::v2_kisit_kaydet
 motors.py::uyari_motoru
 personel_panel_auth.py::_guvenlik_olay_yaz
 rapor_cache.py::aylik_food_cost_hesapla
-rapor_cache.py::aylik_food_cost_hesapla
 rapor_cache.py::batch_log_basla
 rapor_cache.py::batch_log_bitir
 rapor_cache.py::batch_log_hata

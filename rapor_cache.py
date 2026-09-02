@@ -24,6 +24,10 @@ import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
+# SAVEPOINT: bu modül `cur`u DIŞARIDAN alır; kendi transaction'ını açmaz.
+# Yutulan bir cur.execute tüm çağıran transaction'ı zehirler.
+from database import savepoint
+
 log = logging.getLogger(__name__)
 
 
@@ -106,6 +110,15 @@ _RAPOR_TABLOLARI_DDL = [
         sabit_gider     NUMERIC(14,2) NOT NULL DEFAULT 0,
         food_cost_pct   NUMERIC(6,2),
         fis_sayisi      INTEGER NOT NULL DEFAULT 0,
+        -- 🔴 OPS-008 (2026-09-02): `food_cost_pct` burada
+        -- `anlik_gider / ciro` idi — bu FOOD COST DEĞİL, nakit gider oranıdır.
+        -- Kanonik motor (operasyon_merkez_api, definition_version=2) food
+        -- cost'u `ÜRÜN-AÇ × fiyat / ciro` ile hesaplıyor. Aynı ada sahip iki
+        -- farklı sayı iki ayrı uçtan ekrana akıyordu.
+        -- Artık `food_cost_pct` KANONİK motordan gelir; eski oran silinmedi,
+        -- kendi dürüst adıyla ayrı kolonda durur.
+        gider_oran_pct  NUMERIC(6,2),
+        fc_kaynak       TEXT,
         ortalama_fis_tutari NUMERIC(14,2),
         guncelleme      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (sube_id, year_month)
@@ -405,27 +418,67 @@ def aylik_food_cost_hesapla(cur: Any, year_month: str) -> int:
     except Exception:
         return 0
     sayac = 0
-    for sid in sube_ids:
-        try:
+
+    # 🔴 OPS-016: şube başına ayrı SELECT atılıyordu (N+1). Tek geçişte topla.
+    _ozet = {}
+    try:
+        # SAVEPOINT: yutulan cur.execute transaction'ı zehirler; bu fonksiyon
+        # kendi `with db()`ini AÇMIYOR (cur dışarıdan geliyor), o yüzden şart.
+        with savepoint(cur, "sp_fc_ozet"):
             cur.execute(
                 """
-                SELECT
-                  COALESCE(SUM(ciro_toplam), 0)::float AS toplam_ciro,
-                  COALESCE(SUM(anlik_gider_nakit + anlik_gider_kart), 0)::float AS anlik_g,
-                  COALESCE(SUM(fis_sayisi), 0) AS fis
-                FROM rapor_gunluk_sube_ozet
-                WHERE sube_id=%s
-                  AND to_char(tarih, 'YYYY-MM') = %s
-                """,
-                (sid, year_month),
+            SELECT sube_id::text AS sube_id,
+                   COALESCE(SUM(ciro_toplam), 0)::float AS toplam_ciro,
+                   COALESCE(SUM(anlik_gider_nakit + anlik_gider_kart), 0)::float AS anlik_g,
+                   COALESCE(SUM(fis_sayisi), 0) AS fis
+            FROM rapor_gunluk_sube_ozet
+            WHERE to_char(tarih, 'YYYY-MM') = %s
+            GROUP BY sube_id
+            """,
+                (year_month,),
             )
-            r = dict(cur.fetchone() or {})
+            _ozet = {str(r["sube_id"]): dict(r) for r in (cur.fetchall() or [])}
+    except Exception:
+        _ozet = {}
+
+    # 🔴 OPS-008: FOOD COST TEK KAYNAKTAN — kanonik günlük motorun yazdığı
+    # `sube_food_cost_gun` (definition_version=2) satırları aylığa toplanır.
+    # ⚠️ Ortalamanın ortalaması alınmaz: aylık oran = Σ(gerçek maliyet) / Σ(ciro).
+    # Günlük yüzdeleri ortalamak, düşük cirolu günlere fazla ağırlık verir.
+    _kanonik = {}
+    try:
+        with savepoint(cur, "sp_fc_kanonik"):
+            cur.execute(
+                """
+            SELECT sube_id::text AS sube_id,
+                   COALESCE(SUM(COALESCE(actual_open_cogs_tl, gercek_maliyet_tl)), 0)::float AS cogs,
+                   COALESCE(SUM(ciro_tl), 0)::float AS ciro
+            FROM sube_food_cost_gun
+            WHERE to_char(tarih, 'YYYY-MM') = %s
+            GROUP BY sube_id
+            """,
+                (year_month,),
+            )
+            _kanonik = {str(r["sube_id"]): dict(r) for r in (cur.fetchall() or [])}
+    except Exception:
+        _kanonik = {}   # kanonik tablo yoksa food_cost_pct NULL kalır — 0 yazmayız
+
+    for sid in sube_ids:
+        try:
+            r = _ozet.get(str(sid), {})
             toplam_ciro = float(r.get("toplam_ciro") or 0)
             anlik = float(r.get("anlik_g") or 0)
             fis = int(r.get("fis") or 0)
             sabit = 0.0
             toplam_gider = anlik + sabit
-            fc_pct = round((toplam_gider / toplam_ciro) * 100, 2) if toplam_ciro > 0 else None
+            # Eski sayı ölmedi — DÜRÜST ADIYLA duruyor: nakit gider / ciro.
+            gider_oran = round((toplam_gider / toplam_ciro) * 100, 2) if toplam_ciro > 0 else None
+            _kn = _kanonik.get(str(sid)) or {}
+            _kc, _kciro = float(_kn.get("cogs") or 0), float(_kn.get("ciro") or 0)
+            # ⚠️ Kanonik veri yoksa food_cost_pct NULL kalır. Sıfır yazmak
+            # "maliyet yok" yalanı olurdu; NULL "hesaplanamadı" der.
+            fc_pct = round((_kc / _kciro) * 100, 2) if _kciro > 0 else None
+            fc_kaynak = "kanonik_v2" if _kciro > 0 else "yok"
             ort_fis = round(toplam_ciro / fis, 2) if fis > 0 else None
 
             ok = _safe_exec(
@@ -434,20 +487,23 @@ def aylik_food_cost_hesapla(cur: Any, year_month: str) -> int:
                 INSERT INTO rapor_aylik_food_cost
                     (sube_id, year_month, toplam_ciro, toplam_gider,
                      anlik_gider, sabit_gider, food_cost_pct,
+                     gider_oran_pct, fc_kaynak,
                      fis_sayisi, ortalama_fis_tutari, guncelleme)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NOW())
                 ON CONFLICT (sube_id, year_month) DO UPDATE SET
                     toplam_ciro = EXCLUDED.toplam_ciro,
                     toplam_gider = EXCLUDED.toplam_gider,
                     anlik_gider = EXCLUDED.anlik_gider,
                     sabit_gider = EXCLUDED.sabit_gider,
                     food_cost_pct = EXCLUDED.food_cost_pct,
+                    gider_oran_pct = EXCLUDED.gider_oran_pct,
+                    fc_kaynak = EXCLUDED.fc_kaynak,
                     fis_sayisi = EXCLUDED.fis_sayisi,
                     ortalama_fis_tutari = EXCLUDED.ortalama_fis_tutari,
                     guncelleme = NOW()
                 """,
                 (sid, year_month, toplam_ciro, toplam_gider, anlik, sabit,
-                 fc_pct, fis, ort_fis),
+                 fc_pct, gider_oran, fc_kaynak, fis, ort_fis),
             )
             if ok:
                 sayac += 1

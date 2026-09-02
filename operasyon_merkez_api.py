@@ -6920,10 +6920,15 @@ def ops_kasa_uyumsuzluk_listesi(
                 -- Efektif fark: düzeltilmiş tutar varsa onu, yoksa orijinal
                 COALESCE(u.cozum_duzeltilen_tl, u.fark_tl) AS efektif_fark_tl,
                 -- 7-günlük kronik takip (düzeltilmiş tutarlar dahil)
+                -- 🔴 OPS-002 (2026-09-02): ADET yalnız ACILIS sayarken TUTAR
+                -- ACILIS+KAPANIS topluyordu. "7 günde 3 olay, 1.200₺" cümlesinin
+                -- iki yarısı FARKLI EVRENDEN geliyordu; ortalama tutar da,
+                -- kronik yorumu da yanlış çıkıyordu. Evren birleştirildi:
+                -- ikisi de ACILIS+KAPANIS.
                 (
                     SELECT COUNT(*) FROM sube_operasyon_uyari u7
                     WHERE u7.sube_id = u.sube_id
-                      AND u7.tip = 'ACILIS_KASA_FARK'
+                      AND u7.tip IN ('ACILIS_KASA_FARK', 'KAPANIS_KASA_FARK')
                       AND u7.tarih >= CURRENT_DATE - INTERVAL '7 days'
                 ) AS son_7g_adet,
                 (
@@ -21359,11 +21364,18 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
             min_s = int(r["min_stok"] or 0)
             row_fiyat = float(r["birim_fiyat"] or 0)
             p = _ensure(kod, r["kalem_adi"] or "", row_fiyat or global_fiyat.get(kod, 0.0))
-            # Şube bazlı fiyatı pivot fiyatı olarak güncel tut (max)
-            if row_fiyat > p["birim_fiyat"]:
-                p["birim_fiyat"] = row_fiyat
-            fiyat = p["birim_fiyat"]
+            # 🔴 OPS-017 (2026-09-02): pivot fiyatı MAX'a terfi ediyordu ve
+            # SONRA her şubenin stok değeri o en yüksek fiyattan hesaplanıyordu.
+            # Bir şube pahalı almışsa bütün şubelerin stoğu o fiyatla
+            # değerleniyor, toplam stok değeri sistematik olarak ŞİŞİYORDU.
+            # Doğrusu: şubenin DEĞERİ kendi fiyatından hesaplanır. Pivot satırı
+            # yalnız GÖSTERİM için tek bir sayı ister; orada ağırlıklı ortalama
+            # kullanılır (adetle ağırlıklı), maksimum değil.
+            fiyat = row_fiyat or p["birim_fiyat"]
             deger = mevcut * fiyat
+            # Ağırlıklı ortalama için biriktir — pivot fiyatı sonda hesaplanır.
+            p["_fiyat_adet"] = p.get("_fiyat_adet", 0) + mevcut
+            p["_fiyat_tutar"] = p.get("_fiyat_tutar", 0.0) + deger
             p["subeler"].setdefault(sid, {"mevcut": 0, "deger": 0.0, "harcanan": 0,
                                           "harcanan_deger": 0.0, "min_stok": 0})
             p["subeler"][sid]["mevcut"] = mevcut
@@ -21386,6 +21398,17 @@ def ops_v2_depo_ozet(gun: int = Query(30, ge=1, le=365)):
                 p["subeler"][sid]["harcanan_deger"] = round(deger, 2)
                 p["toplam_harcanan"] += adet
                 p["toplam_harcanan_deger"] += deger
+
+        # OPS-017: pivot satırının GÖSTERİM fiyatı — adetle ağırlıklı ortalama.
+        # (Maksimum değil: en pahalı şube tüm envanteri fiyatlandıramaz.)
+        for p in pivot.values():
+            _ad = int(p.pop("_fiyat_adet", 0) or 0)
+            _tt = float(p.pop("_fiyat_tutar", 0.0) or 0.0)
+            if _ad > 0:
+                p["birim_fiyat"] = round(_tt / _ad, 2)
+                p["birim_fiyat_yontem"] = "agirlikli_ortalama"
+            else:
+                p["birim_fiyat_yontem"] = "katalog"
 
         # Yuvarla + sırala (toplam değer azalan)
         for p in pivot.values():

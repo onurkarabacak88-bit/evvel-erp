@@ -42,6 +42,32 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/borc-nav", tags=["borc-navigasyon"])
 
 
+def _kart_borc_toplami(kapsam: str = "taksitli") -> float:
+    """Kart borcu TEK TANIM (BORC-002).
+
+    kapsam='taksitli' → anlık borç + gelecek taksit anaparası (TOPLAM yükümlülük)
+    kapsam='anlik'    → yalnız anlık borç (BUGÜN ne borçluyuz)
+
+    İki ekran farklı soru sorabilir; farklı FORMÜL yazamaz. Formül burada.
+    """
+    toplam = 0.0
+    try:
+        from main import kartlar_listele
+        kl = kartlar_listele()
+        kartlar = kl if isinstance(kl, list) else (kl.get("kartlar") or [])
+        for k in kartlar:
+            anlik = k.get("anlik_borc")
+            anlik = _f(anlik if anlik is not None else k.get("guncel_borc"))
+            if kapsam == "anlik":
+                toplam += anlik
+                continue
+            v = k.get("toplam_borc_taksitli")
+            toplam += _f(v) if v is not None else (anlik + _f(k.get("gelecek_taksit_anapara")))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("kart borc toplami (%s) hata: %s", kapsam, e)
+    return toplam
+
+
 def _f(x) -> float:
     try:
         return float(x or 0)
@@ -103,18 +129,12 @@ def borc_nav_ozet():
         notlar.append("Zorunlu yük okunamadı (kart motoru).")
 
     # ── 2) Toplam borç (kart toplam + kredi kalan anapara) ──
-    kart_toplam = 0.0
-    try:
-        from main import kartlar_listele
-        kl = kartlar_listele()
-        kartlar = kl if isinstance(kl, list) else (kl.get("kartlar") or [])
-        for k in kartlar:
-            v = k.get("toplam_borc_taksitli")
-            if v is None:
-                v = _f(k.get("anlik_borc")) + _f(k.get("gelecek_taksit_anapara"))
-            kart_toplam += _f(v)
-    except Exception as e:
-        logger.warning("borc_nav kart toplam hata: %s", e)
+    # 🔴 BORC-002 (2026-09-02): `/ozet` kart toplamını TAKSİTLİ tanımla
+    # (anlık + gelecek taksit anaparası), `/takvim` ise yalnız `anlik_borc`
+    # ile hesaplıyordu. Taksit yükü olan bir kartta iki ekran farklı toplam
+    # gösteriyordu ve hangisinin doğru olduğunu söyleyen bir şey yoktu.
+    # Tanım TEK YERDE kuruldu; iki uç da aynı fonksiyonu çağırıyor.
+    kart_toplam = _kart_borc_toplami(kapsam="taksitli")
 
     kredi_kalan = 0.0
     try:
@@ -444,9 +464,11 @@ def borc_takvim(ay: int = 36):
         from main import kart_gelecek_ay_yuk, kartlar_listele
         yuk = kart_gelecek_ay_yuk() or {}
         kart_asgari = _f(yuk.get("kart_tahmini_asgari"))
-        kl = kartlar_listele()
-        for k in (kl if isinstance(kl, list) else kl.get("kartlar", [])):
-            kart_borc += _f(k.get("anlik_borc") if k.get("anlik_borc") is not None else k.get("guncel_borc"))
+        # BORC-002: takvim ANLIK borcu ister (o gün ne borçluyuz), özet ise
+        # taksitliyi (toplam yükümlülük). İkisi FARKLI SORULARDIR — sorun
+        # ikisinin farklı olması değil, aynı adla anılmasıydı. Kapsam artık
+        # açıkça seçiliyor ve tanım tek yerde duruyor.
+        kart_borc += _kart_borc_toplami(kapsam="anlik")
     except Exception as e:
         logger.warning("takvim kart hata: %s", e)
     try:

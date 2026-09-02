@@ -65,6 +65,23 @@ def _aralik_dakika_cifti(bas: time, bit: time) -> Tuple[int, int]:
     return s, e
 
 
+def _AYLIK_SAAT_KANONIK() -> float:
+    """Bordro ile AYNI aylık saat tabanı (maas_service.AYLIK_SAAT = 285).
+
+    ⚠️ Sayıyı burada TEKRAR YAZMIYORUZ. Kopyalanan sabit, gün gelir ayrışır
+    ve o gün iki ekran aynı kişiye farklı ücret biçer (PERS-002'nin kendisi).
+    Import başarısız olursa 285'e düşer ve bunu LOGLAR — sessiz sapma yok.
+    """
+    try:
+        from maas_service import AYLIK_SAAT
+        return float(AYLIK_SAAT) or 285.0
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger(__name__).warning(
+            "maas_service.AYLIK_SAAT okunamadı, 285 varsayıldı: %s", e)
+        return 285.0
+
+
 def slot_sure_saat(baslangic: time, bitis: time) -> float:
     """
     İki saat çiftinin süresi (saat).
@@ -1848,7 +1865,13 @@ def iscilik_ozet(cur, tarih) -> Dict[str, Any]:
             saat = 0.0
         saatlik = float(d.get("saatlik") or 0)
         maas = float(d.get("maas") or 0)
-        hourly = saatlik if saatlik > 0 else (round(maas / 225.0, 2) if maas > 0 else 0.0)
+        # 🔴 PERS-002 (2026-09-02): burada aylık maaş 225'e bölünüyordu, oysa
+        # bordronun TEK KAYNAĞI maas_service `AYLIK_SAAT = 9,5 × 30 = 285`
+        # kullanıyor. Aynı personel için işçilik ekranı ile bordro FARKLI
+        # saatlik ücret üretiyordu (%27 sapma) — iki ekran aynı kişiyi farklı
+        # fiyatlıyordu. Bölen tek kaynaktan alınıyor; sayı burada tanımlanmaz.
+        hourly = saatlik if saatlik > 0 else (
+            round(maas / _AYLIK_SAAT_KANONIK(), 2) if maas > 0 else 0.0)
         maliyet = round(saat * hourly, 2)
         sid = str(d.get("sube_id") or "")
         g = per.setdefault(sid, {"sube_id": sid, "sube_ad": d.get("sube_ad") or sid,

@@ -11913,13 +11913,32 @@ export default function OperasyonMerkezi() {
         const receteCount = maliyetOzet?.recete_sayisi || 0;
         const eksikler = durum?.eksikler || [];
 
-        // Hesaplanmış metrikler
-        const avgFoodCost = gunSatirlari.length > 0
-          ? gunSatirlari.filter(r => r.food_cost_pct).reduce((s, r) => s + Number(r.food_cost_pct || 0), 0) / gunSatirlari.filter(r => r.food_cost_pct).length
-          : null;
-        const avgShrinkage = gunSatirlari.length > 0
-          ? gunSatirlari.filter(r => r.shrinkage_pct).reduce((s, r) => s + Number(r.shrinkage_pct || 0), 0) / gunSatirlari.filter(r => r.shrinkage_pct).length
-          : null;
+        // ══════════════════════════════════════════════════════════════════
+        // 🔴 OPS-007 + OPS-018 (2026-09-02) — ÖZET KARTLARI İKİ AYRI HATA
+        // ══════════════════════════════════════════════════════════════════
+        // 1) BİRİM: DB `food_cost_pct` ONDALIK tutuyor (0,32 = %32). Alt
+        //    taraftaki tablo bunu ×100 ile yüzdeye çeviriyor ama bu kart
+        //    çevirmiyordu — sonra %28-35 aralığındaki benchmark ile
+        //    kıyaslıyordu. Yani "%0,32" hep "çok iyi" görünüyordu.
+        // 2) TRUTHY FİLTRE: `filter(r => r.food_cost_pct)` JavaScript'te 0'ı
+        //    ELER. Meşru bir %0 günü (satış var, açılan ürün yok) ortalamadan
+        //    düşüyordu — hem paydan hem paydadan. Eksik olan ile SIFIR olan
+        //    aynı şey değildir: null/undefined "ölçülmedi", 0 bir ÖLÇÜMDÜR.
+        const _sayiVar = (v) => v !== null && v !== undefined && v !== '' && !Number.isNaN(Number(v));
+        // Ortalama = Σ/n; ondalık→yüzde çevrimi tabloyla AYNI kuralda.
+        // ⚠️ Bu kart HER ZAMAN `maliyetOzet.gun_satirlari`i okur — yani DB
+        // kaynağını. Kanonik motor `food_cost_pct`i ORAN yazıyor
+        // (round(actual_cogs / ciro_tl, 6)), dolayısıyla burada çevrim
+        // KOŞULSUZ ×100'dür. Alttaki tablo iki kaynak arasında geçiş yaptığı
+        // için orada koşullu; kaynağı sabit olan yerde koşul yazmak, ileride
+        // yanlış dalın seçilmesine davetiye olur.
+        const _ortalamaYuzde = (alan) => {
+          const dizi = gunSatirlari.filter(r => _sayiVar(r[alan])).map(r => Number(r[alan]));
+          if (dizi.length === 0) return null;
+          return (dizi.reduce((a, b) => a + b, 0) / dizi.length) * 100;
+        };
+        const avgFoodCost  = _ortalamaYuzde('food_cost_pct');
+        const avgShrinkage = _ortalamaYuzde('shrinkage_pct');
 
         const fcRenk = avgFoodCost == null ? 'var(--text3)'
           : avgFoodCost > benchmark.food_cost_max_pct ? 'var(--red)'

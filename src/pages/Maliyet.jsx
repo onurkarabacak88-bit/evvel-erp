@@ -820,9 +820,17 @@ export default function Maliyet() {
           ['İşveren SGK payı', 'sgk_isveren_tl'],
           ['Kira', 'kira_maliyet_tl'], ['Faturalar', 'fatura_maliyet_tl'],
           ['Abonelikler', 'abonelik_maliyet_tl'], ['POS komisyonu', 'pos_komisyon_tl'],
-          ['Platform komisyonu', 'platform_komisyon_tl'], ['Fire', 'fire_maliyet_tl'],
+          ['Platform komisyonu', 'platform_komisyon_tl'],
+          // 🔴 MALIYET-012 (2026-09-02): 'Fire' burada AYRI KALEM olarak
+          // listeleniyordu ama sunucunun `genel_toplam`ına GİRMİYOR — sahip
+          // kararı (2026-06-23): fire zaten ürün-aç COGS'unun içinde, ayrıca
+          // eklemek mükerrer olur. Sonuç: fire > 0 olduğunda kırılım toplamı
+          // başlığı AŞIYORDU ve kimse hangisinin doğru olduğunu bilmiyordu.
+          // Kalem listeden ÇIKARILDI (toplamla tutarlı); değeri kaybolmasın
+          // diye aşağıda ayrı bir "bilgi" satırında gösteriliyor.
           ['İade', 'iade_maliyet_tl'], ['Şube anlık gider', 'sube_anlik_gider_tl'],
         ].map(([ad, k]) => ({ ad, tutar: topla(k) })).filter(x => x.tutar > 0.005).sort((a, b) => b.tutar - a.tutar);
+        const fireBilgi = topla('fire_maliyet_tl');
         {/* Kart dili = ⚖️ Evo↔Fiziki Kasa kartıyla AYNI (sahip 2026-07-19:
             'Marj/Ciro kartları Evo-Fiziki gibi kart olsun'): renkli üst şerit +
             çerçeveli trend ROZETİ (▲%X) + mono büyük değer + alt not. */}
@@ -1471,7 +1479,9 @@ export default function Maliyet() {
           ['Fatura', '#D85A30', s => Number(s.fatura_maliyet_tl) || 0],
           ['Komisyon', '#888780', s => (Number(s.pos_komisyon_tl) || 0) + (Number(s.platform_komisyon_tl) || 0)],
           ['Abonelik', '#7F77DD', s => Number(s.abonelik_maliyet_tl) || 0],
-          ['Fire', '#E24B4A', s => Number(s.fire_maliyet_tl) || 0],
+          // MALIYET-012: 'Fire' burada da ÇIKARILDI — bu şerit `genel_toplam`
+          // ile kıyaslanıyor (maxv), fire ise o toplama girmiyor. Kalemi
+          // bırakmak günlük çubuğu toplamın üstüne taşırıyordu.
           ['İade', '#D4537E', s => Number(s.iade_maliyet_tl) || 0],
           ['Anlık', '#97C459', s => Number(s.sube_anlik_gider_tl) || 0],
         ];

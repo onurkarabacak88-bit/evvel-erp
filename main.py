@@ -13382,12 +13382,20 @@ def ledger(limit: int = 200, islem_turu: Optional[str] = None, ay: str = None):
             return rows
         cur.execute(
             """
+            -- 🔴 RAPOR-002/003 (2026-09-02): bu özet ile aylık raporun özeti
+            -- AYNI ADLA farklı sayı üretiyordu:
+            --   · ledger  : kasa_etkisi süzgeci YOK, DEVIR gelire dahil
+            --   · aylık   : kasa_etkisi=true VE islem_turu != 'DEVIR'
+            -- DEVIR bir kasadan diğerine taşımadır — gelir değildir; kasa
+            -- etkisi olmayan satırlar da (ters kayıt/iz) toplama girmemeli.
+            -- Aylık raporun tanımı doğru olandı; ledger ona HİZALANDI.
             SELECT
-                COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0)        AS toplam_gelir,
+                COALESCE(SUM(CASE WHEN tutar > 0 AND islem_turu != 'DEVIR' THEN tutar ELSE 0 END), 0) AS toplam_gelir,
                 COALESCE(SUM(CASE WHEN tutar < 0 THEN -tutar ELSE 0 END), 0)       AS toplam_gider,
                 COALESCE(SUM(CASE WHEN islem_turu LIKE '%%IPTAL%%' THEN ABS(tutar) ELSE 0 END), 0) AS toplam_iptal
             FROM kasa_hareketleri
-            WHERE durum='aktif' AND to_char(tarih, 'YYYY-MM') = %s
+            WHERE durum='aktif' AND kasa_etkisi = true
+              AND to_char(tarih, 'YYYY-MM') = %s
             """,
             (ay_v,),
         )
