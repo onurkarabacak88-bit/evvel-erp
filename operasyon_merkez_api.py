@@ -1962,6 +1962,17 @@ def kapanis_gun_duzelt(body: KapanisGunDuzeltBody):
                 "Taşınacak kayıt bulunamadı (cevap_ts/olusturma dogru_tarih'e ait değil).",
             )
 
+        # 🔴 OPS-027 (2026-09-02): event taşıması audit'liydi ama CİRO ve
+        # CİRO_TASLAK taşımaları auditsizdi. Oysa taşınan şey PARANIN HANGİ
+        # GÜNE ait olduğu: bir günün cirosu başka güne geçince iki günün de
+        # raporu, food cost'u ve kasa mutabakatı değişir. Event'in izi olup
+        # paranın izi olmaması, denetimin asıl bakması gereken yeri boş bırakır.
+        audit(cur, 'ciro', f"{sid}:{yt}->{dt_}", 'KAPANIS_GUN_DUZELT_CIRO',
+              eski={'tarih': yt, 'sube_id': sid},
+              yeni={'tarih': dt_, 'ciro_tasinan': ciro_tasinan,
+                    'ciro_taslak_tasinan': taslak_tasinan,
+                    'event_id': ev_id, 'silinen_placeholder': silinen})
+
         # 4. Rapor cache her iki gün için yenile (best-effort)
         try:
             from rapor_cache import gunluk_ozet_yenile

@@ -12993,8 +12993,47 @@ def borc_guncelle(bid: str, b: BorcModel):
                      AND durum IN ('bekliyor','onay_bekliyor')""",
                 (b.aylik_taksit, b.aylik_taksit, bid),
             )
-        audit(cur, 'borc_envanteri', bid, 'UPDATE', eski=eski)
-    return {"success": True}
+        # 🔴 TANIM-002 (2026-09-02): audit yalnız `eski` ile çağrılıyordu —
+        # defter "neydi" diyor, "ne oldu" demiyordu. Bir sonraki kayda bakarak
+        # çıkarmak gerekiyordu ki bu da ancak başka bir güncelleme varsa
+        # mümkün. Diff'in yarısı, diff değildir.
+        _yeni = {"kurum": b.kurum, "borc_turu": b.borc_turu,
+                 "toplam_borc": b.toplam_borc, "aylik_taksit": b.aylik_taksit,
+                 "kalan_vade": b.kalan_vade, "toplam_vade": b.toplam_vade,
+                 "baslangic_tarihi": str(b.baslangic_tarihi) if b.baslangic_tarihi else None,
+                 "odeme_gunu": b.odeme_gunu}
+
+        # ⚠️ BASELINE ALANLARI: bunlar borcun GEÇMİŞİNİ yeniden yazar.
+        # `aylik_taksit` ileriye dönüktür (bundan sonraki taksitler), ama
+        # `toplam_borc` / `baslangic_tarihi` / `toplam_vade` değişince
+        # "bu borç baştan beri şuydu" denmiş olur ve geçmiş projeksiyonlar
+        # sessizce farklılaşır. sabit_giderler'de bunun için efektif-tarihli
+        # versiyonlama var; borçta YOK.
+        # ⛔ Versiyonlamayı burada TEK BAŞIMA kurmuyorum: veri modelini ve
+        # projeksiyonun geçmişi nasıl okuduğunu değiştirir — sahip kararı.
+        # Yapılan: değişiklik GÖRÜNÜR kılınıyor, sessiz kalmıyor.
+        _baseline = []
+        for _alan, _yeni_deger in (("toplam_borc", b.toplam_borc),
+                                   ("toplam_vade", b.toplam_vade),
+                                   ("baslangic_tarihi", b.baslangic_tarihi)):
+            _e = dict(eski).get(_alan)
+            if _yeni_deger is None or _e is None:
+                continue
+            if str(_e)[:10] != str(_yeni_deger)[:10]:
+                _baseline.append({"alan": _alan, "eski": str(_e), "yeni": str(_yeni_deger)})
+
+        audit(cur, 'borc_envanteri', bid, 'UPDATE', eski=eski,
+              yeni={**_yeni, "baseline_degisti": _baseline or None})
+    return {
+        "success": True,
+        "baseline_degisti": _baseline or None,
+        "uyari": (
+            "Bu değişiklik borcun BAŞLANGIÇ verisini değiştirdi ("
+            + ", ".join(x["alan"] for x in _baseline)
+            + "). Geçmiş projeksiyonlar artık yeni değerlerle hesaplanır; "
+              "eski hâl yalnız denetim defterinde kalır."
+        ) if _baseline else None,
+    }
 
 
 @app.get("/api/borclar/{bid}/gecmis")
@@ -14939,15 +14978,29 @@ def aylik_rapor(yil: int = None, ay: int = None):
             "aylik_sabit_gider": 0.0, "aylik_maas": 0.0,
             "bekleyen_taksit_90": 0.0,
             "ufuklar": [], "runway_gun": None,
+            # RAPOR-011: hangi güne çıpalandığı GÖRÜNÜR olsun — okuyan
+            # "bu projeksiyon ne zamana göre" sorusunu sormak zorunda kalmasın.
+            "capa_tarihi": None,
         }
         try:
-            # 90 günlük run-rate (gelir/gider)
+            # 🔴 RAPOR-011 (2026-09-02): run-rate penceresi CURRENT_DATE'e
+            # çıpalıydı. Temmuz raporuna bakıldığında projeksiyon BUGÜNDEN
+            # geriye 90 günü kullanıyordu — yani geçmiş bir dönemin raporuna
+            # BUGÜNÜN yükü sızıyordu ve aynı ay, farklı günlerde açıldığında
+            # farklı projeksiyon gösteriyordu. Mühürlü dönemler snapshot ile
+            # korunuyordu; mühürsüz geçmiş aylar korunmuyordu.
+            # Çıpa: rapor edilen ayın SONU — ama gelecek olamaz, bugünle sınırlı
+            # (içinde bulunulan ay için davranış değişmez).
+            _proj_capa = min(ay_son, date.today())
             cur.execute("""
                 SELECT COALESCE(SUM(CASE WHEN tutar>0 AND islem_turu!='DEVIR' THEN tutar ELSE 0 END),0) AS gelir,
                        COALESCE(SUM(CASE WHEN tutar<0 THEN ABS(tutar) ELSE 0 END),0) AS gider
                 FROM kasa_hareketleri
-                WHERE durum='aktif' AND kasa_etkisi=true AND tarih >= CURRENT_DATE - INTERVAL '90 days'
-            """)
+                WHERE durum='aktif' AND kasa_etkisi=true
+                  AND tarih >= %s::date - INTERVAL '90 days'
+                  AND tarih <= %s::date
+            """, (_proj_capa, _proj_capa))
+            projeksiyon["capa_tarihi"] = str(_proj_capa)
             rr = dict(cur.fetchone() or {})
             g_gelir = float(rr.get("gelir") or 0) / 90.0
             g_gider_runrate = float(rr.get("gider") or 0) / 90.0
