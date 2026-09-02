@@ -8043,6 +8043,21 @@ def kasa_acilis_devri(body: KasaAcilisBody):
         onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
         # Önceki açılış kaydını sil, kalan kasayı hesapla, FARK kadar düzeltme yaz →
         # kasa tam HEDEF tutara çekilir (mevcut hareketler ne olursa olsun, üstüne EKLEMEZ).
+        # 🔴 PARA-012 (2026-09-02): önceki açılış devri HARD-DELETE ediliyordu.
+        # Audit'e yalnız YENİ hedef yazılıyordu; silinen satırların kendi
+        # içeriği (tutar/tarih/açıklama) hiçbir yerde kalmıyordu — yani "kasa
+        # çıpası daha önce neydi, ne zaman kim değiştirdi" sorusu cevapsızdı.
+        # Kasa çıpası, tüm kasa aritmetiğinin başlangıç noktasıdır; izsiz
+        # değiştirilirse geçmiş bakiyeler yeniden üretilemez.
+        # ⚠️ Soft-delete YAPILAMIYOR: bu satırlar `kasa_bakiyesi` toplamına
+        # giriyor ve 'iptal' durumu bu tabloda ZATEN toplamdan düşüyor —
+        # ama fonksiyon hemen altında bakiyeyi YENİDEN hesaplıyor, dolayısıyla
+        # silme yerine iptal etmek de aynı sonucu verir ve İZ BIRAKIR.
+        cur.execute(
+            "SELECT id, tarih::text AS tarih, tutar::float AS tutar, aciklama, "
+            "COALESCE(durum,'aktif') AS durum "
+            "FROM kasa_hareketleri WHERE islem_turu='ACILIS_DEVRI'")
+        _silinen = [dict(r) for r in (cur.fetchall() or [])]
         cur.execute("DELETE FROM kasa_hareketleri WHERE islem_turu='ACILIS_DEVRI'")
         mevcut = kasa_bakiyesi(cur)
         duzeltme = round(hedef - mevcut, 2)
@@ -8053,8 +8068,13 @@ def kasa_acilis_devri(body: KasaAcilisBody):
             idempotency_key=f"acilis_devri_{tarih}_{uuid.uuid4().hex[:10]}",
         )
         audit(cur, "kasa_hareketleri", "acilis_devri", "KASA_ACILIS",
+              # PARA-012: silinen satırların İÇERİĞİ artık defterde.
+              eski={"silinen_acilis_devri": _silinen, "silinen_adet": len(_silinen)},
               yeni={"hedef": hedef, "onceki": round(mevcut, 2), "duzeltme": duzeltme,
-                    "tarih": tarih, "onayci": onayci.get("ad_soyad")})
+                    "tarih": tarih},
+              aktor=onayci.get("ad_soyad"),
+              aktor_id=(str(onayci.get("id")) if onayci.get("id") else None),
+              aktor_kaynak="isletme_pin")
         yeni_bakiye = kasa_bakiyesi(cur)
     return {"success": True, "kasa_bakiye": round(yeni_bakiye, 2), "duzeltme": duzeltme}
 

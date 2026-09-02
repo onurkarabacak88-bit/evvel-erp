@@ -16251,18 +16251,30 @@ def ops_maliyet_gun_gun(
                 if adet <= 0:
                     continue
                 depo_kod = urun_depo_map.get(uid)
-                # Fiyat önceliği: ürünün KENDİ UUID'si → depo_stok_kalem_kodu → tarih-aware
-                fiyat = fiyat_son_by_kod.get(uid)
+                # 🔴 MALIYET-014 (2026-09-02): öncelik TERSTİ. `fiyat_son_by_kod`
+                # BUGÜNKÜ fiyattır (sorgu `gecerli_bitis >= CURRENT_DATE` +
+                # en yeni `gecerli_baslangic`); tarih-etkin `_fiyat_bul` ise
+                # YALNIZCA fallback'ti. Sonuç: fiyat geçmişi olan bir kalem,
+                # GEÇMİŞ günlerde bile bugünkü fiyatla maliyetleniyordu.
+                # Zam yapıldığı gün geçmişin tamamı retroaktif olarak pahalılaşır;
+                # "dün food cost neden değişti" sorusunun cevabı "hiçbir şey
+                # olmadı, sadece fiyat güncelledik" olur. Havuz/BAR yolu bunu
+                # zaten doğru yapıyordu (FIX C3) — UUID yolu atlanmış.
+                # Doğru sıra: O GÜNÜN fiyatı → yoksa bugünkü (son çare).
+                fiyat = _fiyat_bul(uid, tarih_str)
+                if fiyat is None and depo_kod:
+                    fiyat = _fiyat_bul(depo_kod, tarih_str)
+                if fiyat is None:
+                    fiyat = fiyat_son_by_kod.get(uid)
                 if fiyat is None and depo_kod:
                     fiyat = fiyat_son_by_kod.get(depo_kod)
-                if fiyat is None:
-                    fiyat = _fiyat_bul(uid, tarih_str) or (_fiyat_bul(depo_kod, tarih_str) if depo_kod else None)
                 if fiyat is None:
                     # EMNİYET AĞI: uid bir DEPO/legacy kod olabilir (ürün-aç ürünü depo koduyla
                     # bildirdi) ama fiyat ürünün UUID'sine tanımlı. O depo koduna bağlı ürünün
                     # UUID fiyatını çek → "merkeze bir kez tanımlanan fiyat her zaman çekilsin".
                     for _puid in depo_to_uuids.get(uid, ()):
-                        _f = fiyat_son_by_kod.get(_puid) or _fiyat_bul(_puid, tarih_str)
+                        # Emniyet ağında da tarih-etkin ÖNCE (MALIYET-014).
+                        _f = _fiyat_bul(_puid, tarih_str) or fiyat_son_by_kod.get(_puid)
                         if _f is not None:
                             fiyat = _f
                             break
@@ -20282,7 +20294,21 @@ def ops_maliyet_recete_kaydet(body: ReceteBody):
         raise HTTPException(400, "En az 1 geçerli hammadde satırı gerekli (kod + miktar>0)")
     with db() as (conn, cur):
         _ensure_maliyet_tablolari(cur)
-        # Mevcut reçeteyi temizle, yeniden yaz
+        # 🔴 OPS-023 (2026-09-02): reçete DELETE+reinsert ile güncelleniyordu ve
+        # eski hâlin HİÇBİR İZİ kalmıyordu — `recete-sil` ucuna audit eklenmiş
+        # ama asıl ezen bu uçta yoktu.
+        # Neden önemli: reçete, ÜRÜN-AÇ maliyet motorunun (L2 teorik) girdisi.
+        # Reçete değişince geçmiş günlerin teorik maliyeti de değişmiş olur ve
+        # "dün food cost neden farklıydı" sorusu cevapsız kalır. Geçmişi
+        # açıklayamayan bir maliyet modeli denetlenemez.
+        # ⚠️ Tam versiyonlama (geçerlilik tarihli reçete) daha büyük bir iş;
+        # burada yapılan ASGARİSİ: eski satırlar SİLİNMEDEN ÖNCE deftere
+        # yazılıyor, böylece "o gün reçete neydi" sorusu cevaplanabiliyor.
+        cur.execute(
+            "SELECT hammadde_kodu, hammadde_adi, miktar, birim "
+            "FROM urun_recete WHERE urun_id = %s ORDER BY hammadde_kodu", (urun,))
+        _onceki = [dict(r) for r in (cur.fetchall() or [])]
+
         cur.execute("DELETE FROM urun_recete WHERE urun_id = %s", (urun,))
         for h in hammaddeler:
             hk = str(h.hammadde_kodu).strip()
@@ -20299,7 +20325,19 @@ def ops_maliyet_recete_kaydet(body: ReceteBody):
                 (urun, body.urun_adi or urun, hk, h.hammadde_adi or hk,
                  round(float(h.miktar), 4), h.birim),
             )
-    return {"success": True, "urun_id": urun, "hammadde_sayisi": len(hammaddeler)}
+        audit(cur, "urun_recete", urun, "RECETE_KAYDET",
+              eski={"hammaddeler": _onceki, "satir": len(_onceki)},
+              yeni={"hammaddeler": [
+                        {"hammadde_kodu": str(h.hammadde_kodu).strip(),
+                         "hammadde_adi": h.hammadde_adi,
+                         "miktar": round(float(h.miktar), 4), "birim": h.birim}
+                        for h in hammaddeler],
+                    "satir": len(hammaddeler),
+                    "urun_adi": body.urun_adi or urun})
+    return {"success": True, "urun_id": urun, "hammadde_sayisi": len(hammaddeler),
+            # Sahip "ne değişti" görebilsin: önceki satır sayısı yanıtta.
+            "onceki_hammadde_sayisi": len(_onceki),
+            "ilk_kayit": len(_onceki) == 0}
 
 
 @router.delete("/maliyet/recete-sil/{urun_id}")
