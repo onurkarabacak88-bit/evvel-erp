@@ -97,6 +97,31 @@ export default function EkstreYukle() {
     } finally { setYukleniyor(false); }
   }
 
+  // 🔴 KART-012b (2026-09-02): ekstre-yukle artık SAF ÖNİZLEME (kaydet=false).
+  // Özet + faiz + CFO planı + PDF arşivi yalnız KABUL jestinde yazılır. Aynı
+  // dosya ikinci kez gönderilir; sunucu her şeyi BELGEDEN yeniden türetir
+  // (istemci beyanına güvenilmez — İz & Belge doktrini). Bu desen zaten vardı:
+  // kart eklendikten sonra lastFile yeniden POST ediliyor (yukarıda).
+  async function ozetKaydet() {
+    if (!lastFile) return null;
+    const fd = new FormData();
+    fd.append('dosya', lastFile);
+    try {
+      const r = await fetch('/api/kartlar/ekstre-yukle?kaydet=1', { method: 'POST', body: fd });
+      const d = await r.json();
+      if (!r.ok) return null;
+      // ⚠️ YALNIZ özet alanları alınır. `islemler`/`mutabakat` ezilirse
+      // kullanıcının satır seçimi (indeks bazlı!) ve akışın kendi
+      // güncellemeleri kaybolur — yanlış satırlar aktarılabilirdi.
+      setSonuc(sn => (sn ? { ...sn,
+        onizleme: d.onizleme, donem_kaydedildi: d.donem_kaydedildi,
+        donem_cakismasi: d.donem_cakismasi, cfo_odeme_plani: d.cfo_odeme_plani,
+        faiz_guncellendi: d.faiz_guncellendi, belge_arsivlendi: d.belge_arsivlendi,
+      } : sn));
+      return d;
+    } catch { return null; }
+  }
+
   const m = sonuc?.mutabakat;
   const kart = sonuc?.eslesen_kart;
   const yeniIdx = (sonuc?.islemler || []).map((x, i) => x.durum === 'yeni' ? i : -1).filter(i => i >= 0);
@@ -197,6 +222,7 @@ export default function EkstreYukle() {
       setImpSonuc({ ...impOzet, tek_tik: true, devir: devirYapildi,
         devir_duzeltme: devirDuzeltme, yeni_sistem_borc: yeniBorc,
         buyuk_fark_onay_gerek: Math.abs(sonFark) > 1 });
+      await ozetKaydet();   // KART-012b: kabul jesti → özet/plan/faiz/arşiv yazılır
     } catch (e) { setHata(e.message); }
     finally { setTtBusy(false); }
   }
@@ -223,6 +249,7 @@ export default function EkstreYukle() {
         islemler: s.islemler.map((x, i) => secili.has(i) && x.durum === 'yeni' ? { ...x, durum: 'eslesti' } : x),
       }));
       setSecili(new Set());
+      await ozetKaydet();   // KART-012b
     } catch (e) { setHata(e.message); } finally { setImpBusy(false); }
   }
   const formatAd = { worldcard: 'Worldcard / Yapı Kredi', enpara: 'Enpara', axess: 'Axess / Akbank', ziraat: 'Ziraat Bankkart', garanti: 'Garanti Bonus' }[sonuc?.banka_format] || sonuc?.banka_format;
@@ -231,7 +258,7 @@ export default function EkstreYukle() {
     <div className="page">
       <div className="page-header">
         <h2>📄 Ekstre Yükle</h2>
-        <p>Banka kredi kartı ekstresini (PDF) yükle → otomatik ayrıştır + mutabakat. <strong>Önizleme — kayıt yazılmaz.</strong></p>
+        <p>Banka kredi kartı ekstresini (PDF) yükle → otomatik ayrıştır + mutabakat. <strong>Önizleme — kayıt yazılmaz.</strong> Özet ve ödeme planı ancak siz kabul edince işlenir.</p>
       </div>
 
       <div className="card mb-16" style={{ padding: 20, textAlign: 'center', border: '1px dashed var(--border)' }}
@@ -326,6 +353,37 @@ export default function EkstreYukle() {
                       Yüklenen ekstre <b>{ay}</b> dönemine ait (son ödeme {sot}). Kayıt doğru aya işlenir —
                       ama güncel borcun için bu ayın ekstresini de yüklemeyi unutma (üstteki şerit hangi kartın beklediğini gösterir).
                     </div>
+                  </div>
+                )}
+                {/* KART-009: ozet ezilmedi — sebebini SOYLE (sessiz koruma yarim koruma). */}
+                {sonuc.donem_cakismasi && (
+                  <div className="card mb-16" style={{ padding: 14, borderLeft: '3px solid var(--yellow)', background: 'rgba(234,179,8,.07)' }}>
+                    <div style={{ fontWeight: 800, color: 'var(--yellow)', fontSize: 14 }}>
+                      ⚠️ Bu ayda BAŞKA kesimli ekstre var — özet EZİLMEDİ
+                    </div>
+                    <div style={{ fontSize: 13, marginTop: 6, lineHeight: 1.6 }}>
+                      Kayıtlı olan <b>{sonuc.donem_cakismasi.mevcut_kesim}</b> kesimli,
+                      yüklediğiniz <b>{sonuc.donem_cakismasi.yeni_kesim}</b> kesimli.
+                      Aynı takvim ayına düştükleri için biri diğerinin yerine yazılacaktı.
+                      Hangisi geçerliyse onu bırakın — yenisi geçerliyse önce o dönemi silip
+                      yeniden yükleyin. Satır aktarımı bundan etkilenmez.
+                    </div>
+                  </div>
+                )}
+                {/* KART-012b: borç zaten uyumluysa aktarılacak satır olmaz →
+                    hiçbir kabul jesti tetiklenmez ve özet HİÇ yazılmazdı.
+                    O yüzden açık bir kaydet düğmesi şart. */}
+                {sonuc.onizleme && sonuc.kesim_tarihi && kart && !sonuc.donem_cakismasi && (
+                  <div className="card mb-16" style={{ padding: 14, borderLeft: '3px solid var(--blue)' }}>
+                    <div style={{ fontWeight: 700, fontSize: 14 }}>📌 Bu ekstre henüz kaydedilmedi</div>
+                    <div style={{ fontSize: 13, marginTop: 4, color: 'var(--text2)' }}>
+                      Şu an sadece bakıyorsunuz — dönem özeti, faiz oranı ve ödeme planı
+                      yazılmadı. Satır aktarırsanız otomatik kaydedilir; aktaracak satır
+                      yoksa buradan kaydedin.
+                    </div>
+                    <button className="btn" style={{ marginTop: 10 }} onClick={ozetKaydet}>
+                      📌 Ekstre özetini kaydet
+                    </button>
                   </div>
                 )}
                 {sonuc.donem_kaydedildi && (

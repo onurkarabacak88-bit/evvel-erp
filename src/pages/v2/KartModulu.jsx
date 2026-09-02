@@ -120,6 +120,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [eksHata, setEksHata] = useState('');
   const [eksDosyaAdi, setEksDosyaAdi] = useState('');
   const [eksLastFile, setEksLastFile] = useState(null);
+  // KART-009 kesim toleransi — TEKNIK SABIT DEGIL IS KURALI; sahip degistirir.
+  const [toleransGun, setToleransGun] = useState(null);
+  const [toleransTaslak, setToleransTaslak] = useState('');
   const [eksTtBusy, setEksTtBusy] = useState(false);
   const [eksImpSonuc, setEksImpSonuc] = useState(null);
   const [eksOnaySor, setEksOnaySor] = useState(null);   // eşik üstü fark onayı {fark, ekstreBorc, yeniBorc, impOzet}
@@ -1049,6 +1052,41 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     setEksOnaySor(null); setManForm(null);
   };
 
+  // KART-012b: ekstre-yukle saf önizleme oldu; kabul jestinde aynı dosya
+  // kaydet=1 ile yeniden gönderilir (sunucu belgeden türetir).
+  const eksOzetKaydet = async () => {
+    if (!eksLastFile) return null;
+    const fd = new FormData();
+    fd.append('dosya', eksLastFile);
+    try {
+      const r = await fetch('/api/kartlar/ekstre-yukle?kaydet=1', { method: 'POST', body: fd });
+      const d = await r.json();
+      if (!r.ok) return null;
+      // Yalnız özet alanları — islemler/mutabakat EZİLMEZ.
+      setEksSonuc((sn) => (sn ? { ...sn,
+        onizleme: d.onizleme, donem_kaydedildi: d.donem_kaydedildi,
+        donem_cakismasi: d.donem_cakismasi, cfo_odeme_plani: d.cfo_odeme_plani,
+        faiz_guncellendi: d.faiz_guncellendi, belge_arsivlendi: d.belge_arsivlendi,
+      } : sn));
+      return d;
+    } catch { return null; }
+  };
+
+  const toleransKaydet = async () => {
+    const g = parseInt(toleransTaslak, 10);
+    if (!Number.isFinite(g) || g < 0 || g > 15) { alert('Eşik 0–15 gün arasında olmalı.'); return; }
+    try {
+      const r = await fetch('/api/kartlar/kesim-tolerans', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ gun: g }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) { alert(d.detail || 'Eşik güncellenemedi.'); return; }
+      setToleransGun(d.gun);
+      alert(`Eşik ${d.eski} → ${d.gun} gün olarak güncellendi. Ekstreyi yeniden yükleyin.`);
+    } catch (e) { alert('Eşik güncellenemedi: ' + e.message); }
+  };
+
   const eksDosyaYukle = async (file) => {
     if (!file) return;
     setEksLastFile(file);
@@ -1059,6 +1097,11 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     fd.append('dosya', file);
     try {
       // api util JSON gövde varsayar — dosya için düz fetch (klasik desen)
+      // Esigi burada cekiyoruz: cakisma uyarisi ciktiginda sahip rakami GORSUN.
+      fetch('/api/kartlar/kesim-tolerans')
+        .then((r) => (r.ok ? r.json() : null))
+        .then((d) => { if (d && d.gun != null) { setToleransGun(d.gun); setToleransTaslak(String(d.gun)); } })
+        .catch(() => {});
       const res = await fetch('/api/kartlar/ekstre-yukle', { method: 'POST', body: fd });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail || 'Ayrıştırılamadı');
@@ -1093,6 +1136,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     const sonFark = Math.round((ekstreBorc - (yeniBorc ?? 0)) * 100) / 100;
     setEksSonuc((sn) => ({ ...sn, mutabakat: { ...sn.mutabakat, sistem_borc: yeniBorc, fark: sonFark, tutar_uyumlu: Math.abs(sonFark) < 1 } }));
     setEksImpSonuc({ ...impOzet, tek_tik: true, devir: devirYapildi, devir_duzeltme: devirDuzeltme, yeni_sistem_borc: yeniBorc, buyuk_fark_onay_gerek: Math.abs(sonFark) > 1 });
+    await eksOzetKaydet();   // KART-012b: kabul jesti → özet/faiz/plan/arşiv yazılır
     onToast?.('⚡ Mutabakat tamam — kart borcu ekstreyle eşitlendi');
     yukle();  // kart listesi/rozetler tazelensin
   };
@@ -2756,6 +2800,52 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                         {eksSonuc.devir_cizgisi_uyarisi.kilitlenen_satir} satır ·
                         {' '}{fmt(sayi(eksSonuc.devir_cizgisi_uyarisi.kilitlenen_tutar))} kilitlendi.
                         Ekstre yine de okundu: taksit zinciri ve belge arşivi için kullanılabilir.
+                      </div>
+                    </div>
+                  )}
+                  {/* KART-012b: borç zaten uyumluysa aktarılacak satır olmaz →
+                      hiçbir kabul jesti tetiklenmez ve özet HİÇ yazılmazdı. */}
+                  {eksSonuc.onizleme && eksSonuc.kesim_tarihi && eksSonuc.eslesen_kart?.id && !eksSonuc.donem_cakismasi && (
+                    <div style={{ padding: '11px 14px', borderRadius: 11, background: `${R.kart2}`, border: `1px solid ${R.cizgi3}`, fontSize: 12, color: R.metin2, marginBottom: 10, lineHeight: 1.6 }}>
+                      📌 <b style={{ color: R.krem }}>Bu ekstre henüz kaydedilmedi</b><br />
+                      Şu an sadece bakıyorsunuz — dönem özeti, faiz oranı ve ödeme planı
+                      yazılmadı. Satır aktarırsanız otomatik kaydedilir; aktaracak satır
+                      yoksa buradan kaydedin.
+                      <div style={{ marginTop: 8 }}>
+                        <button onClick={eksOzetKaydet}
+                                style={{ padding: '5px 12px', borderRadius: 8, border: `1px solid ${R.cizgi3}`, background: R.zemin, color: R.krem, fontSize: 12, cursor: 'pointer' }}>
+                          📌 Ekstre özetini kaydet
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                  {/* 🔴 KART-009 (2026-09-02): kapi CALISIYOR ama SESSIZDI.
+                      Ozet ezilmiyor — iyi; ama sahip "neden kaydedilmedi"
+                      sorusunun cevabini hicbir yerde goremiyordu. Yukaridaki
+                      ayni ders: gorunmeyen koruma yarim korumadir. */}
+                  {eksSonuc.donem_cakismasi && (
+                    <div style={{ padding: '11px 14px', borderRadius: 11, background: `${R.bakir}16`, border: `1px solid ${R.bakir}66`, fontSize: 12, color: R.metin2, marginBottom: 10, lineHeight: 1.6 }}>
+                      ⚠️ <b style={{ color: R.bakir }}>Bu ayda BAŞKA kesimli bir ekstre zaten kayıtlı — özet EZİLMEDİ</b><br />
+                      Kayıtlı olan <b>{kisaTarih(eksSonuc.donem_cakismasi.mevcut_kesim)}</b> kesimli;
+                      yüklediğiniz <b>{kisaTarih(eksSonuc.donem_cakismasi.yeni_kesim)}</b> kesimli.
+                      Aynı takvim ayına düştükleri için biri diğerinin yerine yazılacaktı.
+                      <div style={{ marginTop: 5, color: R.not2 }}>
+                        Hangisi geçerliyse onu bırakın: yenisi geçerliyse önce o dönemi
+                        silin, sonra yeniden yükleyin. Satır aktarımı bundan etkilenmez.
+                      </div>
+                      <div style={{ marginTop: 8, paddingTop: 8, borderTop: `1px solid ${R.cizgi3}` }}>
+                        <span style={{ color: R.not2 }}>
+                          Eşik: kesim tarihleri <b>{toleransGun ?? '…'}</b> günden fazla
+                          farklıysa ayrı ekstre sayılır.
+                        </span>
+                        {' '}
+                        <input type="number" min={0} max={15} value={toleransTaslak}
+                               onChange={(e) => setToleransTaslak(e.target.value)}
+                               style={{ width: 52, marginLeft: 6, padding: '2px 6px', borderRadius: 7, border: `1px solid ${R.cizgi3}`, background: R.kart2, color: R.krem, fontSize: 12 }} />
+                        <button onClick={toleransKaydet}
+                                style={{ marginLeft: 6, padding: '3px 10px', borderRadius: 7, border: `1px solid ${R.cizgi3}`, background: R.kart2, color: R.metin2, fontSize: 11, cursor: 'pointer' }}>
+                          eşiği güncelle
+                        </button>
                       </div>
                     </div>
                   )}

@@ -3720,6 +3720,8 @@ function CepKartlar({ onGeri }) {
   const [yukBusy, setYukBusy] = useState(false);
   const [ekstreSonuc, setEkstreSonuc] = useState(null);
   const [ekstreHata, setEkstreHata] = useState('');
+  // KART-012b: kabul jestinde aynı PDF kaydet=1 ile yeniden gönderilir → sakla.
+  const [ekstreDosya, setEkstreDosya] = useState(null);
   const [impBusy, setImpBusy] = useState(false);
   const [impSonuc, setImpSonuc] = useState(null);
 
@@ -3738,6 +3740,7 @@ function CepKartlar({ onGeri }) {
 
   const ekstreYukle = async (file) => {
     if (!file) return;
+    setEkstreDosya(file);
     setEkstreHata(''); setEkstreSonuc(null); setImpSonuc(null); setYukBusy(true);
     try {
       const fd = new FormData();
@@ -3755,6 +3758,29 @@ function CepKartlar({ onGeri }) {
     finally { setYukBusy(false); }
   };
 
+  // KART-012b: ekstre-yukle saf önizleme; özet/faiz/plan/arşiv kabul jestinde.
+  const ekstreOzetKaydet = async () => {
+    if (!ekstreDosya) return null;
+    const fd = new FormData();
+    fd.append('dosya', ekstreDosya);
+    const headers = {};
+    try {
+      const mut = (localStorage.getItem('evvelMerkezMutasyonKey') || '').trim();
+      if (mut) headers['X-Evvel-Merkez-Key'] = mut;
+    } catch { /* ignore */ }
+    try {
+      const res = await fetch('/api/kartlar/ekstre-yukle?kaydet=1', { method: 'POST', headers, body: fd });
+      const d = await res.json();
+      if (!res.ok) return null;
+      // Yalnız özet alanları — islemler EZİLMEZ.
+      setEkstreSonuc(sn => (sn ? { ...sn,
+        onizleme: d.onizleme, donem_kaydedildi: d.donem_kaydedildi,
+        donem_cakismasi: d.donem_cakismasi, cfo_odeme_plani: d.cfo_odeme_plani,
+      } : sn));
+      return d;
+    } catch { return null; }
+  };
+
   const eksikleriAktar = async () => {
     const k = ekstreSonuc?.eslesen_kart;
     if (!k?.id) return;
@@ -3768,6 +3794,7 @@ function CepKartlar({ onGeri }) {
       const d = await api('/kartlar/ekstre-import', { method: 'POST', body: { kart_id: k.id, islemler } });
       setImpSonuc({ ...d, _aktarilan: islemler.length });
       setEkstreSonuc(s => ({ ...s, islemler: s.islemler.map(x => (x.durum === 'yeni' && !x.benzer_gider_uyari) ? { ...x, durum: 'eslesti' } : x) }));
+      await ekstreOzetKaydet();   // KART-012b
       kartlariYenile();
     } catch (e) { setEkstreHata(e.message || 'İçe aktarılamadı'); }
     finally { setImpBusy(false); }
@@ -3783,6 +3810,7 @@ function CepKartlar({ onGeri }) {
         donem_borcu: ekstreSonuc.donem_borcu, asgari_tutar: ekstreSonuc.asgari_tutar || null,
         faiz_orani: ekstreSonuc.akdi_faiz_yillik || null } });
       setImpSonuc({ devir: true, yeni_sistem_borc: d.yeni_borc });
+      await ekstreOzetKaydet();   // KART-012b
       kartlariYenile();
     } catch (e) { setEkstreHata(e.message || 'Devir kaydedilemedi'); }
     finally { setImpBusy(false); }

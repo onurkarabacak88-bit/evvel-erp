@@ -6883,21 +6883,102 @@ def _ekstre_txn_map(t: dict) -> dict:
     }
 
 
-# KART-009: kesim tarihi kayma toleransı (gün). Banka tatil kaydırması bunu
-# aşmaz varsayımıyla seçildi; üstü FARKLI bir ekstre sayılır. Bu bir İŞ
-# KURALIDIR — sahip değiştirebilir.
-KART_KESIM_TOLERANS_GUN = 3
+# ── KART-009 KESİM TOLERANSI ─────────────────────────────────────────────
+# "Aynı takvim ayına düşen iki ekstre AYNI ekstre mi, BAŞKA ekstre mi?"
+# sorusunun eşiği. Altındaki fark = aynı ekstrenin yeniden yüklenmesi
+# (okuma düzeltmesi, banka tatil kaydırması) → üzerine yazılır.
+# Üstündeki fark = BAŞKA bir ekstre → yazılmaz, sorulur.
+#
+# 🔴 BU BİR İŞ KURALIDIR, TEKNİK SABİT DEĞİL (2026-09-02). Bankaların kesim
+# kaydırma alışkanlığı sahibin gözlemine bağlı; bir sayıyı koda gömüp
+# "isterseniz değiştirin" demek, değiştirilemeyecek bir yerde bırakmaktır.
+# Bu yüzden `ayarlar` tablosundan okunuyor → deploy gerekmeden değişir.
+KART_KESIM_TOLERANS_VARSAYILAN = 3
+KART_KESIM_TOLERANS_ANAHTAR = "kart_kesim_tolerans_gun"
+
+
+def kart_kesim_tolerans(cur) -> int:
+    """Yürürlükteki kesim toleransı (gün). Ayar yoksa/bozuksa varsayılana düşer.
+
+    ⚠️ Bu fonksiyon ASLA patlamamalı: tek işi bir eşiği okumak, ve okunamadı
+    diye ekstre yüklemenin durması saçma olur. Ama sessizce yutmak da
+    transaction'ı zehirler (bu projede tekrarlayan kusur) → savepoint şart.
+    """
+    try:
+        with savepoint(cur, "kesim_tolerans"):
+            cur.execute("SELECT deger FROM ayarlar WHERE anahtar=%s",
+                        (KART_KESIM_TOLERANS_ANAHTAR,))
+            _r = cur.fetchone()
+    except Exception:  # noqa: BLE001
+        return KART_KESIM_TOLERANS_VARSAYILAN
+    if not _r:
+        return KART_KESIM_TOLERANS_VARSAYILAN
+    try:
+        _v = int(str(dict(_r)["deger"]).strip())
+    except (TypeError, ValueError, KeyError):
+        return KART_KESIM_TOLERANS_VARSAYILAN
+    # 0 meşru bir seçimdir: "kesim tarihi birebir tutmuyorsa bana sor".
+    # 15 üstü anlamsız: yarım aydan geniş tolerans iki ayrı ekstreyi aynı
+    # sayar ve kuralı işlevsizleştirir — kabul etmek, kuralı sessizce
+    # kapatmak olurdu.
+    return _v if 0 <= _v <= 15 else KART_KESIM_TOLERANS_VARSAYILAN
+
+
+@app.get("/api/kartlar/kesim-tolerans")
+def kart_kesim_tolerans_oku():
+    with db() as (conn, cur):
+        return {
+            "gun": kart_kesim_tolerans(cur),
+            "varsayilan": KART_KESIM_TOLERANS_VARSAYILAN,
+            "alt": 0, "ust": 15,
+            "aciklama": ("Aynı takvim ayına iki ekstre düşerse: kesim tarihleri "
+                         "bu kadar GÜN'e kadar farklıysa aynı ekstre sayılır ve "
+                         "üzerine yazılır. Daha fazlaysa başka ekstre sayılır, "
+                         "yazılmaz, size sorulur. 0 = birebir tutmalı."),
+        }
+
+
+class KesimToleransBody(BaseModel):
+    gun: int
+
+
+@app.post("/api/kartlar/kesim-tolerans")
+def kart_kesim_tolerans_yaz(body: KesimToleransBody):
+    if not (0 <= body.gun <= 15):
+        raise HTTPException(400, "Tolerans 0–15 gün arasında olmalı.")
+    with db() as (conn, cur):
+        _eski = kart_kesim_tolerans(cur)
+        cur.execute(
+            """INSERT INTO ayarlar (anahtar, deger, guncelle)
+               VALUES (%s, %s, NOW())
+               ON CONFLICT (anahtar) DO UPDATE
+                 SET deger=EXCLUDED.deger, guncelle=NOW()""",
+            (KART_KESIM_TOLERANS_ANAHTAR, str(body.gun)))
+        # Para davranışını değiştiren bir kural — izsiz değişmez.
+        audit(cur, 'ayarlar', KART_KESIM_TOLERANS_ANAHTAR, 'KESIM_TOLERANS',
+              eski={'gun': _eski}, yeni={'gun': body.gun})
+    return {"success": True, "gun": body.gun, "eski": _eski}
 
 
 @app.post("/api/kartlar/ekstre-yukle")
-def kart_ekstre_yukle(dosya: UploadFile = File(...)):
+def kart_ekstre_yukle(dosya: UploadFile = File(...), kaydet: bool = False):
     """Faz E0: Banka kredi kartı ekstresi (PDF) yükle → ayrıştır → mutabakat ÖNİZLEME.
 
-    ⚠️ "Hiçbir şey yazmaz" DEĞİL (docstring 2026-08-10'a kadar öyle diyordu, yanıltıcıydı):
-    İŞLEM SATIRLARI yazılmaz — onlar sahibin şahsi/işletme sınıflandırmasından sonra
-    /api/kartlar/ekstre-import ile gider. Ama kart son 4 haneden EŞLEŞİRSE ekstre
-    ÖZETİ yazılır (_ekstre_eslesme_mutabakat): dönem borcu · asgari · faiz · taksit
-    yükü snapshot'ı ve son ödeme planı güncellenir. Kart eşleşmezse hiçbir yazma olmaz.
+    kaydet=False (VARSAYILAN) → SAF ÖNİZLEME: hiçbir kalıcı yazım yapılmaz.
+    kaydet=True  → kabul jesti: özet snapshot'ı + faiz oranı + CFO ödeme planı +
+                   PDF arşivi yazılır. İşlem SATIRLARI yine ayrı uçtan gider
+                   (/api/kartlar/ekstre-import) — sahibin sınıflandırması sonrası.
+
+    📜 GEÇMİŞ (KART-012b, 2026-09-02): bu uç 2026-08-10'a kadar "hiçbir şey
+    yazmaz" diyordu, yanlıştı; sonra dürüstçe "özet yazılır" denildi ama SORUN
+    DURUYORDU — sahip "bir bakayım" diye PDF açtığında da yazıyordu ve ekranda
+    hâlâ "Önizleme — kayıt yazılmaz." görünüyordu. Somut zarar: aynı ay
+    kovasındaki önceki dönem özeti sessizce eziliyor, istenmeyen ödeme planı
+    doğuyor, arşivdeki belgenin aslı değişiyordu.
+    ⚠️ conn.commit()'i kaldırmak ÇÖZMEZ: `db()` başarılı çıkışta zaten commit
+    ediyor (database.py). Yazımı durdurmanın tek yolu KOŞULU kapatmaktır.
+    İlke: para davranışını değiştiren işlem ÖNCE kuru çalışır, sahip görür,
+    SONRA kabul eder.
 
     Worldcard + Enpara + Axess + Garanti + Ziraat desteklenir.
     Sync def: FastAPI threadpool'da çalışır, pdfplumber event-loop'u bloklamaz."""
@@ -6916,8 +6997,9 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
         from ekstre_parser import is_axess, parse_axess
         if is_axess(raw):
             sonuc = parse_axess(raw)
-            sonuc = _ekstre_eslesme_mutabakat(sonuc, raw)
-            return _ekstre_pdf_arsivle(sonuc, raw, dosya.filename or "ekstre.pdf")
+            sonuc = _ekstre_eslesme_mutabakat(sonuc, raw, kaydet=kaydet)
+            return _ekstre_pdf_arsivle(sonuc, raw, dosya.filename or "ekstre.pdf",
+                                       kaydet=kaydet)
     except HTTPException:
         raise
     except Exception:
@@ -7008,8 +7090,9 @@ def kart_ekstre_yukle(dosya: UploadFile = File(...)):
         except Exception:
             pass
 
-    sonuc = _ekstre_eslesme_mutabakat(sonuc, raw)
-    return _ekstre_pdf_arsivle(sonuc, raw, dosya.filename or "ekstre.pdf")
+    sonuc = _ekstre_eslesme_mutabakat(sonuc, raw, kaydet=kaydet)
+    return _ekstre_pdf_arsivle(sonuc, raw, dosya.filename or "ekstre.pdf",
+                               kaydet=kaydet)
 
 
 def _ekstre_belge_kolonlari(cur):
@@ -7021,12 +7104,20 @@ def _ekstre_belge_kolonlari(cur):
     cur.execute("ALTER TABLE kart_ekstre_donem ADD COLUMN IF NOT EXISTS belge_ts TIMESTAMPTZ")
 
 
-def _ekstre_pdf_arsivle(sonuc, raw: bytes, dosya_ad: str):
+def _ekstre_pdf_arsivle(sonuc, raw: bytes, dosya_ad: str, kaydet: bool = False):
     """Yüklenen ekstre PDF'inin ASLINI dönem kaydına iliştirir (kart+dönem tekil).
     Kart eşleşmediyse ya da dönem yazılamadıysa sessizce False döner — arşiv
     başarısızlığı yükleme/mutabakat sonucunu ASLA düşürmez (ana iş rakamlar)."""
     kart = (sonuc or {}).get("eslesen_kart") or {}
     kesim = (sonuc or {}).get("kesim_tarihi")
+    # KART-012b: bu, iki yükleme yolunun da SON adımı → `onizleme` bayrağını
+    # burada koyuyoruz ki her yanıt ne olduğunu söylesin.
+    sonuc["onizleme"] = not kaydet
+    if not kaydet:
+        # Arşiv de bir yazımdır: önizleme, daha önce kaydedilmiş bir dönemin
+        # belge_pdf'ini sessizce ezerdi (İz & Belge doktrini — belgenin aslı).
+        sonuc["belge_arsivlendi"] = False
+        return sonuc
     if not kart.get("id") or not kesim or not raw:
         sonuc["belge_arsivlendi"] = False
         return sonuc
@@ -7069,7 +7160,8 @@ def kart_ekstre_belge(kart_id: str, donem: str):
                      headers={"Content-Disposition": f'inline; filename="{ad}"'})
 
 
-def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
+def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None,
+                              kaydet: bool = False):
     """Ekstre sonucu → kart eşleştir (son 4 hane) + mutabakat + faiz/snapshot/CFO yaz.
     Hem normal (Worldcard/Enpara) hem Axess akışının ortak son adımı.
 
@@ -7679,7 +7771,9 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                                   and not sonuc["devir_cizgisi_uyarisi"].get("hata"))
             akdi = sonuc.get("akdi_faiz_yillik")
             gec = sonuc.get("gecikme_faiz_yillik")
-            if akdi is not None and akdi > 0 and not _gecmis_ekstre:
+            # KART-012b: yalnız KAYDET jestinde. `not _gecmis_ekstre`
+            # (KART-012a) yerinde duruyor — iki fren birbirini kapsamaz.
+            if kaydet and akdi is not None and akdi > 0 and not _gecmis_ekstre:
                 cur.execute(
                     "UPDATE kartlar SET faiz_orani=%s, "
                     "gecikme_faiz_orani=COALESCE(%s, gecikme_faiz_orani) WHERE id=%s",
@@ -7710,7 +7804,7 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                             "WHERE kart_id=%s AND donem=DATE_TRUNC('month', %s::date)",
                             (kart["id"], kt))
                         _mv = dict(cur.fetchone() or {}).get("kesim_tarihi")
-                    if _mv and abs((date.fromisoformat(str(kt)[:10]) - _mv).days) > KART_KESIM_TOLERANS_GUN:
+                    if _mv and abs((date.fromisoformat(str(kt)[:10]) - _mv).days) > kart_kesim_tolerans(cur):
                         _donem_cakisti = True
                         sonuc["donem_kaydedildi"] = False
                         sonuc["donem_cakismasi"] = {
@@ -7722,7 +7816,19 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
                         }
                 except Exception:  # noqa: BLE001 — kontrol yüklemeyi kilitlemez
                     _donem_cakisti = False
-            if kt and not _donem_cakisti:
+            # 🔴 KART-012b (2026-09-02): buranın adı "önizleme"ydi ama KALICI
+            # YAZIYORDU — ekranda "Önizleme — kayıt yazılmaz." yazarken.
+            # ⚠️ conn.commit()'i kaldırmak ÇÖZMEZ: `db()` başarılı çıkışta
+            # zaten otomatik commit ediyor (database.py:147). Yazımı durdurmanın
+            # tek yolu KOŞULU kapatmak.
+            # Somut zarar: sahip "bir bakayım" diye PDF açar → aynı ay kovasındaki
+            # önceki dönem özeti upsert'le ezilir ve 7758'deki erken commit
+            # yüzünden geri sarılamaz.
+            # Kuru çalıştırma kapısı ilkesi: para davranışını değiştiren işlem
+            # ÖNCE kuru çalışır, sahip listeyi görür, SONRA kabul eder.
+            if kt and not _donem_cakisti and not kaydet:
+                sonuc["donem_kaydedildi"] = False
+            if kt and not _donem_cakisti and kaydet:
                 try:
                     cur.execute(
                         """
@@ -7765,7 +7871,9 @@ def _ekstre_eslesme_mutabakat(sonuc, raw: Optional[bytes] = None):
             brc = sonuc.get("donem_borcu")
             # Sistem başlangıcı 2026-06-01: Haziran ÖNCESİ son ödemeli ekstreden plan üretilmez
             # (eski ekstre tekrar yüklense bile hayalet 'vadesi geçmiş' oluşmasın).
-            if sot and (asg or brc) and str(sot)[:10] >= '2026-06-01' and not _gecmis_ekstre:
+            # KART-012b: plan da yalnız kaydet jestinde doğar — "bakmak"
+            # Ödeme Merkezi'nde satır açmamalı.
+            if kaydet and sot and (asg or brc) and str(sot)[:10] >= '2026-06-01' and not _gecmis_ekstre:
                 acik = f"Kart ekstresi: {kart['kart_adi']} — asgari {asg}"
                 cur.execute(
                     """UPDATE odeme_plani SET tarih=%s::date, odenecek_tutar=%s, asgari_tutar=%s,
@@ -7860,7 +7968,7 @@ def kart_manuel_ekstre(kid: str, body: ManuelEkstreBody):
         except Exception:  # noqa: BLE001
             _mv = None
         if (_mv and not body.uzerine_yaz
-                and abs((date.fromisoformat(kesim) - _mv).days) > KART_KESIM_TOLERANS_GUN):
+                and abs((date.fromisoformat(kesim) - _mv).days) > kart_kesim_tolerans(cur)):
             raise HTTPException(409, (
                 f"Bu ayda {_mv} kesimli bir ekstre zaten kayıtlı; siz {kesim} "
                 "girdiniz. Kaydetmek İLKİNİ siler. Emin iseniz 'üzerine yaz' "
