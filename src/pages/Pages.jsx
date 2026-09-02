@@ -1190,12 +1190,23 @@ export function SabitGiderler() {
                     {hatalar.baslangic_tarihi && <span style={{color:'var(--red)',fontSize:11}}>{hatalar.baslangic_tarihi}</span>}
                   </div>
                 )}
-                {duzenleId && ZORUNLU_KATEGORILER.includes(form.kategori) && (
+                {/* 🔴 TANIM-004 (2026-09-02): bu alan YALNIZ Kira'da çiziliyordu.
+                    Diğer sabit giderlerde (abonelik, fatura, hizmet…) tutar
+                    değiştirmek arka planda YERİNDE UPDATE yapıyor ve GEÇMİŞİ
+                    de değiştiriyordu: 3 ay önceki rapora bugünkü tutarla
+                    bakılıyordu. Alan artık HER kategoride görünür — Kira'da
+                    zorunlu, diğerlerinde isteğe bağlı. Boş bırakmanın ne
+                    demek olduğu da AÇIKÇA yazıyor; sessiz davranış kalmadı. */}
+                {duzenleId && (
                   <div className="form-group" style={{gridColumn:'1/-1',background:'rgba(255,200,0,0.08)',padding:'12px',borderRadius:8,border:'1px solid var(--yellow)'}}>
-                    <label>📅 Hangi Aydan İtibaren Geçerli? *</label>
+                    <label>📅 Hangi Aydan İtibaren Geçerli? {ZORUNLU_KATEGORILER.includes(form.kategori) ? '*' : ''}</label>
                     <input type="date" value={form.gecerlilik_tarihi} onChange={e=>setForm({...form,gecerlilik_tarihi:e.target.value})} style={{borderColor:hatalar.gecerlilik_tarihi?'var(--red)':''}}/>
                     {hatalar.gecerlilik_tarihi && <span style={{color:'var(--red)',fontSize:11}}>{hatalar.gecerlilik_tarihi}</span>}
-                    <p style={{fontSize:11,color:'var(--text3)',marginTop:4}}>Eski kayıt kapatılır, bu tarihten itibaren yeni tutar geçerli olur.</p>
+                    <p style={{fontSize:11,color:'var(--text3)',marginTop:4}}>
+                      {form.gecerlilik_tarihi
+                        ? 'Eski kayıt kapatılır, bu tarihten itibaren yeni tutar geçerli olur — geçmiş raporlar DEĞİŞMEZ.'
+                        : '⚠ Boş bırakılırsa kayıt YERİNDE güncellenir: geçmiş aylar da yeni tutarla görünür. Geçmişi korumak için tarih girin.'}
+                    </p>
                   </div>
                 )}
                 {['Kira','Abonelik'].includes(form.kategori) && (

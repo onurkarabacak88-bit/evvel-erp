@@ -23075,7 +23075,12 @@ def truth_durum():
 
 
 @router.get("/truth/personel-risk-skorlari")
-def truth_personel_risk_skorlari(gun: int = 90):
+def truth_personel_risk_skorlari(
+    gun: int = 90,
+    # TRUTH-006: pencere çıpası. Verilmezse bugün (geriye uyum). Geçmiş bir
+    # günün analizi yeniden üretilebilsin diye var.
+    bitis: Optional[str] = Query(None, description="YYYY-MM-DD; boşsa bugün"),
+):
     """Akıllı Denetim + diğer kaynaklardan (örn. fire_foto_tekrar) üretilen
     personel_risk_sinyal kayıtlarından zaman-ağırlıklı risk skoru.
 
@@ -23087,7 +23092,8 @@ def truth_personel_risk_skorlari(gun: int = 90):
         return {"skorlar": [], "import_hata": str(e)}
     with db() as (_, cur):
         try:
-            skorlar = _tm.personel_risk_skorlari(cur, gun=gun)
+            skorlar = _tm.personel_risk_skorlari(
+                cur, gun=gun, bitis=(bitis or None) if isinstance(bitis, str) else None)
         except Exception as e:
             log.warning("personel_risk_skorlari hata: %s", e)
             skorlar = []
@@ -24124,7 +24130,11 @@ def truth_geri_bildirim(body: GeriBildirimBody):
 
 
 @router.get("/truth/ogrenme-ozeti/{sube_id}")
-def truth_ogrenme_ozeti(sube_id: str, son_gun: int = 90):
+def truth_ogrenme_ozeti(
+    sube_id: str,
+    son_gun: int = 90,
+    bitis: Optional[str] = Query(None, description="YYYY-MM-DD; boşsa bugün"),
+):
     """Öğrenme Katmanı özeti — motor ne kadar iyi öğrendi?
 
     Son N günde hangi senaryolar kaç kez görüldü,
@@ -24135,7 +24145,9 @@ def truth_ogrenme_ozeti(sube_id: str, son_gun: int = 90):
     except Exception as e:
         raise HTTPException(500, f"truth_motor import edilemedi: {e}")
     with db() as (conn, cur):
-        return _tm.ogrenme_ozeti(cur, sube_id, son_gun=son_gun)
+        return _tm.ogrenme_ozeti(
+            cur, sube_id, son_gun=son_gun,
+            bitis=(bitis or None) if isinstance(bitis, str) else None)
 
 
 # ===========================================================================

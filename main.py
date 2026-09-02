@@ -10474,9 +10474,21 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
             """, (gid,))
             # Yeni kayıt aç — gecerlilik_tarihi'nden itibaren
             yeni_id = str(uuid.uuid4())
-            kira_artis_tarihi_g = g.kira_artis_tarihi
-            if g.gecerlilik_tarihi and g.kira_artis_periyot and g.kira_artis_periyot in KIRA_ARTIS_PERIYOT_MAP:
-                kira_artis_tarihi_g = ay_ekle(g.gecerlilik_tarihi, KIRA_ARTIS_PERIYOT_MAP[g.kira_artis_periyot])
+            # 🔴 TANIM-007 (2026-09-02): kira artış tarihi, DÜZENLEME tarihinden
+            # sıfırdan hesaplanıyordu. Oysa artış yıldönümü SÖZLEŞMENİN
+            # özelliğidir — kiraya 200₺ zam girmek için kaydı açan biri,
+            # farkında olmadan artış saatini o güne kaydırıyordu. Üstelik
+            # ekran `kira_artis_tarihi` alanını hiç göndermiyor (form state'inde
+            # yok), yani `g.kira_artis_tarihi` her zaman None geliyordu ve
+            # koşul HER DÜZENLEMEDE çalışıyordu.
+            # Doğrusu: eski çıpa KORUNUR; yalnız hiç yoksa periyottan türetilir.
+            # ⚠️ Geçmişte kalmış bir artış tarihi İLERİ SARILMAZ — "gecikmiş
+            # artış" gerçek bir bilgidir, ileri sarmak onu gizlerdi.
+            kira_artis_tarihi_g = g.kira_artis_tarihi or eski.get('kira_artis_tarihi')
+            if (kira_artis_tarihi_g is None and g.gecerlilik_tarihi
+                    and g.kira_artis_periyot and g.kira_artis_periyot in KIRA_ARTIS_PERIYOT_MAP):
+                kira_artis_tarihi_g = ay_ekle(g.gecerlilik_tarihi,
+                                              KIRA_ARTIS_PERIYOT_MAP[g.kira_artis_periyot])
             sozlesme_bitis = None
             if g.gecerlilik_tarihi and g.sozlesme_sure_ay:
                 sozlesme_bitis = ay_ekle(g.gecerlilik_tarihi, g.sozlesme_sure_ay)

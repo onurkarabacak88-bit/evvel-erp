@@ -9744,7 +9744,8 @@ def geri_bildirim_isle(
     }
 
 
-def ogrenme_ozeti(cur, sube_id: str, son_gun: int = 90) -> Dict[str, Any]:
+def ogrenme_ozeti(cur, sube_id: str, son_gun: int = 90,
+                  bitis: Optional[str] = None) -> Dict[str, Any]:
     """
     Son N günün gözlem + geri bildirim istatistiklerini özetle.
     Hangi senaryolar ne sıklıkla görüldü, geri bildirim ve doğruluk oranları.
@@ -9768,11 +9769,18 @@ def ogrenme_ozeti(cur, sube_id: str, son_gun: int = 90) -> Dict[str, Any]:
             FROM truth_gozlem g
             LEFT JOIN truth_geri_bildirim gb ON gb.gozlem_id = g.id
             WHERE g.sube_id = %s
-              AND g.tarih >= CURRENT_DATE - (%s || ' days')::INTERVAL
+              -- 🔴 TRUTH-006 (2026-09-02): pencere CURRENT_DATE'e çıpalıydı.
+              -- Geçmiş bir günün analizi BUGÜNDEN geriye bakan istatistikle
+              -- sunuluyordu; aynı gün için iki farklı zamanda çalıştırılan
+              -- analiz FARKLI sonuç veriyordu. Denetim, tekrar üretilemeyen
+              -- sayı ile yapılamaz.
+              AND g.tarih >= COALESCE(%s::date, CURRENT_DATE) - (%s || ' days')::INTERVAL
+              AND g.tarih <= COALESCE(%s::date, CURRENT_DATE)
             GROUP BY g.en_olasilik_senaryo
             ORDER BY toplam DESC
             """,
-            (sube_id, str(son_gun)),
+            # Sıra SQL'deki %s sırasıyla birebir: sube_id, çıpa, gün, çıpa.
+            (sube_id, bitis, str(son_gun), bitis),
         )
         rows = [dict(r) for r in (cur.fetchall() or [])]
     except Exception as e:
@@ -9931,7 +9939,8 @@ def gunluk_tam_analiz(
 _RISK_DECAY_YARI_OMUR_GUN = 30.0  # sinyal etkisi her 30 günde yarıya iner
 
 
-def personel_risk_skorlari(cur, gun: int = 90, min_skor: float = 1.0) -> List[Dict[str, Any]]:
+def personel_risk_skorlari(cur, gun: int = 90, min_skor: float = 1.0,
+                           bitis: Optional[str] = None) -> List[Dict[str, Any]]:
     """Son `gun` gündeki personel_risk_sinyal kayıtlarından, zaman-ağırlıklı
     (üstel decay) bir risk skoru üretir. Sadece CFO/operasyon panelinde
     kullanılmak üzere — personelin kendi gördüğü hiçbir ekrana eklenmez.
@@ -9943,15 +9952,20 @@ def personel_risk_skorlari(cur, gun: int = 90, min_skor: float = 1.0) -> List[Di
         FROM personel_risk_sinyal prs
         LEFT JOIN personel p ON p.id = prs.personel_id
         LEFT JOIN subeler s ON s.id = prs.sube_id
-        WHERE prs.tarih >= CURRENT_DATE - (%s || ' days')::interval
+        -- TRUTH-006: pencere `bitis`e çıpalanır; verilmezse bugün.
+        WHERE prs.tarih >= COALESCE(%s::date, CURRENT_DATE) - (%s || ' days')::interval
+          AND prs.tarih <= COALESCE(%s::date, CURRENT_DATE)
         ORDER BY prs.tarih DESC, prs.olusturma DESC
         """,
-        (int(gun),),
+        (bitis, int(gun), bitis),
     )
     rows = cur.fetchall() or []
 
     from datetime import date as _date
-    bugun = _date.today()
+    # ⚠️ Decay referansı da pencereyle AYNI çıpaya bağlanmalı. Bugüne göre
+    # decay hesaplayıp geçmiş pencereyi raporlamak, eski sinyalleri olduğundan
+    # zayıf gösterirdi — pencereyi taşıyıp ağırlığı taşımamak yeni bir sapma.
+    bugun = _date.fromisoformat(bitis) if bitis else _date.today()
 
     agg: Dict[str, Dict[str, Any]] = {}
     for r in rows:
