@@ -17,7 +17,8 @@ Ortam değişkenleri:
     WA_GROUP_ID      — Grup chat ID (@g.us ile biten)
 """
 
-import os, re, json, logging, urllib.request, urllib.error
+import os
+import time as _time, re, json, logging, urllib.request, urllib.error
 from datetime import date, timedelta
 from database import db
 
@@ -1107,11 +1108,34 @@ def wa_chatid_normalize(telefon: str) -> str:
     return digits + "@c.us"
 
 
+# 🔴 ENT-011 (2026-09-02): KOTA KARANTİNASI
+# Green API kotası dolunca HTTP 466 döner. Eskiden bu yalnız
+# `{"basarili": False, "hata": "http_466"}` olarak geri veriliyordu ve çağıran
+# denemeye devam ediyordu: gece zinciri onlarca mesajı sırayla deniyor, hepsi
+# 466 alıyor, her biri bir HTTP turu harcıyordu. Kota dolu olduğunu ÖĞRENİP
+# susmak yerine sistem duvara tekrar tekrar vuruyordu.
+# Karantina: 466 görülünce belirli bir süre HİÇ denenmez; süre dolunca tek bir
+# deneme yapılır (yarı-açık kapı). Bu bir "sessizce yutma" DEĞİLDİR — karantina
+# durumu dönen sözlükte açıkça yazar.
+_KOTA_KARANTINA_SN = 900          # 15 dk — kota pencereleri tipik olarak saatlik
+_kota_karantina_bitis = 0.0
+
+
+def wa_kota_durumu() -> dict:
+    """Karantina açık mı — çağıranlar ve teşhis için okunabilir durum."""
+    kalan = max(0, int(_kota_karantina_bitis - _time.time()))
+    return {"karantinada": kalan > 0, "kalan_sn": kalan}
+
+
 def _wa_send(chat_id: str, mesaj: str) -> dict:
     """
     Green API'ye tek bir mesaj gönderir. Düşük seviye çekirdek.
     Dönüş: {"basarili": bool, "mesaj_id": str|None, "hata": str|None}
     """
+    global _kota_karantina_bitis
+    if _time.time() < _kota_karantina_bitis:
+        return {"basarili": False, "mesaj_id": None, "hata": "kota_karantina",
+                "karantina_kalan_sn": int(_kota_karantina_bitis - _time.time())}
     instance_id = os.getenv("WA_INSTANCE_ID", "").strip()
     token       = os.getenv("WA_TOKEN", "").strip()
     chat_id     = (chat_id or "").strip()
@@ -1136,6 +1160,11 @@ def _wa_send(chat_id: str, mesaj: str) -> dict:
             return {"basarili": False, "mesaj_id": None, "hata": "beklenmedik_yanit"}
     except urllib.error.HTTPError as e:
         logger.error(f"WhatsApp HTTP hatası: {e.code}")
+        if e.code == 466:
+            # Kota doldu → karantinaya al, sıradaki mesajlar duvara vurmasın.
+            _kota_karantina_bitis = _time.time() + _KOTA_KARANTINA_SN
+            logger.warning("WhatsApp KOTA DOLU (466) — %d sn karantinaya alındı",
+                           _KOTA_KARANTINA_SN)
         return {"basarili": False, "mesaj_id": None, "hata": f"http_{e.code}"}
     except Exception as e:
         logger.error(f"WhatsApp hatası: {e}")

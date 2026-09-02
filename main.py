@@ -1237,11 +1237,29 @@ def kapanis_hatirlatma_tara():
                     f"Kapanışa ~1 saat kaldı. Kasa sayımı + ciro girip mührü atmayı unutma. Teşekkürler 🙏"
                 )
                 try:
-                    whatsapp_gonder_numara(tel, msg)
-                    cur.execute("UPDATE subeler SET kapanis_hatirlatma_tarih=%s WHERE id=%s", (tarih, d["id"]))
-                    conn.commit()
-                except Exception:
-                    pass
+                    # 🔴 ENT-003 (2026-09-02): `whatsapp_gonder_numara` HATA
+                    # DURUMUNDA EXCEPTION ATMAZ — `{"basarili": False}` döner.
+                    # Kod dönüşü hiç okumadan "bugün gönderildi" damgasını
+                    # basıyordu. Sonuç: Green API kotası dolu ya da numara
+                    # geçersizse mesaj GİTMİYOR ama sistem gitmiş sayıyor ve
+                    # bir daha DENEMİYOR (damga o günü kapatıyor).
+                    # Kapanış hatırlatması kaçınca kapanış da kaçabilir; bu,
+                    # sessiz bir operasyon kaybı.
+                    _wa = whatsapp_gonder_numara(tel, msg) or {}
+                    if _wa.get("basarili"):
+                        cur.execute(
+                            "UPDATE subeler SET kapanis_hatirlatma_tarih=%s WHERE id=%s",
+                            (tarih, d["id"]))
+                        conn.commit()
+                    else:
+                        # Damga BASILMIYOR → bir sonraki tur yeniden dener.
+                        logger.warning(
+                            "⏰ kapanış hatırlatma gönderilemedi (şube=%s, hata=%s) — "
+                            "damga basılmadı, sonraki turda tekrar denenecek",
+                            d.get("ad"), _wa.get("hata"))
+                except Exception as _e:  # noqa: BLE001
+                    logger.warning("⏰ kapanış hatırlatma istisna (şube=%s): %s",
+                                   d.get("ad"), _e)
     except Exception as e:
         logger.warning(f"⏰ kapanis hatirlatma tara hatasi (yutuldu): {e}")
 
@@ -13542,6 +13560,22 @@ async def excel_import(dosya: UploadFile = File(...)):
                                 pos_oran_x  = float(sube_row['pos_oran'])
                                 online_oran_x = float(sube_row['online_oran'])
                             else:
+                                # 🔴 VERI-007 (2026-09-02): bilinmeyen şube adı
+                                # SESSİZCE 'sube-merkez'e yazılıyordu — ne hata
+                                # sayılıyor ne atlanan listesine giriyordu.
+                                # Sonuç: Excel'de şube adı yanlış yazılmış bir
+                                # ciro, merkeze ait gibi görünüyor ve şube kârı
+                                # eksik, merkez kârı fazla çıkıyor. Yanlış yere
+                                # yazmak, yazmamaktan daha zararlıdır: ikincisi
+                                # fark edilir, birincisi edilmez.
+                                # Kayıt yine yazılıyor (veri kaybolmasın) ama
+                                # ATLANAN listesine düşüyor ve ekran gösteriyor.
+                                atlanan.append({
+                                    "satir": satir_no,
+                                    "sheet": sheet_name,
+                                    "sebep": "şube adı tanınmadı — MERKEZ'e yazıldı",
+                                    "veri": str(d.get('sube') or '(boş)')[:60],
+                                })
                                 cur.execute("SELECT COALESCE(pos_oran,0) as pos_oran, COALESCE(online_oran,0) as online_oran FROM subeler WHERE id='sube-merkez'")
                                 merkez = cur.fetchone()
                                 pos_oran_x    = float(merkez['pos_oran'])    if merkez else 0.0

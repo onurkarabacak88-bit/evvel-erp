@@ -62,14 +62,41 @@ export default function ExcelImport() {
           <div className="card" style={{marginTop:20}}>
             <h3 style={{marginBottom:16,fontSize:14,fontWeight:600}}>✅ İşlem Sonucu</h3>
             <div style={{display:'flex',flexDirection:'column',gap:8}}>
-              {Object.entries(sonuc.detay||{}).map(([tablo, bilgi]) => (
-                <div key={tablo} style={{display:'flex',justifyContent:'space-between',padding:'8px 12px',background:'var(--bg3)',borderRadius:6,fontSize:13}}>
-                  <span style={{fontWeight:500}}>{tablo}</span>
-                  <span style={{color:bilgi.hata>0?'var(--yellow)':'var(--green)'}}>
-                    ✓ {bilgi.eklenen} eklendi {bilgi.hata>0?`· ${bilgi.hata} hata`:''}
-                  </span>
+              {/* 🔴 VERI-010 (2026-09-02): sunucu her atlanan satır için
+                  satır no + sebep + veri döndürüyordu ama ekran bunu HİÇ
+                  göstermiyordu — "atlanan" kelimesi dosyada geçmiyordu bile.
+                  Sahip "✓ 120 eklendi" görüp dosyanın tamamının girdiğini
+                  sanıyordu. Atlanan satır, görünmediği sürece kayıp satırdır. */}
+              {Object.entries(sonuc.detay||{}).map(([tablo, bilgi]) => {
+                const atl = bilgi.atlanan || [];
+                return (
+                <div key={tablo} style={{padding:'8px 12px',background:'var(--bg3)',borderRadius:6,fontSize:13}}>
+                  <div style={{display:'flex',justifyContent:'space-between'}}>
+                    <span style={{fontWeight:500}}>{tablo}</span>
+                    <span style={{color:(bilgi.hata>0||atl.length>0)?'var(--yellow)':'var(--green)'}}>
+                      ✓ {bilgi.eklenen} eklendi
+                      {bilgi.hata>0?` · ${bilgi.hata} hata`:''}
+                      {atl.length>0?` · ${atl.length} atlandı`:''}
+                    </span>
+                  </div>
+                  {atl.length>0 && (
+                    <div style={{marginTop:6,paddingTop:6,borderTop:'1px solid var(--border)',fontSize:11,color:'var(--text3)'}}>
+                      {atl.slice(0,20).map((a,i)=>(
+                        <div key={i} style={{padding:'2px 0'}}>
+                          satır <b>{a.satir}</b> — {a.sebep}
+                          {a.veri?<span style={{opacity:0.7}}> · «{a.veri}»</span>:null}
+                        </div>
+                      ))}
+                      {atl.length>20 && (
+                        <div style={{marginTop:4,color:'var(--yellow)'}}>
+                          …ve {atl.length-20} satır daha (ilk 20 gösteriliyor)
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
-              ))}
+                );
+              })}
               <div style={{marginTop:8,padding:'12px',background:'rgba(76,175,132,0.1)',borderRadius:8,textAlign:'center',fontSize:14,fontWeight:600}}>
                 Toplam {sonuc.toplam} satır işlendi
               </div>
