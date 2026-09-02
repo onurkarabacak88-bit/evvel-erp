@@ -508,7 +508,10 @@ export default function PersonelVardiyaTakip() {
         <div style={{ display: 'flex', gap: 6, marginLeft: 'auto' }}>
           {[['aktif','Aktif'], ['ayrildi','Ayrıldı'], ['hepsi','Tümü']].map(([k, l]) => (
             <button key={k} onClick={() => setFiltre(k)} style={{
-              padding: '6px 12px', borderRadius: 7, border: 'none', cursor: 'pointer',
+              // `border` İKİ KEZ yazılmıştı; JS'te ikinci kazanır, 'none' ölüydü.
+              // Vite bunu uyarı olarak basıyordu ama build geçtiği için kimse
+              // görmüyordu — ölü stil, okuyanı yanıltır.
+              padding: '6px 12px', borderRadius: 7, cursor: 'pointer',
               fontSize: 12, fontWeight: 600,
               background: filtre === k ? 'var(--accent)' : 'var(--bg2)',
               color: filtre === k ? '#fff' : 'var(--text3)',

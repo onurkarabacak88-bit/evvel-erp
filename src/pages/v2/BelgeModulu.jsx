@@ -1984,7 +1984,6 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
             ) : (
               <Tablo
                 baslik={`Kaynak belgeler — ${kisalt(cariSecim, 40)}`}
-                not="satıra tıkla → belge görüntüle"
                 kolonlar={[
                   { ad: 'Tarih' }, { ad: 'Belge no' }, { ad: 'Tutar', sag: 1 }, { ad: 'Bakiye (dahil)', sag: 1 },
                 ]}
@@ -1993,9 +1992,16 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                 // gösterirse sahip "15 fatura kayıp mı?" der ya da — daha
                 // kötüsü — eksik listeye bakıp "bu fatura sistemde yok" hükmü
                 // verir. Bu modülde o hüküm vergi tarafında karar üretir.
+                //
+                // 🔴 AMA `not` İKİ KEZ VERİLMİŞTİ (2026-09-02, Railway build
+                // uyarısında görüldü): JSX'te ikinci kazanır, dolayısıyla
+                // "satıra tıkla → belge görüntüle" ipucu SESSİZCE ÖLMÜŞTÜ ve
+                // 30'un altında `not` hiç görünmüyordu. Sessiz elemeyi
+                // kapatan düzeltme, başka bir sessiz elemeyi doğurmuş.
+                // İkisi tek ifadede birleştirildi.
                 not={faturalar.length > 30
-                  ? `⚠ ${faturalar.length} faturanın ilk 30'u gösteriliyor — ${faturalar.length - 30} kayıt listede yok`
-                  : undefined}
+                  ? `⚠ ${faturalar.length} faturanın ilk 30'u gösteriliyor — ${faturalar.length - 30} kayıt listede yok · satıra tıkla → belge görüntüle`
+                  : 'satıra tıkla → belge görüntüle'}
                 satirlar={faturalar.slice(0, 30).map((f, i) => ({
                   id: f.id || `f-${i}`,
                   _f: f,
