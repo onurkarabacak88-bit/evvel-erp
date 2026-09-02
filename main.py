@@ -121,6 +121,13 @@ try:
     app.include_router(bagsiz_giris_router)
 except Exception as _e:  # noqa: BLE001
     logger.warning("duyu_bagsiz_giris yüklenemedi: %s", _e)
+# 🚑 CİRO KURTARMA (2026-09-02) — `ciro` tablosu korumasız sistem-sifirla ucu
+# yüzünden TRUNCATE edildi; taslaktan geri inşa eder. Kasaya DOKUNMAZ.
+try:
+    from ciro_kurtarma_api import router as ciro_kurtarma_router
+    app.include_router(ciro_kurtarma_router)
+except Exception as _e:  # noqa: BLE001
+    logger.warning("ciro_kurtarma_api yüklenemedi: %s", _e)
 # 🔗 TEDARİKÇİ ZİNCİRİ (kimlik kararı + zaman çizgisi, 2026-08-15) — izole.
 try:
     from tedarikci_zinciri_api import router as tedarikci_zinciri_router
