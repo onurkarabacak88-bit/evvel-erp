@@ -6,7 +6,7 @@ from typing import Any, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from database import db
+from database import db, savepoint
 from kasa_service import audit
 
 router = APIRouter(tags=["kasa-teslim"])
@@ -199,7 +199,41 @@ def kasa_teslim_ekle(body: KasaTeslimBody):
             personel_ad=onay_ad,
         )
 
-    return {"success": True, "id": tid}
+        # 🔴 PARA-002 (2026-09-02): teslim tutarının şube kasasındaki parayla
+        # kıyaslanması HİÇ yapılmıyordu — tek kontrol `tutar > 0` idi. Yani
+        # kasasında 1.000₺ olan şube 50.000₺ teslim yazabiliyordu ve sistem
+        # sessizce kabul ediyordu.
+        # ⚠️ BLOKLAMIYORUZ, UYARIYORUZ. Sebebi kodun kendi belgesinde yazılı
+        # (main.py /api/kasa/sube-bazli): "şubesi çözülemeyen hareketler MERKEZ
+        # kovasında durur" — yani şube bakiyeleri OLDUĞUNDAN DÜŞÜK olabilir.
+        # Yanlış bir bakiyeyle gerçek bir teslimi reddetmek, kontrolsüzlükten
+        # daha zararlıdır: operasyon durur ve kimse nedenini bilmez.
+        # Bakiye modeli düzeldiğinde bu uyarı bloğa çevrilebilir — sahip kararı.
+        _bakiye_uyari = None
+        try:
+            with savepoint(cur, "sp_teslim_bakiye"):
+                cur.execute(
+                    """SELECT COALESCE(SUM(tutar),0)::float AS bakiye
+                       FROM kasa_hareketleri
+                       WHERE COALESCE(durum,'aktif')='aktif'
+                         AND COALESCE(kasa_etkisi, TRUE) = TRUE
+                         AND sube_id = %s""",
+                    (body.sube_id,))
+                _bak = float((cur.fetchone() or {}).get("bakiye") or 0)
+            if float(body.tutar) > _bak + 0.01:
+                _bakiye_uyari = {
+                    "sube_bakiye": round(_bak, 2),
+                    "teslim_tutar": round(float(body.tutar), 2),
+                    "asim": round(float(body.tutar) - _bak, 2),
+                    "not": ("Teslim tutarı şube kasasında görünen paradan fazla. "
+                            "Kayıt YAZILDI — şube bakiyesi eksik hareketler yüzünden "
+                            "düşük görünüyor olabilir, ama tutarı bir kontrol edin."),
+                }
+        except Exception as _e:  # noqa: BLE001
+            # Ölçüm yapılamadıysa SESSİZ geçmiyoruz — uyarı alanı bunu söyler.
+            _bakiye_uyari = {"not": "şube bakiyesi ölçülemedi: %s" % str(_e)[:120]}
+
+    return {"success": True, "id": tid, "bakiye_uyarisi": _bakiye_uyari}
 
 
 @router.get("/api/kasa-teslim")

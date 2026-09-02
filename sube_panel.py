@@ -2653,6 +2653,33 @@ def sube_ara_kasa_teslim(sube_id: str, body: AraTeslimModel):
         alici_d = dict(alici_row)
         alici_ad = alici_d["ad"] + (" — " + alici_d["unvan"] if alici_d.get("unvan") else "")
 
+        # 🔴 SUBE-007 (2026-09-02): bu uçta HİÇBİR mükerrer gönderim koruması
+        # yoktu — ne idempotency anahtarı, ne zaman penceresi, ne kilit.
+        # Zararı sanılandan büyük: her teslim `ensure_kasa_teslim_defterlesme`
+        # ile kasaya ÇİFT KAYIT yazıyor (şubeden çıkış / merkeze giriş) ve o
+        # yazımın idempotency anahtarı TESLİM ID'sinden türüyor. Yani ikinci
+        # teslim satırının kendi ID'si olduğu için idempotans onu YAKALAMAZ:
+        # mükerrer gönderim defterde GERÇEKTEN İKİ KEZ para taşır.
+        # Kardeş uç `urun-ac` 60 sn freni kullanıyor (operasyon_defter metnine
+        # bakarak). Burada metne değil TABLONUN KENDİSİNE bakıyoruz — aynı
+        # şube + aynı tutar + 60 sn: bu bir çift tıklamadır, iki ayrı teslim
+        # değil. Tutarı da şarta koyduk ki farklı tutarlı iki meşru teslim
+        # bloklanmasın.
+        cur.execute(
+            """SELECT id FROM kasa_teslim
+               WHERE sube_id = %s AND teslim_turu = 'ara'
+                 AND ABS(tutar - %s) < 0.01
+                 AND olusturma >= NOW() - INTERVAL '60 seconds'
+               LIMIT 1""",
+            (sube_id, float(body.tutar)),
+        )
+        if cur.fetchone():
+            raise HTTPException(
+                409,
+                "Bu şubeden son 60 saniye içinde aynı tutarda ara teslim kaydedildi. "
+                "Çift kayıt olmasın diye reddedildi — gerçekten ikinci bir teslim "
+                "yapıldıysa 1 dakika sonra tekrar gönderin.")
+
         kt_id = str(uuid.uuid4())
         cur.execute(
             """INSERT INTO kasa_teslim
