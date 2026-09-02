@@ -96,10 +96,81 @@ def _plan_uret(cur) -> Dict[str, Any]:
             "online": round(_f(t["online"]), 2),
             "toplam": round(_f(t["nakit"]) + _f(t["pos"]) + _f(t["online"]), 2),
             "aciklama": t.get("aciklama") or "",
+            "kaynak": "taslak",
             "taslak_id": str(t["taslak_id"]),
         }
         for t in sorted(yazilacak, key=lambda x: (x["tarih"], str(x["sube_id"])))
     ]
+
+    # ═══ İKİNCİ KAYNAK: RAPOR CACHE ═════════════════════════════════════════
+    # Bazı cirolar şube panelinden geçmedi — doğrudan girildi ya da Evo'dan
+    # aktarıldı (GECMIS_CIRO_EVO). Taslakları yok, dolayısıyla birinci kaynak
+    # onları göremiyor. Ama `rapor_gunluk_sube_ozet` gece batch'inde her gün
+    # için nakit/pos/online KIRILIMINI saklıyor — kaybolan tek şey ciro
+    # satırıydı, kırılım başka bir defterde duruyordu.
+    #
+    # ⚠️ Ciro TASLAKTAN geçmiş her kimlik burada DIŞLANIR: birinci kaynak o
+    # kayıtlar için zaten karar verdi (mükerrer eleme dahil). İptal edilmiş bir
+    # ciroyu ikinci kaynaktan geri diriltmek, elenen mükerreri geri getirirdi.
+    cur.execute("SELECT COALESCE(ciro_id,'') AS cid FROM ciro_taslak")
+    taslak_kimlikleri = {str(r["cid"]) for r in (cur.fetchall() or []) if r["cid"]}
+
+    cur.execute(
+        """
+        SELECT kh.kaynak_id::text AS ciro_id, kh.tarih::text AS tarih,
+               kh.sube_id::text AS sube_id, kh.tutar::float AS net,
+               kh.aciklama,
+               COALESCE(s.ad, kh.sube_id) AS sube_adi,
+               COALESCE(s.pos_oran, 0)::float AS pos_oran,
+               COALESCE(s.online_oran, 0)::float AS online_oran,
+               g.ciro_nakit::float  AS c_nakit,
+               g.ciro_pos::float    AS c_pos,
+               g.ciro_online::float AS c_online
+        FROM kasa_hareketleri kh
+        LEFT JOIN subeler s ON s.id = kh.sube_id
+        LEFT JOIN rapor_gunluk_sube_ozet g
+               ON g.sube_id = kh.sube_id AND g.tarih = kh.tarih
+        WHERE kh.kaynak_tablo = 'ciro'
+          AND COALESCE(kh.durum, 'aktif') = 'aktif'
+          AND kh.tutar > 0
+        """
+    )
+    ikinci, kurtarilamayan = [], []
+    for r in (cur.fetchall() or []):
+        d = dict(r)
+        cid = str(d.get("ciro_id") or "")
+        if not cid or cid in mevcut or cid in taslak_kimlikleri:
+            continue
+        n, p, o = _f(d.get("c_nakit")), _f(d.get("c_pos")), _f(d.get("c_online"))
+        if (n + p + o) <= 0:
+            kurtarilamayan.append({
+                "ciro_id": cid, "tarih": d.get("tarih"), "sube_adi": d.get("sube_adi"),
+                "net": round(_f(d.get("net")), 2),
+                "aciklama": (d.get("aciklama") or "")[:80],
+                "neden": "rapor cache'inde de kırılım yok",
+            })
+            continue
+        # DOĞRULAMA: kırılımdan hesaplanan net, kasadaki net ile tutuyor mu?
+        # Tutmuyorsa satır yine sunulur ama "doğrulanamadı" diye İŞARETLENİR —
+        # sessizce doğru saymak, kurtarmayı sahte yeşile çevirirdi.
+        hesap_net = n + p * (1 - _f(d.get("pos_oran")) / 100.0) \
+                      + o * (1 - _f(d.get("online_oran")) / 100.0)
+        fark = round(hesap_net - _f(d.get("net")), 2)
+        ikinci.append({
+            "ciro_id": cid,
+            "tarih": d.get("tarih"),
+            "sube_id": str(d.get("sube_id") or ""),
+            "sube_adi": d.get("sube_adi"),
+            "nakit": round(n, 2), "pos": round(p, 2), "online": round(o, 2),
+            "toplam": round(n + p + o, 2),
+            "aciklama": (d.get("aciklama") or "Kurtarma: rapor cache kırılımı"),
+            "kaynak": "rapor_cache",
+            "dogrulama_farki": fark,
+            "dogrulandi": abs(fark) <= 1.0,
+        })
+
+    satirlar.extend(sorted(ikinci, key=lambda x: (x["tarih"], str(x["sube_id"]))))
+    satirlar.sort(key=lambda x: (x["tarih"], str(x["sube_id"])))
 
     # Kasa tarafı: bağ tutacak mı? Kurtarma sonrası kırık kalan var mı?
     cur.execute(
@@ -124,6 +195,13 @@ def _plan_uret(cur) -> Dict[str, Any]:
     return {
         "satirlar": satirlar,
         "yazilacak_adet": len(satirlar),
+        "kaynak_dagilimi": {
+            "taslak": sum(1 for x in satirlar if x.get("kaynak") == "taslak"),
+            "rapor_cache": len(ikinci),
+            "rapor_cache_dogrulanamayan": sum(1 for x in ikinci if not x.get("dogrulandi")),
+        },
+        # Hâlâ kurtarılamayanlar GİZLENMEZ: elle girilecek olan tam olarak bunlar.
+        "kurtarilamayan": kurtarilamayan,
         "zaten_duran_adet": len(zaten_var),
         "elenen_mukerrer": [
             {
