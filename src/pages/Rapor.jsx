@@ -347,14 +347,29 @@ export default function Rapor() {
         })()}
 
         {/* ÖZET KARTLARI */}
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 12, marginBottom: 20 }}>
+        {/* 🔴 SAHİP KARARI (2026-09-02, seçenek c): İŞLETME SONUCU ile NAKİT
+            DEĞİŞİMİ ayrı gösterilir, fark açıklanır.
+            Neden: `net_kar_zarar` pozitif olan HER hareketi topluyordu —
+            içinde DIS_KAYNAK (banka kredisi/aile desteği/ortak sermayesi/
+            kişisel borç = FİNANSMAN) ve KASA_TESLIM_GIRIS (şubeden merkeze
+            İÇ TRANSFER) vardı. Temmuz 2026 canlı: ekran "+2.251.013 ₺" gösterdi;
+            içinde 4.908.435 ₺ finansman vardı, gerçek işletme sonucu
+            −2.927.472 ₺ idi. Etiketi "Nakit Akışı" yapmak yetmiyordu: işletme
+            sonucu HİÇBİR YERDE yoktu, kullanıcı başka ekrana yollanıyordu. */}
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(5,1fr)', gap: 12, marginBottom: 20 }}>
           {[
             { label: '↑ Toplam Gelir',    val: o.toplam_gelir,   renk: 'var(--green)',  eski: onc.gelir },
             { label: '↓ Toplam Gider',    val: o.toplam_gider,   renk: 'var(--red)',    eski: onc.gider },
+            { label: '⚖ İşletme Sonucu',  val: o.isletme_sonucu,
+              renk: (o.isletme_sonucu ?? 0) >= 0 ? 'var(--green)' : 'var(--red)', eski: null,
+              sub: 'Satış − gider · finansman ve iç transfer HARİÇ' },
             // FIX MN7 (2026-07-06): bu sayı KASA hareketlerinden (gelir−gider) türer = NAKİT
             // AKIŞI; kredi/borç girişi "kâr" gibi görünüyordu. Gerçek net kâr: Maliyet > Gün Gün
             // P&L (net_kar_net_tl, KDV-hariç). Etiket dürüstleştirildi, alan adı korunuyor.
-            { label: '= Net Nakit Akışı (kasa)', val: o.net_kar_zarar,  renk: o.net_kar_zarar >= 0 ? 'var(--green)' : 'var(--red)', eski: null, sub: 'Kâr değil — gerçek kâr: Maliyet › Gün Gün' },
+            { label: '= Net Nakit Akışı (kasa)', val: o.net_kar_zarar,  renk: o.net_kar_zarar >= 0 ? 'var(--green)' : 'var(--red)', eski: null,
+              sub: (Number(o.finansman_girisi || 0) + Number(o.ic_transfer_girisi || 0)) > 0
+                ? `İçinde ${fmt(Number(o.finansman_girisi || 0) + Number(o.ic_transfer_girisi || 0))} finansman/transfer VAR`
+                : 'Kâr değil — kasaya giren eksi çıkan' },
             { label: '🏦 Ay Sonu Kasa',   val: o.bitis_kasa,     renk: 'var(--text1)',  eski: null, sub: `Başlangıç: ${fmt(o.baslangic_kasa)}` },
           ].map(({ label, val, renk, eski, sub }) => {
             const d = eski ? degisim(val, eski) : null;

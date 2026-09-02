@@ -14904,6 +14904,22 @@ def aylik_rapor(yil: int = None, ay: int = None):
                 COALESCE(SUM(CASE WHEN islem_turu='POS_KESINTI'   THEN ABS(tutar) ELSE 0 END),0) as pos_kesinti_toplam,
                 COALESCE(SUM(CASE WHEN tutar > 0 AND islem_turu != 'DEVIR' THEN tutar ELSE 0 END),0) as toplam_gelir,
                 COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END),0) as toplam_gider,
+                -- 🔴 "KÂR" DEĞİLDİ (2026-09-02, canlı ölçüm): `net_kar_zarar`
+                -- `toplam_gelir - toplam_gider` diye hesaplanıyor ve KÂR diye
+                -- sunuluyordu. Ama `toplam_gelir` pozitif olan HER hareketi
+                -- topluyor — içinde GELİR OLMAYANLAR var:
+                --   · DIS_KAYNAK        → banka kredisi / aile desteği / ortak
+                --                          sermayesi / kişisel borç = FİNANSMAN
+                --   · KASA_TESLIM_GIRIS → şubeden merkeze İÇ TRANSFER
+                -- Temmuz 2026 canlı: rapor "+2.251.013 ₺ kâr" diyordu; içinde
+                -- 4.908.435 ₺ finansman + 270.050 ₺ iç transfer vardı. Ciro
+                -- eksi gider ise −2.927.472 ₺ idi. Yani şirkete 4,9 M ₺ BORÇ
+                -- girdiği ay "kâr ayı" görünüyordu.
+                -- DEVIR zaten aynı gerekçeyle dışlanıyordu; bu ikisi atlanmış.
+                COALESCE(SUM(CASE WHEN islem_turu='DIS_KAYNAK' AND tutar > 0
+                                  THEN tutar ELSE 0 END),0) as finansman_girisi,
+                COALESCE(SUM(CASE WHEN islem_turu='KASA_TESLIM_GIRIS' AND tutar > 0
+                                  THEN tutar ELSE 0 END),0) as ic_transfer_girisi,
                 COALESCE(SUM(tutar),0) as net_kasa_degisim
             FROM kasa_hareketleri
             WHERE durum='aktif' AND kasa_etkisi=true AND tarih BETWEEN %s AND %s
@@ -14911,7 +14927,33 @@ def aylik_rapor(yil: int = None, ay: int = None):
         ozet = dict(cur.fetchone())
         ozet['baslangic_kasa'] = baslangic_kasa
         ozet['bitis_kasa']     = baslangic_kasa + float(ozet['net_kasa_degisim'])
+        # ⚠️ GERİYE UYUM: `net_kar_zarar` alanı DURUYOR (eski okuyucular
+        # kırılmasın) ama artık ne olduğu açıkça yazılı: NAKİT DEĞİŞİMİ.
         ozet['net_kar_zarar']  = float(ozet['toplam_gelir']) - float(ozet['toplam_gider'])
+
+        # ── İKİ AYRI SONUÇ (sahip kararı 2026-09-02: "ikisi de dursun") ──
+        # Nakit değişimi de gerçek bir bilgidir (kasa ne oldu), işletme sonucu
+        # da (satış eksi gider). İkisini AYNI ADA sıkıştırmak yanlıştı; ayrı
+        # göstermek ikisini de kazandırır.
+        _finansman = float(ozet.get('finansman_girisi') or 0)
+        _ic_transfer = float(ozet.get('ic_transfer_girisi') or 0)
+        # İşletme geliri = toplam girişten FİNANSMAN ve İÇ TRANSFER düşülmüş hâli.
+        # (DEVIR zaten `toplam_gelir`e girmiyor.)
+        ozet['isletme_geliri'] = round(
+            float(ozet['toplam_gelir']) - _finansman - _ic_transfer, 2)
+        ozet['isletme_sonucu'] = round(
+            ozet['isletme_geliri'] - float(ozet['toplam_gider']), 2)
+        ozet['nakit_degisimi'] = round(
+            float(ozet['toplam_gelir']) - float(ozet['toplam_gider']), 2)
+        ozet['sonuc_aciklama'] = {
+            "isletme_sonucu": ("Satış geliri − gider. İşin kendisi para kazandırıyor mu?"),
+            "nakit_degisimi": ("Kasaya giren − çıkan. Finansman (kredi/ortak/aile) ve "
+                               "şubeden merkeze iç transfer DAHİL."),
+            "fark_nedeni": ("Finansman girişi %s ₺ + iç transfer %s ₺. Bunlar para "
+                            "getirir ama KAZANÇ değildir — biri borç, biri kendi "
+                            "paranı bir cepten diğerine koymak."
+                            % (format(_finansman, ',.2f'), format(_ic_transfer, ',.2f'))),
+        }
 
         # 1b. Ciro breakdown
         cur.execute("""
