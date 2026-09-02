@@ -1287,6 +1287,14 @@ def startup():
             ensure_audit_aktor(cur)
     except Exception as e:
         logger.warning("audit_log aktör migrasyonu (startup) atlandı: %s", e)
+    # ONAY-005/006: onaylayan kimliği + gönderilen tutar kolonları.
+    # Aynı desen: kendi kısa transaction'ı, lock_timeout'lu, hata yutulur.
+    try:
+        with db() as (conn, cur):
+            from ciro_taslak_api import _ensure_onay_kimlik_kolonlari
+            _ensure_onay_kimlik_kolonlari(cur)
+    except Exception as e:
+        logger.warning("ciro_taslak onay kimlik migrasyonu (startup) atlandı: %s", e)
     try:
         with db() as (conn, cur):
             ensure_stok_yolda_columns(cur)

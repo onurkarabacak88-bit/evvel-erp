@@ -182,6 +182,18 @@ class GorevTamamlaBody(BaseModel):
     personel_id: Optional[str] = None
 
 
+def _cep_aktor_metni(body) -> str:
+    """CEP-001: aktörü DÜRÜST yaz — uydurma varsayılan koyma.
+
+    Eski davranış `body.yapan_ad or "Patron (Cep)"` idi: alan boş gelince
+    defter "Patron" diyordu. Denetimde bu satırı okuyan biri, patronun bunu
+    yaptığını sanır. Doğrulanmamış bir adı doğrulanmış gibi yazmaktansa,
+    bilinmediğini söylemek gerekir.
+    """
+    ad = (getattr(body, "yapan_ad", None) or "").strip()
+    return f"{ad} (BEYAN — doğrulanmadı)" if ad else "BİLİNMİYOR (aktör gönderilmedi)"
+
+
 @router.post("/api/gorev/tamamla")
 def gorev_tamamla(body: GorevTamamlaBody):
     from datetime import date as _date, datetime as _dt
@@ -1616,7 +1628,13 @@ def kapanis_muhur_override(body: KapanisMuhurOverrideBody):
             operasyon_defter_ekle(
                 cur, sid, "KAPANIS_MUHUR_OVERRIDE",
                 f"Kapanış mührü YÖNETİCİ tarafından atandı — personel: {d.get('ad_soyad') or pid} "
-                f"(önceki çıkış tipi: {eski_tip or '—'}) | yapan: {(body.yapan_ad or 'Patron (Cep)')}",
+                # 🔴 CEP-001 (2026-09-02): `yapan_ad` gövdeden geliyor ve boşsa
+                # "Patron (Cep)" VARSAYILIYOR. Yani deftere, hiç doğrulanmamış
+                # — hatta hiç gönderilmemiş — bir aktör "Patron" diye yazılıyordu.
+                # Bu, izin en kötü hâli: var gibi görünen ama yanlış olan iz.
+                # Uydurma varsayılan kaldırıldı; aktör verilmediyse deftere
+                # "DOĞRULANMAMIŞ" yazılır ve kim olduğu SORU olarak kalır.
+                f"(önceki çıkış tipi: {eski_tip or '—'}) | yapan: {_cep_aktor_metni(body)}",
                 personel_id=pid, personel_ad=(d.get("ad_soyad") or None),
             )
         except Exception:

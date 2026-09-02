@@ -135,7 +135,10 @@ export default function CiroTaslakOnay() {
                 const n = d.nakit !== undefined ? d.nakit : k.nakit;
                 const p = d.pos !== undefined ? d.pos : k.pos;
                 const o = d.online !== undefined ? d.online : k.online;
-                const kimSaat = [k.gonderen_ad, k.bildirim_saati].filter(Boolean).join(' · ') || (k.olusturma ? `Kayıt: ${k.olusturma}` : '—');
+                // 🔴 ONAY-006 (2026-09-02): bu sütunun başlığı "Onaylayan / saat" ama
+        // gösterdiği GÖNDERENDİ — yanlış atıf. Onaylayan kimliği artık
+        // sunucuda tutuluyor; yoksa "—" yazılır, gönderen onaycı sayılmaz.
+        const kimSaat = [(k.onaylayan_ad || (k.durum === 'onaylandi' ? '—' : null)), k.bildirim_saati].filter(Boolean).join(' · ') || (k.olusturma ? `Kayıt: ${k.olusturma}` : '—');
                 return (
                   <tr key={k.id}>
                     <td><strong>{k.sube_adi}</strong><div className="mono" style={{ fontSize: 11, color: 'var(--text3)' }}>{k.id.slice(0, 8)}…</div></td>

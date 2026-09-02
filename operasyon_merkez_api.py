@@ -3036,7 +3036,7 @@ def ops_guvenlik_alarm_sustur(sube_id: str, body: GuvenlikAlarmIslemBody = Guven
             """,
             (
                 sube_id,
-                (body.personel_id or "").strip() or None,
+                _ops_kimlik_kanonik(cur, body.personel_id, None),
                 (body.notu or "").strip()[:300] or None,
                 sustur_dk,
             ),
@@ -7206,6 +7206,24 @@ def ops_kasa_uyumsuzluk_coz(uyari_id: str, body: KasaUyumsuzlukCozBody = KasaUyu
 _SEBEPLER = {"ciro_yanlis", "acilis_yanlis", "gider_eksik", "ciro_fazla", "devir_yanlis", "gercek_acik"}
 
 
+def _ops_kimlik_kanonik(cur, personel_id, pin) -> Optional[str]:
+    """🔴 OPS-025 (2026-09-02): susturma/alarm uçları gövdeden gelen KEYFİ
+    `personel_id`'yi doğrulamadan yazıyordu — var olmayan bir kimlik bile
+    deftere "bu kişi sustur dedi" diye geçiyordu.
+    Artık kimlik çözülüyor; personel yoksa/pasifse NULL yazılır (uydurma
+    kimlik yazmaktansa BOŞ yazmak dürüsttür), doğrulanmışsa id korunur.
+    """
+    if not (personel_id or "").strip():
+        return None
+    try:
+        from personel_kimlik import personel_coz
+        k = personel_coz(cur, personel_id, pin=pin)
+        # 'yok' = kayıt bulunamadı/pasif → kimlik yazma.
+        return k.get("personel_id") if k.get("kaynak") != "yok" else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
 def _isletme_onay_dogrula(cur, onay_pin: Optional[str]) -> Dict[str, Any]:
     """#2 Yetki: mali kasa düzeltmeleri/geri-al için İŞLETME onayı (Merve Karabacak PIN) şart.
     Para kayıtlarını (ciro/açılış/gider/devir) değiştiren uçlarda çağrılır."""
@@ -9308,6 +9326,9 @@ class OpsSiparisSevkiyatGuncelleBody(BaseModel):
     not_aciklama: Optional[str] = None
     sevkiyat_notu: Optional[str] = None
     personel_ad: Optional[str] = None
+    # OPS-021: PIN'i doğrulayabilmek için KİMİN PIN'i olduğu gerekir.
+    # `personel_ad` bir kimlik değildir — ad değişir, tekrar eder, yazılır.
+    personel_id: Optional[str] = None
     pin: Optional[str] = None
     gonderildi: bool = False
     # 🔒 BAYAT PENCERE KİLİDİ: ekranın OKUDUĞU `kalem_surum`. Yazma anında
@@ -14014,6 +14035,19 @@ def ops_siparis_sevkiyat_guncelle(body: OpsSiparisSevkiyatGuncelleBody):
     notu = (body.sevkiyat_notu or body.not_aciklama or "").strip() or None
     with db() as (conn, cur):
         ensure_stok_yolda_columns(cur)
+        # 🔴 OPS-021 (2026-09-02): PIN'in yalnız BİÇİMİ kontrol ediliyordu
+        # ("4 hane mi") ve sonra hiçbir yere geçirilmiyordu — kimseye karşı
+        # doğrulanmıyordu. Biçim kontrolü kapı GÖRÜNTÜSÜ verir, kapı işi
+        # görmez; ekranda "PIN ile onaylandı" yazarken arkada doğrulama yok.
+        # Sahte onayın en sinsi hâli: kullanıcı korunduğunu sanır.
+        # ⚠️ PIN ZORUNLU KILINMADI (akışı kırmamak için); ama gönderildiyse
+        # ARTIK GERÇEKTEN DOĞRULANIYOR ve sonuç deftere yazılıyor.
+        _kimlik = None
+        if pin:
+            from personel_kimlik import personel_coz
+            _kimlik = personel_coz(cur, body.personel_id, sube_id=sevk_sid, pin=pin)
+            if _kimlik.get("pin_denendi_tutmadi"):
+                raise HTTPException(403, "PIN doğrulanamadı — sevkiyat onayı yazılmadı.")
         defter_sube = _ops_defter_sube_sevkiyat_hedef(sevk_sid, cur)
         return siparis_sevkiyat_kalem_guncelle_execute(
             cur,
@@ -14023,7 +14057,9 @@ def ops_siparis_sevkiyat_guncelle(body: OpsSiparisSevkiyatGuncelleBody):
             bekleyen_var=bekleyen_var,
             kismi_var=kismi_var,
             notu=notu,
-            personel_ad=(body.personel_ad or "").strip() or None,
+            # Doğrulanmış ad varsa ONU kullan — istemcinin yazdığı adı değil.
+            personel_ad=((_kimlik or {}).get("ad_soyad")
+                         or (body.personel_ad or "").strip() or None),
             gonderildi=bool(body.gonderildi),
             defter_sube_id=defter_sube,
             beklenen_surum=body.kalem_surum,

@@ -4,7 +4,7 @@ Prefix: /api/ciro-taslak
 """
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, Header
 from pydantic import BaseModel
 
 from database import db
@@ -12,6 +12,26 @@ from kasa_service import audit
 from sube_panel import _bugun_ciro_var_mi, _ciro_insert_aktif_ve_kasa, _sube_getir
 
 router = APIRouter(prefix="/api/ciro-taslak", tags=["ciro-taslak"])
+
+
+def _ensure_onay_kimlik_kolonlari(cur) -> None:
+    """ONAY-005/006 kolonları — KENDİ kısa transaction'ında çağrılmalı.
+
+    ⚠️ `lock_timeout` şart: ALTER, ACCESS EXCLUSIVE ister ve devreden
+    dağıtımda eski kap hâlâ yazıyorsa sıraya girip TÜM tabloyu bloklar.
+    2026-09-02'de tam bu desen canlıyı 15 dakika 502'de bıraktı (bkz.
+    database.ensure_audit_aktor). Kilidi kapamazsak pes ederiz.
+    """
+    cur.execute("SET LOCAL lock_timeout = '3s'")
+    for ddl in (
+        "ALTER TABLE ciro_taslak ADD COLUMN IF NOT EXISTS onaylayan_ad TEXT",
+        "ALTER TABLE ciro_taslak ADD COLUMN IF NOT EXISTS onaylayan_kaynak TEXT",
+        # Onay anında tutar EZİLİYOR; şubenin GÖNDERDİĞİ değer burada saklanır.
+        "ALTER TABLE ciro_taslak ADD COLUMN IF NOT EXISTS gonderilen_nakit NUMERIC(14,2)",
+        "ALTER TABLE ciro_taslak ADD COLUMN IF NOT EXISTS gonderilen_pos NUMERIC(14,2)",
+        "ALTER TABLE ciro_taslak ADD COLUMN IF NOT EXISTS gonderilen_online NUMERIC(14,2)",
+    ):
+        cur.execute(ddl)
 
 
 class CiroTaslakTutarBody(BaseModel):
@@ -39,9 +59,20 @@ def _taslak_dict(row: dict) -> dict:
         d["olusturma"] = str(d["olusturma"])
     if d.get("onay_zamani"):
         d["onay_zamani"] = str(d["onay_zamani"])
-    for k in ("nakit", "pos", "online"):
+    for k in ("nakit", "pos", "online",
+              "gonderilen_nakit", "gonderilen_pos", "gonderilen_online"):
         if d.get(k) is not None:
             d[k] = float(d[k])
+    # ONAY-005: onay anında tutar EZİLİYOR. Şubenin gönderdiği değer ayrı
+    # kolonlarda saklanıyor; fark varsa ekran bunu görebilsin diye hesaplanıp
+    # yanıta konuyor. "Ne gönderildi / ne onaylandı" farkı ciro denetiminin
+    # tam olarak baktığı şey; görünmezse denetlenemez.
+    try:
+        _g = sum(float(d.get(f"gonderilen_{k}") or 0) for k in ("nakit", "pos", "online"))
+        _o = sum(float(d.get(k) or 0) for k in ("nakit", "pos", "online"))
+        d["onay_farki"] = round(_o - _g, 2) if _g > 0 else None
+    except Exception:
+        d["onay_farki"] = None
     return d
 
 
@@ -172,8 +203,14 @@ def ciro_taslak_duzenle(taslak_id: str, body: CiroTaslakTutarBody):
 
 
 @router.post("/{taslak_id}/onayla")
-def ciro_taslak_onayla(taslak_id: str, body: CiroTaslakOnayTutarlari = CiroTaslakOnayTutarlari()):
+def ciro_taslak_onayla(taslak_id: str,
+                       body: CiroTaslakOnayTutarlari = CiroTaslakOnayTutarlari(),
+                       x_evvel_oturum: Optional[str] = Header(default=None)):
     """Taslağı onayla; isteğe bağlı gövde ile tutarları onay anında güncelleyebilirsiniz."""
+    # ONAY-006: onaylayan kimliği. Jeton geçerliyse 'oturum', değilse 'anonim' —
+    # cevapsız soru cevapsız görünsün, gönderen onaycı diye gösterilmesin.
+    from admin_oturum import aktor_bilgisi
+    _onaylayan_ad, _onaylayan_kaynak = aktor_bilgisi(x_evvel_oturum)
     with db() as (conn, cur):
         cur.execute(
             """
@@ -251,12 +288,29 @@ def ciro_taslak_onayla(taslak_id: str, body: CiroTaslakOnayTutarlari = CiroTasla
             """
             UPDATE ciro_taslak
             SET durum='onaylandi', onay_zamani=NOW(), ciro_id=%s,
-                nakit=%s, pos=%s, online=%s
+                nakit=%s, pos=%s, online=%s,
+                onaylayan_ad=%s, onaylayan_kaynak=%s,
+                gonderilen_nakit=COALESCE(gonderilen_nakit, %s),
+                gonderilen_pos=COALESCE(gonderilen_pos, %s),
+                gonderilen_online=COALESCE(gonderilen_online, %s)
             WHERE id=%s
             """,
-            (cid, nakit, pos, online, taslak_id),
+            (cid, nakit, pos, online, _onaylayan_ad, _onaylayan_kaynak,
+             t.get("nakit"), t.get("pos"), t.get("online"), taslak_id),
         )
-        audit(cur, "ciro_taslak", taslak_id, "ONAYLANDI")
+        # 🔴 ONAY-005 (2026-09-02): audit `eski` parametresiz çağrılıyordu.
+        # Onay anında girilen nakit/pos/online, taslağın ORİJİNAL değerlerinin
+        # ÜZERİNE yazılıyor; eski değer hiçbir yerde kalmıyordu. Yani "şube ne
+        # gönderdi, merkez neyi onayladı" farkının izi YOKTU — oysa bu fark,
+        # ciro denetiminin tam olarak baktığı şey.
+        # 🔴 ONAY-006: onaylayanın kimliği de kaydedilmiyordu; ekranda
+        # "Onaylayan" sütunu GÖNDERENİ gösteriyordu (yanlış atıf).
+        audit(cur, "ciro_taslak", taslak_id, "ONAYLANDI",
+              eski={"nakit": (t or {}).get("nakit"), "pos": (t or {}).get("pos"),
+                    "online": (t or {}).get("online"),
+                    "gonderen": (t or {}).get("gonderen_ad")},
+              yeni={"nakit": nakit, "pos": pos, "online": online, "ciro_id": cid},
+              aktor=_onaylayan_ad, aktor_kaynak=_onaylayan_kaynak)
 
         # ── RAPOR CACHE HOOK ── (defensive)
         try:

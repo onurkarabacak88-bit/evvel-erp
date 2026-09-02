@@ -1108,17 +1108,37 @@ def merkez_personel_erken_acilis_izni(personel_id: str, body: PersonelErkenAcili
     return {"success": True, "personel_id": personel_id, "ad_soyad": hedef_ad, "izin": izin}
 
 
+class AcilisGeriAlBody(BaseModel):
+    """SUBE-001: kardeş uç `kapanis-geri-al` ile AYNI onay sözleşmesi."""
+    onay_pin: Optional[str] = None     # İşletme onayı (Merve Karabacak 4 haneli PIN)
+
+
 @router.post("/{sube_id}/acilis-geri-al")
-def sube_acilis_geri_al(sube_id: str, uygula: bool = False):
+def sube_acilis_geri_al(sube_id: str, uygula: bool = False,
+                        body: AcilisGeriAlBody = AcilisGeriAlBody()):
     """Bugünkü şube açılışını GERİ AL (test/yanlış açılış temizliği).
     Geri alınan: sube_acilis(durum='iptal') + sube_kasa_gun_acma(silinir) + ACILIS
     event(durum='bekliyor'a döner). GÜVENLİK: bugün ciro taslağı / kapanış / başka
     tamamlanmış operasyon varsa BLOKE (kasa-ciro defteri bozulmasın).
-    uygula=False → KURU ÇALIŞMA (durum + bloke nedenleri, yazma yok)."""
+    uygula=False → KURU ÇALIŞMA (durum + bloke nedenleri, yazma yok).
+
+    🔴 SUBE-001 (2026-09-02): bu uç HİÇBİR kimlik doğrulaması yapmıyordu —
+    ne PIN ne oturum. Oysa kardeşi `kapanis-geri-al` işletme PIN'i istiyor ve
+    ikisi de aynı sınıf işi yapıyor: mühürlenmiş bir operasyon kaydını geri
+    almak. Aynı riskin iki ucundan birine kapı koyup diğerine koymamak,
+    kapıyı fiilen kaldırır — kapalı olanın etrafından dolaşılır.
+    ⚠️ KURU ÇALIŞMADA PIN İSTENMEZ: hiçbir şey yazmayan bir önizleme,
+    yazma yetkisi gerektirmemeli (aksi hâlde kimse önce bakmaz)."""
     sid = (sube_id or "").strip()
     g = is_gunu_tr()
     with db() as (conn, cur):
         _sube_getir(cur, sid)
+        onayci = None
+        if uygula:
+            # Yerel import: modül seviyesinde alınırsa operasyon_merkez_api ↔
+            # sube_panel döngüsü doğar (kardeş uç da bu yüzden yerel alıyor).
+            from operasyon_merkez_api import _isletme_onay_dogrula
+            onayci = _isletme_onay_dogrula(cur, body.onay_pin)  # PIN hatalı → 403
 
         def _say(sql, par=()):  # SAVEPOINT'li güvenli sayım
             try:
@@ -1184,7 +1204,19 @@ def sube_acilis_geri_al(sube_id: str, uygula: bool = False):
             (sid, g),
         )
         conn.commit()
-    return {"uygulandi": True, **durum}
+    # SUBE-001: geri alma artık İZLİ — kim, neyi, ne zaman geri aldı.
+    # Mühür açan bir işlemin izsiz olması, mührün kendisini anlamsız kılar.
+    try:
+        with db() as (_c2, _cur2):
+            audit(_cur2, 'sube_acilis', sid, 'ACILIS_GERI_AL',
+                  yeni={'tarih': str(g), 'durum': durum},
+                  aktor=(onayci or {}).get('ad_soyad'),
+                  aktor_id=(str((onayci or {}).get('id')) if (onayci or {}).get('id') else None),
+                  aktor_kaynak='isletme_pin')
+    except Exception as _e:  # noqa: BLE001
+        logger.warning("acilis-geri-al audit yazılamadı: %s", _e)
+    return {"uygulandi": True, **durum,
+            "onaylayan": (onayci or {}).get("ad_soyad")}
 
 
 @router.post("/{sube_id}/acilis")
