@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 from typing import Optional, List, Any, Dict
 from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading, hashlib, hmac
+import hashlib as _hashlib_std
 from collections import defaultdict
 from database import db, savepoint, init_db, ensure_audit_aktor, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural, ensure_kart_devir_islem_turu, ensure_isletmeci, ensure_abonelik, ensure_gider_kanonik, ensure_odeme_plani_odeme_yontemi
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
@@ -13594,9 +13595,37 @@ async def excel_import(dosya: UploadFile = File(...)):
         import openpyxl
         content = await dosya.read()
         wb = openpyxl.load_workbook(io.BytesIO(content), data_only=True)
-        
+
         detay = {}
         toplam = 0
+
+        # 🔴 VERI-006 (2026-09-02): 7 sheet'in 5'inde HİÇ idempotency yoktu
+        # (kart_hareketleri, borclar, personel, sabit_giderler, vadeli_alimlar
+        # — hepsi taze uuid ile koşulsuz INSERT). `ciro`'daki
+        # `ON CONFLICT DO NOTHING` ise FİİLEN ÖLÜ: tabloda PK dışında unique
+        # kısıt YOK (kasıtlı — aynı gün aynı şubede iki ciro meşru) ve id her
+        # satırda taze, dolayısıyla çakışma hiç oluşmuyor.
+        # Sonuç: aynı dosya iki kez yüklenirse HER ŞEY ikinci kez yazılıyordu.
+        #
+        # ⛔ TABLOLARA UNIQUE EKLEMİYORUZ: doğal iş anahtarları güvenilir değil.
+        #    `personel`de `kisi_id` dönem mantığı var (aynı kişi çıkıp geri
+        #    girebilir), `sabit_giderler` "eskiyi kapat, yeni aç" ile
+        #    versiyonlanıyor. Sert unique bu meşru akışları kırardı.
+        # ✅ Bunun yerine DOSYA SEVİYESİ koruma: aynı içerik 24 saat içinde
+        #    ikinci kez yüklenemez. Arızanın gerçek şekli budur — kullanıcı
+        #    "yükledim mi acaba" deyip aynı dosyayı tekrar atıyor.
+        _dosya_parmak = _hashlib_std.sha256(content).hexdigest()
+        with db() as (_c0, _cur0):
+            from istek_izi import istek_izi_tazeyse
+            _onceki_import = istek_izi_tazeyse(
+                _cur0, "excel_import:" + _dosya_parmak, 86400)
+        if _onceki_import:
+            raise HTTPException(
+                409,
+                "Bu dosya son 24 saat içinde zaten içe aktarıldı "
+                "(%s satır). Tekrar yüklemek her kaydı İKİNCİ KEZ yazardı. "
+                "Farklı bir dosya yükleyin ya da 24 saat bekleyin."
+                % _onceki_import.get("toplam", "?"))
 
         with db() as (conn, cur):
             for sheet_name in wb.sheetnames:
@@ -13809,6 +13838,16 @@ async def excel_import(dosya: UploadFile = File(...)):
         except Exception:
             pass  # iz yazıcı sessiz düşer — import sonucu etkilenmez
 
+        # VERI-006: içe aktarma başarılı — parmak izini bırak.
+        try:
+            with db() as (_c1, _cur1):
+                from istek_izi import istek_izi_yaz
+                istek_izi_yaz(_cur1, "excel_import:" + _dosya_parmak, "excel_import",
+                              {"toplam": toplam, "dosya": (dosya.filename or "")[:120]})
+        except Exception as _e:  # noqa: BLE001
+            # İz yazılamazsa içe aktarma GEÇERSİZ SAYILMAZ — yalnız ikinci
+            # yükleme freni çalışmaz. Sessiz kalmasın diye loglanıyor.
+            logger.warning("excel-import parmak izi yazılamadı: %s", _e)
         return {"success": True, "toplam": toplam, "detay": detay}
     except ImportError:
         raise HTTPException(500, "openpyxl kurulu değil")
