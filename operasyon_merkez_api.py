@@ -4496,7 +4496,7 @@ def ops_fire_bildirim_foto_bilgi(bildirim_id: str, t: str):
 @router.post("/fire-bildirimler/{bildirim_id}/foto")
 async def ops_fire_bildirim_foto_yukle(bildirim_id: str, t: str, dosya: UploadFile = File(...)):
     """Personel telefonundan kanıt fotoğrafı yükler — token doğrulanır, tekrar kullanılmış fotoğraf reddedilir."""
-    from fire_bildirim import foto_token_dogrula, foto_yukle
+    from fire_bildirim import foto_token_dogrula, foto_yukle, foto_token_tuket
 
     raw = await dosya.read()
     if not (dosya.content_type or "").startswith("image/"):
@@ -4509,6 +4509,12 @@ async def ops_fire_bildirim_foto_yukle(bildirim_id: str, t: str, dosya: UploadFi
             raise HTTPException(403, str(ex)) from ex
         try:
             sonuc = foto_yukle(cur, bildirim_id, raw, dosya.content_type or "image/jpeg", row.get("personel_id"))
+            # 🔴 OPS-024: token yüklemeden SONRA tüketilir — tek kullanımlık.
+            # Eskiden hiç geçersiz kılınmıyordu: URL query'sinde taşınan bağlantı
+            # bir kez sızarsa o bildirime SINIRSIZ fotoğraf yüklenebiliyordu.
+            # ⚠️ Sıra önemli: önce yükleme, sonra tüketim. Tersi olsaydı yükleme
+            # patladığında kullanıcı geçerli hakkını kaybederdi.
+            foto_token_tuket(cur, bildirim_id)
         except ValueError as ex:
             if str(ex) == "DUPLICATE":
                 personel_id = row.get("personel_id")

@@ -101,6 +101,8 @@ def _iade_alanlari_dogrula(
         raise ValueError("İade için fiş numarası zorunlu")
     if len(fn) > 64:
         raise ValueError("Fiş numarası en fazla 64 karakter olabilir")
+    # ⚠️ TEKİLLİK BURADA DEĞİL: bu fonksiyon `cur` almıyor (saf doğrulama).
+    # Kontrol, DB'ye erişimi olan `fire_bildirim_kaydet` içinde yapılır.
     if not cikis:
         raise ValueError("İade için en az bir ürün kalemi seçin")
     iade_dt = parse_iade_zaman_tr(iade_zaman_raw or "")
@@ -155,6 +157,12 @@ def ensure_fire_bildirim_tablosu(cur: Any) -> None:
         ("iade_musteri_ad", "TEXT"),
         ("iade_musteri_telefon", "TEXT"),
         ("foto_token", "TEXT"),
+        # 🔴 OPS-024 (2026-09-02): token'ın SÜRESİ YOKTU. Doğrulama yalnız
+        # eşitlik bakıyordu, ama hata metni "süresi dolmuş" diyordu — kod ile
+        # mesaj çelişiyordu ve okuyan korunduğunu sanıyordu.
+        ("foto_token_ts", "TIMESTAMPTZ"),
+        # Başarılı yüklemeden sonra token GEÇERSİZ KILINSIN diye kullanım damgası.
+        ("foto_token_kullanildi_ts", "TIMESTAMPTZ"),
     ):
         cur.execute(
             f"""
@@ -387,6 +395,31 @@ def fire_bildirim_kaydet(
     fis_kayit, iade_dt, musteri_ad_k, musteri_tel_k = _iade_alanlari_dogrula(
         kod, fis_no, iade_zaman, cikis, iade_musteri_ad, iade_musteri_telefon,
     )
+
+    # 🔴 OPS-030 (2026-09-02): iade fiş numarasında TEKİLLİK YOKTU — ne UNIQUE
+    # index ne SELECT kontrolü. Aynı fişle ikinci iade sorunsuz kaydediliyordu
+    # ve zincir hiç itiraz etmiyordu: `_fire_stok_hareket_yaz` STOĞU İKİNCİ KEZ
+    # DÜŞÜYOR, defterde iki ayrı satır oluşuyor, `kaynak_belge_no`ya aynı fiş
+    # yazılıyordu. Yani tek bir müşteri iadesi iki kez maliyete geçiyordu.
+    # Kapsam: aynı ŞUBE + aynı fiş no. Farklı şubelerde aynı fiş numarası
+    # olabilir (POS'lar ayrı), o yüzden şube şarta dahil.
+    if fis_kayit:
+        cur.execute(
+            """SELECT id, tarih::text AS tarih FROM sube_fire_bildirim
+               WHERE sube_id = %s
+                 AND LOWER(TRIM(COALESCE(fis_no,''))) = LOWER(TRIM(%s))
+               ORDER BY olusturma DESC LIMIT 1""",
+            (sube_id, fis_kayit),
+        )
+        _onceki = cur.fetchone()
+        if _onceki:
+            _o = dict(_onceki)
+            raise ValueError(
+                "Bu fiş numarasıyla (%s) zaten iade kaydedilmiş (%s). "
+                "Aynı fiş iki kez iade edilirse stok iki kez düşer. "
+                "Farklı bir fiş numarası girin ya da önceki kaydı düzeltin."
+                % (fis_kayit, _o.get("tarih") or "tarih yok")
+            )
 
     toplam = sum(a for _, _, a in cikis)
     sebep_label = FIRE_SEBEP[kod]
@@ -657,12 +690,21 @@ def _hamming(a: str, b: str) -> int:
         return 999
 
 
+# OPS-024: fotoğraf yükleme bağlantısının ömrü. QR okutulup fotoğraf
+# çekilmesi dakikalar sürer; 6 saat cömert ama sınırsız değil.
+FOTO_TOKEN_OMUR_SAAT = 6
+
+
 def foto_token_uret(cur: Any, bildirim_id: str) -> str:
     """Bildirim için yeni bir yükleme token'ı üretir (var olanın üzerine yazar)."""
     ensure_fire_bildirim_tablosu(cur)
     token = uuid.uuid4().hex
+    # Yeni token üretimi eski kullanım damgasını da SIFIRLAR: "yeni QR iste"
+    # akışı gerçekten yeni bir hak vermelidir.
     cur.execute(
-        "UPDATE sube_fire_bildirim SET foto_token = %s WHERE id = %s RETURNING id",
+        "UPDATE sube_fire_bildirim "
+        "SET foto_token = %s, foto_token_ts = NOW(), foto_token_kullanildi_ts = NULL "
+        "WHERE id = %s RETURNING id",
         (token, bildirim_id),
     )
     if not cur.fetchone():
@@ -674,15 +716,39 @@ def foto_token_dogrula(cur: Any, bildirim_id: str, token: str) -> Dict[str, Any]
     """Token doğru mu? Bildirim satırını döner (personel_id dahil)."""
     ensure_fire_bildirim_tablosu(cur)
     cur.execute(
-        "SELECT id, personel_id, foto_token FROM sube_fire_bildirim WHERE id = %s",
+        "SELECT id, personel_id, foto_token, foto_token_ts, foto_token_kullanildi_ts, "
+        "       (NOW() - COALESCE(foto_token_ts, NOW())) > INTERVAL '%s hours' AS suresi_doldu "
+        "FROM sube_fire_bildirim WHERE id = %%s" % FOTO_TOKEN_OMUR_SAAT,
         (bildirim_id,),
     )
     row = cur.fetchone()
     if not row:
         raise ValueError("Bildirim bulunamadı")
     if not row.get("foto_token") or not token or row["foto_token"] != token:
-        raise ValueError("Geçersiz veya süresi dolmuş bağlantı — yeni QR kod isteyin")
+        raise ValueError("Geçersiz bağlantı — yeni QR kod isteyin")
+    # OPS-024: iki kapı EKLENDİ. Eskiden yalnız eşitlik vardı; token URL'de
+    # query param olarak taşınıyor (log/geçmiş/paylaşım izine düşer) ve
+    # süresiz + sınırsız kullanılabiliyordu. Yani bir kez sızan bağlantı,
+    # o bildirime İSTENDİĞİ KADAR fotoğraf yükleyebiliyordu.
+    if row.get("suresi_doldu"):
+        raise ValueError(
+            "Bağlantının süresi doldu (%d saat) — yeni QR kod isteyin" % FOTO_TOKEN_OMUR_SAAT)
+    if row.get("foto_token_kullanildi_ts"):
+        raise ValueError("Bu bağlantı zaten kullanıldı — yeni QR kod isteyin")
     return dict(row)
+
+
+def foto_token_tuket(cur: Any, bildirim_id: str) -> None:
+    """Başarılı yüklemeden SONRA token'ı tüketir (tek kullanımlık yapar).
+
+    ⚠️ Yükleme İŞLEMİNDEN SONRA çağrılmalı: önce tüketip sonra yükleme
+    patlarsa kullanıcı geçerli bir hakkı kaybeder ve yeniden QR istemek
+    zorunda kalır.
+    """
+    cur.execute(
+        "UPDATE sube_fire_bildirim SET foto_token_kullanildi_ts = NOW() WHERE id = %s",
+        (bildirim_id,),
+    )
 
 
 _FOTO_MAX_KENAR = 1200  # uzun kenar bu pikseli aşarsa küçültülür

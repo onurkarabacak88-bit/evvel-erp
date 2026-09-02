@@ -4081,8 +4081,14 @@ export default function OperasyonMerkezi() {
     yukleSiparisMerkez().finally(() => setYukleniyor(false));
   }, [aktifSekme, yukleSiparisMerkez]);
 
+  // 🔴 OPS-029 (2026-09-02): bu sekmenin RENDER bloğu `{false && ...}` ile
+  // kapalı ama fetch'i çalışmaya devam ediyordu: kullanıcı sekmeye düşünce
+  // API çağrılıyor, spinner dönüyor ve EKRANA HİÇBİR ŞEY ÇİZİLMİYOR.
+  // İşlev 8bf06ff'te Sipariş Kontrol Kulesi'ne devredildi (git kanıtı).
+  // Ölü sekme için ağa gitmiyoruz.
   useEffect(() => {
     if (aktifSekme !== 'siparis-kabul-takip') return;
+    if (OLU_SEKMELER.has('siparis-kabul-takip')) return;
     setYukleniyor(true);
     yukleSiparisKabulTakip();
   }, [aktifSekme, yukleSiparisKabulTakip]);
@@ -4394,6 +4400,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (aktifSekme !== 'sevkiyat-uyumsuzluk') return;
+    if (OLU_SEKMELER.has('sevkiyat-uyumsuzluk')) return;   // OPS-029
     setYukleniyor(true);
     sevkiyatUyumDetayYukle()
       .catch((e) => toast(e.message || 'Sevkiyat uyumsuzlukları yüklenemedi'))
@@ -4496,6 +4503,7 @@ export default function OperasyonMerkezi() {
 
   useEffect(() => {
     if (aktifSekme !== 'stok-disiplin') return;
+    if (OLU_SEKMELER.has('stok-disiplin')) return;   // OPS-029
     setYukleniyor(true);
     yukleDisiplin();
   }, [aktifSekme, yukleDisiplin]);
@@ -4964,7 +4972,22 @@ export default function OperasyonMerkezi() {
     };
   }, [hubOzetIsle, opsMerkezPencere, yukleUrunAcBugun, yukleGecAcilanBugun, yukleGecKalanPersonelBugun, yukleKullanilanBugun, yukleCiroOnayBugun, yukleKasaUyumBugun, yuklePersonelVardiyaUyumBugun, yukleUrunUyumBugun, yukleSevkiyatUyumBugun, yukleSevkiyatUyumOzet, fireGunYukle]);
 
+  // 🪦 OPS-029 — ÖLÜ SEKMELER (2026-09-02)
+  // Render blokları `{false && ...}` ile kapalı; işlevleri 8bf06ff'te
+  // Sipariş Kontrol Kulesi'ne devredildi. Kod SİLİNMEDİ (geri almak gerekirse
+  // dursun) ama artık: fetch yapılmıyor ve rozet tıklaması halefe gidiyor.
+  // Boş ekran + boşa API çağrısı, "özellik yok"tan daha kötüdür: kullanıcı
+  // bozuk sanır ve güveni her ekrana yayılır.
+  const OLU_SEKMELER = new Set(['sevkiyat-uyumsuzluk', 'siparis-kabul-takip', 'stok-disiplin']);
+  const OLU_SEKME_HALEF = 'siparis-kontrol';
+
   const acOpsModul = useCallback((id, modulId) => {
+    // OPS-029: ölü sekme istendiyse halefine yönlendir — kullanıcı boş
+    // ekrana düşmesin. Rozetler (ör. "Sevkiyat") hâlâ bu id'yi çağırıyor.
+    if (OLU_SEKMELER.has(id)) {
+      id = OLU_SEKME_HALEF;
+      modulId = OLU_SEKME_HALEF;
+    }
     const bolumler = OPS_MODUL_BOLUM[id] || [{ id: 'icerik', label: 'İçerik' }];
     setAktifSekme(id);
     setOpsIcBolum(bolumler[0].id);
@@ -14179,7 +14202,18 @@ export default function OperasyonMerkezi() {
                           <span style={{ fontWeight: 600 }}>{k.sube_id} <span style={{ color: 'var(--text3)', fontWeight: 400, fontSize: 10 }}>· {k.year_month}</span></span>
                           <span style={{ color: 'var(--text3)' }}>Ciro: {fmt(k.toplam_ciro || 0)}</span>
                           <span style={{ color: 'var(--text3)' }}>Gider: {fmt(k.toplam_gider || 0)}</span>
-                          <span style={{ color: 'var(--text3)' }}>Fiş: {k.fis_sayisi || 0}</span>
+                          {/* 🔴 RAPOR-004 (2026-09-02): `fis_sayisi` hiçbir
+                              yerde DOLDURULMUYOR — `gunluk_ozet_topla` bu alanı
+                              hiç yazmıyor, tablo NOT NULL DEFAULT 0 olduğu için
+                              hep 0 kalıyor. Ekran bunu "0 fiş" diye basıyordu:
+                              ÖLÇÜLMEMİŞ bir şeyi ölçüm gibi göstermek.
+                              Ciro varken fiş 0 olamaz — o yüzden bu durumda
+                              "—" yazıyoruz (ölçüm yok), sıfır demiyoruz. */}
+                          <span style={{ color: 'var(--text3)' }}>
+                            Fiş: {Number(k.fis_sayisi || 0) > 0
+                              ? k.fis_sayisi
+                              : <span title="Fiş sayısı henüz hiçbir kaynaktan doldurulmuyor">—</span>}
+                          </span>
                           <span style={{ fontWeight: 700, color: renk }}>{pct != null ? `%${pct}` : '—'}</span>
                         </div>
                       );
