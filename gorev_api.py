@@ -1586,6 +1586,7 @@ class KapanisMuhurOverrideBody(BaseModel):
     sube_id: str
     personel_id: str
     yapan_ad: Optional[str] = None
+    onay_pin: Optional[str] = None   # CEP-001: işletme onay PIN'i
 
 
 @router.post("/api/gorev/kapanis-muhur-override")
@@ -1612,6 +1613,15 @@ def kapanis_muhur_override(body: KapanisMuhurOverrideBody):
         row = cur.fetchone()
         if not row:
             raise HTTPException(404, "Bu personelin bugün (iş günü) bu şubede yoklaması yok.")
+        # 🔴 CEP-001 (2026-09-02): mühür ATAMAK, mühür GERİ ALMAK ile aynı sınıf
+        # iştir — kardeşi `kapanis-geri-al` işletme PIN'i istiyor, burası hiçbir
+        # şey istemiyordu. Kapanışı yapmayan biri telefonundan kendini "kapanış
+        # mührü" ilan edebiliyordu ve defter yalnız "Patron (Cep) (BEYAN)" diyordu
+        # → "kasa kimdeyse o kapatır" modeli deliniyordu.
+        # ⚖️ Burada PIN operasyonu KİLİTLEMEZ: bu bir POS akışı değil, günde bir
+        # kez, istisna hâlinde kullanılan yönetici aracı.
+        from operasyon_merkez_api import _isletme_onay_dogrula  # yerel: döngü önlemi
+        _onayci = _isletme_onay_dogrula(cur, body.onay_pin)     # PIN hatalı → 403
         d = dict(row)
         eski_tip = d.get("cikis_tip")
         if eski_tip == "kapalis":
@@ -1634,7 +1644,9 @@ def kapanis_muhur_override(body: KapanisMuhurOverrideBody):
                 # Bu, izin en kötü hâli: var gibi görünen ama yanlış olan iz.
                 # Uydurma varsayılan kaldırıldı; aktör verilmediyse deftere
                 # "DOĞRULANMAMIŞ" yazılır ve kim olduğu SORU olarak kalır.
-                f"(önceki çıkış tipi: {eski_tip or '—'}) | yapan: {_cep_aktor_metni(body)}",
+                f"(önceki çıkış tipi: {eski_tip or '—'}) | "
+                f"yapan: {(_onayci or {}).get('ad_soyad') or '?'} (İŞLETME PIN) | "
+                f"not: {_cep_aktor_metni(body)}",
                 personel_id=pid, personel_ad=(d.get("ad_soyad") or None),
             )
         except Exception:
@@ -2399,27 +2411,39 @@ def gecikme_eksik_gun_isle(body: GecikmeEksikGunBody):
         # Eskiden burada el yapımı TAM-AYLIK formül vardı (yemek/yol prorate'siz, dönem
         # kırpmasız) → aynı personel Vardiya Takip ekranı ile burada FARKLI net görüyordu.
         _kayit_m5 = {**mevcut_dict, "eksik_gun": yeni_eksik}
+        # 🔴 PERS-008 (2026-09-02) — CANLI 500 DÜZELTİLDİ.
+        # `fazla`, `bayram` (INSERT parametreleri, aşağıda) ve `gunluk` (dönüş
+        # değeri) YALNIZCA yedek dalda tanımlıydı. Kanonik hesap BAŞARILI
+        # olduğunda — yani normal durumda — o dal hiç çalışmıyor ve üç ad da
+        # tanımsız kalıyordu → NameError → uç 500 veriyordu.
+        # Sonuç: gecikme kesintisi HİÇ işlenemiyordu. Sürekli personelde bir
+        # gün ≈ maaş/30; sessizce fazla ödeme.
+        # ⚠️ Kendi push kapımın kör noktası: pyflakes KOŞULLU tanımı görmüyor,
+        # "TANIMSIZ AD TEMİZ" diyor. Kapıya ayrı bir sınıf gerekiyor.
+        # Üçü de artık HER YOLDA, çekirdeğin sabitleriyle tanımlı.
+        import maas_service as _ms
+        fazla  = float(mevcut_dict.get("fazla_mesai_saat") or 0)
+        bayram = float(mevcut_dict.get("bayram_mesai_saat") or 0)
+        if (p.get("calisma_turu") or "surekli") == "surekli":
+            gunluk = float(p.get("maas") or 0) / _ms.AYLIK_GUN
+        else:
+            gunluk = float(p.get("saatlik_ucret") or 0) * _ms.PART_GUNLUK_SAAT
         net = None
         try:
-            import maas_service as _ms
             _vt = _ms.vardiya_takip_hesap(body.personel_id, body.yil, body.ay)
             if _vt:
                 net = _ms.kanonik_net(dict(p), _vt, _kayit_m5)
-        except Exception:
+        except Exception as _e:  # noqa: BLE001 — vardiya_takip kendi bağlantısını açar
+            import logging as _lg
+            _lg.getLogger(__name__).warning(
+                "gecikme: kanonik hesap alinamadi (%s %s-%s): %s",
+                body.personel_id, body.yil, body.ay, _e)
             net = None
         if net is None:
-            # YEDEK YOL — kanonik hesap alınamazsa (bağlantı vb.) sistem durmasın: eski formül
-            GUNLUK_SAAT = 9.5
-            AYLIK_GUN   = 30.0
-            AYLIK_SAAT  = GUNLUK_SAAT * AYLIK_GUN
-            maas   = float(p.get("maas") or 0)
-            yemek  = float(p.get("yemek_ucreti") or 0)
-            yol    = float(p.get("yol_ucreti") or 0)
-            gunluk = maas / AYLIK_GUN
-            fazla  = float(mevcut_dict.get("fazla_mesai_saat") or 0)
-            bayram = float(mevcut_dict.get("bayram_mesai_saat") or 0)
-            saatlik = maas / AYLIK_SAAT
-            net = maas - (gunluk * yeni_eksik) + (fazla * saatlik) + (bayram * saatlik * 2) + yemek + yol
+            # YEDEK YOL — TEK ÇEKİRDEK kuralı: yerel formül kopyalamak yerine
+            # maas_service.maas_hesapla (pro-rata, raporlu, manuel düzeltme,
+            # part-time dalı hepsi orada tanımlı).
+            net = _ms.maas_hesapla(dict(p), _kayit_m5, body.yil, body.ay)
 
         not_ekle = body.not_aciklama or f"Gecikme → {body.eksik_gun} eksik gün olarak işlendi"
         kid = str(_uuid.uuid4())

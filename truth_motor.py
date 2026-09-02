@@ -3078,7 +3078,7 @@ def adaptive_truth_walk(cur, sube_id: str, tarih: str, boyut: str) -> Dict[str, 
         guven = min(99.0, guven + 8.0)
         sorumlu = vardiya_dun.get("tek_basina_araliklari", [{}])[-1].get("personel_ad", "?")
         vardiya_notu.append(f"⭐ Dün akşam TEK PERSONEL: {sorumlu} — kasa %100 kontrolünde, başka açıklama yok")
-        oneriler.insert(0, f"Sorumlu: {sorumlu} (tek başınaydı, devir kimseyle yapmadı)")
+        oneriler.insert(0, "İncele: o vardiyada tek kişi vardı, devir kimseyle yapılmadı")
     elif karar == "SABAHCI_HATALI" and tek_personel_sabah:
         guven = min(99.0, guven + 8.0)
         sorumlu = vardiya_bugun.get("tek_basina_araliklari", [{}])[0].get("personel_ad", "?")
@@ -5345,6 +5345,15 @@ SUT_BOM: Dict[str, float] = {
 # Süt sapma eşiği: %30 — milkshake + iced latte + ölçüm toleransı için buffer
 SUT_SAPMA_ESIK_YZ = 30.0
 
+# 🔴 TRUTH-003 (2026-09-02): bardak eşiği ÜÇ ayrı yerde bağımsız yazılıydı
+# (Sprint H, Sprint J, ve sinyal vektöründe "> 0" gibi görünen bir üçüncüsü).
+# Davranışta bugün tek eşik geçerli ama bu GİZLİ bir bağımlılığa dayanıyor:
+# `toplam_kayip_adet` yalnız anomali dalında yazıldığı için uyumlu günde 0
+# kalıyor. Biri ekran için o alanı uyumlu dala da eklerse — gayet makul bir
+# istek — model 1 bardakta suçlama puanı vermeye başlar ve hiçbir test bunu
+# yakalamaz. Eşik artık TEK yerde.
+BARDAK_ESIK_ADET = 3
+
 # Sahte fire tespiti — zamanlama eşiği: kapanış öncesi kaç dakika?
 SAHTE_FIRE_KAPANIS_DK = 45   # kapanış öncesi 45dk içindeyse şüpheli
 
@@ -6954,7 +6963,7 @@ def tam_analiz(cur, sube_id: str, tarih: str,
         j_plastik = sprint_j_sonuc.get("gece_plastik_kaybi", 0)
         kasa_str = " + kasa açığı eşleşiyor" if sprint_j_sonuc.get("kasada_acik") else ""
         ozet_parcalari.append(
-            f"⚠ {j_ad} bardak şişirdi: "
+            f"⚠ Gece bardak farkı (akşam vardiyası): "
             f"{j_karton:.0f} karton + {j_plastik:.0f} plastik gece 'eridi'{kasa_str}"
         )
     if iptal_suphe:
@@ -7302,7 +7311,7 @@ def aksam_vardiya_bardak_pnl(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
 
     # ── 8. Anomali tespiti ────────────────────────────────────────────────────
     # Eşik: fiziksel fark > %30 aşım VE en az 3 bardak
-    ESIK_ADET = 3
+    ESIK_ADET = BARDAK_ESIK_ADET
     ESIK_ORAN = 0.30
 
     karton_acik  = round(aksam_karton_kullanim  - evo_aksam_karton_est,  1)
@@ -7826,7 +7835,7 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
     })
 
     # ── 6. Eşik: bardak gece kaybolmaz ──────────────────────────────────────
-    ESIK_ADET = 3
+    ESIK_ADET = BARDAK_ESIK_ADET
     karton_anomali  = gece_karton_kaybi  > ESIK_ADET
     plastik_anomali = gece_plastik_kaybi > ESIK_ADET
 
@@ -7860,7 +7869,16 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
         guven += 3.0     # büyük fark → daha yüksek güven
     guven = min(guven, 96.0)
 
-    # ── 8. İki senaryo analizi — kim suçlu? kasa hakem ──────────────────────
+    # ── 8. İki senaryo analizi — hangisi daha muhtemel? kasa hakem ──
+    # 🔴 TRUTH-010 (2026-09-02): bu blok bir İNSANI ADIYLA ve KESİN KİPLE
+    # hırsızlıkla suçluyordu ("X kasayı şişirdi", "Şüpheli: X"). Oysa motorun
+    # KENDİ Bayesian tablosu aynı olaya "insan sayım hatası" için %38 taban
+    # veriyor — model olasılıksal, cümle kesindi. Tetikleyici de zayıftı:
+    # 4 bardak farkı + 1 ₺ kasa açığı yetiyordu.
+    # Bir yanlış pozitifin bedelini yazılım değil, o kişi öder; üstelik
+    # `truth_gozlem`e kalıcı yazılır. Artık: isimsiz, olasılıksal, aksiyon
+    # "incele". `kim` alanı JSON'da VERİ olarak durur (sahip kiminle
+    # görüşeceğini bilsin) — değişen yalnız HÜKÜM cümleleri.────────────────────
     aks_isim = aksamci_ad or "Akşamcı"
     sab_isim = sabahci_ad or "Sabahçı"
     toplam_kayip_adet = max(0, gece_karton_kaybi) + max(0, gece_plastik_kaybi)
@@ -7879,7 +7897,7 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
     # Senaryo A: Akşamcı doğru saydı, sabahçı yanlış saydı → para kaybı yok
     senaryo_a = {
         "harf":    "A",
-        "baslik":  f"{sab_isim} sayım hatası",
+        "baslik":  "Açılış sayım farkı (sabah vardiyası)",
         "kim":     sab_isim,
         "aciklama": (
             f"{sab_isim} açılış kör sayımında {toplam_kayip_adet} bardak eksik gördü. "
@@ -7899,11 +7917,12 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
     # Senaryo B: Sabahçı doğru saydı, akşamcı şişirdi → zimmet
     senaryo_b = {
         "harf":    "B",
-        "baslik":  f"{aks_isim} kapanış şişirmesi",
+        "baslik":  "Kapanış beyanı fazla (akşam vardiyası)",
         "kim":     aks_isim,
         "aciklama": (
-            f"{aks_isim} kapanışta bardak sayısını {toplam_kayip_adet} adet fazla yazdı. "
-            f"Kayıt dışı satış geliri gizlenmiş, para kasaya girmemiş olabilir."
+            f"Kapanış beyanı, sabah kör sayımından {toplam_kayip_adet} adet fazla görünüyor. "
+            f"Olası nedenler: sayım hatası ya da kayıt dışı satış. "
+            f"Kesin hüküm için fiziksel sayım tekrarı gerekir."
         ),
         "kanitlar": (
             [f"Kasa da açık: N1={n1_devir:.0f}₺ (devir) vs N2={n2_kasa:.0f}₺ (kör) = {abs(fark_n1_n2):.0f}₺ fark — çift sinyal"]
@@ -7925,7 +7944,8 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
             f"{aks_isim} {n1_devir:.0f}₺ devir bıraktı dedi, "
             f"{sab_isim} {n2_kasa:.0f}₺ buldu. "
             f"Hem bardak ({fark_ozet}) hem kasa açığı → "
-            f"Senaryo B daha muhtemel: {aks_isim} kasayı şişirdi."
+            f"Senaryo B daha muhtemel: kapanış beyanı ile sabah sayımı arasında "
+            f"açıklanmamış fark var — kapanış vardiyasını İNCELE."
         )
     elif kasa_fazla:
         olasi_senaryo = "BELIRSIZ"
@@ -7939,7 +7959,7 @@ def aksam_bardak_sisirme_tespit(cur, sube_id: str, tarih: str) -> Dict[str, Any]
         karar_ozeti = (
             f"⚖️ Kasa dengede (N1={n1_devir:.0f}₺ ≈ N2={n2_kasa:.0f}₺, para kaybı yok). "
             f"Bardak farkı ({fark_ozet}) büyük ihtimalle "
-            f"{sab_isim}'in açılış kör sayım hatasıdır. "
+            f"açılış kör sayım hatasından kaynaklanıyor olabilir. "
             f"Senaryo A daha muhtemel: eğitim yeterli, soruşturma gerekmez."
         )
 
@@ -8980,7 +9000,7 @@ def olay_ozeti_uret(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
             f"{tl:.0f}₺ açık. Dünkü stok açığıyla da örtüşüyor "
             f"(güven %{sprint_g.get('guven', 0):.0f})."
         )
-        aksiyonlar.append("Kasa baskını + güvenlik kamerası + soruşturma")
+        aksiyonlar.append("Kasa sayımını tekrarla + kamera kaydını incele")
 
     # ── Sprint J: Bardak şişirme (cross-day) ────────────────────────────────
     sprint_j: Dict[str, Any] = {}
@@ -8999,11 +9019,11 @@ def olay_ozeti_uret(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         if j_ad not in personeller:
             personeller.append(j_ad)
         parcalar.append(
-            f"**Bardak şişirme:** {j_ad} kapanışta {j_kayip} adet bardak fazla yazdı. "
+            f"**Gece bardak farkı:** Kapanış beyanı sabah sayımından {j_kayip} adet fazla görünüyor. "
             f"{s_ad} açılışta gerçek sayıyı buldu — gece bardak kaybolmaz. {j_karar}"
         )
         if sprint_j.get("olasi_senaryo") == "B":
-            aksiyonlar.append(f"{j_ad} ile görüşme + sayım tekrarı")
+            aksiyonlar.append("Sayım tekrarı + kapanış vardiyasıyla görüşme")
 
     # ── Sprint H: Vardiya bardak P&L ─────────────────────────────────────────
     sprint_h: Dict[str, Any] = {}
@@ -9059,8 +9079,8 @@ def olay_ozeti_uret(cur, sube_id: str, tarih: str) -> Dict[str, Any]:
         tarih_str = str(tarih)
         kim_str   = " & ".join(personeller) if personeller else "ilgili personel"
         baslik = {
-            "kritik": f"⚠️ KRİTİK — {tarih_str} — Şüpheli: {kim_str}",
-            "yuksek": f"🟠 YÜKSEK RİSK — {tarih_str} — İnceleme: {kim_str}",
+            "kritik": f"⚠️ KRİTİK — {tarih_str} — İnceleme gerekli",
+            "yuksek": f"🟠 YÜKSEK RİSK — {tarih_str} — İnceleme gerekli",
         }.get(alarm, f"🟡 ORTA RİSK — {tarih_str}")
 
         anlatı = baslik + "\n\n" + "\n\n".join(parcalar)
@@ -9301,7 +9321,10 @@ def _sinyal_vektor_cikar(
 
     # Bardak sinyalleri
     gece_kayip       = int(sprint_j.get("toplam_kayip_adet") or 0)
-    bardak_acik_var  = gece_kayip > 0 or gece_durum in ("uyari", "kritik")
+    # TRUTH-003: burada YENİDEN eşik koyma — Sprint J'nin tanısını oku.
+    # "> 0" ifadesi eşik gibi görünüyordu ama değildi; niyet artık açık.
+    bardak_acik_var  = (str(sprint_j.get("tani") or "") == "AKSAM_BARDAK_SISIRDI"
+                        or gece_durum in ("uyari", "kritik"))
     bardak_acik_buyuk = gece_kayip > 10 or gece_durum == "kritik"
     gece_state       = gece_k.get("state_key", "")
     gece_bardak_sisirdi = "sisirdi" in gece_state

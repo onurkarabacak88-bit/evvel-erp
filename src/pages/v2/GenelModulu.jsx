@@ -2392,7 +2392,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         <KpiSeridi kpiler={[
           { /* PROD-V2-CIRO-001 FIX: BRÜT bu_ay_ciro (ciro tablosu) — "Bu ay ciro" etiketi brüt olmalı;
                önce NET bu_ay_sadece_ciro tercih ediliyordu, aşağıdaki tahsilat kanalları brütken tutarsızdı. */
-            etiket: 'Bu ay ciro', deger: fmt(sayi(p.bu_ay_ciro ?? p.bu_ay_sadece_ciro)), alt: 'sadece ciro', renk: R.krem },
+            etiket: 'Bu ay ciro', deger: p.bu_ay_ciro == null ? '—' : fmt(sayi(p.bu_ay_ciro)), alt: 'sadece ciro', renk: R.krem },
           { etiket: 'Nakit giriş', deger: giris ? fmt(giris) : '—', alt: 'bu ay', renk: giris ? R.yesil : R.not },
           { etiket: 'Nakit çıkış', deger: cikis ? fmt(cikis) : '—', alt: 'bu ay', renk: cikis ? R.kirmizi : R.not },
           // ⚠️ `net === 0` GERÇEK BİR CEVAPTIR: eski koşul `net ? … : '—'` idi,

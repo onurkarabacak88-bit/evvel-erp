@@ -11887,6 +11887,10 @@ def ops_siparis_merkez_test_temizle(body: dict):
     from operasyon_defter import operasyon_defter_ekle
 
     geri_alinan: list = []
+    # 🔴 VERI-003 (2026-09-02): adım 1-3 sessizce atlansa bile adım 4 talebi
+    # YİNE siliyordu — stok geri alınmadan, belge_talep yetim kalarak.
+    # Atlanan her adım burada birikir; biriken varsa silme YAPILMAZ.
+    engeller: list = []
     with db() as (conn, cur):
         cur.execute("SELECT id, personel_ad, sube_id FROM siparis_talep WHERE id=%s", (tid,))
         st = cur.fetchone()
@@ -11936,17 +11940,23 @@ def ops_siparis_merkez_test_temizle(body: dict):
                     if not uad or adet_i <= 0 or not uid:
                         continue  # urun_id yoksa güvenli ATLA (kanonik olmayan stok riskli)
                     try:
-                        depo_kalem = depo_kalem_kodu_resolve(cur, uid, uad)
-                    except Exception:
+                        # SAVEPOINT: resolve içeride SQL çalıştırıyor; yutulan
+                        # hata transaction'ı zehirler ve fatura başka satırda
+                        # kesilir. Adım 2-3 zaten savepoint'liydi, bu ikisi değil.
+                        with savepoint(cur, "sp_mt_resolve"):
+                            depo_kalem = depo_kalem_kodu_resolve(cur, uid, uad)
+                    except Exception:  # noqa: BLE001
                         depo_kalem = None
                     if not depo_kalem:
+                        engeller.append(f"depo kalemi çözülemedi: {adet_i} {uad}")
                         continue
                     try:
-                        sube_depo_stok_depo_cikis_dus(cur, d_sube, depo_kalem, uad, adet_i)
+                        with savepoint(cur, "sp_mt_stok"):
+                            sube_depo_stok_depo_cikis_dus(cur, d_sube, depo_kalem, uad, adet_i)
                         geri_alinan.append(f"{adet_i} {uad}")
                         ozet_kalem.append(f"{adet_i} {uad}")
-                    except Exception:
-                        pass
+                    except Exception as _stok_e:  # noqa: BLE001
+                        engeller.append(f"stok düşülemedi: {adet_i} {uad} ({str(_stok_e)[:80]})")
                 # Ters defter izi (hash-zincir korunur — operasyon_defter_ekle ile)
                 try:
                     # 🛟 SAVEPOINT (2026-09-01 denetimi): yutulan SQL hatasi transaction'i
@@ -11975,9 +11985,17 @@ def ops_siparis_merkez_test_temizle(body: dict):
             # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
             with savepoint(cur, "sp_yut11560"):
                 cur.execute("DELETE FROM stok_yolda WHERE siparis_talep_id=%s", (tid,))
-        except Exception:
-            pass
-        # 4) Talebi sil → toptanci_siparis ON DELETE CASCADE ile düşer
+        except Exception as _sy_e:  # noqa: BLE001
+            engeller.append(f"stok_yolda silinemedi ({str(_sy_e)[:80]})")
+        # 4) ATOMİKLİK KAPISI (VERI-003): yukarıda TEK bir adım bile sessizce
+        #    atlandıysa talep SİLİNMEZ. HTTPException `with db()` içinden çıkar,
+        #    1-3'te yazılan ne varsa geri sarılır → hiçbir şey yazılmamış olur.
+        #    "Sessizce eksik sil" yerine "hiç silme, söyle".
+        if engeller:
+            raise HTTPException(
+                409,
+                "Sipariş SİLİNMEDİ (hiçbir şey yazılmadı): " + "; ".join(engeller[:6]))
+        # 5) Talebi sil → toptanci_siparis ON DELETE CASCADE ile düşer
         cur.execute("DELETE FROM siparis_talep WHERE id=%s", (tid,))
         audit(cur, "siparis_talep", tid, "OPS_MERKEZ_TEST_TEMIZLE")
 
@@ -15744,7 +15762,11 @@ def ops_maliyet_ozet(
         recete_sayisi, recete_durum = 0, {}
         try:
             from recete_api import maliyet_projeksiyonu
-            proj = maliyet_projeksiyonu(cur, _alis_fiyat_haritasi(cur))
+            # SAVEPOINT: maliyet_projeksiyonu içeride cur.execute yapıyor
+            # (recete_api.py). Yutulursa transaction zehirlenir; bugün bloğun
+            # altında sorgu yok ama biri eklerse fatura orada kesilirdi.
+            with savepoint(cur, "sp_ozet_recete_proj"):
+                proj = maliyet_projeksiyonu(cur, _alis_fiyat_haritasi(cur))
             recete_sayisi = int(proj.get("toplam") or 0)
             recete_durum = proj.get("durum_dagilimi") or {}
         except Exception as e:  # noqa: BLE001
@@ -21104,7 +21126,11 @@ def _food_cost_hesapla_gun(
             "tarih":            str(hedef),
             "ciro_tl":          round(ciro_tl, 2),
             "actual_open_cogs_tl": round(actual_cogs, 2),
-            "teorik_maliyet_tl": round(actual_cogs, 2),   # geriye uyum
+            # OPS-009b: ad YANILTICI — bu L1 GERÇEK maliyet, "teorik" değil.
+            # Eski ad geriye uyum için duruyor; doğru ad da cevaba eklendi ki
+            # okuyucular kademeli geçebilsin (kolon DDL'de kalır, DROP gerekmez).
+            "teorik_maliyet_tl": round(actual_cogs, 2),   # geriye uyum (bkz. OPS-009b)
+            "gercek_maliyet_tl": round(actual_cogs, 2),
             "diger_urun_ac_tl": round(diger_urun_ac_tl, 2),
             "theoretical_recipe_cogs_tl": (round(float(teorik_tl), 2) if teorik_tl is not None else None),
             "teorik_kapsama_pct": l2.get("kapsama_pct"),

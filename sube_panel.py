@@ -1607,7 +1607,22 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
             (sube_id, is_gunu_tr()),
         )
         ka = cur.fetchone()
-        pid = (body.personel_id or "").strip() or str((ka or {}).get("personel_id") or "").strip()
+        _kasa_acan = str((ka or {}).get("personel_id") or "").strip()
+        pid = (body.personel_id or "").strip() or _kasa_acan
+        # 🔴 SUBE-002 (2026-09-02): kasa kilidi zaten PIN'le açılmıştı, ama
+        # açılışı KİMİN yaptığı gövdeden geliyordu ve doğrulanmıyordu. Biri
+        # gövdeye bir başkasının id'sini koyarsa sabahki kasa farkı O KİŞİNİN
+        # risk siciline yazılıyordu — gerçek aktör görünmez oluyordu.
+        # ⚖️ İkinci bir PIN İSTEMİYORUZ: aynı kişiye aynı sabah iki kez PIN
+        # sormak POS akışını kilitler. Kimlik ÖLÇMEK ile erişim KESMEK farklı
+        # işlerdir — burada ÖLÇÜYORUZ: kasa açanla aynıysa kanıt 'panel_pin',
+        # değilse personel_coz ne diyorsa o (yoklama/beyan/yok). Defterde
+        # doğrulanmış kimlik ile beyan artık aynı görünmüyor.
+        if pid and pid == _kasa_acan:
+            _aktor_kaynak = "panel_pin"
+        else:
+            from personel_kimlik import personel_coz
+            _aktor_kaynak = personel_coz(cur, pid, sube_id=sube_id).get("kaynak") or "yok"
         if not pid:
             raise HTTPException(400, "Açılış için PIN onaylayan personel bulunamadı.")
         cur.execute("SELECT ad_soyad FROM personel WHERE id=%s", (pid,))
@@ -1670,7 +1685,8 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                 ),
             ),
         )
-        audit(cur, "sube_acilis", aid, "ACILIS_PANEL")
+        audit(cur, "sube_acilis", aid, "ACILIS_PANEL",
+              aktor=onay_ad, aktor_id=pid, aktor_kaynak=_aktor_kaynak)
         from operasyon_defter import operasyon_defter_ekle
 
         operasyon_defter_ekle(
@@ -1848,7 +1864,17 @@ Sadece geçerli bir JSON nesnesi döndür. Başka metin, markdown veya açıklam
                     kasa_snap,
                 ),
             )
-            audit(cur, "x_rapor_kayit", rid, "OCR_X_RAPOR")
+            # 🔴 SUBE-008 (2026-09-02): bu satır bir KANITTIR (foto + model
+            # cevabı + kasa anlık görüntüsü) ama "kim çekti" sorusu cevapsız
+            # kalabiliyordu — personel_id doğrulanmadan, boş bile yazılabiliyordu.
+            # ⚖️ PIN EKLEMİYORUZ: OCR yardımcı araç, para yazmıyor, ciro zaten
+            # kapanışta PIN'li. Ama kimliğin KANIT SEVİYESİ ölçülüp deftere
+            # yazılıyor: 'yok' / 'beyan' / 'yoklama' ayrımı artık görünür.
+            from personel_kimlik import personel_coz
+            _xk = personel_coz(cur, personel_id, sube_id=sube_id)
+            audit(cur, "x_rapor_kayit", rid, "OCR_X_RAPOR",
+                  aktor=_xk.get("ad_soyad"), aktor_id=_xk.get("personel_id"),
+                  aktor_kaynak=_xk.get("kaynak"))
 
         fark = abs(float(amounts["toplam"] or 0) - float(kasa_snap or 0))
         kasa_uyari = None
@@ -2531,11 +2557,32 @@ def sube_personel_panel_public(payload: dict) -> dict:
 
 
 @router.post("/{sube_id}/kasa-yoklama-ac")
-def kasa_yoklama_ile_ac(sube_id: str):
+class KasaYoklamaAcBody(BaseModel):
+    # SUBE-003: verilirse BU kişinin bugünkü yoklaması sunucudan doğrulanır.
+    personel_id: Optional[str] = None
+
+
+def kasa_yoklama_ile_ac(sube_id: str, body: KasaYoklamaAcBody = KasaYoklamaAcBody()):
     """QR yoklama onaylandıktan sonra kasa kilidini PIN'siz aç."""
     with db() as (conn, cur):
         # Bugün yoklama var mı kontrol et
-        cur.execute("SELECT personel_id FROM gorev_yoklama WHERE sube_id=%s AND tarih=%s ORDER BY giris_ts LIMIT 1", (sube_id, is_gunu_tr()))
+        # 🔴 SUBE-003 (2026-09-02): kasa SORUMLULUĞU (custody) kime yazılıyordu?
+        # Günün İLK yoklamacısına — otomatik ve keyfi. Ağdaki herhangi biri
+        # gövdesiz POST atınca, belki beş dakika sonra çıkacak biri günün kasa
+        # sorumlusu oluyordu ve gün sonu farkı ONA yazılıyordu.
+        # ⚖️ PIN EKLEMİYORUZ: tasarım bilerek "QR ile PIN'siz aç" diyor, kapı
+        # zaten sunucu-taraflı bir kanıta (yoklama satırı) dayanıyor. Eksik olan
+        # KİMİN istediğiydi. Gövdede kimlik varsa O kişinin bugünkü yoklaması
+        # aranır; yoksa eski davranış sürer (eski sube_panel.html gövdesiz
+        # çağırıyor — geri uyum şart).
+        _istenen = (body.personel_id or "").strip() if body else ""
+        if _istenen:
+            cur.execute(
+                "SELECT personel_id FROM gorev_yoklama WHERE sube_id=%s AND personel_id=%s "
+                "AND tarih=%s ORDER BY giris_ts LIMIT 1",
+                (sube_id, _istenen, is_gunu_tr()))
+        else:
+            cur.execute("SELECT personel_id FROM gorev_yoklama WHERE sube_id=%s AND tarih=%s ORDER BY giris_ts LIMIT 1", (sube_id, is_gunu_tr()))
         row = cur.fetchone()
         if not row:
             raise HTTPException(403, "Yoklama kaydı bulunamadı")

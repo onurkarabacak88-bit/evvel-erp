@@ -3288,7 +3288,11 @@ export default function OperasyonMerkezi() {
       const kayitlar = Array.isArray(r?.liste) ? r.liste : [];
       let maxAbs = 0;
       kayitlar.forEach((u) => {
-        const a = Math.abs(Number(u?.fark_tl || 0));
+        // 🔴 OPS-015: ham fark okunuyordu — sahip "fiş bulundu, gerçek fark 30 ₺"
+        // diye ÇÖZDÜKTEN sonra bile 7-gün şeridinde o gün kırmızı kalıyordu.
+        // Çözülmüş gün çözülmemiş görünüyor, "kronik mi?" sorusu yanlış
+        // cevaplanıyordu. v2 tarafı 2026-08-27'de düzeltilmişti, eskisi kalmış.
+        const a = Math.abs(Number((u?.efektif_fark_tl ?? u?.fark_tl) || 0));
         if (Number.isFinite(a) && a > maxAbs) maxAbs = a;
       });
       return {
@@ -6378,7 +6382,8 @@ export default function OperasyonMerkezi() {
         const ciroYok = kartlar.length - ciroGiren - ciroOnayda;
         const hepsiGirdi = ciroGiren === kartlar.length && kartlar.length > 0;
         const devirFarkSayi = kasaUyumBugun?.toplam || 0;
-        const devirFarkMaxAbs = Math.max(0, ...((kasaUyumBugun?.kayitlar || []).map(u => Math.abs(Number(u?.fark_tl || 0)))));
+        // OPS-015: aynı kök — çözümle düzeltilmiş tutar varsa o geçerli.
+  const devirFarkMaxAbs = Math.max(0, ...((kasaUyumBugun?.kayitlar || []).map(u => Math.abs(Number((u?.efektif_fark_tl ?? u?.fark_tl) || 0)))));
         // 3 stok sinyali — hepsi aynı kaynaktan (urunUyumBugun.kayitlar), şube bazında ayrı pill
         const _stokKayit = (urunUyumBugun?.kayitlar || []).filter(u => !u.cozuldu);
         const urunDevirSube = new Set(_stokKayit.filter(u => u.tip === 'STOK_BAR_DEVIR_FARK').map(u => u.sube_id)).size;
@@ -12142,7 +12147,7 @@ export default function OperasyonMerkezi() {
                                 <td style={{ padding: '6px 10px', whiteSpace: 'nowrap', fontSize: 11, color: 'var(--text3)' }}>{r.tarih}</td>
                                 <td style={{ padding: '6px 10px', fontWeight: 600 }}>{r.sube_adi || r.sube_id}</td>
                                 <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.ciro_tl||0).toLocaleString('tr-TR',{maximumFractionDigits:0})}</td>
-                                <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.teorik_maliyet_tl||0).toLocaleString('tr-TR',{maximumFractionDigits:0})}</td>
+                                <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums' }}>₺{Number(r.actual_open_cogs_tl ?? r.gercek_maliyet_tl ?? r.teorik_maliyet_tl ?? 0).toLocaleString('tr-TR',{maximumFractionDigits:0})}</td>
                                 <td style={{ padding: '6px 10px', fontWeight: 700, color: fcR }}>{fcRaw > 0 ? `%${fcRaw.toFixed(1)}` : '—'}</td>
                                 <td style={{ padding: '6px 10px', fontVariantNumeric: 'tabular-nums', color: 'var(--text3)' }}>
                                   {r.stok_degeri_tl != null ? `₺${Number(r.stok_degeri_tl).toLocaleString('tr-TR',{maximumFractionDigits:0})}` : '—'}

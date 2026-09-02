@@ -2486,7 +2486,10 @@ function CepKapanisOverride({ onGeri }) {
     if (!window.confirm(`${ad} kapanış mührü olarak işaretlensin mi?\n\nYÖNETİCİ override — telefon QR'ı yerine geçer. Sonra masaüstünden kapanışı tamamlarsın.`)) return;
     setMesgul(p.personel_id); setHata('');
     try {
-      const r = await api('/gorev/kapanis-muhur-override', { method: 'POST', body: { sube_id: secili.sube_id, personel_id: p.personel_id, yapan_ad: 'Patron (Cep)' } });
+      // CEP-001: mühür atamak işletme onayı ister (kapanis-geri-al ile aynı kapı).
+      const onayPin = window.prompt('İşletme onay PIN\'i (kapanış mührü atanıyor):');
+      if (onayPin === null) return;
+      const r = await api('/gorev/kapanis-muhur-override', { method: 'POST', body: { sube_id: secili.sube_id, personel_id: p.personel_id, yapan_ad: 'Patron (Cep)', onay_pin: String(onayPin).trim() } });
       setBilgi(`✅ ${r.personel_ad || ad} mührü atandı (önceki: ${r.onceki_cikis_tip || '—'}). Şimdi masaüstünden kapanışı tamamla.`);
       setSecili(null); setPersoneller(null); yukle();
     } catch (e) { setHata(e.message || 'Mühürlenemedi'); }

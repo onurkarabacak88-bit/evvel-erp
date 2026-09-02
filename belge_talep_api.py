@@ -2314,7 +2314,8 @@ def belge_talep_mesaj_gonderildi(talep_id: str):
 class KapatBody(BaseModel):
     durum: str = "pdf_geldi"          # pdf_geldi | kapandi (geriye uyum)
     kapanis_tipi: Optional[str] = None    # fatura | irsaliye | manuel
-    aciklama: Optional[str] = None        # manuel kapanışta ZORUNLU (kapanış kanıtı)
+    aciklama: Optional[str] = None        # manuel/irsaliye kapanışta ZORUNLU (kapanış kanıtı)
+    kapatan_ad: Optional[str] = None      # CEP-003: kim kapattı (BEYAN — açıklamaya damgalanır)
 
 
 @router.post("/{talep_id}/kapat")
@@ -2332,9 +2333,19 @@ def belge_talep_kapat(talep_id: str, body: KapatBody = None):
     if tip and tip not in ("fatura", "irsaliye", "manuel"):
         raise HTTPException(400, "kapanis_tipi: fatura | irsaliye | manuel")
     acik = (getattr(body, "aciklama", None) or "").strip()
-    if tip == "manuel" and not acik:
-        raise HTTPException(400, "Manuel kapanışta açıklama zorunlu — teslimat kanıtsız kapanamaz "
-                                 "(örn. 'irsaliye elden alındı', 'ay sonu faturasına dahil').")
+    # 🔴 CEP-003 (2026-09-02): kanıt yalnız 'manuel' kanadında isteniyordu.
+    # Tek POST ile `kapanis_tipi='irsaliye'` gönderen, açıklamasız ve kimliksiz
+    # kapatabiliyordu → faturasız borç tahakkuku (GRNI) sessizce düşüyordu.
+    if tip in ("manuel", "irsaliye") and not acik:
+        raise HTTPException(400, "Manuel/irsaliye kapanışta açıklama zorunlu — teslimat kanıtsız "
+                                 "kapanamaz (örn. 'irsaliye elden alındı', 'ay sonu faturasına dahil').")
+    # Kim kapattı: tabloda aktör alanı YOK. ⚖️ DDL eklemiyoruz — `_ensure` her
+    # istekte çalışıyor, oraya ALTER koymak "göç init_db dışında" kuralının
+    # ruhuna ters (sıcak yolda şema işi). Bu dosyanın kendi desenini
+    # kullanıyoruz: aktör açıklamaya damgalanır. Doğrulanmadığı için BEYAN.
+    _kapatan = (getattr(body, "kapatan_ad", None) or "").strip() if body else ""
+    if acik:
+        acik = f"{acik} | kapatan: {_kapatan or 'BİLİNMİYOR'} (BEYAN)"
     if not tip:
         # Geriye uyum: tip belirtilmemişse pdf_geldi=fatura, kapandi=manuel say
         tip = "fatura" if durum == "pdf_geldi" else "manuel"

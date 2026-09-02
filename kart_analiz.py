@@ -468,7 +468,15 @@ def _parse_ziraat(pages_text: List[str], kart_no: str, kart_sahibi: str) -> List
             aciklama = m.group(2).strip()
             tutar_str = m.group(3)
             is_pay = bool(m.group(4))  # ends with +
-            is_pay = is_pay or bool(re.search(r'[öo]deme|te[şs]ekk[üu]r', aciklama, re.I))
+            # 🔴 KART-004 (2026-09-02): '[öo]deme' ALT DİZESİ, "İSKİ SU FATURA
+            # ÖDEMESİ" gibi bir HARCAMAYI ödeme yapıyordu → borç +1.200 yerine
+            # −1.200, yani 2.400 ₺ sapma. Mutabakat farkı gösteriyor ama hangi
+            # satır olduğunu söylemiyordu. Ödeme satırı ya satır BAŞINDA "ÖDEME"
+            # ile ya da bankanın teşekkür/ödemeniz kalıbıyla gelir; harcama
+            # açıklamasının ORTASINDAKİ "ödeme" kelimesi kanıt değildir.
+            is_pay = is_pay or bool(re.search(
+                r'^\s*[öo]deme\b|[öo]demeniz|te[şs]ekk[üu]r|hesaptan\s*[öo]deme|otomatik\s*[öo]deme\s*tal',
+                aciklama, re.I))
             tutar, _ = _parse_tutar(tutar_str)
             if tutar <= 0: continue
             # Clean description

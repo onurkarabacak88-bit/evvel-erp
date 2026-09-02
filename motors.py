@@ -1237,12 +1237,19 @@ def finans_ozet_motoru():
         net_akis_30  = akis["net"]
 
         # Bu ayın cirosu (sadece ciro tablosundan — kasa'dan değil)
+        # 🔴 PANEL-008 (2026-09-02): tarih İKİ kaynaktan geliyordu — Python
+        # `bugun_tr()`, SQL ham `CURRENT_DATE`. Bugün hizalılar çünkü her
+        # db() oturumu `SET TIME ZONE 'Europe/Istanbul'` yapıyor. AMA o SET
+        # başarısız olursa yalnız warning loglanıp oturum UTC'de devam ediyor
+        # → gece 00:00-03:00 arasında Python "bugün", SQL "dün" der; ay devri
+        # gecesinde bu sorgu bir ÖNCEKİ ayı gösterebilir.
+        # Hizalamanın sessizce düşebildiği yerde tek kaynak şart.
         cur.execute("""
             SELECT COALESCE(SUM(toplam), 0) as ciro
             FROM ciro
             WHERE durum='aktif'
-            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', CURRENT_DATE)
-        """)
+            AND DATE_TRUNC('month', tarih) = DATE_TRUNC('month', %s::date)
+        """, (bugun,))
         bu_ay_ciro = float(cur.fetchone()['ciro'])
 
         # ── BUGÜN VE GECİKMİŞ ÖDEMELER (gerçek veri — kırmızı alan) ──

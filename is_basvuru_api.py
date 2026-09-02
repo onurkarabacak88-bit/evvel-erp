@@ -5,7 +5,7 @@ from typing import Optional, List
 import re
 import uuid, io
 from datetime import datetime
-from database import db
+from database import db, savepoint
 from tr_saat import dt_now_tr
 
 # 🔐 YÖNETİM KAPISI (2026-09-02, defter: BASVURU-001/004/005/006 · P0)
@@ -52,6 +52,25 @@ def _basvuru_tel_norm(ham: str) -> str:
     elif len(d) == 10 and d.startswith("5"):
         d = "90" + d
     return d if (len(d) == 12 and d.startswith("905")) else ""
+
+
+def _kaynak_sube_dogrula(cur, ham):
+    """BASVURU-011: `?sube=` HALKA AÇIK formdan, doğrulanmadan yazılıyordu.
+    Değer `subeler` tablosuna karşı eşlenir; tutmuyorsa None (aday
+    cezalandırılmaz, alan boş kalır). Liste ekranı bu alanı ham bastığı için
+    id değil KANONİK AD saklanır."""
+    h = str(ham or "").strip()
+    if not h or len(h) > 60:
+        return None
+    try:
+        with savepoint(cur, "bas_kaynak_sube"):
+            cur.execute(
+                "SELECT ad FROM subeler WHERE LOWER(id::text)=LOWER(%s) OR LOWER(ad)=LOWER(%s) LIMIT 1",
+                (h, h))
+            r = cur.fetchone()
+    except Exception:  # noqa: BLE001
+        return None
+    return str(dict(r)["ad"]) if r else None
 
 
 class BasvuruGonder(BaseModel):
@@ -762,7 +781,7 @@ def basvuru_gonder(body: BasvuruGonder, request: Request = None):
             (body.tanitim or "").strip() or None,
             (body.referans_ad or "").strip() or None,
             (body.referans_tel or "").strip() or None,
-            (body.kaynak_sube or "").strip() or None,
+            _kaynak_sube_dogrula(cur, body.kaynak_sube),
             _tel_n, _ip,
             dt_now_tr(),
         ))

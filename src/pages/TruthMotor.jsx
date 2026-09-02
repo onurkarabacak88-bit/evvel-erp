@@ -2266,7 +2266,7 @@ function AksamBardakSisirme({ tarih, subeler }) {
           {sisirdi && veri.senaryo_a && veri.senaryo_b && (
             <div style={{ marginBottom: 12 }}>
               <div style={{ fontSize: 10, color: 'var(--text3)', textTransform: 'uppercase', fontWeight: 600, marginBottom: 6 }}>
-                Sistem Analizi — Kim Suçlu?
+                Sistem Analizi — Olası Senaryolar
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
                 {/* Senaryo A */}

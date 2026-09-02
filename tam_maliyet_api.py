@@ -260,7 +260,15 @@ def dagitim(bas: str, bit: str):
         _ensure_tablolar(cur)
         # Operasyonel (satış) şubeler — merkez/sevkiyat hariç dağıtım hedefi
         cur.execute(
-            "SELECT id::text AS id, ad FROM subeler WHERE aktif=TRUE AND id <> 'sube-merkez' ORDER BY ad"
+            # 🔴 MALIYET-007 (2026-09-02): yorum "merkez/sevkiyat hariç" diyordu,
+            # kod yalnız merkezi dışlıyordu. `dagitim='esit'` ya da ciro-yok
+            # yedeğinde saf DEPO şubesi 1/n merkez gideri yükleniyor, satış
+            # şubelerinin payı düşüyor ve depo "zararda" görünüyordu.
+            # ⚠️ 'karma' DIŞLANMAZ: hub şube (TEMA/Gazze) hem satış hem depo.
+            # 'sevkiyat' legacy değer için savunma olarak duruyor.
+            "SELECT id::text AS id, ad FROM subeler WHERE aktif=TRUE AND id <> 'sube-merkez' "
+            "AND COALESCE(NULLIF(TRIM(sube_tipi), ''), 'normal') NOT IN ('depo', 'sevkiyat') "
+            "ORDER BY ad"
         )
         subeler = [dict(r) for r in (cur.fetchall() or [])]
         sube_ids = [s["id"] for s in subeler]

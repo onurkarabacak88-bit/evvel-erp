@@ -2422,6 +2422,15 @@ def panel():
 
         ozet = finans_ozet_motoru()
         ozet['plan_kontrol'] = plan_kontrol
+        # 🔴 PANEL-012 (2026-09-02): bu uç TÜM ŞUBELERİ topluyor ama yanıtta
+        # bunun izi yoktu. Tek şubeye bakan biri "bu ay ciro" rakamını kendi
+        # şubesi sanabilirdi. Gerçek şube izolasyonu ayrı bir tasarım işidir
+        # (motor + cache anahtarı + tüm sorgular birlikte değişmeli); YARIM
+        # yama zararlı olurdu: yalnız bu dosyanın sorgularına filtre koyarsak
+        # motorun bu_ay_ciro'su konsolide kalır ve toplam≠parça sapması doğar.
+        # Şimdilik yapılacak dürüst şey: KAPSAMI SÖYLEMEK.
+        ozet['kapsam'] = 'tum_subeler'
+        ozet['sube_id'] = None
         # Devir: hesaplanır, ledger'a yazılmaz
         devir_bilgi = devir_hesapla()
         ozet['bu_ay_devir'] = devir_bilgi['devir_tutar']
@@ -2614,6 +2623,13 @@ def panel():
                      FROM personel_aylik pa
                      JOIN personel p2 ON p2.id = pa.personel_id
                         AND COALESCE(p2.calisma_turu,'surekli')='surekli'
+                        -- 🔴 PANEL-006 (2026-09-02): `tahmini` ve `bekleyen`
+                        -- alt-seçimleri `p.aktif=TRUE` istiyor, `gercek` İSTEMİYORDU.
+                        -- Ay içinde çıkan ama o ayın bordro kaydı olan kişi
+                        -- `gercek`e giriyor, `tahmini`ye girmiyordu → "fark"
+                        -- satırı kişi sayısı kadar şişiyor, sahip "bordro
+                        -- tahminden yüksek çıktı" sanıyordu.
+                        AND p2.aktif=TRUE
                      WHERE pa.yil = EXTRACT(YEAR FROM CURRENT_DATE)
                        AND pa.ay  = EXTRACT(MONTH FROM CURRENT_DATE)) AS gercek,
                     (SELECT COUNT(*)
@@ -5321,6 +5337,13 @@ def anlik_gider_sil(gid: str):
         try:
             from kasa_fark_recalc import sube_gun_kapanis_recalc
             sube_gun_kapanis_recalc(cur, eski.get('sube'), eski['tarih'])
+            # 🔴 RAPOR-007 (2026-09-02): gider ONAYLANINCA cache tazeleniyordu
+            # ama İPTAL EDİLİNCE tazelenmiyordu — o günün `anlik_gider_nakit`i
+            # bayat kalıyor, iptal edilen gider raporda durmaya devam ediyordu.
+            if eski.get('sube'):
+                from rapor_cache import gunluk_ozet_yenile
+                gunluk_ozet_yenile(cur, str(eski['sube']), eski['tarih'],
+                                   kaynak='event_gider_iptal')
         except Exception:
             pass
     return {"success": True}
@@ -13297,17 +13320,26 @@ def borc_ode(bid: str, body: BorcOdemeBody):
         )
         audit(cur, 'borc_envanteri', bid, 'ODEME', eski=dict(borc))
 
-        # Bu ay için bekleyen bir odeme_plani varsa kapat (çift ödemeyi önler)
+        # Bekleyen odeme_plani'nı TAKSİT DÖNEMİNE göre kapat (çift ödemeyi önler).
+        # 🔴 BORC-003 kalıntısı (2026-09-02): kapı ve idempotency TAKSİT NO'ya
+        # geçmişti ama bu adım hâlâ ÖDEME TARİHİNİN takvim ayına bakıyordu.
+        # Koç Finans deseni: Haziran taksiti (vade 29.06) 04.07'de ödenince
+        # TEMMUZ planı 'odendi' oluyor, Haziran planı açık kalıyordu → 29.07'de
+        # gerçek Temmuz taksiti "Bugün Ödemeler"de GÖRÜNMÜYOR, hatırlatma
+        # kayboluyor, gecikme faizi riski doğuyordu. Para çift yazılmıyor
+        # (kasa izi + sayaç doğru) ama dönem kimliği yanlıştı.
+        # Dönem artık taksidin VADE ayı; vade bilinmiyorsa eski kural sürer.
+        _plan_donem = str(taksit_vade) if (borc['toplam_vade'] and taksit_vade) else tarih
         cur.execute(
             """
             UPDATE odeme_plani
             SET durum='odendi', odenen_tutar=%s, odeme_tarihi=%s
             WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s
               AND durum IN ('bekliyor','onay_bekliyor')
-              AND EXTRACT(YEAR FROM tarih)  = EXTRACT(YEAR FROM %s::date)
-              AND EXTRACT(MONTH FROM tarih) = EXTRACT(MONTH FROM %s::date)
+              AND DATE_TRUNC('month', COALESCE(referans_ay, tarih))
+                  = DATE_TRUNC('month', %s::date)
             """,
-            (tutar, tarih, bid, tarih, tarih),
+            (tutar, tarih, bid, _plan_donem),
         )
 
         return {

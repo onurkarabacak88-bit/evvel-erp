@@ -357,13 +357,29 @@ export default function Maliyet() {
     Promise.all(liste.map(s =>
       api(`/ops/maliyet/gun-gun?bas=${ar.bas}&bit=${ar.bit}&sube_id=${encodeURIComponent(s.id)}`)
         .then(d => {
-          const sat = d?.satirlar || [];
+          // 🔴 MALIYET-011 (2026-09-02): aynı şube + aynı dönem için Analiz
+        // kartı ile Genel hero FARKLI net kâr veriyordu. Üç sebep vardı:
+        // (1) gün kümesi — kart TÜM satırları, hero yalnız cirolu günler +
+        //     kira ödenen kapalı günler (bugünün yarım günü hariç);
+        // (2) fallback — kart `net_kar_tl`e (düz %25 vergili ESKİ tanım)
+        //     düşebiliyordu, hero düşmüyordu;
+        // (3) marj paydası — kart KDV DAHİL ciro, hero KDV hariç.
+        // Gün içinde fark en büyüktü: bugünün maliyeti var, cirosu henüz yok.
+        // Sahip hangi rakama güveneceğini bilemiyordu. Kart artık hero'nun
+        // tanımını kullanıyor — TEK tanım.
+        const _bugunIsoA = _iso(new Date());
+        const sat = (d?.satirlar || []).filter(s => {
+          if ((Number(s.ciro_tl) || 0) > 0) return true;
+          const sabit = (Number(s.kira_maliyet_tl) || 0) + (Number(s.fatura_maliyet_tl) || 0)
+            + (Number(s.abonelik_maliyet_tl) || 0);
+          return sabit > 0 && s.tarih !== _bugunIsoA;
+        });
           const T = k => sat.reduce((a, x) => a + (Number(x[k]) || 0), 0);
           // FIX C6 (2026-07-05): net_kar_net_tl (harman vergi+KDV arındırma) — net_kar_tl eski/düz%25
-          const ciro = T('ciro_tl'), gider = T('genel_toplam'), net = sat.reduce((a, x) => a + (Number(x.net_kar_net_tl ?? x.net_kar_tl) || 0), 0);
+          const ciro = T('ciro_tl'), gider = T('genel_toplam'), net = T('net_kar_net_tl');   // MALIYET-011: hero ile aynı alan, fallback YOK
           // G7 (2026-07-07): marj tanım birliği — net kâr / NET SATIŞ (KDV hariç);
           // brüt ciro tabanı marjı sistematik ~%9 düşük gösteriyordu
-          const netSatis = T('net_satis_tl') || ciro;
+          const netSatis = T('net_satis_tl') || (ciro / 1.10);   // MALIYET-011: hero ile aynı KDV-hariç payda
           return { sube_id: s.id, ad: s.ad || s.id, ciro, gider, net, marj: netSatis > 0 ? (net / netSatis) * 100 : null };
         })
         .catch(() => ({ sube_id: s.id, ad: s.ad || s.id, ciro: 0, gider: 0, net: 0, marj: null }))

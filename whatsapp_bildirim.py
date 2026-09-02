@@ -920,13 +920,27 @@ def gunluk_ozet_mesaj_olustur(tarih: date | None = None) -> str:
     s.append(f"*{yarin_tarih_str} ÖDEMELERİ*")
     if yarin:
         toplam_y = 0
+        _maas_n, _maas_top = [0], [0.0]   # ENT-008 sayaçları
         for o in yarin:
-            ad    = str(o.get("aciklama") or "")[:28]
             t     = float(o.get("tutar") or 0)
             toplam_y += t
+            # 🔴 ENT-008 (2026-09-02): maaş planının açıklaması
+            # "Personel Maaş: <ad_soyad> — ..." biçiminde (maas_service.py).
+            # Bu satır ortaklar WhatsApp grubuna VE Green API'ye (3. taraf
+            # sunucu) gidiyordu — yani kişi adı + maaş tutarı çifti dışarı
+            # çıkıyordu. Kimse böyle bir paylaşıma razı olmadı.
+            # Kişi bazlı maaş TEK satıra toplanır; isim mesaja girmez.
+            # Toplam rakam değişmiyor (toplam_y yukarıda zaten eklendi).
+            if (o.get("kaynak_tablo") or "") == "personel":
+                _maas_n[0] += 1
+                _maas_top[0] += t
+                continue
+            ad    = str(o.get("aciklama") or "")[:28]
             etiket = _KAYNAK_ETIKET.get(o.get("kaynak_tablo") or "", "")
             ek = f" ({etiket})" if etiket else ""
             s.append(f"  • {ad}{ek}  {_fmt(t)}")
+        if _maas_n[0]:
+            s.append(f"  • Personel maaşları ({_maas_n[0]} kişi)  {_fmt(_maas_top[0])}")
         if len(yarin) > 1:
             s.append(f"  Toplam: *{_fmt(toplam_y)}*")
     else:

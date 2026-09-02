@@ -92,9 +92,22 @@ def hs_rapor_sube_bazli_cached(bastar: date, bittar: date) -> Dict[str, Any]:
     paylaşır."""
     sonuc = hs_rapor_sube_bazli(bastar, bittar)
     if sonuc.get("subeler"):
-        _evo_cache_yaz("sube-grup-detay", bastar, bittar, sonuc)
         sonuc["canli"] = True
         sonuc["son_cekim_ts"] = datetime.now().isoformat()
+        # 🔴 ENT-004 (2026-09-02): üretici tarafı düzeltilmişti (`tam`,
+        # `eksik_subeler` alanları eklendi) ama SARMALAYICI hâlâ kısmi sonucu
+        # "son başarılı çekim" diye cache'e yazıyordu ve kimse `tam`ı okumuyordu.
+        # Somut zarar: 4 şubeden birinin çağrısı zaman aşımına uğrar → o şube
+        # sonuçta yok → "0 bardak" görünür; ertesi gün Evo tamamen düşerse
+        # cache fallback'i bu EKSİK veriyi "bayat ama tam" diye geri verir.
+        # Hiçbir ekranda sarı ışık yanmaz. Kısmi veri artık cache'i KİRLETMEZ.
+        if sonuc.get("tam", True):
+            sonuc["saglik"] = "ok"
+            _evo_cache_yaz("sube-grup-detay", bastar, bittar, sonuc)
+        else:
+            sonuc["saglik"] = "kismi"
+            log.warning("sube-grup-detay KISMI: eksik subeler=%s (%s..%s)",
+                        sonuc.get("eksik_subeler"), bastar, bittar)
         return sonuc
 
     # Canlı veri gelmedi (tüm şube çekimleri başarısız) → son başarılı çekimi göster
@@ -108,6 +121,7 @@ def hs_rapor_sube_bazli_cached(bastar: date, bittar: date) -> Dict[str, Any]:
 
     sonuc["canli"] = False
     sonuc["son_cekim_ts"] = None
+    sonuc["saglik"] = "hata"   # ENT-004: tüm şubeler başarısız + cache de yok
     return sonuc
 
 # ─────────────────────────────────────────────
@@ -668,6 +682,13 @@ def _hs_web_token_temizle() -> None:
     """Geçersiz/süresi dolmuş token'ı bellekten ve DB'den temizler."""
     global _hs_web_token
     _hs_web_token = ""
+    # 🔴 ENT-007 (2026-09-02): `_hs_web_token_al` 3. adımda REST UID'sini
+    # (8 saatlik önbellek) web token yerine koyuyor. O UID ölürse burada
+    # yalnız `_hs_web_token` siliniyordu; bir sonraki çağrı AYNI ÖLÜ UID'yi
+    # önbellekten tekrar alıyordu → 8 saat boyunca her hs-rapor çağrısı 503.
+    # REST önbelleği de düşürülür; bedeli en fazla bir yeniden giriştir
+    # (okuma çağrıları, idempotent).
+    _token_cache.clear()
     try:
         with db() as (conn, cur):
             cur.execute("DELETE FROM ayarlar WHERE anahtar='evo_web_token'")
