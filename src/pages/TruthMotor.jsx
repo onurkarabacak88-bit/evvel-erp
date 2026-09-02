@@ -2,6 +2,7 @@
 // Mevcut akıştan veri okur, kendi içinde sağıltır (üçgenleme), karar üretir.
 // Şubeler bazında aç/kapat + manuel çalıştır + geçmiş kararlar.
 import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { bugunTR } from '../utils/trTarih';
 
 const API = '';  // same-origin
 
@@ -49,7 +50,7 @@ function fetchJson(url, opts) {
 }
 
 function bugunStr() {
-  return new Date().toISOString().slice(0, 10);
+  return bugunTR();
 }
 
 export default function TruthMotor() {

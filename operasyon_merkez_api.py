@@ -17841,6 +17841,14 @@ def ops_maliyet_basabas(gun: int = Query(30, ge=7, le=90)):
 def ops_maliyet_vergi_ozet(
     gun: int = Query(7, ge=1, le=31),
     sube_id: Optional[str] = Query(None),
+    # 🔴 MALIYET-013 (2026-09-02): bu uç yalnız `gun` alıyor, `gun_gun`'e de
+    # bilerek `bas=None, bit=None` geçiyordu — yani pencere HEP bugüne çıpalı.
+    # Ekranda geçmiş bir dönem seçildiğinde üst bloklar seçili dönemi, vergi
+    # bloğu SON N GÜNÜ gösteriyordu; ikisi aynı başlığın altındaydı.
+    # Yeni parametre icat edilmedi: `gun_gun` zaten bas/bit destekliyor,
+    # o sözleşme yukarı taşındı (iki ayrı tarih dili olmasın).
+    bas: Optional[str] = Query(None, description="YYYY-MM-DD — verilirse gün yerine aralık"),
+    bit: Optional[str] = Query(None, description="YYYY-MM-DD"),
 ):
     """İZOLE şube-bazlı TAHMİNİ vergi özeti (Türkiye mekanizması). Resmî beyan DEĞİL.
     Şirket (Ltd/A.Ş.) → kurumlar %25 düz. Şahıs → gelir vergisi artan dilim (yıllığa
@@ -17854,6 +17862,13 @@ def ops_maliyet_vergi_ozet(
         )
         subeler = [dict(r) for r in cur.fetchall()]
 
+    # ⚠️ Query() varsayılan NESNESİ truthy'dir; fonksiyon içi kullanımda açıkça
+    # None'a indirgenmeli, yoksa tarih filtresi kırılır (kodda zaten uyarı vardı).
+    # Döngü DIŞINDA çözülüyor: try bloğu içinde tanımlansaydı, ilk satırdan önce
+    # bir istisna oluştuğunda aşağıdaki annualize hesabı NameError verirdi.
+    _bas = bas if isinstance(bas, str) and bas.strip() else None
+    _bit = bit if isinstance(bit, str) and bit.strip() else None
+
     satirlar = []
     toplam_vergi = 0.0
     toplam_kar = 0.0
@@ -17861,8 +17876,7 @@ def ops_maliyet_vergi_ozet(
     for s in subeler:
         _veri_eksik = False
         try:
-            # bas/bit AÇIKÇA None — yoksa Query() varsayılan nesnesi truthy olup tarih filtresini kırar
-            gg = ops_maliyet_gun_gun(gun=gun, sube_id=s["id"], bas=None, bit=None)
+            gg = ops_maliyet_gun_gun(gun=gun, sube_id=s["id"], bas=_bas, bit=_bit)
             favok = sum(float(r.get("favok_tl") or 0) for r in gg.get("satirlar", []))
         except Exception:
             # Eskiden hata YUTULUP favok=0 yazılıyordu — şubenin vergisi sessizce
@@ -17871,7 +17885,17 @@ def ops_maliyet_vergi_ozet(
             favok = 0.0
             _veri_eksik = True
             eksik_subeler.append(s["ad"])
-        yillik = favok * (365.0 / gun) if gun > 0 else favok
+        # Yıllığa çevirme, pencerenin GERÇEK uzunluğuna bölünmeli. Aralık
+        # verildiğinde `gun` parametresi pencereyi temsil etmiyor olabilir;
+        # yanlış bölen doğrudan yanlış vergi tahmini üretir.
+        _pencere_gun = gun
+        try:
+            if _bas and _bit:
+                from datetime import date as _d
+                _pencere_gun = max(1, (_d.fromisoformat(_bit) - _d.fromisoformat(_bas)).days + 1)
+        except Exception:
+            _pencere_gun = gun
+        yillik = favok * (365.0 / _pencere_gun) if _pencere_gun > 0 else favok
         if s["vergi_tipi"] == "sahis":
             yillik_vergi = _gelir_vergisi_yillik(yillik)
             yontem = "Gelir Vergisi (artan dilim)"
@@ -17949,6 +17973,12 @@ def ops_maliyet_vergi_ozet(
 def ops_maliyet_kdv_pozisyon(
     gun: int = Query(30, ge=1, le=92),
     sube_id: Optional[str] = Query(None),
+    # 🔴 MALIYET-013 (2026-09-02): pencere yalnız `gun` alıyor ve CURRENT_DATE'e
+    # çıpalanıyordu. Ekranda GEÇMİŞ bir dönem seçilse bile KDV bloğu SON N GÜNÜ
+    # gösteriyordu: ekranın üst yarısı seçilen dönemi, alt yarısı bugünü
+    # anlatıyordu ve ikisi aynı başlığın altındaydı.
+    # `bitis` verilirse pencere ORAYA çıpalanır; verilmezse bugün (geriye uyum).
+    bitis: Optional[str] = Query(None, description="YYYY-MM-DD; boşsa bugün"),
 ):
     """İZOLE KDV Pozisyonu (P&L DIŞI). Hesaplanan (satış) − İndirilecek (alış) = Ödenecek.
     KDV ne gelir ne giderdir; devlet adına tahsil/ödeme. KDV %10 (F&B).
@@ -17959,20 +17989,27 @@ def ops_maliyet_kdv_pozisyon(
     sf = "AND sube_id::text=%s" if sube_id else ""
     with db() as (conn, cur):
         # Hesaplanan KDV — satış (ciro brüt)
-        p = [gun - 1] + ([sube_id] if sube_id else [])
+        # Çıpa: bitis verilmişse o gün, yoksa bugün. Pencere [çıpa-gun+1, çıpa].
+        _bit = (bitis or "").strip() or None
+        p = [_bit, gun - 1, _bit] + ([sube_id] if sube_id else [])
         cur.execute(
             f"""SELECT sube_id::text AS sid, COALESCE(SUM(COALESCE(nakit,0)+COALESCE(pos,0)+COALESCE(online,0)),0) AS brut
-                FROM ciro WHERE tarih >= CURRENT_DATE - (%s || ' days')::interval {sf}
+                FROM ciro
+                WHERE tarih >= COALESCE(%s::date, CURRENT_DATE) - (%s || ' days')::interval
+                  AND tarih <= COALESCE(%s::date, CURRENT_DATE) {sf}
                 GROUP BY sube_id""",
             p,
         )
         ciro_map = {r["sid"]: float(r["brut"] or 0) for r in cur.fetchall()}
         # İndirilecek KDV — alış faturaları (toplam_tutar)
-        p2 = [gun - 1] + ([sube_id] if sube_id else [])
+        p2 = [_bit, gun - 1, _bit] + ([sube_id] if sube_id else [])
         cur.execute(
             f"""SELECT sube_id::text AS sid, COALESCE(SUM(COALESCE(toplam_tutar,0)),0) AS alis
                 FROM tedarikci_fatura
-                WHERE COALESCE(fatura_tarih, olusturma::date) >= CURRENT_DATE - (%s || ' days')::interval {sf}
+                WHERE COALESCE(fatura_tarih, olusturma::date)
+                        >= COALESCE(%s::date, CURRENT_DATE) - (%s || ' days')::interval
+                  AND COALESCE(fatura_tarih, olusturma::date)
+                        <= COALESCE(%s::date, CURRENT_DATE) {sf}
                 GROUP BY sube_id""",
             p2,
         )

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import { api, fmt, fmtDate } from '../utils/api';
 import AyFiltre, { buGununAyi } from '../components/AyFiltre';
 
@@ -15,7 +16,7 @@ export default function DisKaynak() {
   const [liste, setListe] = useState([]);
   const [showModal, setShowModal] = useState(false);
   const [form, setForm] = useState({
-    tarih: new Date().toISOString().split('T')[0],
+    tarih: bugunTR(),
     kategori: 'Aile Desteği',
     tutar: '',
     aciklama: '',
@@ -35,7 +36,7 @@ export default function DisKaynak() {
       if (res.warning) { setDupUyari(res.mesaj); return; }
       toast('Gelir kaydedildi, kasaya eklendi');
       setShowModal(false);
-      setForm({ tarih: new Date().toISOString().split('T')[0], kategori: 'Aile Desteği', tutar: '', aciklama: '' });
+      setForm({ tarih: bugunTR(), kategori: 'Aile Desteği', tutar: '', aciklama: '' });
       load();
     } catch (e) { toast(e.message, 'red'); }
   }

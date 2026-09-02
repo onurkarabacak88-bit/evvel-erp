@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import { api, fmt } from '../utils/api';
 
 // 💳 KART ARA ÖDEME (2026-07-27, sahip: "kart alanında öde alanı + merkez alandan
@@ -11,7 +12,7 @@ export default function KartAraOdemeModal({ kart, kasa, onKapat, onOdendi }) {
   const [mesgul, setMesgul] = useState(false);
   const [hata, setHata] = useState('');
   const borc = Number(kart.guncel_borc) || 0;
-  const bugunISO = new Date().toISOString().slice(0, 10);
+  const bugunISO = bugunTR();
 
   const ode = async () => {
     const n = Number(String(tutar).replace(',', '.'));

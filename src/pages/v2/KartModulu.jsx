@@ -16,6 +16,7 @@
 //   /kart-hareketleri            → hareket defteri
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useMemo, useState } from 'react';
+import { bugunTR } from '../../utils/trTarih';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, Liste, Serit, BorcKocu } from './parcalar';
@@ -494,7 +495,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     try {
       await api('/kart-hareketleri', { method: 'POST', body: {
         kart_id: k.id,
-        tarih: new Date().toISOString().slice(0, 10),
+        tarih: bugunTR(),
         islem_turu: 'ODEME',
         tutar: n,
         taksit_sayisi: 1,

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import { api } from '../utils/api';
 
 const AY_ADLARI = ['', 'Ocak','Şubat','Mart','Nisan','Mayıs','Haziran',
@@ -460,7 +461,7 @@ export default function PersonelVardiyaTakip() {
 
   const yukle = () => {
     setYukleniyor(true);
-    const bugunTarih = new Date().toISOString().slice(0, 10);
+    const bugunTarih = bugunTR();
     Promise.all([
       api(`/gorev/vardiya-takip?yil=${yil}&ay=${ay}`),
       api(`/gorev/izin-alacagi`).catch(() => null),

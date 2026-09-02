@@ -11,6 +11,7 @@
  * - Gün kilidi manuel (slot min ile otomatik kilit yok)
  */
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import * as XLSX from 'xlsx';
 import { jsPDF } from 'jspdf';
 import autoTable from 'jspdf-autotable';
@@ -66,7 +67,7 @@ const SAAT_SABLONLARI = [
   { etiket: 'Kaydırmalı part', bas: '15:30', bit: '19:00', tip: 'normal' },
 ];
 
-const isoToday = () => new Date().toISOString().slice(0, 10);
+const isoToday = () => bugunTR();
 const fmtSaat  = (t) => (t || '').slice(0, 5);
 const fmtTarihKisa = (s) => (s == null || s === '' ? '' : String(s).slice(0, 10));
 

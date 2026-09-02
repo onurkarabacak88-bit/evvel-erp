@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import { api, fmt, fmtDate } from '../utils/api';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 import AyFiltre, { buGununAyi } from '../components/AyFiltre';
@@ -343,7 +344,7 @@ export function Borclar({ onNavigate }) {
   }
 
   function odeAc(borc){
-    const bugun = new Date().toISOString().slice(0,10);
+    const bugun = bugunTR();
     setOdeForm({
       tutar: String(parseFloat(borc.aylik_taksit)||0),
       tarih: bugun,
@@ -663,7 +664,7 @@ export function SabitGiderler() {
   const [odemeler, setOdemeler] = useState({odenenler:[],bekleyenler:[],ozet:{}});
   const [hatalar, setHatalar] = useState({});
   const [faturaModal, setFaturaModal] = useState(null); // {gider_id, gider_adi}
-  const [faturaForm, setFaturaForm] = useState({tutar:'', tarih: new Date().toISOString().split('T')[0], odeme_yontemi:'nakit', kart_id:''});
+  const [faturaForm, setFaturaForm] = useState({tutar:'', tarih: bugunTR(), odeme_yontemi:'nakit', kart_id:''});
   const [faturaGecmis, setFaturaGecmis] = useState([]);
   const [sabitGecmisModal, setSabitGecmisModal] = useState(null);
   const [sabitGecmisData, setSabitGecmisData] = useState(null);
@@ -765,7 +766,7 @@ export function SabitGiderler() {
     const sonTutar = gecmis?.[0]?.tutar ?? (g.tip !== 'degisken' ? g.tutar : null);
     setFaturaForm({
       tutar: sonTutar ? String(Math.round(Number(sonTutar))) : '',
-      tarih: new Date().toISOString().split('T')[0],
+      tarih: bugunTR(),
       odeme_yontemi: g.odeme_yontemi || 'nakit',
       kart_id: g.kart_id || '',
     });
@@ -1888,7 +1889,7 @@ export function VadeliAlimlar({ onNavigate }) {
                       </div>
                       <div className="form-group">
                         <label>Kalan Borcun Yeni Vadesi</label>
-                        <input type="date" value={kismiTarih} min={new Date().toISOString().split('T')[0]} onChange={e=>setKismiTarih(e.target.value)}/>
+                        <input type="date" value={kismiTarih} min={bugunTR()} onChange={e=>setKismiTarih(e.target.value)}/>
                       </div>
                     </>
                   )}
@@ -1933,7 +1934,7 @@ export function KartHareketleri() {
   const [hareketler, setHareketler] = useState([]);
   const [kartlar, setKartlar] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({kart_id:'',tarih:new Date().toISOString().split('T')[0],islem_turu:'HARCAMA',tutar:'',taksit_sayisi:1,aciklama:'',harcama_tipi:'isletme'});
+  const [form, setForm] = useState({kart_id:'',tarih:bugunTR(),islem_turu:'HARCAMA',tutar:'',taksit_sayisi:1,aciklama:'',harcama_tipi:'isletme'});
   const [msg, setMsg] = useState(null);
   const [siniflandirYukleniyor, setSiniflandirYukleniyor] = useState({});
   const [filtreAcik, setFiltreAcik] = useState(false); // detay filtre varsayılan kapalı
@@ -2270,7 +2271,7 @@ export function Ciro() {
   const [liste, setListe] = useState([]);
   const [subeler, setSubeler] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({tarih:new Date().toISOString().split('T')[0],sube_id:'',nakit:0,pos:0,online:0,aciklama:''});
+  const [form, setForm] = useState({tarih:bugunTR(),sube_id:'',nakit:0,pos:0,online:0,aciklama:''});
   const [msg, setMsg] = useState(null);
   const [dupUyari, setDupUyari] = useState(null);
   const [ay, setAy] = useState(buGununAyi());

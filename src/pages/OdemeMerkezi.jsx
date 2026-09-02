@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import { api, fmt } from '../utils/api';
 import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
 import CariEkstrePanel, { trT, malCariListesi } from '../components/CariEkstrePanel';
@@ -74,7 +75,7 @@ const tedarikciEslesir = (a, b) => {
   return ta.some(t => tb.has(t));
 };
 
-const bugunISO = () => new Date().toISOString().slice(0, 10);
+const bugunISO = () => bugunTR();
 const artiGunISO = (g) => new Date(Date.now() + g * 86400000).toISOString().slice(0, 10);
 
 export default function OdemeMerkezi() {

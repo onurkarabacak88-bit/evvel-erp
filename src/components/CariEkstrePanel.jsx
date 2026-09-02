@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import { fmt } from '../utils/api';
 
 // ── 📒 CARİ EKSTRE PANELİ — ORTAK BİLEŞEN (2026-07-19, sahip: 'dünya
@@ -11,7 +12,7 @@ import { fmt } from '../utils/api';
 // (ikincil, katlanır), en sonda kaynak belgeler. PDF sağ çekmecede açılır —
 // kullanıcı satırdan kopmaz; yeni sekme ikincil aksiyon. Veri tek uçtan
 // (/fatura/cari-ekstre) — panel yalnız sunum, hesap yapmaz.
-const bugunISO = () => new Date().toISOString().slice(0, 10);
+const bugunISO = () => bugunTR();
 const artiGunISO = (g) => new Date(Date.now() + g * 86400000).toISOString().slice(0, 10);
 
 export const trT = (d) => (d && d.length >= 10) ? `${d.slice(8, 10)}.${d.slice(5, 7)}.${d.slice(0, 4)}` : (d || '');

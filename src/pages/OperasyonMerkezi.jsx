@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo, Fragment } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import { api, fmt } from '../utils/api';
 import { listeyiCsvIndir } from '../utils/csvExport';
 import { computeOpsKartVurgu } from '../utils/opsVurgu';
@@ -2627,7 +2628,7 @@ export default function OperasyonMerkezi() {
   const [maliyetGun, setMaliyetGun] = useState(30);
   const [foodCostHesaplaYukleniyor, setFoodCostHesaplaYukleniyor] = useState(false);
   const [foodCostHesaplaSonuc, setFoodCostHesaplaSonuc] = useState(null);
-  const [foodCostHesaplaTarih, setFoodCostHesaplaTarih] = useState(() => new Date().toISOString().slice(0, 10));
+  const [foodCostHesaplaTarih, setFoodCostHesaplaTarih] = useState(() => bugunTR());
   const [alisFiyatlari, setAlisFiyatlari] = useState([]);
   const [receteler, setReceteler] = useState([]);
 

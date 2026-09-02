@@ -1,5 +1,6 @@
 ﻿import { useState, useEffect, useRef } from 'react';
 import { api, fmt, fmtDate } from '../utils/api';
+import { bugunTR } from '../utils/trTarih';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, ReferenceLine, ReferenceDot } from 'recharts';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 import IslemSonucOverlay from '../components/IslemSonucOverlay';
@@ -251,7 +252,7 @@ export default function Panel({ onNavigate }) {
         // Günde 1 kez ("Bugünlük kapat" ile snooze), oturumda 1 kez otomatik açılır.
         if (!faturaYakalayiciGosterildi.current) {
           const bekleyen = (p.bugun_odemeler || []).filter(x => x.tip === 'degisken' && x.gun_farki <= 0);
-          const bugunISO = new Date().toISOString().split('T')[0];
+          const bugunISO = bugunTR();
           if (bekleyen.length && localStorage.getItem('fatura_sor_snooze') !== bugunISO) {
             faturaYakalayiciGosterildi.current = true;
             setFaturaBekleyenler(bekleyen);
@@ -420,7 +421,7 @@ export default function Panel({ onNavigate }) {
     setFaturaSorModal({ kaynak_id: u.kaynak_id, aciklama: u.aciklama, tahmini: u.tutar || 0 });
     setFaturaSorAdim(1); setFaturaSorTutar(''); setFaturaSorYontem('nakit');
     setFaturaSorKartlar(null); setFaturaSorKartId('');
-    setFaturaSorTarih(new Date().toISOString().split('T')[0]);
+    setFaturaSorTarih(bugunTR());
   }
 
   async function faturaVadeyeYaz() {
@@ -488,7 +489,7 @@ export default function Panel({ onNavigate }) {
     try {
       // KURAL (2026-07-03): vade HER YÖNE değiştirilebilir (öne çekme dahil);
       // tek sınır bugünden geriye atılamaz. Eski "+4 gün" dayatması kaldırıldı.
-      const bugunISO = new Date().toISOString().split('T')[0];
+      const bugunISO = bugunTR();
       if (erteleTarih < bugunISO) {
         toast('Vade bugünden geriye alınamaz', 'red');
         return;
@@ -2599,7 +2600,7 @@ export default function Panel({ onNavigate }) {
                 <input
                   type="date"
                   value={erteleTarih}
-                  min={new Date().toISOString().split('T')[0]} /* vade her yöne serbest — tek sınır: bugünden geriye yasak */
+                  min={bugunTR()} /* vade her yöne serbest — tek sınır: bugünden geriye yasak */
                   onChange={e => setErteleTarih(e.target.value)}
                   autoFocus
                 />
@@ -2644,7 +2645,7 @@ export default function Panel({ onNavigate }) {
             </div>
             <div className="modal-footer" style={{ justifyContent: 'space-between', alignItems: 'center' }}>
               <button className="btn btn-ghost btn-sm" onClick={() => {
-                localStorage.setItem('fatura_sor_snooze', new Date().toISOString().split('T')[0]);
+                localStorage.setItem('fatura_sor_snooze', bugunTR());
                 setFaturaBekleyenler(null);
               }}>⏰ Bugünlük kapat</button>
               <span style={{ fontSize: 11, color: 'var(--text3)' }}>Yarın tekrar hatırlatılır</span>
@@ -2768,7 +2769,7 @@ export default function Panel({ onNavigate }) {
                   </div>
                   <div className="form-group">
                     <label>Kalan Borcun Yeni Vadesi</label>
-                    <input type="date" value={kismiTarih} min={new Date().toISOString().split('T')[0]}
+                    <input type="date" value={kismiTarih} min={bugunTR()}
                       onChange={e => setKismiTarih(e.target.value)}/>
                   </div>
                 </>
@@ -2967,7 +2968,7 @@ export default function Panel({ onNavigate }) {
 }
 
 function BankaYatirimModal({ liste, yukleniyor, onKapat, onYenile, toast }) {
-  const bugun = new Date().toISOString().slice(0, 10);
+  const bugun = bugunTR();
   const [form, setForm] = useState({ tarih: bugun, tutar: '', yatiran_ad: '', aciklama: '' });
   const [kaydediyor, setKaydediyor] = useState(false);
   const [mut, setMut] = useState(null);
@@ -3240,7 +3241,7 @@ function GecmisOverlay({ baslik, data, onKapat }) {
 
 // Hızlı aksiyon modal bileşeni
 function HizliAksiyonModal({ tip, onKapat, onKaydet }) {
-  const bugun = new Date().toISOString().slice(0, 10);
+  const bugun = bugunTR();
   const [form, setForm] = useState({
     tarih: bugun, tutar: '', aciklama: '', kategori: 'Genel',
     nakit: '', pos: '', online: '', sube_id: ''

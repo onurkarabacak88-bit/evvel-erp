@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { bugunTR } from './utils/trTarih';
 import { api } from './utils/api';
 import { resolvePageAlias } from './utils/sayfaTakmaAd';
 import { subscribeGlobalDataRefresh } from './utils/globalDataRefresh';
@@ -360,7 +361,7 @@ export default function App() {
         .then(d => setCiroBekleyen(Array.isArray(d) ? d.length : 0))
         .catch(() => {});
       // Akıllı Denetim bugün anomali sayısı
-      const bugun = new Date().toISOString().slice(0, 10);
+      const bugun = bugunTR();
       api(`/ops/truth/gunluk-rapor?tarih=${bugun}`)
         .then(d => {
           const top = (d?.subeler || []).reduce((s, r) => s + (Number(r.anomali_sayisi) || 0), 0);

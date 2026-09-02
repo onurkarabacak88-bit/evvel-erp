@@ -1,3 +1,4 @@
+import { bugunTR } from './trTarih';
 const BASE = import.meta.env.VITE_API_URL || '';
 
 /** FastAPI / Starlette: detail string | object | array — kullanıcıya okunur metin */
@@ -136,4 +137,4 @@ export const fmtDate = (d) => {
   return new Date(d).toLocaleDateString('tr-TR');
 };
 
-export const today = () => new Date().toISOString().split('T')[0];
+export const today = () => bugunTR();

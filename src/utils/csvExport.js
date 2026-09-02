@@ -1,3 +1,4 @@
+import { bugunTR } from './trTarih';
 // Ortak CSV dışa aktarım yardımcısı — UTF-8 BOM'lu, TR Excel uyumlu (";" ayraç)
 // Kullanım:
 //   listeyiCsvIndir(satirlar, [{ key: 'ad', baslik: 'Ad' }, ...], 'dosya')
@@ -38,7 +39,7 @@ export function listeyiCsvIndir(satirlar, kolonlar, dosyaAdi = 'liste') {
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;
-  const tarih = new Date().toISOString().slice(0, 10);
+  const tarih = bugunTR();
   a.download = `${dosyaAdi}_${tarih}.csv`;
   document.body.appendChild(a);
   a.click();

@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import { api, fmt } from '../utils/api';
 
 const VT_ETIKET = { sabahci: 'Sabahçı', ara_vardiya: 'Ara Vardiya', kapanis: 'Kapanış' };
@@ -20,7 +21,7 @@ function YuzdeBar({ tamamlanan, toplam }) {
 }
 
 export default function GorevOzet() {
-  const bugun = new Date().toISOString().slice(0, 10);
+  const bugun = bugunTR();
   const [tarih, setTarih] = useState(bugun);
   const [ozet, setOzet] = useState([]);
   const [yukleniyor, setYukleniyor] = useState(true);

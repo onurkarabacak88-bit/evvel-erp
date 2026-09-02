@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import { api, fmt, fmtDate } from '../utils/api';
 import { publishGlobalDataRefresh, subscribeGlobalDataRefresh } from '../utils/globalDataRefresh';
 import AyFiltre, { buGununAyi } from '../components/AyFiltre';
@@ -16,7 +17,7 @@ export default function AnlikGider({ onNavigate }) {
   const [arama, setArama] = useState(''); // açıklama/kategori/şube arama
   const [kartlar, setKartlar] = useState([]);
   const [showModal, setShowModal] = useState(false);
-  const [form, setForm] = useState({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:'', kaynak_id:null, kaynak_tablo:null, tedarikci:''});
+  const [form, setForm] = useState({tarih: bugunTR(), kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:'', kaynak_id:null, kaynak_tablo:null, tedarikci:''});
   // V4: tedarikçi datalist — dolarsa supplier_payment_event conf 1.0 + cari kesin eşleşme
   const [tedarikciListe, setTedarikciListe] = useState([]);
   useEffect(() => { api('/tedarikciler').then(r => setTedarikciListe(Array.isArray(r) ? r : (r?.tedarikciler || []))).catch(() => {}); }, []);
@@ -85,7 +86,7 @@ export default function AnlikGider({ onNavigate }) {
       toast(mesaj);
       setShowModal(false);
       setKartOneri(null);
-      setForm({tarih: new Date().toISOString().split('T')[0], kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:'', tedarikci:''});
+      setForm({tarih: bugunTR(), kategori:'Diğer', tutar:'', aciklama:'', sube:'MERKEZ', odeme_yontemi:'nakit', kart_id:'', tedarikci:''});
       publishGlobalDataRefresh('anlik-gider');
       load();
     } catch(e) { toast(e.message, 'red'); }
@@ -106,7 +107,7 @@ export default function AnlikGider({ onNavigate }) {
   }
 
   const toplamBugün = liste
-    .filter(g => g.tarih === new Date().toISOString().split('T')[0] && g.durum === 'aktif')
+    .filter(g => g.tarih === bugunTR() && g.durum === 'aktif')
     .reduce((s,g)=>s+parseFloat(g.tutar),0);
   // Seçili ayın aktif gider toplamı (liste zaten aya filtreli geliyor)
   const toplamAy = liste

@@ -12,6 +12,7 @@
 // Faz 2 (sonra): PIN + kritik aksiyonda tekrar doğrulama + uzaktan oturum kapatma.
 
 import { useState, useEffect, useCallback, useRef } from 'react';
+import { bugunTR } from '../../utils/trTarih';
 import { api, fmt } from '../../utils/api';
 import BeyinChat from '../../components/BeyinChat';
 
@@ -50,8 +51,13 @@ const C = {
   mavi: '#3b82f6',
 };
 
-const bugunTR = () =>
-  new Date().toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' });
+// ⚠️ Bu fonksiyon EKRANDA GÖSTERİLEN metni üretir ("2 Eylül Pazartesi"),
+// tarih değeri değil. Adı `bugunTR` idi ve merkezî `bugunTR()` (YYYY-MM-DD)
+// ile çakışıyordu — aynı ad, farklı iş. Adı işine göre düzeltildi.
+// timeZone eklendi: o da gece UTC'ye kayıyordu (PANEL-010 ailesi).
+const bugunYaziTR = () =>
+  new Date().toLocaleDateString('tr-TR', {
+    timeZone: 'Europe/Istanbul', weekday: 'long', day: 'numeric', month: 'long' });
 
 // wa.me numara normalizasyonu (TR) — geçerli değilse '' döner
 const cepWaNum = (tel) => {
@@ -327,7 +333,7 @@ function CepHome({ sayac, kasa, onKasa, onAc, onCikis, yenile }) {
       }}>
         <div>
           <div style={{ fontSize: 20, fontWeight: 800, color: C.t1 }}>EVVEL · CEP</div>
-          <div style={{ fontSize: 13, color: C.t3, marginTop: 2, textTransform: 'capitalize' }}>{bugunTR()}</div>
+          <div style={{ fontSize: 13, color: C.t3, marginTop: 2, textTransform: 'capitalize' }}>{bugunYaziTR()}</div>
         </div>
         <button onClick={onCikis} title="Çıkış" style={{
           background: C.bg2, border: `1px solid ${C.border}`, borderRadius: 10,
@@ -1456,7 +1462,7 @@ function CepMerkezSil({ onGeri }) {
 const GIDER_KATEGORILER = ['Nakit Alım', 'Market', 'Fatura', 'Kargo', 'Yemek', 'Yakıt', 'Bakım', 'Diğer'];
 
 function CepAnlikGider({ onGeri }) {
-  const bugun = () => new Date().toISOString().split('T')[0];
+  const bugun = () => bugunTR();
   const [liste, setListe] = useState(null);
   const [hata, setHata] = useState('');
   const [bilgi, setBilgi] = useState('');
@@ -1671,7 +1677,7 @@ function CepAnlikGider({ onGeri }) {
 
 // ── Vadeli Alımlar (telefondan ekle / öde / iptal) ──────────────────────────
 function CepVadeli({ onGeri }) {
-  const bugun = () => new Date().toISOString().split('T')[0];
+  const bugun = () => bugunTR();
   const [liste, setListe] = useState(null);
   const [gorunum, setGorunum] = useState('bekliyor'); // bekliyor | odendi
   const [hata, setHata] = useState('');
@@ -2241,7 +2247,7 @@ function CepVardiyaTakip({ onGeri }) {
   const [ayOff, setAyOff] = useState(0);
   const [filtre, setFiltre] = useState('aktif'); // aktif | ayrildi | hepsi
   const [secili, setSecili] = useState(null);    // detay modalı
-  const bugunStr = new Date().toISOString().slice(0, 10);
+  const bugunStr = bugunTR();
   const izinliBugun = (p) => (izinMap[p.personel_id] || []).some(i =>
     String(i.baslangic_tarih).slice(0, 10) <= bugunStr && bugunStr <= String(i.bitis_tarih).slice(0, 10));
 
@@ -2252,7 +2258,7 @@ function CepVardiyaTakip({ onGeri }) {
 
   const yukle = useCallback(() => {
     setHata('');
-    const bugunTarih = new Date().toISOString().slice(0, 10);
+    const bugunTarih = bugunTR();
     const ayBas = `${yil}-${String(ay).padStart(2, '0')}-01`;
     const ayBitis = new Date(yil, ay, 0).toISOString().slice(0, 10); // ayın son günü
     Promise.all([
@@ -2464,7 +2470,7 @@ function CepKapanisOverride({ onGeri }) {
   }, []);
   useEffect(() => { yukle(); }, [yukle]);
 
-  const isGunu = data?.is_gunu_tr || data?.tarih || new Date().toISOString().slice(0, 10);
+  const isGunu = data?.is_gunu_tr || data?.tarih || bugunTR();
   const bekleyen = (data?.satirlar || []).filter(s => s.acildi && !s.kapanis_tamam);
 
   const subeSec = async (s) => {
@@ -2541,7 +2547,7 @@ function CepDenetim({ onGeri }) {
   const [data, setData] = useState(null);
   const [hata, setHata] = useState('');
   useEffect(() => {
-    const bugun = new Date().toISOString().slice(0, 10);
+    const bugun = bugunTR();
     api(`/ops/truth/gunluk-rapor?tarih=${bugun}`)
       .then(d => setData(d?.subeler || []))
       .catch(e => { setHata(e.message || 'Yüklenemedi'); setData([]); });
@@ -2816,7 +2822,7 @@ function CepOdemeler({ onGeri }) {
         } else {
           await api('/fatura-ode', {
             method: 'POST',
-            body: { sabit_gider_id: o.sabit_gider_id, tutar: t, tarih: new Date().toISOString().slice(0, 10), odeme_yontemi: yontem, kart_id: yontem === 'kart' ? kartId : null },
+            body: { sabit_gider_id: o.sabit_gider_id, tutar: t, tarih: bugunTR(), odeme_yontemi: yontem, kart_id: yontem === 'kart' ? kartId : null },
           });
           setBilgi(`Ödendi — ${yontem === 'kart' ? 'karta yazıldı' : 'kasadan düşüldü'}${await dosyaNotu()}`);
         }

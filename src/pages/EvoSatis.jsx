@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import { api } from '../utils/api';
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
@@ -90,7 +91,7 @@ function MetrikKart({ label, value, sub, renk, delay = 0 }) {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export default function EvoSatis() {
-  const bugun = new Date().toISOString().slice(0, 10);
+  const bugun = bugunTR();
   const [tarih1, setTarih1] = useState(bugun);
   const [tarih2, setTarih2] = useState(bugun);
 

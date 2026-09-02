@@ -287,11 +287,17 @@ export default function Maliyet() {
     // Faz 5 — güven skoru + sapma motoru (izole, hata yutar)
     api(`/ops/maliyet/guven-skoru?gun=${_gunLen}${subeQ}`)
       .then(setGuvenSkoru).catch(() => setGuvenSkoru(null));
+    // 🔴 MALIYET-013 (2026-09-02): bu iki uç SEÇİLİ DÖNEMİ almıyordu, yalnız
+    // `gun` uzunluğunu. Sunucu da pencereyi bugüne çıpalıyordu; sonuç: geçmiş
+    // bir dönem seçildiğinde üst bloklar o dönemi, vergi/KDV blokları SON N
+    // GÜNÜ gösteriyordu — ikisi aynı başlığın altında. `gun-gun` ucu zaten
+    // bas/bit alıyordu; aynı sözleşme bu ikisine de taşındı.
+    const _ar2 = `&bas=${ar.bas}&bit=${ar.bit}`;
     // Faz 1b — şube bazlı tahmini vergi (izole; endpoint max 31 gün)
-    api(`/ops/maliyet/vergi-ozet?gun=${Math.min(31, _gunLen)}${subeQ}`)
+    api(`/ops/maliyet/vergi-ozet?gun=${Math.min(31, _gunLen)}${subeQ}${_ar2}`)
       .then(setVergiOzet).catch(() => setVergiOzet(null));
     // Faz 3 — KDV pozisyonu (izole, P&L dışı)
-    api(`/ops/maliyet/kdv-pozisyon?gun=${Math.min(92, _gunLen)}${subeQ}`)
+    api(`/ops/maliyet/kdv-pozisyon?gun=${Math.min(92, _gunLen)}${subeQ}&bitis=${ar.bit}`)
       .then(setKdvPoz).catch(() => setKdvPoz(null));
   };
 

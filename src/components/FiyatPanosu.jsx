@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import { bugunTR } from '../utils/trTarih';
 import { api, fmt } from '../utils/api';
 import { trT } from './CariEkstrePanel';
 
@@ -44,7 +45,7 @@ export default function FiyatPanosu() {
     toastZaman.current = setTimeout(() => setToast(null), 4500);
   };
   useEffect(() => () => clearTimeout(toastZaman.current), []);
-  const bugun = new Date().toISOString().slice(0, 10);
+  const bugun = bugunTR();
   const formAc = (k) => setForm({ kalem_kodu: k.kalem_kodu, kalem_adi: k.kalem_adi, birim: k.birim || 'adet',
                                   guncel: k.guncel_fiyat, yeni: '', tarih: bugun, tedarikci: k.tedarikci || '', not: '' });
   async function fiyatKaydet(f, kapat) {
