@@ -30,7 +30,8 @@ Bu modül SAFE helper'lar sağlar — endpoint'ler main.py'da.
 from __future__ import annotations
 from typing import Optional, List, Dict, Any, Tuple, Set
 from collections import defaultdict
-from datetime import date, time, datetime, timedelta
+from datetime import date, time, datetime, timedelta, timedelta as _td
+import hashlib as _hashlib
 import uuid as _uuid
 
 from database import db
@@ -1983,6 +1984,22 @@ def atama_olustur(
             "hata": saat_err,
         }
 
+    # 🔴 PERS-016 (2026-09-02): çakışma kontrolü ile INSERT arasında HİÇBİR
+    # kilit yoktu (klasik check-then-insert yarışı). `atama_uyarilari` yalnız
+    # COMMIT edilmiş satırları görür; iki eşzamanlı istek ikisi de "çakışma
+    # yok" deyip aynı personele çakışan vardiya yazabilirdi.
+    # `vardiya_atama`da UNIQUE index de yok — zaten olamaz: çakışma ZAMAN
+    # ARALIĞI örtüşmesidir, tek kolon eşitliği değil. Doğru araç advisory lock.
+    # Desen projede zaten var: operasyon_defter._pg_advisory_lock_sube_defter.
+    # Kilit (personel + tarih) üzerinde: aynı kişinin aynı günündeki atamalar
+    # sıraya girer, farklı kişiler/günler paralel devam eder.
+    _kh = _hashlib.sha256(f"evvel:vardiya_atama:{personel_id}:{tarih}".encode()).digest()
+    cur.execute(
+        "SELECT pg_advisory_xact_lock(%s, %s)",
+        (int.from_bytes(_kh[:4], "big") & 0x7FFFFFFF,
+         int.from_bytes(_kh[4:8], "big") & 0x7FFFFFFF),
+    )
+
     uyarilar = atama_uyarilari(
         cur, personel_id, slot_id, tarih,
         baslangic_saat=bas, bitis_saat=bit,
@@ -2933,15 +2950,40 @@ def personel_ay_vardiya_maas_kaynagi(cur, personel_id: str, yil: int, ay: int) -
     rsum = cur.fetchone()
     toplam_ay = float((rsum or {}).get("saat") or 0)
 
+    # 🔴 PERS-014 (2026-09-02): haftalık ek mesai "Pazartesi'si bu aya düşen
+    # hafta TAMAMEN bu aya yazılır" kuralıyla dağıtılıyordu.
+    # Somut hata: Pazartesi 31 Ağustos olan hafta → 31 Ağu + 1-6 Eylül. Yedi
+    # günün ALTISI eylüldeyken ek mesainin tamamı AĞUSTOS bordrosuna yazılıyordu.
+    # Simetrik olarak, ayın ilk günleri (önceki ayın son Pazartesi'sine ait
+    # hafta) bu ayda HİÇ taranmıyordu.
+    # Toplam kaybolmuyordu ama AY ATFI yanlıştı — bordro ay bazında ödenir.
+    #
+    # Düzeltme: haftanın fazlası, o haftanın AY İÇİNE düşen gün sayısıyla
+    # orantılı bölünür. Sınır haftaları için önceki ayın son Pazartesi'sinden
+    # başlanır. Fazla haftalık bir büyüklüktür (limit haftalık), o yüzden
+    # hafta bütün olarak hesaplanıp SONRA paylaştırılır — günlük hesaplayıp
+    # toplamak limiti bozardı.
     ek_hafta = 0.0
-    for gun in range(1, monthrange(yil, ay)[1] + 1):
-        d = date(yil, ay, gun)
-        if d.weekday() != 0:
-            continue
-        if d > d2_eff:
-            continue
-        h = personel_haftalik_saat(cur, personel_id, d)
-        ek_hafta += max(0.0, h - lim_h)
+    _ay_ilk = date(yil, ay, 1)
+    _ay_son = date(yil, ay, monthrange(yil, ay)[1])
+    # Ayın ilk gününü içeren haftanın Pazartesi'si (önceki aya taşabilir)
+    _ilk_pzt = _ay_ilk - _td(days=_ay_ilk.weekday())
+    _pzt = _ilk_pzt
+    while _pzt <= _ay_son:
+        if _pzt > d2_eff:
+            break
+        h = personel_haftalik_saat(cur, personel_id, _pzt)
+        _fazla = max(0.0, h - lim_h)
+        if _fazla > 0:
+            # Bu haftanın kaç günü BU AY içinde ve çalışma döneminde?
+            _ic = 0
+            for _k in range(7):
+                _g = _pzt + _td(days=_k)
+                if _ay_ilk <= _g <= _ay_son and _g <= d2_eff:
+                    _ic += 1
+            if _ic:
+                ek_hafta += _fazla * (_ic / 7.0)
+        _pzt += _td(days=7)
 
     return {
         "yil": yil,

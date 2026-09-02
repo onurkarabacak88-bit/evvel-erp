@@ -377,11 +377,39 @@ def vadeli_alim_kapat(cur, vadeli_id: str, tarih: str):
 
 
 def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
+    """Onay kuyruğuna kayıt açar. AYNI KAYNAK için ikinci bekleyen AÇMAZ.
+
+    🔴 ONAY-003 (2026-09-02): bu fonksiyon koşulsuz INSERT'ti ve `onay_kuyrugu`
+    tablosunda hiçbir tekillik indeksi yok. 9 çağrı yerinin 4'ünde hiç guard
+    yoktu; guard'ı olanlar da `aciklama LIKE` gibi kırılgan anahtarlar
+    kullanıyordu — kaynak kimliği değil, metin.
+    Aynı kaynak için iki 'bekliyor' satırı oluşabiliyordu ve onaylayan taraf
+    (`_onayla_tx`) id-bazlı çalışıp KARDEŞ SATIRA DOKUNMADIĞI için ikinci onay
+    ayrıca işlenebiliyordu. Çoğu işlem türünde ikinci bir kemer var (plan
+    durumu, kasa sayacı, aynı-ay 409) ama CIRO/CIRO_DUZELTME dalında YOK:
+    iki bekleyen onay iki kasa kaydı üretirdi.
+
+    Dedup anahtarı: (kaynak_tablo, kaynak_id, islem_turu) + durum='bekliyor'.
+    ⚠️ Meşru akışları BOZMAZ: çağrıların çoğu taze kaynak id ile gelir (yeni
+    plan, yeni gider), çakışmaz. Yalnız GERÇEK tekrarlar elenir.
+    Dönüş: kuyruk satırının id'si (yeni ya da mevcut) — sessiz atlama yok.
+    """
+    cur.execute(
+        """SELECT id FROM onay_kuyrugu
+           WHERE kaynak_tablo=%s AND kaynak_id=%s AND islem_turu=%s
+             AND durum='bekliyor'
+           LIMIT 1""",
+        (kaynak_tablo, kaynak_id, islem_turu),
+    )
+    _var = cur.fetchone()
+    if _var:
+        return str(dict(_var)["id"])
+    _yeni = str(uuid.uuid4())
     cur.execute(
         """INSERT INTO onay_kuyrugu (id,islem_turu,kaynak_tablo,kaynak_id,aciklama,tutar,tarih)
         VALUES (%s,%s,%s,%s,%s,%s,%s)""",
         (
-            str(uuid.uuid4()),
+            _yeni,
             islem_turu,
             kaynak_tablo,
             kaynak_id,
@@ -390,6 +418,7 @@ def onay_ekle(cur, islem_turu, kaynak_tablo, kaynak_id, aciklama, tutar, tarih):
             tarih,
         ),
     )
+    return _yeni
 
 
 def kart_plani_upsert(cur, kart_id: str, son_odeme_tarihi, odenecek: float,

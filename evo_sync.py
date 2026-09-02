@@ -2326,6 +2326,17 @@ def hs_rapor_sube_bazli(bastar: date, bittar: date) -> Dict[str, Any]:
         "tarih_bas": str(bastar),
         "tarih_bit": str(bittar),
         "sube_sayisi": len(sonuc_subeler),
+        # 🔴 ENT-004 (2026-09-02): kısmi başarısızlık GÖRÜNMÜYORDU. Bir şubenin
+        # çekimi patlarsa `_sube_cek` None döner ve `if res is not None` ile
+        # SESSİZCE elenir; sonuç yine başarılı gibi döner. Sarmalayıcı
+        # (`hs_rapor_sube_bazli_cached`) "subeler doluysa canlı" kuralıyla
+        # çalıştığı için 4 şubeden 1'i gelse bile `canli=True` yazıp EKSİK
+        # VERİYİ cache'e "son başarılı çekim" olarak kaydediyordu.
+        # `sube_sayisi` tek başına yetmiyordu: BEKLENEN sayı yanıtta yoktu,
+        # kıyaslama tüketiciye bırakılmıştı ve kıyaslayan tüketici yoktu.
+        "beklenen_sube_sayisi": len(EVO_SUBE_ID_MAP),
+        "eksik_subeler": sorted(set(EVO_SUBE_ID_MAP.values()) - set(sonuc_subeler.keys())),
+        "tam": len(sonuc_subeler) == len(EVO_SUBE_ID_MAP),
         "kaynak": "hs_rapor.sube",
         "subeler": sonuc_subeler,
     }

@@ -10400,6 +10400,17 @@ def personel_aylik_sil(pid: str, yil: int = None, ay: int = None):
         # Ödeme planını tahmini tutara geri döndür
         cur.execute("SELECT * FROM personel WHERE id=%s", (pid,))
         p = cur.fetchone()
+        # 🔴 PERS-017 (2026-09-02): senkron YALNIZ sürekli personel için
+        # çağrılıyordu. Part-time kaydı silinince `odeme_plani` satırı, silinen
+        # aylık kaydın ESKİ net tutarıyla defterde kalıyordu — olmayan bir
+        # hesap için ödeme kuyruğunda para bekliyordu.
+        # `odeme_plani_esitle` içinde çalışma türü dalı YOK (maas_service.py:315,
+        # okundu) — part-time için çağırmak mekanik olarak güvenli.
+        # Part-time'da `maas` alanından "tahmini" üretmek anlamsız (ücret saat
+        # bazlı), o yüzden net=0 geçiyoruz: bu, bekleyen planı İPTAL eder ve
+        # bağlı onay kuydunu kapatır — silinen kayıt için doğru olan da budur.
+        if p and p['calisma_turu'] != 'surekli':
+            _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, 0.0)
         if p and p['calisma_turu'] == 'surekli':
             tahmini = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
             _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, tahmini)
