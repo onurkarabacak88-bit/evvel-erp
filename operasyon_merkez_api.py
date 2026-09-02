@@ -3361,9 +3361,19 @@ def _urun_ac_delta_parse(aciklama: str) -> Dict[str, int]:
     result: Dict[str, int] = {}
     for k in _BAR_KEYS:
         try:
-            dv = max(0, int(delta.get(k) or 0))
+            dv_ham = int(delta.get(k) or 0)
         except (TypeError, ValueError):
-            dv = 0
+            dv_ham = 0
+        if dv_ham < 0:
+            # 🚩 OPS-004 (2026-09-02): negatif delta bir SAYIM/KAYIT HATASI
+            # sinyalidir. Klemp davranışı KORUNUR (negatif adet parayı ters
+            # işletmemeli) ama artık SESSİZ değil: iz log'a düşer, kayıp
+            # sorgulanabilir kalır. Kusur klempte değil, sessizliğindeydi.
+            logger.warning(
+                "URUN_AC negatif delta klemplendi: kalem=%s ham=%s (0 sayıldı)",
+                k, dv_ham,
+            )
+        dv = max(0, dv_ham)
         sv = int(s_map.get(k) or 0)
         merged = max(dv, sv)
         if merged > 0:
@@ -5737,9 +5747,33 @@ def ops_metrics_finans_ozet(
         ),
     }
 
+    # 🏷️ OPS-026 KAPSAM ETİKETİ (2026-09-02): bu uç TAM P&L DEĞİLDİR.
+    # Gider tarafı yalnız `gider_kanonik`i okur (nakit anlık gider + kart
+    # defteri; view cari borç ödemesi / KMH / kredi satırlarını BİLEREK eler).
+    # Stok/COGS food-cost motorunda, maaş tahakkuku maas_service hattında —
+    # burada YOK. Etiket olmadan `ciro_gider_orani` ekranda "kârlılık" gibi
+    # okunuyordu ve payda eksik olduğu için rakam OLDUĞUNDAN İYİ görünüyordu.
+    # `sezon_kapali` bayrağıyla aynı ilke: yanıt kendi sınırını kendi söyler.
+    kapsam = {
+        "tam_pnl_mi": False,
+        "aciklama": "Nakit-akış temelli KISMİ özet — kâr/zarar tablosu değildir.",
+        "dahil": [
+            "ciro (ciro tablosu, durum=aktif)",
+            "gider_kanonik (nakit anlık gider + kart defteri, taksit periyodize)",
+            "kart faizi (kart_hareketleri, islem_turu=FAIZ)",
+            "POS/online komisyon kesintisi (subeler oranları)",
+        ],
+        "haric": [
+            "stok/COGS (food-cost motoru — ayrı uç)",
+            "maaş tahakkuku (maas_service hattı)",
+            "cari borç ödemeleri (gider_kanonik bilerek eler — bilanço hareketi)",
+            "KDV/vergi ve amortisman",
+        ],
+    }
     return {
         "gun_sayi": gun_sayi,
         "sube_id": sid,
+        "kapsam": kapsam,
         "ciro_gider_orani_ozet": ciro_gider_orani_ozet,
         "kart_faiz_yuku_orani": kart_faiz_yuku_orani,
         "faiz_son_donem": faiz_son_donem,      # 30g tahakkuk eden faiz (oranın payı)
@@ -6856,6 +6890,39 @@ def ops_ciro_onay_mutabakat(sube_id: str, tarih: str):
         }
 
 
+# 🔧 OPS-001 (2026-09-02): bu DDL eskiden GET handler'ın İÇİNDE her istekte
+# koşuyordu. Üç kusur birdendi:
+#  1) "graceful düş" sözü SAHTEYDİ — `_has_cozum` bir daha hiç okunmuyordu;
+#     ALTER başarısız olsa bile ana SELECT o kolonu koşulsuz seçiyor, yine 500.
+#  2) `except: pass` transaction'ı ZEHİRLİYORDU (bkz. database.savepoint
+#     docstring'i) — fatura başka satıra kesiliyordu.
+#  3) Kolonlar zaten varken bile her GET bir information_schema sorgusu
+#     ödüyor; yokken okuma yolunda ALTER ACCESS EXCLUSIVE kilit deniyordu.
+# Süreç başına BİR kez denenir; `ADD COLUMN IF NOT EXISTS` zaten idempotent
+# olduğu için ön-kontrol sorgusu da gereksiz.
+_KASA_UYARI_COZUM_KOLON_OK = False
+
+
+def _ensure_kasa_uyari_cozum_kolonlari(cur: Any) -> None:
+    """sube_operasyon_uyari çözüm kolonları — süreç başına bir kez, savepoint'li."""
+    global _KASA_UYARI_COZUM_KOLON_OK
+    if _KASA_UYARI_COZUM_KOLON_OK:
+        return
+    try:
+        with savepoint(cur, "sp_kasa_uyari_cozum_ddl"):
+            cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_duzeltilen_tl NUMERIC(14,2)")
+            cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_notu TEXT")
+            cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_ts TIMESTAMPTZ")
+            cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_personel_id TEXT")
+            cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_personel_ad TEXT")
+        _KASA_UYARI_COZUM_KOLON_OK = True
+    except Exception:
+        # Savepoint sayesinde transaction TEMİZ kalır; sıradaki SELECT çalışır.
+        # Kolon gerçekten yoksa ana sorgu açık hatayla düşer — sahte "graceful"
+        # sözü verilmez. Bayrak True yapılmaz, sonraki istek yeniden dener.
+        logger.exception("kasa uyarı çözüm kolonları DDL başarısız")
+
+
 @router.get("/kasa-uyumsuzluk")
 def ops_kasa_uyumsuzluk_listesi(
     tarih: Optional[str] = None,
@@ -6886,25 +6953,10 @@ def ops_kasa_uyumsuzluk_listesi(
         pass
 
     with db() as (_, cur):
-        # Defensive: cozum_duzeltilen_tl kolonu yoksa migration henüz çalışmamış,
-        # graceful düş — sadece orijinal fark_tl ile çalış.
-        cur.execute("""
-            SELECT COUNT(*) FROM information_schema.columns
-            WHERE table_schema='public' AND table_name='sube_operasyon_uyari'
-              AND column_name='cozum_duzeltilen_tl'
-        """)
-        _has_cozum = int((cur.fetchone() or {}).get("count") or 0) > 0
-        if not _has_cozum:
-            # Migration acil tetikle
-            try:
-                cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_duzeltilen_tl NUMERIC(14,2)")
-                cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_notu TEXT")
-                cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_ts TIMESTAMPTZ")
-                cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_personel_id TEXT")
-                cur.execute("ALTER TABLE sube_operasyon_uyari ADD COLUMN IF NOT EXISTS cozum_personel_ad TEXT")
-                _has_cozum = True
-            except Exception:
-                pass
+        # 🔧 OPS-001: DDL artık handler'da değil — süreç başına bir kez,
+        # savepoint'li helper'da (yukarıda). `_has_cozum` bayrağı KALDIRILDI:
+        # zaten hiçbir yerde okunmuyordu, "graceful düş" sözü tutmuyordu.
+        _ensure_kasa_uyari_cozum_kolonlari(cur)
         cur.execute(
             """
             SELECT
@@ -14315,10 +14367,20 @@ def ops_siparis_gecmis(
     with db() as (conn, cur):
         # Şube filtresi: ad ile ara (ILIKE) veya tam ID eşleşmesi
         sube_kosul = ""
+        # 🔧 OPS-005 (2026-09-02): özet sorgusunun koşulu ana koşuldan
+        # `.replace()` ile TÜRETİLİYORDU. Bugün tesadüfen doğru çalışıyordu ama
+        # ana metne dokunulduğu an (alias değişir, COALESCE eklenir) replace
+        # sessizce eşleşmez ve özet YANLIŞ filtreyle sayardı. Bu uçta `toplam`
+        # alanı özetten geldiği için kırılma "başlık rakamı yanlış" olarak
+        # yansır — hata fırlatmaz. Metin cerrahisiyle SQL üretmek, bu dosyanın
+        # denetim geçmişindeki "sessiz sahte-doğru" sınıfının ta kendisi.
+        # İki sorgu farklı alias kullanıyor; her biri KENDİ koşulunu taşır.
+        sube_kosul_ozet = ""
         sube_qp_ana: List[Any] = []
         sube_qp_ozet: List[Any] = []
         if arama:
             sube_kosul = " AND (LOWER(s.ad) LIKE LOWER(%s) OR t.sube_id = %s)"
+            sube_kosul_ozet = " AND (LOWER(subeler.ad) LIKE LOWER(%s) OR siparis_talep.sube_id = %s)"
             like_val = f"%{arama}%"
             sube_qp_ana = [like_val, arama]
             sube_qp_ozet = [like_val, arama]
@@ -14371,7 +14433,7 @@ def ops_siparis_gecmis(
         # Özet: şube + gün filtresi uygulanır, durum filtresi UYGULANMAZ
         # → Kullanıcı "Zafer" filtrelediğinde sadece o şubenin durum dağılımını görür
         ozet_qp: List[Any] = [gun_sayi] + sube_qp_ozet
-        ozet_kosul = f"WHERE tarih >= CURRENT_DATE - (%s * INTERVAL '1 day'){sube_kosul.replace('s.ad', 'subeler.ad').replace('t.sube_id', 'siparis_talep.sube_id')}"
+        ozet_kosul = f"WHERE tarih >= CURRENT_DATE - (%s * INTERVAL '1 day'){sube_kosul_ozet}"
         cur.execute(
             f"""
             SELECT durum, COUNT(*)::int AS adet
@@ -20863,9 +20925,17 @@ def _food_cost_hesapla_gun(
             if not kod or kod in _BAR_KEYS:
                 continue
             try:
-                adet = max(0, int(k.get("adet") or 0))
+                adet_ham = int(k.get("adet") or 0)
             except (TypeError, ValueError):
-                adet = 0
+                adet_ham = 0
+            if adet_ham < 0:
+                # 🚩 OPS-004: negatif ürün-aç adedi sessiz yutulmaz — sayım
+                # hatası izi log'a düşer (davranış: yine 0 sayılır).
+                logger.warning(
+                    "food-cost: negatif ürün-aç adedi klemplendi: sube=%s kod=%s ham=%s",
+                    sid, kod, adet_ham,
+                )
+            adet = max(0, adet_ham)
             if adet > 0:
                 diger_ac_map.setdefault(sid, {})
                 diger_ac_map[sid][kod] = diger_ac_map[sid].get(kod, 0) + adet
