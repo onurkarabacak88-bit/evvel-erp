@@ -95,10 +95,47 @@ def insert_kasa_hareketi(cur, tarih, islem_turu, tutar, aciklama,
           sube_id, odeme_yontemi))
 
     if cur.rowcount == 0:
-        # Aynı anahtarla daha önce yazıldıysa idempotent başarı kabul edilir.
-        cur.execute("SELECT 1 FROM kasa_hareketleri WHERE idempotency_key=%s", (_idem,))
-        if cur.fetchone():
-            return
+        # ⚠️ PARA-010 (2026-09-02): burada "anahtar var → idempotent başarı"
+        # deniyordu. Ama anahtarı tutan satır İPTAL edilmişse çağıranın
+        # istediği AKTİF kayıt YOKTUR — "yazıldı" demek YALAN olur.
+        #
+        # Bu, ciro düzeltmesinde sessizce parayı kaybediyordu: düzeltme akışı
+        # (1) eski hareketi iptal et (2) yeniden yaz şeklinde çalışıyor ve
+        # idempotency anahtarına tutar+tarih girdiği için NET TUTAR DEĞİŞMEYEN
+        # bir düzeltme (yalnız şube/açıklama değişikliği ya da eski tutara geri
+        # dönüş) tam da iptal ettiği satırın anahtarına çarpıyordu. Sonuç:
+        # eski kayıt iptal, yenisi yazılmamış → cironun kasa etkisi buharlaşır,
+        # uç ise success:true döner.
+        cur.execute(
+            "SELECT COALESCE(durum,'aktif') AS durum FROM kasa_hareketleri WHERE idempotency_key=%s",
+            (_idem,))
+        _var = cur.fetchone()
+        if _var and str(_var["durum"]) == "aktif":
+            return  # gerçek idempotent başarı: aktif kayıt zaten duruyor
+
+        if _var:
+            # Çakışan satır iptal edilmiş → NESİL eki ile yeniden yaz.
+            # Nesil, aynı taban anahtarı paylaşan satır sayısından türetilir;
+            # böylece "iptal et + yeniden yaz" döngüsü her turda kendi
+            # satırını alır ve hiçbir tur sessizce yutulmaz.
+            cur.execute(
+                """SELECT COUNT(*) AS c FROM kasa_hareketleri
+                   WHERE idempotency_key = %s OR idempotency_key LIKE %s""",
+                (_idem, _idem + "#n%"))
+            _nesil = int((cur.fetchone() or {}).get("c") or 1)
+            _idem = f"{_idem}#n{_nesil}"
+            cur.execute("""
+                INSERT INTO kasa_hareketleri
+                    (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id,
+                     ref_type, kasa_etkisi, idempotency_key, sube_id, odeme_yontemi)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s,'nakit'))
+                ON CONFLICT (idempotency_key) DO NOTHING
+            """, (str(uuid.uuid4()), str(tarih), islem_turu, tutar, aciklama,
+                  kaynak_tablo, kaynak_id, _event_id, _ref_type, _kasa_etkisi, _idem,
+                  sube_id, odeme_yontemi))
+            if cur.rowcount > 0:
+                return
+
         raise Exception(f"KASA YAZILMADI — {islem_turu} / {kaynak_id}")
 
 

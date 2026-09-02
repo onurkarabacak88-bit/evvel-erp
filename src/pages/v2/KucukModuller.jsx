@@ -1616,6 +1616,9 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
                 ['ciro_toplam', 'Ciro', 'şube satışları', 1],
                 ['dis_kaynak_toplam', 'Dış kaynak geliri', 'satış dışı gelir', 1],
                 ['kart_toplam', 'Kart ödemesi', 'karta yapılan ödeme — GİDER DEĞİL, borç kapatır', -1],
+                // RAPOR-006: faiz artık kart_toplam'ın İÇİNDE DEĞİL (çift sayımdı).
+                // Kendi satırı olmazsa aşağıdaki "ayrıştırılmamış fark"a düşerdi.
+                ['kart_faiz_toplam', 'Kart faizi', 'gerçek gider — borç kapatmaz', -1],
                 ['borc_taksit_toplam', 'Borç taksiti', 'anapara+faiz — GİDER DEĞİL, borç kapatır', -1],
                 ['maas_toplam', 'Personel maaş', 'ödenen maaş', -1],
                 ['sabit_toplam', 'Sabit gider', 'kira · abonelik · düzenli', -1],
@@ -1643,8 +1646,8 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
               // karıştırılmasın.
               ...(() => {
                 const girenKalem = sayi(ozetR.ciro_toplam) + sayi(ozetR.dis_kaynak_toplam);
-                const cikanKalem = ['kart_toplam', 'borc_taksit_toplam', 'maas_toplam', 'sabit_toplam',
-                  'anlik_toplam', 'fatura_toplam', 'vadeli_toplam'].reduce((a, k) => a + sayi(ozetR[k]), 0);
+                const cikanKalem = ['kart_toplam', 'kart_faiz_toplam', 'borc_taksit_toplam', 'maas_toplam',
+                  'sabit_toplam', 'anlik_toplam', 'fatura_toplam', 'vadeli_toplam'].reduce((a, k) => a + sayi(ozetR[k]), 0);
                 const gFark = sayi(ozetR.toplam_gelir) - girenKalem;
                 const cFark = sayi(ozetR.toplam_gider) - cikanKalem;
                 const cizgi = [];

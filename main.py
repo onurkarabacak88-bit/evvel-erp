@@ -5817,6 +5817,23 @@ def kart_hareket_ekle(h: KartHareket):
     # bu guard'dan geçmez → otomatik akışlar etkilenmez.
     if h.islem_turu in ('HARCAMA', 'ODEME') and len((h.aciklama or '').strip()) < 3:
         raise HTTPException(400, "Açıklama zorunlu — para çıkışı adsız olamaz (neye ödendiğini yazın)")
+    # 🔴 KART-013 (2026-09-02): kart defterinin sözleşmesi "POZİTİF BÜYÜKLÜK +
+    # yönü islem_turu söyler"dir — kart borcu HARCAMA'ları toplayıp ODEME'leri
+    # düşerek bulunur. Buraya negatif tutarlı bir HARCAMA girilirse borç ARTMAZ,
+    # AZALIR. Kasa bacağı `-abs(h.tutar)` ile korunmuştu ama kart defteri
+    # korunmamıştı: iki defter sessizce ayrışıyordu.
+    # ⚠️ abs() ile sessizce düzeltMİYORUZ — işareti çevirmek kullanıcının ne
+    # demek istediğini TAHMİN etmektir. Reddedip söylüyoruz.
+    if h.islem_turu in ('HARCAMA', 'ODEME', 'FAIZ'):
+        try:
+            _t = float(h.tutar)
+        except (TypeError, ValueError):
+            raise HTTPException(400, "Geçerli bir tutar girin")
+        if _t <= 0:
+            raise HTTPException(
+                400,
+                f"Tutar pozitif olmalı. Kart defterinde yön işaretle değil işlem türüyle "
+                f"belirtilir — iade/düzeltme için ODEME girin ya da kaydı iptal edin.")
     with db() as (conn, cur):
         hid = str(uuid.uuid4())
         faiz = abs(h.faiz_tutari) if h.faiz_tutari else 0
@@ -6568,8 +6585,11 @@ def kart_gelecek_ay_yuk():
     """İZOLE/SALT-OKUR: gelecek ay tahmini ZORUNLU ödeme yükü + elde kalan strateji.
     Kullanıcı durumu: tüm nakit kredi/kartlara yatıyor → "gelecek ay en az ne ödemeliyim".
       1) Kart tahmini asgari (OTOMATİK): her kart için gelecek dönem borç tahmini ×
-         asgari oran. Gelecek dönem = (anlık−bu ay asgari)×(1+aylık faiz) + gelecek ay
-         taksit dilimi (odeme_plani). Asgari oran: limit>50k → %40, değilse %20 (TR mevzuat).
+         asgari oran. Asgari oran TEK KAYNAKTAN gelir: kart_asgari_orani(k).
+         Gelecek dönem = MAX( (anlık−bu ay asgari)×(1+AYLIK faiz) , gelecek ay ekstre planı )
+         ⚠️ TOPLAM DEĞİL — odeme_plani'nın kartlı satırları ekstre yüklemesinde
+         "dönem borcu ya da asgari" olarak açılır; yani anlık borcun İÇİNDEKİ
+         aynı paradır. İkisini toplamak çift sayımdır (BORC-004, 2026-09-02).
       2) Kredi taksitleri (borc_envanteri, gelecek ay) — kesin.
       3) ZORUNLU YÜK = kart asgari + kredi taksiti (batmamak için minimum).
       4) Serbest nakit (kasa_bakiyesi) − zorunlu = ELDE KALAN → çığa (en pahalı borç).
@@ -6612,20 +6632,37 @@ def kart_gelecek_ay_yuk():
         if anlik <= 0.5:
             continue
         bu_asg = float(k.get("asgari_odeme") or 0)
-        faiz_ay = float(k.get("faiz_orani") or 0) / 100.0
-        limit = float(k.get("limit_tutar") or 0)
-        oran = 0.40 if limit > 50000 else 0.20
+        # 🔴 BORC-001: kartlar.faiz_orani AKDİ (YILLIK) orandır — finans_core
+        # ve borç koçu hep /100/12 ile aylığa çevirir. Burada /100 ile
+        # doğrudan aylık sanılıyordu: 12 KAT şişkin faiz, üstelik çıktıya
+        # "faiz_ay_pct" adıyla basılıyordu.
+        faiz_ay = float(k.get("faiz_orani") or 0) / 100.0 / 12.0
+        # 🔴 BORC-010: asgari oran limit eşiğiyle hardcode ediliyordu;
+        # kartın kendi asgari_oran kolonu yok sayılıyordu. TEK KAYNAK:
+        oran = kart_asgari_orani(k)
         kid = str(k.get("id"))
         kalan = max(0.0, anlik - bu_asg)
         faizli = kalan * (1 + faiz_ay)
+        # 🔴 BORC-004: bu iki değer AYNI PARAYI ölçüyor. `taksit_dilim`,
+        # ekstre yüklemesinde açılan kartlı odeme_plani satırıdır
+        # (odenecek_tutar = dönem borcu ya da asgari) — yani zaten
+        # anlik_borc'un içinde. Toplamak çift sayımdı. MAX alıyoruz:
+        # plan GERÇEK bir ekstreden gelir, faizli ise TAHMİNDİR; hangisi
+        # büyükse gelecek ayın yükü odur, ama ikisi ÜST ÜSTE binmez.
         taksit_dilim = kart_taksit.get(kid, 0.0)
-        gelecek_donem = faizli + taksit_dilim
+        gelecek_donem = max(faizli, taksit_dilim)
         tahmini_asgari = gelecek_donem * oran
         t_asgari += tahmini_asgari
         satir.append({
             "kart_adi": k.get("kart_adi"), "anlik_borc": round(anlik, 2),
-            "faiz_ay_pct": round(faiz_ay * 100, 2),
+            "faiz_ay_pct": round(faiz_ay * 100, 4),
+            "faiz_yil_pct": round(float(k.get("faiz_orani") or 0), 2),
+            "asgari_oran_pct": round(oran * 100, 2),
             "gelecek_donem_tahmini": round(gelecek_donem, 2),
+            # Kırılım görünür olsun: hangi bileşen kazandı, ekranda okunabilsin.
+            "bilesen_faizli_tahmin": round(faizli, 2),
+            "bilesen_ekstre_plani": round(taksit_dilim, 2),
+            "bilesen_secilen": "ekstre_plani" if taksit_dilim > faizli else "faizli_tahmin",
             "tahmini_asgari": round(tahmini_asgari, 2),
         })
     satir.sort(key=lambda x: -x["tahmini_asgari"])
@@ -11716,6 +11753,73 @@ def _vadeli_tedarikci_norm(s: str) -> str:
     return (s or "").strip().lower()
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# 🛡️ İSTEK İZİ — para yazan uçlarda ağ retry'ına karşı idempotency defteri
+#
+# NEDEN (PARA-011, 2026-09-02): vadeli alım ucunda aynı tedarikçide TEK açık
+# borç varsa, ikinci istek "ilave" sayılıp tutarı ÜSTÜNE topluyordu. Yani
+# ağ retry'ı — kullanıcı hiçbir şey yapmadan — borcu SESSİZCE İKİYE KATLIYOR.
+# 7 günlük "benzer kayıt" uyarısı bu dala hiç girmiyordu.
+#
+# Çözüm: ödeme ANLAMINI taşıyan alanlardan parmak izi üret, pencere içinde
+# aynı parmak gelirse İŞLEME, önceki sonucu geri ver. Kullanıcı gerçekten
+# ikinci bir kayıt istiyorsa force=true ile geçebilir — yani kapı kilit değil,
+# BİLİNÇLİ GEÇİŞ gerektiren bir eşik.
+#
+# Pencere neden 180 sn: retry saniyeler içinde olur; 3 dakika arayla girilen
+# birebir aynı borç gerçek bir ikinci kayıttır. Yanlış tarafa düşmenin bedeli
+# asimetrik — mükerrer borç sessizdir, engellenen kayıt ekranda görünür.
+ISTEK_IZI_PENCERE_SN = 180
+
+
+def _ensure_istek_izi(cur):
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS istek_izi (
+            parmak     TEXT PRIMARY KEY,
+            kapsam     TEXT NOT NULL,
+            sonuc      JSONB,
+            olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS ix_istek_izi_ts ON istek_izi (olusturma DESC)")
+
+
+def _istek_parmak(kapsam: str, *parcalar) -> str:
+    ham = kapsam + "|" + "|".join(
+        str(p if p is not None else "").strip().lower() for p in parcalar)
+    return hashlib.md5(ham.encode("utf-8")).hexdigest()
+
+
+def _istek_izi_tazeyse(cur, parmak: str):
+    """Pencere içinde aynı parmak varsa ÖNCEKİ sonucu döner; yoksa None."""
+    _ensure_istek_izi(cur)
+    cur.execute(
+        """SELECT sonuc FROM istek_izi
+           WHERE parmak=%s AND olusturma >= NOW() - (%s || ' seconds')::interval""",
+        (parmak, ISTEK_IZI_PENCERE_SN),
+    )
+    r = cur.fetchone()
+    if not r:
+        return None
+    s = r.get("sonuc")
+    if isinstance(s, dict):
+        return s
+    try:
+        return json.loads(s) if s else {}
+    except Exception:
+        return {}
+
+
+def _istek_izi_yaz(cur, parmak: str, kapsam: str, sonuc: dict):
+    _ensure_istek_izi(cur)
+    cur.execute(
+        """INSERT INTO istek_izi (parmak, kapsam, sonuc, olusturma)
+           VALUES (%s, %s, %s::jsonb, NOW())
+           ON CONFLICT (parmak) DO UPDATE SET sonuc=EXCLUDED.sonuc, olusturma=NOW()""",
+        (parmak, kapsam, json.dumps(sonuc, default=str)),
+    )
+
+
 def _vadeli_bekleyen_ayni_tedarikci(cur, tedarikci: str):
     t = _vadeli_tedarikci_norm(tedarikci)
     if not t:
@@ -11998,8 +12102,27 @@ def vadeli_ekle(v: VadeliAlim):
         birlestir = (v.birlestir_vadeli_id or "").strip()
         karar = (v.tedarikci_karari or "").strip().lower()
 
+        # 🛡️ PARA-011: retry koruması. Parmak izi ödeme ANLAMINI taşıyan
+        # alanlardan üretilir. Aşağıdaki "tek açık borç varsa üstüne topla"
+        # dalı olmasaydı bu guard'a gerek yoktu — ama o dal retry'ı sessizce
+        # borç katlamaya çeviriyor, o yüzden kapı ucun EN BAŞINDA duruyor.
+        _parmak = _istek_parmak(
+            "vadeli_ekle", v.tedarikci, "%.2f" % float(v.tutar),
+            v.vade_tarihi, v.aciklama, birlestir, karar)
+        if not v.force:
+            _onceki = _istek_izi_tazeyse(cur, _parmak)
+            if _onceki:
+                return {**_onceki, "tekrar": True, "mesaj": (
+                    "Aynı istek az önce işlendi — mükerrer borç YAZILMADI. "
+                    "Gerçekten ikinci bir kayıt istiyorsanız force=true gönderin.")}
+
+        def _bitir(sonuc):
+            """Yazma yapan her dönüş buradan geçer — iz olmadan para yazılmaz."""
+            _istek_izi_yaz(cur, _parmak, "vadeli_ekle", sonuc)
+            return sonuc
+
         if birlestir:
-            return _vadeli_borcla_birlestir(cur, birlestir, v)
+            return _bitir(_vadeli_borcla_birlestir(cur, birlestir, v))
 
         acik = _vadeli_bekleyen_ayni_tedarikci(cur, v.tedarikci)
         if acik and not v.force:
@@ -12007,14 +12130,16 @@ def vadeli_ekle(v: VadeliAlim):
                 pass
             elif karar == "ilave":
                 if len(acik) == 1:
-                    return _vadeli_borcla_birlestir(cur, acik[0]["id"], v)
+                    return _bitir(_vadeli_borcla_birlestir(cur, acik[0]["id"], v))
                 raise HTTPException(
                     400,
                     "Bu tedarikçide birden fazla açık borç var — birlestir_vadeli_id ile hedef satırı gönderin.",
                 )
             elif len(acik) == 1:
-                # Aynı toptancı/tedarikçide tek bekleyen borç: tutarı üstüne topla (onay sormadan).
-                return _vadeli_borcla_birlestir(cur, acik[0]["id"], v)
+                # Aynı toptancı/tedarikçide tek bekleyen borç: tutarı üstüne topla.
+                # ⚠️ Bu dal ONAY SORMADAN yazar — retry koruması yukarıdaki
+                # parmak izi kapısıyla sağlanıyor (PARA-011).
+                return _bitir(_vadeli_borcla_birlestir(cur, acik[0]["id"], v))
             else:
                 return {
                     "warning": True,
@@ -12054,7 +12179,9 @@ def vadeli_ekle(v: VadeliAlim):
         """, (pid, v.vade_tarihi, str(v.vade_tarihi), float(v.tutar), float(v.tutar),
               f"Vadeli Alım: {v.aciklama}", vid, vid))
         audit(cur, 'vadeli_alimlar', vid, 'INSERT')
-    return {"id": vid, "success": True}
+        _sonuc = {"id": vid, "success": True}
+        _bitir(_sonuc)
+    return _sonuc
 
 @app.put("/api/vadeli-alimlar/{vid}")
 def vadeli_guncelle(vid: str, v: VadeliAlim):
@@ -14330,6 +14457,14 @@ def toplu_odeme(payload: dict):
                 continue  # ödenecek kalan yok
             if tutar is not None and int(round(float(tutar) * 100)) != kalan_krs:
                 raise HTTPException(400, f"Toplu ödeme tam kapatma yapar (kalan {kalan_krs/100:.2f}₺); kısmi/farklı tutar için kısmi-öde kullanın: {oid}")
+            # 🔴 PERS-011 (2026-09-02): maaş onay kapısı tekli /ode ve /kismi-ode
+            # yollarında vardı, TOPLU ödemede YOKTU. Yani onaylanmamış bir maaş
+            # tek tek ödenemezken toplu listede işaretlenerek kapatılabiliyordu —
+            # kapı, etrafından dolaşılabildiği sürece kapı değildir.
+            # Guard hata atarsa TÜM parti geri alınır (tek transaction): onaysız
+            # bir kalem yüzünden partinin geri kalanını sessizce ödemek, sorunu
+            # görünmez kılardı.
+            _personel_maas_odeme_guard(cur, dict(plan))
             odenen = kalan_krs / 100.0
             bugun = str(bugun_tr())
             # P1 (Codex diff-review 2026-08-13): tam kapatmada odenen_tutar
@@ -14404,7 +14539,13 @@ def aylik_rapor(yil: int = None, ay: int = None):
                 COALESCE(SUM(CASE WHEN islem_turu='CIRO'          THEN tutar  ELSE 0 END),0) as ciro_toplam,
                 COALESCE(SUM(CASE WHEN islem_turu='DIS_KAYNAK'    THEN tutar  ELSE 0 END),0) as dis_kaynak_toplam,
                 COALESCE(SUM(CASE WHEN islem_turu='DEVIR'         THEN tutar  ELSE 0 END),0) as devir_toplam,
-                COALESCE(SUM(CASE WHEN islem_turu IN ('KART_ODEME','KART_FAIZ') THEN ABS(tutar) ELSE 0 END),0) as kart_toplam,
+                -- 🔴 RAPOR-006 (2026-09-02): kart_toplam KART_FAIZ'i de içeriyordu,
+                -- ama gider dağılımında "Kart Faizi" AYRI satır olarak da basılıyordu
+                -- (Rapor.jsx ve Excel çıktısı) → faiz İKİ KEZ sayılıyordu.
+                -- Ayrıca drill detayı (kart_detay) odeme_plani ANAPARAsından gelir,
+                -- faiz içermez — yani başlık ile detay da tutmuyordu.
+                -- Artık iki alan AYRIK: kart_toplam = ödeme, kart_faiz_toplam = faiz.
+                COALESCE(SUM(CASE WHEN islem_turu='KART_ODEME'    THEN ABS(tutar) ELSE 0 END),0) as kart_toplam,
                 COALESCE(SUM(CASE WHEN islem_turu='KART_FAIZ'     THEN ABS(tutar) ELSE 0 END),0) as kart_faiz_toplam,
                 COALESCE(SUM(CASE WHEN islem_turu='ANLIK_GIDER'   THEN ABS(tutar) ELSE 0 END),0) as anlik_toplam,
                 COALESCE(SUM(CASE WHEN islem_turu='VADELI_ODEME'  THEN ABS(tutar) ELSE 0 END),0) as vadeli_toplam,
