@@ -9337,6 +9337,41 @@ def odeme_plani_sil(oid: str):
                     iptal_kasa_hareketi(
                         cur, oid, 'odeme_plani', islem, islem + '_IPTAL',
                         f"Ödeme iptali: {eski['aciklama']}")
+            # ══════════════════════════════════════════════════════════════
+            # 💳 KART SATIRI DA GERİ ALINIR (2026-09-03)
+            # ══════════════════════════════════════════════════════════════
+            # SEBEP: yukarıdaki üç dalın da yaptığı tek şey KASA kaydını ters
+            # çevirmek. Ama ödeme KARTLA yapıldıysa kasaya HİÇ yazılmaz —
+            # `odeme_yap` kart dalı (≈9168) yalnız `kart_hareketleri`'ne bir
+            # HARCAMA satırı yazar. Dolayısıyla geri alma o satıra hiç
+            # dokunmuyordu:
+            #   · bakiye doğru dönüyordu (cari_odeme iptal ediliyor)
+            #   · ama kart HARCAMA satırı AKTİF kalıyordu
+            #     → kart borcu ve dolu limit ŞİŞİK kalıyor, geri alınamıyor
+            # `odeme_plani.kart_id` de NULL yazıldığı için (fatura_api ≈8790)
+            # ilk dal da tetiklenmiyordu — iki taraf birbirini ıskalıyordu.
+            #
+            # Anahtar TAHMİN EDİLMİYOR, yazıcının kullandığının aynısı:
+            # kart satırı `kaynak_tablo=plan.kaynak_tablo` +
+            # `kaynak_id=plan.kaynak_id` ile yazılıyor (main ≈9174).
+            # Hem `cari_odeme` hem `vadeli_alimlar` kart ödemelerini kapsar —
+            # aynı boşluk ikisinde de vardı.
+            # `kaynak_id` NULL ise WHERE hiçbir satır tutmaz (NULL=NULL yanlış)
+            # → nakit planlarda bu blok sessizce no-op'tur.
+            if eski.get('kaynak_id'):
+                cur.execute(
+                    """UPDATE kart_hareketleri SET durum='iptal'
+                        WHERE kaynak_tablo=%s AND kaynak_id=%s
+                          AND islem_turu='HARCAMA'
+                          AND COALESCE(durum,'aktif')='aktif'
+                     RETURNING id, tutar""",
+                    (kaynak, eski.get('kaynak_id')))
+                for _kr in (cur.fetchall() or []):
+                    _kd = dict(_kr)
+                    audit(cur, 'kart_hareketleri', str(_kd.get('id')),
+                          'ODEME_GERI_AL_KART_IPTAL',
+                          eski={'tutar': _kd.get('tutar'), 'kaynak_tablo': kaynak,
+                                'plan_id': oid})
         audit(cur, 'odeme_plani', oid, 'IPTAL', eski=eski)
     return {"success": True}
 
