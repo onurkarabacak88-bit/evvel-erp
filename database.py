@@ -254,6 +254,36 @@ def ensure_audit_aktor(cur) -> None:
     cur.execute("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS aktor_kaynak TEXT")
 
 
+def ensure_toptanci_teslim_kalemler(cur) -> None:
+    """`toptanci_siparis.teslim_kalemler` — FİİLEN TESLİM ALINAN kalemler.
+
+    🔴 NEDEN (2026-09-03, zincir simülasyonu):
+    Sistem "ne SİPARİŞ edildi"ği kaydediyordu, "ne TESLİM ALINDI"ğını
+    kaydetmiyordu. Teslim adetleri yalnızca isteğin gövdesinde yaşıyor, hiçbir
+    yere yazılmıyordu.
+
+    Somut zarar: belge talebi (GRNI = mal geldi / fatura yok) açılırken beklenen
+    borç `toptanci_siparis.kalemler` — yani SİPARİŞ adedi — üzerinden
+    hesaplanıyordu. 10 istenip 6 geldiyse borç 10'luk yazılıyordu:
+      · GRNI ŞİŞİK (gelmemiş mal borç sayılıyor)
+      · fatura gelince `tutar_fark_tl` TERS yön gösteriyor — 6'lık doğru fatura
+        "ucuz gelmiş" gibi görünüyor ve denetim sinyali yalan söylüyor
+      · fazla teslimde ise borç EKSİK kalıyor
+    Aynı kavramın (teslimatın parasal değeri) kaynağı yanlış defterdi.
+
+    ⚠️ GÖÇ init_db DIŞINDA: `toptanci_siparis` sıcak bir tablo; init_db tek
+    transaction olduğu için oradaki ALTER, kilit sırasını FIFO tıkayıp canlıyı
+    502 döngüsüne sokar (bkz. ensure_audit_aktor docstring'i — o hatanın cismi).
+    Kendi kısa transaction'ında + lock_timeout ile çalışır, kilidi kapamazsa
+    pes eder ve uygulamayı bekletmez.
+
+    ⚠️ İNDEKS YOK: bu kolon filtrede değil, satır okunurken kullanılıyor.
+    """
+    cur.execute("SET LOCAL lock_timeout = '3s'")
+    cur.execute("ALTER TABLE toptanci_siparis "
+                "ADD COLUMN IF NOT EXISTS teslim_kalemler JSONB")
+
+
 def ensure_dusum_modu(cur) -> None:
     """siparis_urun.dusum_modu + sube_kullanimda_urun — ayrı, kendi
     transaction'ında çalışabilen migrasyon. init_db tek transaction içinde

@@ -296,7 +296,14 @@ def belge_talep_olustur_izole(ts_id: str, *, teslim_tarihi=None) -> None:
             cur.execute(
                 """
                 SELECT ts.id, ts.talep_id, ts.sube_id, ts.tedarikci_id,
-                       ts.tedarikci_ad, ts.tedarikci_tel, ts.kalemler, s.ad AS sube_adi
+                       ts.tedarikci_ad, ts.tedarikci_tel,
+                       -- 📦 TESLİM adedi varsa O konuşur; yoksa SİPARİŞ adedine
+                       -- düşülür (eski kayıtlar + telafi yolu için geri uyum).
+                       -- "Ürün para olur" değeri, gelen malın değeridir —
+                       -- istenen malın değil.
+                       COALESCE(ts.teslim_kalemler, ts.kalemler) AS kalemler,
+                       (ts.teslim_kalemler IS NOT NULL) AS teslim_kalemi_var,
+                       s.ad AS sube_adi
                 FROM toptanci_siparis ts LEFT JOIN subeler s ON s.id = ts.sube_id
                 WHERE ts.id=%s
                 """,
@@ -327,7 +334,14 @@ def belge_talep_olustur_izole(ts_id: str, *, teslim_tarihi=None) -> None:
                 (tsid, t.get("talep_id"), t.get("sube_id"), t.get("sube_adi"),
                  t.get("tedarikci_id"), t.get("tedarikci_ad"), t.get("tedarikci_tel"),
                  (teslim_tarihi or None),
-                 (pd.get("tutar") or None), pd.get("kalem"), pd.get("fiyatsiz"), pd.get("kaynak")),
+                 (pd.get("tutar") or None), pd.get("kalem"), pd.get("fiyatsiz"),
+                 # 📦 Kayıt HANGİ TEMELE dayandığını kendisi söylesin: teslim
+                 # adedinden mi hesaplandı, yoksa (eski kayıt / telafi yolu)
+                 # sipariş adedine mi düşüldü. Fatura farkı denetlenirken
+                 # "bu rakam neye göreydi" sorusu cevapsız kalmasın.
+                 ((pd.get("kaynak") or "") +
+                  ("|teslim_adedi" if t.get("teslim_kalemi_var")
+                   else "|siparis_adedi")).strip("|") or None),
             )
     except Exception as e:  # noqa: BLE001 — bilerek yutuluyor (teslim-al bozulmasın)
         logger.warning("belge_talep olusturulamadi (yutuldu, teslim-al etkilenmedi): %s", str(e)[:200])

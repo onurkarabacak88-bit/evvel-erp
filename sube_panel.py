@@ -3501,13 +3501,20 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
                 # 'gonderildi' iken alabilen tek kazanan olur; kaybeden
                 # rowcount=0 görür ve HTTPException ile TÜM transaction geri
                 # sarılır — stok hiç yazılmaz.
+                # 📦 TESLİM KALEMLERİ KALICI YAZILIR (2026-09-03).
+                # Eskiden yalnız "teslim alındı" damgası vuruluyordu; NE KADAR
+                # geldiği hiçbir yere yazılmıyordu. Belge talebi (GRNI) bu
+                # yüzden SİPARİŞ adedinden hesaplanıyor ve eksik teslimde borcu
+                # şişiriyordu. Artık gerçek teslim kalemleri kayıtta.
                 cur.execute(
                     """
                     UPDATE toptanci_siparis
-                    SET durum='teslim_alindi', teslim_ts=NOW()
+                    SET durum='teslim_alindi', teslim_ts=NOW(),
+                        teslim_kalemler=%s::jsonb
                     WHERE id=%s AND talep_id=%s AND durum='gonderildi'
                     """,
-                    (toptanci_siparis_id, siparis_talep_id),
+                    (_json.dumps(kalemler, ensure_ascii=False),
+                     toptanci_siparis_id, siparis_talep_id),
                 )
                 if cur.rowcount == 0:
                     _ts_son = str(dict(_ts_chk).get("durum") or "?")

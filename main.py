@@ -12,7 +12,7 @@ from datetime import date, datetime, timedelta
 import uuid, os, json, pathlib, calendar, threading, hashlib, hmac
 import hashlib as _hashlib_std
 from collections import defaultdict
-from database import db, savepoint, init_db, ensure_audit_aktor, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural, ensure_kart_devir_islem_turu, ensure_isletmeci, ensure_abonelik, ensure_gider_kanonik, ensure_odeme_plani_odeme_yontemi
+from database import db, savepoint, init_db, ensure_audit_aktor, ensure_toptanci_teslim_kalemler, ensure_stok_yolda_columns, ensure_dusum_modu, ensure_operasyon_event_durum_latent, ensure_rapor_kapanis, ensure_kart_kategori_columns, ensure_kart_ekstre_donem, ensure_kart_satici_kural, ensure_kart_devir_islem_turu, ensure_isletmeci, ensure_abonelik, ensure_gider_kanonik, ensure_odeme_plani_odeme_yontemi
 from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncelle
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
@@ -1372,6 +1372,12 @@ def startup():
             ensure_audit_aktor(cur)
     except Exception as e:
         logger.warning("audit_log aktör migrasyonu (startup) atlandı: %s", e)
+    # GRNI: teslim alınan kalemler kalıcı olsun (sipariş adedi ≠ teslim adedi).
+    try:
+        with db() as (conn, cur):
+            ensure_toptanci_teslim_kalemler(cur)
+    except Exception as e:
+        logger.warning("toptanci_siparis teslim_kalemler migrasyonu (startup): %s", e)
     # ONAY-005/006: onaylayan kimliği + gönderilen tutar kolonları.
     # Aynı desen: kendi kısa transaction'ı, lock_timeout'lu, hata yutulur.
     try:
