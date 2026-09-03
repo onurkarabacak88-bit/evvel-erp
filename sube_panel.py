@@ -4254,21 +4254,9 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
         bitince_kalemler = [k for k in kalemler if _is_bitince(k)]
 
         # Açılınca modu: teorik stoğa giren klasik URUN_AC kaydı (depodan düşer)
+        # 🔴 GİDER ↔ STOK AYRIŞMASI (2026-09-03) — defter yazımı BURADAN
+        # AŞAĞIYA, stok döngüsünden SONRAYA taşındı. Gerekçe aşağıda.
         rid = None
-        if acilinca_kalemler:
-            payload = _json.dumps({"kalemler": acilinca_kalemler}, ensure_ascii=False, separators=(",", ":"))
-            acik = "URUN_AC_JSON:" + payload + _not_ek
-            rid = operasyon_defter_ekle(
-                cur,
-                sube_id,
-                "URUN_AC",
-                acik,
-                ref_event_id=_talep_id,
-                personel_id=pid_panel,
-                personel_ad=onay_ad,
-                bildirim_saati=saat_sistem,
-            )
-            audit(cur, "operasyon_defter", rid, "URUN_AC")
 
         # ── Şube deposundan düş — bara giren ürün depoda azalır ──
         # Havuz (pool) kaldırıldı. Depo çıkışı yalnızca kalemler[] UUID satırlarıyla yapılır.
@@ -4347,6 +4335,9 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
         # "2 espresso açtım" denip depodan hiçbir şey düşmüyordu. Artık
         # atlananlar TOPLANIR ve yanıtta bildirilir. Sistem yapamadığını SÖYLER.
         _atlananlar: List[Dict[str, Any]] = []
+        # 🔴 Defterin payload'ı artık BU listeden kurulur: yalnız stoktan
+        # FİİLEN düşen kalemler. (Eskiden `acilinca_kalemler` yazılıyordu.)
+        _dusen_kalemler: List[Dict[str, Any]] = []
         for k in acilinca_kalemler:
             uid = str(k.get("urun_id") or "").strip()
             uad = str(k.get("urun_ad") or "").strip()
@@ -4366,11 +4357,25 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                 continue
             # Aynı kalem_kodu bu request'te zaten işlendiyse atla
             if kk in _islendi_kalemler:
+                # Eskiden SESSİZ atlanıyordu: defter kalemi İKİ kez sayıyor,
+                # stok BİR kez düşüyordu → COGS 2×, stok 1×. Artık hem
+                # deftere girmiyor hem de kullanıcıya bildiriliyor.
+                _atlananlar.append({
+                    "urun_ad": uad or "(adsız)", "adet": int(k.get("adet") or 0),
+                    "neden": "aynı ürün bu istekte zaten işlendi (mükerrer satır)"})
                 continue
-            _islendi_kalemler.add(kk)
             adet = max(0, int(k.get("adet") or 0))
             if adet <= 0:
+                # ⚠️ SIRA ÖNEMLİ (2026-09-03): `_islendi_kalemler.add(kk)`
+                # eskiden BU KONTROLDEN ÖNCEYDİ. Sonuç: adet=0 olan bir satır
+                # mükerrer-koruma yerini KAPIYOR ve aynı ürünün sonraki
+                # MEŞRU satırı "zaten işlendi" diye düşülmeden atlanıyordu.
+                # Sessiz olduğu için kimse görmüyordu. Boş satır yer tutmaz.
+                _atlananlar.append({
+                    "urun_ad": uad or "(adsız)", "adet": 0,
+                    "neden": "adet 0 ya da negatif"})
                 continue
+            _islendi_kalemler.add(kk)
             # Depo stoku açmadan önce kontrol — yetersizse uyumsuzluk logla
             cur.execute("SELECT mevcut_adet FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
                         (sube_id, kk))
@@ -4385,6 +4390,8 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                 str(k.get("urun_ad") or "").strip() or None,
                 adet,
             )
+            # Bu kalem FİİLEN düştü → deftere (ve dolayısıyla COGS'a) girer.
+            _dusen_kalemler.append(k)
             cur.execute(
                 """
                 SELECT mevcut_adet, min_stok, kalem_adi FROM sube_depo_stok
@@ -4423,6 +4430,42 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                             f"Depo stok azaldı: {k_adi} — mevcut {mevcut} adet (min {min_s}). Sipariş gerekebilir.",
                         ),
                     )
+
+        # ══════════════════════════════════════════════════════════════════
+        # 🔴 DEFTER BURADA YAZILIR — STOK DÜŞÜMÜNDEN SONRA (2026-09-03)
+        # ══════════════════════════════════════════════════════════════════
+        # SEBEP: defter stok döngüsünden ÖNCE ve `acilinca_kalemler`in
+        # TAMAMIYLA yazılıyordu. Oysa döngü bazı kalemleri atlıyor:
+        #   · `urun_id` boş  → kanonik kimliğe çözülemez
+        #   · depo kalemi bulunamadı
+        #   · aynı kalem istekte iki kez
+        #   · adet ≤ 0
+        # Maliyet motoru (operasyon_merkez_api, food-cost) COGS ve
+        # İNDİRİLECEK KDV'yi bu defterden okuyor; stok ise
+        # `sube_depo_stok`tan. Yani atlanan kalem GİDERE giriyor ama
+        # STOKTAN DÜŞMÜYORDU → aynı kavramın iki kaynağı ayrışıyordu.
+        # Mükerrer satırda ise gider 2×, stok 1× oluyordu.
+        #
+        # ⚠️ Bu, projenin en sık tekrarlayan kök kusuru: AYNI GERÇEĞİ İKİ
+        # YERDE TUTMAK. Çözüm defteri stokla aynı kaynaktan beslemek:
+        # payload artık `_dusen_kalemler` — yalnız fiilen düşenler.
+        # Böylece "gider tüketimde doğar" kuralı hem tutarda hem adette
+        # stokla birebir tutuyor.
+        if _dusen_kalemler:
+            payload = _json.dumps({"kalemler": _dusen_kalemler},
+                                  ensure_ascii=False, separators=(",", ":"))
+            acik = "URUN_AC_JSON:" + payload + _not_ek
+            rid = operasyon_defter_ekle(
+                cur,
+                sube_id,
+                "URUN_AC",
+                acik,
+                ref_event_id=_talep_id,
+                personel_id=pid_panel,
+                personel_ad=onay_ad,
+                bildirim_saati=saat_sistem,
+            )
+            audit(cur, "operasyon_defter", rid, "URUN_AC")
 
         # ── BİTİNCE modu: depodan DÜŞME — "kullanımda" kaydı aç ──
         # Sipariş alarmı bu ürünlerde ürün açılınca DEĞİL, "Bitti" denince tetiklenir.
@@ -4473,7 +4516,14 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
         "defter_id": rid,
         "delta": {},
         "kalemler": kalemler,
-        "acilinca_adet": sum(max(0, int(k.get("adet") or 0)) for k in acilinca_kalemler),
+        # 🔴 GERÇEKTEN DÜŞEN ADET (2026-09-03). Eskiden burada
+        # `acilinca_kalemler` toplanıyordu — yani İSTENEN adet. Atlanan kalem
+        # varsa ekran "2 adet açıldı" diyordu ama depodan 1 düşmüştü.
+        # Manşet rakam artık deftere ve stoğa giren TEK gerçeği söylüyor;
+        # istenen adet ayrı alanda duruyor (geriye uyum + şeffaflık).
+        "acilinca_adet": sum(max(0, int(k.get("adet") or 0))
+                             for k in locals().get("_dusen_kalemler") or []),
+        "istenen_adet": sum(max(0, int(k.get("adet") or 0)) for k in acilinca_kalemler),
         "bitince_adet": sum(max(0, int(k.get("adet") or 0)) for k in bitince_kalemler),
         # 🔇 İŞLENEMEYEN KALEMLER — gizlenmez, sayılır ve sebebi söylenir
         "atlanan": _atl,
