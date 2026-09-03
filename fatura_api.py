@@ -4899,9 +4899,16 @@ def kart_izi_onayla(body: KartIziOnayModel):
         "uygun_olmayan_not": ("Sistem üretimi satırlar (vadeli alım / anlık gider) "
                               "damgalanamaz — cari onları zaten kendi kanalından "
                               "sayıyor" if reddedilen else None),
+        # ⚠️ Eski metin "sonraki faturalara mahsup edilir" diyordu — ETMİYORDU
+        # (2026-09-03). Avans bakiyeyi düşürüyor ama hiçbir faturaya
+        # BAĞLANMIYOR; ödenecekler havuzu yeni faturayı tam açık gösteriyordu.
+        # Vaat edip yapmamak, yapmamaktan kötüdür: sahip mahsubun kendiliğinden
+        # olduğunu sanıp ikinci kez ödeyebilir. Metin artık gerçeği söylüyor.
         "not": ("Para YAZILMADI — zaten kart ekstresinde çıkmıştı; damga onu borçla "
-                "ilişkilendirir. Artan tutar cari bakiyede alacak olarak kalır "
-                "(sonraki faturalara mahsup edilir)."),
+                "ilişkilendirir. Artan tutar cari bakiyede ALACAK olarak kalır. "
+                "⚠️ Otomatik mahsup EDİLMEZ: hangi faturaya sayılacağı sizin "
+                "kararınızdır. Ödenecekler ekranında `avans_kapatir_tl` sütunu "
+                "hangi faturayı ne kadar kapatabileceğini gösterir."),
     }
 
 
@@ -8607,6 +8614,23 @@ def cari_odenecekler(tedarikci: str = "", defter_kiyas: int = 1):
         _ensure_cari_odeme_tablolar(cur)
         ids = [f["id"] for f in faturalar if f.get("id")]
         kapatilan = _cari_kapatilan_toplam(cur, ids)
+        # 💰 AVANS — bu tedarikçiye BORÇTAN FAZLA ödenen tutar.
+        # `fatura_id IS NULL` tahsis satırı olarak yazılıyor (≈8814) ama
+        # havuzun `_cari_kapatilan_toplam`ı `fatura_id = ANY(...)` ile
+        # topladığı için o satır HİÇBİR okuyucuya GÖRÜNMÜYORDU.
+        _avans_ham = []
+        try:
+            cur.execute(
+                """SELECT t.kapatilan::float AS tutar, o.tedarikci_ad,
+                          o.tarih::text AS tarih
+                     FROM cari_odeme_tahsis t
+                     JOIN cari_odeme o ON o.id = t.odeme_id
+                    WHERE t.fatura_id IS NULL
+                      AND COALESCE(o.iptal, FALSE) = FALSE""")
+            _avans_ham = [dict(r) for r in (cur.fetchall() or [])]
+        except Exception as _e_av:  # noqa: BLE001 — avans okunamazsa havuz yine döner
+            logger.warning("avans okunamadi: %s", str(_e_av)[:120])
+            _avans_ham = []
     acik = []
     for f in faturalar:
         tut = float(f.get("tutar") or 0)
@@ -8629,7 +8653,35 @@ def cari_odenecekler(tedarikci: str = "", defter_kiyas: int = 1):
     # Kanal izleri fatura seviyesinde bağlanamaz (banka satırında fatura no
     # yoktur) — o yüzden fark GİZLENMEZ, adıyla raporlanır: sahip "bu 12.000 ₺
     # neyle açıklanıyor" sorusunun cevabını ekranda görür.
+    # ══════════════════════════════════════════════════════════════════════
+    # 💰 AVANS MAHSUBU — HESAPLANIR, YAZILMAZ (2026-09-03)
+    # ══════════════════════════════════════════════════════════════════════
+    # SEBEP: fazla ödeme `cari_odeme_tahsis`e `fatura_id=NULL` avans satırı
+    # olarak yazılıyor ve `hesaplanan_acik` onu DOĞRU şekilde düşüyor. Ama
+    # HAVUZ görmüyordu: yeni gelen fatura TAM AÇIK görünüyor, sahip yeniden
+    # ödüyor ve bakiye kalıcı eksiye gidiyordu. Üstelik `kart-izi-onayla`nın
+    # kendi notu "sonraki faturalara mahsup edilir" diyordu — ETMİYORDU.
+    # Aynı gerçeğe iki uç iki farklı rakam söylüyordu.
+    #
+    # ⚠️ TAHSİS YAZMIYORUZ: avansı otomatik faturaya bağlamak BAĞLAMA'dır ve
+    # bu projede BAĞLAMA ≠ KAPATMA. Hangi faturaya sayılacağı sahibin kararı;
+    # kod yalnız GÖSTERİR. Ayrıca `kalan` alanına DA dokunulmaz — ödeme
+    # ekranı ondan tutar türetiyor; sessizce düşürmek "ödendi sanılan borç"
+    # üretirdi. Avans ayrı alanlarda, adıyla döner.
+    _avans_toplam = round(sum(
+        float(a.get("tutar") or 0) for a in (_avans_ham or [])
+        if _odeme_eslesir(ara, str(a.get("tedarikci_ad") or ""))
+        or _odeme_eslesir(str(a.get("tedarikci_ad") or ""), ara)), 2)
+    _avans_kalan = _avans_toplam
+    for _a in acik:                       # FIFO — en eski fatura önce
+        if _avans_kalan <= 0.01:
+            _a["avans_kapatir_tl"] = 0.0
+            continue
+        _kap = min(_avans_kalan, _a["kalan"])
+        _a["avans_kapatir_tl"] = round(_kap, 2)
+        _avans_kalan = round(_avans_kalan - _kap, 2)
     _acik_toplam = round(sum(a["kalan"] for a in acik), 2)
+    _acik_toplam_avans_dusulmus = round(max(0.0, _acik_toplam - _avans_toplam), 2)
     _kanal_acik = None
     try:
         if not int(defter_kiyas or 0):
@@ -8646,6 +8698,18 @@ def cari_odenecekler(tedarikci: str = "", defter_kiyas: int = 1):
         "tedarikci": ara,
         "acik_faturalar": acik,
         "acik_toplam": _acik_toplam,
+        # 💰 AVANS — borçtan fazla ödenen, henüz bir faturaya BAĞLANMAMIŞ tutar.
+        # `acik_toplam` bunu DÜŞMEZ (fatura bazlı defter), `hesaplanan_acik`
+        # DÜŞER (kanal aritmetiği) — ikisinin farkının bir parçası budur.
+        "avans_toplam": _avans_toplam,
+        "avans_kullanilmayan": _avans_kalan,
+        "acik_toplam_avans_dusulmus": _acik_toplam_avans_dusulmus,
+        "avans_notu": (
+            "Bu tedarikçiye borçtan FAZLA ödenmiş tutar var. Her açık fatura "
+            "satırındaki `avans_kapatir_tl`, avansın o faturayı ne kadar "
+            "kapatabileceğini gösterir (FIFO, en eski önce). Otomatik "
+            "BAĞLANMAZ — hangi faturaya sayılacağı sizin kararınız."
+            if _avans_toplam > 0.01 else None),
         # C-2: tahsis defteri ↔ kanal aritmetiği kıyası (None = ölçülemedi)
         "kanal_hesaplanan_acik": _kanal_acik,
         "defter_farki": (None if _kanal_acik is None
