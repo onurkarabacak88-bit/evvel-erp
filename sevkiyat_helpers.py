@@ -110,6 +110,108 @@ SD_ST = sevkiyat_durumu_sql_expr("st")  # alias: st (hub alarm satırları)
 SD_NOALIAS = "COALESCE(NULLIF(TRIM(sevkiyat_durumu), ''), sevkiyat_durum, 'bekliyor')"
 
 
+def depo_ayagi_ilerledi_mi(cur, talep_id: str) -> dict:
+    """🧟 ZOMBİ TALEP FRENİ — TEK KAYNAK (2026-09-03).
+
+    "Bu talebin DEPO kolu ilerledi mi?" sorusunun tek cevabı.
+
+    ⚠️ NEDEN BURADA (kök kusur):
+    Zincirde bir talebin durumu bir HESAP değil bir YAZIM'dı: beş ayrı uç
+    (toptancı geri-al · toptancı sipariş iptal · akış iptal · birleştir ·
+    kabul) "talep şimdi hangi durumda olmalı" sorusunu KENDİ bildiğince
+    cevaplayıp yazıyordu. Toptancı kolunu kapatan uçlar depo koluna hiç
+    bakmıyordu.
+
+    Somut zarar (canlı senaryo):
+      Talep hem depoya hem toptancıya ayrılır. Depo malı yola çıkar
+      (`stok_yolda.durum='yolda'`). Toptancı gönderimi geri alınır ya da
+      iptal edilir → talep KOŞULSUZ `bekliyor`a çekilir → şube kabul kapısı
+      `gonderildi/hazirlaniyor/kabul_uyusmazlik` istediği için malı REDDEDER.
+      Mal fiziksel olarak gelmiştir, sisteme girilemez. ZOMBİ.
+
+    ⚠️ Bu dersi sistem BİR KEZ zaten öğrendi: `toptanciya-yolla`'nın kısmi
+    dalı (operasyon_merkez_api.py ≈11215) "DEPO AYAĞI VARSA DURUM GERİ
+    ÇEKİLMEZ" diyor ve doğru davranıyor. Aynı ders diğer uçlara
+    uygulanmamıştı — çünkü kural KOPYALANMIŞTI, paylaşılmamıştı.
+    Kopyalanan kural zamanla ayrışır; paylaşılan kural ayrışmaz.
+
+    Döner:
+      {"ilerledi": bool, "yolda": int, "kabul_bekleyen": int, "hedef_var": bool}
+
+    `ilerledi=True` iken talebin `durum`una DOKUNULMAZ: o durum artık depo
+    akışına aittir, toptancı kolu ona karışmaz.
+    """
+    cur.execute(
+        """
+        SELECT
+          COUNT(*) FILTER (WHERE durum = 'yolda')::int              AS yolda,
+          COUNT(*) FILTER (WHERE durum = 'kabul_uyusmazlik')::int   AS kabul_bekleyen
+        FROM stok_yolda
+        WHERE siparis_talep_id = %s
+        """,
+        (talep_id,),
+    )
+    _r = dict(cur.fetchone() or {})
+    yolda = int(_r.get("yolda") or 0)
+    kabul_bekleyen = int(_r.get("kabul_bekleyen") or 0)
+
+    # Hedef depo atanmış + henüz sevk çıkmamış hâl de "ilerlemiş" sayılır:
+    # depocu o talebi ekranında görüyor ve hazırlığa başlamış olabilir.
+    cur.execute(
+        """
+        SELECT COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS hedef, durum
+        FROM siparis_talep WHERE id = %s
+        """,
+        (talep_id,),
+    )
+    _t = dict(cur.fetchone() or {})
+    hedef_var = bool((_t.get("hedef") or "").strip())
+    _durum = str(_t.get("durum") or "")
+
+    ilerledi = bool(yolda or kabul_bekleyen or (hedef_var and _durum == "hazirlaniyor"))
+    return {
+        "ilerledi": ilerledi,
+        "yolda": yolda,
+        "kabul_bekleyen": kabul_bekleyen,
+        "hedef_var": hedef_var,
+    }
+
+
+def acik_toptanci_gonderimi(cur, talep_id: str) -> dict:
+    """🚚 Bu talebin TOPTANCI kolunda hâlâ açık gönderim var mı? — TEK KAYNAK.
+
+    `depo_ayagi_ilerledi_mi`in aynadaki eşi. İptal/birleştirme uçları
+    "toptancıya söz verilmiş mal" varken talebi kapatmamalı: tedarikçi malı
+    getirir, talep `iptal` olduğu için şube listesinden düşer ve teslim
+    alınamaz — yetim toptancı satırı.
+
+    ⚠️ Otomatik iptal ETMİYORUZ: tedarikçiye söz verilmiş, mal yolda olabilir.
+    Bunu geri almak İNSAN kararıdır — kod tek başına veremez. Yol gösterilir:
+    "önce gönderimi geri alın".
+
+    Döner: {"acik": bool, "bekleyen": int, "teslim_alinan": int, "adlar": [...]}
+    `adlar` insana gösterilecek engel listesidir ("toptancı: FEZ KAHVE").
+    """
+    cur.execute(
+        """
+        SELECT durum, COALESCE(NULLIF(TRIM(tedarikci_ad), ''), '—') AS ad
+        FROM toptanci_siparis
+        WHERE talep_id = %s AND durum IN ('gonderildi', 'teslim_alindi')
+        """,
+        (talep_id,),
+    )
+    bekleyen, teslim_alinan, adlar = 0, 0, []
+    for _r in (cur.fetchall() or []):
+        _d = dict(_r)
+        if str(_d.get("durum")) == "gonderildi":
+            bekleyen += 1
+            adlar.append("toptancı: %s" % _d.get("ad"))
+        else:
+            teslim_alinan += 1
+    return {"acik": bekleyen > 0, "bekleyen": bekleyen,
+            "teslim_alinan": teslim_alinan, "adlar": adlar}
+
+
 def sevkiyat_durumu_guncelle_params(yeni_durum: str) -> Tuple[str, str]:
     """
     UPDATE SET sevkiyat_durumu=%s, sevkiyat_durum=%s için parametre çifti döner.

@@ -87,7 +87,9 @@ from kontrol_motoru import tum_subeler_kontrol, sube_kontrol_calistir
 from kontrol_motoru import kontrol_personel_risk_profili
 from finans_core import nakit_akis_tahmin_dogruluk
 from sevkiyat_helpers import (
+    acik_toptanci_gonderimi,
     ad_anahtar,
+    depo_ayagi_ilerledi_mi,
     sevkiyat_durumu_coz,
     sevkiyat_durumu_sql_expr,
     sevkiyat_durumu_guncelle_params,
@@ -11446,7 +11448,16 @@ def ops_siparis_toptanci_geri_al(talep_id: str, toptanci_siparis_id: Optional[st
             (tid,),
         )
         kalan_gonderim = int((cur.fetchone() or {}).get("n") or 0)
-        if kalan_gonderim == 0:
+        # 🧟 ZOMBİ FRENİ (2026-09-03) — SEBEBİ KAPATIYORUZ.
+        # Bu dal talebi KOŞULSUZ 'bekliyor'a çekiyordu ve yalnız
+        # `toptanci_siparis` sayıyordu; DEPO koluna hiç bakmıyordu.
+        # Mal yoldayken talep kuyruğa düşünce şube kabul kapısı onu
+        # reddediyor → mal geldi, sisteme girilemedi.
+        # ⚠️ Bu ders 40 satır AŞAĞIDA (kısmi dal, C-14) zaten öğrenilmişti;
+        # kural KOPYALANDIĞI için bu dala ulaşmamıştı. Artık PAYLAŞILAN
+        # tek fonksiyon: sevkiyat_helpers.depo_ayagi_ilerledi_mi.
+        _depo = depo_ayagi_ilerledi_mi(cur, tid)
+        if kalan_gonderim == 0 and not _depo["ilerledi"]:
             cur.execute(
                 """
                 UPDATE siparis_talep
@@ -11459,6 +11470,19 @@ def ops_siparis_toptanci_geri_al(talep_id: str, toptanci_siparis_id: Optional[st
                 """,
                 (tid,),
             )
+        elif kalan_gonderim == 0 and _depo["ilerledi"]:
+            # Depo ayağı ilerlemiş: durum ONUN akışına ait. Toptancı izini
+            # temizle ama duruma DOKUNMA — yoksa gelen mal kabul edilemez.
+            cur.execute(
+                """
+                UPDATE siparis_talep
+                   SET sevkiyat_notu = NULL
+                 WHERE id = %s
+                """,
+                (tid,),
+            )
+            audit(cur, "siparis_talep", tid, "OPS_TOPTANCI_GERIAL_DURUM_KORUNDU",
+                  yeni={"sebep": "depo ayagi ilerledi", **_depo})
         else:
             # Kısmi geri alma: talep zaten 'bekliyor' olabilir; durumu ZORLAMA.
             # ⚠️ 2026-09-01 zincir denetimi (C-14): yorum "zorlama" diyordu ama
@@ -11796,19 +11820,31 @@ def ops_toptanci_siparis_iptal(ts_id: str):
                     #    istiyor. Merkez yeniden yönlendirebilsin veya bilerek
                     #    iptal etsin — karar sahibinde kalsın.
                     elif bekleyen == 0 and teslim == 0:
-                        cur.execute(
-                            """UPDATE siparis_talep
-                               SET durum='bekliyor',
-                                   sevkiyat_durumu='bekliyor',
-                                   sevkiyat_durum='bekliyor',
-                                   sevkiyat_ts=NULL
-                               WHERE id=%s AND durum NOT IN ('teslim_edildi','iptal')""",
-                            (tid,),
-                        )
-                        if cur.rowcount > 0:
-                            kuyruga_dondu = True
+                        # 🧟 ZOMBİ FRENİ (2026-09-03): aynı kök kusur burada da
+                        # vardı — koşul yalnız talebin KENDİ durumuna bakıyor,
+                        # DEPO koluna bakmıyordu. Depo malı yoldayken toptancı
+                        # gönderimi iptal edilirse talep kuyruğa düşüyor ve
+                        # gelen mal kabul edilemiyordu.
+                        # Ortak fren (yukarıdaki geri-al ile AYNI fonksiyon).
+                        _depo2 = depo_ayagi_ilerledi_mi(cur, tid)
+                        if _depo2["ilerledi"]:
                             audit(cur, "siparis_talep", tid,
-                                  "OPS_TALEP_KUYRUGA_DONDU_TOPTANCI_IPTAL")
+                                  "OPS_TALEP_DURUM_KORUNDU_DEPO_AYAGI",
+                                  yeni={"sebep": "depo ayagi ilerledi", **_depo2})
+                        else:
+                            cur.execute(
+                                """UPDATE siparis_talep
+                                   SET durum='bekliyor',
+                                       sevkiyat_durumu='bekliyor',
+                                       sevkiyat_durum='bekliyor',
+                                       sevkiyat_ts=NULL
+                                   WHERE id=%s AND durum NOT IN ('teslim_edildi','iptal')""",
+                                (tid,),
+                            )
+                            if cur.rowcount > 0:
+                                kuyruga_dondu = True
+                                audit(cur, "siparis_talep", tid,
+                                      "OPS_TALEP_KUYRUGA_DONDU_TOPTANCI_IPTAL")
     return {
         "ok": True, "ts_id": sid, "durum": "iptal",
         "talep_tamamlandi": kapatildi,
@@ -22150,6 +22186,23 @@ def ops_siparis_birlestir(body: OpsSiparisBirlestirBody):
                 raise HTTPException(
                     400,
                     f"Talep #{str(r['id'])[:8]} zaten depoya yönlendirilmiş ({hedef}) — birleştirilemez"
+                )
+            # 🚚 AÇIK TOPTANCI GÖNDERİMİ (2026-09-03) — aynı kök kusur.
+            # Doğrulama yalnız `durum='bekliyor'` + hedef boş bakıyordu. Ama
+            # KISMİ toptancı gönderiminde talep 'bekliyor' KALIR: bir kalemi
+            # tedarikçiye yollanmış talep birleştirilebiliyordu. Eski talep
+            # 'iptal' olunca ona bağlı `toptanci_siparis` satırı yetim kalır
+            # (şube listesinden düşer, mal gelince teslim alınamaz); üstelik
+            # o kalem yeni talebe iptal işareti OLMADAN kopyalandığı için
+            # İKİNCİ KEZ toptancıya yollanabilir.
+            # `merkez_iptal` ve `akisi_iptal` ile AYNI paylaşılan fren.
+            _bir_acik = acik_toptanci_gonderimi(cur, str(r["id"]))
+            if _bir_acik["acik"]:
+                raise HTTPException(
+                    400,
+                    f"Talep #{str(r['id'])[:8]} birleştirilemez — toptancı gönderimi "
+                    f"hâlâ açık ({', '.join(_bir_acik['adlar'][:3])}). Önce gönderimi "
+                    "geri alın."
                 )
 
         sube_id = sube_id_set.pop()

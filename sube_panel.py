@@ -3479,14 +3479,44 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
 
             # Bu toptancı siparişi satırını teslim_alindi yap (tamamlanma kontrolünden ÖNCE)
             if toptanci_siparis_id:
+                # 🔴 P0 ÇİFT STOK (2026-09-03) — ATOMİK TALEP KAPISI.
+                #
+                # NEDEN: yukarıdaki durum kontrolü (≈3377) yalnız 'iptal'i
+                # reddediyordu; 'teslim_alindi' geçiyordu. Talep çok tedarikçili
+                # ya da eksik teslimliyse `teslim_edildi` OLMAZ — açık kalır — ve
+                # talep seviyesindeki ikinci kapı da (≈3385) geçirir.
+                # `istek_izi` tekrar koruması YALNIZ siparişsiz (ad-hoc) dalda.
+                # Sonuç: aynı teslim ikinci kez işlenir, stok döngüsü (≈3632)
+                # `sube_depo_stok_depo_giris_ekle` ile KOŞULSUZ toplar →
+                # STOK İKİ KEZ ARTAR. `belge_talep` ON CONFLICT DO NOTHING ile
+                # tek kalır, yani hiçbir yerde iz de kalmaz.
+                # Kodun kendi yorumu bunu zaten itiraf ediyordu:
+                # operasyon_merkez_api.py:11572 → "API'den ikinci teslim…
+                # stoğu MÜKERRER artırıyor". Kapı bugüne kadar kapatılmamıştı.
+                #
+                # ⚠️ SEBEBİ KAPATIYORUZ, BELİRTİYİ DEĞİL: yukarıya bir `if`
+                # daha eklemek OKU-SONRA-YAZ olurdu ve eşzamanlı iki istekte
+                # yine delinirdi (ikisi de SELECT'te 'gonderildi' görür).
+                # Talep, UPDATE'in KENDİSİNDE yapılır: durumu ancak
+                # 'gonderildi' iken alabilen tek kazanan olur; kaybeden
+                # rowcount=0 görür ve HTTPException ile TÜM transaction geri
+                # sarılır — stok hiç yazılmaz.
                 cur.execute(
                     """
                     UPDATE toptanci_siparis
                     SET durum='teslim_alindi', teslim_ts=NOW()
-                    WHERE id=%s AND talep_id=%s
+                    WHERE id=%s AND talep_id=%s AND durum='gonderildi'
                     """,
                     (toptanci_siparis_id, siparis_talep_id),
                 )
+                if cur.rowcount == 0:
+                    _ts_son = str(dict(_ts_chk).get("durum") or "?")
+                    raise HTTPException(
+                        409,
+                        f"Bu toptancı siparişi zaten teslim alınmış (durum: {_ts_son}). "
+                        "Aynı gönderim ikinci kez teslim alınamaz — stok mükerrer artardı. "
+                        "Eksik kalan mal için Operasyon Merkezi'nden yeni gönderim açın.",
+                    )
                 # İZOLE — Belge Talep Motoru: teslim alınınca tedarikçiden fatura PDF'i
                 # kovalamak için bir "belge talep" kaydı aç. Kendi transaction'ında çalışır,
                 # her hata YUTULUR → teslim-al akışını ASLA bozmaz. (Kaldırmak = bu blok sil.)

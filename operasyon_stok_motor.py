@@ -21,7 +21,7 @@ from tr_saat import bugun_tr, dt_coerce_naive_tr, dt_now_tr_naive
 # 🔤 TEK AD NORMALLEŞTİRİCİ — sube_panel ve kule ile AYNI fonksiyon.
 # Türkçe büyük-İ tuzağı: 'İÇECEK'.lower() içine U+0307 koyar, 'içecek' ile
 # eşleşmez. Ayrı bir kopya yazmak sapma üretir; kaynak tek olmalı.
-from sevkiyat_helpers import ad_anahtar
+from sevkiyat_helpers import ad_anahtar, acik_toptanci_gonderimi
 # 🛟 Yutulan SQL hatası transaction'ı zehirler — tek merkez koruma.
 from database import savepoint
 
@@ -3168,6 +3168,28 @@ def siparis_talep_akisi_iptal(
     st = str(rd.get("durum") or "").strip().lower()
     if st in ("iptal", "teslim_edildi", "gonderilmedi"):
         raise ValueError(f"Bu sipariş iptal edilemez (durum={st or '—'})")
+    # ══════════════════════════════════════════════════════════════════════
+    # 🚚 AÇIK TOPTANCI GÖNDERİMİ VARSA İPTAL EDİLEMEZ (2026-09-03)
+    # ══════════════════════════════════════════════════════════════════════
+    # SEBEP: `merkez_iptal` bu freni 2026-08-30'da kurdu ve gerekçesini
+    # yazdı (bkz. yukarıda ≈2986). Ama bu fonksiyon — kontrol kulesinin
+    # iptal yolu — aynı korumadan YOKSUNDU. Kural KOPYALANMIŞ, PAYLAŞILMAMIŞ.
+    #
+    # Zarar: bir kalemi toptancıya yollanmış (tedarikçiye WhatsApp gitmiş)
+    # talep buradan iptal edilebiliyordu. Tedarikçi malı getirir; talep
+    # 'iptal' olduğu için şube bekleyen listesinden düşer ve `urun-sevk`
+    # "zaten kapatılmış" der → sahipsiz mal + faturası. `toptanci_siparis`
+    # satırı sonsuza dek 'gonderildi' asılı kalır.
+    #
+    # ⚠️ Kod tedarikçiye verilmiş sözü tek başına BOZAMAZ: otomatik iptal
+    #    etmiyoruz, yol gösteriyoruz. Karar insanda.
+    _acik_ts = acik_toptanci_gonderimi(cur, aid)
+    if _acik_ts["acik"]:
+        raise ValueError(
+            "Bu talebin toptancı gönderimi hâlâ açık (%s) — önce gönderimi "
+            "geri alın ya da toptancı siparişini iptal edin, sonra talebi "
+            "iptal edin." % ", ".join(_acik_ts["adlar"][:4])
+        )
     if st in ("bekliyor", "onaylandi"):
         return siparis_talep_merkez_iptal(cur, aid, aciklama, yapan_ad)
 
