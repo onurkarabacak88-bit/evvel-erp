@@ -6410,14 +6410,15 @@ def cari_ozet() -> dict:
         # yoksa tablosu olmayan kurulumda bu uç 500 verirdi.
         _ensure_cari_odeme_tablolar(cur)
         cur.execute(
-            """SELECT tarih::text AS tarih, tutar::float AS tutar, metin, kanal FROM (
+            """SELECT tarih::text AS tarih, tutar::float AS tutar, metin, kanal,
+                      damga FROM (
                  -- 💸 Ödeme izinin tarihi VADE değil ÖDEME tarihidir (2026-08-09).
                  -- Ve tarihi GELECEKTE olan bir kayıt ödeme izi sayılmaz: para
                  -- henüz çıkmamıştır (redbull 21.315,57 ₺ vade 10.08 "ödendi"
                  -- damgalıydı ve borçtan bugünden düşülüyordu).
                  SELECT COALESCE(odeme_tarihi, vade_tarihi) AS tarih, tutar,
                         COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,'') AS metin,
-                        'vadeli_alim' AS kanal
+                        'vadeli_alim' AS kanal, NULL::text AS damga
                  FROM vadeli_alimlar
                  -- ⚠️ 2026-09-01 zincir denetimi (B-19): `odeme_tarihi` NULL
                  -- olan 'odendi' satirlar VADE gununde odenmis sayilip borcu
@@ -6430,17 +6431,29 @@ def cari_ozet() -> dict:
                    AND odeme_tarihi <= CURRENT_DATE
                  UNION ALL
                  SELECT tarih, tutar,
-                        COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''), 'anlik_gider'
+                        COALESCE(tedarikci,'') || ' ' || COALESCE(aciklama,''),
+                        'anlik_gider', NULL::text
                  FROM anlik_giderler
                  WHERE durum='aktif' AND kaynak_id IS NULL AND tarih >= %s::date
                  UNION ALL
-                 SELECT tarih, tutar, COALESCE(aciklama,''), 'kart'
+                 -- 🏷️ DAMGA ARTIK BURADA DA SEÇİLİYOR (2026-09-03).
+                 -- SEBEP: sahip bir kart çekimini "bu FEZ'in ödemesi" diye
+                 -- damgaladığında (`cari_tedarikci`) EKSTRE bunu görüp
+                 -- bakiyeden düşüyordu, ama ÖZET görmüyordu — çünkü özet
+                 -- eşleştirme metni olarak yalnız `aciklama`yı okuyordu.
+                 -- Açıklaması jenerik olan ("ÖDEME-İNTERNET BANKACILIĞI")
+                 -- damgalı bir ödeme, manşet bakiyeden HİÇ düşmüyordu.
+                 -- Aynı gerçeğe iki uç iki farklı rakam söylüyordu.
+                 -- ⚠️ '(ilgisiz)' elemesi SQL'den çıkarıldı ve Python'a
+                 -- alındı (ekstre tarafındaki bilinçli sapmanın aynısı):
+                 -- SQL'de elenirse damga bilgisi kaybolur ve POZİTİF damga
+                 -- eşleşmesi de çalışmaz. Evren aynı, eleme yeri farklı.
+                 SELECT tarih, tutar, COALESCE(aciklama,''), 'kart',
+                        cari_tedarikci
                  FROM kart_hareketleri
-                 -- 🔗 TEK TANIM: KART_ODEME_IZI_SARTI (modül başı). Eskiden bu
-                 -- şartlar burada elle yazılıydı ve üç kardeş sorgu ondan
-                 -- SAPMIŞTI ('(ilgisiz)' damgası ve ekstre_import istisnası
-                 -- yalnız burada vardı). Vakalar sabitin yanında yazılı.
-                 WHERE """ + KART_ODEME_IZI_SARTI + """
+                 WHERE islem_turu='HARCAMA' AND COALESCE(durum,'aktif')='aktif'
+                   AND (kaynak_id IS NULL OR COALESCE(kaynak_tablo,'') = 'ekstre_import')
+                   AND COALESCE(harcama_tipi,'belirsiz') <> 'sahsi'
                    AND tarih >= %s::date
                  UNION ALL
                  -- 💳 4. KANAL — CARİ ÖDEME (2026-09-01 zincir denetimi)
@@ -6454,7 +6467,7 @@ def cari_ozet() -> dict:
                  -- İKİNCİ KEZ ödenmeye çağırıyordu. İptal damgalı ödeme sayılmaz.
                  SELECT tarih, tutar,
                         COALESCE(tedarikci_ad,'') || ' ' || COALESCE(aciklama,''),
-                        'cari_odeme'
+                        'cari_odeme', NULL::text
                  FROM cari_odeme
                  WHERE COALESCE(iptal, FALSE) = FALSE
                    AND tarih >= %s::date AND tarih <= CURRENT_DATE) x""",
@@ -6611,13 +6624,32 @@ def cari_ozet() -> dict:
         # ödeme metninde geçen kayıtlar (aday eşleşme). İz YOKSA açık BÜYÜR.
         # Denetim P2-5: her ödeme izi TEK gruba düşer (vadelerdeki _atandi
         # deseni) — 'MEHMET ATALAY KAHVE' metni iki gruba birden düşmesin.
+        # 🏷️ DAMGA ÖNCELİĞİ (2026-09-03) — ekstre tarafındaki `_odeme_dahil`
+        # ile BİREBİR aynı kural. Sahibin damgası bir KARARDIR: bir yerde
+        # dinleyip başka yerde yok saymak, kararı yok saymaktır.
+        #   · damga '(ilgisiz)'  → bu satır hiçbir cariye ait DEĞİL, elenir
+        #   · damga dolu         → yalnız damganın işaret ettiği gruba düşer
+        #                          (açıklamaya BAKILMAZ — damga daha güçlü kanıt)
+        #   · damga boş          → eski davranış: açıklama metni eşleşmesi
+        _g_katli = {_cari_katla(a) for a in g_adlar}
+
+        def _iz_bu_gruba_mi(o) -> bool:
+            _d = (o.get("damga") or "").strip()
+            if _d == "(ilgisiz)":
+                return False
+            if _d:
+                return _cari_katla(_d) in _g_katli
+            return any(_odeme_eslesir(a, o.get("metin")) for a in g_adlar)
+
         _grup_izler = []
         for o in odeme_izleri:
             if o.get("_atandi"):
                 continue
-            if any(_odeme_eslesir(a, o.get("metin")) for a in g_adlar):
+            if _iz_bu_gruba_mi(o):
                 o["_atandi"] = True
-                _grup_izler.append({**o, "aciklama": o.get("metin")})
+                _grup_izler.append({**o, "aciklama": o.get("metin"),
+                                    "kanit": "damga" if (o.get("damga") or "").strip()
+                                             else "aciklama"})
         # 🪢 ÇİFT KANAL: vadeli alım kartla ödenince hem sistem kaydı hem banka
         # ekstresinin ham satırı iz sayılıyordu → borç olduğundan fazla kapanmış
         # görünüyordu (redbull 21.482 ₺, sahip yakaladı). Grup İÇİNDE tekilleştir
