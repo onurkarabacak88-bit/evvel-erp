@@ -6396,7 +6396,11 @@ def cari_ozet() -> dict:
             """SELECT tedarikci_vkn, tedarikci_ad,
                       COALESCE(fatura_tarih, olusturma::date)::text AS tarih,
                       COALESCE(toplam_tutar,0)::float AS tutar,
-                      onceki_bakiye, bakiye_dahil
+                      onceki_bakiye, bakiye_dahil,
+                      -- 📦 GRNI ÇİFT SAYIM ŞÜPHESİ için: bu fatura bir
+                      -- teslimata BAĞLI mı? Bağsızsa ve aynı tedarikçide
+                      -- açık GRNI varsa, aynı mal iki kez sayılıyor olabilir.
+                      siparis_talep_id, COALESCE(fatura_no,'') AS fatura_no
                FROM tedarikci_fatura
                WHERE (COALESCE(TRIM(tedarikci_ad),'') <> ''
                   OR COALESCE(TRIM(tedarikci_vkn),'') <> '')
@@ -6500,7 +6504,8 @@ def cari_ozet() -> dict:
         _grni_tum = []
         try:
             cur.execute(
-                """SELECT tedarikci_ad, COALESCE(beklenen_tutar_tl,0)::float AS tutar
+                """SELECT tedarikci_ad, COALESCE(beklenen_tutar_tl,0)::float AS tutar,
+                          teslim_tarihi::text AS teslim_tarihi
                    FROM belge_talep WHERE durum='bekliyor' AND fatura_id IS NULL""")
             _grni_tum = [dict(r) for r in (cur.fetchall() or [])]
         except Exception as e:  # noqa: BLE001
@@ -6676,6 +6681,7 @@ def cari_ozet() -> dict:
         # (adet=2 görünüyordu, gerçekte 1 teslimat). Her teslimat YALNIZ BİR
         # gruba yazılır — ilk eşleşen alır, '_alindi' bayrağı tekrarı keser.
         _grni_adet, _grni_tl = 0, 0.0
+        _grni_satirlar = []
         for _bt in _grni_tum:
             if _bt.get("_alindi"):
                 continue
@@ -6684,6 +6690,58 @@ def cari_ozet() -> dict:
                 _bt["_alindi"] = True
                 _grni_adet += 1
                 _grni_tl = round(_grni_tl + float(_bt.get("tutar") or 0), 2)
+                _grni_satirlar.append(_bt)
+        # ══════════════════════════════════════════════════════════════════
+        # 📦 GRNI ↔ BAĞSIZ FATURA ÇİFT SAYIM ŞÜPHESİ (2026-09-03)
+        # ══════════════════════════════════════════════════════════════════
+        # `gercek_borc = hesaplanan_acik + GRNI` — yani "faturası gelmiş borç"
+        # ile "mal geldi faturası yok" TOPLANIR. Bu doğru, AMA bir fatura
+        # teslimata BAĞLANMAMIŞSA (şube foto yolu bağ kurmuyor; öneri motoru
+        # yazıyor, insan onayına kadar bağ yok) aynı mal İKİ KEZ sayılır:
+        #   · bir kez `fat_top` içinde (borç)
+        #   · bir kez GRNI içinde (mal geldi/fatura yok)
+        # Canlı örnek (2026-09-03): SÜTAŞ'ta 20.08 teslimatı 30.067,20 ₺ GRNI
+        # olarak duruyor ve AYNI GÜN tarihli 31.907,35 ₺ BAĞSIZ fatura var.
+        #
+        # ⚠️ OTOMATİK NETLEŞTİRMİYORUZ: bu projede TUTAR en zayıf kanıttır.
+        # Fatura gerçekten o teslimata ait olmayabilir (aynı tedarikçiden iki
+        # ayrı sevkiyat olabilir) ve netleştirmek GERÇEK bir borcu gizlerdi.
+        # Rakam DEĞİŞMEZ; şüphe adıyla, tutarıyla ve gerekçesiyle görünür olur.
+        # Sahip `fatura-bagla` ile bağı kurunca GRNI zaten kendiliğinden düşer.
+        _sup_adet, _sup_tl, _sup_liste = 0, 0.0, []
+        try:
+            _bagsiz = [f for f in son6
+                       if not f.get("siparis_talep_id")
+                       and float(f.get("tutar") or 0) > 0.01]
+            for _gr in _grni_satirlar:
+                _gt = str(_gr.get("teslim_tarihi") or "")[:10]
+                if not _gt:
+                    continue
+                for _f in _bagsiz:
+                    if _f.get("_supheli"):
+                        continue
+                    _ft = str(_f.get("tarih") or "")[:10]
+                    if not _ft:
+                        continue
+                    # Fatura teslimden 3 gün ÖNCE ile 30 gün SONRA arasındaysa
+                    # aynı sevkiyata ait OLABİLİR. Pencere geniş tutuldu:
+                    # amaç yakalamak değil, GÖZDEN KAÇIRMAMAK.
+                    _fark = (date.fromisoformat(_ft) - date.fromisoformat(_gt)).days
+                    if -3 <= _fark <= 30:
+                        _f["_supheli"] = True
+                        _sup_adet += 1
+                        _sup_tl = round(_sup_tl + float(_gr.get("tutar") or 0), 2)
+                        _sup_liste.append({
+                            "teslim_tarihi": _gt,
+                            "grni_tl": round(float(_gr.get("tutar") or 0), 2),
+                            "fatura_tarihi": _ft,
+                            "fatura_no": _f.get("fatura_no") or "",
+                            "fatura_tl": round(float(_f.get("tutar") or 0), 2),
+                            "gun_farki": _fark,
+                        })
+                        break
+        except Exception as _e_sup:  # noqa: BLE001 — şüphe hesabı bakiyeyi düşürmez
+            logger.warning("GRNI cift sayim suphesi hesaplanamadi: %s", str(_e_sup)[:120])
         ozet.append({
             "tedarikci": g["tedarikci"], "vkn": g["vkn"],
             "devir": devir_top,
@@ -6702,6 +6760,18 @@ def cari_ozet() -> dict:
             "faturasiz_teslimat_adet": _grni_adet,
             "faturasiz_teslimat_tl": _grni_tl,
             "gercek_borc": round(hesaplanan_acik + _grni_tl, 2),
+            # 📦 ÇİFT SAYIM ŞÜPHESİ — `gercek_borc` bu kadar ŞİŞİK OLABİLİR.
+            # Rakam düşürülmedi (tutar en zayıf kanıt); karar sahibin.
+            # Bağ kurulunca (`belge-talep/{id}/fatura-bagla`) GRNI kendiliğinden düşer.
+            "supheli_cift_sayim_adet": _sup_adet,
+            "supheli_cift_sayim_tl": _sup_tl,
+            "supheli_cift_sayim": _sup_liste,
+            "supheli_cift_sayim_notu": (
+                "Bu tedarikçide MAL GELDİ/FATURA YOK (GRNI) kaydı ile, hiçbir "
+                "teslimata BAĞLANMAMIŞ fatura aynı tarih aralığında. Aynı mal "
+                "iki kez sayılıyor olabilir — `gercek_borc` bu kadar şişik "
+                "görünebilir. Faturayı teslimata bağlayın; GRNI kendiliğinden düşer."
+                if _sup_adet else None),
             "odeme_izi_var": odeme_top > 0,
             # 🪢 Şeffaflık: kaç ödeme iki kanaldan gelip tekilleştirildi. Gizlenmez —
             # sahip "ödemem neden sayılmadı?" diye sorduğunda cevabı burada.
