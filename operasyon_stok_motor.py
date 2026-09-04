@@ -4339,32 +4339,61 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
                 (siparis_talep_id,),
             )
             _gelen = {}
+            # ⚠️ Kosullu tanim kapisi: asagida kosulsuz okunuyor.
+            _toptanci_bekleniyor = False
             for _gr in cur.fetchall() or []:
                 _g = dict(_gr)
                 # ⚠️ ad_anahtar ŞART: .lower() Turkce'de 'İÇECEK' -> icine U+0307
                 # (birlesen nokta) koyar ve 'içecek' ile ASLA eslesmez; kalem
                 # "hic gelmedi" sayilir. Bugun kulede duzeltilen hatanin ikizi.
                 _gelen[ad_anahtar(_g.get("kalem_adi"))] = int(_g.get("n") or 0)
-            # Toptanciya cikmis adlar (baska kanaldan geliyor, eksik sayilmaz)
-            _toptancida = set()
+            # ══════════════════════════════════════════════════════════════
+            # 🔴 "BASKA KANALDAN GELIYOR" ile "BASKA KANALDAN GELDI" AYRI
+            # ══════════════════════════════════════════════════════════════
+            # (2026-09-03) Bu kume `durum <> 'iptal'` ile kuruluyordu; yani
+            # toptanciya YOLLANMIS ama HENUZ GELMEMIS kalem de "karsilandi"
+            # sayiliyordu. Sonuc SIRAYA BAGLI ERKEN KAPANIS:
+            #   A kalemi toptanciya gitti (hala 'gonderildi'), B depodan geldi
+            #   -> depo kabulu B'yi isler, A'yi "karsilandi" sayar
+            #   -> eksik 0 -> talep 'teslim_edildi' KAPANIR
+            #   -> subenin toptanci-bekleyen listesi kapali talepleri gizler
+            #   -> A gelince `urun-sevk` "zaten kapatilmis" der. Mal ortada kalir.
+            # Ters sirada (once A teslim, sonra B kabul) DOGRU calisiyordu —
+            # yani hata sirayla ortaya cikiyordu, her zaman degil.
+            #
+            # Ayrim: TESLIM ALINMIS kalem gercekten karsilanmistir; hala
+            # 'gonderildi' olan ise BEKLENIYOR demektir ve talebi KAPATTIRMAZ.
+            _toptancida = set()          # teslim alinmis -> eksik sayilmaz
+            _toptanci_bekleyen = set()   # yolda -> eksik sayilmaz AMA kapatmaz
             cur.execute(
-                "SELECT kalemler FROM toptanci_siparis "
+                "SELECT kalemler, durum FROM toptanci_siparis "
                 "WHERE talep_id = %s AND durum <> 'iptal'",
                 (siparis_talep_id,),
             )
             for _tr3 in cur.fetchall() or []:
-                _tk = dict(_tr3).get("kalemler") or []
+                _trd = dict(_tr3)
+                _tk = _trd.get("kalemler") or []
                 if isinstance(_tk, str):
                     _tk = json.loads(_tk)
+                _teslim_mi = str(_trd.get("durum") or "") == "teslim_alindi"
                 for _ti in (_tk or []):
                     _tn = ad_anahtar((_ti or {}).get("urun_ad"))
-                    if _tn:
+                    if not _tn:
+                        continue
+                    if _teslim_mi:
                         _toptancida.add(_tn)
+                    else:
+                        _toptanci_bekleyen.add(_tn)
             for _it in (_istenen or []):
                 if not isinstance(_it, dict) or _it.get("iptal"):
                     continue
                 _ad = ad_anahtar(_it.get("urun_ad"))
                 if not _ad or _ad in _toptancida:
+                    continue
+                if _ad in _toptanci_bekleyen:
+                    # Depo eksigi DEGIL (baska kanaldan geliyor) ama talep de
+                    # KAPANAMAZ — mal hala bekleniyor.
+                    _toptanci_bekleniyor = True
                     continue
                 _ist_adet = max(0, int(_it.get("adet") or 0))
                 if _ist_adet > _gelen.get(_ad, 0):
@@ -4382,6 +4411,13 @@ def sube_kabul_kaydet(cur: Any, siparis_talep_id: str, sube_id: str,
         # Gelen kadari kabul edildi ama TALEP karsilanmadi: kuyruga don.
         yeni_talep_durum = "bekliyor"
         sevk_durum = "bekliyor"
+    elif tam_mi and locals().get("_toptanci_bekleniyor"):
+        # 🚚 Toptanci kolunda HALA BEKLENEN mal var: talep KAPANMAZ.
+        # 'bekliyor'a da CEKILMEZ — o mal zaten tedarikciye siparis edilmis
+        # durumda; kuyruga dusurmek merkezde "yeniden yonlendir" gorunumu
+        # uretir ve mal gelince sube kabul edemez (zombi talep deseni).
+        yeni_talep_durum = "gonderildi"
+        sevk_durum = "toptanciya_yonlendirildi"
     cur.execute(
         """
         UPDATE siparis_talep
