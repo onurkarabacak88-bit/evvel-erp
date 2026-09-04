@@ -3534,7 +3534,16 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
             SELECT kalem_kodu, kalem_adi, COALESCE(sevk_adet, 0) AS sevk_adet
               FROM stok_yolda
              WHERE siparis_talep_id = %s
-               AND durum = 'yolda'
+               -- 🔴 TAVAN KABUL EDILENI DE SAYAR (2026-09-03)
+               -- Eskiden yalniz durum='yolda' sayiliyordu. Kabul edilen satir
+               -- 'kabul_edildi'/'uzlasildi' olunca tavandan DUSUYORDU:
+               --   10 istendi -> 3 sevk -> 3 kabul -> talep 'bekliyor'a doner
+               --   -> merkez yeniden yonlendirir -> depo 10 hazirlar
+               --   -> tavan "onceki 0" gorur -> TOPLAM 13 SEVK EDILIR
+               -- Oysa kural "TOPLAM SEVK ISTENEN ADEDI ASAMAZ" — mal depodan
+               -- CIKTIYSA sayilir, sube kabul etmis olsun ya da olmasin.
+               -- 'iptal' sayilmaz: o mal geri alinmistir.
+               AND COALESCE(durum,'yolda') <> 'iptal'
                AND COALESCE(sevk_adet, 0) > 0
                AND kalem_kodu = ANY(%s)
             """,
@@ -3575,12 +3584,12 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                 _asan.append(
                     f"{_yolda_ad.get(_k, _it.get('kalem_adi') or _k)} "
                     f"(istenen {_ist}"
-                    + (f", zaten {_onceki} yolda" if _onceki else "")
+                    + (f", zaten {_onceki} gonderilmis" if _onceki else "")
                     + f", simdi {_yeni})"
                 )
             elif _ist <= 0 and _onceki > 0:
                 _asan.append(
-                    f"{_yolda_ad.get(_k, _k)} (zaten {_onceki} yolda, "
+                    f"{_yolda_ad.get(_k, _k)} (zaten {_onceki} gonderilmis, "
                     f"istenen adet bilinmiyor, simdi {_yeni} daha)"
                 )
         if _asan:

@@ -10553,7 +10553,17 @@ def ops_siparis_kalem_iptal(body: OpsSiparisKalemIptalBody):
                     except Exception:
                         _tk = []
                 for _ti in _tk:
-                    _n = str((_ti or {}).get("urun_ad") or "").strip().lower()
+                    # 🔴 NORMALLEŞTİRİCİ UYUŞMAZLIĞI (2026-09-03)
+                    # Küme `.strip().lower()` ile kuruluyor, karşılaştırma
+                    # aşağıda `ad_anahtar()` ile yapılıyordu. `ad_anahtar`
+                    # boşluğu alt çizgiye çevirir:
+                    #     "filtre kahve"  vs  "filtre_kahve"
+                    # → ÇOK KELİMELİ hiçbir ürün adı eşleşmiyordu ve
+                    #   TOPTANCIYA YOLLANMIŞ kalem iptal edilebiliyordu.
+                    #   Tedarikçi malı getirir, kalem "iptal" görünür.
+                    # Tek kelimelik adlarda tesadüfen çalıştığı için fark
+                    # edilmemişti. İki taraf artık AYNI fonksiyonu kullanıyor.
+                    _n = ad_anahtar((_ti or {}).get("urun_ad"))
                     if _n:
                         _cikmis.add(_n)
         except Exception:
@@ -10590,6 +10600,11 @@ def ops_siparis_kalem_iptal(body: OpsSiparisKalemIptalBody):
             ) from _e
 
         bulundu = None
+        # ⚠️ Koşullu tanım kapısı: `_bulunan_kalem` yalnız eşleşme dalında
+        # atanıyor; aşağıda koşulsuz okunuyor. Baştan tanımlı olmazsa
+        # eşleşme bulunmayan yolda NameError olurdu — pyflakes bunu
+        # YAKALAMAZ (bu projede tekrarlayan tuzak).
+        _bulunan_kalem = None
         yeni: List[Dict[str, Any]] = []
         for k in kalemler:
             if not isinstance(k, dict):
@@ -10609,6 +10624,14 @@ def ops_siparis_kalem_iptal(body: OpsSiparisKalemIptalBody):
                         "Önce toptancı gönderimini geri alın.",
                     )
                 bulundu = _kad or _kid
+                # 🔴 REZERV İADESİ ÖLÜ KODDU (2026-09-03): aşağıda
+                # `(bulundu or {}).get("urun_id")` çağrılıyor ama `bulundu`
+                # bir METİN — `str.get` yok → AttributeError → dıştaki
+                # `except` yutuyor → iade HİÇ çalışmıyor, yanıt yine
+                # `iade_edilen: 0` diyordu (sessiz başarısızlık).
+                # Yanıt `iptal_edilen` alanında METİN bekliyor, o yüzden
+                # `bulundu` metin KALIYOR; kalem sözlüğü ayrı tutuluyor.
+                _bulunan_kalem = dict(k)
                 k = dict(
                     k,
                     iptal=True,
@@ -10640,8 +10663,8 @@ def ops_siparis_kalem_iptal(body: OpsSiparisKalemIptalBody):
                 from operasyon_stok_motor import tahsis_rezerv_iade
                 _iade_ozet = tahsis_rezerv_iade(
                     cur, tid,
-                    [str((bulundu or {}).get("urun_id") or ""),
-                     str((bulundu or {}).get("urun_ad") or ""),
+                    [str((_bulunan_kalem or {}).get("urun_id") or ""),
+                     str((_bulunan_kalem or {}).get("urun_ad") or ""),
                      str(hedef_id or ""), str(hedef_ad or "")],
                     sebep="merkez_iptal",
                 )
