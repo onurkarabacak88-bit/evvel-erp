@@ -3381,7 +3381,7 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
         """
         SELECT sube_id,
                COALESCE(hedef_depo_sube_id, sevkiyat_sube_id) AS kaynak_depo_sube_id,
-               durum, kalem_durumlari
+               durum, kalem_durumlari, kalemler
         FROM siparis_talep WHERE id=%s
         FOR UPDATE
         """,
@@ -3454,6 +3454,35 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                 if _e.get("depo_disi") or _dur in (
                         "depoya_yonlendirilmedi", "toptanciya_gitti", "merkez_iptal"):
                     _depo_disi_kodlar.setdefault(_a, _dur or "depo_disi")
+    # ══════════════════════════════════════════════════════════════════════
+    # 📏 TAVAN YEDEK REFERANSI: SUBENIN ISTEDIGI (2026-09-03)
+    # ══════════════════════════════════════════════════════════════════════
+    # `_istenen_map` yalniz `kalem_durumlari`ndan kuruluyordu. Merkez henuz
+    # yonlendirme yapmamissa o alan BOSTUR ve tavanin REFERANSI OLMAZ:
+    # `_ist=0` -> ilk sevkte fren hic calismaz -> istenen 5 iken 500 sevk
+    # edilebilir. v2 `sevk-cikti` ucu catali atlayabildigi icin bu yol
+    # gercekten acikti (frontend cagirani yok, ama API'den erisilebilir).
+    # Subenin `kalemler` listesi gecerli bir tavandir — merkezin karari
+    # (kalem_durumlari) VARSA o kazanir, yoksa sube talebine dusulur.
+    # Boylece tavan YONLENDIRMEYE BAGLI OLMAKTAN cikar.
+    _kalemler_raw = rd.get("kalemler")
+    if isinstance(_kalemler_raw, str):
+        try:
+            _kalemler_raw = json.loads(_kalemler_raw)
+        except Exception:
+            _kalemler_raw = []
+    if isinstance(_kalemler_raw, list):
+        for _ki in _kalemler_raw:
+            if not isinstance(_ki, dict) or _ki.get("iptal"):
+                continue
+            _kad_v = max(0, int(_ki.get("adet") or 0))
+            if not _kad_v:
+                continue
+            for _anahtar in (_ki.get("kalem_kodu"), _ki.get("urun_id"),
+                             _ki.get("urun_ad"), ad_anahtar(_ki.get("urun_ad"))):
+                _a = str(_anahtar or "").strip()
+                if _a:
+                    _istenen_map.setdefault(_a, _kad_v)   # kd VARSA o kazanir
     for _it in (sevk_kalemleri or []):
         if not isinstance(_it, dict):
             continue
