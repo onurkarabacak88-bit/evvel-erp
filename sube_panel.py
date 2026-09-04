@@ -3949,8 +3949,12 @@ def sube_urun_sevk_geri_al(sube_id: str, body: SubeSevkGeriAlBody):
         if _stid:
             raise HTTPException(
                 409,
-                "Bu teslim bir siparişi kapatmış — buradan geri alınamaz. "
-                "Operasyon Merkezi üzerinden düzeltilmelidir.",
+                "Bu teslim bir siparişi kapatmış — buradan geri alınamaz "
+                "(stok, belge talebi ve sipariş durumu birlikte dönmeli). "
+                "Operasyon Merkezi'nden geri alın: POST /api/ops/siparis/"
+                "toptanci-siparis/{ts_id}/teslim-geri-al — varsayılan KURU "
+                "çalışır, ne düşeceğini ve hangi belge talebinin kapanacağını "
+                "önce listeler.",
             )
 
         kalemler = payload.get("kalemler") if isinstance(payload.get("kalemler"), list) else []

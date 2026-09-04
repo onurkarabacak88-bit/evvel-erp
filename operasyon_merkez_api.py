@@ -11381,7 +11381,10 @@ def ops_siparis_toptanci_geri_al(talep_id: str, toptanci_siparis_id: Optional[st
                 409,
                 "Teslim alınmış gönderim geri alınamaz: "
                 + ", ".join(str(g.get("tedarikci_ad") or "—") for g in teslim)
-                + ". Mal geldiyse kaydı 'hiç gönderilmedi' yapmak izi bozar.",
+                + ". Mal geldiyse kaydı 'hiç gönderilmedi' yapmak izi bozar. "
+                "Teslim YANLIŞ girildiyse önce onu geri alın: "
+                "POST /api/ops/siparis/toptanci-siparis/{ts_id}/teslim-geri-al "
+                "(varsayılan kuru çalışır, ne olacağını listeler).",
             )
 
         iptal_ids = [str(g["id"]) for g in gonderimler]
@@ -11750,7 +11753,9 @@ def ops_toptanci_siparis_iptal(ts_id: str):
                 "Bu gönderim TESLİM ALINMIŞ — iptal edilemez. Mal şubeye "
                 "girmiş durumda; iptal edilirse stok içeride kalır, fatura "
                 "takibi öksüz kalır ve aynı mal ikinci kez sipariş edilebilir. "
-                "Yanlış teslim girildiyse önce teslimi geri alın.")
+                "Yanlış teslim girildiyse önce teslimi geri alın: "
+                "POST /api/ops/siparis/toptanci-siparis/{ts_id}/teslim-geri-al "
+                "(varsayılan kuru çalışır, ne olacağını listeler).")
         if _mevcut != "iptal":
             cur.execute("UPDATE toptanci_siparis SET durum='iptal' "
                         "WHERE id=%s AND COALESCE(durum,'') <> 'teslim_alindi'",
@@ -11858,6 +11863,184 @@ def ops_toptanci_siparis_iptal(ts_id: str):
 # kendisi temizleyebilir. Stok geri alma DAHİL tam silme. GUARD: sadece MERKEZ
 # talepleri (gerçek personel siparişleri ASLA buradan silinemez). İzole — kaldırmak
 # = bu iki endpoint'i sil.
+
+class TeslimGeriAlBody(BaseModel):
+    # ⚠️ VARSAYILAN KURU: yıkıcı işlem önce kuru çalışır, listesi okunur.
+    kuru: bool = True
+    onay_pin: Optional[str] = None
+    gerekce: Optional[str] = None
+
+
+@router.post("/siparis/toptanci-siparis/{ts_id}/teslim-geri-al")
+def ops_toptanci_teslim_geri_al(ts_id: str, body: TeslimGeriAlBody = TeslimGeriAlBody()):
+    """🔁 YANLIŞ GİRİLEN SİPARİŞLİ TESLİMİ GERİ ALIR.
+
+    ══════════════════════════════════════════════════════════════════════
+    NEDEN BU UÇ VAR (2026-09-03, zincir simülasyonu)
+    ══════════════════════════════════════════════════════════════════════
+    Siparişe bağlı bir teslim yanlış girildiğinde geri alacak HİÇBİR kapı
+    yoktu; üç kapı birbirine yönlendiriyordu:
+      · `sube-panel/{sube}/urun-sevk-geri-al` → 409 "Operasyon Merkezi
+         üzerinden düzeltilmelidir"  (sube_panel.py ≈3950)
+      · `siparis/{talep_id}/toptanci-geri-al` → 409 "teslim alınmış"
+      · `toptanci-siparis/{ts_id}/iptal` → 409 "önce teslimi geri alın"
+    Yani sistem hep BAŞKA bir kapıyı işaret ediyordu ve o kapı yoktu.
+    Sonuç kalıcıydı: şube stoğu FAZLA kalıyor, belge talebi açık kaldığı
+    için GRNI'de SAHTE BORÇ duruyor, `toptanci_siparis` sonsuza dek
+    'teslim_alindi' asılı kalıyordu.
+
+    ⚠️ YIKICI İŞLEM — KURU ÇALIŞTIRMA KAPISI:
+    `kuru=true` (VARSAYILAN) hiçbir şey yazmaz; ne düşeceğini, hangi belge
+    talebinin kapanacağını ve talebin hangi duruma döneceğini LİSTELER.
+    Uygulamak için `kuru=false` + işletme PIN'i + gerekçe gerekir.
+    Bu proje bu dersi pahalıya öğrendi: yıkıcı bir ucun kapısı, o uçtan
+    geçilerek sınanmaz.
+
+    ⚠️ SİLME YOK: `belge_talep` silinmez, `durum='iptal'` damgalanır
+    (append-only defter). `toptanci_siparis` 'gonderildi'ye döner — mal
+    hâlâ bekleniyor demektir.
+    """
+    sid = (ts_id or "").strip()
+    if not sid:
+        raise HTTPException(400, "toptanci_siparis_id zorunlu")
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT id, talep_id, sube_id, tedarikci_ad, durum,
+                      kalemler, teslim_kalemler, teslim_ts::text AS teslim_ts
+                 FROM toptanci_siparis WHERE id=%s FOR UPDATE""", (sid,))
+        ts = cur.fetchone()
+        if not ts:
+            raise HTTPException(404, "Toptancı siparişi bulunamadı")
+        ts = dict(ts)
+        if str(ts.get("durum") or "") != "teslim_alindi":
+            raise HTTPException(
+                409,
+                f"Bu gönderim teslim alınmamış (durum: {ts.get('durum')}) — "
+                "geri alınacak teslim yok.")
+
+        # 📦 NE TESLİM ALINDI? Bugünden itibaren `teslim_kalemler` yazılıyor.
+        # Eski kayıtlarda o alan boş: sipariş kalemlerine düşülür ve bu
+        # SÖYLENİR — sessizce varsayılmaz (adet farklıysa stok eksik düşer).
+        _teslim = ts.get("teslim_kalemler")
+        _kaynak = "teslim_kalemleri"
+        if not isinstance(_teslim, list) or not _teslim:
+            _teslim = ts.get("kalemler") if isinstance(ts.get("kalemler"), list) else []
+            _kaynak = "siparis_kalemleri_TAHMIN"
+
+        from operasyon_stok_motor import (
+            depo_kalem_kodu_resolve, sube_depo_stok_depo_cikis_dus)
+
+        _sube = str(ts.get("sube_id") or "")
+        plan, uyari = [], []
+        for it in _teslim:
+            if not isinstance(it, dict):
+                continue
+            uad = str(it.get("urun_ad") or "").strip()
+            uid = str(it.get("urun_id") or "").strip()
+            try:
+                adet = max(0, int(it.get("adet") or 0))
+            except (TypeError, ValueError):
+                adet = 0
+            if adet <= 0:
+                continue
+            kk = depo_kalem_kodu_resolve(cur, uid, uad) if uid else ""
+            if not kk:
+                uyari.append(f"{uad or '(adsız)'}: depo kalemi çözülemedi — stoktan DÜŞÜLEMEZ")
+                continue
+            cur.execute(
+                "SELECT mevcut_adet FROM sube_depo_stok WHERE sube_id=%s AND kalem_kodu=%s",
+                (_sube, kk))
+            _m = cur.fetchone()
+            _mevcut = int(dict(_m)["mevcut_adet"]) if _m else 0
+            if _mevcut < adet:
+                uyari.append(
+                    f"{uad}: stokta {_mevcut} var, {adet} düşülecek — "
+                    "mal zaten tüketilmiş olabilir (stok 0'a kırpılır)")
+            plan.append({"urun_ad": uad, "kalem_kodu": kk, "adet": adet,
+                         "stok_oncesi": _mevcut,
+                         "stok_sonrasi": max(0, _mevcut - adet)})
+
+        cur.execute(
+            "SELECT id, durum, beklenen_tutar_tl::float AS tutar, fatura_id "
+            "FROM belge_talep WHERE ts_id=%s", (sid,))
+        _bt = [dict(r) for r in (cur.fetchall() or [])]
+        _bt_acik = [b for b in _bt if str(b.get("durum")) == "bekliyor"]
+        _bt_faturali = [b for b in _bt if b.get("fatura_id")]
+        if _bt_faturali:
+            uyari.append(
+                "Bu teslimata FATURA BAĞLI — önce fatura bağını geri alın "
+                "(belge-talep/{id}/fatura-bagla-geri-al), sonra teslimi geri alın.")
+
+        ozet = {
+            "ts_id": sid, "tedarikci": ts.get("tedarikci_ad"),
+            "sube_id": _sube, "teslim_ts": ts.get("teslim_ts"),
+            "kalem_kaynagi": _kaynak,
+            "stoktan_dusecek": plan,
+            "dusecek_toplam_adet": sum(p["adet"] for p in plan),
+            "kapanacak_belge_talebi": len(_bt_acik),
+            "grni_dusecek_tl": round(sum(float(b.get("tutar") or 0) for b in _bt_acik), 2),
+            "toptanci_siparis_yeni_durum": "gonderildi",
+            "uyarilar": uyari,
+        }
+        if body.kuru:
+            return {
+                "kuru": True, "uygulanmadi": True, **ozet,
+                "nasil_uygulanir": {
+                    "method": "POST", "body": {"kuru": False,
+                                               "onay_pin": "<işletme PIN>",
+                                               "gerekce": "<neden geri alınıyor>"}},
+            }
+
+        # ── UYGULAMA ────────────────────────────────────────────────────
+        if _bt_faturali:
+            raise HTTPException(
+                409, "Faturası bağlı teslim geri alınamaz — önce fatura bağını geri alın.")
+        _gerekce = (body.gerekce or "").strip()
+        if len(_gerekce) < 5:
+            raise HTTPException(400, "Gerekçe zorunlu (en az 5 karakter) — "
+                                     "geri alma izli bir karardır.")
+        _onayci = _isletme_onay_dogrula(cur, body.onay_pin)   # PIN hatalı → 403
+
+        for p in plan:
+            sube_depo_stok_depo_cikis_dus(cur, _sube, p["kalem_kodu"], p["urun_ad"], p["adet"])
+        for b in _bt_acik:
+            cur.execute(
+                "UPDATE belge_talep SET durum='iptal', "
+                "kapanis_aciklama=COALESCE(NULLIF(TRIM(kapanis_aciklama),'')||' | ','')"
+                "|| %s WHERE id=%s AND durum='bekliyor'",
+                (f"Teslim geri alındı ({_gerekce}) — {(_onayci or {}).get('ad_soyad') or '?'}",
+                 b["id"]))
+            audit(cur, "belge_talep", str(b["id"]), "TESLIM_GERI_AL_IPTAL",
+                  yeni={"gerekce": _gerekce, "ts_id": sid})
+
+        cur.execute(
+            """UPDATE toptanci_siparis
+                  SET durum='gonderildi', teslim_ts=NULL, teslim_kalemler=NULL
+                WHERE id=%s AND durum='teslim_alindi'""", (sid,))
+        # Talep durumu: mal yeniden BEKLENİYOR. Depo ayağı ilerlediyse ona
+        # DOKUNMA — aynı zombi freni (paylaşılan tek kaynak).
+        _tid = str(ts.get("talep_id") or "")
+        _durum_degisti = False
+        if _tid:
+            _depo = depo_ayagi_ilerledi_mi(cur, _tid)
+            if not _depo["ilerledi"]:
+                cur.execute(
+                    """UPDATE siparis_talep
+                          SET durum='gonderildi',
+                              sevkiyat_durumu='toptanciya_yonlendirildi',
+                              sevkiyat_durum='toptanciya_yonlendirildi'
+                        WHERE id=%s AND durum IN ('teslim_edildi','kabul_uyusmazlik')""",
+                    (_tid,))
+                _durum_degisti = cur.rowcount > 0
+        audit(cur, "toptanci_siparis", sid, "TESLIM_GERI_AL",
+              eski={"durum": "teslim_alindi", "teslim_ts": ts.get("teslim_ts")},
+              yeni={"gerekce": _gerekce, "dusen": ozet["dusecek_toplam_adet"],
+                    "onayci": (_onayci or {}).get("ad_soyad"),
+                    "kalem_kaynagi": _kaynak})
+    return {"kuru": False, "uygulandi": True, **ozet,
+            "talep_durumu_geri_alindi": _durum_degisti,
+            "onayci": (_onayci or {}).get("ad_soyad")}
+
 
 @router.get("/siparis/merkez-liste")
 def ops_siparis_merkez_liste(limit: int = 100):
