@@ -3674,23 +3674,7 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             # ÖNCE ada göre kanonik katalog kalemini çöz; ozel__ fallback'e SON çare olarak düş.
             # Aksi halde teslim alınan ürün ozel__espresso gibi ayrı kaleme yazılıp
             # kanonik depo "artmadı" görünür (ozel__ kopya tuzağı).
-            kalem_kodu = None
-            try:
-                # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
-                # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
-                with savepoint(cur, "sp_yut3498"):
-                    cur.execute(
-                        "SELECT id FROM siparis_urun WHERE lower(btrim(ad))=lower(btrim(%s)) "
-                        "ORDER BY (depo_stok_kalem_kodu IS NULL) DESC LIMIT 1",
-                        (urun_ad,),
-                    )
-                    _ur = cur.fetchone()
-                    if _ur:
-                        kalem_kodu = depo_kalem_kodu_resolve(cur, str(dict(_ur)["id"]), urun_ad) or None
-            except Exception:
-                kalem_kodu = None
-            if not kalem_kodu:
-                kalem_kodu = f"ozel__{_norm_ad_tr(urun_ad)}"  # son çare
+            kalem_kodu = _depo_kalem_coz(cur, "", urun_ad)   # TEK KURAL (geri yolla ortak)
             sube_depo_stok_depo_giris_ekle(cur, sube_id, kalem_kodu, urun_ad, adet_i)
 
         if teslim_durumu == "eksik_var":
@@ -3848,6 +3832,47 @@ def _isletme_onay_personel(cur: Any) -> Dict[str, Any]:
     return rows[0]
 
 
+def _depo_kalem_coz(cur, urun_id: str, urun_ad: str) -> str:
+    """Ad-hoc teslimde depo kalem kodunu çözer — İLERİ ve GERİ yolda TEK KURAL.
+
+    🔴 NEDEN PAYLAŞILIYOR (2026-09-03):
+    İleri yol (teslim al) `urun_id` yoksa ADA göre `siparis_urun`dan kanonik
+    kalemi çözüyor, `ozel__` fallback'ine yalnız SON ÇARE olarak düşüyordu.
+    Geri yol (teslim geri al) ise aynı durumda DOĞRUDAN `ozel__{ad}` yazıyordu.
+    Sonuç: teslim KANONİK satıra +N yazıyor, geri alma BOŞ `ozel__` satırından
+    düşmeye çalışıyor, `GREATEST(0,…)` onu 0'a kırpıyor ve kanonik satırdaki
+    +N OLDUĞU GİBİ KALIYORDU. Defter "geri alındı" diyor, stok fazla duruyor.
+
+    Kural kopyalandığı için ayrışmıştı; artık iki yol da BU fonksiyonu çağırıyor.
+    Öncelik: urun_id → ada göre kanonik katalog → son çare `ozel__`.
+    """
+    # ⚠️ YEREL IMPORT: bu ad modül seviyesinde YOK, uçların içinde import
+    # ediliyor. Kapı bunu yakaladı (tanımsız ad) — build yakalamazdı, ilk
+    # gerçek ad-hoc teslimde NameError ile 500 olurdu.
+    from operasyon_stok_motor import depo_kalem_kodu_resolve
+    _uid = str(urun_id or "").strip()
+    _uad = str(urun_ad or "").strip()
+    if _uid:
+        _k = depo_kalem_kodu_resolve(cur, _uid, _uad)
+        if _k:
+            return _k
+    kalem_kodu = None
+    try:
+        # SAVEPOINT: yutulan cur.execute transaction'ı zehirler.
+        with savepoint(cur, "sp_depo_kalem_coz"):
+            cur.execute(
+                "SELECT id FROM siparis_urun WHERE lower(btrim(ad))=lower(btrim(%s)) "
+                "ORDER BY (depo_stok_kalem_kodu IS NULL) DESC LIMIT 1",
+                (_uad,),
+            )
+            _ur = cur.fetchone()
+            if _ur:
+                kalem_kodu = depo_kalem_kodu_resolve(cur, str(dict(_ur)["id"]), _uad) or None
+    except Exception:  # noqa: BLE001 — çözülemezse son çareye düşülür
+        kalem_kodu = None
+    return kalem_kodu or f"ozel__{_norm_ad_tr(_uad)}"
+
+
 def _urun_sevk_payload_coz(aciklama: str) -> Dict[str, Any]:
     """'URUN_SEVK_JSON:{...} | ...' biçiminden JSON gövdesini güvenli ayıkla."""
     acik = str(aciklama or "")
@@ -3974,10 +3999,11 @@ def sube_urun_sevk_geri_al(sube_id: str, body: SubeSevkGeriAlBody):
             if not urun_ad or adet_i <= 0:
                 continue
             urun_id = str(it.get("urun_id") or "").strip()
-            if urun_id:
-                depo_kalem = depo_kalem_kodu_resolve(cur, urun_id, urun_ad)
-            else:
-                depo_kalem = f"ozel__{_norm_ad_tr(urun_ad)}"
+            # 🔴 ASİMETRİ KAPANDI (2026-09-03): burası `urun_id` yoksa DOĞRUDAN
+            # `ozel__` yazıyordu, oysa ileri yol ADA göre kanonik kalemi
+            # çözüyordu. Teslim kanonik satıra giriyor, geri alma boş `ozel__`
+            # satırından düşüyor, kanonik +N olduğu gibi kalıyordu.
+            depo_kalem = _depo_kalem_coz(cur, urun_id, urun_ad)
             # Depo stoğundan eklenen miktarı geri düş (merkez_stok_sevk tarihsel kayıt olarak kalır)
             sube_depo_stok_depo_cikis_dus(cur, sube_id, depo_kalem, urun_ad, adet_i)
             geri_ozet.append(f"{adet_i} {urun_ad}")
