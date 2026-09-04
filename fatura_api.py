@@ -4857,29 +4857,46 @@ def kart_izi_onayla(body: KartIziOnayModel):
                 "cakisan": len(cakisan),
                 "not": "Bu çekimler artık hiçbir tedarikçiye aday gösterilmez."}
 
-    # FIFO tahsis — YORUM katmanı: bu para hangi faturaları kapattı?
-    # Bakiye zaten doğru; tahsis yalnız yaşlandırma/raporlama içindir.
+    # ══════════════════════════════════════════════════════════════════════
+    # 📊 FIFO ÖNİZLEME — HESAPLANIR, DEFTERE YAZILMAZ (2026-09-03)
+    # ══════════════════════════════════════════════════════════════════════
+    # ESKİDEN buradan `cari_odeme_tahsis` defterine SATIR YAZILIYORDU ve yorumu
+    # "YORUM katmanı, yalnız yaşlandırma/raporlama için" diyordu. Ama o defter
+    # ödenecekler HAVUZUNUN `kalan` hesabını süren defterin TA KENDİSİ — yani
+    # yazılan şey yorum değil KAPATMAydı. Üç ayrı kusur birden:
+    #
+    #  1) YANLIŞ ANAHTAR: `odeme_id` kolonu UUID NOT NULL ve `cari_odeme`
+    #     kimliğini bekliyor; buraya bir KART HAREKETİ kimliği yazılıyordu.
+    #     Ekstreden gelen satırların kimliği `eks_<md5>` — UUID değil → cast
+    #     patlıyor → `except` YUTUYOR. Sonuç: elle girilmiş kart satırında
+    #     tahsis yazılıyor, ekstreden gelende yazılmıyor. AYNI İŞLEM, İKİ
+    #     FARKLI SONUÇ.
+    #  2) GERİ ALINAMIYOR: `/kart-izi-geri-al` damgayı siliyor ama bu satırlara
+    #     DOKUNMUYOR (fonksiyonda 'tahsis' kelimesi hiç geçmiyor). Damga
+    #     kalkıyor, kapatma kalıyor.
+    #  3) DOKTRİN İHLALİ: damga bir BAĞ'dır, KAPATMA değildir. Bu projenin
+    #     kuralı açık: BAĞLAMA ≠ KAPATMA.
+    #
+    # Canlı belirti (2026-09-03 ölçümü): MEHMET ATALAY'da havuz "0 açık" diyor,
+    # kanal aritmetiği 44.825,43 ₺ borç görüyor (defter_farki −44.825,43).
+    # 14 fatura, 93.000,80 ₺ — hepsi tahsis defterinde kapalı görünüyor.
+    #
+    # ⚠️ BİLGİ KAYBEDİLMİYOR: "bu para hangi faturaları kapatırdı" sorusunun
+    # cevabı yanıtta ÖNİZLEME olarak dönmeye devam ediyor. Değişen tek şey:
+    # DEFTERE YAZILMIYOR. Gerçek kapatma tek kapıdan yapılır (`/cari-ode`),
+    # o kapı geri alınabilir ve ters kayıt yazar.
     tahsisler, kalan = [], toplam
     try:
         acik = cari_odenecekler(tedarikci=ted, defter_kiyas=0)["acik_faturalar"]
-        with db() as (conn, cur):
-            _ensure_cari_odeme_tablolar(cur)
-            for a in acik:
-                if kalan <= 0.01:
-                    break
-                pay = round(min(float(a["kalan"]), kalan), 2)
-                cur.execute(
-                    """INSERT INTO cari_odeme_tahsis
-                         (id, odeme_id, fatura_id, fatura_no, fatura_tarih, kapatilan, otomatik)
-                       VALUES (%s,%s,%s,%s,%s,%s,TRUE)""",
-                    (str(uuid.uuid4()), (damgalanan[0]["id"] if damgalanan else None),
-                     a["fatura_id"], a.get("fatura_no"), a.get("tarih"), pay))
-                tahsisler.append({"fatura_no": a.get("fatura_no"), "tarih": a.get("tarih"),
-                                  "kapatilan": pay})
-                kalan = round(kalan - pay, 2)
-            conn.commit()
-    except Exception as e:  # noqa: BLE001 — tahsis YORUM; başarısızlığı bakiyeyi bozmaz
-        logger.warning("kart izi tahsis atlandi (%s): %s", ted, str(e)[:120])
+        for a in acik:
+            if kalan <= 0.01:
+                break
+            pay = round(min(float(a["kalan"]), kalan), 2)
+            tahsisler.append({"fatura_no": a.get("fatura_no"), "tarih": a.get("tarih"),
+                              "kapatilan": pay})
+            kalan = round(kalan - pay, 2)
+    except Exception as e:  # noqa: BLE001 — önizleme başarısızlığı bakiyeyi bozmaz
+        logger.warning("kart izi tahsis onizlemesi yapilamadi (%s): %s", ted, str(e)[:120])
 
     try:
         from supplier_payment import spe_tetikle
@@ -4890,7 +4907,16 @@ def kart_izi_onayla(body: KartIziOnayModel):
         "ok": True, "tedarikci": ted,
         "damgalanan": len(damgalanan), "toplam_dusen": toplam,
         "satirlar": damgalanan,
+        # ⚠️ AD YANILTICIYDI: bu liste "kapatıldı" DEĞİL, "kapatırdı" demek.
+        # Defter yazımı 2026-09-03'te kaldırıldı (yukarıdaki gerekçe); alan
+        # geriye uyum için duruyor ama içeriği bir ÖNİZLEMEdir.
         "kapatilan_fatura": tahsisler,
+        "tahsis_onizleme": tahsisler,
+        "tahsis_yazildi": False,
+        "tahsis_notu": ("Bu liste bir ÖNİZLEMEDİR — tahsis defterine YAZILMADI. "
+                        "Damga bir BAĞ'dır, kapatma değildir. Gerçek kapatma "
+                        "tek kapıdan yapılır (/api/fatura/cari-ode); o kapı geri "
+                        "alınabilir ve ters kayıt yazar."),
         "artan": round(kalan, 2),
         # ⚠ ÇAKIŞMA: satır bu ekrana yüklendikten sonra başka biri bağlamış —
         # üzerine YAZILMADI; ekran yenilenip tekrar bakılmalı.
