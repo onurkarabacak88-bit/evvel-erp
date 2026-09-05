@@ -13648,14 +13648,36 @@ def borc_gecmis(bid: str):
         if not borc: raise HTTPException(404, "Borç bulunamadı")
 
         # Ödenen taksitler — kasa_hareketleri
+        # 🔴 İKİ KUSUR DÜZELTİLDİ (2026-09-06, canlı yakalandı):
+        #
+        # ① İPTAL EDİLENLER ÖDENMİŞ GÖRÜNÜYORDU: sorgu `durum` alanını SEÇİYOR
+        #    ama FİLTRELEMİYORDU. QNB'nin iki mükerrer taksidi geri alındıktan
+        #    sonra sayaçlar (kalan_vade/toplam_borc) ve kasa doğruydu ama bu
+        #    ekran hâlâ 5 ödeme gösteriyordu. Geri alınan bir ödeme "ödenmiş"
+        #    listelenirse düzeltmenin işe yaramadığı sanılır.
+        #
+        # ② PLANDAN ÖDENENLER HİÇ GÖRÜNMÜYORDU: bir taksit iki yoldan ödenebilir —
+        #    doğrudan (kaynak_tablo='borc_envanteri') veya ödeme planı üzerinden
+        #    (kaynak_tablo='odeme_plani', kaynak_id=plan_id). Sorgu yalnız ilkine
+        #    bakıyordu. Canlı kanıt: "katılım evim" Temmuz taksiti 16.07'de
+        #    plandan ödenmişti; bu ekran göstermediği için EKSİK sanıldı ve
+        #    yeniden ödeme denendi (çift ödeme kapısı 409 ile durdurdu).
+        #    Bkz. borc_ode'daki kapı — o zaten HER İKİ yola bakıyor; rapor
+        #    kapıdan daha dar bakınca ikisi çelişiyordu.
         cur.execute("""
             SELECT tarih, tutar, aciklama, islem_turu, durum
             FROM kasa_hareketleri
-            WHERE kaynak_tablo = 'borc_envanteri'
-            AND kaynak_id = %s AND kasa_etkisi = true
-            AND tutar < 0
+            WHERE kasa_etkisi = true
+              AND durum = 'aktif'
+              AND tutar < 0
+              AND (
+                    (kaynak_tablo = 'borc_envanteri' AND kaynak_id = %s)
+                 OR (kaynak_tablo = 'odeme_plani' AND kaynak_id IN (
+                        SELECT id FROM odeme_plani
+                        WHERE kaynak_tablo = 'borc_envanteri' AND kaynak_id = %s))
+              )
             ORDER BY tarih DESC
-        """, (bid,))
+        """, (bid, bid))
         odenenler = [{
             "tarih":    str(r['tarih']),
             "tutar":    abs(float(r['tutar'])),
