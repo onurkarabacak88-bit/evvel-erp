@@ -13401,6 +13401,110 @@ def borc_ode(bid: str, body: BorcOdemeBody):
             "kapandi":    kapansin,
         }
 
+@app.delete("/api/borclar/odeme/{kasa_id}")
+def borc_odeme_geri_al(kasa_id: str):
+    """
+    TEK bir kredi taksidi ödemesini geri alır.
+
+    🔴 NEDEN VAR (2026-09-05, canlı bulgu): `borc_ode` ÜÇ yere birden yazıyor —
+    kasa hareketi, `borc_envanteri` sayaçları (kalan_vade / toplam_borc) ve
+    `odeme_plani` damgası. Bunun geri alma yolu YOKTU. Canlı kanıt: QNB
+    kredisinde bankanın TEK taksidi (anapara 7.138,75 + BSMV 378,93 +
+    KKDF 378,93 = 7.896,61) ÜÇ AYRI TAKSİT sanılıp üç kez ödendi →
+    15.812,42 TL fazla kayıt, kredi iki taksit ileri göründü ve düzeltmenin
+    hiçbir yolu yoktu. Kart tarafında `DELETE /api/kart-hareketleri/{hid}`
+    vardı, kredi tarafında karşılığı eksikti.
+
+    ⛔ NEDEN `iptal_kasa_hareketi` KULLANILMIYOR: o fonksiyon `kaynak_id`ye göre
+    TOPLU iptal eder. Bir kredinin BÜTÜN taksitleri aynı kaynak_id'yi (borç id)
+    taşır — çağrılsaydı kredinin tüm ödeme geçmişini silerdi. Burada tek satır,
+    kendi id'siyle iptal edilir.
+
+    Geri alınanlar:
+      1) kasa satırı `durum='iptal'` + ters BORC_TAKSIT_IPTAL izi
+         (kasa_etkisi=FALSE — ters kayıt AUDİT izidir, para hareketi değil;
+          orijinal satır zaten toplamdan çıkıyor, ikisi de etkiliyse
+          düzeltme İKİ KEZ uygulanır)
+      2) kalan_vade +1, toplam_borc += tutar, borç yeniden aktif
+      3) bu ödemeyle kapanmış odeme_plani satırı 'bekliyor'a döner
+    """
+    with db() as (conn, cur):
+        cur.execute(
+            """SELECT * FROM kasa_hareketleri
+                WHERE id=%s AND islem_turu='BORC_TAKSIT'
+                  AND kaynak_tablo='borc_envanteri' AND durum='aktif'""",
+            (kasa_id,),
+        )
+        kh = cur.fetchone()
+        if not kh:
+            raise HTTPException(
+                404, "Aktif kredi taksidi ödemesi bulunamadı — zaten geri alınmış olabilir"
+            )
+        bid = str(kh["kaynak_id"])
+        tutar = abs(float(kh["tutar"]))
+
+        cur.execute("SELECT * FROM borc_envanteri WHERE id=%s FOR UPDATE", (bid,))
+        borc = cur.fetchone()
+        if not borc:
+            raise HTTPException(404, "Ödemenin bağlı olduğu borç kaydı bulunamadı")
+
+        # 1) kasa satırı
+        cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s", (kasa_id,))
+        _idem = hashlib.sha256(
+            f"v2|borc-odeme-geri-al|{bid}|{kasa_id}".encode("utf-8")
+        ).hexdigest()
+        cur.execute(
+            """
+            INSERT INTO kasa_hareketleri
+                (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id,
+                 ref_id, ref_type, kasa_etkisi, idempotency_key)
+            VALUES (%s, CURRENT_DATE, 'BORC_TAKSIT_IPTAL', %s, %s,
+                    'borc_envanteri', %s, %s, 'BORC_ENVANTERI', FALSE, %s)
+            ON CONFLICT (idempotency_key) DO NOTHING
+            """,
+            (
+                str(uuid.uuid4()), tutar,
+                f"Kredi taksidi geri alındı — {borc['kurum']} · {tutar:,.2f} TL "
+                f"· iptal edilen kasa satırı {kasa_id}",
+                bid, str(uuid.uuid4()), _idem,
+            ),
+        )
+
+        # 2) sayaçları geri sar
+        yeni_kalan = (int(borc["kalan_vade"]) + 1) if borc["kalan_vade"] is not None else None
+        yeni_toplam = float(borc["toplam_borc"] or 0) + tutar
+        cur.execute(
+            """UPDATE borc_envanteri
+                  SET kalan_vade=%s, toplam_borc=%s, aktif=TRUE
+                WHERE id=%s""",
+            (yeni_kalan, yeni_toplam, bid),
+        )
+        audit(cur, "borc_envanteri", bid, "ODEME_GERI_AL", eski=dict(borc))
+
+        # 3) kapatılmış plan satırını geri aç (ödemenin kendi ayına göre)
+        cur.execute(
+            """
+            UPDATE odeme_plani
+               SET durum='bekliyor', odenen_tutar=NULL, odeme_tarihi=NULL
+             WHERE kaynak_tablo='borc_envanteri' AND kaynak_id=%s
+               AND durum='odendi'
+               AND DATE_TRUNC('month', COALESCE(referans_ay, tarih))
+                   = DATE_TRUNC('month', %s::date)
+            """,
+            (bid, kh["tarih"]),
+        )
+        plan_geri = cur.rowcount
+
+    return {
+        "success": True,
+        "borc": borc["kurum"],
+        "geri_alinan": tutar,
+        "kalan_vade": yeni_kalan,
+        "toplam_borc": yeni_toplam,
+        "plan_satiri_geri_acildi": plan_geri,
+    }
+
+
 def _borc_validate(b: BorcModel):
     """Borç ekle/güncelle ortak doğrulaması — negatif/tutarsız değerleri reddet."""
     if not (b.kurum or "").strip():
