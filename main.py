@@ -13811,6 +13811,8 @@ def kasa_onizle(sid: str, baslangic: date, bitis: date = None):
 
         satirlar = []
         toplam_fark = 0
+        yeni_kesinti_toplam = 0.0
+        eski_kesinti_toplam = 0.0
         for k in kayitlar:
             # 🧾 2026-09-05: CIRO satırı artık BRÜT. Komisyon ayrı POS_KESINTI /
             # ONLINE_KESINTI satırında durur. Eskiden burada NET hesaplanıyordu ama
@@ -13819,7 +13821,15 @@ def kasa_onizle(sid: str, baslangic: date, bitis: date = None):
             dogru_tutar = float(k['nakit']) + float(k['pos']) + float(k['online'])
             mevcut_tutar = float(k['kasa_tutar'])
             fark = dogru_tutar - mevcut_tutar
-            if abs(fark) > 0.01:
+            yeni_kesinti = round(float(k['pos']) * pos_oran / 100.0, 2) \
+                         + round(float(k['online']) * online_oran / 100.0, 2)
+            cur.execute("""
+                SELECT COALESCE(SUM(-tutar), 0) AS toplam FROM kasa_hareketleri
+                WHERE kaynak_id IN (%s, %s) AND durum='aktif'
+                  AND islem_turu IN ('POS_KESINTI','ONLINE_KESINTI')
+            """, (str(k['id']) + '_pos', str(k['id']) + '_online'))
+            eski_kesinti = float((cur.fetchone() or {}).get('toplam') or 0)
+            if abs(fark) > 0.01 or abs(yeni_kesinti - eski_kesinti) > 0.01:
                 satirlar.append({
                     "ciro_id": k['id'],
                     "tarih": str(k['tarih']),
@@ -13828,9 +13838,14 @@ def kasa_onizle(sid: str, baslangic: date, bitis: date = None):
                     "online": float(k['online']),
                     "mevcut_kasa": mevcut_tutar,
                     "dogru_kasa": dogru_tutar,
-                    "fark": fark
+                    "fark": fark,
+                    "mevcut_kesinti": eski_kesinti,
+                    "yeni_kesinti": yeni_kesinti,
+                    "net_etki": round(fark - (yeni_kesinti - eski_kesinti), 2),
                 })
                 toplam_fark += fark
+                yeni_kesinti_toplam += yeni_kesinti
+                eski_kesinti_toplam += eski_kesinti
 
         return {
             "sube_adi": sube['ad'],
@@ -13839,7 +13854,13 @@ def kasa_onizle(sid: str, baslangic: date, bitis: date = None):
             "baslangic": str(baslangic),
             "bitis": str(bitis),
             "etkilenen_kayit": len(satirlar),
+            # ⚠️ toplam_fark YALNIZ CIRO satırının değişimidir (net→brüt yükselişi).
+            # Tek başına okunursa "kasa artacak" sanılır. Düzeltme AYRICA negatif
+            # komisyon satırı yazar; sahibin gördüğü rakam NET_ETKI olmalı.
             "toplam_fark": toplam_fark,
+            "yeni_kesinti_toplam": round(yeni_kesinti_toplam, 2),
+            "mevcut_kesinti_toplam": round(eski_kesinti_toplam, 2),
+            "net_etki": round(toplam_fark - (yeni_kesinti_toplam - eski_kesinti_toplam), 2),
             "satirlar": satirlar
         }
 
