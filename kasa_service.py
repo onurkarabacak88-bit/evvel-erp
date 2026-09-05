@@ -139,6 +139,75 @@ def insert_kasa_hareketi(cur, tarih, islem_turu, tutar, aciklama,
         raise Exception(f"KASA YAZILMADI — {islem_turu} / {kaynak_id}")
 
 
+def ciro_kasa_yaz(cur, tarih, ciro_id, nakit, pos, online,
+                  pos_oran, online_oran, aciklama,
+                  ref_id=None, ref_type='CIRO', sube_id=None):
+    """🧾 Ciro kasaya BRÜT yazılır; banka komisyonu AYRI satır olarak düşer.
+
+    SAHİP TALİMATI (2026-09-05): "şube şube düşümü direkt yapıyor, ayrı kalem
+    gibi değil — 11.000'den 200 düşüp kasaya 10.800 yazıyor". Netleme üç şeyi
+    birden bozuyordu:
+      1. Banka komisyonu HİÇBİR gider kaydına dönüşmüyordu. Temmuz–Ağustos'ta
+         32.072,79 ₺ komisyon bankadan çıktı, sistemde tek satır yok.
+      2. Ciro raporu net gösteriyordu — "ciro" artık ciro değildi.
+      3. `kasa-duzelt` ucu CIRO'yu NET yazıp ÜSTÜNE POS_KESINTI satırı da
+         ekliyordu → komisyon İKİ KEZ düşüyordu. O uç bu fonksiyona bağlanınca
+         çift düşüm de kapanır.
+
+    NET KASA ETKİSİ DEĞİŞMEZ: brüt + (−kesinti) = eski net tutar. Bakiye aynı
+    kalır, yalnız kalemler görünür olur.
+    """
+    nakit = float(nakit or 0); pos = float(pos or 0); online = float(online or 0)
+    pos_oran = float(pos_oran or 0); online_oran = float(online_oran or 0)
+    brut = nakit + pos + online
+    pos_kesinti = round(pos * pos_oran / 100.0, 2)
+    online_kesinti = round(online * online_oran / 100.0, 2)
+
+    insert_kasa_hareketi(
+        cur, tarih, 'CIRO', brut, aciklama, 'ciro', ciro_id,
+        ref_id=ref_id or ciro_id, ref_type=ref_type, sube_id=sube_id,
+    )
+    # ⚠️ ref_id ciro_id'den TÜRETİLİR (…_pos / …_online): idempotency anahtarı
+    # deterministik kalsın, çift tık/retry ikinci kesintiyi yazmasın.
+    if pos_kesinti > 0.005:
+        insert_kasa_hareketi(
+            cur, tarih, 'POS_KESINTI', -pos_kesinti,
+            f'POS komisyon kesintisi (%{pos_oran})', 'ciro', str(ciro_id) + '_pos',
+            ref_id=str(ciro_id) + '_pos', ref_type='POS_KESINTI', sube_id=sube_id,
+        )
+    if online_kesinti > 0.005:
+        insert_kasa_hareketi(
+            cur, tarih, 'ONLINE_KESINTI', -online_kesinti,
+            f'Online komisyon kesintisi (%{online_oran})', 'ciro', str(ciro_id) + '_online',
+            ref_id=str(ciro_id) + '_online', ref_type='ONLINE_KESINTI', sube_id=sube_id,
+        )
+    return {"brut": round(brut, 2),
+            "pos_kesinti": pos_kesinti,
+            "online_kesinti": online_kesinti,
+            "net_tutar": round(brut - pos_kesinti - online_kesinti, 2)}
+
+
+def ciro_kesinti_iptal(cur, ciro_id, iptal_turu='CIRO_DUZELTME'):
+    """Bir cironun komisyon satırlarını iptal eder — YOKSA sessiz geçer.
+
+    `iptal_kasa_hareketi` yoksa exception atar; komisyon satırı ise yalnız
+    2026-09-05 sonrası cirolarda var. Ciro güncelleme/silme eski kayıtlarda da
+    çalışmak zorunda olduğu için burada tolerans ZORUNLU — aksi hâlde geçmiş
+    bir cironun düzeltilmesi 500 verir.
+    """
+    iptal = 0
+    for ek, tur in (("_pos", "POS_KESINTI"), ("_online", "ONLINE_KESINTI")):
+        cur.execute(
+            "SELECT id FROM kasa_hareketleri WHERE kaynak_id=%s AND islem_turu=%s AND durum='aktif'",
+            (str(ciro_id) + ek, tur),
+        )
+        if cur.fetchall():
+            iptal_kasa_hareketi(cur, str(ciro_id) + ek, 'ciro', tur, iptal_turu,
+                                f'{tur} iptal — ciro {ciro_id}')
+            iptal += 1
+    return iptal
+
+
 # None = henüz ölçülmedi · True/False = şemadan okundu (süreç ömrü boyunca)
 _AUDIT_AKTOR_KOLONU = None
 

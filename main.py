@@ -17,6 +17,8 @@ from operasyon_stok_motor import eksik_kullanim_kontrol, tum_subeler_skor_guncel
 from tr_saat import bugun_tr, dt_now_tr_naive
 from kasa_service import (
     audit,
+    ciro_kasa_yaz,
+    ciro_kesinti_iptal,
     insert_kasa_hareketi,
     iptal_kasa_hareketi,
     kart_plan_guncelle_tx,
@@ -9955,8 +9957,8 @@ def ciro_ekle(c: CiroModel):
         pos_oran    = float(oran['pos_oran'])    if oran else 0.0
         online_oran = float(oran['online_oran']) if oran else 0.0
 
-        pos_kesinti    = pos    * pos_oran    / 100.0
-        online_kesinti = online * online_oran / 100.0
+        pos_kesinti    = round(pos    * pos_oran    / 100.0, 2)
+        online_kesinti = round(online * online_oran / 100.0, 2)
         net_tutar      = nakit + (pos - pos_kesinti) + (online - online_kesinti)
 
         # force sadece UX uyarılarını bypass eder; sert duplicate engeli yukarıda uygulanır.
@@ -9978,12 +9980,12 @@ def ciro_ekle(c: CiroModel):
             VALUES (%s,%s,%s,%s,%s,%s,%s)""",
             (cid, c.tarih, c.sube_id, c.nakit, c.pos, c.online, c.aciklama))
 
-        # Kasaya NET tutar yaz (komisyon zaten düşülmüş)
-        # POS/Online kesinti ayrıca yazılmıyor — net tutar içinde zaten yok
-        # Panel komisyon tutarını ciro tablosundan hesaplıyor (bilgi amaçlı)
-        insert_kasa_hareketi(cur, c.tarih, 'CIRO', net_tutar,
-            f'Ciro girişi (net) — pos:%{pos_oran} online:%{online_oran}',
-            'ciro', cid, ref_id=cid, ref_type='CIRO')
+        # 🧾 SAHİP (2026-09-05): kasaya BRÜT ciro + AYRI komisyon satırı.
+        # Eskiden net yazılıyordu; banka komisyonu hiçbir gider kaydına dönüşmüyordu.
+        # Net kasa etkisi aynı — bkz. kasa_service.ciro_kasa_yaz.
+        ciro_kasa_yaz(cur, c.tarih, cid, nakit, pos, online, pos_oran, online_oran,
+                      f'Ciro girişi (brüt) — pos:%{pos_oran} online:%{online_oran}',
+                      ref_id=cid, ref_type='CIRO', sube_id=c.sube_id)
 
         audit(cur, 'ciro', cid, 'INSERT')
     return {"id": cid, "success": True, "net_tutar": net_tutar,
@@ -10043,13 +10045,17 @@ def ciro_guncelle(cid: str, c: CiroModel):
         pos_oran    = float(oran['pos_oran'])    if oran else 0.0
         online_oran = float(oran['online_oran']) if oran else 0.0
 
-        pos_kesinti    = pos    * pos_oran    / 100.0
-        online_kesinti = online * online_oran / 100.0
+        pos_kesinti    = round(pos    * pos_oran    / 100.0, 2)
+        online_kesinti = round(online * online_oran / 100.0, 2)
         net_tutar      = nakit + (pos - pos_kesinti) + (online - online_kesinti)
 
         # 1. Eski kasa hareketini iptal et (ters kayıt)
         iptal_kasa_hareketi(cur, cid, 'ciro', 'CIRO', 'CIRO_DUZELTME',
                             f'Ciro düzeltme — eski tutar iptal')
+        # Komisyon satırları da iptal edilmeli; yoksa eski kesinti kasada kalır
+        # ve yeni tutarla birlikte İKİ KEZ düşer. Eski (netlemeli) cirolarda
+        # komisyon satırı yok — helper sessiz geçer.
+        ciro_kesinti_iptal(cur, cid, 'CIRO_DUZELTME')
 
         # 2. Ciro tablosunu güncelle
         cur.execute("""
@@ -10057,10 +10063,10 @@ def ciro_guncelle(cid: str, c: CiroModel):
             WHERE id=%s
         """, (nakit, pos, online, c.aciklama, sube_id, cid))
 
-        # 3. Yeni net tutarla kasa hareketi yaz
-        insert_kasa_hareketi(cur, eski['tarih'], 'CIRO', net_tutar,
-            f'Ciro düzeltme (net) — pos:%{pos_oran} online:%{online_oran}',
-            'ciro', cid, ref_id=cid, ref_type='CIRO_GUNCELLEME')
+        # 3. Yeni tutarla kasa hareketi yaz — BRÜT + ayrı komisyon satırı
+        ciro_kasa_yaz(cur, eski['tarih'], cid, nakit, pos, online, pos_oran, online_oran,
+                      f'Ciro düzeltme (brüt) — pos:%{pos_oran} online:%{online_oran}',
+                      ref_id=cid, ref_type='CIRO_GUNCELLEME', sube_id=sube_id)
 
         audit(cur, 'ciro', cid, 'GUNCELLEME', eski=eski)
 
@@ -10079,6 +10085,9 @@ def ciro_sil(cid: str):
 
         # Ledger: tüm silmelerle aynı model — tek merkez
         iptal_kasa_hareketi(cur, cid, 'ciro', 'CIRO', 'CIRO_IPTAL', 'Ciro iptali')
+        # Ciro iptal edildiyse komisyonu da iptal olmalı; kalırsa kasada
+        # karşılıksız bir eksi satır durur.
+        ciro_kesinti_iptal(cur, cid, 'CIRO_IPTAL')
 
         audit(cur, 'ciro', cid, 'IPTAL', eski=eski)
         # FIX KP3 (2026-07-05): ciro iptali z_nakit'i (ciro.nakit) değiştirir → o günün kapanış
@@ -13803,7 +13812,11 @@ def kasa_onizle(sid: str, baslangic: date, bitis: date = None):
         satirlar = []
         toplam_fark = 0
         for k in kayitlar:
-            dogru_tutar = float(k['nakit']) + float(k['pos']) * (1 - pos_oran/100) + float(k['online']) * (1 - online_oran/100)
+            # 🧾 2026-09-05: CIRO satırı artık BRÜT. Komisyon ayrı POS_KESINTI /
+            # ONLINE_KESINTI satırında durur. Eskiden burada NET hesaplanıyordu ama
+            # kasa-duzelt hem NET CIRO hem AYRICA kesinti satırı yazıyordu —
+            # komisyon İKİ KEZ düşüyordu. Çıpa artık brüt.
+            dogru_tutar = float(k['nakit']) + float(k['pos']) + float(k['online'])
             mevcut_tutar = float(k['kasa_tutar'])
             fark = dogru_tutar - mevcut_tutar
             if abs(fark) > 0.01:
@@ -13864,54 +13877,45 @@ def kasa_duzelt(sid: str, body: KasaDuzeltModel):
         toplam_fark = 0
 
         for k in kayitlar:
-            pos_tutari = float(k['pos'])
-            online_tutari = float(k['online'])
-            dogru_tutar = float(k['nakit']) + pos_tutari * (1 - pos_oran/100) + online_tutari * (1 - online_oran/100)
+            # 🧾 2026-09-05 — ÇİFT DÜŞÜM DÜZELTMESİ.
+            # Eski hâlde `dogru_tutar` NET hesaplanıyor, CIRO satırı o NET tutarla
+            # yazılıyor, ÜSTÜNE bir de POS_KESINTI satırı ekleniyordu. POS_KESINTI
+            # kasa_etkisi=True olduğu için komisyon İKİ KEZ düşüyordu. Üstelik
+            # "eski kesintiyi iptal et" adımı `ref_id = ciro_id` arıyordu, oysa
+            # satırlar `ciro_id + '_pos'` ile yazılıyor — iptal hiç eşleşmiyordu,
+            # ONLINE_KESINTI ise hiç iptal edilmiyordu. Üç kusur da burada kapandı:
+            # çıpa BRÜT, yazım tek merkezden, iptal kaynak_id üzerinden.
+            dogru_tutar = float(k['nakit']) + float(k['pos']) + float(k['online'])
             mevcut_tutar = float(k['kasa_tutar'])
             fark = dogru_tutar - mevcut_tutar
 
-            if abs(fark) < 0.01:
+            pos_kesinti = round(float(k['pos']) * pos_oran / 100.0, 2)
+            online_kesinti = round(float(k['online']) * online_oran / 100.0, 2)
+
+            # Kesinti satırları zaten doğruysa ve CIRO brütse dokunma.
+            cur.execute("""
+                SELECT COALESCE(SUM(-tutar), 0) AS toplam FROM kasa_hareketleri
+                WHERE kaynak_id IN (%s, %s) AND durum='aktif'
+                  AND islem_turu IN ('POS_KESINTI','ONLINE_KESINTI')
+            """, (k['ciro_id'] + '_pos', k['ciro_id'] + '_online'))
+            mevcut_kesinti = float((cur.fetchone() or {}).get('toplam') or 0)
+            if abs(fark) < 0.01 and abs(mevcut_kesinti - (pos_kesinti + online_kesinti)) < 0.01:
                 continue
 
-            # 1) Eski POS_KESINTI / ONLINE_KESINTI kayıtlarını iptal et
-            cur.execute("""
-                UPDATE kasa_hareketleri SET durum='iptal'
-                WHERE ref_id = %s AND islem_turu = 'POS_KESINTI' AND durum='aktif'
-            """, (k['ciro_id'],))
+            # 1) Eski komisyon satırlarını iptal et (varsa; yoksa sessiz geçer)
+            ciro_kesinti_iptal(cur, k['ciro_id'], 'CIRO_DUZELTME')
 
-            # 3) FIX MN1 (2026-07-05): Eski CIRO kaydını UPDATE tutar ile EZMEK append-only
-            # #5 ihlaliydi (ikinci düzeltmede eski değer kalıcı kaybolur). Artık eski kayıt
-            # İPTAL edilir (tutar korunur, iz kalır) + yeni CIRO kaydı kanonik yoldan yazılır.
-            # Net kasa etkisi AYNI (eski iptal → sadece yeni sayılır); davranış bit-bit korunur.
+            # 2) FIX MN1 (2026-07-05): Eski CIRO kaydını UPDATE ile EZMEK append-only
+            # #5 ihlaliydi. Eski kayıt İPTAL edilir (tutar korunur, iz kalır),
+            # yenisi kanonik yoldan BRÜT + ayrı kesinti olarak yazılır.
             cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s AND durum='aktif'",
                         (k['kasa_id'],))
-            insert_kasa_hareketi(
-                cur, k['tarih'], 'CIRO', dogru_tutar,
-                f'POS/Online kesinti düzeltmesi (pos:%{pos_oran}, online:%{online_oran})',
-                'ciro', k['ciro_id'], ref_id=str(uuid.uuid4()), ref_type='CIRO_DUZELTME',
+            ciro_kasa_yaz(
+                cur, k['tarih'], k['ciro_id'],
+                k['nakit'], k['pos'], k['online'], pos_oran, online_oran,
+                f'Ciro brütleştirme + komisyon (pos:%{pos_oran}, online:%{online_oran})',
+                ref_id=str(uuid.uuid4()), ref_type='CIRO_DUZELTME', sube_id=sid,
             )
-
-            # 4) Yeni POS_KESINTI kaydı yaz — paneldeki finansman maliyeti buradan hesaplanır
-            # FIX MN3 (2026-07-06): ham INSERT idempotency'sizdi → düzeltme iki kez tetiklenirse
-            # (çift tık/retry) aynı ciroya ÇİFT kesinti yazılıp kasa fazladan düşüyordu. Merkezi
-            # yazıcıya (insert_kasa_hareketi) çevrildi: deterministik ref_id'den türeyen
-            # idempotency anahtarı birebir tekrarı sessizce yutar (ON CONFLICT).
-            pos_kesinti = pos_tutari * pos_oran / 100
-            online_kesinti = online_tutari * online_oran / 100
-            if pos_kesinti > 0.01:
-                insert_kasa_hareketi(
-                    cur, k['tarih'], 'POS_KESINTI', -pos_kesinti,
-                    f'POS komisyon kesintisi (%{pos_oran})',
-                    'ciro', k['ciro_id'] + '_pos',
-                    ref_id=k['ciro_id'] + '_pos', ref_type='POS_KESINTI',
-                )
-            if online_kesinti > 0.01:
-                insert_kasa_hareketi(
-                    cur, k['tarih'], 'ONLINE_KESINTI', -online_kesinti,
-                    f'Online komisyon kesintisi (%{online_oran})',
-                    'ciro', k['ciro_id'] + '_online',
-                    ref_id=k['ciro_id'] + '_online', ref_type='ONLINE_KESINTI',
-                )
 
             audit(cur, 'kasa_hareketleri', k['kasa_id'], 'DUZELTME',
                   eski={'tutar': mevcut_tutar}, yeni={'tutar': dogru_tutar})
@@ -14110,18 +14114,15 @@ async def excel_import(dosya: UploadFile = File(...)):
                             nakit = float(d.get('nakit')  or 0)
                             pos   = float(d.get('pos')    or 0)
                             online= float(d.get('online') or 0)
-                            # Normal ciro girişiyle aynı prensip: komisyon düşülüp net kasaya
-                            pos_kesinti_x    = pos    * pos_oran_x    / 100.0
-                            online_kesinti_x = online * online_oran_x / 100.0
-                            net_tutar_x = nakit + (pos - pos_kesinti_x) + (online - online_kesinti_x)
+                            # Normal ciro girişiyle aynı prensip: kasaya BRÜT + ayrı komisyon satırı
                             cur.execute("""INSERT INTO ciro (id,tarih,sube_id,nakit,pos,online,aciklama)
                                 VALUES (%s,%s,%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
                                 (cid, fix_date(d.get('tarih')), sube_id, nakit, pos, online, str(d.get('aciklama') or '')))
                             if cur.rowcount > 0:
-                                insert_kasa_hareketi(cur, fix_date(d.get('tarih')), 'CIRO',
-                                    net_tutar_x,
-                                    f'Excel import (net) — pos:%{pos_oran_x} online:%{online_oran_x}',
-                                    'ciro', cid, ref_id=cid, ref_type='CIRO')
+                                ciro_kasa_yaz(cur, fix_date(d.get('tarih')), cid,
+                                    nakit, pos, online, pos_oran_x, online_oran_x,
+                                    f'Excel import (brüt) — pos:%{pos_oran_x} online:%{online_oran_x}',
+                                    ref_id=cid, ref_type='CIRO', sube_id=sube_id)
                                 eklenen += 1
                             else:
                                 atlanan.append({"satir": satir_no, "sebep": "duplicate", "veri": f"{d.get('tarih')} / {d.get('sube','')}"})

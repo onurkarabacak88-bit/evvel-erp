@@ -74,7 +74,8 @@ from siparis_sevkiyat_islem import (
     sevkiyat_kalem_durumlari_normalize,
     siparis_sevkiyat_kalem_guncelle_execute,
 )
-from kasa_service import audit, insert_kasa_hareketi, iptal_kasa_hareketi
+from kasa_service import (audit, insert_kasa_hareketi, iptal_kasa_hareketi,
+                          ciro_kasa_yaz, ciro_kesinti_iptal)
 from sube_panel import (
     _bugun_ciro_taslak_bekliyor,
     _bugun_ciro_var_mi,
@@ -7337,23 +7338,23 @@ def _kk_uyari_getir(cur, uyari_id: str) -> Dict[str, Any]:
 def _kk_ciro_kasa_senkron(cur, sube_id, tarih, cid, nakit, pos, online, yeni_satir=False):
     """KRİTİK: kaynak-düzelt ile ciro değişince KASA DEFTERİNİ (kasa_hareketleri) de senkronla.
     Önceden yalnız ciro tablosu güncelleniyordu → kasa bakiyesi eski yanlış değerde kalıyordu.
-    ciro_guncelle ile AYNI immutable-ledger deseni: eski hareketi ters kayıtla iptal + yeni net yaz.
-    net = nakit + pos*(1−pos_oran) + online*(1−online_oran)."""
+    ciro_guncelle ile AYNI immutable-ledger deseni: eski hareketi ters kayıtla iptal + yeni yaz.
+    🧾 2026-09-05: kasaya BRÜT ciro + AYRI komisyon satırı yazılır (net kasa etkisi aynı)."""
     cur.execute("SELECT COALESCE(pos_oran,0) AS po, COALESCE(online_oran,0) AS oo FROM subeler WHERE id=%s", (sube_id,))
     o = dict(cur.fetchone() or {})
     po = float(o.get("po") or 0)
     oo = float(o.get("oo") or 0)
-    net = round(float(nakit) + (float(pos) - float(pos) * po / 100.0) + (float(online) - float(online) * oo / 100.0), 2)
     if not yeni_satir:
         try:
             iptal_kasa_hareketi(cur, cid, 'ciro', 'CIRO', 'CIRO_DUZELTME',
                                 'Kasa fark kaynak düzeltme — eski ciro kasa hareketi iptal')
         except Exception:
             pass  # iptal edilecek hareket yoksa (ilk kez) sorun değil
-    insert_kasa_hareketi(cur, str(tarih), 'CIRO', net,
-                         'Kasa fark kaynak düzeltme (net)', 'ciro', cid,
-                         ref_id=cid, ref_type='CIRO_GUNCELLEME')
-    return net
+        ciro_kesinti_iptal(cur, cid, 'CIRO_DUZELTME')
+    sonuc = ciro_kasa_yaz(cur, str(tarih), cid, nakit, pos, online, po, oo,
+                          'Kasa fark kaynak düzeltme (brüt)',
+                          ref_id=cid, ref_type='CIRO_GUNCELLEME', sube_id=sube_id)
+    return sonuc["net_tutar"]
 
 
 def _kk_ciro_duzelt(cur, sube_id: str, tarih: str, payload: Dict[str, Any]) -> Dict[str, Any]:

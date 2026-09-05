@@ -30,7 +30,7 @@ from tr_saat import (
 )
 from evvel_merkez_guard import merkez_mutasyon_korumasi
 from finans_core import kasa_bakiyesi
-from kasa_service import insert_kasa_hareketi, audit, onay_ekle
+from kasa_service import insert_kasa_hareketi, audit, onay_ekle, ciro_kasa_yaz
 from operasyon_stok_motor import (
     STOK_KEYS,
     STOK_LABEL_TR,
@@ -262,8 +262,8 @@ def _ciro_insert_aktif_ve_kasa(
 
     pos_oran = float(sube.get("pos_oran") or 0)
     online_oran = float(sube.get("online_oran") or 0)
-    pos_kesinti = pos * pos_oran / 100.0
-    online_kesinti = online * online_oran / 100.0
+    pos_kesinti = round(pos * pos_oran / 100.0, 2)
+    online_kesinti = round(online * online_oran / 100.0, 2)
     net_tutar = nakit + (pos - pos_kesinti) + (online - online_kesinti)
 
     cid = str(uuid.uuid4())
@@ -274,23 +274,20 @@ def _ciro_insert_aktif_ve_kasa(
         """,
         (cid, gercek_tarih, sube_id, nakit, pos, online, aciklama or "Onaylı ciro"),
     )
-    insert_kasa_hareketi(
-        cur,
-        gercek_tarih,
-        "CIRO",
-        net_tutar,
+    # 🧾 SAHİP (2026-09-05): şube kapanışında da kasaya BRÜT ciro + AYRI komisyon
+    # satırı yazılır. Eskiden net yazılıyordu: "11.000'den 200 düşüp kasaya 10.800"
+    # — komisyon hiçbir gider kalemine dönüşmüyordu. Net kasa etkisi aynı.
+    ciro_kasa_yaz(
+        cur, gercek_tarih, cid, nakit, pos, online, pos_oran, online_oran,
         f"Ciro — {sube['ad']} ({audit_etiket})",
-        "ciro",
-        cid,
-        ref_id=cid,
-        ref_type="CIRO",
+        ref_id=cid, ref_type="CIRO", sube_id=sube_id,
     )
     audit(cur, "ciro", cid, audit_etiket)
     return {
         "id": cid,
         "net_tutar": round(net_tutar, 2),
-        "pos_kesinti": round(pos_kesinti, 2),
-        "online_kesinti": round(online_kesinti, 2),
+        "pos_kesinti": pos_kesinti,
+        "online_kesinti": online_kesinti,
     }
 
 

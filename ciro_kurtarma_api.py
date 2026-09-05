@@ -163,9 +163,17 @@ def _plan_uret(cur) -> Dict[str, Any]:
         # DOĞRULAMA: kırılımdan hesaplanan net, kasadaki net ile tutuyor mu?
         # Tutmuyorsa satır yine sunulur ama "doğrulanamadı" diye İŞARETLENİR —
         # sessizce doğru saymak, kurtarmayı sahte yeşile çevirirdi.
+        # 🧾 2026-09-05: CIRO kasa satırı artık BRÜT (komisyon ayrı satırda).
+        # Geçiş dönemi: eski satırlar hâlâ NET. İkisinden hangisine yakınsa
+        # onu esas al — tek çıpaya bağlanmak, geçmiş satırların tamamını
+        # "doğrulanamadı" damgasıyla sahte kırmızıya çevirirdi.
+        kasa_net = _f(d.get("net"))
+        hesap_brut = n + p + o
         hesap_net = n + p * (1 - _f(d.get("pos_oran")) / 100.0) \
                       + o * (1 - _f(d.get("online_oran")) / 100.0)
-        fark = round(hesap_net - _f(d.get("net")), 2)
+        fark_brut = round(hesap_brut - kasa_net, 2)
+        fark_net = round(hesap_net - kasa_net, 2)
+        fark = fark_brut if abs(fark_brut) <= abs(fark_net) else fark_net
         ikinci.append({
             "ciro_id": cid,
             "tarih": d.get("tarih"),
