@@ -371,6 +371,60 @@ mevcut yanlış tarih düzeltilebilir, eski/yeni değer audit izine yazılır.
 
 ---
 
+## 5h · AĞUSTOS KAPANDI + 7 KOD HATASI (2026-09-06 akşamı)
+
+Ağustos 2026 artık sahibin defteriyle **kuruş farkıyla** örtüşüyor:
+
+| kişi | sahip defteri | Evvel | durum |
+|---|---|---|---|
+| MERVE AKTA | 36.454,50 | **36.454,50** | ✅ onaylandı |
+| DENİZ KÜÇÜKKIRLI | 33.912 | 33.911,50 | −0,50 |
+| SILA AKBAY | 25.381 | 20.988,33 | hakediş 24.988,33 − 4.000 avans |
+| YAREN BEŞLİ | 22.218 | 22.214,17 | −3,83 |
+| MERT ALİ AKAR | 15.442 | 15.442,02 | +0,02 |
+| nisanur bolat | 5.415 | 5.414,83 | −0,17 |
+
+Elden ödenenler `anlik_giderler`'de, üçü `elden` damgalandı (6.660 ₺).
+
+### Bugün bulunan ve kapatılan KOD hataları
+
+| # | hata | canlı bedeli | commit |
+|---|---|---|---|
+| 1 | `cikis_tarihi = bugun_tr()` — işlem günü, son çalışma günü değil | YAREN 7.015 ₺ fazla ödeme riski | `0c41fd3` |
+| 2 | Dönem oranında ÜÇ ayrı formül (30 vs takvim günü) | Ağustos %48,4 / Şubat %50 sapma | `bae9c95` |
+| 3 | Kural parametrelerinin 8'i ÖLÜ, kapsam kör | kişi/şube kuralı hiç çalışmıyordu | `4756800` |
+| 4 | Yemek paydası veri seyrekliğine bağlı | aynı ihlal 280 ↔ 1.166,67 ₺ | `b147fcf` |
+| 5 | **GELECEK vardiya yemek paydasını şişiriyor** | SILA 763,64 ₺, ölçüm sırasında oldu | `4f995b7` |
+| 6 | **Part-time GELECEK saat hakedişe giriyor** | CELİLE 5.755,68 ₺, işe başlamadan | `c609061` |
+| 7 | **Kural satırları birleşmiyor, yenisi eskisini siliyor** | Eylül `askida` kuralı sessizce kayboldu | `94c220e` |
+| + | `belirsiz` mola günü onaylanamıyordu | MERVE AKTA 1.000 ₺ | `c609061` |
+| + | Avans tavanı kartı okuyordu, çizgiyi değil | geçmiş ayın tavanı zamla büyüyordu | `c24600d` |
+
+**#5, #6 ve #7 aynı sınıf:** ölçüm sırasında, canlıda, kendi gözümüzün önünde
+gerçekleşti. #7'yi kendi elimle yaptım (yeni kural yazarken öncekini sildim),
+fark edip yapının kendisini düzelttim.
+
+### Kural çizgisi (canlı)
+```
+GENEL · 2026-09-01 · mola_kayit_yok = askida
+                     yemek_paydasi  = beklenen_gun
+Ağustos ve öncesi → VARSAYILAN (hak_dogmaz · planli_gun)
+```
+`beklenen_gun` geriye uygulansaydı ihlali olan kayıtlarda Haziran–Ağustos
+**+11.621,76 ₺** yeni borç doğardı → bilinçli olarak 1 Eylül'den başlatıldı.
+
+### Personel ekranı doğrulaması
+`GorevPersonelSayfasi.jsx:737` doğrudan `/api/gorev/vardiya-takip` çağırıyor,
+kendi formülü YOK. Bugünkü düzeltmeler personelin telefonuna doğrudan yansıdı;
+arayüz yeniden derlenmedi. Personel ekranda `yemek_ucret_gun`, `yemek_ucret_tutari`
+ve gün gün `mola_durum` görüyor — yani #5 düzeltilmeseydi çalışan yemeğinin
+sebepsiz üçte iki düştüğünü GÖRECEKTİ.
+
+⏳ AÇIK: naz dal · ersan kazan · emir efe eraydın kartlarında başlangıç 1 Eylül
+yazıyor ama Ağustos'ta çalıştılar (paraları elden kayıtlı, bordroda görünmüyor).
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
