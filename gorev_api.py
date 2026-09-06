@@ -2319,15 +2319,38 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             #   · Kesinti YALNIZ mola kuralı ihlalinde: molaya zamanında girilmeyen
             #     gün `yemek_ucret_gun`'a sayılmaz ve payda sabit kaldığı için o
             #     günün payı (aylik_yemek / planli_gun) düşer — yönetim kararı.
+            #
+            # ⚠️ VARDİYA GİRİLMEMİŞSE (sahip 2026-09-06: "hak ettiği hâlde personel
+            #    sıkıntısı vs.den vardiyayı sisteme paylaşmamışsak — bu sistemi
+            #    tıkamaz mı?"). İki ayrı durum var:
+            #    · EKSİK giriş  → oranı BOZMAZ. 26 gün çalışıp 20 vardiya girilmiş
+            #      ve 20'sinde ihlal yoksa 20/20 = 1,0 → yemek TAM. Pay ve payda
+            #      birlikte düştüğü için eksik giriş cezalandırmaz.
+            #    · HİÇ giriş yok → payda 0 → yemek 0 olurdu. TIKANMA BURADAYDI.
+            #      Canlı: MERVE KARABACAK dört ay üst üste (Haz–Eyl) yemeği 0;
+            #      HELİN YILDIZ, GÜLNUR, MEHMET EFE, YAĞIZ ERKEK, mehmet ucak —
+            #      toplam 9 kayıt, 17.876 ₺.
+            #    Sahip doktrini (2026-08-07): "vardiya ataması TEYİT katmanıdır —
+            #    varsa gerçek plan oradan okunur, YOKSA sabit tanımdan aktarılır."
+            #    Yemek tarafında bu kural uygulanmamıştı. Artık: vardiya yoksa
+            #    tam hak varsayılır ve DAMGALANIR (`yemek_kaynagi`), ekran uyarsın.
             _aylik_yemek = float(p.get("yemek_ucreti") or 0)
             _donem_orani = (gecen_gun / AYLIK_GUN) if AYLIK_GUN > 0 else 0.0
+            _is_surekli_yemek = (p.get("calisma_turu") or "surekli") == "surekli"
             if planli_gun > 0:
                 yemek_ucret_gunluk = _aylik_yemek / planli_gun
                 yemek_ucret_tutari = _aylik_yemek * _donem_orani * (yemek_ucret_gun / planli_gun)
+                yemek_kaynagi = "vardiya"
+            elif _aylik_yemek > 0 and _donem_orani > 0 and _is_surekli_yemek:
+                # Vardiya hiç girilmemiş — kayıp yerine TAM HAK varsayılır, damgalanır.
+                # Part-time'a uygulanmaz: orada yemek zaten fiilî mola kaydına bağlı.
+                yemek_ucret_gunluk = 0.0
+                yemek_ucret_tutari = _aylik_yemek * _donem_orani
+                yemek_kaynagi = "varsayim_vardiya_yok"
             else:
-                # Hiç vardiya planlanmamış — payda yok, uydurma yapılmaz.
                 yemek_ucret_gunluk = 0.0
                 yemek_ucret_tutari = 0.0
+                yemek_kaynagi = "yok"
             is_surekli  = (p.get("calisma_turu") or "surekli") == "surekli"
             maas_taban  = float(p.get("maas") or 0)
             saatlik_ucr = float(p.get("saatlik_ucret") or 0)
@@ -2391,6 +2414,9 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "yemek_ucret_gun": yemek_ucret_gun,
                 "planli_gun": planli_gun,          # yemek paydası — kişiye/aya özel
                 "yemek_ihlal_gun": max(0, planli_gun - yemek_ucret_gun),
+                # "vardiya" = gerçek plandan · "varsayim_vardiya_yok" = hiç vardiya
+                # girilmemiş, TAM HAK varsayıldı (ekran UYARMALI) · "yok" = hak doğmaz
+                "yemek_kaynagi": yemek_kaynagi,
                 "yemek_ucret_tutari": yemek_ucret_tutari,
                 "part_tam_gun": part_tam_gun,
                 "haftalik_izin_kullanilmadi": haftalik_izin_kullanilmadi,
