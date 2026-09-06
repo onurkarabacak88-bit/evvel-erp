@@ -10,16 +10,16 @@
   },
   "2026-08": {
    "kisi": 9,
-   "toplam_net": 172743.27
+   "toplam_net": 189985.68
   },
   "2026-09": {
-   "kisi": 8,
-   "toplam_net": 47581.06
+   "kisi": 9,
+   "toplam_net": 63797.91
   }
  },
  "olcum": {
   "izin": {
-   "mazeret": 86
+   "mazeret": 92
   },
   "aylik_sabit_aday": [
    "mehmet ucak",
@@ -28,33 +28,39 @@
   "eylul_mola_kaydi_yok": [
    {
     "ad": "emir efe eraydın",
+    "planli": 7,
+    "hak_dogan": 0,
+    "kayit_yok": 7
+   },
+   {
+    "ad": "ersan kazan",
     "planli": 6,
     "hak_dogan": 0,
     "kayit_yok": 6
    },
    {
-    "ad": "ersan kazan",
-    "planli": 5,
-    "hak_dogan": 0,
-    "kayit_yok": 5
-   },
-   {
     "ad": "gökçe değirmenci",
-    "planli": 5,
-    "hak_dogan": 0,
-    "kayit_yok": 5
+    "planli": 6,
+    "hak_dogan": 5,
+    "kayit_yok": 1
    },
    {
     "ad": "MERVE AKTA",
-    "planli": 5,
-    "hak_dogan": 3,
-    "kayit_yok": 2
+    "planli": 6,
+    "hak_dogan": 5,
+    "kayit_yok": 1
    },
    {
-    "ad": "naz dal",
-    "planli": 5,
+    "ad": "SILA AKBAY",
+    "planli": 6,
+    "hak_dogan": 5,
+    "kayit_yok": 1
+   },
+   {
+    "ad": "CELİLE IŞIK",
+    "planli": 1,
     "hak_dogan": 0,
-    "kayit_yok": 5
+    "kayit_yok": 1
    }
   ],
   "personel_maliyet_cagiran": [

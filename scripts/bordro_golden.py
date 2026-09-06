@@ -186,6 +186,19 @@ def karsilastir(url: str) -> int:
              for x in liste(yeni, "personeller", "kayitlar")}
         fark = [(k, e.get(k, 0), y.get(k, 0)) for k in set(e) | set(y)
                 if abs(e.get(k, 0) - y.get(k, 0)) > 0.005]
+        # ⏳ CARİ AY ÇIPASI HER GECE KENDİLİĞİNDEN KIRILIR: `gecen_gun` her gün
+        # 1 artar, hakediş de artar. Bu bir SAPMA DEĞİL, takvimdir. Kırık
+        # saymak "sahte alarm" üretir ve gerçek sapmayı gürültüye boğar
+        # ([[feedback-kayan-pencere-capa]]).
+        from datetime import date as _d
+        _b = _d.today()
+        _cari = (yil, ay) == (_b.year, _b.month)
+        if fark and _cari:
+            print(f"   {yil}-{ay:02d}  ⏳ {len(fark)} kişide fark — CARİ AY, "
+                  f"gün ilerledi (kırık SAYILMAZ). Yeniden dondurun:")
+            for k, a, b in sorted(fark, key=lambda z: -abs(z[1] - z[2]))[:4]:
+                print(f"        {str(k)[:26]:<28}çıpa {tl(a):>12}  canlı {tl(b):>12}")
+            continue
         if fark:
             kirik += len(fark)
             print(f"   {yil}-{ay:02d}  ❌ {len(fark)} kişide fark:")
