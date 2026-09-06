@@ -732,6 +732,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
         .catch(() => setBGecmis((m) => (m && m.pid === pid ? { ...m, satirlar: [], hata: true } : m)));
       return;
     }
+    // 🏦 ÖDEME YÖNTEMİ (2026-09-06, banka mutabakatı denetimi): maaş ödemesi
+    // buradan `odeme_yontemi:'nakit'` SABİT gönderiliyordu. Kasa çekirdeğinde
+    // 'nakit' = BELİRSİZ demek (bkz. kasa_service.insert_kasa_hareketi); 'elden'
+    // nakit çekmeceyi, 'havale' banka hesabını azaltır. Ayrım yazılmadığı için
+    // Temmuz–Ağustos'ta ödenen 12 maaşın hiçbiri banka ekstresiyle
+    // eşleştirilemedi — mutabakat YAPISAL olarak imkânsızdı. Genel Ödeme
+    // Modülü bu ayrımı zaten soruyordu (OdemeModulu `nakitYontemi`); maaş yolu
+    // o güncellemede unutulmuştu.
+    if (tip === 'ode' && !subeListe.length) {
+      api('/subeler').then((d) => setSubeListe(Array.isArray(d) ? d : [])).catch(() => {});
+    }
     setBModal({
       tip, b,
       form: {
@@ -743,6 +754,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
         rapor_kesinti: !!b.rapor_kesinti,
         manuel_duzeltme: b.manuel_duzeltme ?? '',
         not_aciklama: b.not_aciklama || '',
+        // Varsayılan YOK — sahip seçmeden ödeme düğmesi açılmaz. Varsayılan
+        // koymak eski hatayı sessizce sürdürürdü (hep aynı yöntem yazılırdı).
+        nakit_yontemi: '',
+        odeyen_sube: b.sube_id || '',
       },
     });
   };
@@ -778,8 +793,20 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
         onToast?.('✓ Onaylandı — tutar kilitlendi, ödeme açıldı');
       } else if (tip === 'ode') {
         if (!b.odeme_id) throw new Error('Ödeme planı yok — önce onayla');
-        await api(`/odeme-plani/${b.odeme_id}/ode`, { method: 'POST', body: { odeme_yontemi: 'nakit' } });
-        onToast?.('💰 Ödendi — kasadan düşüldü');
+        // Yöntem UYDURULMAZ: seçilmediyse ödeme yapılmaz. Boş göndermek
+        // kasaya yine 'belirsiz' yazar ve mutabakat deliği kapanmaz.
+        if (!form.nakit_yontemi) throw new Error('Önce ödeme yöntemini seçin — elden mi, havale mi?');
+        await api(`/odeme-plani/${b.odeme_id}/ode`, {
+          method: 'POST',
+          body: {
+            odeme_yontemi: 'nakit',              // kart değil (kart ayrı yol)
+            nakit_yontemi: form.nakit_yontemi,   // 'elden' | 'havale' → kasa izine yazılır
+            odeyen_sube_id: form.odeyen_sube || null,
+          },
+        });
+        onToast?.(form.nakit_yontemi === 'havale'
+          ? '🏦 Ödendi — havale olarak işaretlendi, banka ekstresiyle eşleşecek'
+          : '💵 Ödendi — elden nakit, şube kasasından düşüldü');
       } else if (tip === 'kilit') {
         await api(`/personel-aylik/${pid}/kilit-ac?${q}`, { method: 'POST' });
         onToast?.('🔓 Kilit açıldı — düzeltip tekrar onayla');
@@ -3913,6 +3940,49 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                       onChange={(e) => setBModal((m) => ({ ...m, form: { ...m.form, not_aciklama: e.target.value } }))}
                       style={ekAlanStil} />
                   </>
+                )}
+
+                {tip === 'ode' && b.odeme_id && (
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={ekEtiket}>Para nereden çıktı? <span style={{ color: R.amber }}>(zorunlu)</span></label>
+                    <div style={{ display: 'flex', gap: 8, margin: '6px 0 10px' }}>
+                      {[
+                        { k: 'havale', ad: '🏦 Havale / EFT', alt: 'banka hesabından' },
+                        { k: 'elden', ad: '💵 Elden nakit', alt: 'şube çekmecesinden' },
+                      ].map((o) => {
+                        const secili = form.nakit_yontemi === o.k;
+                        return (
+                          <button key={o.k} type="button"
+                            onClick={() => setBModal((m) => ({ ...m, form: { ...m.form, nakit_yontemi: o.k } }))}
+                            style={{
+                              flex: 1, padding: '10px 12px', borderRadius: 10, cursor: 'pointer',
+                              fontFamily: 'inherit', textAlign: 'left', lineHeight: 1.4,
+                              border: `1px solid ${secili ? R.yesil : 'rgba(255,255,255,.14)'}`,
+                              background: secili ? `${R.yesil}1e` : 'transparent',
+                              color: secili ? R.yesil : R.metin2,
+                            }}>
+                            <div style={{ fontSize: 13, fontWeight: 600 }}>{o.ad}</div>
+                            <div style={{ fontSize: 11, color: R.not }}>{o.alt}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    {form.nakit_yontemi === 'elden' && (
+                      <>
+                        <label style={ekEtiket}>Hangi şube kasasından?</label>
+                        <select value={form.odeyen_sube}
+                          onChange={(e) => setBModal((m) => ({ ...m, form: { ...m.form, odeyen_sube: e.target.value } }))}
+                          style={ekAlanStil}>
+                          <option value="">merkez / belirtilmedi</option>
+                          {(subeListe || []).map((s) => <option key={s.id} value={s.id}>{s.ad} kasası</option>)}
+                        </select>
+                      </>
+                    )}
+                    <div style={{ fontSize: 11.5, color: R.not, lineHeight: 1.6, marginTop: 8 }}>
+                      Bu ayrım olmadan maaş banka ekstresiyle eşleştirilemez. Temmuz–Ağustos'ta
+                      ödenen 12 maaşın hiçbirinde yöntem yazılmadığı için hiçbiri bankada bulunamadı.
+                    </div>
+                  </div>
                 )}
 
                 {tip === 'ode' && !b.odeme_id && (

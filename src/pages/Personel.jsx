@@ -166,9 +166,21 @@ export default function Personel() {
   async function maasOde(pid, odemeId, net) {
     if (!odemeId) { toast('Ödeme planı bulunamadı — önce Onayla.', 'red'); return; }
     if (!confirm(`Maaş ödemesi yapılsın mı? Kasadan ${parseInt(net||0).toLocaleString('tr-TR')} ₺ düşülecek.`)) return;
+    // 🏦 YÖNTEM SORULUR (2026-09-06): burada `odeme_yontemi:'nakit'` sabit gidiyordu.
+    // Kasa çekirdeğinde 'nakit' = BELİRSİZ; 'elden' çekmeceyi, 'havale' banka
+    // hesabını azaltır. Ayrım yazılmadığı için Temmuz–Ağustos'ta ödenen 12 maaş
+    // banka ekstresiyle eşleştirilemedi. Yöntem UYDURULMAZ — iptal edilirse ödeme yok.
+    const havale = confirm(
+      'Para nereden çıktı?\n\n' +
+      'TAMAM  → 🏦 Havale / EFT (banka hesabından)\n' +
+      'İPTAL  → 💵 Elden nakit (şube çekmecesinden)\n\n' +
+      'Bu ayrım olmadan maaş banka ekstresiyle eşleştirilemez.');
     try {
-      await api(`/odeme-plani/${odemeId}/ode`, { method:'POST', body:{ odeme_yontemi:'nakit' } });
-      toast('💰 Ödendi — kasadan düşüldü', 'green');
+      await api(`/odeme-plani/${odemeId}/ode`, {
+        method:'POST',
+        body:{ odeme_yontemi:'nakit', nakit_yontemi: havale ? 'havale' : 'elden' },
+      });
+      toast(havale ? '🏦 Ödendi — havale olarak işaretlendi' : '💵 Ödendi — elden nakit', 'green');
       publishGlobalDataRefresh('personel-maas-ode');
       loadAylik();
     } catch(e) { toast(e.message, 'red'); }
