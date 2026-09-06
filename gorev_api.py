@@ -2269,6 +2269,21 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                      "askida": 0, "onayli": 0}
             _askida_gunler = []
 
+            # 🔴 GELECEK VARDİYA PAYDAYI ŞİŞİRMESİN (2026-09-06, canlı bulgu)
+            # `planli_gun` yemek oranının PAYDASI. Döngü ay sonuna kadar gidiyor
+            # ve HENÜZ GELMEMİŞ günlerin vardiyasını da sayıyordu. Mola kaydı
+            # ancak yaşanmış gün için olabileceğinden PAY geçmişten, PAYDA
+            # gelecekten besleniyordu → gelecek haftanın planı girilir girilmez
+            # yemek düşüyordu.
+            # Canlı kanıt: SILA AKBAY Eylül — 5 günün 5'inde hak etmişken plan
+            # 11 güne çıkınca yemek 1.400,00 → 636,36 (5/11). 763,64 ₺ kayıp,
+            # üstelik kişi hiçbir şey yapmadan.
+            # `planli_gun` artık YALNIZ YAŞANMIŞ günleri sayar; gelecek plan
+            # ayrı sayaçta durur (görünür kalsın, oranı bozmasın).
+            from tr_saat import dt_now_tr as _dnt_p
+            _bugun_p = _dnt_p().date()
+            planli_gun_gelecek = 0
+
             tarih = p_d1
             while tarih <= p_d2:
                 t = str(tarih)
@@ -2280,7 +2295,10 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 if v:
                     planlanan = float(v["planlanan_saat"] or 0)
                     toplam_planlanan += planlanan
-                    planli_gun += 1          # yemek paydası (bkz. yukarıdaki not)
+                    if tarih <= _bugun_p:
+                        planli_gun += 1      # yemek paydası — YALNIZ yaşanmış gün
+                    else:
+                        planli_gun_gelecek += 1   # plan var ama gün gelmedi
 
                     # Sistem kurulum öncesi (1-9 Haziran) - herkes tam+doğru çalışmış sayılır
                     baslangic_gunu = (tarih <= _SYSTEM_DATE(2025, 6, 9))
@@ -2592,6 +2610,9 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 # Sahibin onayını bekleyen günler — para ÖDENMEDİ ama KAYBOLMADI.
                 "mola_askida_gunler": _askida_gunler,
                 "mola_kurali": _mola_kurali,
+                # Planlanmış ama HENÜZ GELMEMİŞ gün sayısı. Yemek paydasına
+                # GİRMEZ (gelecek günün mola kaydı olamaz), ekranda görünsün.
+                "planli_gun_gelecek": planli_gun_gelecek,
                 # İZ BIRAKIR (Adım 5): bu rakamlar hangi ücret kaynağından geldi.
                 # 'ucret_tanim' = zaman çizgisi (o dönemde geçerli olan);
                 # 'personel_karti_ayna' = çizgide satır yok, kart okundu.
