@@ -1,0 +1,126 @@
+{
+  "_not": [
+    "BORDRO KABUL TESTİ — ELLE DOĞRULANMIŞ GERÇEKLER",
+    "",
+    "Bu dosya 'sistem eskiden ne üretiyordu'yu değil, 'GERÇEKTE NE OLMASI GEREKTİĞİNİ' tutar.",
+    "Her vaka banka ekstresi ve/veya sahip beyanıyla BAĞIMSIZ olarak doğrulanmıştır.",
+    "Sistem bu rakamları KENDİLİĞİNDEN üretmek zorundadır; üretemiyorsa sistem yanlıştır.",
+    "",
+    "Çalıştır:  python scripts/test_bordro_kabul.py",
+    "Push öncesi kapı:  kapi_kontrol.py + BU TEST",
+    "",
+    "Yeni vaka eklerken: bagimsiz_kanit alanı ZORUNLU. Kanıtı olmayan vaka",
+    "eklenmez — yoksa test 'sistemin bugünkü hatasını' dondurur."
+  ],
+  "vakalar": [
+    {
+      "kod": "deniz-2026-07",
+      "ad_soyad": "DENİZ KÜÇÜKKIRLI",
+      "personel_id": "41cd9474-c364-44e3-aa1e-a7ec50524f3b",
+      "yil": 2026,
+      "ay": 7,
+      "neden_bu_vaka": [
+        "Sistemin yemek ücretini hafta iznine göre kestiği bu vakada yakalandı.",
+        "Elle hesaplandı, banka ekstresi + sahip defteriyle bağımsız doğrulandı.",
+        "Sistem 34.152,96 üretiyordu; doğrusu 35.319,63 — 1.166,67 ₺ eksik."
+      ],
+      "sozlesme": {
+        "calisma_turu": "surekli",
+        "maas": 28075.00,
+        "yemek_ucreti": 7000.00,
+        "yol_ucreti": 0.00,
+        "baslangic_tarihi": "2026-06-09",
+        "cikis_tarihi": "2026-08-31"
+      },
+      "olcum": {
+        "planli_gun": 25,
+        "yemek_hakki_dogan_gun": 25,
+        "mola_ihlal_gun": 0,
+        "mola_sureleri_dk": "48-58 (limit 60 — tek ihlal yok)",
+        "calisilmayan_gun": [1, 8, 16, 22, 27, 31],
+        "fazla_mesai_saat": 2.4833
+      },
+      "beklenen_kalemler": [
+        {"tur": "TABAN",       "tutar": 28075.00, "aciklama": "tam ay, 28.075/30 × 30"},
+        {"tur": "FAZLA_MESAI", "tutar": 244.63,   "aciklama": "2,4833 sa × (28.075/285)"},
+        {"tur": "YEMEK",       "tutar": 7000.00,  "aciklama": "AYLIK SABİT — 0 ihlal, hafta izni kesinti DEĞİL"},
+        {"tur": "YOL",         "tutar": 0.00,     "aciklama": "tanımlı değil"}
+      ],
+      "beklenen_net": 35319.63,
+      "tolerans": 0.05,
+      "bagimsiz_kanit": {
+        "banka": {
+          "tutar": 34675.00,
+          "tarih": "2026-07-31",
+          "hesap": "VB-MERVE",
+          "alici_adi_bankada": "kenan küçükkırlı",
+          "not": "Evvel'de DENİZ, bankada KENAN — sahip 2026-09-06'da aynı kişi olduğunu beyan etti"
+        },
+        "elden": {
+          "tutar": 644.63,
+          "not": "Sahip defterinde 646 yazıyor (liraya yuvarlanmış). Sahip beyanı: bu para VERİLDİ, Evvel'e girilmedi."
+        },
+        "toplam": 35319.63,
+        "sahip_defteri_toplami": 35321.00,
+        "sapma": 1.37,
+        "sapma_aciklamasi": "Sahibin defterindeki 646, gerçek 644,63'ün liraya yuvarlanmışı."
+      },
+      "sistemin_eski_hatasi": {
+        "uretilen": 34152.96,
+        "eksik": 1166.67,
+        "sebep": "yemek = (7.000/30) × 25 gün = 5.833,33 — hafta izni kesinti sayılıyordu",
+        "duzeltme_commiti": "1034202"
+      }
+    },
+    {
+      "kod": "mehmet-efe-2026-07",
+      "ad_soyad": "MEHMET EFE",
+      "yil": 2026,
+      "ay": 7,
+      "neden_bu_vaka": [
+        "Deniz ile AYNI kuralın kısmi dönemde doğru çalıştığını kanıtlar.",
+        "24.07'de başladı — 8 takvim günü, 3 vardiya günü, 0 ihlal.",
+        "Dönem oranı uygulanmalı: ay bitmeden giren tam 7.000 ALMAZ."
+      ],
+      "sozlesme": {"calisma_turu": "surekli", "maas": 28075.00, "yemek_ucreti": 7000.00, "yol_ucreti": 0.00},
+      "olcum": {"planli_gun": 3, "yemek_hakki_dogan_gun": 3, "mola_ihlal_gun": 0, "donem_gun": 8},
+      "beklenen_kalemler": [
+        {"tur": "TABAN", "tutar": 7486.67, "aciklama": "28.075/30 × 8 gün"},
+        {"tur": "YEMEK", "tutar": 1866.67, "aciklama": "7.000 × (8/30) — 0 ihlal, tam hak × dönem oranı"}
+      ],
+      "beklenen_net": 9353.33,
+      "tolerans": 0.05,
+      "bagimsiz_kanit": {
+        "sahip_defteri": 9350.00,
+        "sapma": 3.33,
+        "not": "Sahip defterinde 9.350 (yuvarlanmış). Bankada ödeme İZİ YOK — elden ödenmesi planlanmış."
+      },
+      "sistemin_eski_hatasi": {"uretilen": 8186.67, "eksik": 1166.66}
+    },
+    {
+      "kod": "gulnur-2026-06",
+      "ad_soyad": "GÜLNUR",
+      "yil": 2026,
+      "ay": 6,
+      "neden_bu_vaka": [
+        "Ay bitmeden AYRILAN personel tam 7.000 ALMAMALI (sahip uyarısı 2026-09-06).",
+        "21-22.06 arası 2 gün çalıştı. Vardiyası hiç girilmemiş → varsayım dalı.",
+        "Kanıt yokken bile dönem oranı uygulanmalı."
+      ],
+      "sozlesme": {"calisma_turu": "surekli", "maas": 28075.00, "yemek_ucreti": 7000.00,
+                   "baslangic_tarihi": "2026-06-21", "cikis_tarihi": "2026-06-22"},
+      "olcum": {"planli_gun": 0, "donem_gun": 2, "yemek_kaynagi": "varsayim_vardiya_yok"},
+      "beklenen_kalemler": [
+        {"tur": "YEMEK", "tutar": 466.67, "aciklama": "7.000 × (2/30) — vardiya yok, TAM HAK varsayıldı ama dönem oranlı"}
+      ],
+      "beklenen_yemek": 466.67,
+      "tolerans": 0.05,
+      "bagimsiz_kanit": {
+        "not": "Bağımsız para kanıtı YOK; kural kanıtı: sahip 'ay bitmeden ayrılan tam 7.000 almamalı' dedi.",
+        "kanit_turu": "kural"
+      },
+      "sistemin_eski_hatasi": {"uretilen": 0.00, "eksik": 466.67, "sebep": "planli_gun=0 → payda yok → yemek 0",
+                               "duzeltme_commiti": "b17457c"}
+    }
+  ]
+}
