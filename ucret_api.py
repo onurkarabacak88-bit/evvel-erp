@@ -500,6 +500,25 @@ def mola_askida(yil: int = Query(...), ay: int = Query(...)):
         # Bir günün para karşılığı = aylık yemek × dönem oranı ÷ planlı gün
         gun_tl = (aylik_yemek * (gecen / 30.0) / pg) if pg else 0.0
         toplam_tl += gun_tl * len(gunler)
+        # 🔴 SEBEBİ SÖYLE, SADECE "ONAYLA" DEME (sahip 2026-09-07:
+        # "HER GÜN ONAY MI YAPACAĞIM!"). Ölçüm gösterdi ki iki ayrı topluluk var:
+        #   · kaydı düzgün tutan, bir gün kaçıran  → tek tık onay, güvenli
+        #   · sistemi HİÇ kullanmamış               → onay değil, EĞİTİM sorunu
+        # Canlı: emir efe 0/7, ersan kazan 0/6, gökçe 0/6, naz dal 0/5 — dördü de
+        # 1 Eylül'de başladı ve mola butonuna HİÇ basmadı. MERT ALİ AKAR 3 ayda
+        # 36 planlı gün, TEK kayıt yok (part-time, yemek hakkı zaten yok).
+        m = r.get("mola_ozet") or {}
+        _kayitli = (m.get("hak_dogdu", 0) + m.get("ihlal", 0) + m.get("belirsiz", 0))
+        if _kayitli == 0:
+            tani = "hic_kullanmamis"
+            tani_metni = ("Bu kişi mola kaydını HİÇ tutmamış — onay değil, "
+                          "kullanmayı göstermek gerekiyor.")
+        elif _kayitli >= pg * 0.8:
+            tani = "duzenli_tutuyor"
+            tani_metni = "Kaydı düzenli tutuyor, bu günleri kaçırmış — onay güvenli."
+        else:
+            tani = "duzensiz"
+            tani_metni = "Kaydı düzensiz tutuyor — önce nedenini sormak gerekebilir."
         bekleyen.append({
             "personel_id": str(r.get("personel_id")),
             "ad_soyad": r.get("ad_soyad"),
@@ -508,7 +527,10 @@ def mola_askida(yil: int = Query(...), ay: int = Query(...)):
             "gunler": gunler,
             "gun_tutari": round(gun_tl, 2),
             "toplam_tutar": round(gun_tl * len(gunler), 2),
-            "mola_ozet": r.get("mola_ozet"),
+            "mola_ozet": m,
+            "kayitli_gun": _kayitli,
+            "tani": tani,
+            "tani_metni": tani_metni,
         })
     return {"yil": yil, "ay": ay,
             "kural": (vt or {}).get("personeller", [{}])[0].get("mola_kurali")

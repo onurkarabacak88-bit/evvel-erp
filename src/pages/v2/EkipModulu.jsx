@@ -3694,9 +3694,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           if (!ma || !ma.bekleyen_gun) return null;
           // Parası olmayan bekleyenler (sözleşmesinde yemek yok) ayrı gösterilir:
           // onaylamak para üretmez, listeyi şişirir.
-          const parali = (ma.bekleyenler || []).filter((b) => sayi(b.toplam_tutar) > 0);
-          const parasiz = (ma.bekleyenler || []).filter((b) => !sayi(b.toplam_tutar));
-          if (!parali.length && !parasiz.length) return null;
+          // 🔴 SEBEBE GÖRE AYIR (sahip 2026-09-07: "HER GÜN ONAY MI YAPACAĞIM!")
+          // Ölçüm iki ayrı topluluk gösterdi:
+          //   düzenli tutan, bir gün kaçırmış → tek tık onay, güvenli
+          //   sistemi HİÇ kullanmamış        → onay DEĞİL, eğitim sorunu
+          // Her gün onay istemek, kök nedeni gizleyip angarya üretir.
+          const parali = (ma.bekleyenler || []).filter(
+            (b) => sayi(b.toplam_tutar) > 0 && b.tani !== 'hic_kullanmamis');
+          const egitim = (ma.bekleyenler || []).filter((b) => b.tani === 'hic_kullanmamis');
+          const parasiz = (ma.bekleyenler || []).filter(
+            (b) => !sayi(b.toplam_tutar) && b.tani !== 'hic_kullanmamis');
+          if (!parali.length && !parasiz.length && !egitim.length) return null;
           const onayla = async (b) => {
             setMolaMesgul(true);
             try {
@@ -3739,8 +3747,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                 }}>
                   <b style={{ color: R.krem, minWidth: 150 }}>{b.ad_soyad}</b>
                   <span style={{ color: R.metin2, flex: 1 }}>
-                    {b.askida_gun} gün ({(b.gunler || []).map((g) => g.slice(-2)).join(', ')}) ·
-                    günlük {fmt(sayi(b.gun_tutari))}
+                    {b.askida_gun} gün ({(b.gunler || []).map((g) => g.slice(-2)).join(', ')})
+                    {b.kayitli_gun != null
+                      ? <> · <span style={{ color: R.yesil }}>{b.kayitli_gun}/{b.planli_gun} gün kaydı var</span></>
+                      : null}
                   </span>
                   <b style={{ color: R.yesil, minWidth: 90, textAlign: 'right' }}>
                     {fmt(sayi(b.toplam_tutar))}
@@ -3760,6 +3770,27 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                   </button>
                 </div>
               ))}
+              {egitim.length ? (
+                <div style={{
+                  marginTop: 10, padding: '9px 11px', borderRadius: 9,
+                  background: 'rgba(224,92,92,0.07)', border: `1px solid ${R.cizgi3}`,
+                  color: R.metin2, fontSize: 12, lineHeight: 1.6,
+                }}>
+                  <b style={{ color: R.kirmizi }}>⚠ Onay bu kişilerin çözümü değil</b> — mola
+                  kaydını <b>hiç</b> tutmamışlar. Her ay onaylamak yerine kullanmayı göstermek gerekiyor:
+                  <ul style={{ margin: '6px 0 0', paddingLeft: 18 }}>
+                    {egitim.map((b) => (
+                      <li key={b.personel_id} style={{ marginBottom: 2 }}>
+                        <b style={{ color: R.krem }}>{b.ad_soyad}</b> — {b.planli_gun} planlı günün
+                        <b> {b.kayitli_gun}</b>'ünde kayıt var
+                        {sayi(b.toplam_tutar) > 0
+                          ? <> · onaylanırsa <b style={{ color: R.yesil }}>{fmt(sayi(b.toplam_tutar))}</b></>
+                          : <> · sözleşmesinde yemek yok, para etkisi yok</>}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : null}
               {parasiz.length ? (
                 <div style={{ color: R.not2, fontSize: 11.5, marginTop: 8 }}>
                   {parasiz.map((b) => b.ad_soyad).join(', ')} — {parasiz.reduce((t, b) => t + b.askida_gun, 0)} gün
