@@ -50,15 +50,27 @@ def _kalem(tur: str, eksen: str, tutar: float, kaynak: str, kanit_sinifi: str,
 
 
 def hesapla(sozlesme: Dict[str, Any], kural: Dict[str, Any],
-            olcum: Dict[str, Any]) -> Dict[str, Any]:
-    """SAF. Üç sözlük → kalem listesi + net.
+            olcum: Dict[str, Any], karar: Dict[str, Any] = None,
+            mahsup: Dict[str, Any] = None) -> Dict[str, Any]:
+    """SAF. Beş sözlük → kalem listesi + iki net.
 
     sozlesme: bordro_ucret.sozlesme_coz() çıktısı (kalem başına tutar + iz)
     kural   : bordro_kural_coz.kural_coz() çıktısı (aylik_gun, gunluk_saat…)
     olcum   : KANIT — {gecen_gun, planli_gun, yemek_hak_gun, ihlal_gun,
                        kayit_yok_gun, onayli_gun, fazla_mesai_saat,
                        calisilan_saat, ay_tamam}
+    karar   : SAHİBİN AÇIK KARARLARI — {bayram_mesai_saat, eksik_gun,
+                       raporlu_gun, rapor_kesinti, manuel_duzeltme, gerekce}
+    mahsup  : ERKEN ÖDENMİŞ PARA — {avans_mahsup, mahsup_devir}
+
+    İKİ NET döner ve ikisi FARKLI sorulara cevap verir:
+      net_hakedis  = SOZLESME + OLCUM + KARAR  → "bu dönemde ne HAK ETTİ"
+      net_odenecek = net_hakedis + MAHSUP      → "kasadan ne ÇIKACAK"
+    Avans hakedişi azaltmaz; zaten ödenmiş parçasıdır. İkisini tek sayıya
+    indirmek, bu projede aylarca "maaşı neden düşük" sorusunu doğurdu.
     """
+    karar = karar or {}
+    mahsup = mahsup or {}
     K = sozlesme.get("kalem") or {}
     part = (sozlesme.get("calisma_turu") or "surekli") != "surekli"
     kural_id = kural.get("_kural_id")
@@ -191,8 +203,81 @@ def hesapla(sozlesme: Dict[str, Any], kural: Dict[str, Any],
             ucret_tanim_id=K.get("YOL", {}).get("ucret_tanim_id"),
             kural_id=kural_id))
 
-    net = _r(sum(k["tutar"] for k in kalemler))
-    return {"surum": SURUM, "kalemler": kalemler, "net": net, "notlar": notlar,
+    # ── KARAR EKSENİ — sahibin AÇIK kararları ───────────────────────────────
+    # Bunlar ölçümden türemez; biri karar verir ve GEREKÇESİYLE yazılır.
+    # Ayrı eksende durmalarının sebebi: denetimde "bu para neye dayanıyor"
+    # sorusunun cevabı "ölçtük" değil "karar verildi"dir — ikisi karışmamalı.
+    maas = float(K.get("TABAN", {}).get("tutar") or 0)
+    if part:
+        _saatlik_k = float(K.get("SAATLIK", {}).get("tutar") or 0)
+        _gunluk_k = _saatlik_k * float(kural.get("part_gunluk_saat") or 5.5)
+    else:
+        _saatlik_k = (maas / aylik_saat) if aylik_saat > 0 else 0.0
+        _gunluk_k = (maas / aylik_gun) if aylik_gun > 0 else 0.0
+
+    bayram = float(karar.get("bayram_mesai_saat") or 0)
+    if bayram > 0 and _saatlik_k > 0:
+        kalemler.append(_kalem(
+            "BAYRAM_MESAI", "KARAR", bayram * _saatlik_k * 2,
+            kaynak="sahip_karari", kanit_sinifi="beyan",
+            kanit={"saat": bayram, "saatlik": _r(_saatlik_k, 4), "kat": 2,
+                   "not": "bayram mesaisi vardiya takibinde YOKTUR, elle girilir"},
+            miktar=bayram, birim="saat", birim_tutar=_saatlik_k * 2,
+            kural_id=kural_id))
+
+    eksik = float(karar.get("eksik_gun") or 0)
+    raporlu = float(karar.get("raporlu_gun") or 0)
+    kesinti_gun = eksik + (raporlu if karar.get("rapor_kesinti") else 0)
+    if kesinti_gun > 0 and _gunluk_k > 0:
+        kalemler.append(_kalem(
+            "EKSIK_GUN", "KARAR", -(_gunluk_k * kesinti_gun),
+            kaynak="sahip_karari", kanit_sinifi="beyan",
+            kanit={"eksik_gun": eksik, "raporlu_gun": raporlu,
+                   "rapor_kesinti": bool(karar.get("rapor_kesinti")),
+                   "gunluk_ucret": _r(_gunluk_k, 4),
+                   "dayanak": "İş K. — devamsızlık günlük ücretten düşer"},
+            miktar=kesinti_gun, birim="gun", birim_tutar=-_gunluk_k,
+            kural_id=kural_id))
+
+    duz = float(karar.get("manuel_duzeltme") or 0)
+    if abs(duz) > 0.004:
+        kalemler.append(_kalem(
+            "DUZELTME", "KARAR", duz,
+            kaynak="sahip_karari", kanit_sinifi="beyan",
+            kanit={"gerekce": karar.get("gerekce"),
+                   "not": ("elle girilen düzeltme — GEREKÇESİZ ise denetimde "
+                           "savunulamaz")},
+            kural_id=kural_id))
+        if not (karar.get("gerekce") or "").strip():
+            notlar.append("⚠️ DÜZELTME GEREKÇESİZ: %.2f ₺ neye dayandığı yazılmamış" % duz)
+
+    net_hakedis = _r(sum(k["tutar"] for k in kalemler))
+
+    # ── MAHSUP EKSENİ — erken ödenmiş para ──────────────────────────────────
+    # ⚠️ Avans hakedişi AZALTMAZ; hakedişin zaten ödenmiş parçasıdır. Bu yüzden
+    # net_hakedis'in DIŞINDA durur ve yalnız "kasadan ne çıkacak" sorusunu
+    # etkiler. Tek sayıya indirilirse personel "maaşım neden düşük" diye sorar
+    # ve cevabı ekranda göremez.
+    avans = float(mahsup.get("avans_mahsup") or 0)
+    if avans > 0:
+        kalemler.append(_kalem(
+            "AVANS_MAHSUP", "MAHSUP", -avans,
+            kaynak="avans_service", kanit_sinifi="turetilmis",
+            kanit={"tutar": avans,
+                   "not": "dönemin ödenmiş avansı + önceki dönem devri"},
+            kural_id=kural_id))
+    devir = float(mahsup.get("mahsup_devir") or 0)
+    if devir > 0:
+        notlar.append("mahsup devri %.2f ₺ — bu dönem karşılanamadı, sonrakine yazıldı"
+                      % devir)
+
+    net_odenecek = _r(sum(k["tutar"] for k in kalemler))
+    return {"surum": SURUM, "kalemler": kalemler,
+            "net": net_hakedis,              # geriye uyum: eski ad = hakediş
+            "net_hakedis": net_hakedis,
+            "net_odenecek": net_odenecek,
+            "mahsup_devir": _r(devir),
+            "notlar": notlar,
             "eksen_toplam": {
                 e: _r(sum(k["tutar"] for k in kalemler if k["eksen"] == e))
                 for e in ("SOZLESME", "OLCUM", "KARAR", "MAHSUP")}}

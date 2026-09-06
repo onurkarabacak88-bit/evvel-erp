@@ -655,16 +655,46 @@ def kalem_golge(yil: int = Query(...), ay: int = Query(...),
                 "saat_kaynagi": r.get("saat_kaynagi"),
                 "ay_tamam": u.get("ay_tamam"),
             }
-            sonuc = _bm.hesapla(sz, kr, olcum)
-            v1 = float(r.get("net_hakediş") or 0)
-            fark = sonuc["net"] - v1
-            toplam_v1 += v1
-            toplam_v2 += sonuc["net"]
-            if abs(fark) > 0.005:
+            # KARAR + MAHSUP katmanı `personel_aylik`'te durur — motor onu ALIR.
+            cur.execute(
+                "SELECT bayram_mesai_saat, eksik_gun, raporlu_gun, rapor_kesinti, "
+                "       manuel_duzeltme, not_aciklama, hesaplanan_net, "
+                "       COALESCE(avans_mahsup,0) AS avans_mahsup, "
+                "       COALESCE(mahsup_devir,0) AS mahsup_devir, durum "
+                "  FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
+                (pid, yil, ay))
+            _k = cur.fetchone() or {}
+            karar = {"bayram_mesai_saat": _k.get("bayram_mesai_saat"),
+                     "eksik_gun": _k.get("eksik_gun"),
+                     "raporlu_gun": _k.get("raporlu_gun"),
+                     "rapor_kesinti": _k.get("rapor_kesinti"),
+                     "manuel_duzeltme": _k.get("manuel_duzeltme"),
+                     "gerekce": _k.get("not_aciklama")}
+            mahsup = {"avans_mahsup": _k.get("avans_mahsup"),
+                      "mahsup_devir": _k.get("mahsup_devir")}
+            sonuc = _bm.hesapla(sz, kr, olcum, karar, mahsup)
+
+            # İKİ AYRI KARŞILAŞTIRMA — ikisi farklı soruyu ölçer:
+            #   hakediş  ↔ vardiya_takip.net_hakediş   (SOZLESME+OLCUM, KARAR hariç)
+            #   ödenecek ↔ personel_aylik.hesaplanan_net (KARAR+MAHSUP dahil)
+            v1_hak = float(r.get("net_hakediş") or 0)
+            v2_saf = sonuc["eksen_toplam"]["SOZLESME"] + sonuc["eksen_toplam"]["OLCUM"]
+            fark_hak = round(v2_saf - v1_hak, 2)
+            v1_ode = (float(_k.get("hesaplanan_net"))
+                      if _k.get("hesaplanan_net") is not None else None)
+            fark_ode = (round(sonuc["net_odenecek"] - v1_ode, 2)
+                        if v1_ode is not None else None)
+            toplam_v1 += v1_hak
+            toplam_v2 += v2_saf
+            if abs(fark_hak) > 0.005 or (fark_ode is not None and abs(fark_ode) > 0.005):
                 kirik += 1
             satirlar.append({
                 "personel_id": pid, "ad_soyad": r.get("ad_soyad"),
-                "v1_net": round(v1, 2), "v2_net": sonuc["net"], "fark": round(fark, 2),
+                "durum": _k.get("durum"),
+                "v1_net": round(v1_hak, 2), "v2_net": round(v2_saf, 2),
+                "fark": fark_hak,
+                "v1_odenecek": v1_ode, "v2_odenecek": sonuc["net_odenecek"],
+                "fark_odenecek": fark_ode,
                 "kalemler": sonuc["kalemler"], "notlar": sonuc["notlar"],
                 "eksen_toplam": sonuc["eksen_toplam"]})
 
