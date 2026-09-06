@@ -16,8 +16,8 @@
   "  · mert-2026-08 ve nisanur-2026-08 — saatleri ÖDENEN PARADAN geri türetildi.",
   "    Sistemin o parayı üretmesini sınamak DAİRESEL olurdu: girdiyi çıktıdan",
   "    hesaplayıp sonra çıktıyı doğrulamak hiçbir şey ölçmez.",
-  "  · deniz-2026-08 — 1.163,50 ₺'lik fark AÇIKLANAMADI; bağımsız kanıt tutarsız.",
-  "    Kanıtı olmayan vaka eklenmez (bkz. yukarıdaki kural)."
+  "  · deniz-2026-08 EKLENDİ (2026-09-06): yalnız HAKEDİŞ donduruldu (35.075,00).",
+  "    Açıklanamayan 1.163,50 KARAR katmanındadır, hakedişi etkilemez."
  ],
  "vakalar": [
   {
@@ -371,6 +371,189 @@
     },
     "sahip_defteri": 25381.0,
     "denklem": "hakediş 24.988,33 − 4.000,00 avans = 20.988,33 kalan; toplam ödenen 25.381,00 → 392,67 fazla"
+   }
+  },
+  {
+   "kod": "merve-karabacak-2026-08",
+   "ad_soyad": "MERVE KARABACAK",
+   "personel_id": "6255f347-590f-4ec9-880e-28d79e5a054c",
+   "yil": 2026,
+   "ay": 8,
+   "neden_bu_vaka": [
+    "ZAM GEÇMİŞE SIZMAMALI — V2'nin varlık sebebi. 6 Eylül'de maaşı 32.000'den",
+    "35.000'e çıktı. Eski sistemde kartı değiştirmek AĞUSTOS'u da 35.000 yapardı;",
+    "Haziran/Temmuz 32.000 olarak ÖDENMİŞ olduğu için 6.000 ₺ sahte borç doğardı.",
+    "Ölçüldü: zam öncesi Ağustos hesabı 38.180 çıkıyordu, düzeltildi → 35.180.",
+    "Aynı vaka İKİNCİ bir kuralı da sınar: hiç vardiya kaydı yok (31 gün boş),",
+    "yemek 'varsayim_vardiya_yok' ile TAM verilmeli — 'beklenen_gun' paydası",
+    "bunu sıfırlamamalı (gölge hesabı tam bu kusuru yakaladı)."
+   ],
+   "sozlesme": {
+    "calisma_turu": "surekli",
+    "maas": 32000.0,
+    "yemek_ucreti": 3180.0,
+    "yol_ucreti": 0.0,
+    "baslangic_tarihi": "2026-05-01",
+    "cikis_tarihi": null,
+    "not": "Ağustos'ta 32.000 — 35.000 zammı 2026-09-01'den geçerli"
+   },
+   "olcum": {
+    "planli_gun": 0,
+    "yemek_hakki_dogan_gun": 0,
+    "mola_ihlal_gun": 0,
+    "gecen_gun": 30,
+    "not": "tam ay · vardiya kaydı HİÇ YOK (31 gün)"
+   },
+   "beklenen_kalemler": [
+    {
+     "tur": "TABAN",
+     "tutar": 32000.0,
+     "aciklama": "tam ay · ZAM ÖNCESİ tutar (zaman çizgisi)"
+    },
+    {
+     "tur": "YEMEK",
+     "tutar": 3180.0,
+     "aciklama": "vardiya yok → TAM HAK varsayıldı, damgalı"
+    },
+    {
+     "tur": "YOL",
+     "tutar": 0.0,
+     "aciklama": "tanımlı değil"
+    }
+   ],
+   "beklenen_net": 35180.0,
+   "tolerans": 0.05,
+   "bagimsiz_kanit": {
+    "sahip_beyani": [
+     "2026-09-06 'MERVE MAAŞ 35' → 35.000, 1 Eylül'den geçerli",
+     "Haziran ve Temmuz 32.000 olarak ÖDENDİ (kayıt + banka)"
+    ],
+    "ucret_cizgisi": {
+     "2026-06-15": 32000.0,
+     "2026-07-15": 32000.0,
+     "2026-08-15": 32000.0,
+     "2026-09-15": 35000.0
+    },
+    "not": "Bu vaka kırılırsa ZAM GEÇMİŞE SIZIYOR demektir — en pahalı kusur sınıfı"
+   }
+  },
+  {
+   "kod": "deniz-2026-08",
+   "ad_soyad": "DENİZ KÜÇÜKKIRLI",
+   "personel_id": "41cd9474-c364-44e3-aa1e-a7ec50524f3b",
+   "yil": 2026,
+   "ay": 8,
+   "neden_bu_vaka": [
+    "TAM AY + ÇIKIŞ AYIN SON GÜNÜ + SEYREK VARDİYA VERİSİ bir arada.",
+    "31 günlük ayda yalnız 6 vardiya kaydı var (10,12,13,14,15,16 Ağustos) ama",
+    "kişi tam ay çalıştı; 'vardiya yoksa izinlidir' kuralı gereği tam ay ödenir.",
+    "Kayıtlı bordro 57.550,00 gösteriyordu: içine elle +28.075 (tam bir aylık",
+    "maaş daha) eklenmişti. Bu vaka o tür şişmeyi bir daha görünmez kılmaz.",
+    "⚠️ SADECE HAKEDİŞ dondurulur. Fiilen gönderilen 33.911,50; aradaki",
+    "   1.163,50 KARAR katmanındadır (manuel_duzeltme) ve HÂLÂ AÇIKLANAMADI."
+   ],
+   "sozlesme": {
+    "calisma_turu": "surekli",
+    "maas": 28075.0,
+    "yemek_ucreti": 7000.0,
+    "yol_ucreti": 0.0,
+    "baslangic_tarihi": "2026-06-09",
+    "cikis_tarihi": "2026-08-31"
+   },
+   "olcum": {
+    "planli_gun": 6,
+    "yemek_hakki_dogan_gun": 6,
+    "mola_ihlal_gun": 0,
+    "gecen_gun": 30,
+    "not": "31 günlük ay · tam ay = 30 gün (İş K./SGK)"
+   },
+   "beklenen_kalemler": [
+    {
+     "tur": "TABAN",
+     "tutar": 28075.0,
+     "aciklama": "tam ay · 28.075/30 × 30"
+    },
+    {
+     "tur": "YEMEK",
+     "tutar": 7000.0,
+     "aciklama": "6/6 planlı gün — ihlal yok, TAM"
+    },
+    {
+     "tur": "YOL",
+     "tutar": 0.0,
+     "aciklama": "tanımlı değil"
+    }
+   ],
+   "beklenen_net": 35075.0,
+   "tolerans": 0.05,
+   "bagimsiz_kanit": {
+    "banka": {
+     "tutar": 33911.5,
+     "tarih": "2026-08-31",
+     "hesap": "VakıfBank-MERVE KARABACAK",
+     "alici_adi_bankada": "kenan küçükkırlı",
+     "not": "kimlikteki adı KENAN, kullandığı ad DENİZ — sahip 2026-09-06"
+    },
+    "sahip_defteri": 33912.0,
+    "acik_kalan": "35.075,00 hakediş − 33.911,50 ödenen = 1.163,50 AÇIKLANAMADI. Bir günlük yemeğe (7.000/6 = 1.166,67) çok yakın, kalıntı 3,17. KARAR katmanında duruyor, hakedişi etkilemez."
+   }
+  },
+  {
+   "kod": "mert-2026-07",
+   "ad_soyad": "MERT ALİ AKAR",
+   "personel_id": "b89b146a-27c5-4730-8c83-a264ea8f5f2a",
+   "yil": 2026,
+   "ay": 7,
+   "neden_bu_vaka": [
+    "TESTTE HİÇ PART-TIME VAKASI YOKTU. Part-time'da net = saat × saatlik;",
+    "taban da yemek de YOKTUR (25 gün 'sozlesme_disi' — tam gün eşiği altı).",
+    "Saatler VARDİYA PLANINDAN geliyor (Ağustos'takiler gibi ödenen paradan",
+    "türetilmedi) → dairesel değil.",
+    "Ayrıca hassasiyeti sınar: 136,3666 saat yuvarlanırsa 0,33 ₺ kayar."
+   ],
+   "sozlesme": {
+    "calisma_turu": "part_time",
+    "maas": 0.0,
+    "saatlik_ucret": 99.0,
+    "yemek_ucreti": 0.0,
+    "yol_ucreti": 0.0,
+    "baslangic_tarihi": "2026-06-25",
+    "cikis_tarihi": "2026-08-31"
+   },
+   "olcum": {
+    "planli_gun": 25,
+    "yemek_hakki_dogan_gun": 0,
+    "mola_ihlal_gun": 0,
+    "calisilan_saat": 136.3667,
+    "not": "25 gün sozlesme_disi (part-time tam gün eşiği altı) → yemek YOK"
+   },
+   "beklenen_kalemler": [
+    {
+     "tur": "SAATLIK",
+     "tutar": 13500.3,
+     "aciklama": "136,3666 sa × 99,00"
+    },
+    {
+     "tur": "YEMEK",
+     "tutar": 0.0,
+     "aciklama": "part-time tam gün altı — sözleşme öngörmüyor"
+    },
+    {
+     "tur": "YOL",
+     "tutar": 0.0,
+     "aciklama": "tanımlı değil"
+    }
+   ],
+   "beklenen_net": 13500.3,
+   "tolerans": 0.05,
+   "bagimsiz_kanit": {
+    "banka": {
+     "tutar": 14037.0,
+     "tarih": "2026-07-31",
+     "hesap": "VakıfBank-MERVE KARABACAK",
+     "alici_adi_bankada": "mert ali akay (ekstrede yazım hatası: akar→akay)"
+    },
+    "not": "Banka 14.037,00 · hakediş 13.500,30 → 536,70 FAZLA ödenmiş. Fazlalık hakedişi değiştirmez; vaka hakedişi dondurur."
    }
   }
  ]
