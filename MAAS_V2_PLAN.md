@@ -425,6 +425,48 @@ yazıyor ama Ağustos'ta çalıştılar (paraları elden kayıtlı, bordroda gö
 
 ---
 
+## 5i · ADIM 6 BAŞLADI — SAF MOTOR + GÖLGE (2026-09-06, `39fba86`+`3760310`)
+
+`bordro_motor.hesapla(sozlesme, kural, olcum) → [kalem]`
+DB yok · I/O yok · zaman yok. Ölçümü ÜRETMEZ, ALIR. Her kalem `kaynak` +
+`kanit_sinifi` + `kanit`(JSONB) + `ucret_tanim_id` + `kural_id` taşır.
+Eksenler: SOZLESME | OLCUM | KARAR | MAHSUP.
+
+`GET /api/ucret/kalem-golge?yil=&ay=` — V1 net ↔ Σ kalem yarışı, **para akmaz**.
+
+### Gölge 1. koşu: İKİ KUSUR YAKALADI (para akmadan)
+| kusur | kim | bedel |
+|---|---|---|
+| motorda `planli > 0` şartı eksikti — `beklenen_gun` vardiya yokken pozitif payda üretip yemeği sıfırlıyordu | mehmet ucak · MERVE KARABACAK | −2.036,00 ₺ |
+| gölge düzeneği API'nin YUVARLANMIŞ ölçüsünü okuyordu | MERT · nisanur · Deniz · Celile · ersan | ±0,33 sahte fark |
+
+İkisi de düzeltildi (`3760310`); `gorev_api` artık `olcum_ham` alanı veriyor.
+
+### Gölge 2. koşu — YAKINSADI
+```
+2026-06   0,00      2026-08  −0,01
+2026-07  +0,02      2026-09   0,00      (7 kişide ±0,01)
+```
+Kalan farkın TAMAMI **yuvarlama yönü**:
+```
+V1: önce topla → sonra yuvarla     25.721,67
+V2: önce yuvarla → sonra topla     25.721,66
+```
+**V2'nin yaptığı doğru.** Defterde her satır ödenebilir bir tutar olmalı ve
+toplam, YAZILI satırların toplamına eşit olmalı. V1'in netini alıp satırlarını
+toplarsanız tutmuyor — V2'nin var olma sebebi tam bu.
+⏳ Kesimde 7 kişinin neti 1 kuruş oynayacak; karşılığında defter tutarlı olacak.
+
+### KESİM ÖNCESİ KALAN ŞARTLAR
+1. ❌ Kabul testi **6/9** — Eylül kapanınca 3 vaka daha (bugünkü 6 vakadan
+   3'ü bugün eklendi ve `sila-2026-08` ilk koşuda gerçek kusur yakaladı)
+2. ❌ `bordro_kalem`'e YAZMA yolu yok (şu an yalnız hesaplıyor, kaydetmiyor)
+3. ❌ MAHSUP ekseni (avans/devir) motora girmedi — ödeme katmanında duruyor
+4. ❌ KARAR ekseni kalemi (elden mesai gibi) motorda üretilmiyor
+5. ⏳ ±0,01 yuvarlama farkı sahip onayıyla kabul edilmeli
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
