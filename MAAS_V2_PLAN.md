@@ -187,6 +187,45 @@ hâliyle ödenirse **3.040 ₺ eksik** ödenir. Ödeme öncesi senkron ŞART.
 
 ---
 
+## 5d · ADIM 5 (ÜCRET EKSENİ) TAMAMLANDI (2026-09-06, `b33f5bf`)
+
+Motor artık ücreti **hesaplanan DÖNEMİN tarihine göre** çözüyor
+(`gorev_api.vardiya_takip` → `bordro_ucret.sozlesme_coz`, savepoint içinde).
+Çıktı `ucret_kaynagi` + `ucret_tarihi` taşıyor.
+
+**Canlı kanıt — MERVE KARABACAK Ağustos 2026:**
+```
+Adım 5 öncesi   taban 35.000  → net 38.180   ❌ (Eylül zammı Ağustos'a sızmış)
+Adım 5 sonrası  taban 32.000  → net 35.180   ✅
+```
+Diğer 6 kişinin tabanı DEĞİŞMEDİ; hepsinin kaynağı artık `ucret_tanim`.
+Golden 0,00 × 4 · kabul 3/3.
+
+⚠️ **Adım 5'in bu parçası ücret eksenidir.** Planın "saf motor + kalem defteri
++ gölge hesap" parçası HENÜZ YAPILMADI — `bordro_kalem` hâlâ boş.
+
+### ⛔ AĞUSTOS 2026 SENKRONLANAMAZ — kalan sapmalar ÖLÇÜM kaynaklı
+
+| kişi | kayıtlı | canlı | fark | engel |
+|---|---|---|---|---|
+| MERVE AKTA | 3.733,33 | 32.000,00 | +28.266,67 | kayıt **ONAYLANMIŞ** · planlı 7 gün |
+| DENİZ KÜÇÜKKIRLI | 57.550,00 | 35.075,00 | −22.475,00 | ayrılmış · planlı 6 gün |
+| nisanur bolat | 14.511,70 | **0,00** | −14.511,70 | part-time, vardiya/saat yok → **sıfırlanır** |
+| YAĞIZ ERKEK | 15.162,00 | 7.015,00 | −8.147,00 | ayrılmış · planlı 0 gün |
+| SILA AKBAY | 17.988,33 | 24.988,33 | +7.000,00 | yemek düzeltmesi (gerçek) |
+| YAREN BEŞLİ | 24.795,83 | 29.229,17 | +4.433,34 | yemek düzeltmesi (gerçek) |
+| MEHMET EFE | 3.743,33 | 7.015,00 | +3.271,67 | kayıt **ONAYLANMIŞ** · ayrılmış |
+| MERVE KARABACAK | 32.000,00 | 35.180,00 | +3.180,00 | yemek düzeltmesi (gerçek) |
+
+Toplu senkron: iki onaylı kaydı ezer, bir part-time'ı sıfırlar, ayrılanların
+son dönem hakedişini bozar. **Yapılmamalı.** Bunlar Adım 4 (kanıt toplayıcı +
+çıkış tarihi + part-time saat kaynağı) ve Adım 8 (düzeltme defteri) işidir.
+
+Eylül'de bu tehlike yoktu: hepsi `taslak`, ölçümleri tutarlı, senkron öncesi
+kişi kişi ölçüldü, sonrası tahminle **birebir** uyuştu (+3.476,00).
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
