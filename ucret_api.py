@@ -693,19 +693,27 @@ def kalem_golge(yil: int = Query(...), ay: int = Query(...),
             v1_hak = float(r.get("net_hakediş") or 0)
             v2_saf = sonuc["eksen_toplam"]["SOZLESME"] + sonuc["eksen_toplam"]["OLCUM"]
             fark_hak = round(v2_saf - v1_hak, 2)
+            # ⚠️ ELLE SAATTE HAKEDİŞ KIYASI ANLAMSIZ: `vardiya_takip.net_hakediş`
+            # saati VARDİYA PLANINDAN alır; elle girilen saat katmanı ondan SONRA
+            # (maas_service.part_elle_saat_net) uygulanır. İkisini kıyaslamak
+            # "V2 eksik hesaplıyor" yanılgısı üretir — MERT ALİ AKAR'da 12.183,27.
+            # Bu kişilerde geçerli kıyas ÖDENECEK tarafıdır ve o tutuyor.
+            kiyas_disi = (olcum.get("saat_kaynagi") == "elle")
             v1_ode = (float(_k.get("hesaplanan_net"))
                       if _k.get("hesaplanan_net") is not None else None)
             fark_ode = (round(sonuc["net_odenecek"] - v1_ode, 2)
                         if v1_ode is not None else None)
             toplam_v1 += v1_hak
             toplam_v2 += v2_saf
-            if abs(fark_hak) > 0.005 or (fark_ode is not None and abs(fark_ode) > 0.005):
+            _kirik_hak = (not kiyas_disi) and abs(fark_hak) > 0.005
+            _kirik_ode = (fark_ode is not None) and abs(fark_ode) > 0.005
+            if _kirik_hak or _kirik_ode:
                 kirik += 1
             satirlar.append({
                 "personel_id": pid, "ad_soyad": r.get("ad_soyad"),
                 "durum": _k.get("durum"),
                 "v1_net": round(v1_hak, 2), "v2_net": round(v2_saf, 2),
-                "fark": fark_hak,
+                "fark": fark_hak, "hakedis_kiyas_disi": kiyas_disi,
                 "v1_odenecek": v1_ode, "v2_odenecek": sonuc["net_odenecek"],
                 "fark_odenecek": fark_ode,
                 "kalemler": sonuc["kalemler"], "notlar": sonuc["notlar"],
