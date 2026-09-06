@@ -1992,6 +1992,34 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             """)
         personeller = [dict(r) for r in cur.fetchall()]
 
+        # ── MOLA KAYDI OLMAYAN GÜN: KURAL + ONAY DEFTERİ (Adım 7) ───────────
+        # Sahip 2026-09-06: "MANTIKLISI SANKİ C GİBİ" → mola kaydı bulunmayan
+        # gün kendiliğinden hak DOĞURMAZ; ASKIYA alınır, sahip gün gün onaylar.
+        # Onaylanan gün `bordro_kalem`'e KARAR ekseninde yazılır: kim, ne zaman,
+        # hangi gerekçe orada durur (İZ BIRAKIR).
+        # Kanıtsız ödeme "UYDURMA YOK" doktrinine aykırı olurdu; bu yüzden
+        # varsayılan yol hak doğurmamak, onay ise AÇIK BİR KARARdır.
+        _mola_kurali = "hak_dogmaz"
+        _onayli_gun = set()
+        try:
+            with savepoint(cur, "mola_kural"):
+                import bordro_kural_coz as _bkc
+                _mola_kurali = str(_bkc.kural_coz(cur, d1).get("mola_kayit_yok")
+                                   or "hak_dogmaz")
+        except Exception as _mk_err:  # noqa: BLE001
+            logging.getLogger(__name__).warning("mola kurali okunamadi: %s", _mk_err)
+        try:
+            with savepoint(cur, "mola_onay"):
+                # TEK sorgu — kişi başı sorgu N+1 üretirdi (bkz. PERF N+1 FIX).
+                cur.execute(
+                    "SELECT personel_id, kanit->>'tarih' AS t FROM bordro_kalem "
+                    " WHERE tur='YEMEK_GUN_ONAY' AND durum='aktif' "
+                    "   AND yil=%s AND ay=%s", (yil, ay))
+                _onayli_gun = {(str(r["personel_id"]), str(r["t"]))
+                               for r in (cur.fetchall() or []) if r["t"]}
+        except Exception as _mo_err:  # noqa: BLE001
+            logging.getLogger(__name__).warning("mola onaylari okunamadi: %s", _mo_err)
+
         sonuclar = []
         for p in personeller:
             pid = p["id"]
@@ -2218,7 +2246,9 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             # gün kalem üretmez, GEREKÇESİ durur.
             # ⚠️ Bu blok PARAYA DOKUNMAZ: yalnız var olan kararı etiketler.
             _mola = {"hak_dogdu": 0, "ihlal": 0, "belirsiz": 0,
-                     "kayit_yok": 0, "sozlesme_disi": 0, "vardiya_yok": 0}
+                     "kayit_yok": 0, "sozlesme_disi": 0, "vardiya_yok": 0,
+                     "askida": 0, "onayli": 0}
+            _askida_gunler = []
 
             tarih = p_d1
             while tarih <= p_d2:
@@ -2279,21 +2309,14 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                         fazla = max(0.0, planlanan - STANDART)
                         toplam_fazla_saat += fazla
 
-                        # Yemek ücreti hakkı  +  NEDENİ (Adım 4)
-                        yemek_hak = False
-                        if m and m.get("ucret_hakki") is True:
-                            if part_tam or not is_part:
-                                yemek_hak = True
-                                yemek_ucret_gun += 1
-                        # ── hangi hâl? (para aynı, gerekçe görünür olur) ──
+                        # ── ÖNCE SINIFLANDIR (Adım 4), SONRA KARAR VER (Adım 7)
                         if is_part and not part_tam:
                             # Part-time tam gün eşiğinin altında: sözleşme yemek
                             # ücreti öngörmüyor. Bu bir ihlal DEĞİL.
                             mola_durum = "sozlesme_disi"
                         elif m is None:
-                            # 🔴 EN ÖNEMLİSİ: mola kaydı HİÇ YOK. Bu "hak doğmadı"
-                            # demek DEĞİL, "bilmiyoruz" demektir. Eylül 2026'da
-                            # dört kişinin yemeği tam bu yüzden sıfırlandı.
+                            # 🔴 Mola kaydı HİÇ YOK. "Hak doğmadı" demek DEĞİL,
+                            # "BİLMİYORUZ" demektir. Kararı kural + onay verir.
                             mola_durum = "kayit_yok"
                         elif m.get("ucret_hakki") is True:
                             mola_durum = "hak_dogdu"
@@ -2301,6 +2324,25 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                             mola_durum = "ihlal"
                         else:
                             mola_durum = "belirsiz"
+
+                        # ── HAK KARARI ────────────────────────────────────────
+                        yemek_hak = False
+                        if mola_durum == "hak_dogdu":
+                            yemek_hak = True
+                        elif mola_durum == "kayit_yok":
+                            if (str(pid), t) in _onayli_gun:
+                                # Sahip bu günü ONAYLADI — karar var, iz var.
+                                yemek_hak = True
+                                mola_durum = "onayli"
+                            elif _mola_kurali == "hak_dogar":
+                                yemek_hak = True
+                            elif _mola_kurali == "askida":
+                                # Karar BEKLİYOR: para ödenmez ama KAYBOLMAZ,
+                                # sahibin onay listesine düşer.
+                                mola_durum = "askida"
+                                _askida_gunler.append(t)
+                        if yemek_hak:
+                            yemek_ucret_gun += 1
                         _mola[mola_durum] = _mola.get(mola_durum, 0) + 1
 
                         if part_tam:
@@ -2504,7 +2546,10 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "mola_ozet": _mola,
                 # "belgesiz gün" = hak doğabilecekken KANIT bulunamayan gün.
                 # Sıfırdan büyükse ödenmeyen yemek bir KARAR değil, BOŞLUKTUR.
-                "yemek_belgesiz_gun": _mola.get("kayit_yok", 0),
+                "yemek_belgesiz_gun": _mola.get("kayit_yok", 0) + _mola.get("askida", 0),
+                # Sahibin onayını bekleyen günler — para ÖDENMEDİ ama KAYBOLMADI.
+                "mola_askida_gunler": _askida_gunler,
+                "mola_kurali": _mola_kurali,
                 # İZ BIRAKIR (Adım 5): bu rakamlar hangi ücret kaynağından geldi.
                 # 'ucret_tanim' = zaman çizgisi (o dönemde geçerli olan);
                 # 'personel_karti_ayna' = çizgide satır yok, kart okundu.

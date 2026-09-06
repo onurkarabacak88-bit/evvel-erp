@@ -446,3 +446,140 @@ def kural_yaz(m: KuralModel):
         conn.commit()
     return {"ok": True, "islem": "yeni_donem", "id": yeni,
             "gecerli_bas": str(g), "kapanan_onceki": kapanan}
+
+
+# ── MOLA ONAYI (Adım 7) ─────────────────────────────────────────────────────
+# Sahip 2026-09-06: "AMA MANTIKLISI SANKİ C GİBİ" — mola kaydı bulunmayan gün
+# kendiliğinden hak DOĞURMAZ; askıya alınır ve sahip gün gün onaylar.
+# Kanıtsız ödeme yapmak "UYDURMA YOK" doktrinine aykırı olurdu; onay ise AÇIK
+# BİR KARARdır ve `bordro_kalem`'e KARAR ekseninde iz bırakır.
+class MolaOnayGun(BaseModel):
+    personel_id: str
+    tarih: str                  # YYYY-AA-GG
+
+
+class MolaOnayModel(BaseModel):
+    gunler: List[MolaOnayGun]
+    gerekce: str
+    onaylayan: Optional[str] = None
+    kuru: bool = True           # ⚠️ VARSAYILAN KURU
+    geri_al: bool = False       # onayı kaldır
+
+
+@router.get("/mola-askida")
+def mola_askida(yil: int = Query(...), ay: int = Query(...)):
+    """Sahibin onayını bekleyen günler — kişi kişi, gün gün, para karşılığıyla.
+
+    "Askıda" = vardiya var, mola kaydı YOK. Bu bir ihlal değil, BOŞLUKtur;
+    para ödenmedi ama kaybolmadı.
+    """
+    with db() as (_, cur):
+        cur.execute("SELECT personel_id, kanit->>'tarih' AS tarih, "
+                    "       kanit->>'gerekce' AS gerekce, kanit->>'onaylayan' AS onaylayan "
+                    "  FROM bordro_kalem "
+                    " WHERE tur='YEMEK_GUN_ONAY' AND durum='aktif' AND yil=%s AND ay=%s "
+                    " ORDER BY personel_id", (yil, ay))
+        onayli = [dict(r) for r in (cur.fetchall() or [])]
+    try:
+        from gorev_api import vardiya_takip as _vt
+        vt = _vt(yil, ay)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, "vardiya takip okunamadi: %s" % e)
+
+    bekleyen, toplam_tl = [], 0.0
+    for r in (vt or {}).get("personeller") or []:
+        gunler = r.get("mola_askida_gunler") or []
+        if not gunler:
+            continue
+        u = r.get("ucret_detay") or {}
+        pg = r.get("planli_gun") or 0
+        aylik_yemek = (float(u.get("aylik_toplam_tahmini") or 0)
+                       - float(u.get("taban_maas") or 0)
+                       - float(u.get("yol_ucret_aylik") or 0))
+        gecen = float(u.get("gecen_gun") or 0)
+        # Bir günün para karşılığı = aylık yemek × dönem oranı ÷ planlı gün
+        gun_tl = (aylik_yemek * (gecen / 30.0) / pg) if pg else 0.0
+        toplam_tl += gun_tl * len(gunler)
+        bekleyen.append({
+            "personel_id": str(r.get("personel_id")),
+            "ad_soyad": r.get("ad_soyad"),
+            "planli_gun": pg,
+            "askida_gun": len(gunler),
+            "gunler": gunler,
+            "gun_tutari": round(gun_tl, 2),
+            "toplam_tutar": round(gun_tl * len(gunler), 2),
+            "mola_ozet": r.get("mola_ozet"),
+        })
+    return {"yil": yil, "ay": ay,
+            "kural": (vt or {}).get("personeller", [{}])[0].get("mola_kurali")
+                     if (vt or {}).get("personeller") else None,
+            "bekleyen_kisi": len(bekleyen),
+            "bekleyen_gun": sum(b["askida_gun"] for b in bekleyen),
+            "bekleyen_tutar": round(toplam_tl, 2),
+            "bekleyenler": bekleyen,
+            "onayli": onayli}
+
+
+@router.post("/mola-onay")
+def mola_onay(m: MolaOnayModel, yil: int = Query(...), ay: int = Query(...)):
+    """Askıdaki günleri ONAYLA (veya onayı geri al). ⚠️ Varsayılan KURU."""
+    if not m.gerekce:
+        raise HTTPException(400, "gerekce zorunlu — bu bir PARA kararidir")
+    if not m.gunler:
+        raise HTTPException(400, "gun listesi bos")
+    yazilan, atlanan = [], []
+    with db() as (conn, cur):
+        for g in m.gunler:
+            try:
+                _tarih(g.tarih)
+            except HTTPException:
+                atlanan.append({"personel_id": g.personel_id, "tarih": g.tarih,
+                                "neden": "tarih bicimi"})
+                continue
+            if g.tarih[:7] != "%04d-%02d" % (yil, ay):
+                atlanan.append({"personel_id": g.personel_id, "tarih": g.tarih,
+                                "neden": "donem disi"})
+                continue
+            cur.execute("SELECT id FROM bordro_kalem "
+                        " WHERE tur='YEMEK_GUN_ONAY' AND durum='aktif' "
+                        "   AND personel_id=%s AND yil=%s AND ay=%s "
+                        "   AND kanit->>'tarih'=%s",
+                        (g.personel_id, yil, ay, g.tarih))
+            mevcut = cur.fetchone()
+            if m.geri_al:
+                if not mevcut:
+                    atlanan.append({"personel_id": g.personel_id, "tarih": g.tarih,
+                                    "neden": "zaten onayli degil"})
+                    continue
+                yazilan.append({"personel_id": g.personel_id, "tarih": g.tarih,
+                                "islem": "geri_alindi"})
+                if not m.kuru:
+                    # append-only: SİLİNMEZ, 'eski' yapılır (İZ BIRAKIR).
+                    cur.execute("UPDATE bordro_kalem SET durum='eski' WHERE id=%s",
+                                (mevcut["id"],))
+                continue
+            if mevcut:
+                atlanan.append({"personel_id": g.personel_id, "tarih": g.tarih,
+                                "neden": "zaten onayli"})
+                continue
+            yazilan.append({"personel_id": g.personel_id, "tarih": g.tarih,
+                            "islem": "onaylandi"})
+            if not m.kuru:
+                cur.execute(
+                    "INSERT INTO bordro_kalem (personel_id, yil, ay, tur, eksen, "
+                    "   miktar, birim, tutar, kaynak, kanit_sinifi, kanit) "
+                    "VALUES (%s,%s,%s,'YEMEK_GUN_ONAY','KARAR',1,'gun',0,"
+                    "        'sahip_onayi','beyan',%s::jsonb)",
+                    (g.personel_id, yil, ay,
+                     json.dumps({"tarih": g.tarih, "gerekce": m.gerekce,
+                                 "onaylayan": m.onaylayan or "sahip",
+                                 "onay_ts": str(date.today())}, ensure_ascii=False)))
+        if m.kuru:
+            conn.rollback()
+        else:
+            conn.commit()
+    return {"kuru": m.kuru, "islem": ("geri_alma" if m.geri_al else "onay"),
+            "etkilenen": len(yazilan), "atlanan": len(atlanan),
+            "satirlar": yazilan, "atlanan_detay": atlanan,
+            "not": ("KURU — hicbir sey yazilmadi. kuru=false ile uygulayin."
+                    if m.kuru else "UYGULANDI")}

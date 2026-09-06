@@ -45,6 +45,14 @@ VARSAYILAN: Dict[str, Any] = {
     "yemek_mola_limit_dk": 60,     # sube.yemek_mola_limit_dk varsayılanı
     "varsayilan_saatlik": 99.0,    # maas_service.py — ücreti tanımsız part-time
     "yemek_paydasi": "planli_gun",  # 'planli_gun' | 'aylik_gun' | sayı
+    # 🍽 MOLA KAYDI OLMAYAN GÜN NE SAYILIR? (Adım 7 · sahip kararı 2026-09-06)
+    #   'hak_dogmaz' → bugünkü davranış: kayıt yoksa yemek ödenmez
+    #   'hak_dogar'  → vardiya varsa çalışılmış VE molasını kullanmış kabul edilir
+    #   'askida'     → hak doğmaz ama listelenir, sahip gün gün onaylar
+    # ⚠️ VARSAYILAN 'hak_dogmaz' KALIR. Değişiklik `bordro_kural` satırıyla,
+    # TARİHLİ olarak yapılır; geçmiş ay kendi kuralıyla hesaplanmaya devam eder.
+    # Sahip 2026-09-06: "B" → Eylül'den itibaren 'hak_dogar'.
+    "mola_kayit_yok": "hak_dogmaz",
 }
 
 # Kod içinde kalması gereken tek gerçek: bu değerlerin kaynağı.
