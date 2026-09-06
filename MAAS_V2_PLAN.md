@@ -226,6 +226,37 @@ kişi kişi ölçüldü, sonrası tahminle **birebir** uyuştu (+3.476,00).
 
 ---
 
+## 5e · ADIM 4 TAMAMLANDI (2026-09-06, `8217c6b`)
+
+Yemek hakkı artık **evet/hayır** değil, **NEDEN**. Beş hal:
+`hak_dogdu` · `ihlal` · `belirsiz` · `kayit_yok` · `sozlesme_disi` (+ `vardiya_yok`).
+Çıktı: gün bazında `mola_durum`, kişi bazında `mola_ozet` + `yemek_belgesiz_gun`.
+Golden 0,00 × 4 · kabul 3/3 — **paraya dokunmadı**, kararı etiketledi.
+
+### 🔴 EYLÜL 2026 — ÖLÇÜM SONUCU: İHLAL SIFIR
+
+| kişi | planlı | hak doğdu | **ihlal** | kayıt yok | aldığı | kaybettiği |
+|---|---|---|---|---|---|---|
+| emir efe eraydın | 6 | 0 | **0** | 6 | 0,00 | 0,00 (sözleşmede yemek yok) |
+| ersan kazan | 5 | 0 | **0** | 5 | 0,00 | 0,00 (sözleşmede yemek yok) |
+| gökçe değirmenci | 5 | 0 | **0** | 5 | 0,00 | **1.400,00** |
+| naz dal | 5 | 0 | **0** | 5 | 0,00 | **1.400,00** |
+| MERVE AKTA | 5 | 3 | **0** | 2 | 840,00 | **560,00** |
+| SILA AKBAY | 5 | 5 | **0** | 0 | 1.400,00 | 0,00 |
+| | | | **0** | | | **3.360,00** |
+
+**Hiç kimse mola kuralını ihlal etmemiş.** Kaybedilen her yemek günü bir KARAR
+değil, KAYIT BOŞLUĞU. Eski sistem ikisini aynı gösterdiği için 3.360 ₺ sessizce
+ödenmiyordu.
+
+⏳ SAHİP KARARI (Adım 7'nin girdisi): mola kaydı olmayan gün ne sayılsın —
+(a) hak doğmaz (bugünkü davranış) · (b) hak doğar, vardiya varsa çalışılmış
+kabul edilir · (c) askıya alınır, sahip gün gün onaylar.
+`emir efe eraydın` ve `ersan kazan` sözleşmesinde yemek kalemi olmadığı için
+bu karardan etkilenmez.
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
