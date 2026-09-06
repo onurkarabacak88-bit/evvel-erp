@@ -44,7 +44,22 @@ VARSAYILAN: Dict[str, Any] = {
     "fm_gunluk_esik": 9.5,         # gorev_api.py:2175 STANDART
     "yemek_mola_limit_dk": 60,     # sube.yemek_mola_limit_dk varsayılanı
     "varsayilan_saatlik": 99.0,    # maas_service.py — ücreti tanımsız part-time
-    "yemek_paydasi": "planli_gun",  # 'planli_gun' | 'aylik_gun' | sayı
+    # 🍽 YEMEK PAYDASI — "hak edilen gün / PAYDA" oranındaki payda ne olsun?
+    #   'planli_gun'   → sisteme GİRİLEN vardiya sayısı (bugünkü davranış)
+    #   'beklenen_gun' → kişinin o dönemde ÇALIŞMASI BEKLENEN gün sayısı
+    #   sayı           → sabit payda (ör. 26)
+    # 🔴 NEDEN SEÇENEK (Fable+Claude denetimi 2026-09-06): 'planli_gun' paydası
+    # "kaç gün çalışması gerekiyordu"yu değil "kaç gün KAYIT GİRİLDİ"yi ölçüyor.
+    # Veri seyrekleşince bir mola ihlalinin bedeli patlıyor — canlı kanıt,
+    # DENİZ KÜÇÜKKIRLI, aynı kişi/aynı sözleşme:
+    #     Haziran  8 planlı gün → 1 ihlal   875,00 ₺
+    #     Temmuz  25 planlı gün → 1 ihlal   280,00 ₺
+    #     Ağustos  6 planlı gün → 1 ihlal 1.166,67 ₺   (4,2 KAT)
+    # Ayrıca ters teşvik: kaydı eksik tutan TAM yemek alıyor, düzgün tutan
+    # ceza yiyor (MERVE AKTA 7 kayıt/4 hak = 4.000; 4 kayıt girilseydi 7.000).
+    # İhlal YOKSA hangi payda seçilirse seçilsin sonuç aynıdır (oran 1,0) —
+    # bu yüzden değişiklik geçmişi kaydırmaz.
+    "yemek_paydasi": "planli_gun",
     # 🍽 MOLA KAYDI OLMAYAN GÜN NE SAYILIR? (Adım 7 · sahip kararı 2026-09-06)
     #   'hak_dogmaz' → bugünkü davranış: kayıt yoksa yemek ödenmez
     #   'hak_dogar'  → vardiya varsa çalışılmış VE molasını kullanmış kabul edilir

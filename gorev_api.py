@@ -2472,10 +2472,31 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             _aylik_yemek = float(p.get("yemek_ucreti") or 0)
             _donem_orani = (gecen_gun / AYLIK_GUN) if AYLIK_GUN > 0 else 0.0
             _is_surekli_yemek = (p.get("calisma_turu") or "surekli") == "surekli"
-            if planli_gun > 0:
-                yemek_ucret_gunluk = _aylik_yemek / planli_gun
-                yemek_ucret_tutari = _aylik_yemek * _donem_orani * (yemek_ucret_gun / planli_gun)
-                yemek_kaynagi = "vardiya"
+            # 🍽 PAYDA SEÇİMİ (kural: `yemek_paydasi`, Adım 7 · 2026-09-06)
+            #   'planli_gun'   → girilen vardiya sayısı (VARSAYILAN, bugünkü davranış)
+            #   'beklenen_gun' → dönemde çalışılması BEKLENEN gün (haftalık çalışma
+            #                    günü × geçen gün / 7) — veri seyrekliği cezayı
+            #                    şişirmesin diye
+            #   sayı           → sabit payda
+            # ⚠️ İHLAL YOKSA HANGİSİ SEÇİLİRSE SEÇİLSİN SONUÇ AYNI: pay = payda
+            #    olduğunda oran 1,0 kalır. Bu yüzden kural değişikliği geçmiş
+            #    ayları KAYDIRMAZ; yalnız ihlalin BEDELİNİ makulleştirir.
+            _yp = _kural.get("yemek_paydasi") or "planli_gun"
+            _ihlal_gun = max(0, planli_gun - yemek_ucret_gun)
+            if _yp == "beklenen_gun":
+                _hafta_gun = float(_kural.get("haftalik_calisma_gun") or 6)
+                _payda = max(float(planli_gun),
+                             round(gecen_gun * _hafta_gun / 7.0))
+            else:
+                try:
+                    _payda = float(_yp)          # sabit sayı verilmişse
+                except (TypeError, ValueError):
+                    _payda = float(planli_gun)   # 'planli_gun' (varsayılan)
+            if planli_gun > 0 and _payda > 0:
+                yemek_ucret_gunluk = _aylik_yemek / _payda
+                _oran = max(0.0, (_payda - _ihlal_gun) / _payda)
+                yemek_ucret_tutari = _aylik_yemek * _donem_orani * _oran
+                yemek_kaynagi = "vardiya" if _yp == "planli_gun" else "vardiya_%s" % _yp
             elif _aylik_yemek > 0 and _donem_orani > 0 and _is_surekli_yemek:
                 # Vardiya hiç girilmemiş — kayıp yerine TAM HAK varsayılır, damgalanır.
                 # Part-time'a uygulanmaz: orada yemek zaten fiilî mola kaydına bağlı.
