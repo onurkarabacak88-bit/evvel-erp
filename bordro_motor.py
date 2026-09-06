@@ -131,7 +131,13 @@ def hesapla(sozlesme: Dict[str, Any], kural: Dict[str, Any],
     hak_gun = int(olcum.get("yemek_hak_gun") or 0)
     payda = float(olcum.get("yemek_paydasi_deger") or planli or 0)
     if aylik_yemek > 0 and donem_orani > 0:
-        if payda > 0:
+        # ⚠️ PLANLI GÜN ŞARTI (gölge hesabı bunu yakaladı, 2026-09-06):
+        # `payda > 0` tek başına YETMEZ. `beklenen_gun` kuralı vardiya HİÇ
+        # girilmemişken bile pozitif payda üretir (tam ay ≈ 26) → 0/26 = sıfır
+        # yemek. Oysa sahip doktrini: "vardiya ataması TEYİT katmanıdır — YOKSA
+        # sabit tanımdan aktarılır." Canlı: mehmet ucak −1.400, MERVE KARABACAK
+        # −636 (ikisinin de Eylül'de hiç vardiyası yok).
+        if planli > 0 and payda > 0:
             oran = max(0.0, min(1.0, hak_gun / payda))
             tutar = aylik_yemek * donem_orani * oran
             if tutar > 0:

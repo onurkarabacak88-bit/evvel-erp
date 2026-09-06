@@ -627,7 +627,9 @@ def kalem_golge(yil: int = Query(...), ay: int = Query(...),
             # Yemek paydası: motor kuralı BİLİR ama günleri saymaz — ölçümden gelir.
             _planli = int(r.get("planli_gun") or 0)
             _yp = kr.get("yemek_paydasi") or "planli_gun"
-            if _yp == "beklenen_gun":
+            if _planli <= 0:
+                _payda = 0.0          # vardiya hiç yok → motor VARSAYIM dalına düşsün
+            elif _yp == "beklenen_gun":
                 _payda = max(float(_planli),
                              round(gecen * float(kr.get("haftalik_calisma_gun") or 6) / 7.0))
             else:
@@ -635,16 +637,21 @@ def kalem_golge(yil: int = Query(...), ay: int = Query(...),
                     _payda = float(_yp)
                 except (TypeError, ValueError):
                     _payda = float(_planli)
+            _ham = r.get("olcum_ham") or {}
             olcum = {
-                "gecen_gun": gecen,
+                "gecen_gun": float(_ham.get("gecen_gun") or gecen),
                 "planli_gun": _planli,
                 "yemek_hak_gun": int(r.get("yemek_ucret_gun") or 0),
                 "yemek_paydasi_deger": _payda,
                 "ihlal_gun": m.get("ihlal", 0),
                 "kayit_yok_gun": m.get("kayit_yok", 0),
                 "onayli_gun": m.get("onayli", 0),
-                "fazla_mesai_saat": float(r.get("toplam_fazla_mesai_saat") or 0),
-                "calisilan_saat": float(r.get("toplam_planlanan_saat") or 0),
+                "fazla_mesai_saat": float(_ham.get("fazla_mesai_saat")
+                                          if _ham.get("fazla_mesai_saat") is not None
+                                          else (r.get("toplam_fazla_mesai_saat") or 0)),
+                "calisilan_saat": float(_ham.get("planlanan_saat")
+                                        if _ham.get("planlanan_saat") is not None
+                                        else (r.get("toplam_planlanan_saat") or 0)),
                 "saat_kaynagi": r.get("saat_kaynagi"),
                 "ay_tamam": u.get("ay_tamam"),
             }

@@ -2600,6 +2600,12 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "ad_soyad": p["ad_soyad"],
                 "calisma_turu": p.get("calisma_turu"),
                 "toplam_planlanan_saat": round(toplam_planlanan, 2),
+                # 🔬 GÖLGE HESAP İÇİN HAM ÖLÇÜ (yuvarlanmamış). Ekranlar
+                # yuvarlanmışı okur; saf motor karşılaştırması ham okur,
+                # yoksa kuruş farkları gerçek sapma sanılır.
+                "olcum_ham": {"planlanan_saat": toplam_planlanan,
+                              "fazla_mesai_saat": toplam_fazla_saat,
+                              "gecen_gun": gecen_gun},
                 # Planlanmış ama HENÜZ GELMEMİŞ saat. Hakedişe GİRMEZ;
                 # ay sonu beklentisi (avans tavanı) bunu ekleyerek kullanır.
                 "toplam_planlanan_saat_gelecek": round(toplam_planlanan_gelecek, 2),
