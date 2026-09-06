@@ -769,9 +769,14 @@ def kalem_yaz(m: KalemYazModel, yil: int = Query(...), ay: int = Query(...),
             if not kalemler:
                 atlanan.append({"ad_soyad": s["ad_soyad"], "neden": "kalem yok"})
                 continue
+            # ⛔ KARAR KAYITLARI SÜRÜMLENMEZ (kuru çalıştırma bunu yakaladı):
+            # `YEMEK_GUN_ONAY` satırları HESAPLANMIŞ kalem değil, sahibin
+            # KARARIdır. Yeniden hesap onları eskitemez — eskitseydi bugün
+            # onaylanan 12 mola günü tek komutla kaybolurdu.
             cur.execute(
                 "SELECT COALESCE(MAX(surum),0) AS s FROM bordro_kalem "
-                " WHERE personel_id=%s AND yil=%s AND ay=%s", (pid, yil, ay))
+                " WHERE personel_id=%s AND yil=%s AND ay=%s "
+                "   AND tur <> 'YEMEK_GUN_ONAY'", (pid, yil, ay))
             surum = int((cur.fetchone() or {}).get("s") or 0) + 1
             yazilan.append({"personel_id": pid, "ad_soyad": s["ad_soyad"],
                             "surum": surum, "kalem": len(kalemler),
@@ -781,7 +786,8 @@ def kalem_yaz(m: KalemYazModel, yil: int = Query(...), ay: int = Query(...),
                 continue
             # append-only: öncekiler 'eski', yenisi 'aktif'
             cur.execute("UPDATE bordro_kalem SET durum='eski' "
-                        " WHERE personel_id=%s AND yil=%s AND ay=%s AND durum='aktif'",
+                        " WHERE personel_id=%s AND yil=%s AND ay=%s AND durum='aktif' "
+                        "   AND tur <> 'YEMEK_GUN_ONAY'",   # ⛔ KARAR dokunulmaz
                         (pid, yil, ay))
             for k in kalemler:
                 cur.execute(
