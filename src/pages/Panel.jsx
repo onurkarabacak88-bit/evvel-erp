@@ -653,10 +653,20 @@ export default function Panel({ onNavigate }) {
       onOnayla: async () => {
         setOnayModal(null);
         setTopluUygula(true);
+        // 💳 Para nereden çıktı? (2026-09-06) Maaş kalemlerinde backend bunu ZORUNLU
+        // kılıyor; ayrım yazılmazsa ödeme banka ekstresiyle eşleştirilemiyor.
+        // İki aşamalı soru: tek confirm'de İPTAL hem "elden" hem "vazgeçtim" demek olurdu.
+        let _yontem = null;
+        if (confirm('Para BANKADAN mı çıkıyor? (Havale / EFT)')) _yontem = 'havale';
+        else if (confirm('Peki ELDEN NAKİT mi? (şube çekmecesinden)')) _yontem = 'elden';
+        if (!_yontem) { toast('Ödeme yapılmadı — yöntem seçilmedi.', 'yellow'); setTopluUygula(false); return; }
         try {
           const r = await api('/toplu-odeme', {
             method: 'POST',
-            body: { odemeler: uygulanabilir.map(o => ({ odeme_id: o.odeme_id, tutar: o.tavsiye_tutar })) }
+            body: {
+              odemeler: uygulanabilir.map(o => ({ odeme_id: o.odeme_id, tutar: o.tavsiye_tutar })),
+              nakit_yontemi: _yontem,
+            }
           });
           toast(`✓ ${r.uygulanan}/${uygulanabilir.length} ödeme uygulandı`);
           load();

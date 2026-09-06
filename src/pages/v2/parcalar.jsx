@@ -1068,7 +1068,7 @@ export function KatkiCubugu({ baslik, alt, satirlar, onSatir }) {
 // ─── Onay modalı (para hareketi öncesi son kapı) ────────────────────────────
 export function OnayModali({
   acik, baslik, altBaslik, tutar, satirlar, not, onaylaAd, onOnayla, onKapat, calisiyor,
-  tehlike, kaynaklar, kaynak, onKaynak, tutarSayi,
+  tehlike, kaynaklar, kaynak, onKaynak, tutarSayi, ekIcerik,
 }) {
   if (!acik) return null;
   // Ödeme kaynağı seçimi (yeni handoff): para hareketi doğuran onayda paranın
@@ -1166,6 +1166,9 @@ export function OnayModali({
               </span>
             </div>
           ))}
+          {/* ekIcerik: onaydan ONCE cevaplanmasi gereken soru (or. "para nereden
+              cikti?"). Aciklamanin ustunde durur; okuyan once KARARI gorur. */}
+          {ekIcerik && <div style={{ marginTop: 14 }}>{ekIcerik}</div>}
           {not && <div style={{ fontSize: 11.5, color: R.not2, marginTop: 10, lineHeight: 1.55 }}>{not}</div>}
         </div>
         <div style={{ padding: '14px 22px', borderTop: `1px solid ${R.cizgi2}`, display: 'flex', gap: 9, justifyContent: 'flex-end' }}>

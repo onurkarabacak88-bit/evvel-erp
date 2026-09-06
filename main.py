@@ -15414,11 +15414,24 @@ def toplu_odeme(payload: dict):
     """
     Birden fazla ödemeyi tek transaction'da uygular.
     Biri başarısız olursa hepsi rollback.
-    payload: { odemeler: [{odeme_id, tutar}] }
+    payload: { odemeler: [{odeme_id, tutar, nakit_yontemi?, odeyen_sube_id?}],
+               nakit_yontemi?: 'elden'|'havale', odeyen_sube_id?: str }
+
+    💳 ÖDEME YÖNTEMİ (2026-09-06, Fable denetimi P2): tekli /ode yolunda
+    'elden' | 'havale' ayrımı 7ccc820 ile zorunlu kılındı, ama TOPLU yol bu
+    alanları hiç taşımıyordu — Ödeme Merkezi'nden toplu ödenen maaş yine
+    'nakit' (=BELİRSİZ) yazılıyor ve banka mutabakatından düşüyordu.
+    Kodun kendi yorumu bunu zaten söylüyor (PERS-011): "kapı, etrafından
+    dolaşılabildiği sürece kapı değildir."
+    Yöntem parti geneli verilebilir, kalem bazında ezilebilir.
     """
     odemeler = payload.get('odemeler', [])
     if not odemeler:
         raise HTTPException(400, "Ödeme listesi boş")
+    _parti_yontem = (payload.get('nakit_yontemi') or '').strip().lower() or None
+    _parti_sube = payload.get('odeyen_sube_id') or None
+    if _parti_yontem and _parti_yontem not in ('elden', 'havale'):
+        raise HTTPException(400, "nakit_yontemi 'elden' veya 'havale' olmalı")
     
     with db() as (conn, cur):
         # FIX MN5 (2026-07-05): kasa yeterlilik kontrolü ile ödeme uygulaması arasında
@@ -15475,6 +15488,18 @@ def toplu_odeme(payload: dict):
             # bir kalem yüzünden partinin geri kalanını sessizce ödemek, sorunu
             # görünmez kılardı.
             _personel_maas_odeme_guard(cur, dict(plan))
+            # 💳 Yöntem: kalem > parti. Maaşta ZORUNLU — belirsiz yazılan maaş
+            # banka ekstresiyle bir daha eşleştirilemiyor (canlı: Temmuz–Ağustos'ta
+            # ödenen 12 maaşın 12'si de 1711 banka satırında bulunamadı).
+            _kalem_yontem = (item.get('nakit_yontemi') or '').strip().lower() or _parti_yontem
+            if _kalem_yontem and _kalem_yontem not in ('elden', 'havale'):
+                raise HTTPException(400, f"nakit_yontemi 'elden' veya 'havale' olmalı: {oid}")
+            if (plan.get('kaynak_tablo') or '') == 'personel' and not _kalem_yontem:
+                raise HTTPException(400,
+                    f"Maaş ödemesinde para nereden çıktığı belirtilmeli "
+                    f"('elden' nakit çekmece / 'havale' banka): {plan.get('aciklama') or oid}. "
+                    "Ayrım yazılmazsa ödeme banka ekstresiyle eşleştirilemez.")
+            _kalem_sube = item.get('odeyen_sube_id') or _parti_sube
             odenen = kalan_krs / 100.0
             bugun = str(bugun_tr())
             # P1 (Codex diff-review 2026-08-13): tam kapatmada odenen_tutar
@@ -15486,6 +15511,8 @@ def toplu_odeme(payload: dict):
             ana_t = kasa_ve_faiz_odeme_plani_tam_odeme(
                 cur, plan_d, oid, odenen, bugun,
                 anapara_aciklama=f"Toplu ödeme: {plan['aciklama']}",
+                odeme_yontemi=_kalem_yontem,
+                odeyen_sube_id=_kalem_sube,
             )
             if plan.get('kaynak_tablo') == 'vadeli_alimlar' and plan.get('kaynak_id'):
                 vadeli_alim_kapat(cur, plan['kaynak_id'], bugun)

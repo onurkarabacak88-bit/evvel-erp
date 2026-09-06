@@ -20,11 +20,21 @@ export function Strateji() {
     if (!data?.oneriler?.length) return;
     const uygulanabilir = data.oneriler.filter(o => o.oneri_turu !== 'ERTELE' && o.odeme_id && o.tavsiye_tutar > 0);
     if (!uygulanabilir.length) { toast('Uygulanabilir öneri yok', 'yellow'); return; }
+    // 💳 Para nereden çıktı? (2026-09-06) Maaş kalemlerinde backend bunu ZORUNLU
+    // kılıyor; ayrım yazılmazsa ödeme banka ekstresiyle eşleştirilemiyor.
+    // İki aşamalı soru: tek confirm'de İPTAL hem "elden" hem "vazgeçtim" demek olurdu.
+    let _yontem = null;
+    if (confirm('Para BANKADAN mı çıkıyor? (Havale / EFT)')) _yontem = 'havale';
+    else if (confirm('Peki ELDEN NAKİT mi? (şube çekmecesinden)')) _yontem = 'elden';
+    if (!_yontem) { toast('Ödeme yapılmadı — yöntem seçilmedi.', 'yellow'); return; }
     try {
       // Tek transaction — biri başarısız olursa hepsi rollback
       const r = await api('/toplu-odeme', {
         method: 'POST',
-        body: { odemeler: uygulanabilir.map(o => ({ odeme_id: o.odeme_id, tutar: o.tavsiye_tutar })) }
+        body: {
+          odemeler: uygulanabilir.map(o => ({ odeme_id: o.odeme_id, tutar: o.tavsiye_tutar })),
+          nakit_yontemi: _yontem,
+        }
       });
       toast(`✓ ${r.uygulanan}/${uygulanabilir.length} ödeme uygulandı`);
       load();

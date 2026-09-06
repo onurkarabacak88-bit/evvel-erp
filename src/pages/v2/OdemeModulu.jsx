@@ -384,6 +384,10 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
   // Advisory lock kasadan-çıkaran toplu işlemleri serileştirir (main.py MN5).
   const [topluSecim, setTopluSecim] = useState({});
   const [topluSor, setTopluSor] = useState(false);
+  // 💳 Toplu ödemede para NEREDEN çıktı? (2026-09-06, Fable denetimi P2)
+  // Tekli /ode yolunda bu ayrım zorunlu; toplu yol hiç sormuyordu ve maaş
+  // "belirsiz" yazılıp banka mutabakatından düşüyordu. Varsayılan YOK.
+  const [topluYontem, setTopluYontem] = useState('');
   const [topluMesgul, setTopluMesgul] = useState(false);
   const kartlariGetir = () => {
     if (!kartListe.length) api('/kartlar').then((d) => setKartListe(Array.isArray(d) ? d : [])).catch(() => {});
@@ -738,7 +742,10 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
       // sessiz no-op oluyordu ("Hiçbir ödeme uygulanmadı"nın gerçek sebebi).
       const r = await api('/toplu-odeme', {
         method: 'POST',
-        body: { odemeler: secililer.map((o) => ({ odeme_id: o.id, tutar: sayi(o._tutar) })) },
+        body: {
+          odemeler: secililer.map((o) => ({ odeme_id: o.id, tutar: sayi(o._tutar) })),
+          nakit_yontemi: topluYontem || null,
+        },
       });
       // 🔴 P1 (2026-08-12): `0 || N` tuzağı — backend uygulanan=0 dönse bile (satırlar
       // başkası tarafından kapanmış) "N/N uygulandı" YALANI basıyordu. Gerçek sayıyı kullan.
@@ -746,7 +753,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
       onToast?.(_uyg === 0
         ? 'Hiçbir ödeme uygulanmadı — satırlar zaten kapanmış olabilir'
         : `✓ ${_uyg}/${secililer.length} ödeme uygulandı`);
-      setTopluSecim({}); setTopluSor(false);
+      setTopluSecim({}); setTopluSor(false); setTopluYontem('');
       yukle();
     } catch (e) {
       // Tek transaction: biri düşerse HİÇBİRİ uygulanmaz — mesaj bunu söylemeli
@@ -1948,10 +1955,39 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
                 })).concat(secililer.length > 8
                   ? [{ ad: `… ve ${secililer.length - 8} kalem daha`, deger: '' }] : [])}
                 not="TEK TRANSACTION: biri düşerse HİÇBİRİ uygulanmaz (rollback). Kasa yeterliliği kilit altında kontrol edilir; ödemeler kasa izine yazılır."
+                ekIcerik={(
+                  <div>
+                    <div style={{ fontSize: 12, color: R.metin2, marginBottom: 7 }}>
+                      Para nereden çıkıyor? <span style={{ color: R.amber }}>(maaşta zorunlu)</span>
+                    </div>
+                    <div style={{ display: 'flex', gap: 8 }}>
+                      {[{ k: 'havale', ad: '🏦 Havale / EFT', alt: 'banka hesabından' },
+                        { k: 'elden', ad: '💵 Elden nakit', alt: 'şube çekmecesinden' }].map((o) => {
+                        const sec = topluYontem === o.k;
+                        return (
+                          <button key={o.k} type="button" onClick={() => setTopluYontem(o.k)}
+                            style={{
+                              flex: 1, padding: '9px 11px', borderRadius: 10, cursor: 'pointer',
+                              textAlign: 'left', fontFamily: 'inherit',
+                              border: `1px solid ${sec ? R.yesil : R.cizgi3}`,
+                              background: sec ? `${R.yesil}1e` : 'transparent',
+                            }}>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: sec ? R.yesil : R.metin2 }}>{o.ad}</div>
+                            <div style={{ fontSize: 10.5, color: R.not2, marginTop: 2 }}>{o.alt}</div>
+                          </button>
+                        );
+                      })}
+                    </div>
+                    <div style={{ fontSize: 11, color: R.not2, marginTop: 7, lineHeight: 1.5 }}>
+                      Bu ayrım olmadan maaş banka ekstresiyle eşleştirilemez — tüm parti aynı
+                      yöntemle işaretlenir.
+                    </div>
+                  </div>
+                )}
                 onaylaAd={topluMesgul ? 'Ödeniyor…' : `Evet, ${secililer.length} kalemi öde`}
                 calisiyor={topluMesgul}
                 onOnayla={() => topluOdeGonder(secililer)}
-                onKapat={() => setTopluSor(false)}
+                onKapat={() => { setTopluSor(false); setTopluYontem(''); }}
               />
             </>
           );
