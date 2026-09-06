@@ -5,6 +5,8 @@ from typing import Optional
 from datetime import date
 import io, os, math, logging
 from database import db, savepoint
+import bordro_kural_coz as _bkc          # BORDRO V2 · kural cozucu (TEK KAPI)
+_bkc_varsayilan = dict(_bkc.VARSAYILAN)  # tablo bosken/kirikken dusulecek taban
 
 router = APIRouter()
 
@@ -1999,15 +2001,10 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
         # hangi gerekçe orada durur (İZ BIRAKIR).
         # Kanıtsız ödeme "UYDURMA YOK" doktrinine aykırı olurdu; bu yüzden
         # varsayılan yol hak doğurmamak, onay ise AÇIK BİR KARARdır.
-        _mola_kurali = "hak_dogmaz"
+        # ⚠️ `mola_kayit_yok` artik KISI BAZINDA cozuluyor (asagida, _kural ile):
+        # kural KISI > SUBE > GENEL sirasiyla gecerlidir; burada GENEL okumak
+        # sube/kisi kapsamini KOR ederdi. Onay defteri ise donem geneli, tek sorgu.
         _onayli_gun = set()
-        try:
-            with savepoint(cur, "mola_kural"):
-                import bordro_kural_coz as _bkc
-                _mola_kurali = str(_bkc.kural_coz(cur, d1).get("mola_kayit_yok")
-                                   or "hak_dogmaz")
-        except Exception as _mk_err:  # noqa: BLE001
-            logging.getLogger(__name__).warning("mola kurali okunamadi: %s", _mk_err)
         try:
             with savepoint(cur, "mola_onay"):
                 # TEK sorgu — kişi başı sorgu N+1 üretirdi (bkz. PERF N+1 FIX).
@@ -2061,6 +2058,28 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                     "ucret cozucu calismadi, personel karti kullanildi pid=%s: %s",
                     pid, _uc_err)
                 p["_ucret_kaynagi"] = {"hata": str(_uc_err)}
+
+            # ── KURAL: O DÖNEMDE GEÇERLİ PARAMETRELER (BORDRO V2 · Adım 3 tamamlama)
+            # 🔴 Adım 3'te `bordro_kural` tablosu ve çözücü kuruldu ama motor
+            # parametrelerin YALNIZCA BİRİNİ (`mola_kayit_yok`) okuyordu; diğer
+            # sekizi (aylik_gun, gunluk_saat, fm_gunluk_esik, part_tam_gun_esigi…)
+            # tanımlıydı ama ÖLÜYDÜ — kodda sabit yazılı değerler kullanılmaya
+            # devam ediyordu. Üstelik o tek okuma da `personel_id`/`sube_id`
+            # vermeden yapılıyordu, yani sahibin "her işletmenin mesai kavramı
+            # farklı" dediği KİŞİ/ŞUBE kapsamı hiç çalışmıyordu.
+            # Artık kural KİŞİ > ŞUBE > GENEL sırasıyla, DÖNEMİN tarihine göre
+            # çözülür. Tablo boşsa VARSAYILAN döner = bugünkü sabitlerin birebir
+            # aynısı → davranış değişmez.
+            _kural = dict(_bkc_varsayilan)
+            try:
+                with savepoint(cur, "kural_coz"):
+                    _kural = _bkc.kural_coz(cur, p_d1 or d1, personel_id=pid,
+                                            sube_id=p.get("sube_id"))
+            except Exception as _kr_err:  # noqa: BLE001
+                logging.getLogger(__name__).warning(
+                    "kural cozucu calismadi, varsayilan kullanildi pid=%s: %s",
+                    pid, _kr_err)
+            _mola_kurali = str(_kural.get("mola_kayit_yok") or "hak_dogmaz")
 
             if p_d1 is None:
                 # Bu ay için çalışma aralığı yok (henüz başlamadı / önceden ayrıldı)
@@ -2234,7 +2253,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             # O AY PLANLANAN gün sayısı sayılır (biri 25, biri 26 çalışabilir).
             planli_gun = 0
             part_tam_gun = 0
-            STANDART = 9.5
+            STANDART = float(_kural.get("fm_gunluk_esik") or 9.5)
 
             # 🔍 MOLA DURUMU — 5 HAL (BORDRO V2 · Adım 4)
             # Bugüne kadar yemek hakkı TEK bir doğru/yanlıştı ve BEŞ ayrı durum
@@ -2289,7 +2308,8 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                         })
                     else:
                         # Normal hesaplama
-                        part_tam = is_part and planlanan >= 9.4
+                        part_tam = is_part and planlanan >= float(
+                            _kural.get("part_tam_gun_esigi") or 9.4)
 
                         # Gecikme: planlanan başlangıç vs giriş
                         gecikme_dk = 0.0
@@ -2371,8 +2391,9 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 tarih += timedelta(days=1)
 
             # ── ÜCRET HESABI - İş Kanunu standardı (30 gün) ──────────
-            GUNLUK_SAAT = 9.5
-            AYLIK_GUN   = 30.0   # İş Kanunu: izin günleri dahil
+            # Kuraldan gelir (bordro_kural boşsa VARSAYILAN = 9,5 / 30 / 285)
+            GUNLUK_SAAT = float(_kural.get("gunluk_saat") or 9.5)
+            AYLIK_GUN   = float(_kural.get("aylik_gun") or 30.0)   # İş K.: izin günleri dahil
             AYLIK_SAAT  = GUNLUK_SAAT * AYLIK_GUN  # 285
 
             # Bu ay henüz tamamlanmadıysa (içinde bulunduğumuz ay), personel
