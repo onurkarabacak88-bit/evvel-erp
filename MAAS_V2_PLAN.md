@@ -257,6 +257,46 @@ bu karardan etkilenmez.
 
 ---
 
+## 5f · ADIM 7 TAMAMLANDI (2026-09-06, `77d69cc`) — KURAL ARTIK VERİ
+
+Sahip önce **B** dedi (kayıt yoksa hak doğar), sonra kendisi düzeltti:
+> "AMA MANTIKLISI SANKİ C GİBİ"
+
+Haklı. **B kanıtsız para öder** — "vardiya var, o hâlde molasını da kullanmıştır"
+bir VARSAYIMdır ve `UYDURMA YOK` doktrinine aykırıdır. Denetimde "bu 1.400 ₺ neye
+dayanıyor?" sorusunun cevabı "sistem öyle varsaydı" olurdu.
+**C'de sistem bilmediğini söyler, para bekler, sahip karar verir, karar iz bırakır.**
+
+`bordro_kural` ilk gerçek satırını aldı — kural artık KODDA DEĞİL, VERİDE:
+```
+GENEL · mola_kayit_yok = 'askida' · gecerli_bas 2026-09-01 · id 4bf28bb7
+2026-09-15 sorulunca → askida      (tablodan)
+2026-07-15 sorulunca → hak_dogmaz  (varsayılan — GEÇMİŞ DOKUNULMADI)
+```
+Haziran–Ağustos ödenmiş/kapanmış olduğu için kural 1 Eylül'den geçerli.
+
+### EYLÜL 2026 ONAY KUYRUĞU (canlı)
+
+| kişi | planlı | askıda | gün ₺ | toplam ₺ | günler |
+|---|---|---|---|---|---|
+| gökçe değirmenci | 5 | 5 | 280,00 | **1.400,00** | 1, 2, 4, 5, 6 |
+| naz dal | 5 | 5 | 280,00 | **1.400,00** | 1, 3, 4, 5, 6 |
+| MERVE AKTA | 5 | 2 | 280,00 | **560,00** | 1, 2 |
+| emir efe eraydın | 6 | 6 | 0,00 | 0,00 | sözleşmesinde yemek yok |
+| ersan kazan | 5 | 5 | 0,00 | 0,00 | sözleşmesinde yemek yok |
+| | | **23** | | **3.360,00** | |
+
+Golden 0,00 × 4 · kabul 3/3 — **para hâlâ değişmedi**; hak kaybolmadı, KUYRUĞA
+girdi. Onay verildiğinde `bordro_kalem`'e `eksen='KARAR'` satırı yazılır
+(kim · ne zaman · hangi gerekçe); geri alma SİLMEZ, `durum='eski'` yapar.
+
+Uçlar: `GET /api/ucret/mola-askida?yil=&ay=` · `POST /api/ucret/mola-onay`
+(gerekçe ZORUNLU, varsayılan `kuru=true`).
+
+⏳ SAHİP: 23 günün hangileri onaylanacak.
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
