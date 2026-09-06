@@ -10144,6 +10144,20 @@ def _personel_api_row(r: dict) -> dict:
     # 🌅 Erken açılış izni (2026-08-29): ekran bu alanı okumazsa herkesi
     # "07:00" gösterir ve verilen izin görünmez olurdu.
     d["erken_acilis_izni"] = bool(d.get("erken_acilis_izni"))
+    # 🗓 ÖDEME SATIRI HANGİ DÖNEME AİT (2026-09-06)? Kart ödeme sütununu içinde
+    # bulunulan aya kilitli okur; ARREARS kuralıyla plan.referans_ay = ÖDEME ayı,
+    # çalışma dönemi bir ÖNCEKİ aydır (bkz. _personel_maas_odeme_guard). Etiket
+    # olmadan "ödenecek 57.550" satırı kişinin maaşı sanılıyor.
+    _ref = d.pop("odeme_referans_ay", None)
+    d["odeme_donem_etiketi"] = None
+    if _ref:
+        try:
+            from maas_service import TR_AYLAR  # tek kaynak (1-indeksli, [0]="")
+            _y, _a = _ref.year, _ref.month
+            _cy, _ca = (_y, _a - 1) if _a > 1 else (_y - 1, 12)   # çalışma dönemi
+            d["odeme_donem_etiketi"] = f"{TR_AYLAR[_ca]} {_cy} dönemi"
+        except Exception:  # noqa: BLE001 — etiket kritik değil, veri akışını kesme
+            d["odeme_donem_etiketi"] = None
     return d
 
 
@@ -10154,7 +10168,8 @@ def personel_listele(aktif: Optional[bool] = None):
             cur.execute(
                 """
                 SELECT p.*, s.ad as sube_adi,
-                       opv.odeme_durumu, opv.odeme_tarihi, opv.odenecek_tutar, opv.odenen_tutar
+                       opv.odeme_durumu, opv.odeme_tarihi, opv.odenecek_tutar, opv.odenen_tutar,
+                       opv.odeme_referans_ay
                 FROM personel p
                 LEFT JOIN subeler s ON s.id = p.sube_id
                 LEFT JOIN LATERAL (
@@ -10162,7 +10177,16 @@ def personel_listele(aktif: Optional[bool] = None):
                         op.durum AS odeme_durumu,
                         op.tarih AS odeme_tarihi,
                         op.odenecek_tutar,
-                        op.odenen_tutar
+                        op.odenen_tutar,
+                        -- 🗓 HANGİ DÖNEM? (2026-09-06) Aşağıdaki filtre bu satırı
+                        -- İÇİNDE BULUNULAN AYA kilitliyor; arrears kuralıyla
+                        -- (çalışma ayı + 1) Eylül'de görünen şey AĞUSTOS döneminin
+                        -- planıdır. Etiket olmadan kart bunu "kişinin maaşı" gibi
+                        -- gösteriyor ve okuyanı yanıltıyor — denetimde beni de
+                        -- yanılttı (Temmuz kasa kaydıyla Ağustos planı kıyaslandı).
+                        -- ⚠️ Kişi bazlı hakediş/ödeme için DOĞRU UÇ:
+                        --    /api/personel-aylik?yil=&ay=  (bu alan yalnız etikettir)
+                        op.referans_ay AS odeme_referans_ay
                     FROM odeme_plani op
                     WHERE op.kaynak_tablo='personel'
                       AND op.kaynak_id = p.id
@@ -10182,7 +10206,8 @@ def personel_listele(aktif: Optional[bool] = None):
             cur.execute(
                 """
                 SELECT p.*, s.ad as sube_adi,
-                       opv.odeme_durumu, opv.odeme_tarihi, opv.odenecek_tutar, opv.odenen_tutar
+                       opv.odeme_durumu, opv.odeme_tarihi, opv.odenecek_tutar, opv.odenen_tutar,
+                       opv.odeme_referans_ay
                 FROM personel p
                 LEFT JOIN subeler s ON s.id = p.sube_id
                 LEFT JOIN LATERAL (
@@ -10190,7 +10215,16 @@ def personel_listele(aktif: Optional[bool] = None):
                         op.durum AS odeme_durumu,
                         op.tarih AS odeme_tarihi,
                         op.odenecek_tutar,
-                        op.odenen_tutar
+                        op.odenen_tutar,
+                        -- 🗓 HANGİ DÖNEM? (2026-09-06) Aşağıdaki filtre bu satırı
+                        -- İÇİNDE BULUNULAN AYA kilitliyor; arrears kuralıyla
+                        -- (çalışma ayı + 1) Eylül'de görünen şey AĞUSTOS döneminin
+                        -- planıdır. Etiket olmadan kart bunu "kişinin maaşı" gibi
+                        -- gösteriyor ve okuyanı yanıltıyor — denetimde beni de
+                        -- yanılttı (Temmuz kasa kaydıyla Ağustos planı kıyaslandı).
+                        -- ⚠️ Kişi bazlı hakediş/ödeme için DOĞRU UÇ:
+                        --    /api/personel-aylik?yil=&ay=  (bu alan yalnız etikettir)
+                        op.referans_ay AS odeme_referans_ay
                     FROM odeme_plani op
                     WHERE op.kaynak_tablo='personel'
                       AND op.kaynak_id = p.id
