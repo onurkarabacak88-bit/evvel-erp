@@ -727,6 +727,7 @@ function YemekMolasiButon({ oturum }) {
 function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
   const [bugun, setBugun] = useState(null);
   const [aylik, setAylik] = useState(null);
+  const [kalemler, setKalemler] = useState([]);   // 📒 bordro kalem defteri
   const [yukleniyor, setYukleniyor] = useState(true);
 
   useEffect(() => {
@@ -735,7 +736,12 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
     const ay = simdi.getMonth() + 1;
     Promise.all([
       api(`/gorev/vardiya-takip?yil=${yil}&ay=${ay}&personel_id=${oturum.personel_id}`).catch(() => null),
-    ]).then(([takip]) => {
+      // 📒 KALEM DEFTERİ (BORDRO V2): "bu rakam nereden çıktı" sorusunun cevabı.
+      // Kırılırsa ekran ÇALIŞMAYA DEVAM EDER — defter bir EK'tir, hakedişin
+      // kendisi hâlâ vardiya-takipten gelir.
+      api(`/ucret/kalem?yil=${yil}&ay=${ay}&personel_id=${oturum.personel_id}`).catch(() => null),
+    ]).then(([takip, defter]) => {
+      setKalemler(Object.values(defter?.defter || {})[0]?.kalemler || []);
       const kisi = takip?.personeller?.[0];
       if (kisi) {
         const bugunVeri = kisi.gunler?.find(g => g.tarih === oturum.tarih);
@@ -916,17 +922,122 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
                   </div>
                 </div>
 
-                {/* Yemek ücreti hakkı kaybı uyarısı */}
-                {yemekKaybiGun > 0 && (
-                  <div style={{
-                    margin: '0 18px 16px', padding: '10px 12px', borderRadius: 10,
-                    background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)',
-                    fontSize: 12, color: 'var(--orange)', lineHeight: 1.5,
-                  }}>
-                    ⚠️ Bu ay <strong>{yemekKaybiGun} gün</strong> yemek molası hakkın kazanılmadı
-                    (mola süresi limit dışı kaldı) — bu günler için yemek ücreti eklenmedi.
+                {/* 📒 KALEM DEFTERİ — "bu rakam nereden çıktı"nın cevabı.
+                    Yukarıdaki döküm ÖZETtir; burası her satırın DAYANAĞINI
+                    gösterir: kaç gün/saat, birim tutar, hangi eksen.
+                    Defter yoksa hiç görünmez — ekran eskisi gibi çalışır. */}
+                {kalemler.length > 0 && (
+                  <div style={{ margin: '0 18px 16px' }}>
+                    <details style={{
+                      borderRadius: 12, border: '1px solid rgba(0,0,0,0.08)',
+                      background: 'rgba(0,0,0,0.02)', overflow: 'hidden',
+                    }}>
+                      <summary style={{
+                        padding: '10px 12px', cursor: 'pointer', fontSize: 12,
+                        fontWeight: 700, color: '#6B5E50', listStyle: 'none',
+                      }}>
+                        📒 Bu rakam nereden çıktı? ({kalemler.length} kalem)
+                      </summary>
+                      <div style={{ padding: '0 12px 12px', display: 'grid', gap: 8 }}>
+                        {kalemler.map((k, i) => {
+                          const eks = {
+                            SOZLESME: { ad: 'Sözleşme', renk: '#6B5E50' },
+                            OLCUM: { ad: 'Ölçüm', renk: '#4a9eff' },
+                            KARAR: { ad: 'Karar', renk: 'var(--orange)' },
+                            MAHSUP: { ad: 'Mahsup', renk: '#e05c5c' },
+                          }[k.eksen] || { ad: k.eksen, renk: '#9C8E7E' };
+                          const eksi = Number(k.tutar) < 0;
+                          return (
+                            <div key={i} style={{
+                              padding: '8px 10px', borderRadius: 8, background: '#fff',
+                              border: '1px solid rgba(0,0,0,0.06)',
+                            }}>
+                              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+                                <span style={{ fontSize: 12, fontWeight: 700, color: '#2A241E' }}>
+                                  {k.tur.replace(/_/g, ' ')}
+                                  <span style={{
+                                    marginLeft: 6, fontSize: 10, fontWeight: 600,
+                                    color: eks.renk, border: `1px solid ${eks.renk}`,
+                                    borderRadius: 6, padding: '1px 5px',
+                                  }}>{eks.ad}</span>
+                                </span>
+                                <span style={{
+                                  fontSize: 13, fontWeight: 800,
+                                  color: eksi ? '#e05c5c' : '#4caf84', whiteSpace: 'nowrap',
+                                }}>{eksi ? '' : '+'}{fmt2(k.tutar)}</span>
+                              </div>
+                              {k.miktar != null && k.birim_tutar != null && (
+                                <div style={{ fontSize: 11, color: '#9C8E7E', marginTop: 3 }}>
+                                  {Number(k.miktar).toLocaleString('tr-TR')} {k.birim} × {fmt2(k.birim_tutar)}
+                                </div>
+                              )}
+                              {k.kanit_sinifi === 'varsayim' && (
+                                <div style={{ fontSize: 11, color: 'var(--orange)', marginTop: 3 }}>
+                                  ⚠️ vardiya kaydı yok — tam hak varsayıldı
+                                </div>
+                              )}
+                              {k.kanit_sinifi === 'beyan' && (
+                                <div style={{ fontSize: 11, color: '#6B5E50', marginTop: 3 }}>
+                                  yöneticinin kararı
+                                </div>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </details>
                   </div>
                 )}
+
+                {/* 🔴 İHLAL ≠ KAYIT YOK (2026-09-07)
+                    Eskiden hak doğmayan HER gün için "mola süresi limit dışı kaldı"
+                    yazıyordu — yani kişiyi kural ihlaliyle suçluyordu. Oysa günlerin
+                    çoğunda mola kaydı hiç DÜŞMEMİŞ oluyor; bu bir karar değil,
+                    bir boşluk. Canlı: SILA AKBAY Ağustos'ta 1 gün kayıtsızdı,
+                    ihlali sıfırdı, ekranda "limit dışı" yazıyordu.
+                    Artık her hâl kendi adıyla anlatılıyor. */}
+                {(() => {
+                  const m = aylik.mola_ozet || {};
+                  const ihlal = m.ihlal || 0;
+                  const kayitsiz = (m.kayit_yok || 0) + (m.askida || 0) + (m.belirsiz || 0);
+                  const onayli = m.onayli || 0;
+                  if (!ihlal && !kayitsiz && !onayli) return null;
+                  return (
+                    <div style={{ margin: '0 18px 16px', display: 'grid', gap: 8 }}>
+                      {ihlal > 0 && (
+                        <div style={{
+                          padding: '10px 12px', borderRadius: 10,
+                          background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.25)',
+                          fontSize: 12, color: 'var(--orange)', lineHeight: 1.5,
+                        }}>
+                          ⚠️ <strong>{ihlal} gün</strong> mola kuralı dışında kaldı
+                          (süre limiti aşıldı) — bu günler için yemek ücreti eklenmedi.
+                        </div>
+                      )}
+                      {kayitsiz > 0 && (
+                        <div style={{
+                          padding: '10px 12px', borderRadius: 10,
+                          background: 'rgba(74,158,255,0.08)', border: '1px solid rgba(74,158,255,0.25)',
+                          fontSize: 12, color: '#4a9eff', lineHeight: 1.5,
+                        }}>
+                          ℹ️ <strong>{kayitsiz} gün</strong> mola kaydı düşmemiş — kuralı
+                          çiğnedin demek DEĞİL, sistemde kayıt yok demek. Yöneticin
+                          onaylarsa bu günlerin yemek ücreti eklenir.
+                        </div>
+                      )}
+                      {onayli > 0 && (
+                        <div style={{
+                          padding: '10px 12px', borderRadius: 10,
+                          background: 'rgba(76,175,132,0.08)', border: '1px solid rgba(76,175,132,0.25)',
+                          fontSize: 12, color: '#4caf84', lineHeight: 1.5,
+                        }}>
+                          ✅ <strong>{onayli} gün</strong> mola kaydı yoktu, yöneticin
+                          onayladı — yemek ücreti eklendi.
+                        </div>
+                      )}
+                    </div>
+                  );
+                })()}
               </div>
             );
           })()}
