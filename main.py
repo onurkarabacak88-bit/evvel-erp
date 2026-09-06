@@ -1374,6 +1374,16 @@ def startup():
             ensure_audit_aktor(cur)
     except Exception as e:
         logger.warning("audit_log aktör migrasyonu (startup) atlandı: %s", e)
+    # 📒 BORDRO V2 DEFTERİ: ucret_tanim · bordro_kural · bordro_kalem ·
+    # bordro_duzeltme + 7 kolon. Boş açılır; hiçbir okuyucu henüz bakmaz.
+    # Kilit alınamazsa migrasyon pes eder, uygulama YİNE AÇILIR — V2 yolu
+    # o zaman devreye girmez ve sistem bugünkü davranışını sürdürür.
+    try:
+        with db() as (conn, cur):
+            from database import ensure_bordro_defteri
+            ensure_bordro_defteri(cur)
+    except Exception as e:
+        logger.warning("bordro defteri migrasyonu (startup) atlandı: %s", e)
     # 🕐 PART-TIME ELLE SAAT: personel_aylik.saat_kaynagi ('elle' | NULL).
     # Aynı desen — kendi kısa transaction'ı, lock_timeout'lu, hata yutulur.
     # Kolon açılmazsa sistem eski davranışa düşer (saat vardiyadan gelir),

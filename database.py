@@ -276,6 +276,158 @@ def ensure_personel_aylik_saat_kaynagi(cur) -> None:
     cur.execute("ALTER TABLE personel_aylik ADD COLUMN IF NOT EXISTS saat_kaynagi TEXT")
 
 
+def ensure_bordro_defteri(cur) -> None:
+    """BORDRO V2 — DEFTER RAFLARI. KENDİ KISA transaction'ında, lock_timeout'lu.
+    (init_db'ye KONMAZ; bkz. ensure_audit_aktor: sıcak tabloda FIFO kilit sırası
+    canlıyı 502 döngüsüne sokar.)
+
+    🔴 NEDEN (MAAS_V2_PLAN.md · Adım 1, sahip kararı 2026-09-06):
+    Bugün bordro bir HESAP SONUCU olarak modellenmiş — `personel_aylik` tek satır,
+    tek `hesaplanan_net`. "Bu 259 ₺ nereden çıktı?" sorusunun teknik olarak
+    cevaplanması imkânsız. Canlı bedeli: DENİZ KÜÇÜKKIRLI Temmuz 2026'da
+    1.166,67 ₺ eksik hesaplandı ve dört ay fark edilmedi.
+    Bordro bir DEFTERDİR: her satırı kendi kaynağını, kural sürümünü ve kanıtını
+    taşır; dönem kapanınca donar.
+
+    ⚠️ BU ADIM HİÇBİR RAKAMI DEĞİŞTİRMEZ. Tablolar boş açılır; hiçbir okuyucu
+    henüz buraya bakmaz. Golden çıpası (scripts/bordro_golden.py --karsilastir)
+    bu adımdan sonra 0,00 fark vermek ZORUNDADIR.
+    """
+    cur.execute("SET LOCAL lock_timeout = '3s'")
+
+    # ── ÜCRET TANIMI — "kim, hangi tarihten itibaren, ne kadar" ──────────────
+    # Asgari ücret HER YIL değişiyor + ara zam olabiliyor; bazı personelle
+    # asgari ÜSTÜ anlaşılıyor (sahip). Tek kutuya yazılırsa geçmiş ay yeni
+    # tutarla hesaplanır. Bu yüzden ZAMAN ÇİZGİSİ:
+    #   mod='ASGARIYE_BAGLI' → o tarihte geçerli asgari + fark  (asgari artınca otomatik)
+    #   mod='SABIT'          → tutar sabit                      (asgari artınca DEĞİŞMEZ)
+    # personel.maas/yemek_ucreti/... AYNA olarak kalır; motor buradan okur.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS ucret_tanim (
+            id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            kapsam       TEXT NOT NULL,          -- 'GENEL' (asgari) | 'KISI'
+            personel_id  TEXT,
+            tur          TEXT NOT NULL,          -- 'ASGARI'|'TABAN'|'YEMEK'|'YOL'|'SAATLIK'
+            mod          TEXT NOT NULL DEFAULT 'SABIT',   -- 'SABIT'|'ASGARIYE_BAGLI'
+            tutar        NUMERIC(14,2),
+            fark         NUMERIC(14,2) NOT NULL DEFAULT 0,
+            gecerli_bas  DATE NOT NULL,
+            gecerli_bit  DATE,
+            gerekce      TEXT,
+            kaynak       TEXT NOT NULL DEFAULT 'sahip',
+            olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CHECK (kapsam IN ('GENEL','KISI')),
+            CHECK (tur IN ('ASGARI','TABAN','YEMEK','YOL','SAATLIK')),
+            CHECK (mod IN ('SABIT','ASGARIYE_BAGLI')),
+            CHECK (gecerli_bit IS NULL OR gecerli_bit >= gecerli_bas),
+            CHECK ((kapsam = 'GENEL' AND personel_id IS NULL AND tur = 'ASGARI')
+                OR (kapsam = 'KISI'  AND personel_id IS NOT NULL AND tur <> 'ASGARI'))
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ucret_tanim_kisi "
+                "ON ucret_tanim (personel_id, tur, gecerli_bas DESC)")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ucret_tanim_genel "
+                "ON ucret_tanim (kapsam, gecerli_bas DESC) WHERE kapsam = 'GENEL'")
+
+    # ── BORDRO KURALI — "hangi tarihte hangi parametre" ──────────────────────
+    # 9,5 saat · 30 gün · mola limiti · yemek paydası bugün KODDA sabit; kural
+    # değişince GEÇMİŞ AYLAR da kayıyor. Tarih aralığı bunu kapatır.
+    # gerekce = SÖZLEŞME MADDESİNİN METNİ ("yönetim kararı" değil) — denetimde
+    # tek dayanak budur.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS bordro_kural (
+            id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            kapsam       TEXT NOT NULL DEFAULT 'GENEL',   -- 'GENEL'|'SUBE'|'KISI'
+            sube_id      TEXT,
+            personel_id  TEXT,
+            gecerli_bas  DATE NOT NULL,
+            gecerli_bit  DATE,
+            parametre    JSONB NOT NULL DEFAULT '{}'::jsonb,
+            gerekce      TEXT,
+            olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CHECK (kapsam IN ('GENEL','SUBE','KISI')),
+            CHECK (gecerli_bit IS NULL OR gecerli_bit >= gecerli_bas)
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_bordro_kural_kapsam "
+                "ON bordro_kural (kapsam, sube_id, personel_id, gecerli_bas DESC)")
+
+    # ── BORDRO KALEMİ — defterin satırı ─────────────────────────────────────
+    # ⛔ 'YEMEK_KESINTI' türü YOK — sahip kararı 2026-09-06: sözleşme lafzı
+    #    "molasına zamanında giren personele yemek ücreti ÖDENİR" → bu bir
+    #    KOŞULLU HAK'tır, ücret kesintisi değil (İş K. m.38 kapsamı dışında).
+    #    Yemek, hak DOĞAN günlerden toplanır; hak doğmayan gün kalem üretmez,
+    #    gerekçesiyle `kanit` JSONB'sinde durur.
+    # append-only: yeniden hesap eski satırları durum='eski' yapar, silmez.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS bordro_kalem (
+            id             TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            personel_id    TEXT NOT NULL,
+            yil            INT  NOT NULL,
+            ay             INT  NOT NULL,
+            surum          INT  NOT NULL DEFAULT 1,
+            tur            TEXT NOT NULL,
+            eksen          TEXT NOT NULL,     -- 'SOZLESME'|'OLCUM'|'KARAR'|'MAHSUP'
+            miktar         NUMERIC(12,3),
+            birim          TEXT,              -- 'gun'|'saat'|'tl'
+            birim_tutar    NUMERIC(14,4),
+            tutar          NUMERIC(14,2) NOT NULL,
+            kaynak         TEXT NOT NULL,
+            kanit_sinifi   TEXT NOT NULL DEFAULT 'turetilmis',
+            kanit          JSONB NOT NULL DEFAULT '{}'::jsonb,
+            kural_id       TEXT,
+            ucret_tanim_id TEXT,
+            durum          TEXT NOT NULL DEFAULT 'aktif',
+            olusturma      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CHECK (eksen IN ('SOZLESME','OLCUM','KARAR','MAHSUP')),
+            CHECK (kanit_sinifi IN ('sozlesme','olcum','beyan','varsayim','turetilmis')),
+            CHECK (durum IN ('aktif','eski'))
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_bordro_kalem_donem "
+                "ON bordro_kalem (personel_id, yil, ay, durum)")
+
+    # ── BORDRO DÜZELTMESİ — kapanmış dönemin farkı ──────────────────────────
+    # Kapanmış/ödenmiş ay YENİDEN YAZILMAZ (muhasebe + iş hukuku). Fark, açık
+    # döneme DUZELTME kalemi olarak akar ya da ayrı ek ödeme planı doğurur.
+    # Canlı gerekçe: MERT ALİ AKAR Haziran 2.470,05 ₺ ve Temmuz yemek farkı.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS bordro_duzeltme (
+            id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            personel_id  TEXT NOT NULL,
+            kaynak_yil   INT NOT NULL, kaynak_ay INT NOT NULL,
+            hedef_yil    INT,          hedef_ay  INT,
+            tutar        NUMERIC(14,2) NOT NULL,
+            neden        TEXT NOT NULL,
+            kanit        JSONB NOT NULL DEFAULT '{}'::jsonb,
+            kalem_id     TEXT,
+            durum        TEXT NOT NULL DEFAULT 'onerildi',
+            onaylayan    TEXT,
+            olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            CHECK (durum IN ('onerildi','onaylandi','uygulandi','reddedildi'))
+        )
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_bordro_duzeltme_kisi "
+                "ON bordro_duzeltme (personel_id, durum)")
+
+    # ── MEVCUT TABLOLARA KOLON (hepsi IF NOT EXISTS, veri değişmez) ──────────
+    # hakedis_modeli: müdüre vardiya tanımlanamıyor (sahip). 'AYLIK_SABIT'
+    #   ölçüm beklemez — "vardiya yok = maaş yok" bağımlılığı yapısal olarak biter.
+    cur.execute("ALTER TABLE personel ADD COLUMN IF NOT EXISTS hakedis_modeli TEXT")
+    # guncel_fark: onaylı kayıt DONAR ama güncel hesapla farkı GÖRÜNÜR kalır —
+    #   MERT ALİ AKAR sınıfı bir daha gizlenemez.
+    for kolon, tip in (("hesap_surumu", "INT NOT NULL DEFAULT 0"),
+                       ("hesap_ts", "TIMESTAMPTZ"),
+                       ("kural_id", "TEXT"),
+                       ("kalem_toplam", "NUMERIC(14,2)"),
+                       ("guncel_fark", "NUMERIC(14,2)")):
+        cur.execute(f"ALTER TABLE personel_aylik ADD COLUMN IF NOT EXISTS {kolon} {tip}")
+    # bordro_id: ödeme planı bordroya TARİH ARİTMETİĞİYLE değil KİMLİKLE bağlansın.
+    cur.execute("ALTER TABLE odeme_plani ADD COLUMN IF NOT EXISTS bordro_id TEXT")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_odeme_plani_bordro "
+                "ON odeme_plani (bordro_id) WHERE bordro_id IS NOT NULL")
+
+
 def ensure_toptanci_teslim_kalemler(cur) -> None:
     """`toptanci_siparis.teslim_kalemler` — FİİLEN TESLİM ALINAN kalemler.
 
