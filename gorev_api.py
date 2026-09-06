@@ -2208,6 +2208,18 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             part_tam_gun = 0
             STANDART = 9.5
 
+            # 🔍 MOLA DURUMU — 5 HAL (BORDRO V2 · Adım 4)
+            # Bugüne kadar yemek hakkı TEK bir doğru/yanlıştı ve BEŞ ayrı durum
+            # aynı "hayır"a düşüyordu. Sonuç: "mola kaydı HİÇ YOK" ile "geç
+            # kaldı, hak doğmadı" ekranda ayırt edilemiyordu — sahip parayı
+            # neden ödemediğini göremiyordu.
+            # Sahip kararı 2026-09-06: "A HAK DOĞMAMASI!" → yemek bir KOŞULLU
+            # HAKtır, ücret kesme cezası değil (İş K. m.38 dışı). Hak doğmayan
+            # gün kalem üretmez, GEREKÇESİ durur.
+            # ⚠️ Bu blok PARAYA DOKUNMAZ: yalnız var olan kararı etiketler.
+            _mola = {"hak_dogdu": 0, "ihlal": 0, "belirsiz": 0,
+                     "kayit_yok": 0, "sozlesme_disi": 0, "vardiya_yok": 0}
+
             tarih = p_d1
             while tarih <= p_d2:
                 t = str(tarih)
@@ -2232,12 +2244,14 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                         yemek_hak = not is_part  # sürekli personele yemek ücreti ver
                         if yemek_hak:
                             yemek_ucret_gun += 1
+                        _mola["hak_dogdu" if yemek_hak else "sozlesme_disi"] += 1
                         gunler.append({
                             "tarih": t,
                             "planlanan_saat": round(planlanan, 2),
                             "gecikme_dk": 0.0,
                             "fazla_mesai_saat": 0.0,
                             "yemek_ucret_hakki": yemek_hak,
+                            "mola_durum": "hak_dogdu" if yemek_hak else "sozlesme_disi",
                             "yemek_sure_dk": None,
                             "part_tam_uyari": False,
                             "giris_var": True,
@@ -2265,12 +2279,29 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                         fazla = max(0.0, planlanan - STANDART)
                         toplam_fazla_saat += fazla
 
-                        # Yemek ücreti hakkı
+                        # Yemek ücreti hakkı  +  NEDENİ (Adım 4)
                         yemek_hak = False
                         if m and m.get("ucret_hakki") is True:
                             if part_tam or not is_part:
                                 yemek_hak = True
                                 yemek_ucret_gun += 1
+                        # ── hangi hâl? (para aynı, gerekçe görünür olur) ──
+                        if is_part and not part_tam:
+                            # Part-time tam gün eşiğinin altında: sözleşme yemek
+                            # ücreti öngörmüyor. Bu bir ihlal DEĞİL.
+                            mola_durum = "sozlesme_disi"
+                        elif m is None:
+                            # 🔴 EN ÖNEMLİSİ: mola kaydı HİÇ YOK. Bu "hak doğmadı"
+                            # demek DEĞİL, "bilmiyoruz" demektir. Eylül 2026'da
+                            # dört kişinin yemeği tam bu yüzden sıfırlandı.
+                            mola_durum = "kayit_yok"
+                        elif m.get("ucret_hakki") is True:
+                            mola_durum = "hak_dogdu"
+                        elif m.get("ucret_hakki") is False:
+                            mola_durum = "ihlal"
+                        else:
+                            mola_durum = "belirsiz"
+                        _mola[mola_durum] = _mola.get(mola_durum, 0) + 1
 
                         if part_tam:
                             part_tam_gun += 1
@@ -2281,12 +2312,19 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                             "gecikme_dk": round(gecikme_dk, 1),
                             "fazla_mesai_saat": round(fazla, 2),
                             "yemek_ucret_hakki": yemek_hak,
+                            "mola_durum": mola_durum,
                             "yemek_sure_dk": float(m["sure_dk"]) if m and m.get("sure_dk") else None,
                             "yemek_limit_dk": int(m["limit_dk"]) if m and m.get("limit_dk") else None,
                             "part_tam_uyari": part_tam,
                             "giris_var": y is not None,
                             "baslangic_gunu": False,
                         })
+
+                else:
+                    # Vardiya YOK. Sahip kuralı: "vardiyaya girmiyorsa İZİNLİDİR
+                    # kabulü var." Yani bu bir devamsızlık değil; yemek paydasına
+                    # da girmez. Yine de SAYILIR ki ay tablosu tam görünsün.
+                    _mola["vardiya_yok"] += 1
 
                 tarih += timedelta(days=1)
 
@@ -2456,6 +2494,17 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "haftalik_izin_kullanilmadi": haftalik_izin_kullanilmadi,
                 "haftalik_izin_detay": haftalik_izin_detay,
                 "ucret_detay": ucret_detay,
+                # 🔍 MOLA ÖZETİ (Adım 4): yemek hakkının GÜN GÜN NEDENİ.
+                #   hak_dogdu     — molaya zamanında girdi, hak doğdu
+                #   ihlal         — mola kuralı ihlal edildi, hak doğmadı
+                #   belirsiz      — mola kaydı var ama karar verilmemiş
+                #   kayit_yok     — 🔴 vardiya var, MOLA KAYDI HİÇ YOK ("bilmiyoruz")
+                #   sozlesme_disi — part-time tam gün altı; sözleşme yemek öngörmüyor
+                #   vardiya_yok   — o gün vardiya yok → İZİNLİ kabul (paydaya girmez)
+                "mola_ozet": _mola,
+                # "belgesiz gün" = hak doğabilecekken KANIT bulunamayan gün.
+                # Sıfırdan büyükse ödenmeyen yemek bir KARAR değil, BOŞLUKTUR.
+                "yemek_belgesiz_gun": _mola.get("kayit_yok", 0),
                 # İZ BIRAKIR (Adım 5): bu rakamlar hangi ücret kaynağından geldi.
                 # 'ucret_tanim' = zaman çizgisi (o dönemde geçerli olan);
                 # 'personel_karti_ayna' = çizgide satır yok, kart okundu.
