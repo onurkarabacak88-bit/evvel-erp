@@ -66,6 +66,57 @@ def _kimlik_kolonlari(cur) -> None:
     cur.execute("CREATE INDEX IF NOT EXISTS idx_personel_kisi ON personel (kisi_id)")
 
 
+def _ad_katla(s: str) -> str:
+    """Türkçe harfleri ASCII'ye indirger — 'GÖKÇE' ile 'gökce' aynı sayılsın diye.
+    _tr_kucuk yalnız büyük/küçük çözer; ç/c, ş/s, ğ/g farkı orada KALIR ve
+    'gökçe değirmenci' ile 'GÖKCE ESRA DEĞİRMENCİ' bambaşka görünür."""
+    t = _tr_kucuk(s)
+    for a, b in (("ı", "i"), ("ş", "s"), ("ğ", "g"), ("ü", "u"),
+                 ("ö", "o"), ("ç", "c"), ("â", "a"), ("î", "i")):
+        t = t.replace(a, b)
+    return " ".join(t.split())
+
+
+def _benzer_ad(a: str, b: str) -> Optional[str]:
+    """İki adın AYNI KİŞİ olabileceğine dair ZAYIF işaret. Hüküm DEĞİL.
+
+    Canlı desen (2026-09-06, sahip: "girdiler çıktılar yeniden girdiler"):
+    geri dönen personel yeni kayıtta adını farklı yazdırıyor —
+    'ERSEN KAZAN'/'ersan kazan', 'AYŞENAZ DAL'/'naz dal',
+    'GÖKCE ESRA DEĞİRMENCİ'/'gökçe değirmenci'. Tam ad eşleşmesi üçünü de
+    kaçırıyordu; uç "0 aday" diyor, oysa üç geri dönüş bağsız duruyordu.
+
+    Kural: SOYAD (son kelime) aynı olacak — bu şart. Ad tarafında:
+      · biri diğerinin ön/son eki   ('naz' ⊂ 'aysenaz')
+      · ya da ilk üç harf ortak     ('ersan' / 'ersen')
+    Dönen metin GEREKÇEdir; sahip okur, kararı o verir.
+    """
+    pa, pb = _ad_katla(a).split(), _ad_katla(b).split()
+    if not pa or not pb or pa == pb:
+        return None
+    if pa[-1] != pb[-1]:
+        return None
+    soyad, x, y = pa[-1], pa[0], pb[0]
+    if x == y:
+        return f"soyad '{soyad}' ve ilk ad '{x}' aynı, ara ad farklı"
+    if x.startswith(y) or y.startswith(x) or x.endswith(y) or y.endswith(x):
+        return f"soyad '{soyad}' aynı, ad biri diğerini kapsıyor ('{x}' / '{y}')"
+    if len(x) >= 3 and len(y) >= 3 and x[:3] == y[:3]:
+        return f"soyad '{soyad}' aynı, ad ilk üç harfi ortak ('{x}' / '{y}')"
+    return None
+
+
+def _donem_ortusuyor(u: Dict[str, Any], v: Dict[str, Any]) -> bool:
+    """İki dönem takvimde çakışıyor mu? Çakışma 'çıktı-geri girdi' tezine
+    KARŞI kanıttır: aynı anda iki açık kayıt, büyük ihtimalle iki ayrı insan."""
+    ab, bb = u.get("baslangic"), v.get("baslangic")
+    if not ab or not bb:
+        return False
+    ac = u.get("cikis") or "9999-12-31"
+    bc = v.get("cikis") or "9999-12-31"
+    return ab <= bc and bb <= ac
+
+
 @router.get("/adaylar")
 def adaylar():
     """👥 AYNI KİŞİ OLABİLECEK KAYITLAR — SALT OKUR, ÖNERİ-ONLY.
@@ -107,13 +158,40 @@ def adaylar():
                 if g.get("cikis") and g.get("baslangic") and g["cikis"] < g["baslangic"]
             ],
         })
+    # ── 2. KATMAN: BENZER AD (zayıf kanıt) ──────────────────────────────
+    # Tam ad eşleşmesi geri dönen personeli KAÇIRIYOR: yeni kayıtta ad yazımı
+    # değişiyor. Bu katman olmadan uç "0 aday" diyordu (2026-09-06 canlı).
+    benzer: List[Dict[str, Any]] = []
+    for i in range(len(rows)):
+        for j in range(i + 1, len(rows)):
+            u, v = rows[i], rows[j]
+            if _tr_kucuk(u.get("ad_soyad")) == _tr_kucuk(v.get("ad_soyad")):
+                continue                      # 1. katman zaten gösteriyor
+            if u.get("kisi_id") and u.get("kisi_id") == v.get("kisi_id"):
+                continue                      # zaten bağlı
+            gerekce = _benzer_ad(u.get("ad_soyad"), v.get("ad_soyad"))
+            if not gerekce:
+                continue
+            benzer.append({
+                "adlar": [u.get("ad_soyad"), v.get("ad_soyad")],
+                "gerekce": gerekce,
+                "guven": "zayif",
+                "donem_ortusuyor": _donem_ortusuyor(u, v),
+                "kayitlar": sorted([u, v], key=lambda x: str(x.get("baslangic") or "")),
+            })
+
     return {
         "aday_grup": len([c for c in cikti if not c["bagli_mi"]]),
         "gruplar": cikti,
+        "aday_benzer": len(benzer),
+        "benzer_gruplar": benzer,
         "not": ("ÖNERİ-ONLY: aynı ad AYNI KİŞİ DEMEK DEĞİLDİR — iki farklı insan "
                 "olabilir. Otomatik birleştirme iki insanı tek bordroda toplardı. "
                 "Sahip onaylayınca /bagla damgalar; damga kayıtları BAĞLAR, "
                 "hiçbirini silmez, içeriğini değiştirmez."),
+        "not_benzer": ("benzer_gruplar ZAYIF kanıttır — yalnız soyad + ad yazım "
+                       "yakınlığı. 'donem_ortusuyor=true' ise iki kayıt aynı anda "
+                       "açıktı; bu geri-dönüş tezine KARŞI kanıttır, önce ona bakın."),
     }
 
 
