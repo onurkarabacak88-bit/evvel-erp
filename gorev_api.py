@@ -3,8 +3,8 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
 from datetime import date
-import io, os, math
-from database import db
+import io, os, math, logging
+from database import db, savepoint
 
 router = APIRouter()
 
@@ -2000,6 +2000,40 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             # TEK MERKEZ: işe başlama tarihinden önce / çıkış tarihinden
             # sonraki günler hiçbir hesaba dahil edilmez (vardiya_v2.personel_calisma_araligi)
             p_d1, p_d2 = personel_calisma_araligi(p, d1, d2)
+
+            # ── ÜCRET: O DÖNEMDE GEÇERLİ OLAN (BORDRO V2 · Adım 5) ──────────
+            # 🔴 Buraya kadar motor `personel.maas`'ı, yani KARTIN BUGÜNKÜ değerini
+            # okuyordu. Sonuç: 6 Eylül'de yapılan zam AĞUSTOS bordrosunu da
+            # değiştiriyordu. Canlı kanıt: MERVE KARABACAK 32.000 → 35.000
+            # yapılınca Ağustos hesabı 38.180 çıktı; oysa Ağustos 35.180'di
+            # ([[feedback-kayan-pencere-capa]]).
+            # Artık ücret, hesaplanan DÖNEMİN tarihine göre çözülür. Zaman
+            # çizgisinde satır yoksa çözücü zaten kartın değerine düşer
+            # (`personel_karti_ayna`), yani davranış aynen korunur.
+            # `p` sözlüğünün ücret anahtarları yerinde değiştirilir → aşağıdaki
+            # TÜM okuyucular (taban, yemek, yol, saatlik, fazla mesai) tek
+            # kaynaktan beslenir. TEK ÇEKİRDEK.
+            try:
+                # 🛟 savepoint ŞART: çözücünün içindeki cur.execute patlarsa
+                # yutmak transaction'ı ZEHİRLER ve fatura başka satırda kesilir
+                # ([[feedback-savepoint-zehirlenme]]).
+                with savepoint(cur, "ucret_coz"):
+                    import bordro_ucret as _bu
+                    _uc_tarih = p_d1 or d1
+                    _sz = _bu.sozlesme_coz(cur, pid, _uc_tarih, p)
+                    p["maas"] = _sz["kalem"]["TABAN"]["tutar"]
+                    p["yemek_ucreti"] = _sz["kalem"]["YEMEK"]["tutar"]
+                    p["yol_ucreti"] = _sz["kalem"]["YOL"]["tutar"]
+                    p["saatlik_ucret"] = _sz["kalem"]["SAATLIK"]["tutar"]
+                    p["_ucret_kaynagi"] = {t: k["kaynak"] for t, k in _sz["kalem"].items()}
+                    p["_ucret_tarihi"] = str(_uc_tarih)
+            except Exception as _uc_err:  # noqa: BLE001
+                # Çözücü kırılırsa kartın değeriyle devam — bordro DURMAZ.
+                logging.getLogger(__name__).warning(
+                    "ucret cozucu calismadi, personel karti kullanildi pid=%s: %s",
+                    pid, _uc_err)
+                p["_ucret_kaynagi"] = {"hata": str(_uc_err)}
+
             if p_d1 is None:
                 # Bu ay için çalışma aralığı yok (henüz başlamadı / önceden ayrıldı)
                 sonuclar.append({
@@ -2422,6 +2456,11 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "haftalik_izin_kullanilmadi": haftalik_izin_kullanilmadi,
                 "haftalik_izin_detay": haftalik_izin_detay,
                 "ucret_detay": ucret_detay,
+                # İZ BIRAKIR (Adım 5): bu rakamlar hangi ücret kaynağından geldi.
+                # 'ucret_tanim' = zaman çizgisi (o dönemde geçerli olan);
+                # 'personel_karti_ayna' = çizgide satır yok, kart okundu.
+                "ucret_kaynagi": p.get("_ucret_kaynagi"),
+                "ucret_tarihi": p.get("_ucret_tarihi"),
                 "net_hakediş": ucret_detay["net_hakediş"],
                 "aktif": bool(p.get("aktif", True)),
                 "cikis_tarihi": str(p["cikis_tarihi"]) if p.get("cikis_tarihi") else None,
