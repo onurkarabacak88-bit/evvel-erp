@@ -4785,6 +4785,73 @@ def sube_kimlik_denetimi(kuru: int = 1):
     }
 
 
+class KasaYontemModel(BaseModel):
+    islem_turu: str = "PERSONEL_MAAS"
+    yontem: str                                  # 'elden' | 'havale'
+    tarih_bas: Optional[str] = None              # YYYY-MM-DD (dahil)
+    tarih_bit: Optional[str] = None              # YYYY-MM-DD (dahil)
+    gerekce: str                                 # ZORUNLU — İZ, neye dayanıyor
+    ids: Optional[List[str]] = None              # verilirse SADECE bunlar
+
+
+@app.post("/api/kasa/odeme-yontemi-isaretle")
+def kasa_odeme_yontemi_isaretle(body: KasaYontemModel, kuru: int = 1):
+    """🔧 GEÇMİŞ kasa satırlarının ÖDEME YÖNTEMİNİ işaretler. kuru=1 yalnız ölçer.
+
+    NEDEN: kasa çekirdeğinde `odeme_yontemi` değerleri 'elden' | 'havale' |
+    'kart' | 'nakit'(=BELİRSİZ). Maaş ödeme yolları 2026-09-06'ya kadar yöntemi
+    HİÇ sormuyor, sabit 'nakit' yazıyordu; bu yüzden Temmuz–Ağustos'ta ödenen
+    12 maaşın hiçbiri banka ekstresiyle eşleştirilemiyor. Yamalar İLERİYE
+    dönüktür — geçmişi ancak sahip beyanı ya da KANIT düzeltebilir.
+
+    ⚠️ TUTARA DOKUNMAZ. Yalnız 'belirsiz' (nakit/boş) satırları işaretler:
+    zaten 'elden'/'havale'/'kart' damgalı satır ASLA değiştirilmez — bilinen
+    bir gerçeğin üzerine yazmak, düzeltme değil bozmadır.
+    `gerekce` ZORUNLUDUR ve denetim izine yazılır ("bu damga neye dayanıyor").
+    """
+    _y = (body.yontem or "").strip().lower()
+    if _y not in ("elden", "havale"):
+        raise HTTPException(400, "yontem 'elden' veya 'havale' olmalı")
+    if not (body.gerekce or "").strip():
+        raise HTTPException(400, "gerekce zorunlu — damganın neye dayandığı ize yazılır")
+    kosul = ["islem_turu = %s", "COALESCE(durum,'aktif') = 'aktif'",
+             "COALESCE(odeme_yontemi,'nakit') IN ('nakit','')"]
+    par: List[Any] = [body.islem_turu]
+    if body.ids:
+        kosul.append("id::text = ANY(%s)"); par.append([str(x) for x in body.ids])
+    if body.tarih_bas:
+        kosul.append("tarih >= %s::date"); par.append(body.tarih_bas)
+    if body.tarih_bit:
+        kosul.append("tarih <= %s::date"); par.append(body.tarih_bit)
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT id::text AS id, tarih::text AS tarih, tutar::float AS tutar, "
+            "       COALESCE(aciklama,'') AS aciklama, COALESCE(odeme_yontemi,'') AS mevcut "
+            "  FROM kasa_hareketleri WHERE " + " AND ".join(kosul) + " ORDER BY tarih",
+            tuple(par))
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+        uygulandi = 0
+        if not kuru and satirlar:
+            _ids = [x["id"] for x in satirlar]
+            cur.execute("UPDATE kasa_hareketleri SET odeme_yontemi=%s WHERE id::text = ANY(%s)",
+                        (_y, _ids))
+            uygulandi = cur.rowcount or 0
+            for x in satirlar:
+                audit(cur, 'kasa_hareketleri', x["id"], 'ODEME_YONTEMI_ISARETLE',
+                      eski={'odeme_yontemi': x["mevcut"] or 'nakit(belirsiz)'},
+                      yeni={'odeme_yontemi': _y, 'gerekce': body.gerekce.strip()})
+            conn.commit()
+    return {
+        "kuru": bool(kuru), "yontem": _y, "aday_satir": len(satirlar),
+        "toplam_tutar": round(sum(abs(float(x["tutar"] or 0)) for x in satirlar), 2),
+        "uygulanan": uygulandi,
+        "gerekce": body.gerekce.strip(),
+        "not": ("Yalnız yöntemi BELİRSİZ olan satırlar listelenir; 'elden'/'havale'/'kart' "
+                "damgalı satıra dokunulmaz. Tutar değişmez. Uygulamak için ?kuru=0"),
+        "satirlar": satirlar[:60],
+    }
+
+
 @app.post("/api/kasa/iptal-cift-sayim-duzelt")
 def kasa_iptal_cift_sayim_duzelt(kuru: int = 1):
     """🔧 İPTAL TERS KAYITLARININ ÇİFT SAYIMINI ÖLÇ/DÜZELT (2026-08-09).
@@ -9432,7 +9499,17 @@ def onay_listele(durum: str = "bekliyor", limit: int = 300):
         return [dict(r) for r in cur.fetchall()]
 
 
-def _onayla_tx(cur, oid: str):
+def _onayla_tx(cur, oid: str, nakit_yontemi: Optional[str] = None,
+               odeyen_sube_id: Optional[str] = None):
+    """Onay kuyrugu kalemini uygular.
+
+    💳 nakit_yontemi ('elden' | 'havale') — 2026-09-06, Fable denetimi P2.
+    Onay, para hareketi DOGURAN bir adimdir ama yontem hic sorulmuyordu; kasaya
+    'nakit' (=BELIRSIZ) yaziliyor ve maas banka ekstresiyle eslestirilemiyordu.
+    Tekli /ode ve /toplu-odeme yollarinda bu ayrim zorunlu kilindi (7ccc820,
+    01fd4b3); onay yolu son acik kapiydi. Bos birakilirsa ESKI davranis surer
+    (belirsiz) -- mevcut cagiranlari kirmamak icin zorunlu degil.
+    """
     cur.execute("SELECT * FROM onay_kuyrugu WHERE id=%s FOR UPDATE", (oid,))
     onay = cur.fetchone()
     if not onay:
@@ -9507,6 +9584,8 @@ def _onayla_tx(cur, oid: str):
             ana_onay = kasa_ve_faiz_odeme_plani_tam_odeme(
                 cur, plan_dict, onay['kaynak_id'], odenen_onay, tarih,
                 anapara_aciklama=f"Onaylandı: {onay['aciklama']}",
+                odeme_yontemi=nakit_yontemi,
+                odeyen_sube_id=odeyen_sube_id,
             )
             if _tam_kapandi_onay and kaynak_tablo == 'vadeli_alimlar' and plan_dict.get('kaynak_id'):
                 vadeli_alim_kapat(cur, plan_dict['kaynak_id'], tarih)
@@ -9744,12 +9823,23 @@ def toplu_onayla(body: dict, x_evvel_oturum: Optional[str] = Header(default=None
 # kapıyı KİLİTLEMEK sahibin anahtarı tanımlamasına bağlı (bkz. güvenlik backlog).
 # Kapıdan bağımsız olarak aktör artık HER onayda deftere yazılıyor: jeton
 # geçerliyse 'oturum', değilse 'anonim' — cevapsız soru cevapsız görünsün.
+class OnaylaModel(BaseModel):
+    # 💳 Para nereden çıktı? 'elden' nakit çekmeceyi, 'havale' banka hesabını
+    # azaltır; boş = BELİRSİZ (eski davranış). Bkz. _onayla_tx.
+    nakit_yontemi: Optional[str] = None
+    odeyen_sube_id: Optional[str] = None
+
+
 @app.post("/api/onay-kuyrugu/{oid}/onayla",
           dependencies=[Depends(merkez_mutasyon_korumasi)])
-def onayla(oid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
+def onayla(oid: str, body: OnaylaModel = OnaylaModel(),
+           x_evvel_oturum: Optional[str] = Header(default=None)):
     _ak_ad, _ak_kaynak = aktor_bilgisi(x_evvel_oturum)
+    _y = (body.nakit_yontemi or "").strip().lower() or None
+    if _y and _y not in ("elden", "havale"):
+        raise HTTPException(400, "nakit_yontemi 'elden' veya 'havale' olmalı")
     with db() as (conn, cur):
-        _s = _onayla_tx(cur, oid)
+        _s = _onayla_tx(cur, oid, nakit_yontemi=_y, odeyen_sube_id=body.odeyen_sube_id)
         audit(cur, 'onay_kuyrugu', oid, 'ONAYLANDI',
               aktor=_ak_ad, aktor_kaynak=_ak_kaynak)
         return _s
@@ -10947,7 +11037,11 @@ def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
             raise HTTPException(400, "Kayıt bulunamadı veya zaten onaylandı")
         cur.execute(
             """
-            SELECT durum
+            -- 🔴 FIX (Fable denetimi P2, 2026-09-06): `SELECT durum` okunup
+            -- `plan.get("odeme_durumu")` yazılıyordu → dönüş HER ZAMAN None.
+            -- Ekran "onaylandı, ödeme durumu: —" diyordu; ödenmiş bir dönemi
+            -- onaylıyorsanız fark edilmiyordu. Takma ad eklendi.
+            SELECT durum AS odeme_durumu
             FROM odeme_plani
             WHERE kaynak_tablo='personel'
               AND kaynak_id=%s
@@ -11032,12 +11126,34 @@ def personel_aylik_sil(pid: str, yil: int = None, ay: int = None):
         # Part-time'da `maas` alanından "tahmini" üretmek anlamsız (ücret saat
         # bazlı), o yüzden net=0 geçiyoruz: bu, bekleyen planı İPTAL eder ve
         # bağlı onay kuydunu kapatır — silinen kayıt için doğru olan da budur.
-        if p and p['calisma_turu'] != 'surekli':
-            _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, 0.0)
-        if p and p['calisma_turu'] == 'surekli':
-            tahmini = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
-            _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, tahmini)
-        audit(cur, 'personel_aylik', str(kayit['id']), 'DELETE')
+        # 🔴 FIX (Fable denetimi P2, 2026-09-06): silme DEVİR ZİNCİRİNİ KIRIYORDU.
+        # Silinen kayıt `mahsup_devir` taşıyorsa (karşılanamayan avans mahsubu
+        # sonraki döneme devreder) o bakiye YOK OLUYOR ve sonraki dönem
+        # `onceki_devir` 0 okuyor → devreden avans kayboluyor.
+        # Ayrıca sürekli personelde plan "maaş+yemek+yol" TAM AYLIK yazılıyordu:
+        # ay ortası giren/ayrılan için pro-rata YOK, avans mahsubu YOK — oysa
+        # motors.py aynı tahmini yolda ikisini de uyguluyor (iki yazıcı farklı).
+        # Doğrusu TEK ÇEKİRDEK: taslağı yeniden ürettir; devir avans_service'ten
+        # yeniden hesaplanır, plan da doğru tutarla yazılır.
+        _devir = float(kayit.get('mahsup_devir') or 0)
+        _senk_ok = False
+        if p:
+            try:
+                with savepoint(cur, "pa_sil_senk"):
+                    _maas_svc.aylik_vardiya_senkronize(cur, dict(p), yil, ay)
+                    _senk_ok = True
+            except Exception as _e:  # noqa: BLE001
+                logger.warning("silme sonrasi senkron (%s %s-%s): %s", pid, yil, ay, _e)
+        if p and not _senk_ok:
+            # Savunma: çekirdek çalışmadıysa eski davranış (plan en azından tazelensin)
+            if p['calisma_turu'] != 'surekli':
+                _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, 0.0)
+            else:
+                tahmini = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
+                _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, tahmini)
+        audit(cur, 'personel_aylik', str(kayit['id']), 'DELETE',
+              eski={'mahsup_devir': _devir, 'hesaplanan_net': float(kayit.get('hesaplanan_net') or 0)},
+              yeni={'yeniden_uretildi': _senk_ok})
     return {"success": True}
 
 @app.get("/api/personel-aylik/{pid}/gecmis")
