@@ -315,6 +315,62 @@ da güncellendi. Golden yeniden donduruldu; kabul testi 3/3.
 
 ---
 
+## 5g · AĞUSTOS 2026 MUTABAKATI (2026-09-06) — banka ↔ sahip defteri ↔ Evvel
+
+13 banka ekstresi (10 hesap) çözüldü; Ziraat'in 3 taranmış PDF'i `fitz` ile
+PNG'ye çevrilip GÖZLE okundu (makinede OCR yok). Ayrıştırıcı, gözle okunan
+sayfalarla **kuruşu kuruşuna** doğrulandı.
+
+### Ödeme kaynağı
+| kişi | sahip defteri | bankadan | elden |
+|---|---|---|---|
+| MERVE AKTA | 36.454 | 36.454,50 | — |
+| DENİZ KÜÇÜKKIRLI | 33.912 | 33.911,50 | — |
+| SILA AKBAY | 25.381 | 25.381,00 | — |
+| YAREN BEŞLİ | 22.218 | 22.215,00 | — |
+| MERT ALİ AKAR | 15.442 | 14.037,00 | 1.405,00 |
+| NİSANUR BOLAT | 5.415 | 0 | 5.415,00 |
+| EMİR EFE ERAYDIN | 4.320 | 0 | 4.320,00 |
+| NAZ DAL | 1.170 | 0 | 1.170,00 |
+| ERSAN KAZAN | 1.170 | 0 | 1.170,00 |
+| | **145.482** | **131.999,00** | **13.480,00** |
+
+Elden 5 kalem `anlik_giderler`'de: 2'sini bu oturum girdi (`elden` damgalı),
+3'ü zaten vardı (`nakit` = belirsiz, damgası düzeltilmeli).
+
+### Evvel Ağustos'ta düzeltilenler
+| kişi | önce | sonra | ne yapıldı |
+|---|---|---|---|
+| MERT ALİ AKAR | 3.258,75 | **15.442,02** | saat 32,92 → 155,98 (ödenen ÷ 99,00), `elle` damgalı |
+| nisanur bolat | 14.511,70 | **5.414,83** | saat 146,14 → 54,53 (ödenen ÷ 99,30) |
+| SILA AKBAY | 17.988,33 | **20.988,33** | canlıya hizalandı; hakediş 24.988,33 − 4.000 avans |
+| MERVE AKTA | 3.733,33 | **36.454,50** | gönderilen tutara hizalandı; kayıt taslağa düştü |
+
+⚠️ MERVE AKTA'nın 4.454,50 ₺'lik düzeltmesinin **1.454,50 ₺'si açıklanamadı** —
+denkleştirme kalemidir, gerekçesi bulununca ayrı kalem olmalı
+([[feedback-dairesel-mutabakat-tuzagi]]).
+
+### 🔴 KOD HATASI BULUNDU VE DÜZELTİLDİ (`0c41fd3`)
+`POST /api/personel/{id}/cikis` → `cikis_tarihi = bugun_tr()`, **tarih parametresi
+YOKTU**. Kaydedilen şey İŞLEMİN YAPILDIĞI GÜN, kişinin son çalıştığı gün değil.
+Sahip: "SİSTEMDE AYRILMA TARİHİ DİYE BİR ALAN YOK, BAZEN GEÇ ÇIKIŞ YAPABİLİYORUZ."
+Canlı bedeli: YAREN BEŞLİ çıkışı 25.08 damgalı → 29.229,17 ₺; sahip defteri
+22.218 ₺ (≈19 gün) → **~7.000 ₺ fazla ödeme riski**.
+Artık `tarih` parametresi var (fiilî son gün), başlangıçtan önce reddedilir,
+mevcut yanlış tarih düzeltilebilir, eski/yeni değer audit izine yazılır.
+
+### ⏳ AÇIK KALANLAR
+- **YAREN BEŞLİ** fiilî son çalışma günü? (paradan ≈ 19 Ağustos)
+- **DENİZ KÜÇÜKKIRLI** çıkışı 31.08 yazılı → 35.075; sahip defteri 33.912
+- **naz dal · ersan kazan · emir efe eraydın** Ağustos'ta çalıştı ama kartlarında
+  başlangıç **1 Eylül** → sistem onları Ağustos'ta HİÇ görmüyor
+- 3 elden kaydın ödeme yöntemi `nakit` → `elden` damgalanmalı
+- **Part-time hakedişi PLANLANAN vardiyadan türüyor**: CELİLE IŞIK 7 Eylül'de
+  başlıyor ama 6 Eylül'de 18,98 saat / 1.869,86 ₺ görünüyor (durum
+  `vardiya_tahmini`, henüz ödenmez ama ekranda kazanç gibi duruyor)
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
