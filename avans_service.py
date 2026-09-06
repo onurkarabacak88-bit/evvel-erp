@@ -36,7 +36,7 @@ from typing import Any, Dict, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from database import db
+from database import db, savepoint
 from tr_saat import bugun_tr
 from kasa_service import insert_kasa_hareketi, audit
 import maas_service as _maas
@@ -160,7 +160,21 @@ def _donem_sec(cur, personel_id: str) -> tuple:
 def _beklenen_net(cur, p: dict, yil: int, ay: int, vt: Optional[dict]) -> float:
     if (p.get("calisma_turu") or "surekli") == "surekli":
         return float(p.get("maas") or 0) + float(p.get("yemek_ucreti") or 0) + float(p.get("yol_ucreti") or 0)
+    # 🔴 FIX (Fable denetimi P2, 2026-09-06): part-time beklenen net YALNIZ
+    # planlanan vardiya saatinden türüyordu. Vardiya planı olmayan part-time'da
+    # (elle-saat yolu tam da bunlar için var) saat 0 → beklenen 0 → tavan
+    # adaylarına girmiyor → tavan mutlak sınıra, 20.000 ₺'ye ÇIKIYORDU. Oysa
+    # 30.000 maaşlı sürekli personel 9.000 alabiliyor. Kapı ters çalışıyordu.
+    # Saat kaynağı sırası: vardiya planı → bordro kaydındaki saat ('elle' dahil).
     saat = float((vt or {}).get("toplam_planlanan_saat") or 0)
+    if saat <= 0:
+        try:
+            cur.execute(
+                "SELECT calisma_saati FROM personel_aylik "
+                " WHERE personel_id=%s AND yil=%s AND ay=%s", (str(p["id"]), yil, ay))
+            saat = float((cur.fetchone() or {}).get("calisma_saati") or 0)
+        except Exception as e:  # noqa: BLE001 — tavan hesabı bordro okunamadı diye çökmesin
+            logger.warning("beklenen_net bordro saati okunamadi (%s): %s", p.get("ad_soyad"), e)
     return saat * float(p.get("saatlik_ucret") or 0)
 
 
@@ -176,7 +190,11 @@ def _tavan_hesapla(cur, p: dict) -> Dict[str, Any]:
         adaylar.append(hakedis * AVANS_HAKEDIS_ORAN)
     if beklenen > 0:
         adaylar.append(beklenen * AVANS_NET_ORAN)
-    tavan = round(min(adaylar), 2)
+    # 🔴 FIX (Fable denetimi P2, 2026-09-06): ikisi de 0 iken adaylar YALNIZ mutlak
+    # sınırdan ibaret kalıyor ve tavan 20.000 ₺ çıkıyordu — yani hakedişi hiç
+    # ölçülememiş kişiye EN YÜKSEK tavan veriliyordu. Doğrusu: ölçü yoksa kapı
+    # KAPALI. Sıfır tavan "hakediş oluşmadan avans açılamaz" demektir.
+    tavan = 0.0 if (hakedis <= 0 and beklenen <= 0) else round(min(adaylar), 2)
     d_yil, d_ay = _donem_sec(cur, p["id"])
     cur.execute(
         """SELECT COALESCE(SUM(tutar),0) AS t FROM personel_avans
@@ -352,24 +370,51 @@ def avans_onayla(aid: str, body: AvansOnayModel):
             raise HTTPException(400,
                 f"Onay anında tavan aşılıyor: dönem toplamı {_toplam:,.0f} ₺ > tavan {_lim['tavan']:,.0f} ₺. "
                 f"Hakediş/dönem talep sonrası değişti — talebi reddedip güncel tavanla yeniden açtırın.")
+        # 🔴 MAHSUP DÖNEMİ ONAY ANINDA YENİDEN SEÇİLİR (Fable denetimi P1, 2026-09-06).
+        # Dönem TALEP anında yazılıyor, onayda bir daha bakılmıyordu. Talep ile onay
+        # arasında o dönemin bordrosu onaylanırsa (ya da ödenirse) avans hiçbir yerde
+        # mahsup edilmiyordu: hedef dönemin neti dondurulmuş olduğu için düşülmüyor,
+        # sonraki dönem ise `donem_odenen_avans(yil,ay)` filtresiyle eski dönemdeki
+        # avansı GÖRMÜYOR. Para çıkıyor, maaştan hiç düşmüyor.
+        # `_tavan_hesapla` zaten `_donem_sec`'i çağırıp GÜNCEL dönemi buluyordu
+        # (_lim["donem_yil"]/["donem_ay"]) — tek eksik onu satıra YAZMAKTI.
+        _d_yil, _d_ay = int(_lim["donem_yil"]), int(_lim["donem_ay"])
+        _donem_kaydi = (_d_yil, _d_ay) != (int(r["donem_yil"]), int(r["donem_ay"]))
+        if _donem_kaydi:
+            _event(cur, aid, "DONEM_KAYDI", {
+                "eski": f"{r['donem_yil']}-{int(r['donem_ay']):02d}",
+                "yeni": f"{_d_yil}-{_d_ay:02d}",
+                "neden": "talep ile onay arasında hedef dönemin bordrosu kilitlendi"})
         if yontem == "havale":
             # Onay = ödeme anı: kasa izi ŞİMDİ yazılır ("kasa izi = tek gerçek")
             insert_kasa_hareketi(cur, str(bugun), "PERSONEL_AVANS", -abs(float(r["tutar"])),
-                f"Personel Avans (havale): {ad} — {r['donem_yil']}-{int(r['donem_ay']):02d} dönemi mahsup",
+                f"Personel Avans (havale): {ad} — {_d_yil}-{_d_ay:02d} dönemi mahsup",
                 "personel_avans", aid, ref_type="PERSONEL_AVANS")
             cur.execute(
                 """UPDATE personel_avans SET durum='odendi', odeme_yontemi='havale',
+                       donem_yil=%s, donem_ay=%s,
                        onay_ts=NOW(), odeme_ts=NOW(), onaylayan=%s WHERE id=%s""",
-                (body.onaylayan, aid),
+                (_d_yil, _d_ay, body.onaylayan, aid),
             )
-            _event(cur, aid, "ONAY_HAVALE_ODENDI", {"onaylayan": body.onaylayan})
+            _event(cur, aid, "ONAY_HAVALE_ODENDI",
+                   {"onaylayan": body.onaylayan, "donem": f"{_d_yil}-{_d_ay:02d}"})
         else:
             cur.execute(
                 """UPDATE personel_avans SET durum='onaylandi', odeme_yontemi='elden',
-                       sube_id=%s, onay_ts=NOW(), onaylayan=%s WHERE id=%s""",
-                (body.sube_id, body.onaylayan, aid),
+                       sube_id=%s, donem_yil=%s, donem_ay=%s,
+                       onay_ts=NOW(), onaylayan=%s WHERE id=%s""",
+                (body.sube_id, _d_yil, _d_ay, body.onaylayan, aid),
             )
-            _event(cur, aid, "ONAY_ELDEN", {"sube_id": body.sube_id, "onaylayan": body.onaylayan})
+            _event(cur, aid, "ONAY_ELDEN", {"sube_id": body.sube_id, "onaylayan": body.onaylayan,
+                                            "donem": f"{_d_yil}-{_d_ay:02d}"})
+        # Hedef dönemin bordrosunu TAZELE — mahsup oraya işlensin. Onaylı/ödenmiş
+        # kaydı senkron zaten atlar; taslaksa net avans düşülmüş haliyle yeniden yazılır.
+        try:
+            with savepoint(cur, "avans_donem_senk"):
+                _maas.aylik_vardiya_senkronize(cur, dict(p_onay), _d_yil, _d_ay)
+        except Exception as e:  # noqa: BLE001 — avans onayı bordro senkronu yüzünden düşmesin
+            logger.warning("avans sonrasi bordro senkronu (%s %s-%s): %s",
+                           r["personel_id"], _d_yil, _d_ay, e)
         audit(cur, "personel_avans", aid, "ONAY", yeni={"yontem": yontem})
     # DUYU OMURGASI (2026-07-06): kimliksiz para-çıkışı/onay olayı — hata-yutar
     try:

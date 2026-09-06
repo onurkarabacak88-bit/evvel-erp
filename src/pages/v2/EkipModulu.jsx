@@ -790,7 +790,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             saat_elle: !!bModal?.dokunulan?.calisma_saati,
           },
         });
-        onToast?.(`✓ Kaydedildi — net ${fmt(sayi(r?.hesaplanan_net))}`);
+        onToast?.(r?.onay_dustu
+          ? `✓ Net ${fmt(sayi(r?.hesaplanan_net))} — kayıt ONAYLIYDI, düzeltme taslağa döndürdü; yeniden onaylayın`
+          : `✓ Kaydedildi — net ${fmt(sayi(r?.hesaplanan_net))}`);
       } else if (tip === 'onayla') {
         await api(`/personel-aylik/${pid}/onayla?${q}`, { method: 'POST' });
         onToast?.('✓ Onaylandı — tutar kilitlendi, ödeme açıldı');
@@ -836,6 +838,13 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     }
     if (d === 'onayli') {
       A.push({ ad: '💰 Öde (kasadan düş)', birincil: true, onTikla: () => bAc('ode', b) });
+      // 🔓 ONAY KİLİDİ KALDIRILDI (sahip kararı 2026-09-06). Onaylı bordro artık
+      // doğrudan düzeltilebiliyor; düzeltme kaydı taslağa döndürür (onay düşer).
+      // Eski kilit canlı para kaybı üretmişti: ücreti tanımsızken onaylanan kayıt
+      // 0,00'da donuyor, gece senkronu onaylı kaydı atladığı için bir daha
+      // ölçülmüyordu (MERT ALİ AKAR Haziran 2026 → 2.470,05 ₺ görünmez oldu).
+      A.push({ ad: '✎ Düzelt & kaydet', onTikla: () => bAc('kaydet', b) });
+      A.push({ ad: '🗓 Vardiyadan doldur', onTikla: () => bAc('doldur', b) });
       A.push({ ad: '🔓 Kilidi aç', onTikla: () => bAc('kilit', b) });
       A.push({ ad: '🕘 Geçmiş aylar', onTikla: () => bAc('gecmis', b) });
       return A;

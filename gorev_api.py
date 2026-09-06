@@ -2406,11 +2406,11 @@ def gecikme_eksik_gun_isle(body: GecikmeEksikGunBody):
         import uuid as _uuid
         mevcut_dict = dict(mevcut) if mevcut else {}
 
-        # FIX M5 (2026-07-06): net artık KANONİK motordan — maas_service.kanonik_net
-        # (= Vardiya Takip net_hakediş + bayram×2 − eksik gün + manuel düzeltme).
-        # Eskiden burada el yapımı TAM-AYLIK formül vardı (yemek/yol prorate'siz, dönem
-        # kırpmasız) → aynı personel Vardiya Takip ekranı ile burada FARKLI net görüyordu.
-        _kayit_m5 = {**mevcut_dict, "eksik_gun": yeni_eksik}
+        # FIX M5 (2026-07-06): net artık KANONİK motordan — maas_service.kanonik_net.
+        # 2026-09-06 (Fable P1): net ARTIK BURADA HİÇ hesaplanmıyor; yalnız girdi
+        # (eksik_gun) yazılıp `aylik_vardiya_senkronize` çağrılıyor — avans mahsubu,
+        # ödeme planı ve part-time 'elle' saat o çekirdekte. `_kayit_m5` bu yüzden
+        # kaldırıldı (yalnız kaldırılan kanonik_net/maas_hesapla çağrıları kullanıyordu).
         # 🔴 PERS-008 (2026-09-02) — CANLI 500 DÜZELTİLDİ.
         # `fazla`, `bayram` (INSERT parametreleri, aşağıda) ve `gunluk` (dönüş
         # değeri) YALNIZCA yedek dalda tanımlıydı. Kanonik hesap BAŞARILI
@@ -2428,25 +2428,24 @@ def gecikme_eksik_gun_isle(body: GecikmeEksikGunBody):
             gunluk = float(p.get("maas") or 0) / _ms.AYLIK_GUN
         else:
             gunluk = float(p.get("saatlik_ucret") or 0) * _ms.PART_GUNLUK_SAAT
-        net = None
-        try:
-            _vt = _ms.vardiya_takip_hesap(body.personel_id, body.yil, body.ay)
-            if _vt:
-                net = _ms.kanonik_net(dict(p), _vt, _kayit_m5)
-        except Exception as _e:  # noqa: BLE001 — vardiya_takip kendi bağlantısını açar
-            import logging as _lg
-            _lg.getLogger(__name__).warning(
-                "gecikme: kanonik hesap alinamadi (%s %s-%s): %s",
-                body.personel_id, body.yil, body.ay, _e)
-            net = None
-        if net is None:
-            # YEDEK YOL — TEK ÇEKİRDEK kuralı: yerel formül kopyalamak yerine
-            # maas_service.maas_hesapla (pro-rata, raporlu, manuel düzeltme,
-            # part-time dalı hepsi orada tanımlı).
-            net = _ms.maas_hesapla(dict(p), _kayit_m5, body.yil, body.ay)
+        # 🔴 ÖDENMİŞ DÖNEM KAPISI (Fable denetimi P1, 2026-09-06): bu uç kilit
+        # kontrolünden HİÇ geçmiyordu — kasadan parası çıkmış bir dönemin bordrosu
+        # buradan değiştirilebiliyordu. Kural tek çekirdekte.
+        if _ms.odenmis_donem_mi(cur, body.personel_id, body.yil, body.ay):
+            raise HTTPException(400,
+                "Bu dönemin maaşı ödenmiş — gecikme/eksik gün işlenemez. Düzeltme için "
+                "ek ödeme / gelecek aydan mahsup gerekir (geçmiş kayıt değişmez).")
 
         not_ekle = body.not_aciklama or f"Gecikme → {body.eksik_gun} eksik gün olarak işlendi"
         kid = str(_uuid.uuid4())
+        # 🔴 NETİ BURADA HESAPLAMA (Fable denetimi P1, 2026-09-06).
+        # Eskiden net burada kanonik_net ile yazılıyordu ve ÜÇ ŞEY ATLANIYORDU:
+        #   1) avans mahsubu uygulanmıyordu → satır kendi içinde çelişiyordu
+        #      (hesaplanan_net mahsupsuz, avans_mahsup kolonu eski değerde kalıyor);
+        #      sahip onaylarsa bu net plana taşınıyor ve avans kadar FAZLA ödeniyordu,
+        #   2) ödeme planı senkronlanmıyordu → plan eski tutarda kalıyordu,
+        #   3) part-time 'elle' saat yok sayılıyordu (kanonik_net planlanan saatten hesaplar).
+        # Doğrusu: yalnız GİRDİYİ (eksik_gun + not) yaz, neti TEK ÇEKİRDEK hesaplasın.
         cur.execute("""
             INSERT INTO personel_aylik
                 (id, personel_id, yil, ay, calisma_saati, fazla_mesai_saat,
@@ -2454,13 +2453,15 @@ def gecikme_eksik_gun_isle(body: GecikmeEksikGunBody):
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'taslak')
             ON CONFLICT (personel_id, yil, ay) DO UPDATE SET
                 eksik_gun = %s,
-                hesaplanan_net = %s,
                 not_aciklama = COALESCE(personel_aylik.not_aciklama,'') || ' | ' || %s,
                 durum = 'taslak'
         """, (kid, body.personel_id, body.yil, body.ay,
               float(mevcut_dict.get("calisma_saati") or 0), fazla, bayram,
-              yeni_eksik, round(net, 2), not_ekle,
-              yeni_eksik, round(net, 2), not_ekle))
+              yeni_eksik, 0, not_ekle,
+              yeni_eksik, not_ekle))
+        # TEK ÇEKİRDEK: elle saat + avans mahsubu + ödeme planı hepsi burada.
+        _senk = _ms.aylik_vardiya_senkronize(cur, dict(p), body.yil, body.ay)
+        net = float((_senk or {}).get("hesaplanan_net") or 0)
         conn.commit()
 
     return {

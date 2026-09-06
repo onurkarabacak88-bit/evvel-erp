@@ -72,6 +72,38 @@ def referans_to_donem(ref) -> tuple:
     return yil, ay
 
 
+def odenmis_donem_mi(cur, personel_id: str, yil: int, ay: int) -> bool:
+    """(yil, ay) ÇALIŞMA döneminin maaşı ÖDENMİŞ mi? — TEK ÇEKİRDEK.
+
+    main._maas_kayit_kilit_guard bu kontrolü kendi içinde taşıyordu; gorev_api'nin
+    gecikme/eksik-gün ucu ise HİÇ kontrol etmiyordu ve ödenmiş dönemin bordrosunu
+    değiştirebiliyordu (Fable denetimi P1, 2026-09-06). Kural tek yerde dursun.
+
+    İki konvansiyon: yeni planda referans_ay = ÖDEME ayı (dönem+1); eski planlarda
+    çalışma ayının kendisi. Eski dal, ÖNCEKİ dönemin ödenmiş planıyla çakışmasın
+    diye plan AÇIKLAMASININ bu dönemi adıyla söylemesini şart koşar.
+    """
+    try:
+        cur.execute(
+            """
+            SELECT 1 FROM odeme_plani
+            WHERE kaynak_tablo='personel' AND kaynak_id=%s AND durum='odendi'
+              AND (
+                    referans_ay = %s::date
+                 OR (referans_ay = MAKE_DATE(%s, %s, 1)
+                     AND COALESCE(aciklama,'') LIKE %s)
+                  )
+            LIMIT 1
+            """,
+            (str(personel_id), str(maas_odeme_tarihi(yil, ay)), yil, ay,
+             f"%{TR_AYLAR[ay]} {yil} dönemi%"),
+        )
+        return cur.fetchone() is not None
+    except Exception as e:  # noqa: BLE001 — kapı okunamadıysa AÇIK sayma; çağıran karar versin
+        logger.warning("odenmis donem kontrolu (%s %s-%s): %s", personel_id, yil, ay, e)
+        raise
+
+
 def plan_aciklama(p: dict, yil: int, ay: int) -> str:
     """CFO panel / Yaklaşan Ödemeler'de hangi ayın maaşı olduğu okunsun diye dönem etiketi."""
     return f"Personel Maaş: {p.get('ad_soyad') or ''} — {TR_AYLAR[ay]} {yil} dönemi"
@@ -326,12 +358,38 @@ def avans_mahsup_uygula(cur, p: dict, yil: int, ay: int, brut_net: float) -> tup
     mahsup 'mahsup_devir' olarak sonraki döneme yazılır. Maaş motoru avansı
     yalnızca OKUR — kasa hareketi üretme yetkisi avans_service'tedir.
     Dönüş: (net, avans_mahsup, mahsup_devir)."""
+    from database import savepoint  # lazy: bu modül database'e top-level bağlı değil
+    istek = None
     try:
-        import avans_service as _av  # lazy: döngüsel import kırıcı (avans → maas tek yön top-level)
-        istek = _av.onceki_devir(cur, p["id"], yil, ay) + _av.donem_odenen_avans(cur, p["id"], yil, ay)
+        # SAVEPOINT ŞART: içerideki cur.execute patlarsa transaction ZEHİRLENİR ve
+        # aşağıdaki kurtarma okuması da düşerdi (bkz. feedback_savepoint_zehirlenme).
+        with savepoint(cur, "avans_mahsup_oku"):
+            import avans_service as _av  # lazy: döngüsel import kırıcı (avans → maas tek yön top-level)
+            istek = _av.onceki_devir(cur, p["id"], yil, ay) + _av.donem_odenen_avans(cur, p["id"], yil, ay)
     except Exception as e:
         logger.warning("avans mahsubu okunamadi (%s %s-%s): %s", p.get("id"), yil, ay, e)
+        istek = None
+
+    if istek is None:
+        # 🔴 FIX (Fable denetimi P2, 2026-09-06): eskiden burada (brut_net, 0, 0)
+        # dönülüyordu. Çağıran bunu kayda YAZIYOR (avans_mahsup=0, mahsup_devir=0)
+        # → geçici bir okuma hatası DEVİR ZİNCİRİNİ SESSİZCE SIFIRLIYOR; devreden
+        # avans kayboluyor ve sonraki dönem onu bir daha görmüyor. Ölçemediğimizde
+        # UYDURMAYIZ: kayıtta ne varsa KORUNUR.
+        try:
+            with savepoint(cur, "avans_mahsup_koru"):
+                cur.execute(
+                    "SELECT COALESCE(avans_mahsup,0) AS m, COALESCE(mahsup_devir,0) AS d "
+                    "  FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
+                    (str(p["id"]), yil, ay))
+                _r = cur.fetchone() or {}
+                _m, _d = float(_r.get("m") or 0), float(_r.get("d") or 0)
+        except Exception:  # noqa: BLE001
+            _m = _d = 0.0
+        if _m > 0 or _d > 0:
+            return round(max(0.0, brut_net - _m), 2), _m, _d
         return brut_net, 0.0, 0.0
+
     if istek <= 0:
         return brut_net, 0.0, 0.0
     mahsup = round(min(istek, max(0.0, brut_net)), 2)

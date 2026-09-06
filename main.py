@@ -10324,18 +10324,22 @@ class PersonelAylikModel(BaseModel):
     saat_elle: bool = False
 
 def _maas_kayit_kilit_guard(cur, pid: str, yil: int, ay: int) -> None:
-    """FAZ 0 #5: Onaylı (kilitli) veya ödenmiş maaş kaydı sessizce taslağa
-    döndürülemez. Düzeltme için kullanıcı önce '🔓 Kilidi Aç' demeli."""
-    cur.execute(
-        "SELECT durum FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
-        (pid, yil, ay),
-    )
-    r = cur.fetchone()
-    if r and (r.get("durum") == "onaylandi"):
-        raise HTTPException(
-            400,
-            "Maaş kaydı onaylı (kilitli). Değiştirmek için önce '🔓 Kilidi Aç' yapın.",
-        )
+    """ÖDENMİŞ maaş kaydı değiştirilemez. (Onaylı kayıt ARTIK değiştirilebilir.)
+
+    🔓 ONAY KİLİDİ KALDIRILDI (sahip kararı 2026-09-06: "kilit mekanizmasını kaldır").
+    Eskiden 'onaylandi' damgası düzenlemeyi engelliyor, düzeltme için önce
+    '🔓 Kilidi Aç' gerekiyordu. Bu kilit canlı para kaybı üretti: ücreti tanımsızken
+    onaylanan bordro 0,00'da DONUYOR, gece senkronu onaylı kaydı atladığı için bir
+    daha ölçülmüyordu (MERT ALİ AKAR Haziran 2026 → 24,95 saat × 0 = 0; ücret
+    sonradan 99,00 yapıldı ama kayıt donmuş kaldı → 2.470,05 ₺ görünmez oldu).
+    Artık onaylı kayıt doğrudan düzeltilebilir; düzeltme kaydı TASLAĞA döndürür
+    (INSERT ... ON CONFLICT ... durum='taslak') — yani onay düşer ve yeniden
+    onaylanması gerekir. Bu bilinçlidir: değişen tutar yeniden onaydan geçmeli.
+
+    ⚠️ ÖDENMİŞ dönem koruması DURUYOR (sahip bu seçeneği almadı): kasadan para
+    çıkmış bir dönemin kaydı değişirse, ödenen tutar ile bordro birbirinden
+    ayrışır ve fark ne ek ödemeye ne mahsuba bağlanır.
+    """
     # ARREARS: (yil, ay) = ÇALIŞMA dönemi → ödenmiş plan referans_ay = ödeme ayı (dönem+1).
     # FIX 2026-07-04: MAKE_DATE(yil,ay,1) çalışma ayına bakıyordu → kilit hiç devreye
     # girmiyordu. Eski konvansiyon planları için çalışma ayı da kontrol edilir.
@@ -10350,21 +10354,9 @@ def _maas_kayit_kilit_guard(cur, pid: str, yil: int, ay: int) -> None:
     # çalışma dönemini adıyla yazar (maas_service.plan_aciklama:
     # "Personel Maaş: AD — Temmuz 2026 dönemi"). Eski dal artık yalnız açıklaması
     # BU dönemi söyleyen planla eşleşir.
-    _donem_etiketi = f"%{_maas_svc.TR_AYLAR[ay]} {yil} dönemi%"
-    cur.execute(
-        """
-        SELECT 1 FROM odeme_plani
-        WHERE kaynak_tablo='personel' AND kaynak_id=%s AND durum='odendi'
-          AND (
-                referans_ay = %s::date
-             OR (referans_ay = MAKE_DATE(%s, %s, 1)
-                 AND COALESCE(aciklama,'') LIKE %s)
-              )
-        LIMIT 1
-        """,
-        (pid, str(_maas_svc.maas_odeme_tarihi(yil, ay)), yil, ay, _donem_etiketi),
-    )
-    if cur.fetchone():
+    # Kural TEK ÇEKİRDEKTE (maas_service.odenmis_donem_mi) — gorev_api'nin
+    # gecikme ucu da aynı kapıyı kullanabilsin diye oraya taşındı.
+    if _maas_svc.odenmis_donem_mi(cur, pid, yil, ay):
         raise HTTPException(
             400,
             "Bu dönemin maaşı ödenmiş — kayıt değiştirilemez. Düzeltme için ek ödeme / "
@@ -10729,10 +10721,14 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
         # dokunmasa bile o saat korunmalı (yoksa "bayram mesaisini düzelttim, saatim
         # uçtu" olur). Damga yalnız vardiya-aktar ile temizlenir.
         cur.execute(
-            "SELECT calisma_saati, saat_kaynagi FROM personel_aylik "
+            "SELECT calisma_saati, saat_kaynagi, durum FROM personel_aylik "
             " WHERE personel_id=%s AND yil=%s AND ay=%s", (pid, yil, ay))
         _mev = cur.fetchone() or {}
         _mev_elle = str(_mev.get("saat_kaynagi") or "") == "elle"
+        # 🔓 Onay kilidi kalktı: onaylı kayıt düzeltilebiliyor ama düzeltme onu
+        # TASLAĞA döndürür (aşağıdaki ON CONFLICT durum='taslak'). Sessiz olmasın —
+        # sahip "onaylıydı, ne oldu?" diye sormasın diye dönüşte söylenir.
+        _onay_dustu = str(_mev.get("durum") or "") == "onaylandi"
         _elle_saat = 0.0
         if _part and bool(getattr(body, "saat_elle", False)) and float(body.calisma_saati or 0) > 0:
             _elle_saat = float(body.calisma_saati)          # bu kaydetmede DEĞİŞTİRİLDİ
@@ -10788,10 +10784,14 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
         audit(cur, 'personel_aylik', kid, 'KAYDET',
               yeni={'net': net, 'yil': yil, 'ay': ay,
                     'saat': kayit_dict["calisma_saati"],
-                    'saat_kaynagi': 'elle' if _elle_saat > 0 else 'vardiya'})
+                    'saat_kaynagi': 'elle' if _elle_saat > 0 else 'vardiya',
+                    'onay_dustu': _onay_dustu})
     return {"success": True, "hesaplanan_net": net,
             "saat": kayit_dict["calisma_saati"],
-            "saat_kaynagi": 'elle' if _elle_saat > 0 else 'vardiya'}
+            "saat_kaynagi": 'elle' if _elle_saat > 0 else 'vardiya',
+            "onay_dustu": _onay_dustu,
+            "mesaj": ("Kayit ONAYLIYDI, duzeltme onu taslaga dondurdu - "
+                      "yeniden onaylayin." if _onay_dustu else None)}
 
 
 @app.post("/api/personel-aylik/{pid}/vardiya-aktar")
