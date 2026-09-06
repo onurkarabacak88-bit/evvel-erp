@@ -293,7 +293,25 @@ girdi. Onay verildiğinde `bordro_kalem`'e `eksen='KARAR'` satırı yazılır
 Uçlar: `GET /api/ucret/mola-askida?yil=&ay=` · `POST /api/ucret/mola-onay`
 (gerekçe ZORUNLU, varsayılan `kuru=true`).
 
-⏳ SAHİP: 23 günün hangileri onaylanacak.
+### ✅ ONAY VERİLDİ (2026-09-06) — sahip: "3 KİŞİYİ BUGÜNE KADAR ONAYLAYABİLİRSİN"
+
+12 gün onaylandı, `bordro_kalem`'e `eksen='KARAR'` · `kanit_sinifi='beyan'`
+satırı olarak yazıldı (onaylayan: Fethi Karabacak).
+
+| kişi | onaylanan gün | yemek önce | yemek sonra |
+|---|---|---|---|
+| gökçe değirmenci | 1,2,4,5,6 | 0,00 | **1.400,00** |
+| naz dal | 1,3,4,5,6 | 0,00 | **1.400,00** |
+| MERVE AKTA | 1,2 | 840,00 | **1.400,00** |
+| | **12** | | **+3.360,00** |
+
+Bekleyen: emir efe eraydın (6 gün) + ersan kazan (5 gün) — **0,00 ₺**,
+sözleşmelerinde yemek kalemi yok, onay para üretmez.
+
+Eylül `personel-aylik` senkronlandı: **51.057,06 → 54.417,06**. Senkron öncesi
+kişi kişi ölçüldü, sonrası tahminle **birebir** uyuştu (+3.360,00). Ödeme planı
+da güncellendi. Golden yeniden donduruldu; kabul testi 3/3.
+
 
 ---
 
