@@ -2088,6 +2088,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                     "ad_soyad": p["ad_soyad"],
                     "calisma_turu": p.get("calisma_turu"),
                     "toplam_planlanan_saat": 0.0,
+                    "toplam_planlanan_saat_gelecek": 0.0,
                     "toplam_gecikme_dk": 0.0,
                     "toplam_fazla_mesai_saat": 0.0,
                     "yemek_ucret_gun": 0,
@@ -2243,6 +2244,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             # Günlük analiz
             gunler = []
             toplam_planlanan = 0.0
+            toplam_planlanan_gelecek = 0.0   # plan var, gun gelmedi
             toplam_gecikme_dk = 0.0
             toplam_fazla_saat = 0.0
             yemek_ucret_gun = 0
@@ -2294,7 +2296,17 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
 
                 if v:
                     planlanan = float(v["planlanan_saat"] or 0)
-                    toplam_planlanan += planlanan
+                    # 🔴 GELECEK SAAT HAKEDİŞE GİRMEZ (2026-09-06). Part-time
+                    # neti = saat × saatlik olduğu için gelecek vardiya planı
+                    # girilir girilmez kişi ÇALIŞMADAN kazanç görüyordu.
+                    # Canlı: CELİLE IŞIK 7 Eylül'de başlıyor, 6 Eylül'de
+                    # 58,43 saat / 5.755,68 ₺ görünüyordu.
+                    # Satır 2562'deki "zaten bugüne kadar" yorumu kodun NİYETİ
+                    # idi ama kod onu uygulamıyordu; artık uyguluyor.
+                    if tarih <= _bugun_p:
+                        toplam_planlanan += planlanan
+                    else:
+                        toplam_planlanan_gelecek += planlanan
                     if tarih <= _bugun_p:
                         planli_gun += 1      # yemek paydası — YALNIZ yaşanmış gün
                     else:
@@ -2583,6 +2595,9 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "ad_soyad": p["ad_soyad"],
                 "calisma_turu": p.get("calisma_turu"),
                 "toplam_planlanan_saat": round(toplam_planlanan, 2),
+                # Planlanmış ama HENÜZ GELMEMİŞ saat. Hakedişe GİRMEZ;
+                # ay sonu beklentisi (avans tavanı) bunu ekleyerek kullanır.
+                "toplam_planlanan_saat_gelecek": round(toplam_planlanan_gelecek, 2),
                 "toplam_gecikme_dk": round(toplam_gecikme_dk, 1),
                 "toplam_fazla_mesai_saat": round(toplam_fazla_saat, 2),
                 "yemek_ucret_gun": yemek_ucret_gun,

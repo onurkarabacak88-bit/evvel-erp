@@ -189,7 +189,11 @@ def _beklenen_net(cur, p: dict, yil: int, ay: int, vt: Optional[dict]) -> float:
     # adaylarına girmiyor → tavan mutlak sınıra, 20.000 ₺'ye ÇIKIYORDU. Oysa
     # 30.000 maaşlı sürekli personel 9.000 alabiliyor. Kapı ters çalışıyordu.
     # Saat kaynağı sırası: vardiya planı → bordro kaydındaki saat ('elle' dahil).
-    saat = float((vt or {}).get("toplam_planlanan_saat") or 0)
+    # ⚠️ BURASI "AY SONUNDA BEKLENEN" nettir, "bugüne kadarki hakediş" değil.
+    # Bu yüzden GELECEK vardiya saati de sayılır — hakediş tarafında (net_hakediş)
+    # gelecek saat 2026-09-06'da bilinçli olarak dışarıda bırakıldı.
+    saat = (float((vt or {}).get("toplam_planlanan_saat") or 0)
+            + float((vt or {}).get("toplam_planlanan_saat_gelecek") or 0))
     if saat <= 0:
         try:
             cur.execute(
