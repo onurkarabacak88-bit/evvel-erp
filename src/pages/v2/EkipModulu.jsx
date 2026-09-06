@@ -237,6 +237,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   // verilen izin) ve o gün vardiya dışı görünen girişler.
   const [izin, setIzin] = useState(null);
   const [isgucu, setIsgucu] = useState(null);   // /ops/metrics/isgucu — ₺/adam-saat
+  const [kalemDefteri, setKalemDefteri] = useState({});  // 📒 personel_id -> kalem[]
   const [onayKuyrugu, setOnayKuyrugu] = useState(null);  // bordro temiz/incele ayrımı
   const [topluOnayMesgul, setTopluOnayMesgul] = useState(false);
   const [topluOnaySoru, setTopluOnaySoru] = useState(false);
@@ -346,7 +347,21 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
       // Onay tek tek yapılıyordu; canlıda Temmuz'da 10 kayıt taslakta kalıp
       // 194.470 ₺ maaşı 9 gün bekletti. Artık temiz yığın tek tuşla onaylanır.
       api(`/personel-aylik/onay-kuyrugu?yil=${donem.yil}&ay=${donem.ay}`).catch(() => null),
-    ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd, sl, ig, ok]) => {
+      // 📒 KALEM DEFTERİ (BORDRO V2) — "bu rakam nereden çıktı"nın satır satır
+      // cevabı. Çekmece SENKRON açıldığı için tıklama anında değil, dönem
+      // yüklenirken BİR KEZ çekilir ve personel_id'ye göre indekslenir.
+      // Kırılırsa çekmece eski sabit alanlarıyla çalışmaya devam eder.
+      api(`/ucret/kalem?yil=${donem.yil}&ay=${donem.ay}`).catch(() => null),
+    ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd, sl, ig, ok, kd]) => {
+      setKalemDefteri((() => {
+        const ix = {};
+        Object.values(kd?.defter || {}).forEach((v) => {
+          (v.kalemler || []).forEach((k) => {
+            (ix[k.personel_id] = ix[k.personel_id] || []).push(k);
+          });
+        });
+        return ix;
+      })());
       setOnayKuyrugu(ok);
       setIsgucu(ig);
       // Meşru boş liste de state'i tazeler — bayat şube seçeneği kalmasın (Codex P3).
@@ -3851,6 +3866,37 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                 ],
                 listeBaslik: 'Kırılım',
                 satirlar: [
+                  // 📒 KALEM DEFTERİ ÖNCE GELİR (BORDRO V2, 2026-09-07).
+                  // Aşağıdaki sabit alanlar elle seçilmiş bir ÖZETti; net'i
+                  // oluşturan asıl satırlar hiçbir yerde görünmüyordu. Canlı
+                  // bedeli: DENİZ KÜÇÜKKIRLI Temmuz'da 1.166,67 ₺ eksik
+                  // hesaplandı, DÖRT AY fark edilmedi.
+                  // Her kalem kendi ölçüsünü ve kanıt sınıfını taşır:
+                  //   sozlesme/olcum → ölçüldü   · beyan → karar   · varsayim → ⚠
+                  ...((kalemDefteri[b.personel_id] || [])
+                    .filter((k) => k.tur !== 'YEMEK_GUN_ONAY')   // karar kaydı, kalem değil
+                    .sort((x, y) => (x.eksen > y.eksen ? 1 : -1))
+                    .map((k) => ({
+                      ad: `${k.tur.replace(/_/g, ' ')} · ${{
+                        SOZLESME: 'sözleşme', OLCUM: 'ölçüm',
+                        KARAR: 'karar', MAHSUP: 'mahsup',
+                      }[k.eksen] || k.eksen}`,
+                      detay: [
+                        (k.miktar != null && k.birim_tutar != null)
+                          ? `${trSayi(sayi(k.miktar), 2)} ${k.birim} × ${fmt(sayi(k.birim_tutar))}`
+                          : null,
+                        k.kanit_sinifi === 'varsayim' ? '⚠ VARSAYIM — vardiya kaydı yok' : null,
+                        k.kanit_sinifi === 'beyan' ? 'sahip beyanı' : null,
+                      ].filter(Boolean).join(' · ') || k.kaynak,
+                      tutar: fmt(sayi(k.tutar)),
+                    }))),
+                  ...((kalemDefteri[b.personel_id] || []).length ? [{
+                    ad: '— defter toplamı —',
+                    detay: `${(kalemDefteri[b.personel_id] || []).filter((k) => k.tur !== 'YEMEK_GUN_ONAY').length} kalem`,
+                    tutar: fmt((kalemDefteri[b.personel_id] || [])
+                      .filter((k) => k.tur !== 'YEMEK_GUN_ONAY')
+                      .reduce((t, k) => t + sayi(k.tutar), 0)),
+                  }] : []),
                   { ad: 'Avans mahsubu', detay: 'bu ay düşülen', tutar: fmt(sayi(b.avans_mahsup)) },
                   { ad: 'Mahsup devri', detay: 'sonraki aya taşan', tutar: fmt(sayi(b.mahsup_devir)) },
                   // 0 eksik gün = "hiç devamsızlık yok" — bu bir BULGUDUR,
