@@ -10362,7 +10362,26 @@ def personel_ekle(p: PersonelModel):
              p.yemek_ucreti, p.yol_ucreti, p.odeme_gunu, p.baslangic_date(), p.sube_id, p.notlar,
              (p.telefon or '').strip() or None))
         audit(cur, 'personel', pid, 'INSERT')
-    return {"id": pid, "success": True}
+
+        # ── KART KÖPRÜSÜ (BORDRO V2 · Adım 2) ──────────────────────────────
+        # Yeni personelin ücreti İŞE BAŞLANGIÇ GÜNÜNDEN geçerlidir — ay başından
+        # değil. Aksi hâlde ayın 20'sinde giren kişi ayın 1'inden ücretli görünür.
+        kopru_sonuc = None
+        try:
+            with savepoint(cur, "ucret_koprusu_yeni"):
+                import bordro_ucret as _bu
+                _yeni = {"maas": p.maas, "yemek_ucreti": p.yemek_ucreti,
+                         "yol_ucreti": p.yol_ucreti, "saatlik_ucret": p.saatlik_ucret,
+                         "calisma_turu": p.calisma_turu}
+                kopru_sonuc = _bu.kart_koprusu(
+                    cur, pid, _yeni, None,
+                    gerekce="personel karti - yeni kayit",
+                    gecerli_bas=(p.baslangic_date() or date.today()))
+        except Exception as _kop_err:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "ucret kart koprusu yazilamadi (personel kaydi korundu) pid=%s: %s",
+                pid, _kop_err)
+    return {"id": pid, "success": True, "ucret_cizgisi": kopru_sonuc}
 
 @app.put("/api/personel/{pid}")
 def personel_guncelle(pid: str, p: PersonelModel):
@@ -10377,7 +10396,27 @@ def personel_guncelle(pid: str, p: PersonelModel):
              p.yemek_ucreti, p.yol_ucreti, p.odeme_gunu, p.baslangic_date(),
              p.sube_id, p.notlar, (p.telefon or '').strip() or None, pid))
         audit(cur, 'personel', pid, 'UPDATE', eski=eski)
-    return {"success": True}
+
+        # ── KART KÖPRÜSÜ (BORDRO V2 · Adım 2) ──────────────────────────────
+        # Sahip 2026-09-06: "TEKRAR SİSTEMDEN MAAŞ GÜNCELLEMESİ YAPILABİLSİN!"
+        # Kart `personel.maas`'ı günceller; V2 motoru `ucret_tanim`'dan okuyacak.
+        # Köprü olmasa ikisi AYRIŞIR — sahip kartta 30.000 görür, bordro 28.075
+        # hesaplar. Yeni tutar İÇİNDE BULUNULAN AYIN 1'inden geçerli olur.
+        # 🛟 savepoint: köprü kırılsa bile personel kaydı kaydedilmiş kalır
+        # (yutulan hata transaction'ı zehirlerdi — bkz. database.savepoint).
+        kopru_sonuc = None
+        try:
+            with savepoint(cur, "ucret_koprusu"):
+                import bordro_ucret as _bu
+                _yeni = {"maas": p.maas, "yemek_ucreti": p.yemek_ucreti,
+                         "yol_ucreti": p.yol_ucreti, "saatlik_ucret": p.saatlik_ucret,
+                         "calisma_turu": p.calisma_turu}
+                kopru_sonuc = _bu.kart_koprusu(cur, pid, _yeni, dict(eski))
+        except Exception as _kop_err:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "ucret kart koprusu yazilamadi (personel kaydi korundu) pid=%s: %s",
+                pid, _kop_err)
+    return {"success": True, "ucret_cizgisi": kopru_sonuc}
 
 @app.post("/api/personel/{pid}/cikis")
 def personel_cikis(pid: str, neden: str = ""):

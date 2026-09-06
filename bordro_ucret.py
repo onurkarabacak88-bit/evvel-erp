@@ -29,7 +29,7 @@ Bugün ücret `personel.maas` kolonunda TEK DEĞER. İki kırık üretiyor:
 from __future__ import annotations
 
 import logging
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger(__name__)
@@ -164,3 +164,85 @@ def sozlesme_coz(cur, personel_id: str, tarih,
         k["kaynak"] == "personel_karti_ayna" and k["tutar"] > 0
         for k in out["kalem"].values())
     return out
+
+
+# ── KART KÖPRÜSÜ ────────────────────────────────────────────────────────────
+def kart_koprusu(cur, personel_id: str, yeni: Dict[str, Any],
+                 eski: Optional[Dict[str, Any]] = None,
+                 gerekce: Optional[str] = None,
+                 gecerli_bas=None) -> Dict[str, Any]:
+    """Personel kartından maaş güncellenince ZAMAN ÇİZGİSİNE de yaz.
+
+    🔴 NEDEN (sahip 2026-09-06: "TEKRAR SİSTEMDEN MAAŞ GÜNCELLEMESİ YAPILABİLSİN"):
+    Kart `personel.maas`'ı güncelliyor; V2 motoru ise `ucret_tanim`'dan okuyacak.
+    Köprü olmasa ikisi AYRIŞIRDI — sahip kartta 30.000 görür, bordro 28.075
+    hesaplardı. Bu, düzeltilmeye çalışılan kusurun ta kendisi olurdu.
+
+    Sahip: "BURADA UÇTA ASLINDA PERSONELE MAAŞ TANIMLAMASI YAPIYORUZ AYLIK!"
+    → yeni tutar İÇİNDE BULUNULAN AYIN 1'İNDEN geçerli olur. Aynı ay içinde
+    tekrar değiştirilirse aynı satır güncellenir (ay ikiye bölünmez).
+
+    ⚠️ ASGARIYE_BAGLI KORUNUR: kişi asgariye bağlıysa ve kartta yazan tutar
+    zaten çözülen tutara eşitse HİÇBİR ŞEY YAPILMAZ. Aksi hâlde kartı her
+    kaydediş kişiyi sessizce SABİT'e çevirir ve asgari zammını kaçırırdı.
+
+    Hiçbir zaman istisna fırlatmaz — çağıran `savepoint` içinde çağırmalıdır;
+    köprü kırılsa bile personel kaydı kaydedilmeye devam eder.
+    """
+    bugun = date.today()
+    # Güncelleme → içinde bulunulan ayın 1'i. Yeni kayıt → işe başlangıç günü
+    # (çağıran `gecerli_bas` verir); kişinin ücreti başlamadığı gün geçerli olamaz.
+    ay_basi = _gun(gecerli_bas) if gecerli_bas else date(bugun.year, bugun.month, 1)
+    part = (yeni.get("calisma_turu") or "surekli") != "surekli"
+    sonuc = {"yazilan": [], "atlanan": [], "korunan": []}
+
+    for tur, kol in AYNA_KOLON.items():
+        if tur == "TABAN" and part:
+            continue
+        if tur == "SAATLIK" and not part:
+            continue
+        yeni_v = _f(yeni.get(kol))
+        eski_v = _f((eski or {}).get(kol))
+        if eski is not None and abs(yeni_v - eski_v) < 0.005:
+            continue                      # değişmemiş — dokunma
+        if yeni_v <= 0:
+            sonuc["atlanan"].append({"tur": tur, "neden": "sifir/bos"})
+            continue
+
+        mevcut = kalem_coz(cur, personel_id, tur, ay_basi, yeni)
+        if (mevcut["kaynak"] == "ucret_tanim"
+                and mevcut["mod"] == "ASGARIYE_BAGLI"
+                and abs(mevcut["tutar"] - yeni_v) < 0.005):
+            # Asgariye bağlı ve tutar zaten aynı → bağı KOPARMA.
+            sonuc["korunan"].append({"tur": tur, "mod": "ASGARIYE_BAGLI",
+                                     "tutar": yeni_v})
+            continue
+
+        not_ = gerekce or ("personel kartindan guncellendi (%s): %.2f -> %.2f"
+                           % (bugun, eski_v, yeni_v))
+        cur.execute(
+            "SELECT id, mod FROM ucret_tanim WHERE kapsam='KISI' AND personel_id=%s "
+            "   AND tur=%s AND gecerli_bas=%s", (str(personel_id), tur, ay_basi))
+        r = cur.fetchone()
+        if r:
+            # Aynı ay içinde ikinci düzeltme — satırı bölme, yerinde güncelle.
+            cur.execute("UPDATE ucret_tanim SET mod='SABIT', tutar=%s, fark=0, "
+                        "       gerekce=%s, kaynak='personel_karti' WHERE id=%s",
+                        (yeni_v, not_, r["id"]))
+            sonuc["yazilan"].append({"tur": tur, "islem": "ayni_ay_guncellendi",
+                                     "tutar": yeni_v, "gecerli_bas": str(ay_basi)})
+            continue
+
+        cur.execute(
+            "UPDATE ucret_tanim SET gecerli_bit=%s "
+            " WHERE kapsam='KISI' AND personel_id=%s AND tur=%s AND gecerli_bas < %s "
+            "   AND (gecerli_bit IS NULL OR gecerli_bit >= %s)",
+            (ay_basi - timedelta(days=1), str(personel_id), tur, ay_basi, ay_basi))
+        cur.execute(
+            "INSERT INTO ucret_tanim (kapsam, personel_id, tur, mod, tutar, fark, "
+            "                         gecerli_bas, gerekce, kaynak) "
+            "VALUES ('KISI',%s,%s,'SABIT',%s,0,%s,%s,'personel_karti')",
+            (str(personel_id), tur, yeni_v, ay_basi, not_))
+        sonuc["yazilan"].append({"tur": tur, "islem": "yeni_donem",
+                                 "tutar": yeni_v, "gecerli_bas": str(ay_basi)})
+    return sonuc
