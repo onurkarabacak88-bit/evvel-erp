@@ -591,9 +591,15 @@ def mola_onay(m: MolaOnayModel, yil: int = Query(...), ay: int = Query(...)):
 # Motor ölçümü ÜRETMEZ, ALIR: ölçüm kanıtı `vardiya_takip`ten gelir; motor
 # yalnız ARİTMETİĞİ bağımsız olarak yeniden kurar. Aritmetikte bir kusur varsa
 # gölge onu yakalar; ölçüm kusurunu yakalamaz (o Adım 4'ün işi).
-@router.get("/kalem-golge")
-def kalem_golge(yil: int = Query(...), ay: int = Query(...),
-                personel_id: Optional[str] = Query(None)):
+def _kalem_donem_hesapla(cur, yil: int, ay: int,
+                         personel_id: Optional[str] = None):
+    """ORTAK ÇEKİRDEK — dönemin kalemlerini üretir. Yazmaz, döndürür.
+
+    TEK ÇEKİRDEK: gölge hesabı da (`/kalem-golge`) deftere yazma da
+    (`/kalem-yaz`) BURAYI çağırır. İki ayrı kopya olsaydı biri düzelip
+    diğeri kalırdı — bu projede tam olarak böyle üç ayrı dönem-oranı
+    formülü doğmuştu.
+    """
     """V1 net'i ile saf motorun Σ kalem'ini karşılaştırır. SALT OKUR."""
     import bordro_motor as _bm
     try:
@@ -603,124 +609,232 @@ def kalem_golge(yil: int = Query(...), ay: int = Query(...),
         raise HTTPException(500, "vardiya takip okunamadi: %s" % e)
 
     satirlar, kirik, toplam_v1, toplam_v2 = [], 0, 0.0, 0.0
+    for r in (vt or {}).get("personeller") or []:
+        pid = str(r.get("personel_id"))
+        u = r.get("ucret_detay") or {}
+        gecen = float(u.get("gecen_gun") or 0)
+        if gecen <= 0 and not (r.get("planli_gun") or 0):
+            continue
+        cur.execute("SELECT id, ad_soyad, maas, yemek_ucreti, yol_ucreti, "
+                    "       saatlik_ucret, calisma_turu, baslangic_tarihi "
+                    "  FROM personel WHERE id=%s", (pid,))
+        p = cur.fetchone()
+        if not p:
+            continue
+        _bas = p.get("baslangic_tarihi")
+        _t = date(yil, ay, 1)
+        if _bas and _bas > _t:
+            _t = _bas
+        sz = bordro_ucret.sozlesme_coz(cur, pid, _t, dict(p))
+        kr = bordro_kural_coz.kural_coz(cur, _t, personel_id=pid,
+                                        sube_id=p.get("sube_id"))
+        m = r.get("mola_ozet") or {}
+        # Yemek paydası: motor kuralı BİLİR ama günleri saymaz — ölçümden gelir.
+        _planli = int(r.get("planli_gun") or 0)
+        _yp = kr.get("yemek_paydasi") or "planli_gun"
+        if _planli <= 0:
+            _payda = 0.0          # vardiya hiç yok → motor VARSAYIM dalına düşsün
+        elif _yp == "beklenen_gun":
+            _payda = max(float(_planli),
+                         round(gecen * float(kr.get("haftalik_calisma_gun") or 6) / 7.0))
+        else:
+            try:
+                _payda = float(_yp)
+            except (TypeError, ValueError):
+                _payda = float(_planli)
+        _ham = r.get("olcum_ham") or {}
+        olcum = {
+            "gecen_gun": float(_ham.get("gecen_gun") or gecen),
+            "planli_gun": _planli,
+            "yemek_hak_gun": int(r.get("yemek_ucret_gun") or 0),
+            "yemek_paydasi_deger": _payda,
+            "ihlal_gun": m.get("ihlal", 0),
+            "kayit_yok_gun": m.get("kayit_yok", 0),
+            "onayli_gun": m.get("onayli", 0),
+            "fazla_mesai_saat": float(_ham.get("fazla_mesai_saat")
+                                      if _ham.get("fazla_mesai_saat") is not None
+                                      else (r.get("toplam_fazla_mesai_saat") or 0)),
+            "calisilan_saat": float(_ham.get("planlanan_saat")
+                                    if _ham.get("planlanan_saat") is not None
+                                    else (r.get("toplam_planlanan_saat") or 0)),
+            "saat_kaynagi": r.get("saat_kaynagi"),
+            "ay_tamam": u.get("ay_tamam"),
+        }
+        # KARAR + MAHSUP katmanı `personel_aylik`'te durur — motor onu ALIR.
+        cur.execute(
+            "SELECT bayram_mesai_saat, eksik_gun, raporlu_gun, rapor_kesinti, "
+            "       manuel_duzeltme, not_aciklama, hesaplanan_net, "
+            "       COALESCE(avans_mahsup,0) AS avans_mahsup, "
+            "       COALESCE(mahsup_devir,0) AS mahsup_devir, durum, "
+            "       calisma_saati, saat_kaynagi "
+            "  FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
+            (pid, yil, ay))
+        _k = cur.fetchone() or {}
+        karar = {"bayram_mesai_saat": _k.get("bayram_mesai_saat"),
+                 "eksik_gun": _k.get("eksik_gun"),
+                 "raporlu_gun": _k.get("raporlu_gun"),
+                 "rapor_kesinti": _k.get("rapor_kesinti"),
+                 "manuel_duzeltme": _k.get("manuel_duzeltme"),
+                 "gerekce": _k.get("not_aciklama")}
+        mahsup = {"avans_mahsup": _k.get("avans_mahsup"),
+                  "mahsup_devir": _k.get("mahsup_devir")}
+
+        # 🕐 ELLE GİRİLEN SAAT KAZANIR (part-time). Sahip 2026-09-06:
+        # "part personeli sistem hesaplamıyor — saati belirtiyorum".
+        # Vardiya planı olmayan part-time'da hakediş elle girilen saatten
+        # doğar; gölge bunu okumazsa MERT/nisanur gibi kişilerde koca fark
+        # üretir ve "V2 eksik hesaplıyor" sanılır. Kaynağı da taşı:
+        # bu bir ÖLÇÜM değil BEYANdır, kalem öyle damgalanmalı.
+        if (sz.get("calisma_turu") or "surekli") != "surekli"                     and str(_k.get("saat_kaynagi") or "") == "elle"                     and float(_k.get("calisma_saati") or 0) > 0:
+            olcum["calisilan_saat"] = float(_k["calisma_saati"])
+            olcum["saat_kaynagi"] = "elle"
+            olcum["saat_kanit_sinifi"] = "beyan"
+
+        sonuc = _bm.hesapla(sz, kr, olcum, karar, mahsup)
+
+        # İKİ AYRI KARŞILAŞTIRMA — ikisi farklı soruyu ölçer:
+        #   hakediş  ↔ vardiya_takip.net_hakediş   (SOZLESME+OLCUM, KARAR hariç)
+        #   ödenecek ↔ personel_aylik.hesaplanan_net (KARAR+MAHSUP dahil)
+        v1_hak = float(r.get("net_hakediş") or 0)
+        v2_saf = sonuc["eksen_toplam"]["SOZLESME"] + sonuc["eksen_toplam"]["OLCUM"]
+        fark_hak = round(v2_saf - v1_hak, 2)
+        # ⚠️ ELLE SAATTE HAKEDİŞ KIYASI ANLAMSIZ: `vardiya_takip.net_hakediş`
+        # saati VARDİYA PLANINDAN alır; elle girilen saat katmanı ondan SONRA
+        # (maas_service.part_elle_saat_net) uygulanır. İkisini kıyaslamak
+        # "V2 eksik hesaplıyor" yanılgısı üretir — MERT ALİ AKAR'da 12.183,27.
+        # Bu kişilerde geçerli kıyas ÖDENECEK tarafıdır ve o tutuyor.
+        kiyas_disi = (olcum.get("saat_kaynagi") == "elle")
+        v1_ode = (float(_k.get("hesaplanan_net"))
+                  if _k.get("hesaplanan_net") is not None else None)
+        fark_ode = (round(sonuc["net_odenecek"] - v1_ode, 2)
+                    if v1_ode is not None else None)
+        toplam_v1 += v1_hak
+        toplam_v2 += v2_saf
+        _kirik_hak = (not kiyas_disi) and abs(fark_hak) > 0.005
+        _kirik_ode = (fark_ode is not None) and abs(fark_ode) > 0.005
+        if _kirik_hak or _kirik_ode:
+            kirik += 1
+        satirlar.append({
+            "personel_id": pid, "ad_soyad": r.get("ad_soyad"),
+            "durum": _k.get("durum"),
+            "v1_net": round(v1_hak, 2), "v2_net": round(v2_saf, 2),
+            "fark": fark_hak, "hakedis_kiyas_disi": kiyas_disi,
+            "v1_odenecek": v1_ode, "v2_odenecek": sonuc["net_odenecek"],
+            "fark_odenecek": fark_ode,
+            "kalemler": sonuc["kalemler"], "notlar": sonuc["notlar"],
+            "eksen_toplam": sonuc["eksen_toplam"]})
+
+    return satirlar, kirik, toplam_v1, toplam_v2
+
+@router.get("/kalem-golge")
+def kalem_golge(yil: int = Query(...), ay: int = Query(...),
+                personel_id: Optional[str] = Query(None)):
+    """V1 net'i ile saf motorun kalem toplamını karşılaştırır. SALT OKUR."""
     with db() as (_, cur):
-        for r in (vt or {}).get("personeller") or []:
-            pid = str(r.get("personel_id"))
-            u = r.get("ucret_detay") or {}
-            gecen = float(u.get("gecen_gun") or 0)
-            if gecen <= 0 and not (r.get("planli_gun") or 0):
-                continue
-            cur.execute("SELECT id, ad_soyad, maas, yemek_ucreti, yol_ucreti, "
-                        "       saatlik_ucret, calisma_turu, baslangic_tarihi "
-                        "  FROM personel WHERE id=%s", (pid,))
-            p = cur.fetchone()
-            if not p:
-                continue
-            _bas = p.get("baslangic_tarihi")
-            _t = date(yil, ay, 1)
-            if _bas and _bas > _t:
-                _t = _bas
-            sz = bordro_ucret.sozlesme_coz(cur, pid, _t, dict(p))
-            kr = bordro_kural_coz.kural_coz(cur, _t, personel_id=pid,
-                                            sube_id=p.get("sube_id"))
-            m = r.get("mola_ozet") or {}
-            # Yemek paydası: motor kuralı BİLİR ama günleri saymaz — ölçümden gelir.
-            _planli = int(r.get("planli_gun") or 0)
-            _yp = kr.get("yemek_paydasi") or "planli_gun"
-            if _planli <= 0:
-                _payda = 0.0          # vardiya hiç yok → motor VARSAYIM dalına düşsün
-            elif _yp == "beklenen_gun":
-                _payda = max(float(_planli),
-                             round(gecen * float(kr.get("haftalik_calisma_gun") or 6) / 7.0))
-            else:
-                try:
-                    _payda = float(_yp)
-                except (TypeError, ValueError):
-                    _payda = float(_planli)
-            _ham = r.get("olcum_ham") or {}
-            olcum = {
-                "gecen_gun": float(_ham.get("gecen_gun") or gecen),
-                "planli_gun": _planli,
-                "yemek_hak_gun": int(r.get("yemek_ucret_gun") or 0),
-                "yemek_paydasi_deger": _payda,
-                "ihlal_gun": m.get("ihlal", 0),
-                "kayit_yok_gun": m.get("kayit_yok", 0),
-                "onayli_gun": m.get("onayli", 0),
-                "fazla_mesai_saat": float(_ham.get("fazla_mesai_saat")
-                                          if _ham.get("fazla_mesai_saat") is not None
-                                          else (r.get("toplam_fazla_mesai_saat") or 0)),
-                "calisilan_saat": float(_ham.get("planlanan_saat")
-                                        if _ham.get("planlanan_saat") is not None
-                                        else (r.get("toplam_planlanan_saat") or 0)),
-                "saat_kaynagi": r.get("saat_kaynagi"),
-                "ay_tamam": u.get("ay_tamam"),
-            }
-            # KARAR + MAHSUP katmanı `personel_aylik`'te durur — motor onu ALIR.
-            cur.execute(
-                "SELECT bayram_mesai_saat, eksik_gun, raporlu_gun, rapor_kesinti, "
-                "       manuel_duzeltme, not_aciklama, hesaplanan_net, "
-                "       COALESCE(avans_mahsup,0) AS avans_mahsup, "
-                "       COALESCE(mahsup_devir,0) AS mahsup_devir, durum, "
-                "       calisma_saati, saat_kaynagi "
-                "  FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
-                (pid, yil, ay))
-            _k = cur.fetchone() or {}
-            karar = {"bayram_mesai_saat": _k.get("bayram_mesai_saat"),
-                     "eksik_gun": _k.get("eksik_gun"),
-                     "raporlu_gun": _k.get("raporlu_gun"),
-                     "rapor_kesinti": _k.get("rapor_kesinti"),
-                     "manuel_duzeltme": _k.get("manuel_duzeltme"),
-                     "gerekce": _k.get("not_aciklama")}
-            mahsup = {"avans_mahsup": _k.get("avans_mahsup"),
-                      "mahsup_devir": _k.get("mahsup_devir")}
-
-            # 🕐 ELLE GİRİLEN SAAT KAZANIR (part-time). Sahip 2026-09-06:
-            # "part personeli sistem hesaplamıyor — saati belirtiyorum".
-            # Vardiya planı olmayan part-time'da hakediş elle girilen saatten
-            # doğar; gölge bunu okumazsa MERT/nisanur gibi kişilerde koca fark
-            # üretir ve "V2 eksik hesaplıyor" sanılır. Kaynağı da taşı:
-            # bu bir ÖLÇÜM değil BEYANdır, kalem öyle damgalanmalı.
-            if (sz.get("calisma_turu") or "surekli") != "surekli"                     and str(_k.get("saat_kaynagi") or "") == "elle"                     and float(_k.get("calisma_saati") or 0) > 0:
-                olcum["calisilan_saat"] = float(_k["calisma_saati"])
-                olcum["saat_kaynagi"] = "elle"
-                olcum["saat_kanit_sinifi"] = "beyan"
-
-            sonuc = _bm.hesapla(sz, kr, olcum, karar, mahsup)
-
-            # İKİ AYRI KARŞILAŞTIRMA — ikisi farklı soruyu ölçer:
-            #   hakediş  ↔ vardiya_takip.net_hakediş   (SOZLESME+OLCUM, KARAR hariç)
-            #   ödenecek ↔ personel_aylik.hesaplanan_net (KARAR+MAHSUP dahil)
-            v1_hak = float(r.get("net_hakediş") or 0)
-            v2_saf = sonuc["eksen_toplam"]["SOZLESME"] + sonuc["eksen_toplam"]["OLCUM"]
-            fark_hak = round(v2_saf - v1_hak, 2)
-            # ⚠️ ELLE SAATTE HAKEDİŞ KIYASI ANLAMSIZ: `vardiya_takip.net_hakediş`
-            # saati VARDİYA PLANINDAN alır; elle girilen saat katmanı ondan SONRA
-            # (maas_service.part_elle_saat_net) uygulanır. İkisini kıyaslamak
-            # "V2 eksik hesaplıyor" yanılgısı üretir — MERT ALİ AKAR'da 12.183,27.
-            # Bu kişilerde geçerli kıyas ÖDENECEK tarafıdır ve o tutuyor.
-            kiyas_disi = (olcum.get("saat_kaynagi") == "elle")
-            v1_ode = (float(_k.get("hesaplanan_net"))
-                      if _k.get("hesaplanan_net") is not None else None)
-            fark_ode = (round(sonuc["net_odenecek"] - v1_ode, 2)
-                        if v1_ode is not None else None)
-            toplam_v1 += v1_hak
-            toplam_v2 += v2_saf
-            _kirik_hak = (not kiyas_disi) and abs(fark_hak) > 0.005
-            _kirik_ode = (fark_ode is not None) and abs(fark_ode) > 0.005
-            if _kirik_hak or _kirik_ode:
-                kirik += 1
-            satirlar.append({
-                "personel_id": pid, "ad_soyad": r.get("ad_soyad"),
-                "durum": _k.get("durum"),
-                "v1_net": round(v1_hak, 2), "v2_net": round(v2_saf, 2),
-                "fark": fark_hak, "hakedis_kiyas_disi": kiyas_disi,
-                "v1_odenecek": v1_ode, "v2_odenecek": sonuc["net_odenecek"],
-                "fark_odenecek": fark_ode,
-                "kalemler": sonuc["kalemler"], "notlar": sonuc["notlar"],
-                "eksen_toplam": sonuc["eksen_toplam"]})
-
+        satirlar, kirik, toplam_v1, toplam_v2 = _kalem_donem_hesapla(
+            cur, yil, ay, personel_id)
     return {"yil": yil, "ay": ay, "kisi": len(satirlar), "kirik": kirik,
             "toplam_v1": round(toplam_v1, 2), "toplam_v2": round(toplam_v2, 2),
             "toplam_fark": round(toplam_v2 - toplam_v1, 2),
             "hazir": kirik == 0,
             "satirlar": satirlar}
+
+
+# ── DEFTERE YAZ (Adım 6/3) ──────────────────────────────────────────────────
+class KalemYazModel(BaseModel):
+    kuru: bool = True
+    gerekce: Optional[str] = None
+
+
+@router.post("/kalem-yaz")
+def kalem_yaz(m: KalemYazModel, yil: int = Query(...), ay: int = Query(...),
+              personel_id: Optional[str] = Query(None)):
+    """Motorun ürettiği kalemleri `bordro_kalem`'e YAZAR. ⚠️ PARA AKMAZ.
+
+    🔴 APPEND-ONLY: eski kalemler SİLİNMEZ, `durum='eski'` yapılır ve yeni
+    sürüm yazılır. "Bu rakam dün neydi" sorusunun cevabı kalmalı — bordroda
+    silinen satır, savunulamayan bordrodur.
+
+    `personel_aylik`'e yalnız İZLEME alanları yazılır (Adım 1'de bunun için
+    açılmıştı): `kalem_toplam`, `guncel_fark`, `hesap_surumu`, `hesap_ts`,
+    `kural_id`. **`hesaplanan_net`'e DOKUNULMAZ** — para hâlâ V1'den akar.
+    Kesim ayrı bir adımdır ve kabul testi + gölge 0 fark şartına bağlıdır.
+    """
+    yazilan, atlanan = [], []
+    with db() as (conn, cur):
+        satirlar, kirik, _tv1, _tv2 = _kalem_donem_hesapla(cur, yil, ay, personel_id)
+        for s in satirlar:
+            pid = s["personel_id"]
+            kalemler = s["kalemler"]
+            if not kalemler:
+                atlanan.append({"ad_soyad": s["ad_soyad"], "neden": "kalem yok"})
+                continue
+            cur.execute(
+                "SELECT COALESCE(MAX(surum),0) AS s FROM bordro_kalem "
+                " WHERE personel_id=%s AND yil=%s AND ay=%s", (pid, yil, ay))
+            surum = int((cur.fetchone() or {}).get("s") or 0) + 1
+            yazilan.append({"personel_id": pid, "ad_soyad": s["ad_soyad"],
+                            "surum": surum, "kalem": len(kalemler),
+                            "kalem_toplam": s["v2_odenecek"],
+                            "guncel_fark": s.get("fark_odenecek")})
+            if m.kuru:
+                continue
+            # append-only: öncekiler 'eski', yenisi 'aktif'
+            cur.execute("UPDATE bordro_kalem SET durum='eski' "
+                        " WHERE personel_id=%s AND yil=%s AND ay=%s AND durum='aktif'",
+                        (pid, yil, ay))
+            for k in kalemler:
+                cur.execute(
+                    "INSERT INTO bordro_kalem (personel_id, yil, ay, surum, tur, eksen, "
+                    "   miktar, birim, birim_tutar, tutar, kaynak, kanit_sinifi, kanit, "
+                    "   kural_id, ucret_tanim_id, durum) "
+                    "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,'aktif')",
+                    (pid, yil, ay, surum, k["tur"], k["eksen"], k["miktar"], k["birim"],
+                     k["birim_tutar"], k["tutar"], k["kaynak"], k["kanit_sinifi"],
+                     json.dumps(k["kanit"], ensure_ascii=False, default=str),
+                     k.get("kural_id"), k.get("ucret_tanim_id")))
+            # personel_aylik: YALNIZ izleme alanları (hesaplanan_net'e DOKUNMA)
+            cur.execute(
+                "UPDATE personel_aylik SET hesap_surumu=%s, hesap_ts=NOW(), "
+                "       kural_id=%s, kalem_toplam=%s, guncel_fark=%s "
+                " WHERE personel_id=%s AND yil=%s AND ay=%s",
+                (surum, (kalemler[0] or {}).get("kural_id"), s["v2_odenecek"],
+                 s.get("fark_odenecek"), pid, yil, ay))
+        if m.kuru:
+            conn.rollback()
+        else:
+            conn.commit()
+
+    return {"kuru": m.kuru, "yil": yil, "ay": ay,
+            "kisi": len(yazilan), "atlanan": len(atlanan),
+            "kalem_toplam": sum(x["kalem"] for x in yazilan),
+            "golge_kirik": kirik,
+            "satirlar": yazilan, "atlanan_detay": atlanan,
+            "not": ("KURU — hicbir sey yazilmadi. kuru=false ile uygulayin."
+                    if m.kuru else
+                    "YAZILDI — bordro_kalem doldu. PARA HALA V1'DEN AKIYOR.")}
+
+
+@router.get("/kalem")
+def kalem_oku(yil: int = Query(...), ay: int = Query(...),
+              personel_id: Optional[str] = Query(None)):
+    """Deftere yazılmış kalemleri okur — "bu rakam nereden çıktı"nın cevabı."""
+    kosul = ["yil=%s", "ay=%s", "durum='aktif'"]
+    par: List[Any] = [yil, ay]
+    if personel_id:
+        kosul.append("personel_id=%s")
+        par.append(str(personel_id))
+    with db() as (_, cur):
+        cur.execute(
+            "SELECT k.*, p.ad_soyad FROM bordro_kalem k "
+            "  LEFT JOIN personel p ON p.id = k.personel_id "
+            " WHERE " + " AND ".join(kosul) +
+            " ORDER BY p.ad_soyad, k.eksen, k.tur", tuple(par))
+        R = [dict(r) for r in (cur.fetchall() or [])]
+    kisi: Dict[str, Any] = {}
+    for r in R:
+        a = r.get("ad_soyad") or r["personel_id"]
+        d = kisi.setdefault(a, {"kalemler": [], "toplam": 0.0, "surum": r.get("surum")})
+        d["kalemler"].append(r)
+        d["toplam"] = round(d["toplam"] + float(r.get("tutar") or 0), 2)
+    return {"yil": yil, "ay": ay, "kisi": len(kisi), "kalem": len(R), "defter": kisi}
