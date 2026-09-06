@@ -109,8 +109,8 @@ Kanıt JSONB: `{"hak_dogan_gun":24, "hak_dogmayan":{"2026-09-03":"mola_asim"},
 | # | adım | değer | risk | kapı |
 |---|---|---|---|---|
 | ~~0~~ | ✅ **Golden dondurma + 4 ölçüm** — BİTTİ (`2df2339`) (ücretsiz izin sayısı · müdür adayları · Eylül kayıt-yok günleri) | sonraki her adımın çıpası | yok | — |
-| 1 | Şema açılışı (boş tablolar + kolonlar) | — | düşük | — |
-| 2 | `ucret_tanim` seed + çözücü + kart köprüsü | **asgari merkezî olur** | düşük | — |
+| ~~1~~ | ✅ **Şema açılışı** — BİTTİ (`9057d14`) 4 tablo + 7 kolon, boş açıldı | — | düşük | golden 0,00 ✅ |
+| ~~2~~ | ✅ **`ucret_tanim` çözücü + uç + kuru backfill** — BİTTİ (`bb7ef4a`) | **asgari merkezî olur** | düşük | golden 0,00 ✅ |
 | 3 | `bordro_kural` tohum + çözücü | 9,5/30/5,5 koddan çıkar | düşük | — |
 | 4 | Kanıt toplayıcı + `mola_durum` 5 hal + hakediş modeli | **Eylül'de kimin belgesiz olduğu görünür** | düşük-orta | — |
 | 5 | Saf motor + **GÖLGE hesap** (para eski yoldan) | kalem defteri okunabilir | orta | golden 0 fark |

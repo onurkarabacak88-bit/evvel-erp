@@ -25,6 +25,7 @@ Bu yüzden İKİ AYRI YOL vardır ve ikisi de çalışmak zorundadır:
 """
 from __future__ import annotations
 
+import json
 import logging
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
@@ -32,6 +33,7 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel
 
+import bordro_kural_coz
 import bordro_ucret
 from database import db
 
@@ -346,3 +348,93 @@ def backfill(m: BackfillModel):
             "satirlar": yazilan, "atlanan_detay": atlanan,
             "not": ("KURU — hicbir sey yazilmadi. kuru=false ile uygulayin."
                     if m.kuru else "UYGULANDI")}
+
+
+# ── KURAL (Adım 3) ──────────────────────────────────────────────────────────
+@router.get("/kural")
+def kural(tarih: Optional[str] = Query(None),
+          personel_id: Optional[str] = Query(None),
+          sube_id: Optional[str] = Query(None)):
+    """O tarihte geçerli bordro parametreleri + nereden geldikleri.
+
+    Tablo boşken kodda yazılı değerlerin BİREBİR aynısını döner — bu adım
+    hiçbir rakamı değiştirmez, yalnız GÖRÜNÜR kılar.
+    """
+    g = _tarih(tarih, str(date.today()))
+    with db() as (_, cur):
+        p = bordro_kural_coz.kural_coz(cur, g, personel_id, sube_id)
+        cur.execute("SELECT id, kapsam, sube_id, personel_id, gecerli_bas, "
+                    "       gecerli_bit, parametre, gerekce, olusturma "
+                    "  FROM bordro_kural ORDER BY gecerli_bas DESC")
+        cizgi = [dict(r) for r in (cur.fetchall() or [])]
+    return {"tarih": str(g), "parametre": p, "cizgi": cizgi,
+            "celiski": bordro_kural_coz.celiski_var_mi(p)}
+
+
+class KuralModel(BaseModel):
+    parametre: Dict[str, Any]
+    kapsam: str = "GENEL"
+    sube_id: Optional[str] = None
+    personel_id: Optional[str] = None
+    gecerli_bas: Optional[str] = None
+    gerekce: Optional[str] = None
+    duzelt: bool = False
+
+
+@router.post("/kural")
+def kural_yaz(m: KuralModel):
+    """Kural değişikliğini VERİ olarak yaz. Geçmiş ay eski kuralla kalır."""
+    kapsam = (m.kapsam or "GENEL").upper()
+    if kapsam not in ("GENEL", "SUBE", "KISI"):
+        raise HTTPException(400, "kapsam GENEL|SUBE|KISI olmali")
+    if kapsam == "SUBE" and not m.sube_id:
+        raise HTTPException(400, "SUBE kapsaminda sube_id zorunlu")
+    if kapsam == "KISI" and not m.personel_id:
+        raise HTTPException(400, "KISI kapsaminda personel_id zorunlu")
+    bilinmeyen = [k for k in (m.parametre or {}) if k not in bordro_kural_coz.VARSAYILAN]
+    if bilinmeyen:
+        raise HTTPException(400, "bilinmeyen parametre: %s — gecerliler: %s"
+                            % (bilinmeyen, sorted(bordro_kural_coz.VARSAYILAN)))
+    if not m.gerekce:
+        # Gerekçesiz kural denetimde savunulamaz (İZ BIRAKIR doktrini).
+        raise HTTPException(400, "gerekce zorunlu — hangi sozlesme maddesi/karar")
+    g = _tarih(m.gecerli_bas, SISTEM_BASLANGIC)
+
+    with db() as (conn, cur):
+        if m.duzelt:
+            cur.execute(
+                "SELECT id, parametre FROM bordro_kural "
+                " WHERE kapsam=%s AND COALESCE(sube_id,'')=%s "
+                "   AND COALESCE(personel_id,'')=%s AND gecerli_bas <= %s "
+                "   AND (gecerli_bit IS NULL OR gecerli_bit >= %s) "
+                " ORDER BY gecerli_bas DESC LIMIT 1",
+                (kapsam, str(m.sube_id or ""), str(m.personel_id or ""), g, g))
+            r = cur.fetchone()
+            if not r:
+                raise HTTPException(404, "duzeltilecek kural satiri yok")
+            cur.execute("UPDATE bordro_kural SET parametre = parametre || %s::jsonb, "
+                        "       gerekce=%s WHERE id=%s",
+                        (json.dumps(m.parametre),
+                         "%s | DUZELTME %s (eski: %s)" % (m.gerekce, date.today(),
+                                                          json.dumps(r["parametre"])),
+                         r["id"]))
+            conn.commit()
+            return {"ok": True, "islem": "duzeltildi", "id": r["id"]}
+
+        cur.execute(
+            "UPDATE bordro_kural SET gecerli_bit=%s "
+            " WHERE kapsam=%s AND COALESCE(sube_id,'')=%s "
+            "   AND COALESCE(personel_id,'')=%s AND gecerli_bas < %s "
+            "   AND (gecerli_bit IS NULL OR gecerli_bit >= %s)",
+            (g - timedelta(days=1), kapsam, str(m.sube_id or ""),
+             str(m.personel_id or ""), g, g))
+        kapanan = cur.rowcount or 0
+        cur.execute(
+            "INSERT INTO bordro_kural (kapsam, sube_id, personel_id, gecerli_bas, "
+            "                          parametre, gerekce) "
+            "VALUES (%s,%s,%s,%s,%s::jsonb,%s) RETURNING id",
+            (kapsam, m.sube_id, m.personel_id, g, json.dumps(m.parametre), m.gerekce))
+        yeni = cur.fetchone()["id"]
+        conn.commit()
+    return {"ok": True, "islem": "yeni_donem", "id": yeni,
+            "gecerli_bas": str(g), "kapanan_onceki": kapanan}
