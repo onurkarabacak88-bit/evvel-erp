@@ -1374,6 +1374,16 @@ def startup():
             ensure_audit_aktor(cur)
     except Exception as e:
         logger.warning("audit_log aktör migrasyonu (startup) atlandı: %s", e)
+    # 🕐 PART-TIME ELLE SAAT: personel_aylik.saat_kaynagi ('elle' | NULL).
+    # Aynı desen — kendi kısa transaction'ı, lock_timeout'lu, hata yutulur.
+    # Kolon açılmazsa sistem eski davranışa düşer (saat vardiyadan gelir),
+    # uygulama YİNE AÇILIR.
+    try:
+        with db() as (conn, cur):
+            from database import ensure_personel_aylik_saat_kaynagi
+            ensure_personel_aylik_saat_kaynagi(cur)
+    except Exception as e:
+        logger.warning("personel_aylik saat_kaynagi migrasyonu (startup) atlandı: %s", e)
     # GRNI: teslim alınan kalemler kalıcı olsun (sipariş adedi ≠ teslim adedi).
     try:
         with db() as (conn, cur):
@@ -10447,6 +10457,14 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                     net = maas_hesapla(dict(p), kayit, yil, ay)
                 durum = 'vardiya_tahmini'
 
+            # 🕐 ELLE GİRİLEN SAAT damgası KAYITTAN gelir ve hepsini yener.
+            # Yukarıdaki `_saat_kaynagi` okuma anında türetiliyor (vardiya ataması /
+            # sabit tanım / varsayım); sahip saati elle girdiyse rakamın kaynağı
+            # bunların hiçbiri değildir. Damga yoksa (kolon henüz açılmadıysa)
+            # eski davranış aynen sürer.
+            if str((kayit or {}).get('saat_kaynagi') or '') == 'elle':
+                _saat_kaynagi = 'elle'
+
             sonuc.append({
                 'personel_id': p['id'],
                 'ad_soyad': p['ad_soyad'],
@@ -10635,8 +10653,22 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
         kayit_dict = body.dict()
         # KANONİK: saat/fazla mesai VARDİYA TAKİP'ten gelir (elle girilse de kaynak takiptir —
         # kullanıcı kararı 2026-07-04); bayram/eksik/rapor/manuel/not katmanı body'den uygulanır.
+        #
+        # 🕐 PART-TIME İSTİSNASI (sahip 2026-09-06: "part personeli sistem
+        # hesaplamıyor — saati belirtiyorum, saatlik ücreti sistem hesaplamalı
+        # direk"). Part-time neti PLANLANAN saatten türer; vardiya planı
+        # girilmemişse planlanan 0'dır ve yukarıdaki koşulsuz ezme elle yazılan
+        # saati siler → net 0. (Canlı: MERT ALİ AKAR Haziran 2026 = 0,00.)
+        # Sürekli personelde taban aylık maaş olduğu için 2026-07-04 kararı
+        # aynen geçerli; yalnız part-time'da ELLE SAAT KAZANIR.
         vt = _vardiya_takip_hesap(p["id"], yil, ay)
-        if vt is not None:
+        _part = (p.get("calisma_turu") or "surekli") != "surekli"
+        _elle_saat = float(body.calisma_saati or 0) if _part else 0.0
+        if _part and _elle_saat > 0:
+            kayit_dict["calisma_saati"] = _elle_saat
+            kayit_dict["fazla_mesai_saat"] = 0.0   # part-time'da fazla mesai kavramı yok
+            net = _maas_svc.part_elle_saat_net(dict(p), vt, kayit_dict)
+        elif vt is not None:
             kayit_dict["calisma_saati"] = float(vt.get("toplam_planlanan_saat") or 0)
             kayit_dict["fazla_mesai_saat"] = float(vt.get("toplam_fazla_mesai_saat") or 0)
             net = _kanonik_net(dict(p), vt, kayit_dict)
@@ -10663,11 +10695,29 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
                 body.eksik_gun, body.raporlu_gun, body.rapor_kesinti,
                 body.manuel_duzeltme, body.not_aciklama, net, _avm, _avd))
 
+        # 🕐 SAAT KAYNAĞI DAMGASI — ayrı ve KORUMALI yazılır. Ana INSERT'e
+        # katılmıyor: kolon migrasyonu (ensure_personel_aylik_saat_kaynagi)
+        # kilit yüzünden atlanmış olabilir ve o zaman bordro kaydının TAMAMI
+        # düşerdi. savepoint yutulan hatanın transaction'ı zehirlemesini önler.
+        try:
+            with savepoint(cur, "pa_saat_kaynagi"):
+                cur.execute(
+                    "UPDATE personel_aylik SET saat_kaynagi=%s "
+                    " WHERE personel_id=%s AND yil=%s AND ay=%s",
+                    ('elle' if (_part and _elle_saat > 0) else None, pid, yil, ay))
+        except Exception as _e:   # noqa: BLE001
+            logger.warning("saat_kaynagi damgası yazılamadı (%s %s-%s): %s", pid, yil, ay, _e)
+
         # Bağlı ödeme planını gerçek tutarla güncelle
         _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, net)
 
-        audit(cur, 'personel_aylik', kid, 'KAYDET', yeni={'net': net, 'yil': yil, 'ay': ay})
-    return {"success": True, "hesaplanan_net": net}
+        audit(cur, 'personel_aylik', kid, 'KAYDET',
+              yeni={'net': net, 'yil': yil, 'ay': ay,
+                    'saat': kayit_dict["calisma_saati"],
+                    'saat_kaynagi': 'elle' if (_part and _elle_saat > 0) else 'vardiya'})
+    return {"success": True, "hesaplanan_net": net,
+            "saat": kayit_dict["calisma_saati"],
+            "saat_kaynagi": 'elle' if (_part and _elle_saat > 0) else 'vardiya'}
 
 
 @app.post("/api/personel-aylik/{pid}/vardiya-aktar")

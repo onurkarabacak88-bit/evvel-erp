@@ -254,6 +254,28 @@ def ensure_audit_aktor(cur) -> None:
     cur.execute("ALTER TABLE audit_log ADD COLUMN IF NOT EXISTS aktor_kaynak TEXT")
 
 
+def ensure_personel_aylik_saat_kaynagi(cur) -> None:
+    """`personel_aylik.saat_kaynagi` — saat ELLE mi girildi, vardiyadan mı geldi?
+    KENDİ KISA transaction'ında (bkz. ensure_audit_aktor: init_db'ye konursa
+    sıcak tabloda FIFO kilit sırası canlıyı 502 döngüsüne sokar).
+
+    🔴 NEDEN (sahip 2026-09-06: "part personeli sistem hesaplamıyor — saati
+    belirtiyorum, saatlik ücreti sistem hesaplamalı direk"):
+    Part-time hakedişi = saat × saatlik ücret. Saat KOŞULSUZ vardiya takibinden
+    okunuyordu; gece senkronu da (maas_service.aylik_vardiya_senkronize) yalnız
+    bayram/eksik/rapor/manuel/not katmanını koruyup `calisma_saati`'ni yeniden
+    yazıyordu. Sahip saati elle girse bile ertesi gece EZİLİYOR, vardiya planı
+    yoksa net 0 ₺ çıkıyordu (canlı: MERT ALİ AKAR Haziran 2026 → 0,00).
+
+    Bu kolon saati `manuel_duzeltme` gibi KORUNAN bir katman yapar:
+    'elle' damgalıysa senkron o saate dokunmaz. Damga aynı zamanda İZdir —
+    "bu rakam nereden çıktı" sorusu ekranda cevaplanabilir.
+    Değerler: 'elle' | NULL (=vardiya/otomatik).
+    """
+    cur.execute("SET LOCAL lock_timeout = '3s'")
+    cur.execute("ALTER TABLE personel_aylik ADD COLUMN IF NOT EXISTS saat_kaynagi TEXT")
+
+
 def ensure_toptanci_teslim_kalemler(cur) -> None:
     """`toptanci_siparis.teslim_kalemler` — FİİLEN TESLİM ALINAN kalemler.
 

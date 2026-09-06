@@ -218,6 +218,35 @@ def kanonik_net(p: dict, vt: dict, kayit: dict) -> float:
     return round(max(0.0, net), 2)
 
 
+def part_elle_saat_net(p: dict, vt: Optional[dict], kayit: dict) -> float:
+    """PART-TIME · ELLE GİRİLEN SAAT KAZANIR (sahip 2026-09-06:
+    "part personeli sistem hesaplamıyor — saati belirtiyorum, saatlik ücreti
+    sistem hesaplamalı direk").
+
+    NEDEN: kanonik yol part-time netini PLANLANAN vardiya saatinden türetir
+    (gorev_api.vardiya_takip: normal_ucret = toplam_planlanan × saatlik).
+    `personel_aylik_kaydet` ise saati koşulsuz takipten alıp body'yi eziyordu.
+    Vardiya planı girilmemişse planlanan 0'dır → elle yazılan saat kaybolur ve
+    net 0 çıkar. Canlı kanıt: MERT ALİ AKAR, Haziran 2026 → hesaplanan_net 0,00
+    (part_time, saatlik 99,00). Sürekli personelde taban aylık maaş olduğu için
+    bu tuzak yok; oradaki davranış DEĞİŞMEZ.
+
+    KALEMLER UYDURULMAZ: yemek/yol vardiya takibi hesapladıysa oradan alınır
+    (fiilî yemek günü bilgisini yalnız o bilir), takip yoksa yalnız tanımlı yol
+    ücreti eklenir. Part-time'da eksik gün kesintisi YOKTUR — az çalışıldıysa
+    zaten az saat girilir; ayrıca kesmek çifte kesinti olurdu.
+    """
+    saatlik = float(p.get("saatlik_ucret") or 0)
+    saat = float(kayit.get("calisma_saati") or 0)
+    d = (vt or {}).get("ucret_detay") or {}
+    net = saat * saatlik
+    net += float(d.get("yemek_ucret") or 0)
+    net += float(d["yol_ucret"]) if "yol_ucret" in d else float(p.get("yol_ucreti") or 0)
+    net += float(kayit.get("bayram_mesai_saat") or 0) * saatlik * 2
+    net += float(kayit.get("manuel_duzeltme") or 0)
+    return round(max(0.0, net), 2)
+
+
 def maas_hesapla(p: dict, kayit: dict, yil: int = None, ay: int = None) -> float:
     """YEDEK YOL (kanonik hesap alınamazsa sistem durmasın diye). Kanonik = Vardiya Takip.
 
@@ -458,7 +487,32 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
                 # vardiya_takip kurgusuyla aynı; bkz. vardiya_takip_hesap açıklaması).
                 vt["net_hakediş"] = round(_saat * _saatlik, 2) + float(vt.get("yol_ucreti") or 0)
                 vt["hesap_kaynagi"] = _sabit_kaynak
-    if vt is not None:
+    # 🕐 ELLE GİRİLEN SAAT KORUNUR (sahip 2026-09-06). Senkron bugüne kadar
+    # `manuel_duzeltme` gibi katmanları koruyup `calisma_saati`'ni HER GECE
+    # yeniden yazıyordu. Part-time'da net = saat × saatlik olduğu için, sahibin
+    # elle girdiği saat ertesi gece siliniyor ve vardiya planı yoksa net 0 ₺
+    # oluyordu. 'elle' damgası varsa saat DEĞİŞMEZ — damga yalnız part-time
+    # kaydetme yolunda konur (bkz. main.personel_aylik_kaydet).
+    _elle_saat_var = (
+        str(mev.get("saat_kaynagi") or "") == "elle"
+        and float(mev.get("calisma_saati") or 0) > 0
+    )
+    if _elle_saat_var:
+        kayit = {
+            "calisma_saati": float(mev.get("calisma_saati") or 0),
+            "fazla_mesai_saat": 0.0,
+            "bayram_mesai_saat": float(mev.get("bayram_mesai_saat") or 0),
+            "eksik_gun": float(mev.get("eksik_gun") or 0),
+            "raporlu_gun": float(mev.get("raporlu_gun") or 0),
+            "rapor_kesinti": bool(mev.get("rapor_kesinti") or False),
+            "manuel_duzeltme": float(mev.get("manuel_duzeltme") or 0),
+            "not_aciklama": mev.get("not_aciklama"),
+        }
+        net = part_elle_saat_net(dict(p), vt, kayit)
+        vk = {"kaynak": "elle_saat",
+              "toplam_planlanan_saat": kayit["calisma_saati"],
+              "fazla_mesai_saat": 0.0}
+    elif vt is not None:
         kayit = {
             "calisma_saati": float(vt.get("toplam_planlanan_saat") or 0),
             "fazla_mesai_saat": float(vt.get("toplam_fazla_mesai_saat") or 0),

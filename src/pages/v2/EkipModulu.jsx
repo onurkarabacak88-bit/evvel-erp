@@ -3825,6 +3825,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                     alt: (() => {
                       const k = String(b.saat_kaynagi || '');
                       const ucretNot = k.includes('varsayilan_ucret') ? ' · ücret 99 ₺/sa varsayıldı' : '';
+                      // 'elle' = sahip saati kendi girdi; vardiya senkronu bu saate DOKUNMAZ.
+                      if (k === 'elle') return `✍️ elle girildi · ${trSayi(sayi(b.saatlik_ucret), 2)} ₺/sa üzerinden`;
                       if (k.startsWith('sabit_tanim_haftalik')) return `sabit tanımdan${ucretNot}`;
                       // Part standardı UYARI DEĞİL: 5,5 sa/gün işletme kuralıdır.
                       if (k.startsWith('part_standart')) return `part standardı (6 gün × 5,5 sa)${ucretNot}`;
@@ -3925,6 +3927,36 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                       {alan('fazla_mesai_saat', 'Fazla mesai (sa)')}
                       {alan('bayram_mesai_saat', 'Bayram mesai (sa)')}
                     </div>
+                    {/* 🕐 PART-TIME: saat × saatlik ücret ANINDA gösterilir. Sahip
+                        "saati belirtiyorum, saatlik ücreti sistem hesaplamalı direk"
+                        dedi; rakamın kaydetmeden önce görünmesi o beklentiyi karşılar. */}
+                    {b.calisma_turu !== 'surekli' && (
+                      <div style={{
+                        margin: '2px 0 10px', padding: '10px 12px', borderRadius: 10,
+                        background: sayi(form.calisma_saati) > 0 ? `${R.yesil}14` : 'rgba(255,255,255,.04)',
+                        border: `1px solid ${sayi(form.calisma_saati) > 0 ? `${R.yesil}44` : 'rgba(255,255,255,.10)'}`,
+                        fontSize: 12.5, color: R.metin2, lineHeight: 1.6,
+                      }}>
+                        {sayi(b.saatlik_ucret) > 0 ? (
+                          <>
+                            <b>Part-time hesabı:</b> {trSayi(sayi(form.calisma_saati), 1)} sa ×{' '}
+                            {trSayi(sayi(b.saatlik_ucret), 2)} ₺/sa ={' '}
+                            <b style={{ color: R.yesil }}>
+                              {fmt(sayi(form.calisma_saati) * sayi(b.saatlik_ucret))}
+                            </b>
+                            <div style={{ fontSize: 11.5, color: R.not, marginTop: 4 }}>
+                              Girdiğin saat KORUNUR — gece vardiya senkronu bu rakamı ezmez.
+                              {sayi(form.manuel_duzeltme) !== 0 && ' Manuel düzeltme ayrıca eklenir.'}
+                            </div>
+                          </>
+                        ) : (
+                          <span style={{ color: R.amber }}>
+                            ⚠️ Bu kişinin saatlik ücreti tanımlı değil (0 ₺/sa). Saat girsen de
+                            net hesaplanamaz — önce personel kartından saatlik ücreti gir.
+                          </span>
+                        )}
+                      </div>
+                    )}
                     <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
                       {alan('eksik_gun', 'Eksik gün')}
                       {alan('raporlu_gun', 'Raporlu gün')}
