@@ -99,6 +99,15 @@ def kural_coz(cur, tarih, personel_id: Optional[str] = None,
         if kapsam != "GENEL" and not deger:
             continue
         kolon = "sube_id" if kapsam == "SUBE" else "personel_id"
+        # 🔴 TÜM GEÇERLİ SATIRLAR ÜST ÜSTE BİNER — "LIMIT 1" DEĞİL.
+        # Eski hâli en yeni TEK satırı okuyordu. Sonuç: aynı kapsam+aynı tarihe
+        # ikinci bir satır yazınca ÖNCEKİNİN PARAMETRELERİ SESSİZCE KAYBOLUYORDU.
+        # Canlı kanıt (2026-09-06): `yemek_paydasi` satırı eklenince aynı tarihli
+        # `mola_kayit_yok='askida'` satırı görünmez oldu, Eylül kuralı sessizce
+        # varsayılana döndü. Kural KAYBI en sinsi tür: hata vermez, sadece
+        # davranış eski hâline döner.
+        # Artık satırlar (gecerli_bas, olusturma) ARTAN sırayla ALAN ALAN
+        # bindirilir: sonraki satır yalnız KENDİ yazdığı alanı ezer.
         sql = ("SELECT id, parametre, gerekce, gecerli_bas FROM bordro_kural "
                " WHERE kapsam=%s AND gecerli_bas <= %s "
                "   AND (gecerli_bit IS NULL OR gecerli_bit >= %s) ")
@@ -106,26 +115,24 @@ def kural_coz(cur, tarih, personel_id: Optional[str] = None,
         if kapsam != "GENEL":
             sql += " AND %s = %%s" % kolon
             args.append(str(deger))
-        sql += " ORDER BY gecerli_bas DESC, olusturma DESC LIMIT 1"
+        sql += " ORDER BY gecerli_bas ASC, olusturma ASC"
         cur.execute(sql, tuple(args))
-        r = cur.fetchone()
-        if not r:
-            continue
-        par = r["parametre"] or {}
-        if isinstance(par, str):
-            import json as _json
-            try:
-                par = _json.loads(par)
-            except Exception:  # noqa: BLE001
-                par = {}
-        for k, v in par.items():
-            if k not in VARSAYILAN:
-                logger.warning("bordro_kural: bilinmeyen parametre %s (yok sayildi)", k)
-                continue
-            p[k] = v
-            iz[k] = {"kural_id": r["id"], "kapsam": kapsam,
-                     "gecerli_bas": str(r["gecerli_bas"]), "gerekce": r.get("gerekce")}
-        kural_id = r["id"]
+        for r in (cur.fetchall() or []):
+            par = r["parametre"] or {}
+            if isinstance(par, str):
+                import json as _json
+                try:
+                    par = _json.loads(par)
+                except Exception:  # noqa: BLE001
+                    par = {}
+            for k, v in par.items():
+                if k not in VARSAYILAN:
+                    logger.warning("bordro_kural: bilinmeyen parametre %s (yok sayildi)", k)
+                    continue
+                p[k] = v
+                iz[k] = {"kural_id": r["id"], "kapsam": kapsam,
+                         "gecerli_bas": str(r["gecerli_bas"]), "gerekce": r.get("gerekce")}
+            kural_id = r["id"]
 
     p["_iz"] = iz
     p["_kural_id"] = kural_id

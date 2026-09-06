@@ -415,7 +415,7 @@ def kural_yaz(m: KuralModel):
                 " WHERE kapsam=%s AND COALESCE(sube_id,'')=%s "
                 "   AND COALESCE(personel_id,'')=%s AND gecerli_bas <= %s "
                 "   AND (gecerli_bit IS NULL OR gecerli_bit >= %s) "
-                " ORDER BY gecerli_bas DESC LIMIT 1",
+                " ORDER BY gecerli_bas DESC, olusturma DESC LIMIT 1",
                 (kapsam, str(m.sube_id or ""), str(m.personel_id or ""), g, g))
             r = cur.fetchone()
             if not r:
