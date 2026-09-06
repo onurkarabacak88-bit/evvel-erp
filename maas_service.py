@@ -122,7 +122,19 @@ def personel_donem_orani(p: dict, yil: int, ay: int) -> Optional[float]:
     if eff1 > eff2:
         return None
     gun = (eff2 - eff1).days + 1
-    return 1.0 if gun >= sgun else gun / sgun
+    # 🔴 PAYDA = 30, TAKVİM GÜNÜ DEĞİL (Fable+Claude denetimi, 2026-09-06).
+    # Buradaki payda `sgun` (28/29/30/31) idi; kanonik motor ise HER ZAMAN 30
+    # kullanıyor (gorev_api.vardiya_takip: AYLIK_GUN=30, İş K./SGK "aylık ücret
+    # 30 gün" konvansiyonu). İki formül aynı kişiye farklı rakam söylüyordu:
+    #   Ağustos'un (31 gün) 17'sinde giren → kanonik 15/30 = %50,0
+    #                                        buradaki 15/31 = %48,4  (565,32 ₺ eksik)
+    #   Şubat'ın   (28 gün) 15'inde giren → kanonik 14/30 = %46,7
+    #                                        buradaki 14/28 = %50,0  (1.169,17 ₺ fazla)
+    # Sahip: "31 olunca ay fazla mı, 30 olunca eksik mi hesaplıyor?" — evet, bu
+    # yoldan. TEK ÇEKİRDEK: payda artık kanonikle aynı.
+    if gun >= sgun:
+        return 1.0                                    # tam ay = 30/30
+    return min(float(gun), AYLIK_GUN) / AYLIK_GUN
 
 
 # ── HESAP MOTORLARI ────────────────────────────────────────────

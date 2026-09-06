@@ -10642,11 +10642,18 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                 durum = kayit['durum']
             else:
                 # Tahmini hesap — ay içinde başlayan/ayrılan için gün oranlı
+                # 🔴 TEK ÇEKİRDEK (2026-09-06): burada `_gun / _son_gun` vardı,
+                # yani TAKVİM GÜNÜ paydası (Ağustos 31, Şubat 28). Kanonik motor
+                # ise 30 kullanıyor → aynı kişi bu ekranda başka, bordroda başka
+                # rakam gösteriyordu (Ağustos yarısı: %48,4 vs %50,0 = 565,32 ₺).
+                # Oran artık tek yerden: maas_service.personel_donem_orani.
                 if p['calisma_turu'] == 'surekli':
                     net = float(p['maas'] or 0) + float(p['yemek_ucreti'] or 0) + float(p['yol_ucreti'] or 0)
-                    _gun = (_eff2 - _eff1).days + 1
-                    if _gun < _son_gun:
-                        net = round(net * _gun / _son_gun, 2)
+                    _oran = _maas_svc.personel_donem_orani(dict(p), yil, ay)
+                    if _oran is None:
+                        _oran = 0.0
+                    if _oran < 1.0:
+                        net = round(net * _oran, 2)
                 else:
                     net = 0  # Part-time saat girilmeden tahmin yapılamaz
                 durum = 'tahmini'
