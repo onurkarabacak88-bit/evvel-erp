@@ -10419,10 +10419,49 @@ def personel_guncelle(pid: str, p: PersonelModel):
     return {"success": True, "ucret_cizgisi": kopru_sonuc}
 
 @app.post("/api/personel/{pid}/cikis")
-def personel_cikis(pid: str, neden: str = ""):
+def personel_cikis(pid: str, neden: str = "", tarih: str = ""):
+    """Personeli çıkışa alır. `tarih` = FİİLÎ SON ÇALIŞMA GÜNÜ (YYYY-AA-GG).
+
+    🔴 NEDEN (sahip 2026-09-06): "SİSTEMDE AYRILMA TARİHİ DİYE BİR ALAN YOK,
+    BAZEN GEÇ ÇIKIŞ YAPABİLİYORUZ :(( BU DÜZENLENECEK BİR UNSUR."
+    Bu uç `cikis_tarihi`'ni koşulsuz `bugun_tr()` yazıyordu — yani İŞLEMİN
+    YAPILDIĞI GÜNÜ, kişinin son çalıştığı günü DEĞİL. Çıkış geç işlenirse
+    aradaki her gün hakedişe giriyor.
+    Canlı bedeli: YAREN BEŞLİ çıkışı 25.08 damgalanmış, hakedişi 29.229,17 ₺
+    hesaplanmış; sahibin defterinde 22.218 ₺ — fark ~7.000 ₺ FAZLA ödeme riski.
+
+    `tarih` verilmezse bugüne düşer (eski davranış korunur) ama artık
+    VERİLEBİLİR ve mevcut yanlış tarih bu uçtan DÜZELTİLEBİLİR.
+    """
     with db() as (conn, cur):
+        cur.execute("SELECT ad_soyad, baslangic_tarihi, cikis_tarihi FROM personel "
+                    " WHERE id=%s", (pid,))
+        _p = cur.fetchone()
+        if not _p:
+            raise HTTPException(404, "Personel bulunamadı")
+        _bugun = bugun_tr()
+        if (tarih or "").strip():
+            try:
+                _cikis = date.fromisoformat(tarih.strip()[:10])
+            except ValueError:
+                raise HTTPException(400, "tarih YYYY-AA-GG olmalı: %s" % tarih)
+            # UYDURMA YOK: işe başlamadan önce çıkış olamaz.
+            if _p.get("baslangic_tarihi") and _cikis < _p["baslangic_tarihi"]:
+                raise HTTPException(
+                    400, "Çıkış tarihi işe başlangıçtan (%s) önce olamaz"
+                         % _p["baslangic_tarihi"])
+            if (_cikis - _bugun).days > 90:
+                raise HTTPException(400, "Çıkış tarihi 90 günden fazla ileri olamaz")
+        else:
+            _cikis = _bugun
+        _eski_cikis = _p.get("cikis_tarihi")
         cur.execute("UPDATE personel SET aktif=FALSE, cikis_tarihi=%s WHERE id=%s",
-            (str(bugun_tr()), pid))
+            (str(_cikis), pid))
+        # İZ BIRAKIR: tarih düzeltmesi sessiz kalmamalı — eski değer denetim izine.
+        audit(cur, 'personel', pid, 'CIKIS',
+              eski={'cikis_tarihi': str(_eski_cikis) if _eski_cikis else None},
+              yeni={'cikis_tarihi': str(_cikis), 'neden': neden,
+                    'kaynak': 'fiili_son_gun' if (tarih or '').strip() else 'islem_gunu'})
         # KURAL (2026-07-03): "Dönem hakedişi aktiflikten bağımsızdır."
         # Sadece ÇALIŞILMAMIŞ (gelecek dönem) planlar iptal edilir — simülasyondan çıksın.
         # Çalışılan dönemin (çıkış ayı dahil, kısmi hakediş) planı KALIR: ay sonunda
