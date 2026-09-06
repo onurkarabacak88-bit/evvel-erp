@@ -238,6 +238,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   const [izin, setIzin] = useState(null);
   const [isgucu, setIsgucu] = useState(null);   // /ops/metrics/isgucu — ₺/adam-saat
   const [kalemDefteri, setKalemDefteri] = useState({});  // 📒 personel_id -> kalem[]
+  const [molaAskida, setMolaAskida] = useState(null);   // 🍽 onay bekleyen mola günleri
+  const [molaOnaySoru, setMolaOnaySoru] = useState(null); // iki tıklamalı onay (personel_id)
+  const [molaMesgul, setMolaMesgul] = useState(false);
   const [onayKuyrugu, setOnayKuyrugu] = useState(null);  // bordro temiz/incele ayrımı
   const [topluOnayMesgul, setTopluOnayMesgul] = useState(false);
   const [topluOnaySoru, setTopluOnaySoru] = useState(false);
@@ -352,7 +355,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
       // yüklenirken BİR KEZ çekilir ve personel_id'ye göre indekslenir.
       // Kırılırsa çekmece eski sabit alanlarıyla çalışmaya devam eder.
       api(`/ucret/kalem?yil=${donem.yil}&ay=${donem.ay}`).catch(() => null),
-    ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd, sl, ig, ok, kd]) => {
+      // 🍽 MOLA ONAY KUYRUĞU — mola kaydı DÜŞMEMİŞ günler. Bordro onay
+      // kuyruğundan AYRI bir aşama: o hesaplanmış net'i onaylar, bu hesap
+      // ÖNCESİNDE eksik veri boşluğunu karara bağlar.
+      api(`/ucret/mola-askida?yil=${donem.yil}&ay=${donem.ay}`).catch(() => null),
+    ]).then(([p, h, b, av, go, vt, bs, bo, pin, iz, vd, sl, ig, ok, kd, ma]) => {
+      setMolaAskida(ma);
       setKalemDefteri((() => {
         const ix = {};
         Object.values(kd?.defter || {}).forEach((v) => {
@@ -3674,6 +3682,97 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           },
           { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: 'bu ay toplam', renk: toplamFm > 0 ? R.kirmizi : R.krem },
         ]} />
+        {/* 🍽 MOLA ONAY KUYRUĞU (BORDRO V2 · Adım 7) — bordro onayından AYRI aşama.
+            Bordro onayı HESAPLANMIŞ net'i kilitler; bu ondan ÖNCE gelir ve
+            "mola kaydı düşmemiş gün" boşluğunu karara bağlar.
+            Sahip kararı 2026-09-06: "MANTIKLISI SANKİ C GİBİ" — kanıtsız para
+            ödenmez ama hak da KAYBOLMAZ; askıya alınır, sahip gün gün onaylar.
+            ⚠️ İki tıklama: ilk tıklama soruyu açar, ikincisi yazar. Onay
+            `bordro_kalem`'e KARAR ekseninde iz bırakır; geri alınabilir. */}
+        {(() => {
+          const ma = molaAskida;
+          if (!ma || !ma.bekleyen_gun) return null;
+          // Parası olmayan bekleyenler (sözleşmesinde yemek yok) ayrı gösterilir:
+          // onaylamak para üretmez, listeyi şişirir.
+          const parali = (ma.bekleyenler || []).filter((b) => sayi(b.toplam_tutar) > 0);
+          const parasiz = (ma.bekleyenler || []).filter((b) => !sayi(b.toplam_tutar));
+          if (!parali.length && !parasiz.length) return null;
+          const onayla = async (b) => {
+            setMolaMesgul(true);
+            try {
+              const r = await api(`/ucret/mola-onay?yil=${donem.yil}&ay=${donem.ay}`, {
+                method: 'POST',
+                body: JSON.stringify({
+                  kuru: false,
+                  onaylayan: 'sahip',
+                  gerekce: `Sahip ekrandan onayladı (Ekip modülü, ${new Date().toLocaleDateString('tr-TR')}). `
+                    + `Vardiya planlanmış, çalışma gerçekleşmiş, mola kaydı teknik olarak düşmemiş.`,
+                  gunler: (b.gunler || []).map((g) => ({ personel_id: b.personel_id, tarih: g })),
+                }),
+              });
+              onToast?.(`✓ ${b.ad_soyad} · ${r?.etkilenen ?? 0} gün onaylandı — ${fmt(sayi(b.toplam_tutar))}`);
+              setMolaOnaySoru(null);
+              yukle();
+            } catch (e) {
+              onToast?.(`⚠ onaylanamadı: ${e?.message || e}`);
+            } finally {
+              setMolaMesgul(false);
+            }
+          };
+          return (
+            <div style={{
+              ...kartYuzey, padding: '13px 16px', marginBottom: 12,
+              borderLeft: `3px solid ${R.mavi}`, fontSize: 12.5, lineHeight: 1.65,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', marginBottom: 8 }}>
+                <b style={{ color: R.mavi, fontSize: 13 }}>
+                  🍽 {ma.bekleyen_gun} gün mola kaydı düşmemiş · {fmt(sayi(ma.bekleyen_tutar))}
+                </b>
+                <span style={{ color: R.metin2 }}>
+                  bu bir <b>ihlal değil</b> — sistemde kayıt yok. Onaylarsanız yemek ücreti eklenir.
+                </span>
+              </div>
+              {parali.map((b) => (
+                <div key={b.personel_id} style={{
+                  display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
+                  padding: '7px 0', borderTop: `1px solid ${R.cizgi3}`,
+                }}>
+                  <b style={{ color: R.krem, minWidth: 150 }}>{b.ad_soyad}</b>
+                  <span style={{ color: R.metin2, flex: 1 }}>
+                    {b.askida_gun} gün ({(b.gunler || []).map((g) => g.slice(-2)).join(', ')}) ·
+                    günlük {fmt(sayi(b.gun_tutari))}
+                  </span>
+                  <b style={{ color: R.yesil, minWidth: 90, textAlign: 'right' }}>
+                    {fmt(sayi(b.toplam_tutar))}
+                  </b>
+                  <button
+                    disabled={molaMesgul}
+                    onClick={() => (molaOnaySoru === b.personel_id ? onayla(b) : setMolaOnaySoru(b.personel_id))}
+                    style={{
+                      padding: '7px 13px', borderRadius: 8, border: 'none', fontFamily: 'inherit',
+                      cursor: molaMesgul ? 'default' : 'pointer', fontSize: 12, fontWeight: 700,
+                      background: molaOnaySoru === b.personel_id
+                        ? 'linear-gradient(150deg, #E0A559, #AF6C29)' : 'rgba(255,255,255,0.08)',
+                      color: molaOnaySoru === b.personel_id ? '#1C1309' : R.krem,
+                    }}
+                  >
+                    {molaMesgul ? '…' : (molaOnaySoru === b.personel_id ? 'Eminim, onayla' : 'Onayla')}
+                  </button>
+                </div>
+              ))}
+              {parasiz.length ? (
+                <div style={{ color: R.not2, fontSize: 11.5, marginTop: 8 }}>
+                  {parasiz.map((b) => b.ad_soyad).join(', ')} — {parasiz.reduce((t, b) => t + b.askida_gun, 0)} gün
+                  bekliyor ama <b>sözleşmelerinde yemek kalemi yok</b>; onay para üretmez.
+                </div>
+              ) : null}
+              <div style={{ color: R.not2, fontSize: 11.5, marginTop: 8 }}>
+                Onay <b>karar</b> olarak yazılır (kim · ne zaman · gerekçe) ve geri alınabilir.
+                Kayıt silinmez, "eski" olur.
+              </div>
+            </div>
+          );
+        })()}
         {/* BORDRO ONAY KUYRUĞU — "istisnaya göre onay".
             Onay tek tek yapılıyordu: canlıda Temmuz'da 10 kayıt taslakta kaldı ve
             194.470 ₺ maaş 9 gün ödenemedi (ödeme guard'ı onaysız kaydı geçirmez).
