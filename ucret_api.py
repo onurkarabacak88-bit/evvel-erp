@@ -660,7 +660,8 @@ def kalem_golge(yil: int = Query(...), ay: int = Query(...),
                 "SELECT bayram_mesai_saat, eksik_gun, raporlu_gun, rapor_kesinti, "
                 "       manuel_duzeltme, not_aciklama, hesaplanan_net, "
                 "       COALESCE(avans_mahsup,0) AS avans_mahsup, "
-                "       COALESCE(mahsup_devir,0) AS mahsup_devir, durum "
+                "       COALESCE(mahsup_devir,0) AS mahsup_devir, durum, "
+                "       calisma_saati, saat_kaynagi "
                 "  FROM personel_aylik WHERE personel_id=%s AND yil=%s AND ay=%s",
                 (pid, yil, ay))
             _k = cur.fetchone() or {}
@@ -672,6 +673,18 @@ def kalem_golge(yil: int = Query(...), ay: int = Query(...),
                      "gerekce": _k.get("not_aciklama")}
             mahsup = {"avans_mahsup": _k.get("avans_mahsup"),
                       "mahsup_devir": _k.get("mahsup_devir")}
+
+            # 🕐 ELLE GİRİLEN SAAT KAZANIR (part-time). Sahip 2026-09-06:
+            # "part personeli sistem hesaplamıyor — saati belirtiyorum".
+            # Vardiya planı olmayan part-time'da hakediş elle girilen saatten
+            # doğar; gölge bunu okumazsa MERT/nisanur gibi kişilerde koca fark
+            # üretir ve "V2 eksik hesaplıyor" sanılır. Kaynağı da taşı:
+            # bu bir ÖLÇÜM değil BEYANdır, kalem öyle damgalanmalı.
+            if (sz.get("calisma_turu") or "surekli") != "surekli"                     and str(_k.get("saat_kaynagi") or "") == "elle"                     and float(_k.get("calisma_saati") or 0) > 0:
+                olcum["calisilan_saat"] = float(_k["calisma_saati"])
+                olcum["saat_kaynagi"] = "elle"
+                olcum["saat_kanit_sinifi"] = "beyan"
+
             sonuc = _bm.hesapla(sz, kr, olcum, karar, mahsup)
 
             # İKİ AYRI KARŞILAŞTIRMA — ikisi farklı soruyu ölçer:
