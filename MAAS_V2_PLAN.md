@@ -145,6 +145,48 @@ kabul testi arkasında.
 
 ---
 
+## 5c · ADIM 2 TAMAMLANDI (2026-09-06)
+
+`ucret_tanim` DOLDU — **56 satır**, `ayna_kalan = 0`, `hazir = true`.
+Golden 0,00 × 4 · kabul 3/3 korundu (hiçbir rakam değişmedi).
+
+| karar | sahip | uygulama |
+|---|---|---|
+| Asgari ücret | **28.075 ₺** | GENEL/ASGARI, `gecerli_bas 2026-06-01` |
+| Ayrılanlar | "TALHA VE YILMAZ ZATEN AYRILDILAR AMA MAAŞLARI BUYDU" | pasif personel HER ZAMAN `SABIT` (donuk) — 22 kişi |
+| Aktif + tam asgari | "bir kere değiştiğinde HEPSİNE BİRDEN uygulanmalı" | `ASGARIYE_BAGLI` fark 0 — SILA AKBAY, gökçe değirmenci |
+| Diğer tutarlar | "4 KİŞİNİN MAAŞLAR DOĞRU" | kart tutarı birebir `SABIT` |
+| MERVE KARABACAK | "MERVE MAAŞ 35 SADECE" | **32.000 → 35.000, 1 Eylül'den** |
+
+**Zaman çizgisi ilk kez gerçek bir vakada kanıtlandı** — Merve Karabacak:
+```
+2026-06-15 → 32.000    2026-08-15 → 32.000
+2026-07-15 → 32.000    2026-09-15 → 35.000
+```
+Zam geçmişi kaydırmadı. Haziran/Temmuz 32.000 olarak ödenmişti; eski sistemde
+kartı 35.000 yapmak bu iki ayı da 35.000 gösterir, 6.000 ₺ sahte borç doğururdu.
+
+### 🔴 ADIM 2'DE ÇIKAN YENİ CANLI BULGU — kayıtlı satır canlı hesabı EZİYOR
+
+`main.py:10601` → `if kayit: net = kayit['hesaplanan_net']`. `personel_aylik`
+satırı varsa canlı hesap YOK SAYILIR. Kart değişince bordro kendiliğinden
+yenilenmiyor; `POST /api/personel-aylik/vardiya-sync` elle çağrılmadıkça eski
+rakam ödenir. Eylül 2026 ölçümü (hepsi `taslak`, henüz ödenmedi):
+
+| kişi | kayıtlı | canlı | fark | neden |
+|---|---|---|---|---|
+| MERVE KARABACAK | 6.400,00 | 7.636,00 | +1.236,00 | zam işlenmemiş |
+| mehmet ucak | 7.000,00 | 8.400,00 | +1.400,00 | **yemek düzeltmesi işlenmemiş** |
+| SILA AKBAY | 6.548,33 | 7.015,00 | +466,67 | yemek düzeltmesi işlenmemiş |
+| MERVE AKTA | 6.066,67 | 6.440,00 | +373,33 | yemek düzeltmesi işlenmemiş |
+| **TOPLAM** | | | **+3.476,00** | |
+
+⚠️ `1034202`/`b17457c` yemek düzeltmeleri KAYITLI SATIRLARA ULAŞMAMIŞ. Eylül bu
+hâliyle ödenirse **3.040 ₺ eksik** ödenir. Ödeme öncesi senkron ŞART.
+⏳ SAHİP KARARI: Eylül senkronu çalıştırılsın mı.
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
