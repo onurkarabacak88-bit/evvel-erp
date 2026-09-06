@@ -189,6 +189,17 @@ except Exception as _tedarik_mut_err:
     logging.getLogger(__name__).warning(
         f"tedarik_mutabakat modulu yuklenemedi (izole, ana akis etkilenmez): {_tedarik_mut_err}"
     )
+# ÜCRET ZAMAN ÇİZGİSİ — BORDRO V2 · Adım 2. İZOLE: yükleme başarısız olsa bile
+# bordro bugünkü haliyle çalışır (motor henüz buradan okumuyor; Adım 5'te geçer).
+# Sahip: "asgari ücret her yıl değişiyor, bir kere değiştiğinde HEPSİNE BİRDEN
+# uygulanmalı; bazı personelle asgari ÜSTÜ anlaşılabilir."
+try:
+    from ucret_api import router as ucret_router
+    app.include_router(ucret_router)
+except Exception as _ucret_err:
+    logging.getLogger(__name__).warning(
+        f"ucret modulu yuklenemedi (izole, ana akis etkilenmez): {_ucret_err}"
+    )
 # PERSONEL KİMLİĞİ — İZOLE: "aynı kişi mi?" + "gerçekten ne zaman başladı?"
 # ÖNERİ-ONLY: hiçbir kaydı kendiliğinden birleştirmez/düzeltmez.
 try:
