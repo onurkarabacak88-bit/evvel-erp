@@ -583,3 +583,86 @@ def mola_onay(m: MolaOnayModel, yil: int = Query(...), ay: int = Query(...)):
             "satirlar": yazilan, "atlanan_detay": atlanan,
             "not": ("KURU — hicbir sey yazilmadi. kuru=false ile uygulayin."
                     if m.kuru else "UYGULANDI")}
+
+
+# ── GÖLGE HESAP (Adım 6) ────────────────────────────────────────────────────
+# 🔴 Saf motor (`bordro_motor.hesapla`) V1 ile YARIŞIR, para AKMAZ.
+# Kesim (net = Σ kalem) ancak burada 0,00 fark görülünce yapılır.
+# Motor ölçümü ÜRETMEZ, ALIR: ölçüm kanıtı `vardiya_takip`ten gelir; motor
+# yalnız ARİTMETİĞİ bağımsız olarak yeniden kurar. Aritmetikte bir kusur varsa
+# gölge onu yakalar; ölçüm kusurunu yakalamaz (o Adım 4'ün işi).
+@router.get("/kalem-golge")
+def kalem_golge(yil: int = Query(...), ay: int = Query(...),
+                personel_id: Optional[str] = Query(None)):
+    """V1 net'i ile saf motorun Σ kalem'ini karşılaştırır. SALT OKUR."""
+    import bordro_motor as _bm
+    try:
+        from gorev_api import vardiya_takip as _vt
+        vt = _vt(yil, ay, personel_id=personel_id) if personel_id else _vt(yil, ay)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(500, "vardiya takip okunamadi: %s" % e)
+
+    satirlar, kirik, toplam_v1, toplam_v2 = [], 0, 0.0, 0.0
+    with db() as (_, cur):
+        for r in (vt or {}).get("personeller") or []:
+            pid = str(r.get("personel_id"))
+            u = r.get("ucret_detay") or {}
+            gecen = float(u.get("gecen_gun") or 0)
+            if gecen <= 0 and not (r.get("planli_gun") or 0):
+                continue
+            cur.execute("SELECT id, ad_soyad, maas, yemek_ucreti, yol_ucreti, "
+                        "       saatlik_ucret, calisma_turu, baslangic_tarihi "
+                        "  FROM personel WHERE id=%s", (pid,))
+            p = cur.fetchone()
+            if not p:
+                continue
+            _bas = p.get("baslangic_tarihi")
+            _t = date(yil, ay, 1)
+            if _bas and _bas > _t:
+                _t = _bas
+            sz = bordro_ucret.sozlesme_coz(cur, pid, _t, dict(p))
+            kr = bordro_kural_coz.kural_coz(cur, _t, personel_id=pid,
+                                            sube_id=p.get("sube_id"))
+            m = r.get("mola_ozet") or {}
+            # Yemek paydası: motor kuralı BİLİR ama günleri saymaz — ölçümden gelir.
+            _planli = int(r.get("planli_gun") or 0)
+            _yp = kr.get("yemek_paydasi") or "planli_gun"
+            if _yp == "beklenen_gun":
+                _payda = max(float(_planli),
+                             round(gecen * float(kr.get("haftalik_calisma_gun") or 6) / 7.0))
+            else:
+                try:
+                    _payda = float(_yp)
+                except (TypeError, ValueError):
+                    _payda = float(_planli)
+            olcum = {
+                "gecen_gun": gecen,
+                "planli_gun": _planli,
+                "yemek_hak_gun": int(r.get("yemek_ucret_gun") or 0),
+                "yemek_paydasi_deger": _payda,
+                "ihlal_gun": m.get("ihlal", 0),
+                "kayit_yok_gun": m.get("kayit_yok", 0),
+                "onayli_gun": m.get("onayli", 0),
+                "fazla_mesai_saat": float(r.get("toplam_fazla_mesai_saat") or 0),
+                "calisilan_saat": float(r.get("toplam_planlanan_saat") or 0),
+                "saat_kaynagi": r.get("saat_kaynagi"),
+                "ay_tamam": u.get("ay_tamam"),
+            }
+            sonuc = _bm.hesapla(sz, kr, olcum)
+            v1 = float(r.get("net_hakediş") or 0)
+            fark = sonuc["net"] - v1
+            toplam_v1 += v1
+            toplam_v2 += sonuc["net"]
+            if abs(fark) > 0.005:
+                kirik += 1
+            satirlar.append({
+                "personel_id": pid, "ad_soyad": r.get("ad_soyad"),
+                "v1_net": round(v1, 2), "v2_net": sonuc["net"], "fark": round(fark, 2),
+                "kalemler": sonuc["kalemler"], "notlar": sonuc["notlar"],
+                "eksen_toplam": sonuc["eksen_toplam"]})
+
+    return {"yil": yil, "ay": ay, "kisi": len(satirlar), "kirik": kirik,
+            "toplam_v1": round(toplam_v1, 2), "toplam_v2": round(toplam_v2, 2),
+            "toplam_fark": round(toplam_v2 - toplam_v1, 2),
+            "hazir": kirik == 0,
+            "satirlar": satirlar}
