@@ -155,8 +155,18 @@ kabul testi arkasında.
 
 ## 7 · AÇIK KALAN ÜÇ SORU
 
-1. **28.075 asgari ücret mi?** Üç kabul vakası bu tutarda ama sahip teyidi yok.
-   Hangi kişiler `ASGARIYE_BAGLI`, hangileri `SABIT` → sahip işaretleyecek.
+1. ~~**28.075 asgari ücret mi?**~~ → ✅ **SAHİP TEYİT ETTİ (2026-09-06): 28.075 ₺.**
+   `ucret_tanim` GENEL/ASGARI satırı yazıldı, `gecerli_bas = 2026-06-01`
+   (id `14a6a977`). Golden 0,00 × 4 · kabul 3/3 korundu.
+   ⏳ **Hâlâ açık:** hangi kişiler `ASGARIYE_BAGLI`, hangileri `SABIT`.
+   Kuru liste (canlı, 2026-09-06): 54 satır · 14 kişi tam 28.075 (bağlanabilir) ·
+   4 kişi asgari ÜSTÜ (mehmet ucak 35.000 · MERVE KARABACAK 32.000 ·
+   RAMAZAN YILMAZ 30.500 · TALHA TUYGUN 30.500) → sabit mi, fark korunarak
+   birlikte mi artsın.
+   🔴 **BULGU:** 5 kişi 28.000 ₺ — asgariden 75 ₺ EKSİK. Mayıs'ta başlayanlar
+   (SILA AKBAY · RÜMEYSA · irem) için "zamdan önceki tutar" olabilir; ama
+   **MERVE AKTA (17.07)** ve **naz dal (01.09)** zamdan SONRA başlamış ve hâlâ
+   28.000 → muhtemelen yazım eksiği, sahip teyidi gerekiyor.
 2. **Kesinti paydası** — Fable 26 öneriyor (6 gün × 4,33). Sahip 30 diyebilir.
    Adım 7 kuru listesi iki seçeneği yan yana gösterecek.
 3. ~~Temmuz'da ~9.000 ₺ açıklanamıyor~~ → **BÖYLE BİR AÇIK YOK (doğrulandı).**
