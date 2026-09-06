@@ -158,6 +158,29 @@ def _donem_sec(cur, personel_id: str) -> tuple:
 
 
 def _beklenen_net(cur, p: dict, yil: int, ay: int, vt: Optional[dict]) -> float:
+    # 🔴 ÜCRET, DÖNEMİN TARİHİNDEN ÇÖZÜLÜR (2026-09-06, Adım 5'in atlanan ayağı).
+    # Burada `personel` kartının BUGÜNKÜ değerleri okunuyordu. Motor Adım 5'te
+    # zaman çizgisine bağlanmıştı ama avans tavanı bağlanmamıştı → bugün yapılan
+    # bir zam GEÇMİŞ AYIN avans tavanını da büyütüyordu.
+    # Canlı örnek: MERVE KARABACAK Ağustos'ta 32.000 kazanıyordu; kartı 6 Eylül'de
+    # 35.000 oldu → Ağustos tavanı 35.000 üzerinden hesaplanırdı.
+    # Çizgide satır yoksa çözücü zaten karta düşer → davranış korunur.
+    _p = dict(p)
+    try:
+        with savepoint(cur, "avans_ucret_coz"):
+            import bordro_ucret as _bu
+            _bas = p.get("baslangic_tarihi")
+            _t = date(yil, ay, 1)
+            if _bas and _bas > _t:
+                _t = _bas
+            _sz = _bu.sozlesme_coz(cur, p["id"], _t, dict(p))
+            _p["maas"] = _sz["kalem"]["TABAN"]["tutar"]
+            _p["yemek_ucreti"] = _sz["kalem"]["YEMEK"]["tutar"]
+            _p["yol_ucreti"] = _sz["kalem"]["YOL"]["tutar"]
+            _p["saatlik_ucret"] = _sz["kalem"]["SAATLIK"]["tutar"]
+    except Exception as e:  # noqa: BLE001 — tavan, ücret çözücü kırıldı diye çökmesin
+        logger.warning("avans tavani ucret cozucu calismadi (%s): %s", p.get("ad_soyad"), e)
+    p = _p
     if (p.get("calisma_turu") or "surekli") == "surekli":
         return float(p.get("maas") or 0) + float(p.get("yemek_ucreti") or 0) + float(p.get("yol_ucreti") or 0)
     # 🔴 FIX (Fable denetimi P2, 2026-09-06): part-time beklenen net YALNIZ
