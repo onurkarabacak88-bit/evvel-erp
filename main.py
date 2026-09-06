@@ -10316,6 +10316,12 @@ class PersonelAylikModel(BaseModel):
     rapor_kesinti: bool = False
     manuel_duzeltme: float = 0
     not_aciklama: Optional[str] = None
+    # 🕐 Saat alanına BU KAYDETMEDE dokunuldu mu? (2026-09-06, Fable denetimi P1)
+    # Form saati mevcut kayıttan ÖN-DOLDURUYOR; "calisma_saati > 0" ölçütü
+    # kullanılırsa sahip yalnız bayram mesaisini düzeltse bile saat 'elle'
+    # damgalanır ve ayın kalan günleri vardiyadan bir daha eklenmez.
+    # None/False = dokunulmadı → mevcut damga korunur, yoksa vardiya kazanır.
+    saat_elle: bool = False
 
 def _maas_kayit_kilit_guard(cur, pid: str, yil: int, ay: int) -> None:
     """FAZ 0 #5: Onaylı (kilitli) veya ödenmiş maaş kaydı sessizce taslağa
@@ -10333,14 +10339,30 @@ def _maas_kayit_kilit_guard(cur, pid: str, yil: int, ay: int) -> None:
     # ARREARS: (yil, ay) = ÇALIŞMA dönemi → ödenmiş plan referans_ay = ödeme ayı (dönem+1).
     # FIX 2026-07-04: MAKE_DATE(yil,ay,1) çalışma ayına bakıyordu → kilit hiç devreye
     # girmiyordu. Eski konvansiyon planları için çalışma ayı da kontrol edilir.
+    #
+    # 🔴 FIX 2026-09-06 (Fable denetimi P1): eski-konvansiyon dalı ÖNCEKİ DÖNEMİN
+    # ödenmiş planıyla ÇAKIŞIYORDU. Çalışma dönemi Ağustos için IN listesi
+    # [2026-09-01, 2026-08-01] oluyor; Temmuz döneminin planı da referans_ay
+    # 2026-08-01 ve 'odendi' → Temmuz ödendiği an AĞUSTOS kaydı düzenlenemiyordu
+    # ("bu dönemin maaşı ödenmiş" 400'ü). Her ay ödendikçe sonraki ay kilitleniyordu
+    # ve part-time elle-saat yolu bu kapının arkasında kalıyordu.
+    # Ayrım: iki konvansiyon referans_ay'dan AYIRT EDİLEMEZ, ama plan AÇIKLAMASI
+    # çalışma dönemini adıyla yazar (maas_service.plan_aciklama:
+    # "Personel Maaş: AD — Temmuz 2026 dönemi"). Eski dal artık yalnız açıklaması
+    # BU dönemi söyleyen planla eşleşir.
+    _donem_etiketi = f"%{_maas_svc.TR_AYLAR[ay]} {yil} dönemi%"
     cur.execute(
         """
         SELECT 1 FROM odeme_plani
         WHERE kaynak_tablo='personel' AND kaynak_id=%s AND durum='odendi'
-          AND referans_ay IN (%s::date, MAKE_DATE(%s, %s, 1))
+          AND (
+                referans_ay = %s::date
+             OR (referans_ay = MAKE_DATE(%s, %s, 1)
+                 AND COALESCE(aciklama,'') LIKE %s)
+              )
         LIMIT 1
         """,
-        (pid, str(_maas_svc.maas_odeme_tarihi(yil, ay)), yil, ay),
+        (pid, str(_maas_svc.maas_odeme_tarihi(yil, ay)), yil, ay, _donem_etiketi),
     )
     if cur.fetchone():
         raise HTTPException(
@@ -10475,7 +10497,13 @@ def personel_aylik_listele(yil: int = None, ay: int = None):
                             _saat_kaynagi = _k
                             vt = dict(vt)
                             vt['toplam_planlanan_saat'] = _s
-                            vt['net_hakediş'] = round(_s * _su, 2) + float(p['yol_ucreti'] or 0)
+                            # Yol: TAM aylık değil, dönem oranlı `ucret_detay.yol_ucret`
+                            # (Fable denetimi P1, 2026-09-06). Burası tam aylık yolu
+                            # ekliyordu, maas_service tarafı ise hatalı anahtar yüzünden
+                            # HİÇ eklemiyordu — ekran ile kayıt farklı rakam söylüyordu.
+                            # İkisi de aynı kaynağa bağlandı.
+                            vt['net_hakediş'] = round(_s * _su, 2) + float(
+                                (vt.get('ucret_detay') or {}).get('yol_ucret') or 0)
                     except Exception as _e_sm:
                         logging.getLogger(__name__).warning("sabit mesai fallback: %s", _e_sm)
             else:
@@ -10697,8 +10725,20 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
         # aynen geçerli; yalnız part-time'da ELLE SAAT KAZANIR.
         vt = _vardiya_takip_hesap(p["id"], yil, ay)
         _part = (p.get("calisma_turu") or "surekli") != "surekli"
-        _elle_saat = float(body.calisma_saati or 0) if _part else 0.0
-        if _part and _elle_saat > 0:
+        # Mevcut damga: sahip saati DAHA ÖNCE elle girdiyse, bu kaydetmede saate
+        # dokunmasa bile o saat korunmalı (yoksa "bayram mesaisini düzelttim, saatim
+        # uçtu" olur). Damga yalnız vardiya-aktar ile temizlenir.
+        cur.execute(
+            "SELECT calisma_saati, saat_kaynagi FROM personel_aylik "
+            " WHERE personel_id=%s AND yil=%s AND ay=%s", (pid, yil, ay))
+        _mev = cur.fetchone() or {}
+        _mev_elle = str(_mev.get("saat_kaynagi") or "") == "elle"
+        _elle_saat = 0.0
+        if _part and bool(getattr(body, "saat_elle", False)) and float(body.calisma_saati or 0) > 0:
+            _elle_saat = float(body.calisma_saati)          # bu kaydetmede DEĞİŞTİRİLDİ
+        elif _part and _mev_elle and float(_mev.get("calisma_saati") or 0) > 0:
+            _elle_saat = float(_mev["calisma_saati"])       # önceki elle saat KORUNUR
+        if _elle_saat > 0:
             kayit_dict["calisma_saati"] = _elle_saat
             kayit_dict["fazla_mesai_saat"] = 0.0   # part-time'da fazla mesai kavramı yok
             net = _maas_svc.part_elle_saat_net(dict(p), vt, kayit_dict)
@@ -10738,7 +10778,7 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
                 cur.execute(
                     "UPDATE personel_aylik SET saat_kaynagi=%s "
                     " WHERE personel_id=%s AND yil=%s AND ay=%s",
-                    ('elle' if (_part and _elle_saat > 0) else None, pid, yil, ay))
+                    ('elle' if _elle_saat > 0 else None, pid, yil, ay))
         except Exception as _e:   # noqa: BLE001
             logger.warning("saat_kaynagi damgası yazılamadı (%s %s-%s): %s", pid, yil, ay, _e)
 
@@ -10748,10 +10788,10 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
         audit(cur, 'personel_aylik', kid, 'KAYDET',
               yeni={'net': net, 'yil': yil, 'ay': ay,
                     'saat': kayit_dict["calisma_saati"],
-                    'saat_kaynagi': 'elle' if (_part and _elle_saat > 0) else 'vardiya'})
+                    'saat_kaynagi': 'elle' if _elle_saat > 0 else 'vardiya'})
     return {"success": True, "hesaplanan_net": net,
             "saat": kayit_dict["calisma_saati"],
-            "saat_kaynagi": 'elle' if (_part and _elle_saat > 0) else 'vardiya'}
+            "saat_kaynagi": 'elle' if _elle_saat > 0 else 'vardiya'}
 
 
 @app.post("/api/personel-aylik/{pid}/vardiya-aktar")
@@ -10839,9 +10879,24 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
                 eksik, raporlu, rapor_k,
                 manuel, not_a, net, _avm, _avd))
 
+        # 🕐 ELLE SAAT DAMGASI TEMİZLENİR (Fable denetimi P1, 2026-09-06).
+        # Bu uç saati BİLEREK vardiyadan ezer (ekran da "elle girdiğin düzeltmeler
+        # EZİLİR" diyor). Damga bırakılırsa iki yanlış doğar: (a) liste "✍️ elle
+        # girildi" der ama saat vardiyadan gelmiştir, (b) gece senkronu bu saati
+        # 'elle' sanıp DONDURUR — ayın kalan günleri bir daha eklenmez.
+        try:
+            with savepoint(cur, "va_saat_kaynagi"):
+                cur.execute(
+                    "UPDATE personel_aylik SET saat_kaynagi=NULL "
+                    " WHERE personel_id=%s AND yil=%s AND ay=%s", (pid, yil, ay))
+        except Exception as _e:   # noqa: BLE001
+            logger.warning("vardiya-aktar saat_kaynagi temizlenemedi (%s %s-%s): %s",
+                           pid, yil, ay, _e)
+
         _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, net)
 
-        audit(cur, 'personel_aylik', kid, 'VARDIYA_AKTAR', yeni={'net': net, 'yil': yil, 'ay': ay})
+        audit(cur, 'personel_aylik', kid, 'VARDIYA_AKTAR',
+              yeni={'net': net, 'yil': yil, 'ay': ay, 'saat_kaynagi': 'vardiya (elle damgası silindi)'})
     return {"success": True, "hesaplanan_net": net, "vardiya": vk}
 
 
@@ -10853,6 +10908,37 @@ def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
     ay  = ay  or bugun.month
     maas_odeme_tarihi = _personel_maas_odeme_tarihi(yil, ay)
     with db() as (conn, cur):
+        # 🛑 SIFIR HAKEDİŞ KAPISI (2026-09-06, canlı kayıp).
+        # Onay bordroyu KİLİTLER ve gece senkronu onaylı kaydı bir daha HESAPLAMAZ
+        # (maas_service.aylik_vardiya_senkronize: durum=='onaylandi' → atlandı).
+        # Ücreti tanımsızken onaylanan kayıt bu yüzden SONSUZA KADAR 0'da donuyor.
+        # Canlı: MERT ALİ AKAR Haziran 2026 — 24,95 saat çalışmış, ama o tarihte
+        # saatlik ücreti 0,00'dı (denetim izi 2026-08-06), net 0,00 onaylandı;
+        # ücret sonradan 99,00 yapıldı ama Haziran bir daha ölçülmedi → 2.470,05 ₺
+        # görünmez oldu. Kilitten ÖNCE sorulmayan soru sonradan sorulamıyor.
+        cur.execute(
+            "SELECT hesaplanan_net, calisma_saati FROM personel_aylik "
+            " WHERE personel_id=%s AND yil=%s AND ay=%s AND durum='taslak'",
+            (pid, yil, ay))
+        _k = cur.fetchone()
+        if _k is not None and float(_k.get("hesaplanan_net") or 0) <= 0.01:
+            _part = (p_ct := None)  # noqa: F841 — aşağıda personelden okunur
+            cur.execute("SELECT ad_soyad, calisma_turu, maas, saatlik_ucret "
+                        "  FROM personel WHERE id=%s", (pid,))
+            _p = cur.fetchone() or {}
+            _ct = (_p.get("calisma_turu") or "surekli")
+            _birim = float(_p.get("saatlik_ucret") or 0) if _ct != "surekli" else float(_p.get("maas") or 0)
+            _saat = float(_k.get("calisma_saati") or 0)
+            # Gerçekten hiç çalışmadıysa 0 DOĞRUdur — engelleme. Yalnız
+            # "emek var ama birim ücret tanımsız" halini durdur.
+            if _birim <= 0 and (_saat > 0 or _ct == "surekli"):
+                raise HTTPException(400,
+                    f"{_p.get('ad_soyad') or 'Personel'} için net 0,00 ₺ hesaplanmış çünkü "
+                    + ("saatlik ücreti" if _ct != "surekli" else "aylık maaşı")
+                    + " tanımlı değil"
+                    + (f" (kayıtta {_saat:,.2f} saat var). " if _saat > 0 else ". ")
+                    + "Onay bordroyu KİLİTLER ve bir daha hesaplanmaz — önce personel "
+                      "kartından ücreti girin, sonra onaylayın.")
         cur.execute("""
             UPDATE personel_aylik SET durum='onaylandi'
             WHERE personel_id=%s AND yil=%s AND ay=%s AND durum='taslak'

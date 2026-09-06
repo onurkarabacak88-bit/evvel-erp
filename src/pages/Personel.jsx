@@ -170,11 +170,16 @@ export default function Personel() {
     // Kasa çekirdeğinde 'nakit' = BELİRSİZ; 'elden' çekmeceyi, 'havale' banka
     // hesabını azaltır. Ayrım yazılmadığı için Temmuz–Ağustos'ta ödenen 12 maaş
     // banka ekstresiyle eşleştirilemedi. Yöntem UYDURULMAZ — iptal edilirse ödeme yok.
-    const havale = confirm(
-      'Para nereden çıktı?\n\n' +
-      'TAMAM  → 🏦 Havale / EFT (banka hesabından)\n' +
-      'İPTAL  → 💵 Elden nakit (şube çekmecesinden)\n\n' +
-      'Bu ayrım olmadan maaş banka ekstresiyle eşleştirilemez.');
+    // İki aşamalı SORU — tek confirm'de İPTAL hem "elden" hem "vazgeçtim"
+    // demek olurdu ve Escape'e basan sahip farkında olmadan kaydı "elden nakit"
+    // damgalardı (Fable denetimi P2). Artık ikisi de reddedilirse ödeme YAPILMAZ.
+    let havale = null;
+    if (confirm('Para BANKADAN mı çıktı? (🏦 Havale / EFT)\n\nTAMAM = evet, havale\nİPTAL = hayır, sıradaki soruya geç')) {
+      havale = true;
+    } else if (confirm('Peki ELDEN NAKİT mi verildi? (💵 şube çekmecesinden)\n\nTAMAM = evet, elden\nİPTAL = vazgeç, ödeme yapma')) {
+      havale = false;
+    }
+    if (havale === null) { toast('Ödeme yapılmadı — yöntem seçilmedi.', 'yellow'); return; }
     try {
       await api(`/odeme-plani/${odemeId}/ode`, {
         method:'POST',

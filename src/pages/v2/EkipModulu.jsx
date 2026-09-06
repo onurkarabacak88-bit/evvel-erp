@@ -785,6 +785,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             rapor_kesinti: !!form.rapor_kesinti,
             manuel_duzeltme: sayi(form.manuel_duzeltme),
             not_aciklama: (form.not_aciklama || '').trim() || null,
+            // Saat alanına BU açılışta dokunuldu mu? Backend damgayı buna göre
+            // koyar; dokunulmadıysa önceki damga korunur, o da yoksa vardiya kazanır.
+            saat_elle: !!bModal?.dokunulan?.calisma_saati,
           },
         });
         onToast?.(`✓ Kaydedildi — net ${fmt(sayi(r?.hesaplanan_net))}`);
@@ -3894,11 +3897,20 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             sil: 'Bu ayın bordro kaydı silinir, personel taslak duruma döner. Geçmiş aylar etkilenmez.',
           }[tip];
           const TEHLIKE = tip === 'ode' || tip === 'sil';
+          // `dokunulan`: sahip bu açılışta HANGİ alanı fiilen değiştirdi?
+          // Form değerleri mevcut kayıttan ÖN-DOLDURULUYOR; "değer var" ile
+          // "sahip girdi" aynı şey değil. Saat damgası (saat_elle) buna bakar —
+          // yoksa yalnız bayram mesaisi düzeltilse bile saat 'elle' damgalanır
+          // ve ayın kalan günleri vardiyadan bir daha eklenmez.
           const alan = (k, etiket, ipucu) => (
             <div style={{ flex: '1 1 140px' }}>
               <label style={ekEtiket}>{etiket}</label>
               <input value={form[k]} inputMode="decimal" placeholder={ipucu || '0'}
-                onChange={(e) => setBModal((m) => ({ ...m, form: { ...m.form, [k]: e.target.value } }))}
+                onChange={(e) => setBModal((m) => ({
+                  ...m,
+                  form: { ...m.form, [k]: e.target.value },
+                  dokunulan: { ...(m.dokunulan || {}), [k]: true },
+                }))}
                 style={ekAlanStil} />
             </div>
           );

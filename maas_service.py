@@ -485,7 +485,15 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
                 vt["toplam_planlanan_saat"] = _saat
                 # Part-time hakedişi: saat × saatlik + yol payı (yemek/fazla mesai YOK —
                 # vardiya_takip kurgusuyla aynı; bkz. vardiya_takip_hesap açıklaması).
-                vt["net_hakediş"] = round(_saat * _saatlik, 2) + float(vt.get("yol_ucreti") or 0)
+                # 🔴 FIX (Fable denetimi P1, 2026-09-06): burada `vt.get("yol_ucreti")`
+                # okunuyordu ama vardiya_takip satırında ÖYLE BİR ANAHTAR YOK
+                # (gorev_api.py:2346-2366) — yol ücreti HER ZAMAN 0 ekleniyordu.
+                # Sonuç: part-time personelin yol ücreti kayda ve ödeme planına hiç
+                # girmiyor, ama ekran (main.py listele) tam yolu gösteriyordu —
+                # iki yazıcı farklı rakam söylüyordu. Doğru kaynak: dönem oranlı
+                # `ucret_detay.yol_ucret`.
+                _yol = float((vt.get("ucret_detay") or {}).get("yol_ucret") or 0)
+                vt["net_hakediş"] = round(_saat * _saatlik, 2) + _yol
                 vt["hesap_kaynagi"] = _sabit_kaynak
     # 🕐 ELLE GİRİLEN SAAT KORUNUR (sahip 2026-09-06). Senkron bugüne kadar
     # `manuel_duzeltme` gibi katmanları koruyup `calisma_saati`'ni HER GECE
@@ -493,8 +501,15 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
     # elle girdiği saat ertesi gece siliniyor ve vardiya planı yoksa net 0 ₺
     # oluyordu. 'elle' damgası varsa saat DEĞİŞMEZ — damga yalnız part-time
     # kaydetme yolunda konur (bkz. main.personel_aylik_kaydet).
+    # 🔴 TÜR KONTROLÜ ŞART (Fable denetimi P1, 2026-09-06): damga part-time'a
+    # konur ama personel SONRADAN 'surekli'ye çevrilebilir. Tür bakılmazsa gece
+    # senkronu sürekli personelin maaşını saat × saatlik_ucret ile yazar; sürekli
+    # kayıtlarda saatlik_ucret genelde 0'dır → net ≈ 0 → ödeme planı İPTAL edilir
+    # ve kişi bordrodan düşer. Tür sürekliyse damga yok sayılır (aşağıdaki
+    # INSERT saat_kaynagi'na dokunmaz; kalıcı temizlik kaydet yolunda yapılır).
     _elle_saat_var = (
-        str(mev.get("saat_kaynagi") or "") == "elle"
+        (p.get("calisma_turu") or "surekli") != "surekli"
+        and str(mev.get("saat_kaynagi") or "") == "elle"
         and float(mev.get("calisma_saati") or 0) > 0
     )
     if _elle_saat_var:
