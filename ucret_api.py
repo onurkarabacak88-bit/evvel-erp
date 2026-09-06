@@ -271,9 +271,12 @@ def backfill(m: BackfillModel):
 
     ⚠️ Tutarlar BİREBİR taşınır — hiçbir rakam değişmez, yuvarlanmaz.
     `asgariye_bagla=False` iken sonuç bugünküyle bire bir aynıdır (hepsi SABIT).
-    `asgariye_bagla=True` iken tutarı asgariye EŞİT olanlar ASGARIYE_BAGLI
+    `asgariye_bagla=True` iken tutarı asgariye EŞİT olan AKTİF kişiler ASGARIYE_BAGLI
     (fark=0) olur — bugünkü rakam yine aynı çıkar, ama asgari artınca birlikte
     artarlar. Sahip kararı budur.
+
+    ⛔ AYRILANLAR HER ZAMAN SABİT — sahip 2026-09-06: "TALHA VE YILMAZ ZATEN
+    AYRILDILAR AMA MAAŞLARI BUYDU". Ayrılmış kişinin ücreti dondurulur.
 
     `gecerli_bas` = personelin işe başlangıç tarihi (yoksa sistem başlangıcı).
     Böylece geçmiş aylar da çözülebilir.
@@ -313,7 +316,12 @@ def backfill(m: BackfillModel):
                 if tur == "SAATLIK" and not part:
                     continue
                 mod, fark, tutar = "SABIT", 0.0, v
+                # 🔴 AYRILAN DONAR — sahip kararı 2026-09-06: "TALHA VE YILMAZ
+                # ZATEN AYRILDILAR AMA MAAŞLARI BUYDU." İşten ayrılmış kişinin
+                # ücreti asgariye BAĞLANMAZ; ileride asgari artınca onun kapanmış
+                # dönemleri kaymasın diye tutar olduğu gibi dondurulur.
                 if (tur == "TABAN" and m.asgariye_bagla and asgari_tutar
+                        and p.get("aktif")
                         and abs(v - float(asgari_tutar)) < 0.01):
                     mod, fark, tutar = "ASGARIYE_BAGLI", 0.0, None
 
