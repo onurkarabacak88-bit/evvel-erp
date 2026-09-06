@@ -2607,7 +2607,18 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "toplam_fazla_mesai_saat": round(toplam_fazla_saat, 2),
                 "yemek_ucret_gun": yemek_ucret_gun,
                 "planli_gun": planli_gun,          # yemek paydası — kişiye/aya özel
-                "yemek_ihlal_gun": max(0, planli_gun - yemek_ucret_gun),
+                # 🔴 İHLAL ≠ KAYIT YOK (Adım 4'ün eksik kalan ayağı, 2026-09-06).
+                # Bu alan `planli_gun - yemek_ucret_gun` idi: hak doğmayan HER günü
+                # "ihlal" sayıyordu. Oysa Adım 4 bunları ayırmıştı —
+                #   ihlal    = mola kuralı ÇİĞNENDİ (bir KARAR)
+                #   kayit_yok/askida = kayıt YOK (bir BOŞLUK)
+                # Kabul testi (sila-2026-08) tam bu farkı yakaladı: Sıla'nın 1 günü
+                # kayıt yoktu, ihlali sıfırdı — sistem "1 ihlal" diyordu.
+                # Rakam aynı olsa bile SEBEP farklı; sebebi yanlış söylemek,
+                # personele "kuralı çiğnedin" demektir.
+                "yemek_ihlal_gun": _mola.get("ihlal", 0),
+                # Hak doğmayan TÜM günler (ihlal + kayıt yok + askıda + sözleşme dışı)
+                "yemek_hak_dogmayan_gun": max(0, planli_gun - yemek_ucret_gun),
                 # "vardiya" = gerçek plandan · "varsayim_vardiya_yok" = hiç vardiya
                 # girilmemiş, TAM HAK varsayıldı (ekran UYARMALI) · "yok" = hak doğmaz
                 "yemek_kaynagi": yemek_kaynagi,
