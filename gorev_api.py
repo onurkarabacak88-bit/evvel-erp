@@ -2379,7 +2379,12 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                         yemek_hak = False
                         if mola_durum == "hak_dogdu":
                             yemek_hak = True
-                        elif mola_durum == "kayit_yok":
+                        elif mola_durum in ("kayit_yok", "belirsiz"):
+                            # 'belirsiz' = mola kaydı VAR ama karara bağlanmamış
+                            # (`ucret_hakki IS NULL`). Bilgi durumu 'kayit_yok'
+                            # ile aynıdır: BİLMİYORUZ. Onay mekanizması bu yüzden
+                            # ikisini de kapsar (2026-09-06; MERVE AKTA 10 Ağustos
+                            # 'belirsiz' olduğu için onaylanamıyordu).
                             if (str(pid), t) in _onayli_gun:
                                 # Sahip bu günü ONAYLADI — karar var, iz var.
                                 yemek_hak = True
