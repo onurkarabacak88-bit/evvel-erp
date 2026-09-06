@@ -2165,6 +2165,12 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             toplam_gecikme_dk = 0.0
             toplam_fazla_saat = 0.0
             yemek_ucret_gun = 0
+            # 🍽 YEMEK PAYDASI (2026-09-06, sahip kuralı): yemek ücreti AYLIK 7.000 ₺
+            # olarak anlaşılıyor; hafta izni KESİNTİ DEĞİLDİR, kesinti yalnız mola
+            # kuralını ihlal eden günde olur. Payda takvimden hesaplanamaz çünkü
+            # izinler kişiye göre farklı günlerde ve aylara sarkıyor — kişinin
+            # O AY PLANLANAN gün sayısı sayılır (biri 25, biri 26 çalışabilir).
+            planli_gun = 0
             part_tam_gun = 0
             STANDART = 9.5
 
@@ -2179,6 +2185,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 if v:
                     planlanan = float(v["planlanan_saat"] or 0)
                     toplam_planlanan += planlanan
+                    planli_gun += 1          # yemek paydası (bkz. yukarıdaki not)
 
                     # Sistem kurulum öncesi (1-9 Haziran) - herkes tam+doğru çalışmış sayılır
                     baslangic_gunu = (tarih <= _SYSTEM_DATE(2025, 6, 9))
@@ -2290,11 +2297,37 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 else:
                     gecen_gun = min(float(_fiili_gun), AYLIK_GUN)  # kısmi = prorate
 
-            # personel.yemek_ucreti AYLIK bir tutardır (örn. 7000 TL/ay) —
-            # hak kazanılan her gün için aylık tutarın 1/30'u ödenir,
-            # tam tutar değil (önceki hata: her gün 7000 TL ekleniyordu).
-            yemek_ucret_gunluk = float(p.get("yemek_ucreti") or 0) / AYLIK_GUN if AYLIK_GUN > 0 else 0
-            yemek_ucret_tutari = yemek_ucret_gun * yemek_ucret_gunluk
+            # personel.yemek_ucreti AYLIK bir tutardır (örn. 7000 TL/ay).
+            # (Tarihçe: en eski hata her gün 7000 TL ekliyordu; sonra 1/30'a
+            #  bölündü — o da aşağıdaki nedenle yanlıştı.)
+            # 🍽 YEMEK ÜCRETİ — AYLIK SABİT, HAFTA İZNİ KESİNTİ DEĞİL
+            # (sahip kuralı 2026-09-06; eski davranış CANLI EKSİK ÖDEME üretiyordu)
+            #
+            # ESKİ: yemek = (aylik_yemek / 30) × hak_edilen_gün
+            #   Sabit 30'a bölüp ÇALIŞILAN güne çarpıyordu. Hafta izni yapan herkes
+            #   izin günleri kadar yemek KAYBEDİYORDU. Canlı kanıt: DENİZ KÜÇÜKKIRLI
+            #   Temmuz 2026 — 25 gün çalıştı, 25 günün 25'inde de yemek hakkı doğdu
+            #   (tek ihlal yok), buna rağmen 7.000 yerine 5.833,33 hesaplandı →
+            #   1.166,67 ₺ eksik. Bankadan çıkan + sahibin defterindeki elden alacak
+            #   toplamı 35.321,00; yeni formülle 35.319,63 (sapma 1,37 ₺).
+            #
+            # YENİ: yemek = aylik_yemek × dönem_oranı × (hak_edilen_gün / PLANLI_gün)
+            #   · Payda = kişinin O AY planlanan gün sayısı — takvimden TÜRETİLEMEZ:
+            #     izinler kişiye göre farklı günlerde ve aylara sarkıyor, aynı ay
+            #     biri 25 biri 26 gün çalışabiliyor (sahip, 2026-09-06).
+            #   · İhlal yoksa oran 1,0 → yemek TAM AYLIK tutar (ay 28/30/31 fark etmez).
+            #   · Kesinti YALNIZ mola kuralı ihlalinde: molaya zamanında girilmeyen
+            #     gün `yemek_ucret_gun`'a sayılmaz ve payda sabit kaldığı için o
+            #     günün payı (aylik_yemek / planli_gun) düşer — yönetim kararı.
+            _aylik_yemek = float(p.get("yemek_ucreti") or 0)
+            _donem_orani = (gecen_gun / AYLIK_GUN) if AYLIK_GUN > 0 else 0.0
+            if planli_gun > 0:
+                yemek_ucret_gunluk = _aylik_yemek / planli_gun
+                yemek_ucret_tutari = _aylik_yemek * _donem_orani * (yemek_ucret_gun / planli_gun)
+            else:
+                # Hiç vardiya planlanmamış — payda yok, uydurma yapılmaz.
+                yemek_ucret_gunluk = 0.0
+                yemek_ucret_tutari = 0.0
             is_surekli  = (p.get("calisma_turu") or "surekli") == "surekli"
             maas_taban  = float(p.get("maas") or 0)
             saatlik_ucr = float(p.get("saatlik_ucret") or 0)
@@ -2323,7 +2356,10 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                     "yol_ucret":        round(yol_kazanilan, 2),
                     "yol_ucret_aylik":  round(yol_ucr, 2),
                     "net_hakediş":      round(net_hesap, 2),
-                    "aylik_toplam_tahmini": round(maas_taban + yemek_ucret_gunluk * AYLIK_GUN + yol_ucr, 2),
+                    "aylik_toplam_tahmini": round(maas_taban + _aylik_yemek + yol_ucr, 2),
+                    # ⚠️ yemek artık gunluk×30 ile TÜRETİLEMEZ: günlük tutar kişiye
+                    # ve aya özel paydadan (planli_gun) çıkıyor. Aylık tahmin
+                    # doğrudan TANIMLI aylık yemek ücretidir.
                 }
             else:
                 # Part-time: toplam planlanan saat × saatlik ücret (zaten bugüne kadar)
@@ -2353,6 +2389,8 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                 "toplam_gecikme_dk": round(toplam_gecikme_dk, 1),
                 "toplam_fazla_mesai_saat": round(toplam_fazla_saat, 2),
                 "yemek_ucret_gun": yemek_ucret_gun,
+                "planli_gun": planli_gun,          # yemek paydası — kişiye/aya özel
+                "yemek_ihlal_gun": max(0, planli_gun - yemek_ucret_gun),
                 "yemek_ucret_tutari": yemek_ucret_tutari,
                 "part_tam_gun": part_tam_gun,
                 "haftalik_izin_kullanilmadi": haftalik_izin_kullanilmadi,
