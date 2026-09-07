@@ -574,6 +574,53 @@ Maaş planı yalnız `/odeme-plani/bugun` ve `/ucret/plan-durum` üzerinden gör
 
 ---
 
+---
+
+## 5l · SAHİP ONAYI UYGULANDI (2026-09-07) — "ONAYLA"
+
+### 1. MÜKERRER KAPANDI — 4.580,00 ₺
+Ağustos'ta kaynağı sonradan düzeltilen iki elden gider kaydı **iptal edildi**
+(silinmedi: `durum='iptal'`, kasa hareketi ters çevrildi, denetim izi yazıldı):
+MERVE KARABACAK 3.180,00 · YAĞIZ ERKEK 1.400,00. Düzeltme defterindeki iki
+satır gerekçesiyle `reddedildi` yapıldı.
+
+Düzeltme defteri şimdi: **21 satır · 21 `gecerli` · 0 `mukerrer` · 0 `olculemedi`**
+
+### 2. AĞUSTOS BORDROLARI ONAYLANDI — 8 kayıt / 186.242,35 ₺
+DENİZ KÜÇÜKKIRLI · MERT ALİ AKAR · MERVE AKTA · MERVE KARABACAK · nisanur bolat ·
+SILA AKBAY · YAREN BEŞLİ · YAĞIZ ERKEK. Onay bordroyu KİLİTLER, kasaya dokunmaz.
+Ağustos'ta artık `taslak` bordro kalmadı.
+
+golden 4 dönem 0,00 · kabul 9/9 — onay hiçbir rakamı oynatmadı.
+
+### 3. ⛔ PLANLAR KAPATILMADI — VE KAPATILMAMALI
+Ödeme planı satırları hâlâ açık: **256.253,64 ₺** (Ağustos 192.455,73 +
+Eylül 63.797,91). Kapatmanın iki yolu var ve ikisi de bugün UYGUN DEĞİL:
+
+· `/odeme-plani/{id}/ode` → **YENİ KASA HAREKETİ YAZAR.** Ağustos maaşı zaten
+  bankadan çıktığı için para ikinci kez düşerdi.
+· `/odeme-plani/{id}/iz-ile-kapat` → kasa hareketi yazmaz (doğru araç) ama
+  **GERÇEK BİR İZ ister**. Dedektif taraması (`gecikmis-iz-tarama`) şunu söyledi:
+
+| | satır | tutar |
+|---|---:|---:|
+| ödeme izi BULUNAN | 1 | 5.414,83 |
+| ödeme izi YOK | 9 | **187.040,90** |
+
+Tek izli satır nisanur bolat (elden gider kaydı 5.415,00 · 31 Ağustos).
+Diğer dokuzunun izi yok çünkü **o maaşlar bankadan ödendi ve banka ekstreleri
+sistemin kasa/kart defterine yüklü değil**.
+
+**🔴 KÖK NEDEN, YENİ BİR İŞ DEĞİL:** bu, `project_banka_mutabakat_2026_09`
+kuyruğundaki eksikle aynı şey — Merve Karabacak VakıfBank ekstresi bekleniyor
+(425.762 ₺ maaş onunla kapanır). Banka hareketleri sisteme girmeden bu 187 bin ₺
+"ödendi" diye işaretlenemez; işaretlenirse KANIT UYDURULMUŞ olur.
+
+⚠️ Bu yüzden nakit kokpiti 30 günlük çıkışta Ağustos maaşlarını hâlâ sayıyor.
+Sahte alarm olduğunu BİLİYORUZ ama kapatmanın dürüst yolu banka verisidir.
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
