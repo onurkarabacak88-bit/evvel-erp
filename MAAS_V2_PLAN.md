@@ -467,6 +467,68 @@ toplarsanız tutmuyor — V2'nin var olma sebebi tam bu.
 
 ---
 
+---
+
+## 5j · ADIM 10 + ADIM 8 TAMAMLANDI (2026-09-07)
+
+### Adım 10 — ÜCRET KURALLARI SEKMESİ (v2 · Ekip'in 9. görünümü)
+Bordronun iki temel ayarı bugüne kadar **hiçbir ekrandan yönetilemiyordu**:
+asgari ücretin tarihli tanımı ve bordro parametreleri. Parayı nasıl
+hesapladığımızı belirleyen ayarlar sahibin göremediği yerdeydi.
+
+Sekme üç blok: **asgari ücret zaman çizgisi** (yeni dönem ≠ düzeltme ayrımı
+açıkça yazılı) · **kural tablosu** (değer + NEREDEN geldiği) · **kişi
+ücretleri** (satıra tık → o kişinin ücret geçmişi). Her yazma iki tıklamalı,
+gerekçe zorunlu. Bilinen çelişki (`part_tam_gun_esigi` 9,4 ↔ `fm_gunluk_esik`
+9,5) sessizce düzeltilmiyor, **adıyla** gösteriliyor.
+
+⚠️ Sahte yeşil kapandı: `ayna` ölçütü sunucuyla birebir hizalandı
+(`kaynak=ayna` **VE** `tutar > 0`) — gevşek ölçüt, KPI "0 kişi" derken tabloda
+herkesi ayna gösterecekti.
+
+### Adım 8 — DÜZELTME DEFTERİ (`bordro_duzeltme` artık çalışıyor)
+Kapanmış dönemin farkı `anlik_giderler`'e **serbest** bir elden satırı olarak
+yazılıyordu; o satırın düzelttiği DÖNEME hiçbir bağı yoktu.
+
+**🔴 CANLI BULGU — 4.580,00 ₺ MÜKERRER (kendi hatam):** elden satırlarını
+yazdıktan sonra Ağustos'u kapatırken KAYNAK kaydı da düzelttim. Aynı para iki
+yerde kaldı ve hiçbir şey uyarmadı:
+
+| kişi | dönem | düzeltme | o an Evvel | şimdi Evvel |
+|---|---|---|---|---|
+| MERVE KARABACAK | 2026-08 | 3.180,00 | 32.000,00 | **35.180,00** |
+| YAĞIZ ERKEK | 2026-08 | 1.400,00 | 15.162,00 | **16.562,00** |
+
+Haziran/Temmuz'da sorun YOK (21 satır `gecerli`) — oralarda kaynağa
+dokunulmadı. Yani hata "elden yazmak" değil, **yazdıktan sonra kaynağı da
+düzeltip düzeltmeyi geri almamak**.
+
+**Defterin çözümü:** her düzeltme yazıldığı andaki kaynak tutarını `kanit.v1_anlik`
+alanına ÇIPA olarak dondurur. `GET /api/ucret/duzeltme` her okumada bugünkü
+kaynakla yeniden kıyaslar ve `tani` üretir:
+`gecerli` · `mukerrer` · `eksik` · `fazla` · `olculemedi`.
+
+Uçlar: `GET /duzeltme` · `POST /duzeltme` · `POST /duzeltme/backfill` ·
+`POST /duzeltme/{id}/durum` (SİLMEZ — `reddedildi` yapar, gerekçe `kanit.gecmis`e).
+
+**Backfill sonucu:** 23 elden satırı deftere taşındı, 36.171,46 ₺, atlanan 0.
+
+### 🪤 BACKFILL'İN İLK SÜRÜMÜ YANLIŞ KİŞİYE BAĞLADI
+`CELİLE IŞIK` adında **iki personel kaydı** var (1 Mayıs kapanmış dönem ·
+7 Eylül yeni dönem). Ad anahtarlı sözlük ikincisini birincinin üzerine yazdı;
+HAZİRAN düzeltmesi EYLÜL kaydına bağlandı ve defterde `olculemedi` göründü —
+**duyu kendi backfill'imin hatasını yakaladı.** Düzeltildi: artık dönem de
+soruluyor, belirsizse ATLANIR ([[feedback-personel-kisi-kimligi]]).
+
+### DURUM
+- golden 4 dönem **0,00** · kabul testi **9/9**
+- düzeltme defteri: 23 satır · 21 `gecerli` · **2 `mukerrer` (4.580,00 ₺)** · 0 `olculemedi`
+- ⏳ **SAHİP KARARI:** 4.580,00 ₺'lik iki mükerrer satır nasıl kapansın —
+  elden gider kaydı mı geri alınsın, yoksa Ağustos bordro kaydı mı eski hâline
+  dönsün? (Öneri: bordro kaydı DOĞRU olan; elden satırları geri alınmalı.)
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
