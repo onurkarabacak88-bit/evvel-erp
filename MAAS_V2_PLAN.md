@@ -529,6 +529,51 @@ soruluyor, belirsizse ATLANIR ([[feedback-personel-kisi-kimligi]]).
 
 ---
 
+---
+
+## 5k · ADIM 9 TAMAMLANDI (2026-09-07) — PLAN ↔ BORDRO KİMLİK BAĞI
+
+Maaş ödeme planı bordroya **tarih aritmetiğiyle** bağlıydı; hangi bordro
+kaydından doğduğu hiçbir yerde durmuyordu. `odeme_plani.bordro_id` Adım 1'de
+boş açılmıştı — artık dolu: **70 plan satırı** bordro kaydına bağlandı.
+
+Yeni uçlar: `GET /api/ucret/plan-durum` (plan ↔ bordro yan yana + tanı) ·
+`POST /api/ucret/plan-bagla` (kimlik yazar, PARAYA DOKUNMAZ, kuru varsayılan).
+
+### CANLI DURUM — 87 plan satırı
+| tanı | adet | tutar |
+|---|---:|---:|
+| kapalı (ödenmiş/iptal) | 68 | — |
+| hizalı (plan = bordro, açık) | 17 | 250.040,26 |
+| bordro onaylı ama plan açık | 2 | 6.213,38 |
+| **açık toplam** | **19** | **256.253,64** |
+
+İki bağımsız ölçüm (`/odeme-plani/bugun` ve `/ucret/plan-durum`) aynı rakamı
+verdi. Açığın tamamı Ağustos (189.985,68) + Eylül (63.797,91) dönemi + MERT ALİ
+AKAR Haziran (2.470,05).
+
+### 🪤 BU ADIMDA İKİ KEZ YANLIŞ ÖLÇTÜM — İKİSİ DE YAYINLANMADAN YAKALANDI
+1. **`referans_ay` dönem sanıldı.** O alan maaşta ÖDEME ayını tutar
+   (`maas_service:59-64`). 87 satırın 32'si "bordro yok" göründü; hepsinin
+   bordrosu vardı, yalnızca bir ay kaymıştı. Çözüm: dönüşümü yeniden türetme,
+   yazan modülün ters fonksiyonunu (`referans_to_donem`) çağır.
+2. **`iptal` satırlar "yetim açık" sayıldı.** Bordro bulunamayınca erken
+   çıkıyor, durum kontrolüne hiç varmıyordum → **600.630,00 ₺ sahte borç**.
+   Çözüm: ÖNCE durum, sonra bordro. Kapanmış satırın bordrosunun olmaması
+   sorun değildir.
+
+Ayrıca bir okuma boşluğu: `GET /api/odeme-plani` **INNER JOIN kartlar**
+kullanıyor → `kart_id` boş olan her satırı (maaşın tamamı) sessizce eliyor.
+Maaş planı yalnız `/odeme-plani/bugun` ve `/ucret/plan-durum` üzerinden görünür.
+
+### SIRADAKİ
+- ⏳ **SAHİP KARARI:** Ağustos dönemi 189.985,68 ₺ planda açık duruyor ama
+  ödeme fiilen yapıldı (banka mutabakatı). Bordrolar `taslak` olduğu için plan
+  kapanmıyor. Bordroları onaylayıp planları kapatmak gerekiyor.
+- ⏳ **SAHİP KARARI:** düzeltme defterindeki 4.580,00 ₺ mükerrer (bkz. 5j)
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
