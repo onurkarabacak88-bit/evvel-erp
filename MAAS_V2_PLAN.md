@@ -686,6 +686,62 @@ Bundan SONRAKİ geçmiş tarihli ödemeler doğru güne yazılır.
 
 ---
 
+---
+
+## 5n · 🔪 V1 KESİLDİ (2026-09-07) — NET ARTIK Σ KALEM
+
+Sahip: *"kesimi yaz"*. Tek yönlü kapıdan geçildi.
+
+### DEĞİŞEN
+`maas_service.aylik_vardiya_senkronize` kanonik neti bugüne kadar
+`vardiya_takip.net_hakediş`ten alıyordu — tek bir sayı, ara değerleri hiçbir
+yere yazılmayan bir formül. Artık **motorun kalem toplamından** alıyor
+(`maas_service.motor_net` → `ucret_api._kalem_donem_hesapla`, TEK ÇEKİRDEK).
+
+· MAHSUP ekseni DÖNMEZ (SOZLESME+OLCUM+KARAR): avans mahsubu bu adımdan SONRA
+  uygulanıyor, `net_odenecek` dönseydi avans İKİ KEZ düşerdi.
+· Motor cevap veremezse eski formüle düşer **ve LOG bırakır** — sessizce eski
+  davranışa dönmek kesimin yapılmadığını gizlerdi.
+· `onaylandi`/`odendi` kayıtlar yine atlanır → geçmiş kaymaz.
+
+### ÖLÇÜLEN ETKİ (kesimden önce ilan edildi, sonra doğrulandı)
+| kişi | önce | sonra | fark | sebep |
+|---|---:|---:|---:|---|
+| naz dal | 8.184,17 | **7.911,94** | −272,23 | yemek paydası `beklenen_gun` (5/6) |
+| MERVE AKTA | 8.184,17 | 8.184,16 | −0,01 | önce yuvarla → sonra topla |
+| SILA AKBAY | 8.184,17 | 8.184,16 | −0,01 | aynı |
+| gökçe değirmenci | 8.184,17 | 8.184,16 | −0,01 | aynı |
+| diğer 5 kişi | — | — | 0,00 | fark yok |
+
+**Toplam etki −272,26 ₺.** Kilitli dönemlerde (Haziran/Temmuz/Ağustos) **tek bir
+net değişmedi** — çıpa diffi bunu satır satır kanıtlıyor.
+
+⚠️ naz dal'ın 272,23 ₺'si bir CEZA değil, bir BOŞLUK göstergesi: sistemde 5
+günlük vardiyası girili, geçen 7 günde 6 gün beklenıyor. Eksik gün girilirse
+tutar kendiliğinden geri gelir.
+
+### AYRICA KAPANAN: BAYATLIK
+Kesimden önce üç kişinin kaydı bayattı (gökçe · MERVE AKTA · SILA AKBAY),
+her birine **272,23 ₺ EKSİK** yazılmıştı — toplam 816,69 ₺. Senkron kapattı.
+Bu kesimle ilgili değildi; saklanan değer canlı hesabın gerisinde kalmıştı.
+
+### DOĞRULAMA
+```
+saklanan == motor        9/9 kişi (Eylül)
+kabul testi              9/9
+golden 2026-06/07/08     0,00 fark  (kapalı dönemler DEĞİŞMEDİ)
+golden 2026-09           4 kişide beklenen fark → yeniden donduruldu
+çıpa diffi               kapalı dönemlerde hicbir `hesaplanan_net` oynamadı
+```
+
+### KESİM SONRASI KALAN
+- `vardiya_takip.net_hakediş` hâlâ EKRANDA gösteriliyor (tahmini hakediş) —
+  artık kanonik değil, ikinci bir görüş. Silmek Adım 11'in işi.
+- `maas_service.net_hesapla` / `kanonik_net` yedek yol olarak duruyor: motor
+  susarsa devreye girer. Ölü kod DEĞİL, emniyet kemeri.
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor

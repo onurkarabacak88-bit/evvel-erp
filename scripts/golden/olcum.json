@@ -14,7 +14,7 @@
   },
   "2026-09": {
    "kisi": 9,
-   "toplam_net": 63797.91
+   "toplam_net": 64342.34
   }
  },
  "olcum": {
@@ -29,32 +29,14 @@
    {
     "ad": "emir efe eraydın",
     "planli": 7,
-    "hak_dogan": 0,
-    "kayit_yok": 7
+    "hak_dogan": 1,
+    "kayit_yok": 6
    },
    {
     "ad": "ersan kazan",
     "planli": 6,
     "hak_dogan": 0,
     "kayit_yok": 6
-   },
-   {
-    "ad": "gökçe değirmenci",
-    "planli": 6,
-    "hak_dogan": 5,
-    "kayit_yok": 1
-   },
-   {
-    "ad": "MERVE AKTA",
-    "planli": 6,
-    "hak_dogan": 5,
-    "kayit_yok": 1
-   },
-   {
-    "ad": "SILA AKBAY",
-    "planli": 6,
-    "hak_dogan": 5,
-    "kayit_yok": 1
    },
    {
     "ad": "CELİLE IŞIK",
