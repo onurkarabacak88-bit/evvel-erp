@@ -5269,7 +5269,6 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
         'Kapanmış aylar kendi kuralıyla hesaplanmaya devam eder — geçmiş kaymaz.',
         tablodan ? '' : '⚠ Bu değer bir karar değil, kodda yazılı varsayılandır. Değiştirmek için aşağıdaki formdan tarihli bir kural yazın.',
       ].filter(Boolean).join(' '),
-      geri: { ad: 'Ücret kuralları', onTikla: () => onCekmece?.(null) },
     });
   };
 
@@ -5309,7 +5308,6 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
       })),
     ],
     not: d.tani_metni || '',
-    geri: { ad: 'Ücret kuralları', onTikla: () => onCekmece?.(null) },
   });
 
   /** PLAN DOSYASI — bu satır neden hâlâ açık? */
@@ -5343,7 +5341,6 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
       + ' Planı kapatmanın iki yolu var: para ŞİMDİ çıkıyorsa "öde" (kasaya yazar),'
       + ' para ZATEN çıkmışsa "iz ile kapat" (kasaya yazmaz). Sistem bu kişiye bu dönem'
       + ' için elden bir ödeme bulursa ödemeyi reddedip size söyler.',
-    geri: { ad: 'Ücret kuralları', onTikla: () => onCekmece?.(null) },
   });
     return (
       <>

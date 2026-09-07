@@ -1013,6 +1013,16 @@ class DuzeltmeModel(BaseModel):
     kuru: bool = True                   # ⚠️ VARSAYILAN KURU
 
 
+def _tl(x) -> str:
+    """Türkçe para biçimi. 🔴 Mesajlar SAHİBE gidiyor (ekranda çekmecede
+    okunuyor) — ham "3271.67" değil "3.271,67" yazılmalı. Ekranda gördüm."""
+    try:
+        return ("{:,.2f}".format(float(x or 0))
+                ).replace(",", "_").replace(".", ",").replace("_", ".")
+    except (TypeError, ValueError):
+        return "?"
+
+
 def _duzeltme_tani(tutar: float, v1_anlik, v1_simdi, v2_simdi):
     """Bir düzeltme bugün hâlâ GEÇERLİ mi, MÜKERRER mi, EKSİK mi?
 
@@ -1029,19 +1039,18 @@ def _duzeltme_tani(tutar: float, v1_anlik, v1_simdi, v2_simdi):
     t = round(float(tutar or 0), 2)
     if abs(acik - t) < 1.0:
         return ("gecerli",
-                "Kaynak kayıt hâlâ %s ₺ eksik — bu düzeltme yerinde duruyor." % ("%.2f" % t))
+                "Kaynak kayıt hâlâ %s ₺ eksik — bu düzeltme yerinde duruyor." % _tl(t))
     if abs(acik) < 1.0:
         return ("mukerrer",
                 "⚠ Kaynak kayıt sonradan düzeltilmiş (%s → %s). Aynı para iki yerde: "
                 "bu düzeltme artık MÜKERRER."
-                % (("%.2f" % float(v1_anlik)) if v1_anlik is not None else "?",
-                   "%.2f" % float(v1_simdi)))
+                % (_tl(v1_anlik) if v1_anlik is not None else "?", _tl(v1_simdi)))
     if acik > t:
         return ("eksik",
                 "Kaynakta hâlâ %s ₺ açık var — bu düzeltme (%s ₺) tamamını kapatmıyor."
-                % ("%.2f" % acik, "%.2f" % t))
+                % (_tl(acik), _tl(t)))
     return ("fazla",
-            "Düzeltme (%s ₺) kaynaktaki açıktan (%s ₺) büyük." % ("%.2f" % t, "%.2f" % acik))
+            "Düzeltme (%s ₺) kaynaktaki açıktan (%s ₺) büyük." % (_tl(t), _tl(acik)))
 
 
 @router.get("/duzeltme")
@@ -1384,8 +1393,7 @@ def _plan_bordro_esle(cur):
         elif abs(fark) > 0.5:
             tani = "tutar_farki"
             metin = ("Plan %s ₺ diyor, bordro %s ₺ — aradaki %s ₺ hangi rakamın "
-                     "güncel olduğuna göre değişir." % ("%.2f" % tutar, "%.2f" % net,
-                                                        "%.2f" % fark))
+                     "güncel olduğuna göre değişir." % (_tl(tutar), _tl(net), _tl(fark)))
         else:
             tani, metin = "hizali", "Plan ve bordro aynı rakamı söylüyor."
         out.append({**pl, "bordro": b, "fark": fark, "tani": tani, "tani_metni": metin})
