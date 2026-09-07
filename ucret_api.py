@@ -957,7 +957,14 @@ def kalem_oku(yil: int = Query(...), ay: int = Query(...),
             yazili["fark"] = round(yazili["guncel_net"] - float(yazili["toplam"]), 2)
             yazili["guncel"] = True   # kilitli dönem DONMUŞTUR, bayat sayılmaz
             continue
-        canli = x.get("kalemler") or []
+        # 🔴 CANLI KALEME KİMLİK DAMGASI ŞART (ekranı gezerken görüldü, 2026-09-07)
+        # Yazılı `bordro_kalem` satırları `personel_id`/`yil`/`ay` taşır; motorun
+        # ürettiği saf kalemler TAŞIMAZ (motor kimlik bilmez, aritmetik yapar).
+        # v2 bordro çekmecesi defteri `k.personel_id` ile indeksliyordu → canlı
+        # dalda hepsi `undefined` altında toplandı ve KALEM SATIRLARI ÇEKMECEDEN
+        # KAYBOLDU. Okuma ucu, yazılı satırla AYNI ŞEKLİ vermek zorunda.
+        canli = [dict(k, personel_id=pid_x, yil=yil, ay=ay, durum="canli")
+                 for k in (x.get("kalemler") or [])]
         kisi[ad_x] = {
             "kalemler": canli,
             "toplam": round(sum(float(k.get("tutar") or 0) for k in canli), 2),
