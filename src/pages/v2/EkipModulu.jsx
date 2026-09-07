@@ -4584,7 +4584,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     // HESAPLAYIP gösteriyordu; /gorev/vardiya-takip zaten `ucret_detay` +
     // `net_hakediş` döndürüyor ama v2 bu veriyi ATIYORDU. Geri kondu.
     // Yeni hesap YOK — sunucunun hesabı gösteriliyor. Bordronun kendisi
-    // maas_service tekelinde; burası TAHMİNÎ hakediş penceresi.
+    // 🔪 KESİMDEN SONRA (2026-09-07): bordronun KANONİK neti artık motorun
+    // kalem toplamı (`maas_service.motor_net`). `net_hakediş` kanonik DEĞİL,
+    // vardiya kaydından türeyen İKİNCİ GÖRÜŞtür. İkisi ayrıldığında haklı
+    // olan defterdir — yemek paydası gibi kuralları yalnız motor okur.
     const netAl = (t) => sayi(t?.['net_hakediş'] ?? t?.ucret_detay?.['net_hakediş']);
     const toplamNet = satir.reduce((s, t) => s + netAl(t), 0);
     // Gün detayı (2026-08-01, okuma boşluğu #3): sunucu her gün için ayrı ayrı
@@ -4788,8 +4791,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                   onTikla: () => setEksikGunModal({ t, gun: 0.5, not: '', mesgul: false }),
                 }] : undefined,
                 not: d.not
-                  ? `${d.not} — bu TAHMİNÎ hakediştir, bordronun kendisi Ekip ▸ Maaş & Avans'ta onaylanır. Gün gün kayıt İz sekmesinde.`
-                  : 'Bu TAHMİNÎ hakediş: vardiya kaydından türetilir, ay ilerledikçe artar. Ödenecek bordro Ekip ▸ Maaş & Avans\'ta onaylanır — iki sayı aynı olmak zorunda değil. Gün gün kayıt İz sekmesinde.',
+                  ? `${d.not} — bu TAHMİNÎ hakediştir; bordronun KANONİK rakamı KALEM DEFTERİnden gelir. Onay Ekip ▸ Maaş & Avans'ta onaylanır. Gün gün kayıt İz sekmesinde.`
+                  : 'Bu TAHMİNÎ hakediş: vardiya kaydından türetilen İKİNCİ GÖRÜŞtür, ay ilerledikçe artar. Bordronun kanonik neti artık KALEM DEFTERİdir — yemek paydası gibi kuralları yalnız o okur, bu yüzden iki sayı ayrılabilir ve ayrıldığında haklı olan defterdir. Ödenecek bordro Ekip ▸ Maaş & Avans\'ta onaylanır — iki sayı aynı olmak zorunda değil. Gün gün kayıt İz sekmesinde.',
               });
             }}
           />

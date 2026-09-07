@@ -875,10 +875,46 @@ def kalem_oku(yil: int = Query(...), ay: int = Query(...),
     kisi: Dict[str, Any] = {}
     for r in R:
         a = r.get("ad_soyad") or r["personel_id"]
-        d = kisi.setdefault(a, {"kalemler": [], "toplam": 0.0, "surum": r.get("surum")})
+        d = kisi.setdefault(a, {"kalemler": [], "toplam": 0.0, "surum": r.get("surum"),
+                                "personel_id": str(r.get("personel_id") or "")})
         d["kalemler"].append(r)
         d["toplam"] = round(d["toplam"] + float(r.get("tutar") or 0), 2)
-    return {"yil": yil, "ay": ay, "kisi": len(kisi), "kalem": len(R), "defter": kisi}
+
+    # 🔴 DEFTER BAYATLAYABİLİR (Adım 11 · canlı bulgu 2026-09-07)
+    # Kesimden sonra net HER SENKRONDA motordan yeniden hesaplanıyor, ama
+    # `bordro_kalem` tablosuna YAZMA ayrı bir uçla (`/kalem-yaz`) yapılıyor.
+    # Açık ayda gün ilerledikçe yazılı defter hesabın gerisinde kalıyor —
+    # canlı: Eylül defteri 6 Eylül'de yazılmış, kişi başına 900-1.400 ₺ geride.
+    # Personelin telefonunda üstte GÜNCEL net, altta ESKİ döküm görünüyordu ve
+    # ikisi tutmuyordu; döküm "bu rakam nereden çıktı"yı yanlış cevaplıyordu.
+    # ⚠️ SESSİZCE TAZELEMİYORUZ (defter append-only, her okuma yeni sürüm
+    # yazsaydı tablo şişerdi). Duyu SÖYLER: `guncel=false` + fark.
+    with db() as (_, cur2):
+        try:
+            sat, _k, _t1, _t2 = _kalem_donem_hesapla(cur2, yil, ay, personel_id)
+        except Exception as e:  # noqa: BLE001
+            logger.warning("kalem defteri tazelik olculemedi %s-%s: %s", yil, ay, e)
+            sat = []
+    simdi = {str(x["personel_id"]): x for x in sat}
+    bayat = 0
+    for a, d in kisi.items():
+        x = simdi.get(d.get("personel_id") or "")
+        if not x:
+            d["guncel"] = None       # ölçülemedi ≠ güncel
+            continue
+        gnc = float(x.get("v2_odenecek") or 0)
+        d["guncel_net"] = gnc
+        d["fark"] = round(gnc - float(d["toplam"]), 2)
+        d["guncel"] = abs(d["fark"]) < 0.5
+        if not d["guncel"]:
+            bayat += 1
+    return {"yil": yil, "ay": ay, "kisi": len(kisi), "kalem": len(R),
+            "bayat_kisi": bayat,
+            "not": ("Defter GÜNCEL." if not bayat else
+                    "%d kişinin defteri hesabın gerisinde — ay ilerledi, defter "
+                    "o günden beri yazılmadı. Tazelemek icin POST /api/ucret/kalem-yaz"
+                    % bayat),
+            "defter": kisi}
 
 
 # ── DÜZELTME DEFTERİ (Adım 8) ───────────────────────────────────────────────

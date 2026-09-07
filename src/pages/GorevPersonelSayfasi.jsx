@@ -728,6 +728,7 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
   const [bugun, setBugun] = useState(null);
   const [aylik, setAylik] = useState(null);
   const [kalemler, setKalemler] = useState([]);   // 📒 bordro kalem defteri
+  const [defterGuncel, setDefterGuncel] = useState(true);  // defter hesabın gerisinde mi
   const [yukleniyor, setYukleniyor] = useState(true);
 
   useEffect(() => {
@@ -737,11 +738,16 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
     Promise.all([
       api(`/gorev/vardiya-takip?yil=${yil}&ay=${ay}&personel_id=${oturum.personel_id}`).catch(() => null),
       // 📒 KALEM DEFTERİ (BORDRO V2): "bu rakam nereden çıktı" sorusunun cevabı.
-      // Kırılırsa ekran ÇALIŞMAYA DEVAM EDER — defter bir EK'tir, hakedişin
-      // kendisi hâlâ vardiya-takipten gelir.
+      // Kırılırsa ekran ÇALIŞMAYA DEVAM EDER — defter bir EK'tir.
       api(`/ucret/kalem?yil=${yil}&ay=${ay}&personel_id=${oturum.personel_id}`).catch(() => null),
     ]).then(([takip, defter]) => {
-      setKalemler(Object.values(defter?.defter || {})[0]?.kalemler || []);
+      const _d = Object.values(defter?.defter || {})[0] || null;
+      setKalemler(_d?.kalemler || []);
+      // 🔴 BAYAT DEFTER SESSİZ KALMAZ (2026-09-07): açık ayda gün ilerledikçe
+      // yazılı defter hesabın gerisinde kalıyor (canlı: kişi başı 900-1.400 ₺).
+      // Üstte güncel net, altta eski döküm gösterip "işte dayanağı" demek
+      // YANLIŞ CEVAPtır. Defter bayatsa bunu personelin kendisi görsün.
+      setDefterGuncel(_d ? (_d.guncel !== false) : true);
       const kisi = takip?.personeller?.[0];
       if (kisi) {
         const bugunVeri = kisi.gunler?.find(g => g.tarih === oturum.tarih);
@@ -936,9 +942,21 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
                         padding: '10px 12px', cursor: 'pointer', fontSize: 12,
                         fontWeight: 700, color: '#6B5E50', listStyle: 'none',
                       }}>
-                        📒 Bu rakam nereden çıktı? ({kalemler.length} kalem)
+                        📒 {defterGuncel ? 'Bu rakam nereden çıktı?' : 'Önceki dökümün'} ({kalemler.length} kalem)
                       </summary>
                       <div style={{ padding: '0 12px 12px', display: 'grid', gap: 8 }}>
+                        {!defterGuncel && (
+                          <div style={{
+                            fontSize: 11.5, lineHeight: 1.55, color: '#8A6D3B',
+                            background: 'rgba(240,180,60,0.12)', border: '1px solid rgba(240,180,60,0.35)',
+                            borderRadius: 9, padding: '9px 11px',
+                          }}>
+                            ⚠ Bu döküm <b>son yazıldığı güne ait</b>. O günden sonra çalıştığın
+                            günler yukarıdaki tutara girdi ama bu listeye <b>henüz işlenmedi</b> —
+                            bu yüzden alttaki satırların toplamı üstteki rakamdan az.
+                            Ay kapanınca döküm eksiksiz olur.
+                          </div>
+                        )}
                         {kalemler.map((k, i) => {
                           const eks = {
                             SOZLESME: { ad: 'Sözleşme', renk: '#6B5E50' },
