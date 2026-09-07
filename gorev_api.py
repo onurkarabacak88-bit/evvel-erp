@@ -2268,7 +2268,7 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
             # ⚠️ Bu blok PARAYA DOKUNMAZ: yalnız var olan kararı etiketler.
             _mola = {"hak_dogdu": 0, "ihlal": 0, "belirsiz": 0,
                      "kayit_yok": 0, "sozlesme_disi": 0, "vardiya_yok": 0,
-                     "askida": 0, "onayli": 0}
+                     "askida": 0, "onayli": 0, "gelecek": 0}
             _askida_gunler = []
 
             # 🔴 GELECEK VARDİYA PAYDAYI ŞİŞİRMESİN (2026-09-06, canlı bulgu)
@@ -2360,7 +2360,19 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                         toplam_fazla_saat += fazla
 
                         # ── ÖNCE SINIFLANDIR (Adım 4), SONRA KARAR VER (Adım 7)
-                        if is_part and not part_tam:
+                        if tarih > _bugun_p:
+                            # 🔴 GELECEK GÜN KARARA GİRMEZ (2026-09-07, canlı bulgu)
+                            # Vardiya planı ay sonuna kadar girili olduğu için
+                            # HENÜZ YAŞANMAMIŞ günün mola kaydı da doğal olarak
+                            # yoktu ve 'askida' sayılıp SAHİBİN ONAY KUYRUĞUNA
+                            # düşüyordu. Canlı: 7 Eylül'de kuyrukta 13 Eylül'ün
+                            # günleri vardı; onaylansa ÇALIŞILMAMIŞ gün için
+                            # yemek hakkı doğardı (7.132,22 ₺'nin bir kısmı).
+                            # Bu, [[feedback-pay-gecmis-payda-gelecek]] dersinin
+                            # onay tarafındaki ikizi: ölçüm geçmişten, karar
+                            # gelecekten gelemez.
+                            mola_durum = "gelecek"
+                        elif is_part and not part_tam:
                             # Part-time tam gün eşiğinin altında: sözleşme yemek
                             # ücreti öngörmüyor. Bu bir ihlal DEĞİL.
                             mola_durum = "sozlesme_disi"

@@ -562,6 +562,19 @@ def mola_onay(m: MolaOnayModel, yil: int = Query(...), ay: int = Query(...)):
                 atlanan.append({"personel_id": g.personel_id, "tarih": g.tarih,
                                 "neden": "donem disi"})
                 continue
+            # 🔴 GELECEK GÜN ONAYLANAMAZ (2026-09-07). Kuyruk artık gelecek gün
+            # uretmiyor (gorev_api mola_durum='gelecek'), ama onay bir PARA
+            # kararidir: cagrinin govdesi elle de gonderilebilir. Yasanmamis
+            # gunun molasi hakkinda verilecek karar YOKTUR.
+            try:
+                from tr_saat import dt_now_tr as _dnt_o
+                _bugun_o = str(_dnt_o().date())
+            except Exception:  # noqa: BLE001
+                _bugun_o = str(date.today())
+            if not m.geri_al and g.tarih > _bugun_o:
+                atlanan.append({"personel_id": g.personel_id, "tarih": g.tarih,
+                                "neden": "gun henuz yasanmadi"})
+                continue
             cur.execute("SELECT id FROM bordro_kalem "
                         " WHERE tur='YEMEK_GUN_ONAY' AND durum='aktif' "
                         "   AND personel_id=%s AND yil=%s AND ay=%s "
