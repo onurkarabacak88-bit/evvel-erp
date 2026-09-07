@@ -202,6 +202,47 @@ const ekEtiket = {
   color: R.not2, fontWeight: 700, marginBottom: 6, display: 'block',
 };
 
+// ── BORDRO PARAMETRELERİ · İNSAN DİLİ ────────────────────────────────────────
+// Sunucu bunları `bordro_kural_coz.VARSAYILAN` içinde tutar; buradaki karşılık
+// yalnız EKRAN metnidir. Yeni parametre eklenirse burada da adı yazılmalı —
+// yoksa sekmede ham anahtar (`yemek_paydasi`) görünür ve kimse anlamaz.
+const KURAL_BILGI = {
+  gunluk_saat: { ad: 'Günlük çalışma saati', ipucu: 'Bir tam vardiya kaç saat sayılır', birim: 'saat', tip: 'sayi' },
+  aylik_gun: { ad: 'Aylık gün — bordro paydası', ipucu: 'Maaş kaça bölünür. İş Kanunu 30 gün der (izin günleri dahil)', birim: 'gün', tip: 'sayi' },
+  haftalik_calisma_gun: { ad: 'Haftalık çalışma günü', ipucu: 'Haftada kaç gün çalışılır', birim: 'gün', tip: 'sayi' },
+  part_gunluk_saat: { ad: 'Part-time günlük saat', ipucu: 'Part-time bir günün varsayılan saati', birim: 'saat', tip: 'sayi' },
+  part_tam_gun_esigi: { ad: 'Part-time "tam gün" eşiği', ipucu: 'Bu saatin üstü tam gün sayılır — yemek hakkı buna bağlı', birim: 'saat', tip: 'sayi' },
+  fm_gunluk_esik: { ad: 'Fazla mesai eşiği', ipucu: 'Günde bu saatin üstü fazla mesai olarak ödenir', birim: 'saat', tip: 'sayi' },
+  yemek_mola_limit_dk: { ad: 'Yemek molası limiti', ipucu: 'Bu dakikayı aşan mola ihlal sayılır', birim: 'dk', tip: 'sayi' },
+  varsayilan_saatlik: { ad: 'Varsayılan saatlik ücret', ipucu: 'Saatlik ücreti tanımsız part-time için son çare', birim: '₺', tip: 'sayi' },
+  yemek_paydasi: {
+    ad: 'Yemek oranının paydası', birim: '', tip: 'secim',
+    ipucu: '"Hak edilen gün ÷ payda" hesabındaki payda. Kayıt seyrekleşince ihlalin bedeli buradan patlar.',
+    secenekler: [
+      ['planli_gun', 'Sisteme girilen vardiya günü'],
+      ['beklenen_gun', 'Kişinin çalışması beklenen gün'],
+    ],
+  },
+  mola_kayit_yok: {
+    ad: 'Mola kaydı olmayan gün', birim: '', tip: 'secim',
+    ipucu: 'Vardiya var ama mola kaydı yoksa o gün ne sayılsın.',
+    secenekler: [
+      ['hak_dogmaz', 'Yemek hakkı doğmaz'],
+      ['hak_dogar', 'Çalışmış sayılır, hak doğar'],
+      ['askida', 'Askıya alınır — sahip onaylar'],
+    ],
+  },
+};
+const kuralDegerMetni = (anahtar, deger) => {
+  const b = KURAL_BILGI[anahtar];
+  if (!b) return String(deger);
+  if (b.tip === 'secim') {
+    const s = (b.secenekler || []).find((x) => x[0] === deger);
+    return s ? s[1] : String(deger);
+  }
+  return `${trSayi(deger, Number.isInteger(Number(deger)) ? 0 : 1)}${b.birim ? ` ${b.birim}` : ''}`;
+};
+
 const ucretMetni = (p) => (sayi(p.maas) > 0
   ? fmt(sayi(p.maas))
   : sayi(p.saatlik_ucret) > 0 ? `${fmt(p.saatlik_ucret)}/sa` : '—');
@@ -245,6 +286,21 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   const [topluOnayMesgul, setTopluOnayMesgul] = useState(false);
   const [topluOnaySoru, setTopluOnaySoru] = useState(false);
   const [vardiyaDisi, setVardiyaDisi] = useState(null);
+  // ── ÜCRET & KURAL YÖNETİMİ (BORDRO V2 · Adım 10) ──────────────────────────
+  // 🔴 NEDEN BU SEKME (sahip 2026-09-07): ücret zaman çizgisi ve bordro
+  // parametreleri BUGÜNE KADAR hiçbir ekrandan yönetilemiyordu — asgari ücret
+  // tanımı da, "mola kaydı yoksa ne olsun" kuralı da yalnız API'den yazılıyordu.
+  // Yani sistemin PARAYI NASIL HESAPLADIĞINI belirleyen ayarlar sahibin
+  // göremediği bir yerdeydi. Bu sekme onları görünür ve YÖNETİLEBİLİR yapar.
+  const [ucDurum, setUcDurum] = useState(null);
+  const [ucKural, setUcKural] = useState(null);
+  const [ucHata, setUcHata] = useState('');
+  const [ucMesgul, setUcMesgul] = useState(false);
+  const [ucAsgari, setUcAsgari] = useState({ tutar: '', gecerli_bas: '', gerekce: '', duzelt: false });
+  const [ucAsgariSoru, setUcAsgariSoru] = useState(false);
+  const [ucKf, setUcKf] = useState({ anahtar: '', deger: '', gecerli_bas: '', gerekce: '' });
+  const [ucKuralSoru, setUcKuralSoru] = useState(false);
+
   // ── PERSONEL DENETİMİ (ops-merkez P2 sekmeleri, 2026-07-30) ───────────────
   // davranış analizi · puan defteri · geç kalma · kasa açık analizi + kasiyer karne
   const [pdSekme, setPdSekme] = useState('davranis');
@@ -1224,6 +1280,107 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     if (gorunum === 'denetim') pdYukle();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gorunum, donem.yil, donem.ay]);
+
+  // ── ÜCRET & KURAL: okuma + yazma ──────────────────────────────────────────
+  const ucYukle = useCallback(() => {
+    setUcHata('');
+    // HATA≠BOŞ: uç düşerse null kalır ve ekran "tanımlı değil" yalanı basmaz.
+    api('/ucret/durum')
+      .then((d) => setUcDurum(d || null))
+      .catch((e) => { setUcDurum(null); setUcHata(e?.message || 'ücret durumu okunamadı'); });
+    api('/ucret/kural')
+      .then((d) => setUcKural(d || null))
+      .catch(() => setUcKural(null));
+  }, []);
+
+  useEffect(() => {
+    if (gorunum === 'ucret') ucYukle();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [gorunum]);
+
+  /** "1.234,50" · "1234.50" → 1234.5 · boş/bozuksa null (0 DEĞİL). */
+  const ucSayi = (v) => {
+    const s = String(v ?? '').trim().replace(/\s/g, '');
+    if (!s) return null;
+    const n = Number(s.includes(',') ? s.replace(/\./g, '').replace(',', '.') : s);
+    return Number.isFinite(n) ? n : null;
+  };
+
+  const ucAsgariYaz = async () => {
+    const t = ucSayi(ucAsgari.tutar);
+    if (t === null || t <= 0) { onToast?.('Tutar okunamadı'); return; }
+    if (!ucAsgari.gerekce.trim()) { onToast?.('Gerekçe zorunlu'); return; }
+    setUcMesgul(true);
+    try {
+      const r = await api('/ucret/asgari', { method: 'POST', body: {
+        tutar: t,
+        gecerli_bas: ucAsgari.gecerli_bas || null,
+        gerekce: ucAsgari.gerekce.trim(),
+        duzelt: !!ucAsgari.duzelt,
+      } });
+      onToast?.(`✓ Asgari ücret ${r?.islem === 'duzeltildi' ? 'düzeltildi' : 'tanımlandı'} — ${fmt(t)}`);
+      setUcAsgari({ tutar: '', gecerli_bas: '', gerekce: '', duzelt: false });
+      ucYukle();
+    } catch (e) {
+      onToast?.(`✕ ${e?.message || 'yazılamadı'}`);
+    } finally { setUcMesgul(false); setUcAsgariSoru(false); }
+  };
+
+  const ucKuralYaz = async () => {
+    const bilgi = KURAL_BILGI[ucKf.anahtar];
+    if (!bilgi) { onToast?.('Parametre seçilmedi'); return; }
+    if (!ucKf.gerekce.trim()) { onToast?.('Gerekçe zorunlu — kural denetimde savunulmalı'); return; }
+    let deger = ucKf.deger;
+    if (bilgi.tip === 'sayi') {
+      const n = ucSayi(deger);
+      if (n === null) { onToast?.('Değer okunamadı'); return; }
+      deger = n;
+    } else if (!deger) { onToast?.('Değer seçilmedi'); return; }
+    setUcMesgul(true);
+    try {
+      await api('/ucret/kural', { method: 'POST', body: {
+        parametre: { [ucKf.anahtar]: deger },
+        kapsam: 'GENEL',
+        gecerli_bas: ucKf.gecerli_bas || null,
+        gerekce: ucKf.gerekce.trim(),
+      } });
+      onToast?.(`✓ ${bilgi.ad} kuralı yazıldı`);
+      setUcKf({ anahtar: '', deger: '', gecerli_bas: '', gerekce: '' });
+      ucYukle();
+    } catch (e) {
+      onToast?.(`✕ ${e?.message || 'yazılamadı'}`);
+    } finally { setUcMesgul(false); setUcKuralSoru(false); }
+  };
+
+  /** Kişinin ücret geçmişini çekmecede aç — "bu rakam ne zaman değişti". */
+  const ucCizgiAc = async (p) => {
+    try {
+      const c = await api(`/ucret/personel/${p.personel_id}/cizgi`);
+      const sat = (c?.satirlar || []);
+      onCekmece?.({
+        baslik: p.ad_soyad,
+        alt: sat.length ? `${sat.length} ücret satırı — zaman çizgisi` : 'zaman çizgisinde satır YOK',
+        kpi: Object.entries(p.kalem || {}).map(([t, v]) => ({
+          etiket: t === 'TABAN' ? 'Maaş' : t === 'YEMEK' ? 'Yemek' : t === 'YOL' ? 'Yol' : t,
+          deger: v.tutar == null ? '—' : fmt(sayi(v.tutar)),
+          renk: v.uyari ? R.amber : undefined,
+        })),
+        listeBaslik: 'Ücret satırları',
+        satirlar: sat.map((s) => ({
+          ad: `${s.tur} · ${s.mod === 'ASGARIYE_BAGLI' ? 'asgariye bağlı' : 'sabit'}`,
+          detay: `${kisaTarih(s.gecerli_bas)} → ${s.gecerli_bit ? kisaTarih(s.gecerli_bit) : 'devam ediyor'}${s.gerekce ? ` · ${s.gerekce}` : ''}`,
+          tutar: s.mod === 'ASGARIYE_BAGLI'
+            ? `asgari${sayi(s.fark) ? ` ${sayi(s.fark) > 0 ? '+' : ''}${fmt(sayi(s.fark))}` : ''}`
+            : fmt(sayi(s.tutar)),
+        })),
+        not: sat.length
+          ? 'Zaman çizgisi: her satır bir DÖNEMdir. Zam yeni satır açar, eski satır kapanır — geçmiş ay eski tutarla hesaplanmaya devam eder.'
+          : 'Bu kişinin zaman çizgisinde satır yok; ücreti personel KARTINDAN (ayna) okunuyor. Ayna geçmişi bilmez: kart bugünkü tutarı söyler, dünkünü değil.',
+      });
+    } catch (e) {
+      onToast?.(`✕ ${e?.message || 'geçmiş okunamadı'}`);
+    }
+  };
 
   // ── personel formu (klasik Personel.jsx sözleşmesi) ────────────────────────
   const pFormAc = (p) => {
@@ -4826,6 +4983,329 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   }
 
   // ── 6) İş Başvuruları ──────────────────────────────────────────────────────
+  // ══════════════════ ÜCRET KURALLARI · ZAMAN ÇİZGİSİ ══════════════════════
+  // Sahip 2026-09-07. Bu sekmeye kadar bordronun İKİ temel ayarı hiçbir ekrandan
+  // yönetilemiyordu: (1) asgari ücretin tarihli tanımı, (2) bordro parametreleri.
+  // Bu yüzden "sistem neden böyle hesapladı" sorusunun cevabı ekranda YOKTU.
+  // ⚠️ BURASI PARA YAZAR — her yazma iki tıklamalıdır ve GEREKÇE zorunludur.
+  if (gorunum === 'ucret') {
+    const D = ucDurum;
+    const K = ucKural;
+    const asgariTutar = D?.asgari?.tutar;
+    const aynaKalan = sayi(D?.ayna_kalan);
+    const par = K?.parametre || {};
+    const iz = par._iz || {};
+    const kisiler = D?.personel || [];
+    const secBilgi = KURAL_BILGI[ucKf.anahtar];
+    const asgariHazir = !!ucAsgari.tutar && !!ucAsgari.gerekce.trim();
+    const kuralHazir = !!ucKf.anahtar && ucKf.deger !== '' && !!ucKf.gerekce.trim();
+
+    return (
+      <>
+        {!!ucHata && <HataBandi mesaj={ucHata} kaynak="/api/ucret/durum" onTekrar={ucYukle} />}
+        <KpiSeridi kpiler={[
+          {
+            etiket: 'Asgari ücret · bugün',
+            deger: asgariTutar == null ? 'TANIMSIZ' : fmt(sayi(asgariTutar)),
+            alt: asgariTutar == null ? 'asgariye bağlı kişiler hesaplanamaz' : 'zaman çizgisinden',
+            renk: asgariTutar == null ? R.kirmizi : R.krem,
+          },
+          {
+            etiket: 'Zaman çizgisi satırı',
+            deger: String(sayi(D?.kisi_satir_sayisi)),
+            alt: 'kişiye özel ücret dönemi',
+          },
+          {
+            // 🪞 AYNA = kişinin ücreti zaman çizgisinde YOK, personel kartından
+            // okunuyor. Kart yalnız BUGÜNÜ bilir; geçmiş ay yanlış hesaplanır.
+            etiket: 'Kartından okunan kişi',
+            deger: String(aynaKalan),
+            alt: aynaKalan ? 'geçmişi bilmiyor — çizgiye taşınmalı' : 'hepsi zaman çizgisinde',
+            renk: aynaKalan ? R.amber : R.yesil,
+          },
+          {
+            etiket: 'Bordro kuralı',
+            deger: par._tablodan ? 'Tablodan' : 'Koddan',
+            alt: par._tablodan ? 'tarihli kural satırı var' : 'henüz kural yazılmamış — varsayılan',
+            renk: par._tablodan ? R.yesil : R.not,
+          },
+        ]} />
+
+        {!!K?.celiski && (
+          <div style={{
+            ...kartYuzey, padding: '14px 18px', marginBottom: 16,
+            borderLeft: `3px solid ${R.amber}`, fontSize: 12.5, lineHeight: 1.6,
+          }}>
+            <b style={{ color: R.amber }}>⚠ Kurallar arasında çelişki var</b>
+            <div style={{ color: R.not, marginTop: 4 }}>{K.celiski}</div>
+            <div style={{ color: R.not2, marginTop: 6, fontSize: 11.5 }}>
+              Sessizce düzeltilmedi — aynı vardiya iki ekranda iki türlü sayılıyor olabilir.
+              Hangisinin doğru olduğuna siz karar vermelisiniz.
+            </div>
+          </div>
+        )}
+
+        {/* ── 1. ASGARİ ÜCRET ────────────────────────────────────────────── */}
+        <div style={{ ...kartYuzey, padding: '20px 22px', marginBottom: 16 }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
+            Asgari ücret
+          </div>
+          <div style={{ fontSize: 12, color: R.not, lineHeight: 1.65, marginBottom: 14 }}>
+            Tek yerden tanımlanır ve <b>“asgariye bağlı”</b> işaretli herkese aynı anda uygulanır.
+            Zam geldiğinde tek satır yazarsınız; kimseyi tek tek güncellemezsiniz.
+            Eski aylar eski tutarla hesaplanmaya devam eder.
+          </div>
+
+          {(D?.asgari_cizgi || []).length ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginBottom: 16 }}>
+              {(D.asgari_cizgi || []).map((s, i) => (
+                <div key={s.id || i} style={{
+                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
+                  borderRadius: 9, background: i === 0 ? `${R.bakir}14` : R.girinti,
+                  border: `1px solid ${i === 0 ? `${R.bakir}44` : R.cizgi3}`,
+                }}>
+                  <span style={{ fontFamily: F.mono, fontSize: 14, fontWeight: 700, minWidth: 108 }}>
+                    {fmt(sayi(s.tutar))}
+                  </span>
+                  <span style={{ fontSize: 12, color: R.metin2 }}>
+                    {kisaTarih(s.gecerli_bas)} → {s.gecerli_bit ? kisaTarih(s.gecerli_bit) : 'devam ediyor'}
+                  </span>
+                  {i === 0 && <span style={{ ...rozetHapV, background: `${R.yesil}22`, color: R.yesil }}>yürürlükte</span>}
+                  <span style={{ marginLeft: 'auto', fontSize: 11.5, color: R.not2, textAlign: 'right' }}>
+                    {s.gerekce || '—'}
+                  </span>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div style={{
+              padding: '14px 16px', borderRadius: 9, marginBottom: 16,
+              background: `${R.kirmizi}14`, border: `1px solid ${R.kirmizi}44`,
+              fontSize: 12.5, lineHeight: 1.6,
+            }}>
+              <b style={{ color: R.kirmizi }}>Asgari ücret hiç tanımlanmamış.</b> Bu yüzden
+              “asgariye bağlı” işaretli kişilerin maaşı hesaplanamıyor. Sistem sıfır yazmıyor —
+              <b> bilmediğini söylüyor</b>, çünkü sıfır yazsa herkesin maaşını sıfırlardı.
+            </div>
+          )}
+
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ flex: '1 1 140px' }}>
+              <label style={ekEtiket}>Yeni tutar</label>
+              <input value={ucAsgari.tutar} placeholder="26.005,50"
+                onChange={(e) => { setUcAsgari((f) => ({ ...f, tutar: e.target.value })); setUcAsgariSoru(false); }}
+                style={ekAlanStil} />
+            </div>
+            <div style={{ flex: '1 1 150px' }}>
+              <label style={ekEtiket}>Ne zaman başlıyor</label>
+              <input type="date" value={ucAsgari.gecerli_bas}
+                onChange={(e) => { setUcAsgari((f) => ({ ...f, gecerli_bas: e.target.value })); setUcAsgariSoru(false); }}
+                style={ekAlanStil} />
+            </div>
+            <div style={{ flex: '2 1 240px' }}>
+              <label style={ekEtiket}>Gerekçe (zorunlu)</label>
+              <input value={ucAsgari.gerekce} placeholder="2026 ikinci yarı asgari ücret zammı"
+                onChange={(e) => { setUcAsgari((f) => ({ ...f, gerekce: e.target.value })); setUcAsgariSoru(false); }}
+                style={ekAlanStil} />
+            </div>
+          </div>
+          <label style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 12, fontSize: 12, color: R.not, cursor: 'pointer' }}>
+            <input type="checkbox" checked={ucAsgari.duzelt}
+              onChange={(e) => { setUcAsgari((f) => ({ ...f, duzelt: e.target.checked })); setUcAsgariSoru(false); }} />
+            <span>
+              Bu bir <b>düzeltme</b> — yeni dönem değil, yanlış girilmiş tutarı yerinde düzelt
+              <span style={{ color: R.not2 }}> (geçmiş aylar da yeni tutarla yeniden hesaplanır)</span>
+            </span>
+          </label>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
+            {ucAsgariSoru ? (
+              <>
+                <span style={{ fontSize: 12.5, color: R.amber }}>
+                  {ucAsgari.duzelt
+                    ? 'Yürürlükteki satır DEĞİŞTİRİLECEK — geçmiş aylar da etkilenir. Emin misiniz?'
+                    : `Yeni dönem açılacak: ${fmt(ucSayi(ucAsgari.tutar) || 0)} · ${ucAsgari.gecerli_bas || 'sistem başlangıcı'}. Emin misiniz?`}
+                </span>
+                <button disabled={ucMesgul} onClick={ucAsgariYaz} style={{
+                  marginLeft: 'auto', padding: '9px 20px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                  fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>{ucMesgul ? 'Yazılıyor…' : 'Evet, uygula'}</button>
+                <button disabled={ucMesgul} onClick={() => setUcAsgariSoru(false)} style={plBtn}>Vazgeç</button>
+              </>
+            ) : (
+              <button
+                disabled={!asgariHazir}
+                onClick={() => setUcAsgariSoru(true)}
+                style={{ ...plBtn, opacity: asgariHazir ? 1 : 0.45, cursor: asgariHazir ? 'pointer' : 'not-allowed' }}>
+                Asgari ücreti tanımla
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* ── 2. BORDRO KURALLARI ────────────────────────────────────────── */}
+        <Tablo
+          baslik="Bordro kuralları — bugün geçerli olanlar"
+          not={par._tarih ? `${kisaTarih(par._tarih)} itibarıyla` : ''}
+          kolonlar={[{ ad: 'Parametre' }, { ad: 'Değer', sag: true }, { ad: 'Nereden geliyor' }]}
+          satirlar={Object.keys(KURAL_BILGI).filter((k) => par[k] !== undefined).map((k) => {
+            const b = KURAL_BILGI[k];
+            const kaynak = iz[k];
+            const tablodan = kaynak && typeof kaynak === 'object';
+            return {
+              id: k,
+              hucreler: [
+                { v: b.ad },
+                { v: kuralDegerMetni(k, par[k]), sag: true, mono: true, kalin: true },
+                tablodan
+                  ? { v: `${kisaTarih(kaynak.gecerli_bas)} · ${kaynak.gerekce || 'gerekçesiz'}`, renk: R.metin2 }
+                  : { v: 'varsayılan (kural yazılmamış)', renk: R.not2 },
+              ],
+            };
+          })}
+        />
+
+        <div style={{ ...kartYuzey, padding: '20px 22px', marginBottom: 16 }}>
+          <div style={{ fontFamily: F.baslik, fontSize: 16, fontWeight: 600, marginBottom: 4 }}>
+            Kural değiştir
+          </div>
+          <div style={{ fontSize: 12, color: R.not, lineHeight: 1.65, marginBottom: 14 }}>
+            Kural değişikliği <b>bir tarihe bağlanır</b>: yeni satır açılır, eski satır kapanır.
+            Kapanmış aylar kendi kuralıyla hesaplanmaya devam eder — geçmiş kaymaz.
+          </div>
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end' }}>
+            <div style={{ flex: '2 1 230px' }}>
+              <label style={ekEtiket}>Hangi kural</label>
+              <select value={ucKf.anahtar}
+                onChange={(e) => { setUcKf((f) => ({ ...f, anahtar: e.target.value, deger: '' })); setUcKuralSoru(false); }}
+                style={ekAlanStil}>
+                <option value="">— seçin —</option>
+                {Object.entries(KURAL_BILGI).map(([k, b]) => (
+                  <option key={k} value={k}>{b.ad}</option>
+                ))}
+              </select>
+            </div>
+            <div style={{ flex: '1 1 190px' }}>
+              <label style={ekEtiket}>Yeni değer</label>
+              {secBilgi?.tip === 'secim' ? (
+                <select value={ucKf.deger}
+                  onChange={(e) => { setUcKf((f) => ({ ...f, deger: e.target.value })); setUcKuralSoru(false); }}
+                  style={ekAlanStil}>
+                  <option value="">— seçin —</option>
+                  {(secBilgi.secenekler || []).map(([v, ad]) => <option key={v} value={v}>{ad}</option>)}
+                </select>
+              ) : (
+                <input value={ucKf.deger} disabled={!ucKf.anahtar}
+                  placeholder={secBilgi ? `bugün: ${kuralDegerMetni(ucKf.anahtar, par[ucKf.anahtar])}` : ''}
+                  onChange={(e) => { setUcKf((f) => ({ ...f, deger: e.target.value })); setUcKuralSoru(false); }}
+                  style={{ ...ekAlanStil, opacity: ucKf.anahtar ? 1 : 0.5 }} />
+              )}
+            </div>
+            <div style={{ flex: '1 1 150px' }}>
+              <label style={ekEtiket}>Ne zaman başlıyor</label>
+              <input type="date" value={ucKf.gecerli_bas}
+                onChange={(e) => { setUcKf((f) => ({ ...f, gecerli_bas: e.target.value })); setUcKuralSoru(false); }}
+                style={ekAlanStil} />
+            </div>
+          </div>
+          {!!secBilgi && (
+            <div style={{ fontSize: 11.5, color: R.not2, marginTop: 8, lineHeight: 1.55 }}>
+              {secBilgi.ipucu}
+            </div>
+          )}
+          <div style={{ marginTop: 12 }}>
+            <label style={ekEtiket}>Gerekçe (zorunlu — hangi sözleşme maddesi / hangi karar)</label>
+            <input value={ucKf.gerekce} placeholder="Sahip kararı: Eylül'den itibaren mola kaydı olmayan gün askıya alınır"
+              onChange={(e) => { setUcKf((f) => ({ ...f, gerekce: e.target.value })); setUcKuralSoru(false); }}
+              style={ekAlanStil} />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 14 }}>
+            {ucKuralSoru ? (
+              <>
+                <span style={{ fontSize: 12.5, color: R.amber }}>
+                  {secBilgi?.ad} → <b>{kuralDegerMetni(ucKf.anahtar, secBilgi?.tip === 'sayi' ? ucSayi(ucKf.deger) : ucKf.deger)}</b>
+                  {' · '}{ucKf.gecerli_bas || 'sistem başlangıcı'} tarihinden itibaren. Emin misiniz?
+                </span>
+                <button disabled={ucMesgul} onClick={ucKuralYaz} style={{
+                  marginLeft: 'auto', padding: '9px 20px', borderRadius: 9, border: 'none', cursor: 'pointer',
+                  background: 'linear-gradient(150deg, #E0A559, #AF6C29)', color: '#1C1309',
+                  fontSize: 12.5, fontWeight: 700, fontFamily: 'inherit',
+                }}>{ucMesgul ? 'Yazılıyor…' : 'Evet, uygula'}</button>
+                <button disabled={ucMesgul} onClick={() => setUcKuralSoru(false)} style={plBtn}>Vazgeç</button>
+              </>
+            ) : (
+              <button
+                disabled={!kuralHazir}
+                onClick={() => setUcKuralSoru(true)}
+                style={{ ...plBtn, opacity: kuralHazir ? 1 : 0.45, cursor: kuralHazir ? 'pointer' : 'not-allowed' }}>
+                Kuralı yaz
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* ── 3. KİŞİ ÜCRETLERİ ──────────────────────────────────────────── */}
+        <Tablo
+          baslik="Kişi ücretleri — sistemin bugün okuduğu tutarlar"
+          not={kisiler.length ? `${kisiler.length} kişi · satıra tıklayın` : ''}
+          kolonlar={[
+            { ad: 'Kişi' }, { ad: 'Tür' }, { ad: 'Maaş / saatlik', sag: true },
+            { ad: 'Yemek', sag: true }, { ad: 'Yol', sag: true }, { ad: 'Kaynak' },
+          ]}
+          satirlar={kisiler.map((p) => {
+            const kl = p.kalem || {};
+            const taban = kl.TABAN || kl.SAATLIK || null;
+            // 🪞 AYNA ÖLÇÜTÜ SUNUCUYLA BİREBİR (bordro_ucret.py:163):
+            // kaynak ayna OLMASI yetmez, TUTARIN DA > 0 olması gerekir.
+            // Tutarsız ölçüt canlıda sahte alarm üretiyordu: part-time kişilerin
+            // kullanılmayan TABAN kalemi 0,00 ve "ayna" damgalı geliyor — ölçüt
+            // gevşek olsaydı KPI "0 kişi kartından okunuyor" derken tablo
+            // herkesi ayna gösterecekti ([[feedback-sahte-yesili-kapatirken]]).
+            const aynadan = Object.values(kl).some(
+              (v) => String(v.kaynak || '').includes('ayna') && sayi(v.tutar) > 0);
+            const uyari = Object.values(kl).some((v) => v.uyari);
+            const gost = (v) => (!v || v.tutar == null
+              ? { v: '—', sag: true, renk: R.not2 }
+              : { v: fmt(sayi(v.tutar)), sag: true, mono: true, renk: v.uyari ? R.amber : undefined });
+            return {
+              id: p.personel_id,
+              hucreler: [
+                { v: p.ad_soyad || '—', kalin: true, renk: p.aktif ? R.krem : R.not },
+                { v: p.calisma_turu === 'surekli' ? 'sürekli' : 'part-time', renk: R.metin2 },
+                gost(taban),
+                gost(kl.YEMEK),
+                gost(kl.YOL),
+                aynadan
+                  ? { v: 'personel kartı (ayna)', rozet: R.amber }
+                  : { v: 'zaman çizgisi', rozet: uyari ? R.amber : R.yesil },
+              ],
+            };
+          })}
+          onSatir={(s) => {
+            const p = kisiler.find((x) => x.personel_id === s.id);
+            if (p) ucCizgiAc(p);
+          }}
+        />
+
+        {aynaKalan > 0 && (
+          <div style={{
+            ...kartYuzey, padding: '16px 20px', marginBottom: 16,
+            borderLeft: `3px solid ${R.amber}`, fontSize: 12.5, lineHeight: 1.65,
+          }}>
+            <b style={{ color: R.amber }}>🪞 {aynaKalan} kişinin ücreti hâlâ personel kartından okunuyor</b>
+            <div style={{ color: R.not, marginTop: 5 }}>
+              Kart yalnız <b>bugünkü</b> tutarı bilir; geçmiş ay yeniden hesaplanırsa
+              bugünkü maaşla hesaplanır — yani <b>geçmiş kayar</b>. Zaman çizgisine taşınmaları gerekiyor.
+            </div>
+            <div style={{ color: R.not2, marginTop: 6, fontSize: 11.5 }}>
+              {(D?.ayna_kisiler || []).map((a) => a.ad_soyad).filter(Boolean).join(' · ') || '—'}
+            </div>
+          </div>
+        )}
+      </>
+    );
+  }
+
   if (gorunum === 'basvuru') {
     const bs = basvurular;
     const yeni = bs.filter(b => trKucuk(b.durum) === 'yeni');

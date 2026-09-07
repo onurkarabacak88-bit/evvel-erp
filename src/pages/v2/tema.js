@@ -313,6 +313,12 @@ export const MODULLER = [
     { id: 'kadro', ad: 'Kadro' },
     { id: 'vardiya', ad: 'Vardiya Planı', rozet: 'vardiyaAcik', renk: '#FBBF24' },
     { id: 'maas', ad: 'Maaş & Avans', rozet: 'maasBekleyen', renk: '#D29A5B' },
+    // 🔴 BORDRO V2 · Adım 10 (2026-09-07): ücret zaman çizgisi ve bordro
+    // parametreleri hiçbir ekrandan yönetilemiyordu — asgari ücret tanımı da,
+    // "mola kaydı yoksa ne olsun" kuralı da yalnız API'den yazılabiliyordu.
+    // Parayı NASIL hesapladığımızı belirleyen ayarlar sahibin göremediği
+    // yerdeydi; bu görünüm onları görünür ve yönetilebilir yapar.
+    { id: 'ucret', ad: 'Ücret Kuralları · zaman çizgisi' },
     { id: 'gorev', ad: 'Görev Takibi', rozet: 'gorevAcik', renk: '#60A5FA' },
     { id: 'takip', ad: 'Vardiya Takip · giriş-çıkış' },
     { id: 'denetim', ad: 'Personel Denetimi', rozet: 'ekipDenetim', renk: '#FBBF24' },
