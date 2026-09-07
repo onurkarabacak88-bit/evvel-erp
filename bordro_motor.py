@@ -171,8 +171,16 @@ def hesapla(sozlesme: Dict[str, Any], kural: Dict[str, Any],
                     "YEMEK", "OLCUM", tutar,
                     kaynak=K.get("YEMEK", {}).get("kaynak") or "?",
                     kanit_sinifi="olcum",
+                    # 🔴 KANIT, TUTARI AÇIKLAMALI (ekranı gezerken görüldü 2026-09-07):
+                    # panel "Hak doğan gün 5/6" yazıp TAM yemek ödendiğini
+                    # gösteriyordu — okuyan 5/6 oranı uygulanmış sanıyor.
+                    # Oran artık hak/payda DEĞİL, (payda − hak doğmayan)/payda.
+                    # Kanıt bu iki sayıyı da taşımalı, yoksa kanıt YANILTIR.
                     kanit={"aylik_yemek": aylik_yemek, "donem_orani": _r(donem_orani, 6),
                            "hak_dogan_gun": hak_gun, "payda": payda,
+                           "hak_dogmayan_gun": hak_dogmayan,
+                           "planli_gun": planli,
+                           "uygulanan_oran": _r(oran, 6),
                            "payda_kurali": kural.get("yemek_paydasi"),
                            "planli_gun": planli,
                            "ihlal_gun": olcum.get("ihlal_gun"),

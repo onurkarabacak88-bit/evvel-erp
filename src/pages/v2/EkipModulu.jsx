@@ -3875,7 +3875,21 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     if (kn.aylik_yol != null) ekle('Aylık yol', fmt(sayi(kn.aylik_yol)), 'sözleşmedeki tam tutar');
     if (kn.gecen_gun != null) ekle('Geçen gün', trSayi(sayi(kn.gecen_gun), 0), `${trSayi(sayi(kn.aylik_gun || 30), 0)} günlük ay üzerinden`);
     if (kn.donem_orani != null) ekle('Dönem oranı', `%${trSayi(sayi(kn.donem_orani) * 100, 1)}`, 'ayın ne kadarı geçti');
-    if (kn.hak_dogan_gun != null) ekle('Hak doğan gün', `${trSayi(sayi(kn.hak_dogan_gun), 0)} / ${trSayi(sayi(kn.payda), 0)}`, kn.payda_kurali ? `payda kuralı: ${kn.payda_kurali}` : '');
+    // 🔴 ORANI DA GÖSTER (2026-09-07): yalnız "5 / 6" yazmak yanıltıyordu —
+    // okuyan %83 uygulanmış sanıyor, oysa yemeği düşüren şey VARDİYASI OLUP hak
+    // doğmayan gündür; vardiyasız gün (izin) düşürmez. İki sayı yan yana durmalı.
+    if (kn.hak_dogan_gun != null) {
+      ekle('Hak doğan gün', `${trSayi(sayi(kn.hak_dogan_gun), 0)} / ${trSayi(sayi(kn.planli_gun ?? kn.payda), 0)}`,
+        'planlı günün kaçında hak doğdu');
+      if (kn.hak_dogmayan_gun != null) {
+        ekle('Hak doğmayan gün', `${trSayi(sayi(kn.hak_dogmayan_gun), 0)} / ${trSayi(sayi(kn.payda), 0)}`,
+          'yemeği YALNIZ bunlar düşürür — vardiyası olmayan gün (izin) düşürmez');
+      }
+      if (kn.uygulanan_oran != null) {
+        ekle('Uygulanan oran', `%${trSayi(sayi(kn.uygulanan_oran) * 100, 1)}`,
+          kn.payda_kurali ? `payda kuralı: ${kn.payda_kurali}` : '');
+      }
+    }
     if (kn.saat != null) ekle('Saat', trSayi(sayi(kn.saat), 2), kn.saat_kaynagi ? `kaynak: ${kn.saat_kaynagi}` : '');
     if (kn.saatlik != null) ekle('Saatlik ücret', fmt(sayi(kn.saatlik)), '');
     if (kn.saatlik_ucret != null) ekle('Saatlik ücret', fmt(sayi(kn.saatlik_ucret)), '');
@@ -3969,7 +3983,26 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                 alt: `${AY_KISA[ay - 1]} ${yil} · ${asamaAd(b.durum)}`,
                 kpi: [
                   { etiket: 'Hesaplanan net', deger: fmt(sayi(b.hesaplanan_net)), renk: R.yesil },
-                  { etiket: 'Ücret', deger: ucretMetni(b) },
+                  // 🔴 ÇEKMECE KARTIN ÜCRETİNİ GÖSTERİYORDU (2026-09-07, ekranı
+                  // gezerken görüldü): naz dal'da "28.000 ₺" yazıyordu ama motor
+                  // 28.075 kullanıyor (TABAN kalemi 936 ₺/gün × 30 = 28.075).
+                  // `ucretMetni(b)` personel kartının AYNA değerini okuyor; kart
+                  // bugünü bilir, zaman çizgisi geçmişi de bilir — bordroda
+                  // kanonik olan çizgidir. Kalem defterindeki TABAN kaleminin
+                  // kanıtı zaten aylık tutarı taşıyor; varsa ONU göster.
+                  (() => {
+                    const _tb = (kalemDefteri[b.personel_id] || [])
+                      .find((k) => k.tur === 'TABAN' || k.tur === 'SAATLIK');
+                    const _ak = _tb && (_tb.kanit || {});
+                    const _aylik = _ak && (_ak.aylik_maas ?? _ak.saatlik_ucret ?? null);
+                    return {
+                      etiket: 'Ücret',
+                      deger: _aylik != null
+                        ? fmt(sayi(_aylik)) + (_tb.tur === 'SAATLIK' ? '/sa' : '')
+                        : ucretMetni(b),
+                      alt: _aylik != null ? 'zaman çizgisinden' : 'personel kartından',
+                    };
+                  })(),
                   // ⚠️ Saatin KAYNAĞI (sahip doktrini 2026-08-07): vardiya ataması
                   // TEYİT katmanıdır — yoksa sabit tanımdan aktarılır. Hangisi
                   // kullanıldığı gizlenmez, çünkü "varsayilan_gunluk" TAHMİNDİR.
