@@ -1070,8 +1070,32 @@ def duzeltme_backfill(m: DuzeltmeBackfillModel):
             "SELECT id, tarih, tutar, aciklama FROM anlik_giderler "
             " WHERE aciklama LIKE %s ORDER BY tarih", ("%hakediş farkı (elden)%",))
         giderler = [dict(r) for r in (cur.fetchall() or [])]
-        cur.execute("SELECT id, ad_soyad FROM personel")
-        P = {(r["ad_soyad"] or "").strip(): r["id"] for r in (cur.fetchall() or [])}
+        # 🪤 AYNI AD, İKİ KAYIT (canlı bulgu 2026-09-07): CELİLE IŞIK'ın biri
+        # 1 Mayıs'ta başlayan kapanmış dönemi, diğeri 7 Eylül'de başlayan yeni
+        # dönemi. Adı anahtar yapan sözlük ikincisini birincinin üzerine yazdı
+        # ve HAZİRAN düzeltmesi EYLÜL kaydına bağlandı. Ad TEK BAŞINA kimlik
+        # değildir — dönem de sorulmalı ([[feedback-personel-kisi-kimligi]]).
+        cur.execute("SELECT id, ad_soyad, baslangic_tarihi FROM personel "
+                    " ORDER BY baslangic_tarihi NULLS FIRST")
+        _aday: Dict[str, List[Dict[str, Any]]] = {}
+        for r in (cur.fetchall() or []):
+            _aday.setdefault((r["ad_soyad"] or "").strip(), []).append(dict(r))
+
+        def _kisi_sec(ad: str, yy: int, aa: int):
+            """O DÖNEMDE çalışan kaydı seç. Belirsizse None — uydurma yok."""
+            adaylar = _aday.get(ad) or []
+            if not adaylar:
+                return None, "personel bulunamadi: %s" % ad
+            if len(adaylar) == 1:
+                return adaylar[0]["id"], None
+            son = date(yy + (1 if aa == 12 else 0), (1 if aa == 12 else aa + 1), 1) - timedelta(days=1)
+            uygun = [a for a in adaylar
+                     if not a.get("baslangic_tarihi") or a["baslangic_tarihi"] <= son]
+            if not uygun:
+                return None, ("%s adinda %d kayit var, hicbiri %d-%02d doneminde baslamamis"
+                              % (ad, len(adaylar), yy, aa))
+            uygun.sort(key=lambda a: (a.get("baslangic_tarihi") or date(1900, 1, 1)))
+            return uygun[-1]["id"], None
 
         yazilacak, atlanan = [], []
         for g in giderler:
@@ -1081,12 +1105,12 @@ def duzeltme_backfill(m: DuzeltmeBackfillModel):
                 atlanan.append({"gider_id": g["id"], "neden": "aciklama cozulemedi"})
                 continue
             ad, yy, aa = mm.group(1).strip(), int(mm.group(2)), int(mm.group(3))
-            pid = P.get(ad)
+            pid, _hata = _kisi_sec(ad, yy, aa)
             if not pid:
                 # ⛔ GEVŞEK AD EŞLEŞTİRME YOK ([[feedback-para-zinciri-dersleri]]):
                 # yakın ad aramak yerine ATLA ve ADIYLA söyle. Yanlış kişiye
                 # bağlanan bir para kaydı, hiç bağlanmamış olandan beterdir.
-                atlanan.append({"gider_id": g["id"], "neden": "personel bulunamadi: %s" % ad})
+                atlanan.append({"gider_id": g["id"], "neden": _hata})
                 continue
             cur.execute("SELECT id FROM bordro_duzeltme "
                         " WHERE personel_id=%s AND kaynak_yil=%s AND kaynak_ay=%s "
@@ -1129,3 +1153,41 @@ def duzeltme_backfill(m: DuzeltmeBackfillModel):
         conn.commit()
     return {"kuru": False, "yazilan": len(yazilacak), "atlanan": len(atlanan),
             "toplam_tutar": round(sum(x["tutar"] for x in yazilacak), 2)}
+
+
+class DuzeltmeDurumModel(BaseModel):
+    durum: str                  # 'uygulandi' | 'reddedildi'
+    gerekce: str
+
+
+@router.post("/duzeltme/{did}/durum")
+def duzeltme_durum(did: str, m: DuzeltmeDurumModel):
+    """Bir düzeltmeyi geçersiz kıl ya da geri getir. SİLMEZ — iz kalır.
+
+    🔴 'reddedildi' bir SİLME değildir: satır defterde durur, listeden düşer ve
+    ne zaman/neden geçersiz kılındığı `kanit.red`'de yazar. Para kaydını silmek,
+    "bu para hiç konuşulmadı" demektir; oysa konuşuldu ve bir karar verildi.
+    """
+    d = (m.durum or "").strip()
+    if d not in ("uygulandi", "reddedildi"):
+        raise HTTPException(400, "durum 'uygulandi' veya 'reddedildi' olmali")
+    if not (m.gerekce or "").strip():
+        raise HTTPException(400, "gerekce zorunlu — bu bir PARA kararidir")
+    with db() as (conn, cur):
+        cur.execute("SELECT id, kanit, durum FROM bordro_duzeltme WHERE id=%s", (str(did),))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "duzeltme bulunamadi")
+        k = r["kanit"] or {}
+        if isinstance(k, str):
+            try:
+                k = json.loads(k)
+            except Exception:  # noqa: BLE001
+                k = {}
+        k.setdefault("gecmis", []).append(
+            {"eski_durum": r["durum"], "yeni_durum": d,
+             "gerekce": m.gerekce.strip(), "ts": str(date.today())})
+        cur.execute("UPDATE bordro_duzeltme SET durum=%s, kanit=%s::jsonb WHERE id=%s",
+                    (d, json.dumps(k, ensure_ascii=False), str(did)))
+        conn.commit()
+    return {"ok": True, "id": did, "durum": d}
