@@ -1191,3 +1191,141 @@ def duzeltme_durum(did: str, m: DuzeltmeDurumModel):
                     (d, json.dumps(k, ensure_ascii=False), str(did)))
         conn.commit()
     return {"ok": True, "id": did, "durum": d}
+
+
+# ── PLAN ↔ BORDRO BAĞI (Adım 9) ─────────────────────────────────────────────
+# 🔴 NEDEN (canlı ölçüm 2026-09-07):
+# Maaş ödeme planı satırı bordroya TARİH ARİTMETİĞİYLE bağlıydı: plan
+# `kaynak_tablo='personel'` + `referans_ay` ile yazılıyor, hangi BORDRO
+# KAYDINDAN doğduğu hiçbir yerde durmuyordu. Sonucu canlıda görünür:
+#   · Ağustos dönemi için 189.985,68 ₺ hâlâ "bekliyor" — bordrolar 'taslak',
+#     ödeme gerçekte yapılmış olsa bile plan kendiliğinden kapanmıyor
+#   · MEHMET EFE Ağustos bordrosu 'onaylandi' AMA planı hâlâ açık
+#   · MERT ALİ AKAR Haziran planı 68 gündür gecikmiş görünüyor
+# Nakit kokpiti bu satırları 30 günlük çıkışa sayıyor; yani "ne kadar para
+# çıkacak" sorusunun cevabı, kapanmamış eski planlar yüzünden şişik.
+#
+# Bu adım PARAYA DOKUNMAZ: yalnız `odeme_plani.bordro_id` alanını doldurur
+# (Adım 1'de boş açılmıştı) ve iki defteri YAN YANA okutur. Kapatma kararı
+# sahibindir — bağ kurulmadan o karar bile verilemiyordu.
+class PlanBaglaModel(BaseModel):
+    kuru: bool = True
+
+
+def _plan_bordro_esle(cur):
+    """Maaş planı satırlarını bordro kaydıyla eşle. SALT OKUR, liste döner.
+
+    Eşleşme çapası: (personel_id, referans_ay) → personel_aylik(personel_id,
+    yil, ay). Ad ya da tutar üzerinden EŞLEŞTİRİLMEZ — ikisi de zayıf kanıttır
+    ([[feedback-teslimat-fatura-eslesme]]: tutar en zayıf kanıt).
+    """
+    cur.execute(
+        "SELECT op.id, op.kaynak_id AS personel_id, op.tarih, op.referans_ay, "
+        "       op.odenecek_tutar, COALESCE(op.odenen_tutar,0) AS odenen_tutar, "
+        "       op.durum, op.aciklama, op.bordro_id, "
+        "       p.ad_soyad "
+        "  FROM odeme_plani op "
+        "  LEFT JOIN personel p ON p.id = op.kaynak_id "
+        " WHERE op.kaynak_tablo = 'personel' "
+        " ORDER BY op.tarih")
+    planlar = [dict(r) for r in (cur.fetchall() or [])]
+
+    cur.execute("SELECT id, personel_id, yil, ay, hesaplanan_net, durum "
+                "  FROM personel_aylik")
+    bordro = {(str(r["personel_id"]), int(r["yil"]), int(r["ay"])): dict(r)
+              for r in (cur.fetchall() or [])}
+
+    out = []
+    for pl in planlar:
+        ref = pl.get("referans_ay")
+        # 🔴 DÖNEM = REFERANS AY, ödeme tarihi DEĞİL. Maaş dönem kapandıktan
+        # sonraki ayın 1'inde ödenir; `tarih`ten ay çıkarmak Ağustos bordrosunu
+        # Eylül bordrosu sanmaya yol açar.
+        if not ref:
+            out.append({**pl, "bordro": None, "tani": "referans_ay yok",
+                        "tani_metni": "Plan hangi döneme ait belli değil — bağlanamaz."})
+            continue
+        b = bordro.get((str(pl.get("personel_id")), ref.year, ref.month))
+        if not b:
+            out.append({**pl, "bordro": None, "tani": "bordro_yok",
+                        "tani_metni": "Bu dönem için bordro kaydı yok; plan yetim."})
+            continue
+        net = float(b.get("hesaplanan_net") or 0)
+        tutar = float(pl.get("odenecek_tutar") or 0)
+        fark = round(net - tutar, 2)
+        if pl["durum"] not in ("bekliyor", "onay_bekliyor"):
+            tani, metin = "kapali", "Plan zaten kapanmış (%s)." % pl["durum"]
+        elif b["durum"] == "odendi":
+            tani = "bordro_odendi_plan_acik"
+            metin = ("⚠ Bordro ÖDENDİ işaretli ama plan hâlâ açık — nakit "
+                     "kokpitinde çıkacak para gibi görünüyor.")
+        elif b["durum"] == "onaylandi":
+            tani = "bordro_onayli_plan_acik"
+            metin = ("Bordro onaylanmış, plan açık. Ödeme yapıldıysa plan "
+                     "kapatılmalı; yapılmadıysa borç gerçek.")
+        elif abs(fark) > 0.5:
+            tani = "tutar_farki"
+            metin = ("Plan %s ₺ diyor, bordro %s ₺ — aradaki %s ₺ hangi rakamın "
+                     "güncel olduğuna göre değişir." % ("%.2f" % tutar, "%.2f" % net,
+                                                        "%.2f" % fark))
+        else:
+            tani, metin = "hizali", "Plan ve bordro aynı rakamı söylüyor."
+        out.append({**pl, "bordro": b, "fark": fark, "tani": tani, "tani_metni": metin})
+    return out
+
+
+@router.get("/plan-durum")
+def plan_durum():
+    """Maaş ödeme planı ↔ bordro kaydı YAN YANA. SALT OKUR.
+
+    "Bu maaş ödendi mi" sorusunun cevabı bugüne kadar iki ayrı deftere bakıp
+    kafadan eşleştirmeyi gerektiriyordu. Burada tek tabloda duruyor.
+    """
+    with db() as (_, cur):
+        satirlar = _plan_bordro_esle(cur)
+    ozet: Dict[str, int] = {}
+    acik_tl = 0.0
+    for s in satirlar:
+        ozet[s["tani"]] = ozet.get(s["tani"], 0) + 1
+        if s["tani"] in ("bordro_odendi_plan_acik", "bordro_onayli_plan_acik",
+                         "tutar_farki", "hizali", "bordro_yok"):
+            acik_tl += float(s.get("odenecek_tutar") or 0)
+    return {"adet": len(satirlar), "ozet": ozet,
+            "acik_plan_tutari": round(acik_tl, 2),
+            "bagli": sum(1 for s in satirlar if s.get("bordro_id")),
+            "satirlar": [{k: v for k, v in s.items() if k != "bordro"}
+                         | {"bordro_durum": (s.get("bordro") or {}).get("durum"),
+                            "bordro_net": (s.get("bordro") or {}).get("hesaplanan_net")}
+                         for s in satirlar]}
+
+
+@router.post("/plan-bagla")
+def plan_bagla(m: PlanBaglaModel):
+    """`odeme_plani.bordro_id` alanını doldur. ⚠️ VARSAYILAN KURU · PARA AKMAZ.
+
+    Yalnızca KİMLİK yazar; tutar, durum, tarih hiçbiri değişmez. Bağ kurulunca
+    "bu plan hangi bordrodan doğdu" sorusu tarih aritmetiğiyle değil, kimlikle
+    cevaplanır.
+    """
+    with db() as (conn, cur):
+        satirlar = _plan_bordro_esle(cur)
+        yazilacak = [s for s in satirlar
+                     if s.get("bordro") and not s.get("bordro_id")]
+        if m.kuru:
+            return {"kuru": True, "plan_satiri": len(satirlar),
+                    "baglanacak": len(yazilacak),
+                    "zaten_bagli": sum(1 for s in satirlar if s.get("bordro_id")),
+                    "baglanamaz": sum(1 for s in satirlar if not s.get("bordro")),
+                    "satirlar": [{"ad_soyad": s.get("ad_soyad"),
+                                  "donem": str(s.get("referans_ay"))[:7],
+                                  "plan_tutar": float(s.get("odenecek_tutar") or 0),
+                                  "bordro_net": float((s["bordro"] or {}).get("hesaplanan_net") or 0),
+                                  "bordro_durum": (s["bordro"] or {}).get("durum"),
+                                  "tani": s["tani"]}
+                                 for s in yazilacak],
+                    "not": "KURU — hicbir sey yazilmadi. kuru=false ile uygulayin."}
+        for s in yazilacak:
+            cur.execute("UPDATE odeme_plani SET bordro_id=%s WHERE id=%s",
+                        (s["bordro"]["id"], s["id"]))
+        conn.commit()
+    return {"kuru": False, "baglanan": len(yazilacak)}
