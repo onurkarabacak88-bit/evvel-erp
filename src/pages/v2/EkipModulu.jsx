@@ -300,6 +300,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   const [ucAsgariSoru, setUcAsgariSoru] = useState(false);
   const [ucKf, setUcKf] = useState({ anahtar: '', deger: '', gecerli_bas: '', gerekce: '' });
   const [ucKuralSoru, setUcKuralSoru] = useState(false);
+  // 📒 Düzeltme defteri + ödeme planı: uçları vardı, EKRANI YOKTU (2026-09-07).
+  // Sahip bugüne kadar bu iki defteri hiç göremedi — ben uçtan okuyordum.
+  const [ucDuzeltme, setUcDuzeltme] = useState(null);
+  const [ucPlan, setUcPlan] = useState(null);
 
   // ── PERSONEL DENETİMİ (ops-merkez P2 sekmeleri, 2026-07-30) ───────────────
   // davranış analizi · puan defteri · geç kalma · kasa açık analizi + kasiyer karne
@@ -1291,6 +1295,13 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     api('/ucret/kural')
       .then((d) => setUcKural(d || null))
       .catch(() => setUcKural(null));
+    // HATA≠BOŞ: düşerse null kalır, ekran "düzeltme yok" yalanı basmaz.
+    api('/ucret/duzeltme')
+      .then((d) => setUcDuzeltme(d || null))
+      .catch(() => setUcDuzeltme(null));
+    api('/ucret/plan-durum')
+      .then((d) => setUcPlan(d || null))
+      .catch(() => setUcPlan(null));
   }, []);
 
   useEffect(() => {
@@ -3848,6 +3859,55 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     geri: { ad: `${b.ad_soyad} bordrosu`, onTikla: () => bordroDosyasiAc(b) },
   });
 
+  /** MOLA GÜNLERİ — onay satırının arkasındaki gün gün kanıt (2026-09-07).
+      Onay bir PARA kararıdır; "hangi günler, o gün ne oldu" sorusu çekmeceye
+      tıklanarak inilebilmeli. Veri zaten `takip` içinde duruyordu, hiç
+      gösterilmiyordu. */
+  const molaGunleriAc = (b) => {
+    const kisi = (takip || []).find((t) => String(t.personel_id) === String(b.personel_id));
+    const gs = {};
+    ((kisi || {}).gunler || []).forEach((g) => { gs[String(g.tarih)] = g; });
+    const MOLA_AD = {
+      hak_dogdu: 'mola kaydı var, hak doğdu', ihlal: 'mola ihlali',
+      belirsiz: 'kayıt var, karara bağlanmamış', kayit_yok: 'mola kaydı yok',
+      askida: 'askıda — onay bekliyor', onayli: 'sahip onayladı',
+      sozlesme_disi: 'sözleşme dışı', gelecek: 'gün henüz gelmedi',
+    };
+    onCekmece?.({
+      tip: 'MOLA GÜNLERİ',
+      baslik: b.ad_soyad || '—',
+      alt: `${AY_KISA[ay - 1]} ${yil} · ${b.askida_gun} gün onay bekliyor`,
+      kpi: [
+        { etiket: 'Onaylanırsa', deger: fmt(sayi(b.toplam_tutar)), renk: sayi(b.toplam_tutar) > 0 ? R.yesil : R.not },
+        { etiket: 'Gün başına', deger: fmt(sayi(b.gun_tutari)) },
+        { etiket: 'Mola kaydı', deger: `${b.kayitli_gun ?? '—'} / ${b.planli_gun ?? '—'}` },
+        {
+          etiket: 'Giriş kaydı yok', deger: `${sayi(b.girissiz_gun)} gün`,
+          renk: sayi(b.girissiz_gun) > 0 ? R.amber : R.yesil,
+        },
+      ],
+      listeBaslik: 'Gün gün — o gün ne olmuş',
+      satirlar: (b.gunler || []).map((t) => {
+        const g = gs[t] || {};
+        return {
+          ad: kisaTarih(t),
+          detay: [
+            g.giris_var ? 'giriş var' : '⚠ GİRİŞ KAYDI YOK',
+            g.planlanan_saat != null ? `${trSayi(sayi(g.planlanan_saat), 1)} sa planlı` : null,
+            MOLA_AD[g.mola_durum] || g.mola_durum || null,
+            (g.yemek_sure_dk != null) ? `mola ${trSayi(sayi(g.yemek_sure_dk), 0)} dk` : null,
+            sayi(g.gecikme_dk) > 0 ? `${trSayi(sayi(g.gecikme_dk), 0)} dk geç` : null,
+          ].filter(Boolean).join(' · '),
+          tutar: fmt(sayi(b.gun_tutari)),
+        };
+      }),
+      not: (sayi(b.girissiz_gun) > 0
+        ? `⚠ ${b.girissiz_gun} günde işe giriş kaydı da yok — o günlerde çalışıp çalışmadığını bilmeden onaylamak, ödemeyi kanıtsız bırakır. `
+        : '')
+        + 'Onay bir KARAR olarak yazılır (kim · ne zaman · gerekçe) ve geri alınabilir; kayıt silinmez, "eski" olur.',
+    });
+  };
+
   /** BORDRO DOSYASI — birinci katman. Kalem satırları artık KAPI. */
   const bordroDosyasiAc = (b) => onCekmece?.({
                 tip: 'BORDRO DOSYASI',
@@ -4076,7 +4136,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                   display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap',
                   padding: '7px 0', borderTop: `1px solid ${R.cizgi3}`,
                 }}>
-                  <b style={{ color: R.krem, minWidth: 150 }}>{b.ad_soyad}</b>
+                  <b
+                    onClick={() => molaGunleriAc(b)}
+                    title="Gün gün bak"
+                    style={{ color: R.krem, minWidth: 150, cursor: 'pointer', textDecoration: 'underline dotted' }}
+                  >{b.ad_soyad} ›</b>
                   <span style={{ color: R.metin2, flex: 1 }}>
                     {b.askida_gun} gün ({(b.gunler || []).map((g) => g.slice(-2)).join(', ')})
                     {b.kayitli_gun != null
@@ -5095,6 +5159,84 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     const asgariHazir = !!ucAsgari.tutar && !!ucAsgari.gerekce.trim();
     const kuralHazir = !!ucKf.anahtar && ucKf.deger !== '' && !!ucKf.gerekce.trim();
 
+
+  // ── ÇEKMECE KATMANI · ÜCRET KURALLARI (2026-09-07) ────────────────────────
+  // Bordroda kurulan desenin aynısı: satır bir KAPI, arkasında kanıtı var,
+  // geri yolu açıldığı yere çıkar. Kapı YALNIZ arkasında içerik varken açılır
+  // ([[reference-cekmece-denetimi]]).
+
+  /** DÜZELTME DOSYASI — bir düzeltme bugün hâlâ geçerli mi? */
+  const duzeltmeDosyasiAc = (d) => onCekmece?.({
+    tip: 'DÜZELTME KAYDI',
+    baslik: d.ad_soyad || '—',
+    alt: `${d.kaynak_yil}-${String(d.kaynak_ay).padStart(2, '0')} dönemi · ${d.durum}`,
+    kpi: [
+      { etiket: 'Düzeltme', deger: fmt(sayi(d.tutar)), renk: R.krem },
+      { etiket: 'Yazıldığında kayıtlı', deger: d.v1_anlik == null ? '—' : fmt(sayi(d.v1_anlik)) },
+      { etiket: 'Şimdi kayıtlı', deger: d.v1_simdi == null ? '—' : fmt(sayi(d.v1_simdi)) },
+      {
+        etiket: 'Tanı',
+        deger: { gecerli: 'Yerinde', mukerrer: 'MÜKERRER', eksik: 'Yetmiyor',
+                 fazla: 'Fazla', olculemedi: 'Ölçülemedi' }[d.tani] || d.tani,
+        renk: d.tani === 'gecerli' ? R.yesil : d.tani === 'mukerrer' ? R.kirmizi : R.amber,
+      },
+    ],
+    listeBaslik: 'Kanıt',
+    satirlar: [
+      { ad: 'Neden yazıldı', detay: d.neden || '—', tutar: '' },
+      { ad: 'Motorun gerçeği', detay: 'o dönem için hesaplanan hakediş', tutar: d.v2_simdi == null ? '—' : fmt(sayi(d.v2_simdi)) },
+      {
+        ad: 'Bugünkü açık',
+        detay: 'motor − kayıtlı; düzeltme tutarına eşitse yerinde duruyor',
+        tutar: (d.v2_simdi == null || d.v1_simdi == null) ? '—'
+          : fmt(sayi(d.v2_simdi) - sayi(d.v1_simdi)),
+      },
+      ...((d.kanit || {}).gider_id ? [{
+        ad: 'Bağlı gider kaydı', detay: String((d.kanit || {}).aciklama || '').slice(0, 90),
+        tutar: 'anlık gider',
+      }] : []),
+      ...(((d.kanit || {}).gecmis) || []).map((g) => ({
+        ad: `${g.eski_durum} → ${g.yeni_durum}`,
+        detay: g.gerekce || '', tutar: g.ts || '',
+      })),
+    ],
+    not: d.tani_metni || '',
+    geri: { ad: 'Ücret kuralları', onTikla: () => onCekmece?.(null) },
+  });
+
+  /** PLAN DOSYASI — bu satır neden hâlâ açık? */
+  const planDosyasiAc = (x) => onCekmece?.({
+    tip: 'MAAŞ ÖDEME PLANI',
+    baslik: x.ad_soyad || '—',
+    alt: `${String(x.referans_ay || '').slice(0, 7)} ödemesi · plan ${x.durum}`,
+    kpi: [
+      { etiket: 'Plan tutarı', deger: fmt(sayi(x.odenecek_tutar)), renk: R.krem },
+      { etiket: 'Bordro neti', deger: x.bordro_net == null ? '—' : fmt(sayi(x.bordro_net)) },
+      { etiket: 'Ödenen', deger: fmt(sayi(x.odenen_tutar)) },
+      {
+        etiket: 'Bordro durumu', deger: x.bordro_durum || '—',
+        renk: x.bordro_durum === 'onaylandi' ? R.yesil : R.amber,
+      },
+    ],
+    listeBaslik: 'Plan ile bordro yan yana',
+    satirlar: [
+      { ad: 'Plan vadesi', detay: 'maaş dönem kapandıktan sonraki ayın 1’inde ödenir', tutar: kisaTarih(x.tarih) },
+      {
+        ad: 'Fark', detay: 'bordro neti − plan tutarı; sıfır değilse hangisi güncel diye bakılır',
+        tutar: x.fark == null ? '—' : fmt(sayi(x.fark)),
+      },
+      {
+        ad: 'Bordroya bağlı mı', detay: x.bordro_id ? 'kimlikle bağlı' : '⚠ bağ yok — tarih aritmetiğiyle eşleşiyor',
+        tutar: x.bordro_id ? 'evet' : 'hayır',
+      },
+      { ad: 'Plan açıklaması', detay: x.aciklama || '—', tutar: '' },
+    ],
+    not: (x.tani_metni || '')
+      + ' Planı kapatmanın iki yolu var: para ŞİMDİ çıkıyorsa "öde" (kasaya yazar),'
+      + ' para ZATEN çıkmışsa "iz ile kapat" (kasaya yazmaz). Sistem bu kişiye bu dönem'
+      + ' için elden bir ödeme bulursa ödemeyi reddedip size söyler.',
+    geri: { ad: 'Ücret kuralları', onTikla: () => onCekmece?.(null) },
+  });
     return (
       <>
         {!!ucHata && <HataBandi mesaj={ucHata} kaynak="/api/ucret/durum" onTekrar={ucYukle} />}
@@ -5381,6 +5523,98 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             if (p) ucCizgiAc(p);
           }}
         />
+
+
+        {/* ── 4. DÜZELTME DEFTERİ ────────────────────────────────────────── */}
+        {/* 🔴 Bu defterin ekranı YOKTU (2026-09-07). Uç Adım 8'de açılmıştı ama
+            yalnız API'den okunuyordu; sahip kapanmış dönemlere yazılan
+            düzeltmeleri hiç göremiyordu. Duyu burada asıl işini yapar: bir
+            düzeltme, kaynağı sonradan düzeltilirse MÜKERRERleşir ve bunu
+            kendiliğinden söyler ([[feedback-duzeltme-mukerrerlesir]]). */}
+        {ucDuzeltme && (ucDuzeltme.satirlar || []).length ? (
+          <Tablo
+            baslik="Düzeltme defteri — kapanmış dönemlere yazılan farklar"
+            not={sayi(ucDuzeltme.mukerrer_tutar) > 0
+              ? `⚠ ${fmt(sayi(ucDuzeltme.mukerrer_tutar))} mükerrer`
+              : `${ucDuzeltme.adet} satır · mükerrer yok · satıra tıklayın`}
+            kolonlar={[
+              { ad: 'Kişi' }, { ad: 'Dönem' }, { ad: 'Düzeltme', sag: true },
+              { ad: 'O an kayıtlı', sag: true }, { ad: 'Şimdi kayıtlı', sag: true },
+              { ad: 'Tanı' },
+            ]}
+            satirlar={(ucDuzeltme.satirlar || [])
+              .slice()
+              .sort((x, y) => ((x.tani === 'mukerrer' ? 0 : 1) - (y.tani === 'mukerrer' ? 0 : 1)))
+              .map((d) => ({
+                id: d.id,
+                vurgu: d.tani === 'mukerrer',
+                hucreler: [
+                  { v: d.ad_soyad || '—', kalin: true },
+                  { v: `${d.kaynak_yil}-${String(d.kaynak_ay).padStart(2, '0')}`, renk: R.metin2 },
+                  { v: fmt(sayi(d.tutar)), sag: true, mono: true, kalin: true },
+                  { v: d.v1_anlik == null ? '—' : fmt(sayi(d.v1_anlik)), sag: true, mono: true, renk: R.not2 },
+                  { v: d.v1_simdi == null ? '—' : fmt(sayi(d.v1_simdi)), sag: true, mono: true },
+                  {
+                    v: { gecerli: 'yerinde', mukerrer: 'MÜKERRER', eksik: 'yetmiyor',
+                         fazla: 'fazla', olculemedi: 'ölçülemedi' }[d.tani] || d.tani,
+                    rozet: d.tani === 'gecerli' ? R.yesil
+                      : d.tani === 'mukerrer' ? R.kirmizi : R.amber,
+                  },
+                ],
+              }))}
+            onSatir={(row) => {
+              const d = (ucDuzeltme.satirlar || []).find((x) => x.id === row.id);
+              if (d) duzeltmeDosyasiAc(d);
+            }}
+          />
+        ) : null}
+
+        {/* ── 5. ÖDEME PLANI ↔ BORDRO ────────────────────────────────────── */}
+        {/* 🔴 Bunun da ekranı yoktu. Plan bordroya KİMLİKLE bağlandıktan sonra
+            (Adım 9) iki defter yan yana okunabiliyor — ama yalnız uçtan.
+            Açık satır "para hâlâ çıkacak" demektir; sahibin bunu görmesi lazım. */}
+        {ucPlan && (ucPlan.satirlar || []).length ? (() => {
+          const acik = (ucPlan.satirlar || []).filter((x) => x.tani !== 'kapali');
+          return (
+            <Tablo
+              baslik="Maaş ödeme planı — hâlâ açık görünenler"
+              not={acik.length
+                ? `${acik.length} satır · ${fmt(sayi(ucPlan.acik_plan_tutari))} · satıra tıklayın`
+                : 'tümü kapandı'}
+              kolonlar={[
+                { ad: 'Kişi' }, { ad: 'Dönem' }, { ad: 'Plan', sag: true },
+                { ad: 'Bordro net', sag: true }, { ad: 'Bordro' }, { ad: 'Durum' },
+              ]}
+              satirlar={acik.map((x) => {
+                const ref = String(x.referans_ay || '').slice(0, 7);
+                const [ry, rm] = ref.split('-').map(Number);
+                const donem = ry ? `${rm === 1 ? ry - 1 : ry}-${String(rm === 1 ? 12 : rm - 1).padStart(2, '0')}` : '—';
+                return {
+                  id: x.id,
+                  hucreler: [
+                    { v: x.ad_soyad || '—', kalin: true },
+                    { v: donem, renk: R.metin2 },
+                    { v: fmt(sayi(x.odenecek_tutar)), sag: true, mono: true, kalin: true },
+                    { v: x.bordro_net == null ? '—' : fmt(sayi(x.bordro_net)), sag: true, mono: true },
+                    { v: x.bordro_durum || '—', renk: R.metin2 },
+                    {
+                      v: { hizali: 'plan = bordro', tutar_farki: 'TUTAR FARKI',
+                           bordro_onayli_plan_acik: 'onaylı · plan açık',
+                           bordro_odendi_plan_acik: 'ÖDENDİ · plan açık',
+                           bordro_yok: 'bordro yok' }[x.tani] || x.tani,
+                      rozet: x.tani === 'hizali' ? R.mavi
+                        : x.tani === 'tutar_farki' ? R.kirmizi : R.amber,
+                    },
+                  ],
+                };
+              })}
+              onSatir={(row) => {
+                const x = (ucPlan.satirlar || []).find((y) => y.id === row.id);
+                if (x) planDosyasiAc(x);
+              }}
+            />
+          );
+        })() : null}
 
         {aynaKalan > 0 && (
           <div style={{
