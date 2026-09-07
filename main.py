@@ -9113,6 +9113,11 @@ class VadeliOdeModel(BaseModel):
     odeyen_sube_id: Optional[str] = None
     # 'elden' | 'havale' — banka mutabakatını besler; boşsa belirsiz kalır.
     nakit_yontemi: Optional[str] = None
+    # 🚪 ÇİFT ÖDEME KAPISI ONAYI (2026-09-07, Fable madde 4).
+    # Sunucu bu kişiye bu dönem için ZATEN elden bir ödeme bulursa isteği
+    # REDDEDER ve izi adıyla söyler. Çağıran "gördüm, yine de tamamını öde"
+    # diyorsa bunu AÇIKÇA belirtmek zorundadır. Varsayılan GÜVENLİ taraftır.
+    iz_goruldu: bool = False
     # 📅 PARANIN GERÇEKTE ÇIKTIĞI GÜN (2026-09-07, sahip: "ekle").
     # Bu uç ödeme gününü HEP `bugun` yazıyordu; geçmişte yapılmış bir ödemeyi
     # sisteme girerken kasa BAKİYESİ doğru oluyor ama GÜN/AY raporu kayıyordu.
@@ -9174,6 +9179,7 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
         # FAZ 0 #3: personel maaşı onaysız ödenemez
         _personel_maas_odeme_guard(cur, dict(plan))
 
+
         # ÇİFT ÖDEME KAPISI (ters yön): sabit gider planı ödenmeden önce, o ay manuel
         # /fatura-ode ile (nakit veya kart) zaten ödendiyse engelle.
         if plan.get('kaynak_tablo') == 'sabit_giderler' and plan.get('kaynak_id'):
@@ -9204,6 +9210,46 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
             float(plan['odenecek_tutar'] or 0) - float(plan.get('odenen_tutar') or 0), 2)
         if _kalan_varsayilan <= 0:
             raise HTTPException(400, "Bu planın kalan borcu yok — zaten ödenmiş görünüyor")
+
+        # ── 🚪 ÇİFT ÖDEME KAPISI (Fable madde 4 · 2026-09-07) ────────────────
+        # Bir maaş planını kapatmanın iki yolu var ve yanlış seçim parayı ya İKİ
+        # KEZ düşürür ya HİÇ düşürmez. Seçim bugüne kadar ELLE yapılıyordu:
+        # MERT ALİ AKAR'da çakışma (banka 14.037 + elden 1.405 = plan 15.442)
+        # yalnız insan gözüyle yakalandı; kaçsaydı 1.405,00 ₺ ikinci kez çıkardı.
+        # Artık sunucu soruyor: "bu kişiye bu dönem için zaten bir şey verildi mi?"
+        # ⚠️ OTOMATİK KARAR VERMEZ — REDDEDER ve izi ADIYLA söyler. Kapatma
+        # kararı insanındır ([[feedback-kuru-calistirma-kapisi]]).
+        if (plan.get('kaynak_tablo') or '') == 'personel' and not body.iz_goruldu:
+            try:
+                from ucret_api import maas_odeme_izleri as _mizler
+                import maas_service as _ms_iz
+                _ref = plan.get('referans_ay')
+                if _ref:
+                    _dy, _da = _ms_iz.referans_to_donem(_ref)
+                    _iz = _mizler(cur, str(plan.get('kaynak_id')), _dy, _da)
+                    _zaten = float(_iz.get("zaten_dusulmus") or 0)
+                    if _zaten > 0.5:
+                        _kalan_oneri = round(_kalan_varsayilan - _zaten, 2)
+                        raise HTTPException(409, {
+                            "hata": "cift_odeme_riski",
+                            "mesaj": ("%s icin %d-%02d doneminde ZATEN %.2f TL kasadan "
+                                      "dusulmus gorunuyor. Planin tamamini odemek bu "
+                                      "tutari IKINCI KEZ dusurur."
+                                      % (_iz.get("ad_soyad") or "?", _dy, _da, _zaten)),
+                            "plan_tutari": _kalan_varsayilan,
+                            "zaten_dusulmus": _zaten,
+                            "onerilen_kasa_tutari": max(0.0, _kalan_oneri),
+                            "izler": _iz.get("izler"),
+                            "ne_yapmali": ("Kalan %.2f TL icin ?tutar=%.2f ile odeyin, "
+                                           "artan kismi /iz-ile-kapat ile kapatin. "
+                                           "Iz yanlissa iz_goruldu=true gonderin."
+                                           % (max(0.0, _kalan_oneri), max(0.0, _kalan_oneri))),
+                        })
+            except HTTPException:
+                raise
+            except Exception as _ize:  # noqa: BLE001
+                # İz araması KIRILIRSA ödeme DURMAZ — ama iz bırakır.
+                logger.warning("maas odeme izi aranamadi (plan %s): %s", oid, _ize)
 
         # KART seçildiyse kart akışına yönlendir.
         # ⚠️ ESKİDEN yalnız `kaynak_tablo='vadeli_alimlar'` planda açılıyordu

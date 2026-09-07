@@ -1443,3 +1443,62 @@ def plan_bagla(m: PlanBaglaModel):
                         (s["bordro"]["id"], s["id"]))
         conn.commit()
     return {"kuru": False, "baglanan": len(yazilacak)}
+
+
+# ── MAAŞ ÖDEME İZİ (Adım · Fable madde 4) ───────────────────────────────────
+# 🔴 NEDEN: bir maaş planını kapatmanın İKİ yolu var ve yanlış seçim parayı ya
+# İKİ KEZ düşürüyor ya HİÇ düşürmüyor:
+#   /ode            → kasaya PERSONEL_MAAS çıkışı YAZAR
+#   /iz-ile-kapat   → yazmaz; parası BAŞKA bir kayıtla zaten düşmüş olanlar için
+# Seçim bugüne kadar ELLE yapılıyordu. 2026-09-07'de MERT ALİ AKAR'da çakışma
+# (banka 14.037 + elden 1.405 = plan 15.442) yalnız insan gözüyle yakalandı;
+# gözden kaçsaydı 1.405,00 ₺ ikinci kez kasadan düşecekti.
+#
+# Bu fonksiyon o soruyu SİSTEME sordurur: "bu kişiye bu dönem için zaten
+# elden bir şey verildi mi?"
+# ⛔ GEVŞEK AD EŞLEŞTİRME YOK ([[feedback-para-zinciri-dersleri]]): adın hem
+#    İLK hem SON parçası açıklamada geçmeli. Sadece soyadla eşleştirmek bu
+#    projede 4.828.917 ₺'lik sahte eşleşme üretmişti.
+def maas_odeme_izleri(cur, personel_id: str, yil: int, ay: int) -> Dict[str, Any]:
+    """(kişi, ÇALIŞMA dönemi) için kasadan ZATEN düşmüş maaş kayıtları.
+
+    Dönen `zaten_dusulmus`, plan tutarından düşülmesi gereken tutardır:
+    o kadarı kasadan bir kez çıkmıştır, ikinci kez çıkarılmamalıdır.
+    """
+    cur.execute("SELECT ad_soyad FROM personel WHERE id=%s", (str(personel_id),))
+    p = cur.fetchone()
+    if not p:
+        return {"izler": [], "zaten_dusulmus": 0.0, "ad_soyad": None}
+    ad = (p.get("ad_soyad") or "").strip()
+    parca = [x for x in ad.split() if len(x) > 2]
+    if len(parca) < 2:
+        # Tek parçalı ad güvenli eşleşme veremez — İZ YOK de, uydurma.
+        return {"izler": [], "zaten_dusulmus": 0.0, "ad_soyad": ad,
+                "not": "ad tek parcali, guvenli iz aramasi yapilamadi"}
+    ilk, son = parca[0].lower(), parca[-1].lower()
+
+    # Pencere: çalışma döneminin başı → ödeme ayının sonu (maaş bir sonraki
+    # ayın başında ödenir, elden kısmı ay sonunda verilmiş olabilir).
+    bas = date(yil, ay, 1)
+    _oy, _oa = (yil + 1, 1) if ay == 12 else (yil, ay + 1)
+    _sy, _sa = (_oy + 1, 1) if _oa == 12 else (_oy, _oa + 1)
+    bit = date(_sy, _sa, 1) - timedelta(days=1)
+
+    cur.execute(
+        "SELECT id, tarih, tutar, aciklama, odeme_yontemi "
+        "  FROM anlik_giderler "
+        " WHERE durum='aktif' AND tarih BETWEEN %s AND %s "
+        "   AND LOWER(aciklama) LIKE %s AND LOWER(aciklama) LIKE %s",
+        (bas, bit, "%" + ilk + "%", "%" + son + "%"))
+    izler = []
+    for r in (cur.fetchall() or []):
+        ac = str(r.get("aciklama") or "")
+        dusuk = ac.lower()
+        # Yalnız MAAŞ niteliğindeki kayıtlar — "kahve aldı" gibi satırlar değil.
+        if not any(k in dusuk for k in ("maaş", "maas", "hakediş", "hakedis", "avans")):
+            continue
+        izler.append({"gider_id": str(r["id"]), "tarih": str(r["tarih"])[:10],
+                      "tutar": float(r.get("tutar") or 0),
+                      "yontem": r.get("odeme_yontemi"), "aciklama": ac})
+    return {"ad_soyad": ad, "izler": izler,
+            "zaten_dusulmus": round(sum(x["tutar"] for x in izler), 2)}
