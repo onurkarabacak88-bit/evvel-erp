@@ -10992,6 +10992,24 @@ def personel_aylik_kaydet(pid: str, body: PersonelAylikModel, yil: int = None, a
         except Exception as _e:   # noqa: BLE001
             logger.warning("saat_kaynagi damgası yazılamadı (%s %s-%s): %s", pid, yil, ay, _e)
 
+        # ── 🔪 KESİMİ TAMAMLA (Fable denetimi 2026-09-07) ────────────────────
+        # Bu uç neti hâlâ V1 formülüyle yazıyordu; gece senkronu ise motorla
+        # yeniden hesaplayıp EZİYORDU. Aradaki saatlerde ödeme yapılırsa fark
+        # kasadan çıkardı (canlı örnek: naz dal'da 272,23 ₺).
+        # Sıra ÖNEMLİ: girdiler ÖNCE yazıldı, motor onları okuyabilsin diye
+        # net BURADA yeniden hesaplanıyor (gorev_api.py:2755-2781 ile aynı desen).
+        # Motor susarsa V1 neti yerinde kalır ve LOG düşer — sessiz sapma yok.
+        _mn = _maas_svc.motor_net(cur, dict(p), yil, ay)
+        if _mn is None:
+            logger.warning("KESIM: motor net veremedi, V1 neti kaldi (%s %s-%s)", pid, yil, ay)
+        else:
+            net, _avm, _avd = _maas_svc.avans_mahsup_uygula(cur, dict(p), yil, ay, _mn)
+            cur.execute(
+                "UPDATE personel_aylik SET hesaplanan_net=%s, avans_mahsup=%s, "
+                "       mahsup_devir=%s "
+                " WHERE personel_id=%s AND yil=%s AND ay=%s",
+                (net, _avm, _avd, pid, yil, ay))
+
         # Bağlı ödeme planını gerçek tutarla güncelle
         _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, net)
 
@@ -11106,6 +11124,24 @@ def personel_aylik_vardiya_aktar(pid: str, yil: int = None, ay: int = None):
         except Exception as _e:   # noqa: BLE001
             logger.warning("vardiya-aktar saat_kaynagi temizlenemedi (%s %s-%s): %s",
                            pid, yil, ay, _e)
+
+        # ── 🔪 KESİMİ TAMAMLA (Fable denetimi 2026-09-07) ────────────────────
+        # Bu uç neti hâlâ V1 formülüyle yazıyordu; gece senkronu ise motorla
+        # yeniden hesaplayıp EZİYORDU. Aradaki saatlerde ödeme yapılırsa fark
+        # kasadan çıkardı (canlı örnek: naz dal'da 272,23 ₺).
+        # Sıra ÖNEMLİ: girdiler ÖNCE yazıldı, motor onları okuyabilsin diye
+        # net BURADA yeniden hesaplanıyor (gorev_api.py:2755-2781 ile aynı desen).
+        # Motor susarsa V1 neti yerinde kalır ve LOG düşer — sessiz sapma yok.
+        _mn = _maas_svc.motor_net(cur, dict(p), yil, ay)
+        if _mn is None:
+            logger.warning("KESIM: motor net veremedi, V1 neti kaldi (%s %s-%s)", pid, yil, ay)
+        else:
+            net, _avm, _avd = _maas_svc.avans_mahsup_uygula(cur, dict(p), yil, ay, _mn)
+            cur.execute(
+                "UPDATE personel_aylik SET hesaplanan_net=%s, avans_mahsup=%s, "
+                "       mahsup_devir=%s "
+                " WHERE personel_id=%s AND yil=%s AND ay=%s",
+                (net, _avm, _avd, pid, yil, ay))
 
         _personel_odeme_plani_senkronize(cur, dict(p), yil, ay, net)
 
