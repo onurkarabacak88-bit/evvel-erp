@@ -1252,6 +1252,15 @@ def _plan_bordro_esle(cur):
             continue
         _dy, _da = _maas_svc.referans_to_donem(ref)
         b = bordro.get((str(pl.get("personel_id")), _dy, _da))
+        # 🔴 ÖNCE DURUM, SONRA BORDRO (kendi duyumun sahte alarmı, 2026-09-07):
+        # ilk sürümde bordro bulunamayınca ERKEN ÇIKIYORDUM ve durum kontrolüne
+        # hiç varmıyordum. Sonuç: `durum='iptal'` 17 eski plan "yetim, açık"
+        # göründü ve 600.630,00 ₺'lik SAHTE bir borç rakamı üretti. Kapanmış bir
+        # satırın bordrosunun olmaması sorun değildir — o satır zaten bitmiştir.
+        if pl["durum"] not in ("bekliyor", "onay_bekliyor"):
+            out.append({**pl, "bordro": b, "tani": "kapali",
+                        "tani_metni": "Plan zaten kapanmış (%s)." % pl["durum"]})
+            continue
         if not b:
             out.append({**pl, "bordro": None, "tani": "bordro_yok",
                         "tani_metni": "Bu dönem için bordro kaydı yok; plan yetim."})
@@ -1259,9 +1268,7 @@ def _plan_bordro_esle(cur):
         net = float(b.get("hesaplanan_net") or 0)
         tutar = float(pl.get("odenecek_tutar") or 0)
         fark = round(net - tutar, 2)
-        if pl["durum"] not in ("bekliyor", "onay_bekliyor"):
-            tani, metin = "kapali", "Plan zaten kapanmış (%s)." % pl["durum"]
-        elif b["durum"] == "odendi":
+        if b["durum"] == "odendi":
             tani = "bordro_odendi_plan_acik"
             metin = ("⚠ Bordro ÖDENDİ işaretli ama plan hâlâ açık — nakit "
                      "kokpitinde çıkacak para gibi görünüyor.")
@@ -1293,8 +1300,9 @@ def plan_durum():
     acik_tl = 0.0
     for s in satirlar:
         ozet[s["tani"]] = ozet.get(s["tani"], 0) + 1
-        if s["tani"] in ("bordro_odendi_plan_acik", "bordro_onayli_plan_acik",
-                         "tutar_farki", "hizali", "bordro_yok"):
+        # AÇIK = kapanmamış satır. 'kapali' hariç her şey açıktır; tek tek
+        # saymak yeni bir tanı eklendiğinde onu sessizce dışarıda bırakırdı.
+        if s["tani"] != "kapali":
             acik_tl += float(s.get("odenecek_tutar") or 0)
     return {"adet": len(satirlar), "ozet": ozet,
             "acik_plan_tutari": round(acik_tl, 2),
