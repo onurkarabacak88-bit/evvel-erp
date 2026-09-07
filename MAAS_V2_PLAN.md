@@ -845,8 +845,23 @@ golden 09                      çıpa düzeltildi (7.911,94 → 8.184,16)
 
    Canlı doğrulama (Eylül, 9 kişi): **defter Σ = motor = bordro neti**, hepsi
    0,00 fark. Kapalı ay (Ağustos): 9/9 `kaynak=yazili · kilitli=true`.
-4. **Ödemede tek düğme:** `/ode` izi kendi arasın, "X ₺ zaten düşülmüş, kalan
-   Y mi?" desin. −15 dk/ay, yanlış uç riski sıfır. *(orta)*
+4. ✅ **UYGULANDI (2026-09-07)** — ama Fable'ın önerdiği gibi OTOMATİK
+   DEĞİL: sistem çift ödemeyi **reddediyor** ve izi adıyla söylüyor. Karar
+   insanda kalıyor ([[feedback-kuru-calistirma-kapisi]]).
+   · `ucret_api.maas_odeme_izleri(cur, pid, yil, ay)` — (kişi, çalışma dönemi)
+     için kasadan ZATEN düşmüş maaş kayıtlarını bulur. ⛔ Gevşek ad eşleştirme
+     yok: adın hem İLK hem SON parçası açıklamada geçmeli; tek parçalı adda
+     "iz yok" der, uydurmaz.
+   · `POST /odeme-plani/{id}/ode` — personel planında iz bulursa **409** ile
+     reddeder; izi tutarıyla söyler, kalan tutarı ÖNERİR. `iz_goruldu=true` ile
+     bilerek geçilebilir. İz araması kırılırsa ödeme DURMAZ, log bırakır.
+   · `GET /api/ucret/maas-odeme-izi` — kapının çekirdeği **okuma ucundan**
+     doğrulanabilir. Kapı, kapıdan geçmeyi deneyerek sınanmaz
+     ([[feedback-yikici-ucu-sinama]]).
+
+   Sınama (canlı, 4 vaka): MERT ALİ AKAR 2026-08 → 1.405,00 ✅ ·
+   nisanur bolat → 5.415,00 ✅ · DENİZ KÜÇÜKKIRLI → 0,00 ✅ ·
+   MERVE KARABACAK → 0,00 ✅ (iptal edilen 3.180 doğru şekilde sayılmadı).
 5. ✅ **UYGULANDI (2026-09-07)** — üç düzeltme:
    · **Üçüncü formül kalktı.** Günlük tutar `aylık yemek ÷ PLANLI GÜN` ile
      hesaplanıyor ve `yemek_paydasi` kuralını hiç okumuyordu. Artık ölçüm
@@ -866,10 +881,22 @@ golden 09                      çıpa düzeltildi (7.911,94 → 8.184,16)
 
    Canlı sonuç: onay bekleyen **1 kişi · 5 gün · 1.361,12 ₺** (önce "11 gün /
    0,00 ₺" görünüyordu). Gün tutarı motorun yazacağıyla **0,00 fark**.
-6. **Yedek yolu tuzaktan çıkar:** motor susarsa `hesaplanan_net`'e DOKUNMA +
-   alarm; `kanonik_net`/`part_elle_saat_net`/`maas_hesapla` silinsin;
-   `_kalem_donem_hesapla` `sube_id` geçirsin; `_tavan_hesapla` motoru okusun;
-   "onaydan sonra motor yeniden hesaplar" cümlesi TERS (onay kilitler). *(küçük-orta)*
+6. ✅ **UYGULANDI (2026-09-07)** — dördü de:
+   · **Emniyet ters çevrildi.** Motor susunca sistem V1 formülüyle PARA
+     YAZIYORDU. Artık kayıtlı net KORUNUR + `logger.error` ALARMı düşer.
+     "Emniyet kemeri durur; tuzak başka yöne sürer."
+   · **Şube kuralı motora ulaşmıyordu.** `_kalem_donem_hesapla`'nın SELECT'inde
+     `sube_id` yoktu → kural çözücü KİŞİ>ŞUBE>GENEL sırasında ŞUBE katmanını hiç
+     göremiyordu; ölçüm tarafı görüyordu. İlk şube kuralı yazıldığı gün sessizce
+     ayrışırlardı. Latent sapma kapandı.
+   · **Avans tavanı** motoru okuyor (kanonik hakedişin %50'si).
+   · **Ters cümle** düzeldi: "onaydan sonra motor yeniden hesaplar" yazıyordu —
+     tersi doğru, onay HESAPLAMAZ, KİLİTLER. Yeni metin: *"Ay kapanmadan bu
+     tutarlar artmaya devam eder. Onay hesaplamaz, KİLİTLER."*
+
+   ⏳ `kanonik_net`/`part_elle_saat_net`/`maas_hesapla` SİLİNMEDİ. Emniyet ters
+   çevrildiği için artık tuzak değiller (yanlış rakam yazamazlar). Silmek
+   regresyon riski taşır, bugün görünür kazanç yok — ayrı bir temizlik turu.
 
 ---
 
