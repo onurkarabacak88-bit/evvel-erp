@@ -833,9 +833,18 @@ golden 09                      çıpa düzeltildi (7.911,94 → 8.184,16)
 ```
 
 ### FABLE'IN KALAN 4 MADDESİ (sahip kararı bekliyor)
-3. **Tek sayı:** `net_hakediş` 4 ekrandan kalksın, hepsi motoru okusun;
-   `/ucret/kalem` açık ayda CANLI kalem dönsün, kilitte YAZILI. Defter
-   tazeleme işi tamamen biter. *(orta)*
+3. ✅ **UYGULANDI (2026-09-07)** — `/ucret/kalem` artık dönem AÇIKSA motorun
+   CANLI kalemlerini, KİLİTLİYSE yazılı sürümü döndürüyor; `onayla` defteri
+   DONDURUYOR. **"Defter tazeleme" işi tamamen ortadan kalktı.**
+
+   ⚠️ `net_hakediş`'i 4 ekrandan kaldırma İŞİ YAPILMADI — ve artık gerekmiyor:
+   madde 1 (yemek oranı) düzeltildikten sonra ölçüm ile motor **aynı formülü**
+   kullanıyor. Kalan sapma yalnız ±0,01 yuvarlama yönü (V1 önce topla-sonra
+   yuvarla, V2 önce yuvarla-sonra topla). Üç saatin ikisi zaten aynı saati
+   gösteriyor; üçüncüsü (bayat defter) bu maddeyle kapandı.
+
+   Canlı doğrulama (Eylül, 9 kişi): **defter Σ = motor = bordro neti**, hepsi
+   0,00 fark. Kapalı ay (Ağustos): 9/9 `kaynak=yazili · kilitli=true`.
 4. **Ödemede tek düğme:** `/ode` izi kendi arasın, "X ₺ zaten düşülmüş, kalan
    Y mi?" desin. −15 dk/ay, yanlış uç riski sıfır. *(orta)*
 5. **Kuyruk gürültüsü:** 0 ₺'lik askıda satır kuyruğa girmesin (bugün 11 gün /
