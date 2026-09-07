@@ -1364,6 +1364,59 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   };
 
   /** Kişinin ücret geçmişini çekmecede aç — "bu rakam ne zaman değişti". */
+  /** ÜCRET SATIRI — zaman çizgisinin bir DÖNEMİ (2026-09-07).
+      Zam bir olaydır: ne zaman başladı, neden verildi, o gün asgari neydi.
+      Bu üçü ayrı ayrı yerlerde duruyordu; satır artık kapı, arkasında hepsi var. */
+  const ucretSatiriAc = (p, sat) => {
+    const asgariBagli = sat.mod === 'ASGARIYE_BAGLI';
+    // O tarihte geçerli asgari — zaman çizgisinden okunur, BUGÜNKÜ asgari değil.
+    // ([[feedback-kayan-pencere-capa]]: geçmiş, bugünün rakamıyla anlatılmaz.)
+    const cizgi = (ucDurum?.asgari_cizgi || []);
+    const oGun = cizgi.find((x) => String(x.gecerli_bas) <= String(sat.gecerli_bas)
+      && (!x.gecerli_bit || String(x.gecerli_bit) >= String(sat.gecerli_bas)));
+    onCekmece?.({
+      tip: 'ÜCRET SATIRI',
+      baslik: `${sat.tur} · ${p.ad_soyad}`,
+      alt: `${kisaTarih(sat.gecerli_bas)} → ${sat.gecerli_bit ? kisaTarih(sat.gecerli_bit) : 'devam ediyor'}`,
+      kpi: [
+        {
+          etiket: 'Tutar',
+          deger: asgariBagli
+            ? (oGun ? fmt(sayi(oGun.tutar) + sayi(sat.fark)) : 'asgari + fark')
+            : fmt(sayi(sat.tutar)),
+          renk: R.krem,
+        },
+        { etiket: 'Bağlanma', deger: asgariBagli ? 'asgariye bağlı' : 'sabit',
+          renk: asgariBagli ? R.mavi : undefined },
+        ...(asgariBagli ? [{ etiket: 'Asgari üstü fark', deger: fmt(sayi(sat.fark)) }] : []),
+        { etiket: 'Durum', deger: sat.gecerli_bit ? 'kapandı' : 'yürürlükte',
+          renk: sat.gecerli_bit ? R.not : R.yesil },
+      ],
+      listeBaslik: 'Bu satır ne diyor',
+      satirlar: [
+        { ad: 'Kalem', detay: 'hangi ücret bileşeni', tutar: sat.tur },
+        {
+          ad: 'Geçerlilik', tutar: sat.gecerli_bit ? kisaTarih(sat.gecerli_bit) : 'açık',
+          detay: `${kisaTarih(sat.gecerli_bas)} tarihinden itibaren${sat.gecerli_bit ? ` ${kisaTarih(sat.gecerli_bit)} tarihine kadar` : ' — hâlâ yürürlükte'}`,
+        },
+        ...(asgariBagli ? [{
+          ad: 'O tarihteki asgari',
+          detay: oGun
+            ? `${kisaTarih(oGun.gecerli_bas)} tarihli asgari satırı${oGun.gerekce ? ` · ${oGun.gerekce}` : ''}`
+            : '⚠ o tarih için asgari satırı bulunamadı',
+          tutar: oGun ? fmt(sayi(oGun.tutar)) : '—',
+        }] : []),
+        { ad: 'Gerekçe', detay: sat.gerekce || '⚠ gerekçe yazılmamış — denetimde savunulamaz', tutar: '' },
+        { ad: 'Kaynak', detay: 'bu satırı kim/ne yazdı', tutar: sat.kaynak || '—' },
+        ...(sat.olusturma ? [{ ad: 'Yazıldığı gün', detay: '', tutar: kisaTarih(sat.olusturma) }] : []),
+      ],
+      not: asgariBagli
+        ? 'Bu kalem asgari ücrete BAĞLI: asgari değiştiğinde tutar kendiliğinden değişir, yeni satır açmak gerekmez. Fark, asgarinin üstüne eklenen sabit tutardır.'
+        : 'Bu kalem SABİT: asgari artsa da bu tutar değişmez. Zam için yeni bir dönem satırı açılır; eski satır kapanır ve geçmiş ay eski tutarla hesaplanmaya devam eder.',
+      geri: { ad: `${p.ad_soyad} ücret geçmişi`, onTikla: () => ucCizgiAc(p) },
+    });
+  };
+
   const ucCizgiAc = async (p) => {
     try {
       const c = await api(`/ucret/personel/${p.personel_id}/cizgi`);
@@ -1383,6 +1436,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           tutar: s.mod === 'ASGARIYE_BAGLI'
             ? `asgari${sayi(s.fark) ? ` ${sayi(s.fark) > 0 ? '+' : ''}${fmt(sayi(s.fark))}` : ''}`
             : fmt(sayi(s.tutar)),
+          onTikla: () => ucretSatiriAc(p, s),
         })),
         not: sat.length
           ? 'Zaman çizgisi: her satır bir DÖNEMdir. Zam yeni satır açar, eski satır kapanır — geçmiş ay eski tutarla hesaplanmaya devam eder.'
@@ -5165,6 +5219,60 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   // geri yolu açıldığı yere çıkar. Kapı YALNIZ arkasında içerik varken açılır
   // ([[reference-cekmece-denetimi]]).
 
+  /** BORDRO KURALI — bu parametre neden bu değerde? (2026-09-07)
+      Kural tablosu bugüne kadar "değer + nereden" diyordu ama o kural satırının
+      TARİHÇESİ görünmüyordu: aynı parametre daha önce ne idi, ne zaman
+      değiştirildi, hangi gerekçeyle. `/ucret/kural` zaten `cizgi` döndürüyor —
+      okunmuyordu. */
+  const kuralSatiriAc = (anahtar) => {
+    const bilgi = KURAL_BILGI[anahtar] || {};
+    const par = ucKural?.parametre || {};
+    const iz = (par._iz || {})[anahtar];
+    const tablodan = iz && typeof iz === 'object';
+    // Bu parametreye DOKUNAN kural satırları — hepsi değil, yalnız ilgili olan.
+    const gecmis = (ucKural?.cizgi || []).filter((c) => {
+      const pr = c.parametre || {};
+      return Object.prototype.hasOwnProperty.call(pr, anahtar);
+    });
+    onCekmece?.({
+      tip: 'BORDRO KURALI',
+      baslik: bilgi.ad || anahtar,
+      alt: `bugün: ${kuralDegerMetni(anahtar, par[anahtar])}`,
+      kpi: [
+        { etiket: 'Yürürlükteki değer', deger: kuralDegerMetni(anahtar, par[anahtar]), renk: R.krem },
+        {
+          etiket: 'Nereden', deger: tablodan ? 'Kural satırı' : 'Varsayılan',
+          renk: tablodan ? R.yesil : R.not,
+        },
+        ...(tablodan ? [{ etiket: 'Yürürlük', deger: kisaTarih(iz.gecerli_bas) }] : []),
+        { etiket: 'Değişiklik', deger: `${gecmis.length} kez` },
+      ],
+      listeBaslik: gecmis.length ? 'Bu kuralın tarihçesi' : 'Bu kural hiç yazılmamış',
+      satirlar: gecmis.length
+        ? gecmis
+          .slice()
+          .sort((x, y) => (String(y.gecerli_bas) > String(x.gecerli_bas) ? 1 : -1))
+          .map((c) => ({
+            ad: kuralDegerMetni(anahtar, (c.parametre || {})[anahtar]),
+            detay: `${kisaTarih(c.gecerli_bas)} → ${c.gecerli_bit ? kisaTarih(c.gecerli_bit) : 'devam ediyor'}`
+              + ` · ${c.kapsam}${c.gerekce ? ` · ${c.gerekce}` : ' · ⚠ gerekçesiz'}`,
+            tutar: c.gecerli_bit ? 'kapandı' : 'yürürlükte',
+          }))
+        : [{
+          ad: kuralDegerMetni(anahtar, par[anahtar]),
+          detay: 'kodda yazılı varsayılan — bu değeri kimse KARAR olarak yazmadı',
+          tutar: 'varsayılan',
+        }],
+      not: [
+        bilgi.ipucu || '',
+        'Kural değişikliği bir TARİHE bağlanır: yeni satır açılır, eski satır kapanır.',
+        'Kapanmış aylar kendi kuralıyla hesaplanmaya devam eder — geçmiş kaymaz.',
+        tablodan ? '' : '⚠ Bu değer bir karar değil, kodda yazılı varsayılandır. Değiştirmek için aşağıdaki formdan tarihli bir kural yazın.',
+      ].filter(Boolean).join(' '),
+      geri: { ad: 'Ücret kuralları', onTikla: () => onCekmece?.(null) },
+    });
+  };
+
   /** DÜZELTME DOSYASI — bir düzeltme bugün hâlâ geçerli mi? */
   const duzeltmeDosyasiAc = (d) => onCekmece?.({
     tip: 'DÜZELTME KAYDI',
@@ -5383,7 +5491,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
         {/* ── 2. BORDRO KURALLARI ────────────────────────────────────────── */}
         <Tablo
           baslik="Bordro kuralları — bugün geçerli olanlar"
-          not={par._tarih ? `${kisaTarih(par._tarih)} itibarıyla` : ''}
+          not={par._tarih ? `${kisaTarih(par._tarih)} itibarıyla · satıra tıklayın` : 'satıra tıklayın'}
           kolonlar={[{ ad: 'Parametre' }, { ad: 'Değer', sag: true }, { ad: 'Nereden geliyor' }]}
           satirlar={Object.keys(KURAL_BILGI).filter((k) => par[k] !== undefined).map((k) => {
             const b = KURAL_BILGI[k];
@@ -5400,6 +5508,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               ],
             };
           })}
+          onSatir={(row) => kuralSatiriAc(row.id)}
         />
 
         <div style={{ ...kartYuzey, padding: '20px 22px', marginBottom: 16 }}>
