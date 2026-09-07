@@ -156,6 +156,43 @@ def vardiya_takip_hesap(pid, yil: int, ay: int) -> Optional[dict]:
         return None
 
 
+def motor_net(cur, p: dict, yil: int, ay: int) -> Optional[float]:
+    """🔪 KESİM (MAAS_V2_PLAN · Adım 6): NET ARTIK Σ KALEM'DİR.
+
+    Bugüne kadar kanonik net `vardiya_takip.net_hakediş` idi: tek bir sayı,
+    ara değerleri hiçbir yere yazılmayan bir formül. "Bu 259 ₺ nereden çıktı?"
+    sorusunun cevabı yoktu ve DENİZ KÜÇÜKKIRLI Temmuz 2026'da 1.166,67 ₺ eksik
+    hesaplandı, dört ay fark edilmedi.
+
+    Artık net, motorun ürettiği KALEMLERİN TOPLAMIdır. Her kalem kaynağını
+    (hangi ücret satırı), ölçüsünü (kaç gün/saat) ve kanıtını taşır; defter
+    `/api/ucret/kalem` ucundan satır satır okunabilir.
+
+    ⚠️ MAHSUP EKSENİ DÖNMEZ — yalnız SOZLESME+OLCUM+KARAR (yani HAKEDİŞ).
+    Avans/devir mahsubu bu fonksiyondan SONRA `avans_mahsup_uygula` ile
+    uygulanıyor; net_odenecek döndürülseydi avans İKİ KEZ düşerdi.
+
+    ⚠️ TEK ÇEKİRDEK: hesap burada yeniden kurulmaz, gölge hesabının kullandığı
+    çekirdek (`ucret_api._kalem_donem_hesapla`) çağrılır. İkinci bir kopya, bu
+    projede zaten üç ayrı dönem-oranı formülü doğurmuştu.
+
+    Motor cevap veremezse None döner — çağıran ESKİ formüle düşer. Sıfır DÖNMEZ:
+    sıfır yazmak kişinin maaşını siler ([[feedback-sahte-yesili-kapatirken]]).
+    """
+    try:
+        from ucret_api import _kalem_donem_hesapla
+        satirlar, _kirik, _t1, _t2 = _kalem_donem_hesapla(cur, yil, ay, str(p["id"]))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("motor_net hesaplanamadi (%s %s-%s): %s", p.get("ad_soyad"), yil, ay, e)
+        return None
+    if not satirlar:
+        return None
+    eks = satirlar[0].get("eksen_toplam") or {}
+    return round(float(eks.get("SOZLESME") or 0)
+                 + float(eks.get("OLCUM") or 0)
+                 + float(eks.get("KARAR") or 0), 2)
+
+
 def sabit_mesai_saati(cur, p: dict, yil: int, ay: int) -> Tuple[float, str]:
     """SABİT TANIMLI MESAİ — vardiya ataması YOKKEN kullanılacak taban saat.
 
@@ -619,6 +656,20 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
         kayit = vardiya_kayit_dict(cur, p, yil, ay, mevcut)
         vk = kayit.pop("_vardiya", {})
         net = maas_hesapla(dict(p), kayit, yil, ay)
+    # ── 🔪 KESİM: NET = Σ KALEM (Adım 6, sahip onayı 2026-09-07) ─────────────
+    # Yukarıdaki dallar `kayit` sözlüğünü ve YEDEK neti üretir; kanonik net artık
+    # motordan gelir. Motor susarsa eski formül devreye girer ve İZ BIRAKIR —
+    # sessizce eski davranışa dönmek, kesimin yapılmadığını gizlerdi.
+    _v1_net = net
+    _m_net = motor_net(cur, dict(p), yil, ay)
+    if _m_net is None:
+        logger.warning("KESIM: motor net veremedi, V1 formulune dusuldu (%s %s-%s)",
+                       p.get("ad_soyad"), yil, ay)
+    else:
+        if abs(_m_net - float(_v1_net or 0)) > 0.005:
+            logger.info("KESIM: %s %s-%s  V1=%.2f -> kalem toplami=%.2f",
+                        p.get("ad_soyad"), yil, ay, float(_v1_net or 0), _m_net)
+        net = _m_net
     # Avans mahsubu — dönemin ödenmiş avansları + önceki devir netten düşer
     net, avans_mahsup, mahsup_devir = avans_mahsup_uygula(cur, dict(p), yil, ay, net)
     kid = str(uuid.uuid4())
