@@ -784,6 +784,70 @@ yazmak append-only tabloyu ayda ~30 kat şişirirdi; sahip kararı gerekir.
 
 ---
 
+---
+
+## 5p · FABLE DENETİMİ + MADDE 1-2 UYGULANDI (2026-09-07)
+
+Sahip kesimden sonra bağımsız denetim istedi. **Hüküm: kapsamlı revizyon
+gerekmiyor, 6 nokta atışı düzeltme — ikisi para yanlış yazıyor.**
+
+### 🔴 DENETİM BENİM HATAMI BULDU
+Kesimde ilan ettiğim "beklenen etki −272,23 ₺" bir kural etkisi DEĞİL, motorun
+kuralı yanlış uygulamasıydı. Üstelik bu değeri **golden çıpasına dondurmuştum**
+— hata referans olmuştu.
+
+```
+ölçüm  (gorev_api:2551)   oran = (payda − ihlal_gun) / payda   ← yalnız İHLAL düşürür
+motor  (bordro_motor:153) oran = hak_gun / payda               ← VARDİYASIZ GÜN de düşürür
+```
+
+`payda`, `beklenen_gun` kuralıyla planlı günden büyük olabildiği için kişinin
+**izinli** olduğu günler "hak doğmadı" sayılıyordu. Sahip kuralı tersini
+söylüyor: *hafta izni kesinti değildir, vardiyada olmayan izinlidir.*
+naz dal Eylül: 5 planlı gün, 5'inde hak, ihlal SIFIR → yine de 272,23 ₺ kesilmiş.
+
+### MADDE 1 — MOTOR YEMEK ORANI DÜZELTİLDİ
+`oran = (payda − hak_dogmayan) / payda`, `hak_dogmayan = max(0, planli − hak)`.
+Ölçüm tarafındaki formülün birebir aynısı.
+⚠️ `payda == planli` iken iki formül **matematiksel olarak aynı** — bu yüzden
+`planli_gun` paydası kullanan kapanmış aylar KAYMADI (çıpa diffi kanıtladı).
++ `EKSIK_GUN` kesintisi part-time'a uygulanmaz (çifte kesinti; bugün hiçbir
+part-time'da tetiklenmediği için testler göremiyordu).
+
+### MADDE 2 — KESİM TAMAMLANDI
+`personel_aylik_kaydet` (main.py:10958) ve `vardiya_aktar` (main.py:11074) neti
+hâlâ V1 formülüyle yazıyordu; gece senkronu motorla eziyordu. Aradaki saatlerde
+ödeme yapılırsa fark kasadan çıkardı. v2 Ekip'in **"kaydet"** ve **"vardiyadan
+doldur"** düğmeleri tam bu uçlara gidiyor.
+Artık: girdiler ÖNCE yazılır (motor onları okusun), net SONRA motordan alınır —
+`gorev_api.py:2755-2781` ile aynı desen. Motor susarsa V1 neti yerinde kalır ve
+LOG düşer.
+
+### DOĞRULAMA
+```
+naz dal        7.911,94 → 8.184,16   (272,22 ₺ geri geldi)
+saklanan == motor              9/9 kişi
+kabul testi                    9/9
+golden 06/07/08                0,00 fark — kapalı dönemlerde TEK net değişmedi
+golden 09                      çıpa düzeltildi (7.911,94 → 8.184,16)
+```
+
+### FABLE'IN KALAN 4 MADDESİ (sahip kararı bekliyor)
+3. **Tek sayı:** `net_hakediş` 4 ekrandan kalksın, hepsi motoru okusun;
+   `/ucret/kalem` açık ayda CANLI kalem dönsün, kilitte YAZILI. Defter
+   tazeleme işi tamamen biter. *(orta)*
+4. **Ödemede tek düğme:** `/ode` izi kendi arasın, "X ₺ zaten düşülmüş, kalan
+   Y mi?" desin. −15 dk/ay, yanlış uç riski sıfır. *(orta)*
+5. **Kuyruk gürültüsü:** 0 ₺'lik askıda satır kuyruğa girmesin (bugün 11 gün /
+   0,00 ₺); onay satırında "giriş kaydı da yok" uyarısı; askıda ₺/gün motorla
+   aynı formülü okusun. *(küçük)*
+6. **Yedek yolu tuzaktan çıkar:** motor susarsa `hesaplanan_net`'e DOKUNMA +
+   alarm; `kanonik_net`/`part_elle_saat_net`/`maas_hesapla` silinsin;
+   `_kalem_donem_hesapla` `sube_id` geçirsin; `_tavan_hesapla` motoru okusun;
+   "onaydan sonra motor yeniden hesaplar" cümlesi TERS (onay kilitler). *(küçük-orta)*
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
