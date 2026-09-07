@@ -742,6 +742,48 @@ golden 2026-09           4 kişide beklenen fark → yeniden donduruldu
 
 ---
 
+---
+
+## 5o · ADIM 11 KAPANDI (2026-09-07) — V2 PLANI BİTTİ
+
+### 🔴 TEMİZLİK BİR HATA ORTAYA ÇIKARDI: BAYAT DEFTER
+Kesimden sonra net **her senkronda motordan** hesaplanıyor, ama `bordro_kalem`
+tablosuna YAZMA ayrı bir uçla (`/ucret/kalem-yaz`) yapılıyor. Açık ayda gün
+ilerledikçe yazılı defter hesabın gerisinde kalıyor. Canlı ölçüm:
+
+| dönem | durum |
+|---|---|
+| 2026-08 (kapalı) | defter GÜNCEL · 9/9 kişi 0,00 |
+| 2026-09 (açık) | **8 kişinin defteri geride** · kişi başı 900–1.400 ₺ |
+
+Personelin telefonunda **üstte güncel net, altta eski döküm** görünüyordu ve
+ikisi tutmuyordu — "bu rakam nereden çıktı" sorusuna YANLIŞ cevap veriliyordu.
+
+### YAPILAN
+· `GET /api/ucret/kalem` artık kişi başına `guncel_net` · `fark` · `guncel`
+  bayrağı, dönem başına `bayat_kisi` + açıklama döner.
+  ⚠️ **Sessizce TAZELEMEZ** — defter append-only; her okumada yeni sürüm yazmak
+  tabloyu şişirirdi. Duyu SÖYLER, kod kendiliğinden düzeltmez.
+· Personel ekranı: defter bayatsa başlık "Önceki dökümün" olur ve içeride
+  nedeni yazar ("bu döküm son yazıldığı güne ait…").
+· v2 çekmecesi + kod yorumu: `net_hakediş` artık **KANONİK DEĞİL**, vardiya
+  kaydından türeyen İKİNCİ GÖRÜŞ. Kanonik olan kalem defteridir; ikisi
+  ayrıldığında haklı olan defterdir (yemek paydası gibi kuralları yalnız motor okur).
+
+### DOĞRULAMA
+```
+golden 4 dönem   0,00 fark        kabul testi 9/9
+canlı bundle     yeni metinler yayında (index-B0dNAxR3.js)
+2026-08 defteri  "Defter GÜNCEL"  ·  2026-09 defteri  8 kişi bayat (doğru tespit)
+```
+
+### ⏳ AÇIK KALAN (bilinçli)
+Defterin otomatik tazelenmesi YAPILMADI. Ay kapanırken `/ucret/kalem-yaz`
+çalıştırılır ve defter kesinleşir. Gece senkronunda her kişiye yeni sürüm
+yazmak append-only tabloyu ayda ~30 kat şişirirdi; sahip kararı gerekir.
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
