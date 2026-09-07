@@ -847,9 +847,25 @@ golden 09                      çıpa düzeltildi (7.911,94 → 8.184,16)
    0,00 fark. Kapalı ay (Ağustos): 9/9 `kaynak=yazili · kilitli=true`.
 4. **Ödemede tek düğme:** `/ode` izi kendi arasın, "X ₺ zaten düşülmüş, kalan
    Y mi?" desin. −15 dk/ay, yanlış uç riski sıfır. *(orta)*
-5. **Kuyruk gürültüsü:** 0 ₺'lik askıda satır kuyruğa girmesin (bugün 11 gün /
-   0,00 ₺); onay satırında "giriş kaydı da yok" uyarısı; askıda ₺/gün motorla
-   aynı formülü okusun. *(küçük)*
+5. ✅ **UYGULANDI (2026-09-07)** — üç düzeltme:
+   · **Üçüncü formül kalktı.** Günlük tutar `aylık yemek ÷ PLANLI GÜN` ile
+     hesaplanıyor ve `yemek_paydasi` kuralını hiç okumuyordu. Artık ölçüm
+     katmanının kendi paydasını (`yemek_ucret_birim`) kullanıyor.
+   · **Parasız gürültü ayrıldı.** Başlık rakamı yalnız para eden satırları
+     sayar; diğerleri kaybolmaz, `bilgi` kovasında durur.
+   · **Eksik bağlam kapandı.** Askıdaki günde İŞE GİRİŞ kaydı da yoksa ekran
+     söylüyor ("⚠ N günde giriş kaydı da yok").
+
+   🔴 **DÜZELTME BİR HATAYI ORTAYA ÇIKARDI:** eski formül `aylik_toplam_tahmini
+   − taban − yol` ile aylık yemeği türetiyordu; PART-TIME'da bu 0 çıkıyor.
+   Sonuç: **ersan kazan** için kuyruk "0,00 ₺ · sözleşmesinde yemek yok" diyordu
+   ve sahibe böyle raporlanmıştı — oysa `ucret_tanim`'da **YEMEK 7.000,00 ₺**
+   tanımlı. Doğru rakam: 5 gün × 272,22 = **1.361,12 ₺**. Bir hakediş, yanlış
+   formül yüzünden görünmez olmuştu.
+   (emir efe eraydın'da yemek gerçekten 0 — o satır doğruydu.)
+
+   Canlı sonuç: onay bekleyen **1 kişi · 5 gün · 1.361,12 ₺** (önce "11 gün /
+   0,00 ₺" görünüyordu). Gün tutarı motorun yazacağıyla **0,00 fark**.
 6. **Yedek yolu tuzaktan çıkar:** motor susarsa `hesaplanan_net`'e DOKUNMA +
    alarm; `kanonik_net`/`part_elle_saat_net`/`maas_hesapla` silinsin;
    `_kalem_donem_hesapla` `sube_id` geçirsin; `_tavan_hesapla` motoru okusun;
