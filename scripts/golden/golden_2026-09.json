@@ -2631,14 +2631,14 @@
     "rapor_kesinti": false,
     "manuel_duzeltme": 0.0,
     "not_aciklama": null,
-    "hesaplanan_net": 7911.94,
+    "hesaplanan_net": 8184.16,
     "avans_mahsup": 0.0,
     "mahsup_devir": 0.0,
     "durum": "taslak",
     "odeme_id": "c6321360-65b5-418c-9cfe-d687e54c5655",
     "odeme_durumu": "bekliyor",
     "odeme_tarihi": "2026-10-01",
-    "odenecek_tutar": 7911.94,
+    "odenecek_tutar": 8184.16,
     "odenen_tutar": 0.0,
     "vardiya_ay_toplam_saat": 47.47,
     "vardiya_ek_mesai_saat": 0.0,
@@ -2682,6 +2682,6 @@
     "cikis_tarihi": null
    }
   ],
-  "toplam_tahmini": 64342.34
+  "toplam_tahmini": 64614.56
  }
 }
