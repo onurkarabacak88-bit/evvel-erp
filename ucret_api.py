@@ -1502,3 +1502,16 @@ def maas_odeme_izleri(cur, personel_id: str, yil: int, ay: int) -> Dict[str, Any
                       "yontem": r.get("odeme_yontemi"), "aciklama": ac})
     return {"ad_soyad": ad, "izler": izler,
             "zaten_dusulmus": round(sum(x["tutar"] for x in izler), 2)}
+
+
+@router.get("/maas-odeme-izi")
+def maas_odeme_izi(personel_id: str = Query(...), yil: int = Query(...),
+                   ay: int = Query(...)):
+    """Bu kişiye bu ÇALIŞMA dönemi için kasadan zaten ne düşmüş? SALT OKUR.
+
+    `/odeme-plani/{id}/ode` ucundaki çift ödeme kapısı bu çekirdeği kullanır.
+    Kapının doğruluğu ÖDEME DENEYEREK sınanamaz ([[feedback-yikici-ucu-sinama]]);
+    bu uç aynı cevabı yazmadan verir, hem doğrulama hem ekran önizlemesi için.
+    """
+    with db() as (_, cur):
+        return maas_odeme_izleri(cur, str(personel_id), yil, ay)
