@@ -3908,6 +3908,15 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                     {b.kayitli_gun != null
                       ? <> · <span style={{ color: R.yesil }}>{b.kayitli_gun}/{b.planli_gun} gün kaydı var</span></>
                       : null}
+                    {/* 🚪 GİRİŞ KAYDI DA YOK MU (Fable madde 5 · 2026-09-07)
+                        Askıdaki gün "molasını kaydetmemiş" demek. O gün İŞE GİRİŞ
+                        kaydı da yoksa soru değişir: kişi o gün geldi mi? Onay bir
+                        PARA kararıdır; bağlamı eksik verilemez. */}
+                    {sayi(b.girissiz_gun) > 0 && (
+                      <> · <span style={{ color: R.amber }}>
+                        ⚠ {b.girissiz_gun} günde <b>giriş kaydı da yok</b>
+                      </span></>
+                    )}
                   </span>
                   <b style={{ color: R.yesil, minWidth: 90, textAlign: 'right' }}>
                     {fmt(sayi(b.toplam_tutar))}

@@ -486,20 +486,26 @@ def mola_askida(yil: int = Query(...), ay: int = Query(...)):
     except Exception as e:  # noqa: BLE001
         raise HTTPException(500, "vardiya takip okunamadi: %s" % e)
 
-    bekleyen, toplam_tl = [], 0.0
+    bekleyen: List[Dict[str, Any]] = []
     for r in (vt or {}).get("personeller") or []:
         gunler = r.get("mola_askida_gunler") or []
         if not gunler:
             continue
         u = r.get("ucret_detay") or {}
         pg = r.get("planli_gun") or 0
-        aylik_yemek = (float(u.get("aylik_toplam_tahmini") or 0)
-                       - float(u.get("taban_maas") or 0)
-                       - float(u.get("yol_ucret_aylik") or 0))
         gecen = float(u.get("gecen_gun") or 0)
-        # Bir günün para karşılığı = aylık yemek × dönem oranı ÷ planlı gün
-        gun_tl = (aylik_yemek * (gecen / 30.0) / pg) if pg else 0.0
-        toplam_tl += gun_tl * len(gunler)
+        _ay_gun = float(u.get("ay_gun") or 30.0)
+        # 🔴 ÜÇÜNCÜ FORMÜL OLMASIN (Fable madde 5 · 2026-09-07)
+        # Eski hâli günlük tutarı `aylık yemek ÷ PLANLI GÜN` ile buluyordu ve
+        # `yemek_paydasi` kuralını HİÇ okumuyordu. Kural 'beklenen_gun' iken
+        # payda planlı günden büyük olabiliyor → onay ekranındaki "onaylanırsa
+        # +X ₺" rakamı motorun yazacağıyla tutmuyordu. Sahip, ödediğinden
+        # başka bir sayıya bakarak karar veriyordu.
+        # Ölçüm katmanı doğru paydayı ZATEN hesaplayıp `yemek_ucret_birim`
+        # olarak veriyor (gorev_api.py:2586) — üçüncü bir formül yazmak yerine
+        # onu kullanıyoruz. Bir günün marjinal değeri:
+        #     aylık yemek ÷ payda × dönem oranı  =  yemek_ucret_birim × (geçen/30)
+        gun_tl = float(u.get("yemek_ucret_birim") or 0) * (gecen / _ay_gun if _ay_gun else 0)
         # 🔴 SEBEBİ SÖYLE, SADECE "ONAYLA" DEME (sahip 2026-09-07:
         # "HER GÜN ONAY MI YAPACAĞIM!"). Ölçüm gösterdi ki iki ayrı topluluk var:
         #   · kaydı düzgün tutan, bir gün kaçıran  → tek tık onay, güvenli
@@ -519,25 +525,51 @@ def mola_askida(yil: int = Query(...), ay: int = Query(...)):
         else:
             tani = "duzensiz"
             tani_metni = "Kaydı düzensiz tutuyor — önce nedenini sormak gerekebilir."
+        # 🚪 GİRİŞ KAYDI DA YOK MU? (Fable madde 5)
+        # Askıdaki gün "molasını kaydetmemiş" demek. Ama o gün İŞE GİRİŞ kaydı
+        # da yoksa soru değişir: kişi o gün geldi mi? Sahip bunu bilmeden
+        # onaylıyordu. Onay bir PARA kararıdır; kararın bağlamı eksik olamaz.
+        _gs = {str(g.get("tarih")): g for g in (r.get("gunler") or [])}
+        girissiz = [t for t in gunler if not (_gs.get(t) or {}).get("giris_var")]
+        _toplam = round(gun_tl * len(gunler), 2)
         bekleyen.append({
             "personel_id": str(r.get("personel_id")),
             "ad_soyad": r.get("ad_soyad"),
             "planli_gun": pg,
             "askida_gun": len(gunler),
             "gunler": gunler,
+            "girissiz_gun": len(girissiz),
+            "girissiz_gunler": girissiz,
+            "para_etkisi": _toplam > 0.005,
             "gun_tutari": round(gun_tl, 2),
-            "toplam_tutar": round(gun_tl * len(gunler), 2),
+            "toplam_tutar": _toplam,
             "mola_ozet": m,
             "kayitli_gun": _kayitli,
             "tani": tani,
             "tani_metni": tani_metni,
         })
+    # 🔢 BAŞLIK RAKAMI YALNIZ PARA EDEN SATIRLARI SAYAR (Fable madde 5)
+    # Canlı: kuyrukta 11 gün görünüyordu ve 11'inin de karşılığı 0,00 ₺ idi
+    # (emir efe 6 + ersan 5 — sözleşmelerinde yemek yok). Sahip parasız
+    # satırları okuyup onaylıyor, gerçek kararlar gürültüde kayboluyordu.
+    # Satırlar KAYBOLMAZ (kişinin kaydı hiç tutmadığı bilgisi değerli), ama
+    # "onay bekleyen" sayısı yalnız para eden satırdır.
+    _parali = [b for b in bekleyen if b["para_etkisi"]]
+    _bilgi = [b for b in bekleyen if not b["para_etkisi"]]
     return {"yil": yil, "ay": ay,
             "kural": (vt or {}).get("personeller", [{}])[0].get("mola_kurali")
                      if (vt or {}).get("personeller") else None,
-            "bekleyen_kisi": len(bekleyen),
-            "bekleyen_gun": sum(b["askida_gun"] for b in bekleyen),
-            "bekleyen_tutar": round(toplam_tl, 2),
+            "bekleyen_kisi": len(_parali),
+            "bekleyen_gun": sum(b["askida_gun"] for b in _parali),
+            "bekleyen_tutar": round(sum(b["toplam_tutar"] for b in _parali), 2),
+            "bilgi_kisi": len(_bilgi),
+            "bilgi_gun": sum(b["askida_gun"] for b in _bilgi),
+            "not": ("Onay bekleyen yok." if not _parali else
+                    "%d kişi · %d gün onay bekliyor." % (len(_parali),
+                                                         sum(b["askida_gun"] for b in _parali)))
+                   + ("" if not _bilgi else
+                      " Ayrıca %d kişinin kaydı eksik ama sözleşmesinde yemek yok — "
+                      "onay para değiştirmez." % len(_bilgi)),
             "bekleyenler": bekleyen,
             "onayli": onayli}
 
@@ -895,8 +927,6 @@ def kalem_oku(yil: int = Query(...), ay: int = Query(...),
         except Exception as e:  # noqa: BLE001
             logger.warning("kalem defteri tazelik olculemedi %s-%s: %s", yil, ay, e)
             sat = []
-    simdi = {str(x["personel_id"]): x for x in sat}
-
     # 🔴 AÇIK AYDA DEFTER CANLIDIR, KİLİTTE YAZILI (Fable madde 3 · 2026-09-07)
     # Önceki hâli her zaman `bordro_kalem`'deki YAZILI satırları döndürüyordu.
     # Ama defterin yazılması ayrı bir uçla (`/kalem-yaz`) yapılıyor ve üründe
