@@ -3772,6 +3772,180 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     const avansBekleyen = sayi(avans?.bekleyen_adet);
     const avansTeslimBekleyen = sayi(avans?.teslim_bekleyen_adet);
     const toplamFm = bordro.reduce((s, b) => s + sayi(b.fazla_mesai_saat), 0);
+  // ══════════════════ ÇEKMECE KATMANI (sahip 2026-09-07: "çekmece mantığını kur")
+  // 🔴 NEDEN: çekmece bugüne kadar ÇIKMAZ SOKAKtı — aç, düz listeyi oku, kapat.
+  // `parcalar.jsx` satırı kapı yapabiliyor (`onTikla`) ve geri yolu çizebiliyor
+  // (`geri`) ama bu güç yalnız BAKIŞ'ta kullanılmıştı; bordroda hiç yoktu.
+  // Oysa derinleşecek veri TAM BURADA: her kalem kendi kanıtını taşıyor
+  // (miktar · birim · birim tutar · kaynak · kanıt sınıfı · kural/ücret satırı).
+  // ⚠️ DOKTRİN ([[reference-cekmece-denetimi]]): "satırı tıklanabilir yapmak ile
+  // arkasına içerik koymak BİRLİKTE yapılmalı" — yalnız ilki yapılırsa dürüst
+  // bir çıkmaz sokak, YALANCI BİR KAPIya dönüşür. Bu yüzden kapı YALNIZ kanıtı
+  // olan kalemde açılır; kanıtsız kalem eskisi gibi düz metin kalır.
+  const EKSEN_AD = { SOZLESME: 'sözleşme', OLCUM: 'ölçüm', KARAR: 'karar', MAHSUP: 'mahsup' };
+  const KANIT_AD = {
+    sozlesme: 'Sözleşmeden — ücret tanımında yazılı',
+    olcum: 'Ölçümden — vardiya/mola kaydından sayıldı',
+    beyan: 'Beyandan — sahip kararı, ölçüm değil',
+    varsayim: '⚠ VARSAYIM — kayıt yok, tam hak varsayıldı',
+    turetilmis: 'Türetilmiş — başka bir kalemden hesaplandı',
+  };
+
+  /** Bir kalemin `kanit` sözlüğünü insan diline çevirir. */
+  const kanitSatirlari = (k) => {
+    const kn = k.kanit || {};
+    const S = [];
+    const ekle = (ad, deger, detay) => {
+      if (deger === undefined || deger === null || deger === '') return;
+      S.push({ ad, detay: detay || '', tutar: String(deger) });
+    };
+    // Ölçü — "kaç × kaça" sorusunun cevabı
+    if (k.miktar != null && k.birim_tutar != null) {
+      ekle('Ölçü', `${trSayi(sayi(k.miktar), 2)} ${k.birim}`, 'sayılan miktar');
+      ekle('Birim tutar', fmt(sayi(k.birim_tutar)), `bir ${k.birim} karşılığı`);
+    }
+    // Türe özel kanıt alanları — motorun `kanit` JSON'ı
+    if (kn.aylik_maas != null) ekle('Aylık maaş', fmt(sayi(kn.aylik_maas)), 'sözleşmedeki tam tutar');
+    if (kn.aylik_yemek != null) ekle('Aylık yemek', fmt(sayi(kn.aylik_yemek)), 'sözleşmedeki tam tutar');
+    if (kn.aylik_yol != null) ekle('Aylık yol', fmt(sayi(kn.aylik_yol)), 'sözleşmedeki tam tutar');
+    if (kn.gecen_gun != null) ekle('Geçen gün', trSayi(sayi(kn.gecen_gun), 0), `${trSayi(sayi(kn.aylik_gun || 30), 0)} günlük ay üzerinden`);
+    if (kn.donem_orani != null) ekle('Dönem oranı', `%${trSayi(sayi(kn.donem_orani) * 100, 1)}`, 'ayın ne kadarı geçti');
+    if (kn.hak_dogan_gun != null) ekle('Hak doğan gün', `${trSayi(sayi(kn.hak_dogan_gun), 0)} / ${trSayi(sayi(kn.payda), 0)}`, kn.payda_kurali ? `payda kuralı: ${kn.payda_kurali}` : '');
+    if (kn.saat != null) ekle('Saat', trSayi(sayi(kn.saat), 2), kn.saat_kaynagi ? `kaynak: ${kn.saat_kaynagi}` : '');
+    if (kn.saatlik != null) ekle('Saatlik ücret', fmt(sayi(kn.saatlik)), '');
+    if (kn.saatlik_ucret != null) ekle('Saatlik ücret', fmt(sayi(kn.saatlik_ucret)), '');
+    if (kn.esik != null) ekle('Fazla mesai eşiği', `${trSayi(sayi(kn.esik), 1)} sa`, 'bu saatin üstü fazla mesai');
+    if (kn.gerekce) ekle('Gerekçe', '—', String(kn.gerekce));
+    if (kn.dayanak) ekle('Dayanak', '—', String(kn.dayanak));
+    // İz — hangi ücret satırından geldi
+    const iz = kn.iz;
+    if (iz && typeof iz === 'object') {
+      ekle('Ücret satırı', iz.mod === 'ASGARIYE_BAGLI' ? 'asgariye bağlı' : 'sabit',
+           `${iz.gecerli_bas ? kisaTarih(iz.gecerli_bas) : '?'} tarihinden beri${iz.gerekce ? ` · ${iz.gerekce}` : ''}`);
+    }
+    return S;
+  };
+
+  /** KALEM KANITI — çekmecenin ikinci katmanı. Geri yolu bordro dosyasına çıkar. */
+  const kalemKanitiAc = (b, k) => onCekmece?.({
+    tip: 'KALEM KANITI',
+    baslik: `${String(k.tur || '').replace(/_/g, ' ')} · ${b.ad_soyad}`,
+    alt: `${AY_KISA[ay - 1]} ${yil} · ${EKSEN_AD[k.eksen] || k.eksen} ekseni`,
+    kpi: [
+      { etiket: 'Tutar', deger: fmt(sayi(k.tutar)), renk: sayi(k.tutar) < 0 ? R.kirmizi : R.yesil },
+      ...(k.miktar != null ? [{ etiket: 'Miktar', deger: `${trSayi(sayi(k.miktar), 2)} ${k.birim || ''}` }] : []),
+      ...(k.birim_tutar != null ? [{ etiket: 'Birim', deger: fmt(sayi(k.birim_tutar)) }] : []),
+      { etiket: 'Kanıt sınıfı', deger: k.kanit_sinifi || '—',
+        renk: k.kanit_sinifi === 'varsayim' ? R.amber : undefined },
+    ],
+    listeBaslik: 'Bu rakam neye dayanıyor',
+    satirlar: kanitSatirlari(k),
+    not: [
+      KANIT_AD[k.kanit_sinifi] || '',
+      k.kaynak ? `Kaynak: ${k.kaynak}.` : '',
+      'Bu satır bordronun toplamına doğrudan girer — net, kalemlerin toplamıdır.',
+    ].filter(Boolean).join(' '),
+    geri: { ad: `${b.ad_soyad} bordrosu`, onTikla: () => bordroDosyasiAc(b) },
+  });
+
+  /** BORDRO DOSYASI — birinci katman. Kalem satırları artık KAPI. */
+  const bordroDosyasiAc = (b) => onCekmece?.({
+                tip: 'BORDRO DOSYASI',
+                baslik: b.ad_soyad,
+                alt: `${AY_KISA[ay - 1]} ${yil} · ${asamaAd(b.durum)}`,
+                kpi: [
+                  { etiket: 'Hesaplanan net', deger: fmt(sayi(b.hesaplanan_net)), renk: R.yesil },
+                  { etiket: 'Ücret', deger: ucretMetni(b) },
+                  // ⚠️ Saatin KAYNAĞI (sahip doktrini 2026-08-07): vardiya ataması
+                  // TEYİT katmanıdır — yoksa sabit tanımdan aktarılır. Hangisi
+                  // kullanıldığı gizlenmez, çünkü "varsayilan_gunluk" TAHMİNDİR.
+                  {
+                    etiket: 'Çalışma saati',
+                    deger: b.calisma_saati ? `${trSayi(b.calisma_saati, 0)} sa` : '—',
+                    alt: (() => {
+                      const k = String(b.saat_kaynagi || '');
+                      const ucretNot = k.includes('varsayilan_ucret') ? ' · ücret 99 ₺/sa varsayıldı' : '';
+                      // 'elle' = sahip saati kendi girdi; vardiya senkronu bu saate DOKUNMAZ.
+                      if (k === 'elle') return `✍️ elle girildi · ${trSayi(sayi(b.saatlik_ucret), 2)} ₺/sa üzerinden`;
+                      if (k.startsWith('sabit_tanim_haftalik')) return `sabit tanımdan${ucretNot}`;
+                      // Part standardı UYARI DEĞİL: 5,5 sa/gün işletme kuralıdır.
+                      if (k.startsWith('part_standart')) return `part standardı (6 gün × 5,5 sa)${ucretNot}`;
+                      if (k.startsWith('varsayilan_gunluk')) return `⚠ varsayım (haftada 6 gün × 9,5 sa)${ucretNot}`;
+                      return b.calisma_saati ? 'vardiya atamasından' : undefined;
+                    })(),
+                    renk: String(b.saat_kaynagi || '').includes('varsayilan') ? R.amber : undefined,
+                  },
+                  { etiket: 'Fazla mesai', deger: b.fazla_mesai_saat == null ? '—' : `${trSayi(b.fazla_mesai_saat)} sa`, renk: b.fazla_mesai_saat == null ? R.not3 : (sayi(b.fazla_mesai_saat) > 8 ? R.kirmizi : R.krem) },
+                ],
+                listeBaslik: 'Kırılım',
+                satirlar: [
+                  // 📒 KALEM DEFTERİ ÖNCE GELİR (BORDRO V2, 2026-09-07).
+                  // Aşağıdaki sabit alanlar elle seçilmiş bir ÖZETti; net'i
+                  // oluşturan asıl satırlar hiçbir yerde görünmüyordu. Canlı
+                  // bedeli: DENİZ KÜÇÜKKIRLI Temmuz'da 1.166,67 ₺ eksik
+                  // hesaplandı, DÖRT AY fark edilmedi.
+                  // Her kalem kendi ölçüsünü ve kanıt sınıfını taşır:
+                  //   sozlesme/olcum → ölçüldü   · beyan → karar   · varsayim → ⚠
+                  ...((kalemDefteri[b.personel_id] || [])
+                    .filter((k) => k.tur !== 'YEMEK_GUN_ONAY')   // karar kaydı, kalem değil
+                    .sort((x, y) => (x.eksen > y.eksen ? 1 : -1))
+                    .map((k) => ({
+                      ad: `${k.tur.replace(/_/g, ' ')} · ${{
+                        SOZLESME: 'sözleşme', OLCUM: 'ölçüm',
+                        KARAR: 'karar', MAHSUP: 'mahsup',
+                      }[k.eksen] || k.eksen}`,
+                      detay: [
+                        (k.miktar != null && k.birim_tutar != null)
+                          ? `${trSayi(sayi(k.miktar), 2)} ${k.birim} × ${fmt(sayi(k.birim_tutar))}`
+                          : null,
+                        k.kanit_sinifi === 'varsayim' ? '⚠ VARSAYIM — vardiya kaydı yok' : null,
+                        k.kanit_sinifi === 'beyan' ? 'sahip beyanı' : null,
+                      ].filter(Boolean).join(' · ') || k.kaynak,
+                      tutar: fmt(sayi(k.tutar)),
+                      // 🚪 KAPI YALNIZ KANITI OLAN KALEMDE AÇILIR.
+                      // Boş bir kapı, çıkmaz sokaktan beterdir: kullanıcı tıklar,
+                      // hiçbir şey görmez, bir daha tıklamaz. `kanitSatirlari`
+                      // boş dönüyorsa satır eskisi gibi düz metin kalır.
+                      onTikla: kanitSatirlari(k).length ? () => kalemKanitiAc(b, k) : undefined,
+                    }))),
+                  ...((kalemDefteri[b.personel_id] || []).length ? [{
+                    ad: '— defter toplamı —',
+                    detay: `${(kalemDefteri[b.personel_id] || []).filter((k) => k.tur !== 'YEMEK_GUN_ONAY').length} kalem`,
+                    tutar: fmt((kalemDefteri[b.personel_id] || [])
+                      .filter((k) => k.tur !== 'YEMEK_GUN_ONAY')
+                      .reduce((t, k) => t + sayi(k.tutar), 0)),
+                  }] : []),
+                  { ad: 'Avans mahsubu', detay: 'bu ay düşülen', tutar: fmt(sayi(b.avans_mahsup)) },
+                  { ad: 'Mahsup devri', detay: 'sonraki aya taşan', tutar: fmt(sayi(b.mahsup_devir)) },
+                  // 0 eksik gün = "hiç devamsızlık yok" — bu bir BULGUDUR,
+                  // veri yokluğu değil. Kişinin lehine olan bilgi gizlenemez.
+                  { ad: 'Eksik gün', detay: 'devamsızlık', tutar: b.eksik_gun == null ? '—' : `${trSayi(b.eksik_gun, 0)} gün` },
+                  { ad: 'Manuel düzeltme', detay: b.not_aciklama || 'not yok', tutar: fmt(sayi(b.manuel_duzeltme)) },
+                  // Ödeme planının KENDİ durumu — kayıt `durum`undan ayrı kavram
+                  // (bordro onaylı olabilir ama para henüz çıkmamış olabilir).
+                  ...(b.odeme_durumu ? [{
+                    ad: 'Ödeme durumu',
+                    detay: b.odeme_tarihi ? `${kisaTarih(b.odeme_tarihi)} tarihli plan` : 'plan tarihi yok',
+                    tutar: String(b.odeme_durumu),
+                  }] : []),
+                  // Vardiya kaynağı: kanonik saat sunucudan gelir. `calisma_saati`
+                  // ile ayrışıyorsa bordroda elle düzeltme yapılmış demektir.
+                  ...(b.vardiya_ay_toplam_saat != null ? [{
+                    ad: 'Vardiya kaynağı (ay)',
+                    detay: sayi(b.vardiya_ay_toplam_saat) !== sayi(b.calisma_saati)
+                      ? `⚠ bordrodaki ${trSayi(sayi(b.calisma_saati), 0)} sa ile ayrışıyor — elle düzeltilmiş olabilir`
+                      : 'bordrodaki saatle birebir',
+                    tutar: `${trSayi(sayi(b.vardiya_ay_toplam_saat), 0)} sa`,
+                  }] : []),
+                  ...(sayi(b.vardiya_ek_mesai_saat) > 0 ? [{
+                    ad: 'Haftalık limit üstü',
+                    detay: `haftalık limit ${trSayi(sayi(b.vardiya_haftalik_limit), 0)} sa`,
+                    tutar: `${trSayi(sayi(b.vardiya_ek_mesai_saat))} sa`,
+                  }] : []),
+                ],
+                not: 'Hesap maaş çekirdeğinin (maas_service) tekelindedir — buradaki düğmeler o çekirdeğin açtığı kapılardır, yeni bir para yolu değil. Ödeme kasa izine yazılır.',
+  });
+
     return (
       <>
       {/* ⚠️ Sentinel görünür olmalı: "okunamadı"yı sessiz bırakmak, onu
@@ -4130,101 +4304,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                 { v: asamaAd(b.durum), rozet: ASAMA_RENK[b.durum] || ASAMA_RENK[asamaNorm(b.durum)] || R.amber },
               ],
             }))}
-            onSatir={(row) => {
-              const b = row._b;
-              onCekmece?.({
-                tip: 'BORDRO DOSYASI',
-                baslik: b.ad_soyad,
-                alt: `${AY_KISA[ay - 1]} ${yil} · ${asamaAd(b.durum)}`,
-                kpi: [
-                  { etiket: 'Hesaplanan net', deger: fmt(sayi(b.hesaplanan_net)), renk: R.yesil },
-                  { etiket: 'Ücret', deger: ucretMetni(b) },
-                  // ⚠️ Saatin KAYNAĞI (sahip doktrini 2026-08-07): vardiya ataması
-                  // TEYİT katmanıdır — yoksa sabit tanımdan aktarılır. Hangisi
-                  // kullanıldığı gizlenmez, çünkü "varsayilan_gunluk" TAHMİNDİR.
-                  {
-                    etiket: 'Çalışma saati',
-                    deger: b.calisma_saati ? `${trSayi(b.calisma_saati, 0)} sa` : '—',
-                    alt: (() => {
-                      const k = String(b.saat_kaynagi || '');
-                      const ucretNot = k.includes('varsayilan_ucret') ? ' · ücret 99 ₺/sa varsayıldı' : '';
-                      // 'elle' = sahip saati kendi girdi; vardiya senkronu bu saate DOKUNMAZ.
-                      if (k === 'elle') return `✍️ elle girildi · ${trSayi(sayi(b.saatlik_ucret), 2)} ₺/sa üzerinden`;
-                      if (k.startsWith('sabit_tanim_haftalik')) return `sabit tanımdan${ucretNot}`;
-                      // Part standardı UYARI DEĞİL: 5,5 sa/gün işletme kuralıdır.
-                      if (k.startsWith('part_standart')) return `part standardı (6 gün × 5,5 sa)${ucretNot}`;
-                      if (k.startsWith('varsayilan_gunluk')) return `⚠ varsayım (haftada 6 gün × 9,5 sa)${ucretNot}`;
-                      return b.calisma_saati ? 'vardiya atamasından' : undefined;
-                    })(),
-                    renk: String(b.saat_kaynagi || '').includes('varsayilan') ? R.amber : undefined,
-                  },
-                  { etiket: 'Fazla mesai', deger: b.fazla_mesai_saat == null ? '—' : `${trSayi(b.fazla_mesai_saat)} sa`, renk: b.fazla_mesai_saat == null ? R.not3 : (sayi(b.fazla_mesai_saat) > 8 ? R.kirmizi : R.krem) },
-                ],
-                listeBaslik: 'Kırılım',
-                satirlar: [
-                  // 📒 KALEM DEFTERİ ÖNCE GELİR (BORDRO V2, 2026-09-07).
-                  // Aşağıdaki sabit alanlar elle seçilmiş bir ÖZETti; net'i
-                  // oluşturan asıl satırlar hiçbir yerde görünmüyordu. Canlı
-                  // bedeli: DENİZ KÜÇÜKKIRLI Temmuz'da 1.166,67 ₺ eksik
-                  // hesaplandı, DÖRT AY fark edilmedi.
-                  // Her kalem kendi ölçüsünü ve kanıt sınıfını taşır:
-                  //   sozlesme/olcum → ölçüldü   · beyan → karar   · varsayim → ⚠
-                  ...((kalemDefteri[b.personel_id] || [])
-                    .filter((k) => k.tur !== 'YEMEK_GUN_ONAY')   // karar kaydı, kalem değil
-                    .sort((x, y) => (x.eksen > y.eksen ? 1 : -1))
-                    .map((k) => ({
-                      ad: `${k.tur.replace(/_/g, ' ')} · ${{
-                        SOZLESME: 'sözleşme', OLCUM: 'ölçüm',
-                        KARAR: 'karar', MAHSUP: 'mahsup',
-                      }[k.eksen] || k.eksen}`,
-                      detay: [
-                        (k.miktar != null && k.birim_tutar != null)
-                          ? `${trSayi(sayi(k.miktar), 2)} ${k.birim} × ${fmt(sayi(k.birim_tutar))}`
-                          : null,
-                        k.kanit_sinifi === 'varsayim' ? '⚠ VARSAYIM — vardiya kaydı yok' : null,
-                        k.kanit_sinifi === 'beyan' ? 'sahip beyanı' : null,
-                      ].filter(Boolean).join(' · ') || k.kaynak,
-                      tutar: fmt(sayi(k.tutar)),
-                    }))),
-                  ...((kalemDefteri[b.personel_id] || []).length ? [{
-                    ad: '— defter toplamı —',
-                    detay: `${(kalemDefteri[b.personel_id] || []).filter((k) => k.tur !== 'YEMEK_GUN_ONAY').length} kalem`,
-                    tutar: fmt((kalemDefteri[b.personel_id] || [])
-                      .filter((k) => k.tur !== 'YEMEK_GUN_ONAY')
-                      .reduce((t, k) => t + sayi(k.tutar), 0)),
-                  }] : []),
-                  { ad: 'Avans mahsubu', detay: 'bu ay düşülen', tutar: fmt(sayi(b.avans_mahsup)) },
-                  { ad: 'Mahsup devri', detay: 'sonraki aya taşan', tutar: fmt(sayi(b.mahsup_devir)) },
-                  // 0 eksik gün = "hiç devamsızlık yok" — bu bir BULGUDUR,
-                  // veri yokluğu değil. Kişinin lehine olan bilgi gizlenemez.
-                  { ad: 'Eksik gün', detay: 'devamsızlık', tutar: b.eksik_gun == null ? '—' : `${trSayi(b.eksik_gun, 0)} gün` },
-                  { ad: 'Manuel düzeltme', detay: b.not_aciklama || 'not yok', tutar: fmt(sayi(b.manuel_duzeltme)) },
-                  // Ödeme planının KENDİ durumu — kayıt `durum`undan ayrı kavram
-                  // (bordro onaylı olabilir ama para henüz çıkmamış olabilir).
-                  ...(b.odeme_durumu ? [{
-                    ad: 'Ödeme durumu',
-                    detay: b.odeme_tarihi ? `${kisaTarih(b.odeme_tarihi)} tarihli plan` : 'plan tarihi yok',
-                    tutar: String(b.odeme_durumu),
-                  }] : []),
-                  // Vardiya kaynağı: kanonik saat sunucudan gelir. `calisma_saati`
-                  // ile ayrışıyorsa bordroda elle düzeltme yapılmış demektir.
-                  ...(b.vardiya_ay_toplam_saat != null ? [{
-                    ad: 'Vardiya kaynağı (ay)',
-                    detay: sayi(b.vardiya_ay_toplam_saat) !== sayi(b.calisma_saati)
-                      ? `⚠ bordrodaki ${trSayi(sayi(b.calisma_saati), 0)} sa ile ayrışıyor — elle düzeltilmiş olabilir`
-                      : 'bordrodaki saatle birebir',
-                    tutar: `${trSayi(sayi(b.vardiya_ay_toplam_saat), 0)} sa`,
-                  }] : []),
-                  ...(sayi(b.vardiya_ek_mesai_saat) > 0 ? [{
-                    ad: 'Haftalık limit üstü',
-                    detay: `haftalık limit ${trSayi(sayi(b.vardiya_haftalik_limit), 0)} sa`,
-                    tutar: `${trSayi(sayi(b.vardiya_ek_mesai_saat))} sa`,
-                  }] : []),
-                ],
-                not: 'Hesap maaş çekirdeğinin (maas_service) tekelindedir — buradaki düğmeler o çekirdeğin açtığı kapılardır, yeni bir para yolu değil. Ödeme kasa izine yazılır.',
-                aksiyonlar: bordroAksiyonlari(b),
-              });
-            }}
+            onSatir={(row) => bordroDosyasiAc(row._b)}
           />
         ) : (
           <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not }}>
