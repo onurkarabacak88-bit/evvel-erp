@@ -150,7 +150,21 @@ def hesapla(sozlesme: Dict[str, Any], kural: Dict[str, Any],
         # sabit tanımdan aktarılır." Canlı: mehmet ucak −1.400, MERVE KARABACAK
         # −636 (ikisinin de Eylül'de hiç vardiyası yok).
         if planli > 0 and payda > 0:
-            oran = max(0.0, min(1.0, hak_gun / payda))
+            # 🔴 VARDİYASI OLMAYAN GÜN KESİNTİ DEĞİLDİR (Fable denetimi 2026-09-07)
+            # Eski hâli `hak_gun / payda` idi. Payda `beklenen_gun` kuralıyla
+            # planlı günden BÜYÜK olabildiği için, kişinin İZİNLİ olduğu günler
+            # de "hak doğmamış" sayılıp yemeği düşürüyordu. Sahip kuralı bunun
+            # tersini söylüyor ([[reference-yemek-ucreti-kurali]]):
+            #   "hafta izni kesinti DEĞİLDİR, kesinti YALNIZ mola ihlalinde olur;
+            #    vardiyada olmayan personel İZİNLİ sayılır."
+            # Canlı bedeli: naz dal Eylül 2026 — 5 planlı günün 5'inde hak doğmuş,
+            # ihlal SIFIR, ama payda 6 olduğu için 272,23 ₺ kesildi.
+            # Artık yalnız VARDİYASI OLUP hak doğmayan gün düşürür — ölçüm
+            # tarafındaki formülün (gorev_api.py:2551) birebir aynısı.
+            # ⚠️ payda == planli iken iki formül MATEMATİKSEL OLARAK AYNIDIR,
+            # bu yüzden 'planli_gun' paydası kullanan kapanmış aylar KAYMAZ.
+            hak_dogmayan = max(0, planli - hak_gun)
+            oran = max(0.0, min(1.0, (payda - hak_dogmayan) / payda))
             tutar = aylik_yemek * donem_orani * oran
             if tutar > 0:
                 kalemler.append(_kalem(
@@ -228,7 +242,13 @@ def hesapla(sozlesme: Dict[str, Any], kural: Dict[str, Any],
     eksik = float(karar.get("eksik_gun") or 0)
     raporlu = float(karar.get("raporlu_gun") or 0)
     kesinti_gun = eksik + (raporlu if karar.get("rapor_kesinti") else 0)
-    if kesinti_gun > 0 and _gunluk_k > 0:
+    # ⚠️ PART-TIME'A EKSİK GÜN KESİNTİSİ UYGULANMAZ (Fable denetimi 2026-09-07).
+    # Part-time hakedişi zaten ÇALIŞILAN SAATTEN doğar; gelmediği gün saati de
+    # yok, yani kesinti kendiliğinden olmuş demektir. Bir de günlük ücret düşmek
+    # ÇİFTE KESİNTİ olurdu — V1 bunu bilerek yapmıyordu (maas_service.py:302).
+    # Bugün hiçbir part-time'da eksik_gun > 0 olmadığı için testler bunu
+    # göremiyordu: sessiz, tetiklenmemiş bir kusurdu.
+    if kesinti_gun > 0 and _gunluk_k > 0 and not part:
         kalemler.append(_kalem(
             "EKSIK_GUN", "KARAR", -(_gunluk_k * kesinti_gun),
             kaynak="sahip_karari", kanit_sinifi="beyan",
