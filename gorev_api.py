@@ -2407,7 +2407,14 @@ def vardiya_takip(yil: int, ay: int, personel_id: Optional[str] = None):
                                 # Karar BEKLİYOR: para ödenmez ama KAYBOLMAZ,
                                 # sahibin onay listesine düşer.
                                 mola_durum = "askida"
-                                _askida_gunler.append(t)
+                                # ⏳ BUGÜN KUYRUĞA GİRMEZ: gün bitmedi, kişi
+                                # molasını akşam kaydedebilir. Bugünü onaylamak
+                                # hem erken bir PARA kararı olur hem de sahibe
+                                # kendiliğinden çözülecek satır gösterir
+                                # (sahip 2026-09-07: "HER GÜN ONAY MI YAPACAĞIM").
+                                # Durum 'askida' KALIR — kaybolmaz, yarın düşer.
+                                if tarih < _bugun_p:
+                                    _askida_gunler.append(t)
                         if yemek_hak:
                             yemek_ucret_gun += 1
                         _mola[mola_durum] = _mola.get(mola_durum, 0) + 1
