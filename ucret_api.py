@@ -682,8 +682,13 @@ def _kalem_donem_hesapla(cur, yil: int, ay: int,
         gecen = float(u.get("gecen_gun") or 0)
         if gecen <= 0 and not (r.get("planli_gun") or 0):
             continue
+        # ⚠️ sube_id ŞART (Fable madde 6): kural çözücü KAPSAM SIRASI'nı
+        # KISI > SUBE > GENEL diye uygular. Bu SELECT'te şube yoktu, yani motor
+        # ŞUBE KURALINI HİÇ GÖRMÜYORDU — oysa ölçüm tarafı görüyor
+        # (gorev_api.py:2076). İlk şube kuralı yazıldığı gün ikisi sessizce
+        # ayrışırdı; bugün tetiklenmemiş, latent bir sapmaydı.
         cur.execute("SELECT id, ad_soyad, maas, yemek_ucreti, yol_ucreti, "
-                    "       saatlik_ucret, calisma_turu, baslangic_tarihi "
+                    "       saatlik_ucret, calisma_turu, baslangic_tarihi, sube_id "
                     "  FROM personel WHERE id=%s", (pid,))
         p = cur.fetchone()
         if not p:

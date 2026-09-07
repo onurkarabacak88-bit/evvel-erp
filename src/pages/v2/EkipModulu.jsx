@@ -4442,8 +4442,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             taşıyordu. Bir dizinin ilk ve son ögesi hatırlanır; PARA ekranının
             son sözü bir tablo hücresi olamaz.
             ⚠️ YENİ HESAP YOK — ekranda zaten olan sunucu sayıları tek cümlede.
-            ⚠️ En önemli cümle sonda: bu rakam TAHMİNÎDİR. Onaydan sonra maaş
-            motoru yeniden hesaplar; buradaki sayıya bakıp ödeme sözü verilmez. */}
+            ⚠️ En önemli cümle sonda. 🔴 DÜZELTİLDİ (Fable madde 6, 2026-09-07):
+            eskiden "onaydan sonra motor yeniden hesaplar" yazıyordu — TERSİ doğru.
+            Onay HESAPLAMAZ, KİLİTLER (maas_service.py:525 · main.py onayla).
+            Sahip "onaylayınca düzelir" sanıp yanlış rakamı onaylayabilirdi. */}
         <div style={{
           ...kartYuzey, padding: '14px 18px', marginTop: 14,
           borderLeft: `3px solid ${bekleyen.length ? R.amber : R.yesil}`,
@@ -4463,8 +4465,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               bu ay maaştan düşülecek.</>}
           </div>
           <div style={{ fontSize: 11.5, color: R.not2, marginTop: 8, lineHeight: 1.7 }}>
-            ⚠ Buradaki tutarlar <b style={{ color: R.not }}>tahminîdir</b>: onaydan sonra maaş motoru
-            (tek hesap merkezi) yeniden hesaplar. Ödeme sözü bu ekrandaki sayıya bakılarak verilmez.
+            ⚠ Ay kapanmadan bu tutarlar <b style={{ color: R.not }}>artmaya devam eder</b> — her gün
+            hakediş eklenir. <b>Onay hesaplamaz, KİLİTLER</b>: onayladığınız an rakam donar ve kalem
+            defteri o hâliyle saklanır. Onaydan önce son bir kez bakın.
           </div>
         </div>
 

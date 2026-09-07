@@ -211,6 +211,18 @@ def _tavan_hesapla(cur, p: dict) -> Dict[str, Any]:
     yil, ay = bugun.year, bugun.month
     vt = _maas.vardiya_takip_hesap(p["id"], yil, ay)
     hakedis = float((vt or {}).get("net_hakediş") or 0)
+    # 🔪 KESİM SONRASI KANONİK HAKEDİŞ MOTORDAN GELİR (Fable madde 6, 2026-09-07)
+    # Avans tavanı hakedişin %50'si; hakediş V1 formülünden okunuyordu. Kesimden
+    # sonra kanonik rakam Σ kalem olduğu için tavan da oradan hesaplanmalı —
+    # yoksa kişi "hak ettiğinin yarısı" derken BAŞKA bir hakedişe göre avans alır.
+    # Motor susarsa V1 değeri kalır: tavan hesabı DURMAZ, yalnız eski sayıyla
+    # devam eder (avans bir üst sınırdır, hesabın kendisi değil).
+    try:
+        _m = _maas.motor_net(cur, dict(p), yil, ay)
+        if _m is not None:
+            hakedis = float(_m)
+    except Exception:  # noqa: BLE001
+        pass
     beklenen = _beklenen_net(cur, p, yil, ay, vt)
     adaylar = [AVANS_SABIT_TAVAN]
     if hakedis > 0:

@@ -663,8 +663,21 @@ def aylik_vardiya_senkronize(cur, p: dict, yil: int, ay: int) -> dict:
     _v1_net = net
     _m_net = motor_net(cur, dict(p), yil, ay)
     if _m_net is None:
-        logger.warning("KESIM: motor net veremedi, V1 formulune dusuldu (%s %s-%s)",
-                       p.get("ad_soyad"), yil, ay)
+        # 🔴 EMNİYET KEMERİ "DURUR", TUZAK "BAŞKA YÖNE SÜRER" (Fable madde 6)
+        # Eski hâli motor susunca V1 formülüyle para YAZIYORDU ve yalnız log
+        # bırakıyordu. İki formülün ayrıldığı bir sistemde bu, sessizce yanlış
+        # rakamı kaydetmek demek. Artık kayıtlı net KORUNUR: yanlış bir sayı
+        # yazmaktansa eski doğru sayıyı bırakmak yeğdir.
+        _eski = (mevcut or {}).get("hesaplanan_net")
+        if _eski is not None:
+            net = float(_eski)
+            logger.error("KESIM ALARM: motor net veremedi, KAYITLI NET KORUNDU "
+                         "(%s %s-%s · %.2f)", p.get("ad_soyad"), yil, ay, net)
+        else:
+            # Hiç kayıt yoksa korunacak bir şey de yok — V1 ile açılır, ama
+            # bu bir ALARMdır, sessiz gerileme değil.
+            logger.error("KESIM ALARM: motor net veremedi ve kayit YOK, V1 ile "
+                         "acildi (%s %s-%s)", p.get("ad_soyad"), yil, ay)
     else:
         if abs(_m_net - float(_v1_net or 0)) > 0.005:
             logger.info("KESIM: %s %s-%s  V1=%.2f -> kalem toplami=%.2f",
