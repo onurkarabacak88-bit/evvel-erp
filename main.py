@@ -11215,6 +11215,21 @@ def personel_aylik_onayla(pid: str, yil: int = None, ay: int = None):
             (pid, str(maas_odeme_tarihi)),
         )
         plan = cur.fetchone()
+
+    # 📒 ONAY = DEFTERİN DONDUĞU AN (Fable madde 3 · 2026-09-07)
+    # Dönem açıkken kalem defteri CANLI hesaptan okunur (bkz. /ucret/kalem).
+    # Onay bordroyu KİLİTLER; o andan sonra "bu rakam nereden çıktı" sorusunun
+    # cevabı bir daha oynamamalı. Bu yüzden kilit anında yazılı sürüm donar.
+    # ⚠️ Onay AKIŞINI KIRMAZ: defter yazılamazsa bordro yine onaylıdır, yalnız
+    # log düşer — para kararı bir yan kayda bağlanamaz.
+    try:
+        from ucret_api import kalem_yaz as _kalem_yaz, KalemYazModel as _KYM
+        _r = _kalem_yaz(_KYM(kuru=False, gerekce="bordro onayi"), yil, ay, str(pid))
+        logger.info("DEFTER DONDU: %s %s-%s · %s kalem",
+                    pid, yil, ay, _r.get("kalem_toplam"))
+    except Exception as _dfe:  # noqa: BLE001
+        logger.warning("onay sonrasi defter yazilamadi (%s %s-%s): %s", pid, yil, ay, _dfe)
+
     return {
         "success": True,
         "mesaj": "Maaş hesabı onaylandı. Ödeme paneldeki ödeme planından yapılır.",

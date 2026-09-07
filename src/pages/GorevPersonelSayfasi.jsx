@@ -743,10 +743,10 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
     ]).then(([takip, defter]) => {
       const _d = Object.values(defter?.defter || {})[0] || null;
       setKalemler(_d?.kalemler || []);
-      // 🔴 BAYAT DEFTER SESSİZ KALMAZ (2026-09-07): açık ayda gün ilerledikçe
-      // yazılı defter hesabın gerisinde kalıyor (canlı: kişi başı 900-1.400 ₺).
-      // Üstte güncel net, altta eski döküm gösterip "işte dayanağı" demek
-      // YANLIŞ CEVAPtır. Defter bayatsa bunu personelin kendisi görsün.
+      // 📒 Defter açık ayda CANLI, dönem onaylanınca YAZILI (Fable madde 3).
+      // Bayatlık artık YAPISAL OLARAK olamaz: sunucu açık dönemde motorun
+      // güncel kalemlerini döndürüyor. Bayrak yine de okunuyor — sunucu bir
+      // gün "ölçemedim" derse (guncel===null) personel bunu bilmeli.
       setDefterGuncel(_d ? (_d.guncel !== false) : true);
       const kisi = takip?.personeller?.[0];
       if (kisi) {
@@ -951,10 +951,8 @@ function VardiyamEkrani({ oturum, subeBilgi, mod = 'bugun' }) {
                             background: 'rgba(240,180,60,0.12)', border: '1px solid rgba(240,180,60,0.35)',
                             borderRadius: 9, padding: '9px 11px',
                           }}>
-                            ⚠ Bu döküm <b>son yazıldığı güne ait</b>. O günden sonra çalıştığın
-                            günler yukarıdaki tutara girdi ama bu listeye <b>henüz işlenmedi</b> —
-                            bu yüzden alttaki satırların toplamı üstteki rakamdan az.
-                            Ay kapanınca döküm eksiksiz olur.
+                            ⚠ Bu dökümün dayanağı şu an okunamadı. Yukarıdaki tutar
+                            doğrudur; aşağıdaki liste eksik kalmış olabilir.
                           </div>
                         )}
                         {kalemler.map((k, i) => {

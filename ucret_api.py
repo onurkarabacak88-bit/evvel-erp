@@ -896,24 +896,58 @@ def kalem_oku(yil: int = Query(...), ay: int = Query(...),
             logger.warning("kalem defteri tazelik olculemedi %s-%s: %s", yil, ay, e)
             sat = []
     simdi = {str(x["personel_id"]): x for x in sat}
-    bayat = 0
-    for a, d in kisi.items():
-        x = simdi.get(d.get("personel_id") or "")
-        if not x:
-            d["guncel"] = None       # ölçülemedi ≠ güncel
+
+    # 🔴 AÇIK AYDA DEFTER CANLIDIR, KİLİTTE YAZILI (Fable madde 3 · 2026-09-07)
+    # Önceki hâli her zaman `bordro_kalem`'deki YAZILI satırları döndürüyordu.
+    # Ama defterin yazılması ayrı bir uçla (`/kalem-yaz`) yapılıyor ve üründe
+    # onu çağıran hiçbir düğme yok — yani defteri elle biri yazıyordu. Açık ayda
+    # gün ilerledikçe yazılı satırlar geride kalıyor; personelin telefonunda
+    # ÜSTTE güncel net, ALTTA eski döküm görünüyor ve ikisi tutmuyordu
+    # (canlı: kişi başı 900–1.400 ₺).
+    #
+    # Doğrusu: dönem AÇIKKEN defter bir FOTOĞRAF değil, CANLI hesaptır — motor
+    # zaten bu uçta koşuyor, satırlarını göstermemek için sebep yok. Dönem
+    # ONAYLANINCA (kilit) yazılı sürüm donar ve bir daha oynamaz; "o gün ne
+    # ödedik" sorusunun cevabı odur.
+    # ⚠️ Yazma YOK: bu uç okuma ucudur, tabloya dokunmaz.
+    for x in sat:
+        pid_x = str(x["personel_id"])
+        ad_x = x.get("ad_soyad") or pid_x
+        kilitli = str(x.get("durum") or "") in ("onaylandi", "odendi")
+        yazili = kisi.get(ad_x)
+        if kilitli and yazili and yazili.get("kalemler"):
+            yazili["kaynak"] = "yazili"
+            yazili["kilitli"] = True
+            yazili["guncel_net"] = float(x.get("v2_odenecek") or 0)
+            yazili["fark"] = round(yazili["guncel_net"] - float(yazili["toplam"]), 2)
+            yazili["guncel"] = True   # kilitli dönem DONMUŞTUR, bayat sayılmaz
             continue
-        gnc = float(x.get("v2_odenecek") or 0)
-        d["guncel_net"] = gnc
-        d["fark"] = round(gnc - float(d["toplam"]), 2)
-        d["guncel"] = abs(d["fark"]) < 0.5
-        if not d["guncel"]:
-            bayat += 1
-    return {"yil": yil, "ay": ay, "kisi": len(kisi), "kalem": len(R),
-            "bayat_kisi": bayat,
-            "not": ("Defter GÜNCEL." if not bayat else
-                    "%d kişinin defteri hesabın gerisinde — ay ilerledi, defter "
-                    "o günden beri yazılmadı. Tazelemek icin POST /api/ucret/kalem-yaz"
-                    % bayat),
+        canli = x.get("kalemler") or []
+        kisi[ad_x] = {
+            "kalemler": canli,
+            "toplam": round(sum(float(k.get("tutar") or 0) for k in canli), 2),
+            "surum": None, "personel_id": pid_x,
+            "kaynak": "canli", "kilitli": False, "guncel": True,
+            "guncel_net": float(x.get("v2_odenecek") or 0),
+            "fark": 0.0,
+        }
+
+    # Motorun hiç göremediği (dönemle kesişmeyen) yazılı satırlar olabilir —
+    # onları SİLMEYİZ, "ölçülemedi" diye işaretleriz.
+    for a, d in kisi.items():
+        d.setdefault("kaynak", "yazili")
+        if d.get("guncel") is None or "guncel" not in d:
+            d["guncel"] = None
+
+    canli_adet = sum(1 for d in kisi.values() if d.get("kaynak") == "canli")
+    return {"yil": yil, "ay": ay, "kisi": len(kisi),
+            "kalem": sum(len(d.get("kalemler") or []) for d in kisi.values()),
+            "yazili_kalem": len(R),
+            "canli_kisi": canli_adet,
+            "bayat_kisi": 0,
+            "not": ("Açık dönem: %d kişinin defteri CANLI hesaptan geliyor. "
+                    "Dönem onaylanınca yazılı sürüm donar." % canli_adet
+                    if canli_adet else "Dönem kilitli — defter YAZILI sürümden."),
             "defter": kisi}
 
 
