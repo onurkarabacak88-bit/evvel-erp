@@ -988,6 +988,77 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
   // sokaktan daha kötüdür.
   //
   // ⛔ HİÇBİR RAKAM YENİDEN HESAPLANMAZ: uç ne dönerse o yazılır.
+  // 🚪 KASA HAREKETİ → KAYNAK KAYIT (sahip 2026-09-07: "kasa hareketi kapısını kur")
+  // Kasa defteri satırı bugüne kadar DÜZ METİNdi: "Personel Maaş: MEHMET EFE"
+  // yazıyordu ama bu satırın HANGİ KAYITTAN doğduğu görünmüyordu. Oysa uç zaten
+  // `kaynak_tablo` + `kaynak_id` + `ref_type` + `odeme_yontemi` döndürüyor —
+  // okunmuyordu. Derinlik uçtaydı, ekranda değildi.
+  const KAYNAK_AD = {
+    odeme_plani: ['Ödeme planı', 'Bir plan satırı ödendiğinde bu hareket doğar — maaş, kira, taksit, kart.'],
+    anlik_giderler: ['Anlık gider', 'Elden/karttan yapılan tekil harcama kaydı.'],
+    borc_envanteri: ['Borç envanteri', 'Kredi ya da borç taksiti.'],
+    sabit_giderler: ['Sabit gider', 'Her ay tekrar eden gider (kira, internet, abonelik).'],
+    kartlar: ['Kredi kartı', 'Kart ekstresi ödemesi.'],
+    personel: ['Personel', 'Maaş / avans ödemesi.'],
+    vadeli_alimlar: ['Vadeli alım', 'Tedarikçiye vadeli alım ödemesi.'],
+    kasa_teslim: ['Kasa teslimi', 'Şubeden merkeze nakit taşınması — para yok olmaz, YER DEĞİŞTİRİR.'],
+    ciro: ['Ciro', 'Şube kapanışından gelen satış geliri.'],
+  };
+
+  /** KASA HAREKETİ — bir satırın arkasındaki kaynak kayıt. */
+  const kasaHareketiAc = (h, geriHedef) => {
+    const kt = String(h.kaynak_tablo || '');
+    const [kAd, kAciklama] = KAYNAK_AD[kt] || [kt || 'kaynak bilinmiyor',
+      kt ? 'Bu tablo için açıklama tanımlı değil.'
+         : '⚠ Bu hareketin kaynağı kayıtlı değil — hangi işlemden doğduğu izlenemiyor.'];
+    const cikis = sayi(h.tutar) < 0;
+    onCekmece?.({
+      tip: 'KASA HAREKETİ',
+      baslik: kisalt(String(h.aciklama || h.islem_turu || '—'), 60),
+      alt: `${kisaGun(h.tarih)} · ${h.islem_turu}`,
+      kpi: [
+        {
+          etiket: cikis ? 'Kasadan çıkan' : 'Kasaya giren',
+          deger: fmt(Math.abs(sayi(h.tutar))),
+          renk: cikis ? R.kirmizi : R.yesil,
+        },
+        { etiket: 'Kaynak', deger: kAd, renk: kt ? undefined : R.amber },
+        {
+          etiket: 'Bakiyeye etkisi',
+          deger: h.kasa_etkisi === false ? 'YOK' : 'var',
+          renk: h.kasa_etkisi === false ? R.amber : R.yesil,
+        },
+        { etiket: 'Yöntem', deger: h.odeme_yontemi || 'belirsiz',
+          renk: h.odeme_yontemi ? undefined : R.not },
+      ],
+      listeBaslik: 'Bu hareket nereden doğdu',
+      satirlar: [
+        { ad: 'Kaynak defter', detay: kAciklama, tutar: kAd },
+        ...(h.kaynak_id ? [{
+          ad: 'Kaynak kayıt', detay: 'o defterdeki satırın kimliği',
+          tutar: String(h.kaynak_id).slice(0, 8) + '…',
+        }] : [{
+          ad: 'Kaynak kayıt', detay: '⚠ bağ yok — bu hareket bir kayda bağlanmamış', tutar: '—',
+        }]),
+        ...(h.ref_type ? [{ ad: 'İşlem tipi', detay: 'kasa defterindeki sınıf', tutar: String(h.ref_type) }] : []),
+        { ad: 'Şube', detay: h.sube_id ? 'parayı çıkaran/alan kasa' : '⚠ şube çözülmemiş — hangi kasadan çıktığı belirsiz',
+          tutar: SUBE_ADI[h.sube_id] || h.sube_id || '—' },
+        { ad: 'Ödeme yöntemi',
+          detay: h.odeme_yontemi === 'elden' ? 'fiziki nakit — çekmeceden çıktı'
+            : h.odeme_yontemi === 'havale' ? 'bankadan gitti, çekmeceye dokunmadı'
+            : '⚠ belirsiz — banka mutabakatı bu alandan besleniyor',
+          tutar: h.odeme_yontemi || '—' },
+        ...(h.olusturma ? [{ ad: 'Kayda geçtiği an', detay: 'işlem tarihinden farklı olabilir', tutar: kisaGun(h.olusturma) }] : []),
+      ],
+      not: (h.kasa_etkisi === false
+        ? '⚠ Bu satır defterde duruyor ama kasa bakiyesini OYNATMIYOR (devir/plan kaydı). Net rakamına dahil değil. '
+        : '')
+        + 'Kasa TEK HAVUZ: nakit de havale de aynı bakiyeyi oynatır. "Ödeme yöntemi" alanı ikisini ayıran '
+        + 'tek ipucudur — banka mutabakatı buradan beslenir.',
+      geri: geriHedef,
+    });
+  };
+
   const kasaDetayAc = async ({ baslik, sube_id, islem_turu, altBilgi, geriHedef }) => {
     // BOYUT 300: canlıda ZAFER kasası 282 hareket — 120'de "162 tanesi bu
     // listede yok" yazıyordu. Dürüsttü ama işe yaramıyordu: sahip yarısını
@@ -1005,7 +1076,12 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
     try {
       const d = await api(`/kasa-defteri?${sorgu.toString()}`);
       const oz = d?.ozet || {};
-      const satirlar = (d?.satirlar || []).map((h) => ({
+      // 🔴 CANLI HATA (2026-09-07): uç `hareketler` döndürüyor, burada
+      // `satirlar` okunuyordu → liste HER ZAMAN BOŞtu. Üstelik alt satır
+      // "282 hareket" yazıyordu; sahip dolu bir başlık altında boş bir liste
+      // görüyordu. Sessiz eleme değil, sessiz YOKLUK.
+      const _ham = d?.hareketler || d?.satirlar || [];
+      const satirlar = _ham.map((h) => ({
         ad: kisalt(String(h.aciklama || h.islem_turu || '—'), 58),
         // Kasayı OYNATMAYAN satır (DEVIR, ODEME_PLANI…) defterde durur ama
         // bakiyeye girmez. Karışırsa "kasa tutmuyor" diye sahte alarm doğar —
@@ -1016,6 +1092,10 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
           h.kasa_etkisi === false ? '⚠ kasayı oynatmaz' : null,
         ].filter(Boolean).join(' · '),
         tutar: fmt(sayi(h.tutar)),
+        // 🚪 Kapı: bu satır hangi kayıttan doğdu. Geri yolu BU listeye çıkar.
+        onTikla: () => kasaHareketiAc(h, {
+          ad: baslik, onTikla: () => kasaDetayAc({ baslik, sube_id, islem_turu, altBilgi, geriHedef }),
+        }),
       }));
       onCekmece?.({
         tip: 'KASA HAREKETLERİ',
