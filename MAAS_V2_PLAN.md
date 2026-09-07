@@ -671,11 +671,18 @@ düzeltme defteri        21 satır · 21 gecerli · 0 mukerrer
 golden 4 dönem 0,00 · kabul testi 9/9
 ```
 
-### ⚠️ BİLİNEN SINIR
-`/odeme-plani/{id}/ode` ödeme tarihini BUGÜN yazar (uç tarih parametresi
-almıyor). Para gerçekte 31 Ağustos'ta çıktı. Kasa BAKİYESİ doğru; günlük/aylık
-nakit raporunda 183.165,85 ₺ Ağustos yerine Eylül'e düşüyor. Bilinerek kabul
-edildi — düzeltmek için uca `odeme_tarihi` parametresi eklenmeli.
+### ✅ SINIR KAPANDI — `odeme_tarihi` EKLENDİ (sahip: "ekle")
+`/odeme-plani/{id}/ode` ödeme tarihini HEP bugün yazıyordu. Artık gövdede
+opsiyonel `odeme_tarihi` (YYYY-AA-GG) kabul ediyor; **gelecek tarih reddedilir**
+(henüz çıkmamış para kasaya ileri tarihe yazılamaz), boş bırakılırsa eski
+davranış birebir sürer. Canlı doğrulandı: alan OpenAPI şemasında görünüyor.
+
+⚠️ **Ağustos'un 8 kaydı 7 Eylül tarihli kaldı.** Geriye dönük düzeltmek plan
+iptali + yeniden oluşturma gerektirir (`DELETE /odeme-plani/{id}` kasayı geri
+alır ama planı `iptal` yapar, yeniden ödenemez). Kasa BAKİYESİ zaten doğru;
+kazanç yalnız gün/ay raporunda. Risk/fayda dengesi düzeltmeyi haklı çıkarmıyor —
+183.165,85 ₺ günlük nakit raporunda 31 Ağustos yerine 7 Eylül'de görünüyor.
+Bundan SONRAKİ geçmiş tarihli ödemeler doğru güne yazılır.
 
 ---
 
