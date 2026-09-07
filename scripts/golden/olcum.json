@@ -14,7 +14,7 @@
   },
   "2026-09": {
    "kisi": 9,
-   "toplam_net": 64614.56
+   "toplam_net": 65975.67
   }
  },
  "olcum": {
@@ -35,8 +35,8 @@
    {
     "ad": "ersan kazan",
     "planli": 6,
-    "hak_dogan": 0,
-    "kayit_yok": 6
+    "hak_dogan": 5,
+    "kayit_yok": 1
    },
    {
     "ad": "CELİLE IŞIK",
