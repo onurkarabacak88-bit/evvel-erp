@@ -621,6 +621,64 @@ Sahte alarm olduğunu BİLİYORUZ ama kapatmanın dürüst yolu banka verisidir.
 
 ---
 
+---
+
+## 5m · AĞUSTOS KASADAN DÜŞÜLDÜ (2026-09-07) — sahip: "ONAYLIYORUM"
+
+### 🔴 SAHİBİN TESPİTİ BİR HATAMI DÜZELTTİ
+Sahip: *"Evvel'de nakit de olsa havale de olsa o ayrım yapılmadığı için kasa TEK
+olarak algılanıyor girişlerde çıkışlarda. Ağustos'ta bankalardan ödenen para
+kasadan düşmüş mü düşmemiş mi?"*
+
+Ölçtüm — **düşmemiş.** `islem_turu='PERSONEL_MAAS'` hareketleri:
+
+| ay | hareket | tutar | hangi dönem |
+|---|---:|---:|---|
+| 2026-07 | 17 | −250.486,97 | Haziran |
+| 2026-08 | 11 | −228.622,82 | Temmuz |
+| **2026-09 (önce)** | **0** | **0,00** | **Ağustos — HİÇ** |
+
+⚠️ **BEN YANLIŞ SÖYLEMİŞTİM.** Bir önceki turda "planı ödendi işaretlemek parayı
+ikinci kez düşürür" demiştim. Yanlıştı: kasa TEK HAVUZ olduğu için bankadan
+ödenen maaş **başka hiçbir yere kaydedilmiyor**; kasadan düşmesinin tek yolu
+plan ödemesi. Haziran/Temmuz tam olarak böyle işlemişti. Çift sayım değil,
+**EKSİK SAYIM** vardı: kasa 183.165,85 ₺ fazla görünüyordu.
+
+### UYGULANAN
+| | kişi | tutar | etki |
+|---|---:|---:|---|
+| `/ode` — kasadan düştü | 8 | 183.165,85 | PERSONEL_MAAS çıkışı |
+| `/iz-ile-kapat` — plan kapandı | 2 | 20.856,85 | kasa DEĞİŞMEZ |
+
+`nakit_yontemi='havale'` yalnız banka ekstresinde ödemesi GÖRÜLEN 6 kişiye
+yazıldı; YAĞIZ ERKEK ve MEHMET EFE `belirsiz` bırakıldı (sahip beyanı, banka
+kaydı yok) — uydurma damga vurulmadı.
+
+### 🪤 İKİ ÇAKIŞMA YAKALANDI (para iki kez düşmedi)
+· **MERT ALİ AKAR** — planı 15.442,02 ama 1.405,00'ü "maaş farkı (elden)"
+  kaydıyla ZATEN kasadan düşmüştü (banka 14.037 + elden 1.405). Kasadan yalnız
+  14.037,02 düşüldü, kalan iz ile kapatıldı.
+· **nisanur bolat** — Ağustos maaşının TAMAMI elden kaydıyla düşmüştü (5.415,00
+  · 31 Ağu). Ona `/ode` uygulanmadı, yalnız plan satırı kapatıldı.
+· MEHMET EFE'de çakışma YOK: 3.271,67 planın DIŞINDAKİ hakediş farkı.
+
+### SONUÇ (canlı doğrulama)
+```
+kasa               2.047.016,76 → 1.863.850,91 ₺   (iç tutarlılık: tutuyor, fark 0,00)
+Ağustos dönemi açık plan            0 satır · 0,00 ₺
+kalan açık plan (Eylül)            10 satır · 66.267,96 ₺
+düzeltme defteri        21 satır · 21 gecerli · 0 mukerrer
+golden 4 dönem 0,00 · kabul testi 9/9
+```
+
+### ⚠️ BİLİNEN SINIR
+`/odeme-plani/{id}/ode` ödeme tarihini BUGÜN yazar (uç tarih parametresi
+almıyor). Para gerçekte 31 Ağustos'ta çıktı. Kasa BAKİYESİ doğru; günlük/aylık
+nakit raporunda 183.165,85 ₺ Ağustos yerine Eylül'e düşüyor. Bilinerek kabul
+edildi — düzeltmek için uca `odeme_tarihi` parametresi eklenmeli.
+
+---
+
 ## 6 · KAPSAM DIŞI (bilinçli)
 - Banka ekstre satırı + eşleşme → ayrı proje (`project_banka_mutabakat_2026_09`);
   banka PDF ayrıştırıcısı **yok**, Merve VakıfBank ekstresi bekleniyor
