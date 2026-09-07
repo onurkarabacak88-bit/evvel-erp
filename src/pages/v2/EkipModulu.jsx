@@ -5600,7 +5600,14 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           ]}
           satirlar={kisiler.map((p) => {
             const kl = p.kalem || {};
-            const taban = kl.TABAN || kl.SAATLIK || null;
+            // 🔴 CANLI HATA (2026-09-07, ekranı gezerken görüldü): `kl.TABAN ||
+            // kl.SAATLIK` yazıyordu. Part-time kişilerde TABAN kalemi VAR ama
+            // tutarı 0 — nesne olduğu için `||` onu seçiyor ve SAATLIK hiç
+            // okunmuyordu. CELİLE IŞIK 98,5 ₺/sa yerine "0 ₺" görünüyordu.
+            // Boş bir nesne "yok" demek değildir; TÜRE göre seçilir.
+            const _part = (p.calisma_turu || 'surekli') !== 'surekli';
+            const taban = _part ? (kl.SAATLIK || kl.TABAN || null)
+                                : (kl.TABAN || kl.SAATLIK || null);
             // 🪞 AYNA ÖLÇÜTÜ SUNUCUYLA BİREBİR (bordro_ucret.py:163):
             // kaynak ayna OLMASI yetmez, TUTARIN DA > 0 olması gerekir.
             // Tutarsız ölçüt canlıda sahte alarm üretiyordu: part-time kişilerin
@@ -5610,15 +5617,18 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             const aynadan = Object.values(kl).some(
               (v) => String(v.kaynak || '').includes('ayna') && sayi(v.tutar) > 0);
             const uyari = Object.values(kl).some((v) => v.uyari);
-            const gost = (v) => (!v || v.tutar == null
+            const gost = (v, saatlik) => (!v || v.tutar == null
               ? { v: '—', sag: true, renk: R.not2 }
-              : { v: fmt(sayi(v.tutar)), sag: true, mono: true, renk: v.uyari ? R.amber : undefined });
+              : {
+                v: fmt(sayi(v.tutar)) + (saatlik ? '/sa' : ''),
+                sag: true, mono: true, renk: v.uyari ? R.amber : undefined,
+              });
             return {
               id: p.personel_id,
               hucreler: [
                 { v: p.ad_soyad || '—', kalin: true, renk: p.aktif ? R.krem : R.not },
                 { v: p.calisma_turu === 'surekli' ? 'sürekli' : 'part-time', renk: R.metin2 },
-                gost(taban),
+                gost(taban, _part),
                 gost(kl.YEMEK),
                 gost(kl.YOL),
                 aynadan
