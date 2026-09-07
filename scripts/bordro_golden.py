@@ -13,7 +13,7 @@ NEDEN VAR (MAAS_V2_PLAN.md · Adım 0):
    üretiyor mu" sorusunu cevaplar. İkisi birlikte kullanılır.
 
 KULLANIM
-    python scripts/bordro_golden.py                    # dondur + ölç
+    python scripts/bordro_golden.py --dondur           # çıpayı YENİDEN YAZ (dikkat)
     python scripts/bordro_golden.py --karsilastir      # kayıtlı golden ile canlıyı kıyasla
     python scripts/bordro_golden.py --url http://localhost:8000
 Çıktı: scripts/golden/golden_YYYY-MM.json  +  scripts/golden/olcum.json
@@ -217,6 +217,18 @@ def main() -> int:
         url = sys.argv[sys.argv.index("--url") + 1]
     if "--karsilastir" in sys.argv:
         return karsilastir(url)
+    # 🔴 VARSAYILAN ARTIK KARŞILAŞTIRMA (2026-09-07, canlı hata)
+    # Argümansız çalıştırma çıpayı YENİDEN DONDURUYORDU. Çıpanın tek işi
+    # "davranış değişti mi" sorusuna cevap vermek; onu sessizce üzerine yazan
+    # bir komut, gerçek bir gerilemeyi de aynı sessizlikle onaylardı. Bugün
+    # `--karsilastir` yazmayı unuttum ve dört dönemin çıpasını ezdim; para
+    # değişmediği için kurtuldum, ama bu ŞANStı ([[feedback-yikici-ucu-sinama]]).
+    # Dondurmak artık AÇIK niyet ister.
+    if "--dondur" not in sys.argv:
+        print("⚠️  Bu komut ÇIPAYI EZER. Ne yapmak istediğinizi açıkça yazın:")
+        print("    python scripts/bordro_golden.py --karsilastir   # kıyasla (normal kullanım)")
+        print("    python scripts/bordro_golden.py --dondur        # çıpayı YENİDEN YAZ")
+        return 2
     ozet = dondur(url)
     olcum = olc(url)
     os.makedirs(KLASOR, exist_ok=True)

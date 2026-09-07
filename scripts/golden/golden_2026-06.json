@@ -221,7 +221,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 30,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 0,
     "mola_askida_gunler": [],
@@ -346,7 +347,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 4,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 5,
     "mola_askida_gunler": [],
@@ -488,7 +490,8 @@
      "sozlesme_disi": 8,
      "vardiya_yok": 1,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 0,
     "mola_askida_gunler": [],
@@ -675,7 +678,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 3,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 7,
     "mola_askida_gunler": [],
@@ -988,7 +992,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 14,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 0,
     "mola_askida_gunler": [],
@@ -1175,7 +1180,8 @@
      "sozlesme_disi": 1,
      "vardiya_yok": 6,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 8,
     "mola_askida_gunler": [],
@@ -1366,7 +1372,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 5,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 2,
     "mola_askida_gunler": [],
@@ -1484,7 +1491,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 5,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 1,
     "mola_askida_gunler": [],
@@ -1808,7 +1816,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 2,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 0,
     "mola_askida_gunler": [],
@@ -1887,7 +1896,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 13,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 0,
     "mola_askida_gunler": [],
@@ -1972,7 +1982,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 18,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 1,
     "mola_askida_gunler": [],
@@ -2078,7 +2089,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 2,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 1,
     "mola_askida_gunler": [],
@@ -2256,7 +2268,8 @@
      "sozlesme_disi": 5,
      "vardiya_yok": 1,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 0,
     "mola_askida_gunler": [],
@@ -2430,7 +2443,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 8,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 11,
     "mola_askida_gunler": [],
@@ -2660,7 +2674,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 6,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 1,
     "mola_askida_gunler": [],
@@ -2753,7 +2768,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 6,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 0,
     "mola_askida_gunler": [],
@@ -2900,7 +2916,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 18,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 3,
     "mola_askida_gunler": [],
@@ -3159,7 +3176,8 @@
      "sozlesme_disi": 0,
      "vardiya_yok": 2,
      "askida": 0,
-     "onayli": 0
+     "onayli": 0,
+     "gelecek": 0
     },
     "yemek_belgesiz_gun": 1,
     "mola_askida_gunler": [],
