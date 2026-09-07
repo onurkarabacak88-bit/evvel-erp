@@ -9113,6 +9113,13 @@ class VadeliOdeModel(BaseModel):
     odeyen_sube_id: Optional[str] = None
     # 'elden' | 'havale' — banka mutabakatını besler; boşsa belirsiz kalır.
     nakit_yontemi: Optional[str] = None
+    # 📅 PARANIN GERÇEKTE ÇIKTIĞI GÜN (2026-09-07, sahip: "ekle").
+    # Bu uç ödeme gününü HEP `bugun` yazıyordu; geçmişte yapılmış bir ödemeyi
+    # sisteme girerken kasa BAKİYESİ doğru oluyor ama GÜN/AY raporu kayıyordu.
+    # Canlı bedeli: Ağustos maaşları 31 Ağustos'ta çıkmışken 183.165,85 ₺
+    # kasaya 7 Eylül'de düştü — Ağustos nakit raporu olduğundan iyi, Eylül
+    # olduğundan kötü göründü. Boş bırakılırsa eski davranış BİREBİR sürer.
+    odeme_tarihi: Optional[str] = None
 
 
 def _personel_maas_odeme_guard(cur, plan: dict) -> None:
@@ -9311,7 +9318,18 @@ def odeme_yap(oid: str, tutar: Optional[float] = None, body: VadeliOdeModel = Va
                     "mesaj": ("Borç tamamen kapandı" if _kart_tam
                               else f"Kısmi ödeme — kalan {max(0.0, _kart_kalan):,.2f} TL devrediyor")}
 
+        # 📅 Geçmiş tarihli ödeme: gövdede tarih varsa O KULLANILIR.
+        # ⛔ GELECEK YASAK — henüz olmamış bir ödeme kaydı kasayı ileri tarihe
+        # yazar ve bugünün bakiyesini yalanlar ([[feedback-gelecek-gun-karar-kuyrugu]]).
         bugun = str(bugun_tr())
+        if body.odeme_tarihi:
+            try:
+                _od = date.fromisoformat(str(body.odeme_tarihi)[:10])
+            except ValueError:
+                raise HTTPException(400, "odeme_tarihi YYYY-AA-GG olmali")
+            if _od > bugun_tr():
+                raise HTTPException(400, "odeme_tarihi gelecek olamaz — para henuz cikmadi")
+            bugun = str(_od)
         odenen = tutar or _kalan_varsayilan   # P0 fix: varsayılan = KALAN, orijinal değil
         # ── KISMİ ÖDEME (2026-08-08, sahip: "bazen içerdeki borç tutarının bir
         # kısmını bırakırız, üstüne yeni borçlar eklenir; ödeme illa fatura
