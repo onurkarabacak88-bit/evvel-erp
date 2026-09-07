@@ -1215,10 +1215,12 @@ class PlanBaglaModel(BaseModel):
 def _plan_bordro_esle(cur):
     """Maaş planı satırlarını bordro kaydıyla eşle. SALT OKUR, liste döner.
 
-    Eşleşme çapası: (personel_id, referans_ay) → personel_aylik(personel_id,
-    yil, ay). Ad ya da tutar üzerinden EŞLEŞTİRİLMEZ — ikisi de zayıf kanıttır
-    ([[feedback-teslimat-fatura-eslesme]]: tutar en zayıf kanıt).
+    Eşleşme çapası: (personel_id, ÇALIŞMA DÖNEMİ). Çalışma dönemi plandaki
+    `referans_ay`dan `maas_service.referans_to_donem` ile çözülür — o alan
+    ÖDEME ayını tutar, dönemi değil. Ad ya da tutar üzerinden EŞLEŞTİRİLMEZ;
+    ikisi de zayıf kanıttır ([[feedback-teslimat-fatura-eslesme]]).
     """
+    import maas_service as _maas_svc
     cur.execute(
         "SELECT op.id, op.kaynak_id AS personel_id, op.tarih, op.referans_ay, "
         "       op.odenecek_tutar, COALESCE(op.odenen_tutar,0) AS odenen_tutar, "
@@ -1238,14 +1240,18 @@ def _plan_bordro_esle(cur):
     out = []
     for pl in planlar:
         ref = pl.get("referans_ay")
-        # 🔴 DÖNEM = REFERANS AY, ödeme tarihi DEĞİL. Maaş dönem kapandıktan
-        # sonraki ayın 1'inde ödenir; `tarih`ten ay çıkarmak Ağustos bordrosunu
-        # Eylül bordrosu sanmaya yol açar.
+        # 🔴 referans_ay = ÖDEME AYI, ÇALIŞMA DÖNEMİ DEĞİL (maas_service:59-64).
+        # İlk sürümde referans_ay'ı dönem sandım ve 87 satırın 32'si "bordro yok"
+        # göründü — oysa hepsinin bordrosu vardı, yalnızca BİR AY KAYMIŞTI.
+        # Dönüşümü BURADA yeniden türetmiyoruz: planı yazan modülün kendi ters
+        # fonksiyonu çağrılır. İki yerde iki ayrı tarih aritmetiği, bu projede
+        # zaten üç ayrı dönem-oranı formülü doğurmuştu (TEK ÇEKİRDEK).
         if not ref:
             out.append({**pl, "bordro": None, "tani": "referans_ay yok",
                         "tani_metni": "Plan hangi döneme ait belli değil — bağlanamaz."})
             continue
-        b = bordro.get((str(pl.get("personel_id")), ref.year, ref.month))
+        _dy, _da = _maas_svc.referans_to_donem(ref)
+        b = bordro.get((str(pl.get("personel_id")), _dy, _da))
         if not b:
             out.append({**pl, "bordro": None, "tani": "bordro_yok",
                         "tani_metni": "Bu dönem için bordro kaydı yok; plan yetim."})
