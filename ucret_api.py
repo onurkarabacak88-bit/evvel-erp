@@ -879,3 +879,253 @@ def kalem_oku(yil: int = Query(...), ay: int = Query(...),
         d["kalemler"].append(r)
         d["toplam"] = round(d["toplam"] + float(r.get("tutar") or 0), 2)
     return {"yil": yil, "ay": ay, "kisi": len(kisi), "kalem": len(R), "defter": kisi}
+
+
+# ── DÜZELTME DEFTERİ (Adım 8) ───────────────────────────────────────────────
+# 🔴 NEDEN (canlı bulgu 2026-09-07, kendi hatam):
+# Kapanmış dönemin farkı `anlik_giderler`'e serbest bir "elden ödeme" satırı
+# olarak yazılmıştı. O satırın düzelttiği DÖNEME hiçbir bağı yoktu. Sonra
+# Ağustos'u kapatırken KAYNAK kaydı da düzelttim — ve aynı para iki yerde
+# birden kaldı: MERVE KARABACAK 3.180,00 + YAĞIZ ERKEK 1.400,00 = 4.580,00 ₺.
+# Hiçbir şey uyarmadı, çünkü düzeltmeyi kaynağına bağlayan bir defter yoktu.
+#
+# Düzeltme defteri üç şeyi birden tutar:
+#   1) HANGİ DÖNEMİ düzeltiyor (kaynak_yil/ay) — serbest gider satırında yok
+#   2) YAZILDIĞI ANDA kaynak ne diyordu (`kanit.v1_anlik`) — çıpa
+#   3) Bugün kaynak ne diyor — DUYU bunu her okumada yeniden ölçer
+# Üçü bir arada olunca "kaynak sonradan düzeltildi, bu düzeltme artık mükerrer"
+# durumu KENDİLİĞİNDEN görünür. Tek bir çıpa ([[feedback-kayan-pencere-capa]])
+# olmadan bu tespit imkânsızdır.
+class DuzeltmeModel(BaseModel):
+    personel_id: str
+    kaynak_yil: int
+    kaynak_ay: int
+    tutar: float
+    neden: str
+    hedef_yil: Optional[int] = None
+    hedef_ay: Optional[int] = None
+    gider_id: Optional[str] = None      # bağlı anlik_giderler satırı
+    kuru: bool = True                   # ⚠️ VARSAYILAN KURU
+
+
+def _duzeltme_tani(tutar: float, v1_anlik, v1_simdi, v2_simdi):
+    """Bir düzeltme bugün hâlâ GEÇERLİ mi, MÜKERRER mi, EKSİK mi?
+
+    Kanıt: düzeltme yazıldığında kaynak `v1_anlik` diyordu. Bugün `v1_simdi`
+    diyor. Motorun gerçeği `v2_simdi`. Açık = v2 − v1.
+      · açık ≈ düzeltme tutarı → kaynak değişmemiş, düzeltme YERİNDE
+      · açık ≈ 0               → kaynak sonradan düzeltilmiş → MÜKERRER
+      · açık > düzeltme        → düzeltme yetmiyor, hâlâ eksik var
+    """
+    if v1_simdi is None or v2_simdi is None:
+        return ("olculemedi",
+                "Bu dönem için karşılaştırma yapılamadı — kaynak kaydı okunamıyor.")
+    acik = round(float(v2_simdi) - float(v1_simdi), 2)
+    t = round(float(tutar or 0), 2)
+    if abs(acik - t) < 1.0:
+        return ("gecerli",
+                "Kaynak kayıt hâlâ %s ₺ eksik — bu düzeltme yerinde duruyor." % ("%.2f" % t))
+    if abs(acik) < 1.0:
+        return ("mukerrer",
+                "⚠ Kaynak kayıt sonradan düzeltilmiş (%s → %s). Aynı para iki yerde: "
+                "bu düzeltme artık MÜKERRER."
+                % (("%.2f" % float(v1_anlik)) if v1_anlik is not None else "?",
+                   "%.2f" % float(v1_simdi)))
+    if acik > t:
+        return ("eksik",
+                "Kaynakta hâlâ %s ₺ açık var — bu düzeltme (%s ₺) tamamını kapatmıyor."
+                % ("%.2f" % acik, "%.2f" % t))
+    return ("fazla",
+            "Düzeltme (%s ₺) kaynaktaki açıktan (%s ₺) büyük." % ("%.2f" % t, "%.2f" % acik))
+
+
+@router.get("/duzeltme")
+def duzeltme_listesi(yil: Optional[int] = Query(None), ay: Optional[int] = Query(None)):
+    """Düzeltme defteri + HER SATIRIN BUGÜNKÜ GEÇERLİLİĞİ.
+
+    ⚠️ Bu uç sadece listelemez, ÖLÇER. Bir düzeltme yazıldıktan sonra kaynak
+    kayıt değişmiş olabilir; o zaman düzeltme sessizce mükerrere döner. Liste
+    her okumada bunu yeniden hesaplar — "yazdım ve unuttum" hâli olmasın.
+    """
+    with db() as (_, cur):
+        sql = ("SELECT d.id, d.personel_id, d.kaynak_yil, d.kaynak_ay, d.hedef_yil, "
+               "       d.hedef_ay, d.tutar, d.neden, d.kanit, d.durum, d.olusturma, "
+               "       p.ad_soyad "
+               "  FROM bordro_duzeltme d "
+               "  LEFT JOIN personel p ON p.id = d.personel_id "
+               " WHERE d.durum <> 'reddedildi' ")
+        args: List[Any] = []
+        if yil:
+            sql += " AND d.kaynak_yil=%s"
+            args.append(yil)
+        if ay:
+            sql += " AND d.kaynak_ay=%s"
+            args.append(ay)
+        sql += " ORDER BY d.kaynak_yil DESC, d.kaynak_ay DESC, p.ad_soyad"
+        cur.execute(sql, tuple(args))
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+
+        # Dönem başına TEK gölge koşusu — kişi başına çağırmak dakikalar sürerdi.
+        donemler = sorted({(int(s["kaynak_yil"]), int(s["kaynak_ay"])) for s in satirlar})
+        golge: Dict[Any, Dict[str, Any]] = {}
+        for (y, a) in donemler:
+            try:
+                sat, _k, _t1, _t2 = _kalem_donem_hesapla(cur, y, a)
+            except Exception as e:  # noqa: BLE001
+                logger.warning("duzeltme golge okunamadi %s-%s: %s", y, a, e)
+                continue
+            for s in sat:
+                golge[(y, a, str(s["personel_id"]))] = s
+
+        out, ozet = [], {"gecerli": 0, "mukerrer": 0, "eksik": 0, "fazla": 0, "olculemedi": 0}
+        mukerrer_tl = 0.0
+        for s in satirlar:
+            k = s.get("kanit") or {}
+            if isinstance(k, str):
+                try:
+                    k = json.loads(k)
+                except Exception:  # noqa: BLE001
+                    k = {}
+            g = golge.get((int(s["kaynak_yil"]), int(s["kaynak_ay"]), str(s["personel_id"])))
+            tani, metin = _duzeltme_tani(
+                float(s["tutar"] or 0), k.get("v1_anlik"),
+                (g or {}).get("v1_odenecek"), (g or {}).get("v2_odenecek"))
+            ozet[tani] = ozet.get(tani, 0) + 1
+            if tani == "mukerrer":
+                mukerrer_tl += float(s["tutar"] or 0)
+            out.append({**{kk: s[kk] for kk in
+                           ("id", "personel_id", "ad_soyad", "kaynak_yil", "kaynak_ay",
+                            "hedef_yil", "hedef_ay", "neden", "durum", "olusturma")},
+                        "tutar": float(s["tutar"] or 0),
+                        "kanit": k,
+                        "v1_anlik": k.get("v1_anlik"),
+                        "v1_simdi": (g or {}).get("v1_odenecek"),
+                        "v2_simdi": (g or {}).get("v2_odenecek"),
+                        "tani": tani, "tani_metni": metin})
+    return {"adet": len(out), "ozet": ozet,
+            "mukerrer_tutar": round(mukerrer_tl, 2),
+            "satirlar": out}
+
+
+@router.post("/duzeltme")
+def duzeltme_yaz(m: DuzeltmeModel):
+    """Kapanmış döneme düzeltme yaz. ⚠️ VARSAYILAN KURU."""
+    if not m.neden or not m.neden.strip():
+        raise HTTPException(400, "neden zorunlu — duzeltme denetimde savunulmali")
+    if abs(float(m.tutar or 0)) < 0.01:
+        raise HTTPException(400, "tutar sifir olamaz")
+    with db() as (conn, cur):
+        cur.execute("SELECT id, ad_soyad FROM personel WHERE id=%s", (str(m.personel_id),))
+        p = cur.fetchone()
+        if not p:
+            raise HTTPException(404, "personel bulunamadi")
+        # Aynı kişi+dönem+tutar zaten varsa MÜKERRER yazma.
+        cur.execute("SELECT id FROM bordro_duzeltme "
+                    " WHERE personel_id=%s AND kaynak_yil=%s AND kaynak_ay=%s "
+                    "   AND ROUND(tutar,2)=ROUND(%s,2) AND durum <> 'reddedildi'",
+                    (str(m.personel_id), m.kaynak_yil, m.kaynak_ay, float(m.tutar)))
+        if cur.fetchone():
+            return {"ok": False, "neden": "ayni kisi/donem/tutar zaten kayitli"}
+
+        # ÇIPA: yazıldığı anda kaynak ne diyordu. Sonradan değişirse duyu görür.
+        try:
+            sat, _k, _t1, _t2 = _kalem_donem_hesapla(cur, m.kaynak_yil, m.kaynak_ay,
+                                                     str(m.personel_id))
+        except Exception:  # noqa: BLE001
+            sat = []
+        g = sat[0] if sat else {}
+        kanit = {"v1_anlik": g.get("v1_odenecek"), "v2_anlik": g.get("v2_odenecek"),
+                 "gider_id": m.gider_id, "yazim_ts": str(date.today())}
+        if m.kuru:
+            return {"kuru": True, "yazilacak": {
+                "ad_soyad": p.get("ad_soyad"), "donem": "%d-%02d" % (m.kaynak_yil, m.kaynak_ay),
+                "tutar": float(m.tutar), "kanit": kanit},
+                "not": "KURU — hicbir sey yazilmadi. kuru=false ile uygulayin."}
+        cur.execute(
+            "INSERT INTO bordro_duzeltme (personel_id, kaynak_yil, kaynak_ay, "
+            "        hedef_yil, hedef_ay, tutar, neden, kanit, durum) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb,'uygulandi') RETURNING id",
+            (str(m.personel_id), m.kaynak_yil, m.kaynak_ay, m.hedef_yil, m.hedef_ay,
+             float(m.tutar), m.neden.strip(), json.dumps(kanit, ensure_ascii=False)))
+        yeni = cur.fetchone()["id"]
+        conn.commit()
+    return {"ok": True, "id": yeni, "ad_soyad": p.get("ad_soyad")}
+
+
+class DuzeltmeBackfillModel(BaseModel):
+    kuru: bool = True
+
+
+@router.post("/duzeltme/backfill")
+def duzeltme_backfill(m: DuzeltmeBackfillModel):
+    """Elden yazılmış hakediş farklarını düzeltme defterine TAŞI. ⚠️ KURU.
+
+    Bu kayıtlar bugüne kadar `anlik_giderler`'de serbest satırdı: hangi dönemi
+    düzelttikleri yalnız AÇIKLAMA METNİNDE yazıyordu, hiçbir alan bağlamıyordu.
+    Deftere taşınınca kaynağına bağlanır ve duyu onları izlemeye başlar.
+    """
+    import re as _re
+    with db() as (conn, cur):
+        cur.execute(
+            "SELECT id, tarih, tutar, aciklama FROM anlik_giderler "
+            " WHERE aciklama LIKE %s ORDER BY tarih", ("%hakediş farkı (elden)%",))
+        giderler = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("SELECT id, ad_soyad FROM personel")
+        P = {(r["ad_soyad"] or "").strip(): r["id"] for r in (cur.fetchall() or [])}
+
+        yazilacak, atlanan = [], []
+        for g in giderler:
+            ac = str(g.get("aciklama") or "")
+            mm = _re.match(r"^(.+?)\s+(\d{4})-(\d{2})\s+hakediş farkı", ac)
+            if not mm:
+                atlanan.append({"gider_id": g["id"], "neden": "aciklama cozulemedi"})
+                continue
+            ad, yy, aa = mm.group(1).strip(), int(mm.group(2)), int(mm.group(3))
+            pid = P.get(ad)
+            if not pid:
+                # ⛔ GEVŞEK AD EŞLEŞTİRME YOK ([[feedback-para-zinciri-dersleri]]):
+                # yakın ad aramak yerine ATLA ve ADIYLA söyle. Yanlış kişiye
+                # bağlanan bir para kaydı, hiç bağlanmamış olandan beterdir.
+                atlanan.append({"gider_id": g["id"], "neden": "personel bulunamadi: %s" % ad})
+                continue
+            cur.execute("SELECT id FROM bordro_duzeltme "
+                        " WHERE personel_id=%s AND kaynak_yil=%s AND kaynak_ay=%s "
+                        "   AND ROUND(tutar,2)=ROUND(%s,2) AND durum <> 'reddedildi'",
+                        (pid, yy, aa, float(g["tutar"] or 0)))
+            if cur.fetchone():
+                atlanan.append({"gider_id": g["id"], "neden": "defterde zaten var"})
+                continue
+            # Açıklamadaki "Evvel X kaydetmiş" tutarı = yazıldığı andaki çıpa.
+            m2 = _re.search(r"Evvel\s+([\d.]+,\d{2})\s+kaydetmiş", ac)
+            v1_anlik = None
+            if m2:
+                try:
+                    v1_anlik = float(m2.group(1).replace(".", "").replace(",", "."))
+                except ValueError:
+                    v1_anlik = None
+            yazilacak.append({
+                "personel_id": pid, "ad_soyad": ad, "yil": yy, "ay": aa,
+                "tutar": float(g["tutar"] or 0), "gider_id": g["id"],
+                "v1_anlik": v1_anlik, "aciklama": ac})
+
+        if m.kuru:
+            return {"kuru": True, "bulunan_gider": len(giderler),
+                    "yazilacak": len(yazilacak), "atlanan": len(atlanan),
+                    "toplam_tutar": round(sum(x["tutar"] for x in yazilacak), 2),
+                    "satirlar": yazilacak, "atlanan_detay": atlanan,
+                    "not": "KURU — hicbir sey yazilmadi. kuru=false ile uygulayin."}
+
+        for x in yazilacak:
+            kanit = {"v1_anlik": x["v1_anlik"], "gider_id": x["gider_id"],
+                     "kaynak": "anlik_giderler", "aciklama": x["aciklama"],
+                     "yazim_ts": str(date.today())}
+            cur.execute(
+                "INSERT INTO bordro_duzeltme (personel_id, kaynak_yil, kaynak_ay, "
+                "        tutar, neden, kanit, durum) "
+                "VALUES (%s,%s,%s,%s,%s,%s::jsonb,'uygulandi')",
+                (x["personel_id"], x["yil"], x["ay"], x["tutar"],
+                 "Evvel eksik kaydetmisti, fark elden odendi (sahip 2026-09-06)",
+                 json.dumps(kanit, ensure_ascii=False)))
+        conn.commit()
+    return {"kuru": False, "yazilan": len(yazilacak), "atlanan": len(atlanan),
+            "toplam_tutar": round(sum(x["tutar"] for x in yazilacak), 2)}
