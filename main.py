@@ -1441,6 +1441,16 @@ def startup():
             ensure_kullanici(cur)
     except Exception as e:
         logger.warning("kullanici migrasyonu (startup) atlandı: %s", e)
+    # 🏠 KİRALIK MÜLK DEFTERİ: mulk · kiraci · kira_sozlesme · mulk_hareket
+    # + kasa_hareketleri.defter kolonu ('TULIPI' varsayılan). Aynı desen —
+    # kendi kısa transaction'ı, lock_timeout'lu, hata yutulur. Kolon açılmazsa
+    # kasa bugünkü haliyle TEK parça okunur ve uygulama YİNE AÇILIR.
+    try:
+        with db() as (conn, cur):
+            from database import ensure_mulk_defteri
+            ensure_mulk_defteri(cur)
+    except Exception as e:
+        logger.warning("mülk defteri migrasyonu (startup) atlandı: %s", e)
     # 🕐 PART-TIME ELLE SAAT: personel_aylik.saat_kaynagi ('elle' | NULL).
     # Aynı desen — kendi kısa transaction'ı, lock_timeout'lu, hata yutulur.
     # Kolon açılmazsa sistem eski davranışa düşer (saat vardiyadan gelir),
@@ -2544,6 +2554,7 @@ def panel():
                         AND islem_turu NOT IN ('CIRO_DUZELTME','CIRO_IPTAL','ACILIS_DEVRI')), 0) AS toplam_giris
                 FROM kasa_hareketleri
                 WHERE durum='aktif'
+                  AND COALESCE(defter,'TULIPI') = 'TULIPI'   -- 🏠 mülk hariç
                   AND tarih >= date_trunc('month', CURRENT_DATE)
                   AND tarih <  date_trunc('month', CURRENT_DATE) + INTERVAL '1 month'
             """)
@@ -8606,7 +8617,12 @@ def kasa_acilis_devri(body: KasaAcilisBody):
             "FROM kasa_hareketleri WHERE islem_turu='ACILIS_DEVRI'")
         _silinen = [dict(r) for r in (cur.fetchall() or [])]
         cur.execute("DELETE FROM kasa_hareketleri WHERE islem_turu='ACILIS_DEVRI'")
-        mevcut = kasa_bakiyesi(cur)
+        # 🏠 2026-09-08: ÇIPA YALNIZ TULİPİ ÇEKMECESİNİ HİZALAR.
+        # `hedef` sahibin dükkân kasasını FİZİKEN saydığı tutardır. Toplam
+        # bakiye okunursa mülk defterindeki para da bu farka karışır ve
+        # tek bir ACILIS_DEVRI satırıyla TULİPİ'ye yutulur: toplam tutar,
+        # kırılım YALAN söyler. Mülk defterinin çıpası ayrıdır.
+        mevcut = kasa_bakiyesi(cur, defter='TULIPI')
         duzeltme = round(hedef - mevcut, 2)
         insert_kasa_hareketi(
             cur, tarih, "ACILIS_DEVRI", duzeltme,
@@ -15995,6 +16011,10 @@ def aylik_rapor(yil: int = None, ay: int = None):
                 COALESCE(SUM(tutar),0) as net_kasa_degisim
             FROM kasa_hareketleri
             WHERE durum='aktif' AND kasa_etkisi=true AND tarih BETWEEN %s AND %s
+              -- 🏠 2026-09-08: mülk defteri kahve işinin raporuna GİRMEZ.
+              -- Bugün no-op (tüm satırlar 'TULIPI'), yarın kira geldiğinde
+              -- kirayı ciro sanmayı ÖNLER.
+              AND COALESCE(defter,'TULIPI') = 'TULIPI'
         """, (ay_basi, ay_son))
         ozet = dict(cur.fetchone())
         ozet['baslangic_kasa'] = baslangic_kasa

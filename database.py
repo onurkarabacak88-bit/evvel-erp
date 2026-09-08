@@ -6676,3 +6676,139 @@ def ensure_kullanici(cur) -> None:
     # belirsizleşir ve denetim defteri yalan söyler.
     cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_kullanici_adi "
                 "ON kullanici (LOWER(kullanici_adi))")
+
+
+# ═══════════════════════════════════════════════════════════════════
+def ensure_mulk_defteri(cur) -> None:
+    """🏠 KİRALIK MÜLK DEFTERİ — sahibin gayrimenkulleri, TULİPİ'den AYRI defter.
+
+    🔴 NEDEN (sahip 2026-09-08): *"kiralık mülklerimizin takip alanını kurmak
+    istiyorum"* + *"bu kasa izi ... kahveci dükkanın kasa izinden ayrışması
+    lazım"*.
+
+    Bugün kira, `kasa_hareketleri.islem_turu='DIS_KAYNAK'` içine serbest metinle
+    yazılıyor ("Aile Desteği: hasan güçlü kira"). Sonuçları ÖLÇÜLDÜ:
+      · 46 kayıt / 657.765 ₺ kira, kahve dükkânının GELİRİ sayılıyor
+        (`main.py` Excel "GELİR DAĞILIMI" ve panel `bu_ay_kanal_toplam`).
+      · 3.880.000 ₺ ev satışı da aynı torbada — varlık satışı, gelir değil.
+      · Aynı kiracı 3 farklı yazımla ("hamayoun / hamayoğun / hamoayoun faizi")
+        → "bu ay kim ödemedi?" sorusu CEVAPSIZ.
+
+    ⚖️ AYRIŞMA NASIL KURULDU — TEK HAVUZ, İKİ ÇEKMECE (sahip 2026-09-08:
+    *"toplam kasa diye yeni bir isimde şu andaki kasa görünsün"*):
+      TOPLAM KASA  =  TULİPİ kasası  +  MÜLK kasası
+    Para fiziken TEK yerde durur; ayrım paranın YERİNDE değil ETİKETİNDEdir.
+    Bunun için `kasa_hareketleri`'ne `defter` kolonu eklenir ('TULIPI' | 'MULK').
+
+      · `defter` filtresi KOYMAYAN her mevcut sorgu TOPLAMI okur — yani bugünkü
+        kasa rakamı ZERRE DEĞİŞMEZ, hiçbir rapor kırılmaz. Yalnız yeni ekranlar
+        çekmeceleri ayrı okur.
+      · Kira/aidat/depozito satırları `defter='MULK'` ile yazılır → TULİPİ'nin
+        cirosuna ve kasasına girmez.
+      · Mülkten TULİPİ'ye para geçtiğinde İKİ satır yazılır: MULK −X, TULIPI +X.
+        Toplam değişmez, çekmeceler arası geçiş görünür olur.
+
+    `mulk_hareket` bu kayıtların KİRACI/SÖZLEŞME/DÖNEM ayrıntısını tutar ve
+    para satırına `kasa_hareket_id` ile bağlanır. Ayrıntı defteri ile para
+    defteri ayrı ama BAĞLI — biri diğerini doğrular.
+
+    ⚠️ DEPOZİTO GELİR DEĞİLDİR — iade edilecek emanettir. Kendi türünde durur
+    (`DEPOZITO_ALINDI` / `DEPOZITO_IADE`) ve "kira geliri" toplamlarına
+    KATILMAZ; "elde tutulan emanet" ayrı okunur.
+    """
+    cur.execute("SET LOCAL lock_timeout = '3s'")
+    # 🔑 AYRIŞMANIN ÇIPASI: kasa_hareketleri'ne defter etiketi.
+    # SABİT DEFAULT ile eklenir → PostgreSQL 11+ tabloyu YENİDEN YAZMAZ, işlem
+    # anlıktır; sıcak tablo kilitlenip canlıyı 502 döngüsüne sokmaz
+    # ([[feedback-goc-init-db-disinda]]). Var olan TÜM satırlar 'TULIPI' olur —
+    # yani bugünkü davranış aynen korunur, hiçbir rapor kırılmaz.
+    cur.execute("""
+        ALTER TABLE kasa_hareketleri
+        ADD COLUMN IF NOT EXISTS defter TEXT NOT NULL DEFAULT 'TULIPI'
+    """)
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_kasa_hareket_defter "
+                "ON kasa_hareketleri (defter) WHERE defter <> 'TULIPI'")
+    # ⚠️ ÜÇÜNCÜ ÇEKMECE DOĞMASIN: 'MÜLK' / 'Mulk' / 'mulk' yazan tek bir satır
+    # sessizce yeni bir defter açar ve toplam ile kırılım ayrışır. CHECK bunu
+    # yazma anında keser. NOT VALID: mevcut satırlar taranmaz (sıcak tabloda
+    # tam tarama kilit süresini uzatırdı) — hepsi zaten DEFAULT 'TULIPI'.
+    # ⚠️ savepoint ŞART: kısıt zaten varsa ALTER patlar ve YUTULAN hata TÜM
+    # transaction'ı aborted yapar — bu ensure'un altındaki her CREATE geri
+    # alınırdı ([[feedback-savepoint-zehirlenme]]).
+    try:
+        with savepoint(cur, "mulk_defter_chk"):
+            cur.execute("ALTER TABLE kasa_hareketleri ADD CONSTRAINT chk_kasa_defter "
+                        "CHECK (defter IN ('TULIPI','MULK')) NOT VALID")
+    except Exception:
+        pass  # kısıt zaten var — transaction TEMİZ kaldı
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS mulk (
+            id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            ad         TEXT NOT NULL,              -- "Huzur Sitesi B/4"
+            adres      TEXT,
+            tur        TEXT,                       -- daire | dükkan | depo | arsa
+            aylik_kira NUMERIC(14,2),              -- referans/hedef kira
+            notlar     TEXT,
+            aktif      BOOLEAN NOT NULL DEFAULT TRUE,
+            olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kiraci (
+            id        TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            ad        TEXT NOT NULL,
+            telefon   TEXT,
+            notlar    TEXT,
+            aktif     BOOLEAN NOT NULL DEFAULT TRUE,
+            olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    # Sözleşme = mülk ile kiracıyı BAĞLAYAN çıpa. Aylık beklenen kira burada
+    # yazar; "kim ödemedi" sorusu bu satır ile tahsilat satırlarının FARKIdır.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kira_sozlesme (
+            id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            mulk_id    TEXT NOT NULL,
+            kiraci_id  TEXT NOT NULL,
+            baslangic  DATE NOT NULL,
+            bitis      DATE,                       -- NULL = sürüyor
+            aylik_kira NUMERIC(14,2) NOT NULL,
+            depozito   NUMERIC(14,2) NOT NULL DEFAULT 0,
+            odeme_gunu INTEGER NOT NULL DEFAULT 1, -- ayın kaçında beklenir
+            durum      TEXT NOT NULL DEFAULT 'aktif',  -- aktif | bitti | iptal
+            notlar     TEXT,
+            olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    # Mülk defteri: TULİPİ kasasından BAĞIMSIZ hareket kaydı.
+    # tutar: + defter'e giriş, − defter'den çıkış (aktarım/gider/iade)
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS mulk_hareket (
+            id          TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            tarih       DATE NOT NULL,
+            tur         TEXT NOT NULL,
+            -- KIRA_TAHSILAT · DEPOZITO_ALINDI · DEPOZITO_IADE
+            -- MULK_GIDER (aidat/fatura/tadilat) · AKTARIM_TULIPI · DIGER
+            sozlesme_id TEXT,
+            mulk_id     TEXT,
+            kiraci_id   TEXT,
+            donem       TEXT,                      -- 'YYYY-MM' hangi ayın kirası
+            tutar       NUMERIC(14,2) NOT NULL,
+            aciklama    TEXT,
+            -- AKTARIM_TULIPI satırının kasa_hareketleri'ndeki karşılığı.
+            -- Bu bağ olmadan "mülkten TULİPİ'ye ne geçti" iki defterde
+            -- ayrı ayrı sayılır ve mutabakat imkânsızlaşır.
+            kasa_hareket_id TEXT,
+            durum       TEXT NOT NULL DEFAULT 'aktif',   -- aktif | iptal
+            olusturma   TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    for _sql in (
+        "CREATE INDEX IF NOT EXISTS idx_kira_sozlesme_mulk ON kira_sozlesme (mulk_id)",
+        "CREATE INDEX IF NOT EXISTS idx_kira_sozlesme_kiraci ON kira_sozlesme (kiraci_id)",
+        "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_donem ON mulk_hareket (donem)",
+        "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_sozlesme ON mulk_hareket (sozlesme_id)",
+        "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_tarih ON mulk_hareket (tarih DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_kasa ON mulk_hareket (kasa_hareket_id)",
+    ):
+        cur.execute(_sql)

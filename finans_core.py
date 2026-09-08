@@ -40,18 +40,59 @@ from tr_saat import bugun_tr
 # Yeni bir kasa sorgusu yazan buraya bakar; WHERE'i elle KOPYALAMAZ.
 KASA_SUZGEC = "kasa_etkisi = TRUE AND COALESCE(durum,'aktif') = 'aktif'"
 
+# 🏠 TULİPİ SÜZGECİ (2026-09-08) — "kahve işi ne kazandı?" sorusunun süzgeci.
+#
+# 🔴 NEDEN: `defter` kolonu "bu para KİMİN?" sorusunu çözer, ama sahibin
+# şikâyeti ("Temmuz'da 3.880.000 ₺ gelir elde ettik" — o para EV SATIŞIYDI)
+# "bu akışın DOĞASI ne?" sorusudur. İkisi AYRI eksendir ve gelir rakamı
+# İKİSİNİ BİRDEN süzmeden doğru olmaz:
+#   · defter='TULIPI'  → mülkün parası kahvenin cirosu sayılmasın
+#   · islem_turu NOT IN(...) → borç/kredi/iç transfer gelir sayılmasın
+#
+# ⚠️ Bu liste beş ayrı yerde ELLE KOPYALANMIŞTI (panel · rapor · net akış ·
+# duyu · Excel) ve biri güncellenmeyince her biri FARKLI gelir gösteriyordu.
+# Artık tek yer burasıdır; yeni tür eklendiğinde YALNIZ burası değişir.
+GELIR_SAYILMAYAN = (
+    'CIRO_DUZELTME', 'CIRO_IPTAL', 'ACILIS_DEVRI', 'DEVIR',
+    # iç transfer — para yer değiştirir, kazanç doğmaz
+    'KASA_TESLIM_GIRIS', 'KASA_TESLIM_CIKIS',
+    'SUBE_BORC_VER', 'SUBE_BORC_AL', 'SUBE_BORC_GERI_VER', 'SUBE_BORC_GERI_AL',
+    'MULK_AKTARIM_GIRIS', 'MULK_AKTARIM_CIKIS',
+    # finansman ve varlık — kazanç değil
+    'DIS_KAYNAK', 'VARLIK_SATISI', 'DEPOZITO_ALINDI',
+)
+GELIR_SAYILMAYAN_SQL = ", ".join("'%s'" % t for t in GELIR_SAYILMAYAN)
 
-def kasa_bakiyesi(cur) -> float:
+# Kahve işinin gerçek gelir süzgeci — bakiye değil AKIŞ soruları için.
+TULIPI_GELIR_SUZGEC = (
+    "%s AND COALESCE(defter,'TULIPI') = 'TULIPI' "
+    "AND islem_turu NOT IN (%s)" % (KASA_SUZGEC, GELIR_SAYILMAYAN_SQL)
+)
+
+
+def kasa_bakiyesi(cur, defter: str = None) -> float:
     """
     Anlık kasa bakiyesi.
     Tek gerçek kaynak: kasa_hareketleri + KASA_SUZGEC.
     DEVIR dahil değil (kasa_etkisi=false).
+
+    🏠 defter (2026-09-08):
+      None    → TOPLAM KASA (sahip: "toplam kasa diye şu andaki kasa görünsün").
+                Varsayılan BİLEREK budur: 530 mevcut çağıranın hiçbiri
+                değişmez, bugünkü rakam aynen korunur.
+      'TULIPI'→ yalnız kahve işi çekmecesi
+      'MULK'  → yalnız kiralık mülk çekmecesi
     """
+    _ek = ""
+    _p = []
+    if defter:
+        _ek = " AND COALESCE(defter,'TULIPI') = %s"
+        _p = [defter]
     cur.execute(f"""
         SELECT COALESCE(SUM(tutar), 0) AS bakiye
         FROM kasa_hareketleri
-        WHERE {KASA_SUZGEC}
-    """)
+        WHERE {KASA_SUZGEC}{_ek}
+    """, _p)
     return float(cur.fetchone()['bakiye'])
 
 
@@ -2124,11 +2165,10 @@ def net_akis_30_gun(cur) -> dict:
             COALESCE(SUM(CASE WHEN tutar > 0 THEN tutar ELSE 0 END), 0) AS gelir,
             COALESCE(SUM(CASE WHEN tutar < 0 THEN ABS(tutar) ELSE 0 END), 0) AS gider
         FROM kasa_hareketleri
-        WHERE kasa_etkisi = true AND durum = 'aktif'
-        AND islem_turu NOT IN ('CIRO_DUZELTME', 'CIRO_IPTAL', 'ACILIS_DEVRI')
+        WHERE {suzgec}
         -- Sistem başlangıcından (1 Haziran) öncesine inme — eski/test verisi akışa girmesin
         AND tarih >= GREATEST(CURRENT_DATE - INTERVAL '30 days', DATE '2026-06-01')
-    """)
+    """.format(suzgec=TULIPI_GELIR_SUZGEC))
     r = cur.fetchone()
     gelir = float(r['gelir'])
     gider = float(r['gider'])

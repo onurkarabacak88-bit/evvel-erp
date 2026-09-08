@@ -1,0 +1,154 @@
+Sen deneyimli bir yazılım mimarı + Türkiye muhasebe/vergi danışmanısın.
+Acımasız dürüst ol, iltifat etme, sadece sorunları ve somut önerileri yaz.
+Türkçe cevap ver.
+
+═══════════════════════════════════════════════════════════════
+BAĞLAM
+═══════════════════════════════════════════════════════════════
+Elimde CANLI çalışan bir ERP var: 4 şubeli bir kahve zinciri (marka: TULİPİ).
+FastAPI + PostgreSQL + React. Gerçek para, gerçek veri, her gün kullanılıyor.
+Ben kod bilmiyorum; sistemi bir yapay zekâ geliştiriciye kurdurtuyorum.
+
+Şimdi buna KİRALIK MÜLK takibi eklemek istiyorum. Benim kendi
+gayrimenkullerim var, kiracılara kiraya veriyorum. Kahve işiyle ilgisi yok
+ama parası aynı kasaya giriyor.
+
+═══════════════════════════════════════════════════════════════
+BENİM İSTEKLERİM (birebir söylediklerim)
+═══════════════════════════════════════════════════════════════
+1) "Dış kaynak geliri başlığını değiştirerek kiralık mülklerimizin takip
+   alanını kurmak istiyorum; sadece o sayfaya girince kendi içinde sekmeleri
+   ve çalışma metodu olan bir alan."
+2) "Bu kasa izi, TULİPİ'nin yani kahveci dükkânın kasa izinden ayrışmalı."
+3) "Kahveci dükkânı kasasıyla mülk kirası kasası ayrı gösterilsin; 'toplam
+   kasa' diye yeni bir isimde şu andaki kasa görünsün."
+
+═══════════════════════════════════════════════════════════════
+CANLI VERİDEN ÖLÇÜLEN GERÇEK (tahmin değil, sayıldı)
+═══════════════════════════════════════════════════════════════
+Bugün tüm bu para "DIS_KAYNAK" (dış kaynak geliri) adlı tek bir kasa hareket
+türünde duruyor: 89 kayıt / 6.037.829 TL. İçeriği karışık:
+
+  KİRA .............................. 46 kayıt /   657.765 TL
+  EV SATIŞI (tek kayıt) .............  1 kayıt / 3.880.000 TL
+  gerçek dış kaynak ................. 42 kayıt / 1.500.064 TL
+     (emekli maaşı, banka kredisi, SGK iadesi, akrabadan borç, ortak parası)
+
+Aylık kira: 2026-05: 42.000 | 06: 260.815 | 07: 173.550 | 08: 144.400 | 09: 37.000
+
+TESPİT EDİLEN BOZUKLUKLAR:
+- Kayıtlar serbest metin: "Aile Desteği: hasan güçlü kira" gibi.
+- Aynı kiracı farklı yazımlarla: "hamayoun faizi / hamayoğun faizi /
+  hamoayoun faizi", "bilal başer / bilal baser", "emel canbaz / emek canbaz",
+  "fatih özesen / fatih özelsen". Bu yüzden "bu ay kim ödemedi?" sorusunun
+  cevabı YOK.
+- Depozito (35.500 TL) kira geliriyle aynı torbada. Depozito gelir değil,
+  iade edilecek emanet.
+- Site aidatı/faturası ve "merdiven parası" (500 TL) da aynı torbada.
+- "ahmet güllü 3 aylık gecikmiş" 36.000 TL — gecikme kavramı sistemde yok.
+- Sistem bu paranın hepsini raporda "GELİR DAĞILIMI" başlığı altında Nakit
+  Ciro ve POS Ciro'nun YANINDA gösteriyor. Yani "Temmuz'da 3.880.000 TL gelir
+  elde ettik" diyor — o para EV SATIŞIYDI.
+
+═══════════════════════════════════════════════════════════════
+GELİŞTİRİCİNİN ÖNERDİĞİ TASARIM (bunu eleştirmeni istiyorum)
+═══════════════════════════════════════════════════════════════
+"TEK HAVUZ, İKİ ÇEKMECE":
+        TOPLAM KASA  =  TULİPİ kasası  +  MÜLK kasası
+
+- Kasa hareketleri tablosuna "defter" adında bir etiket kolonu ekleniyor.
+  Değerler: 'TULIPI' (varsayılan) veya 'MULK'.
+- Gerekçe: kasa tablosunu okuyan 530 ayrı sorgu var. Etiket filtresi
+  koymayan her sorgu TOPLAMI okumaya devam ediyor → bugünkü kasa rakamı hiç
+  değişmiyor, hiçbir mevcut rapor bozulmuyor. Sadece yeni ekranlar
+  çekmeceleri ayrı okuyor.
+- Para fiziken tek yerde; ayrım paranın YERİNDE değil ETİKETİNDE.
+- Mülkten kahve işine para geçerse ÇİFT KAYIT yazılıyor:
+  MULK -X ve TULIPI +X. Toplam değişmiyor, geçiş görünür oluyor.
+- Yeni tablolar: mulk, kiraci, kira_sozlesme, mulk_hareket
+  (mulk_hareket kiracı/sözleşme/dönem ayrıntısını tutuyor ve para satırına
+   bağlanıyor).
+- Ekranda sekmeler: mülkler · kiracılar/sözleşmeler · tahsilat & gecikme ·
+  depozito · aidat/gider · defter
+
+SİSTEMİN İHLAL EDİLEMEZ KURALLARI:
+- Kasa izi tek gerçektir; parayı kasadan "silerek" ayrıştırmak yasak.
+- Defterler append-only: satır silinmez, "iptal" işaretlenir.
+- Para değiştiren toplu işlem önce KURU çalışır, listesi okunur, sonra yazılır.
+
+═══════════════════════════════════════════════════════════════
+BAŞKA BİR YAPAY ZEKÂNIN BU TASARIMA İTİRAZI (sen hakem ol)
+═══════════════════════════════════════════════════════════════
+İkinci bir modele aynı tasarımı okuttum. Şunları söyledi:
+
+İTİRAZ 1 — "Yanlış soruyu çözüyorsun."
+  'defter' etiketi "bu para KİMİN?" sorusuna cevap. Ama benim şikâyetim
+  ("Temmuz'da 3,88 milyon gelir elde ettik" yalanı) "bu akışın DOĞASI ne?"
+  sorusu: gelir mi, borç mu, emanet mi, varlık satışı mı, iç transfer mi.
+  Raporlar 'defter'e değil, hareket TÜRÜNE bakıyor. Yani etiket eklemek o
+  raporların hiçbirini düzeltmez; kırık kalırlar.
+  Önerisi: iki eksen olsun — hareket türü (akışın doğası) + defter (kimin
+  cebi); ve defter, türden OTOMATİK türetilsin, elle yazılmasın.
+
+İTİRAZ 2 — "Mevcut 46 kaydı taşıma, AYNALA."
+  Tasarım o 46 kaydı 'MULK' diye etiketlemeyi öngörüyor. Ama bu, "kira parası
+  dükkân kasasına hiç girmedi" varsayımıdır. Oysa kayıtlar zaten dükkân
+  kasasına girilmiş görünüyor. Etiketi değiştirirsem dükkân kasasından
+  657.765 TL sessizce düşer ve fiziksel sayımla çelişir.
+  Önerisi: mevcut satıra HİÇ dokunma; karşısına iki yeni satır yaz —
+      MÜLK defteri:  kira tahsilatı  +X
+      MÜLK defteri:  dükkâna aktarım −X
+  Sonuç: mülk defteri net 0, dükkân kasası değişmez, toplam değişmez, ama
+  "kim ne zaman ödedi" ayrıntısı kazanılır. Sonra ben "şu 10 tanesi benim
+  hesabımda kaldı" dersem yalnız o aktarım satırları iptal edilir.
+
+İTİRAZ 3 — "Kim ödemedi ekranının çıpası SÖZLEŞME olmalı, dönem değil."
+  Beklenen kira satırları veritabanına yazılmasın, okunurken hesaplansın.
+  Kısmi/gecikmiş/peşin ödeme kendiliğinden çözülür; hangi ayı kapattığı
+  okuma anında FIFO ile bulunur.
+
+İTİRAZ 4 — "En büyük kazanç banka ekstresinden otomatik eşleştirme."
+  Kira havaleyle geliyor. Ekstre zaten sisteme okunuyor. Kiracı adı eşleşmesi
+  kurulursa tahsilat kaydı ben hiç girmeden oluşur; işim "onayla"ya iner.
+
+SENDEN İSTEDİĞİM: bu itirazların hangileri haklı, hangileri fazla temkinli?
+Kendi görüşünü de ekle.
+
+═══════════════════════════════════════════════════════════════
+SORULARIM
+═══════════════════════════════════════════════════════════════
+1. Bu iki-çekmece modeli doğru mu? Daha basit/daha sağlam bir ayrışma var mı?
+   Model nerede SESSİZCE yanlış cevap vermeye başlar? (banka mutabakatı,
+   açılış/devir bakiyesi, şube kırılımı, ay sonu kapanış, rapor önbelleği)
+
+2. Mevcut 46 kira kaydını kiracı/mülk/sözleşmeye bağlarken elle iş nasıl en
+   aza iner? Aynı kiracının 3 farklı yazımı otomatik eşleştirilmeli mi, yoksa
+   bana tek tek mi sorulmalı? Hangi sırayla, hangi geri-alma yoluyla?
+
+3. "Bu ay kim ödemedi?" ekranı hangi çıpaya oturmalı — sözleşme mi, dönem mi?
+   Şunlar nasıl modellenir: kısmi ödeme, 3 ay gecikmiş toplu ödeme, peşin
+   birkaç ay ödeme, kira artışı ortasında yapılan ödeme?
+
+4. DEPOZİTO: gelir mi, emanet mi? Kasaya nasıl girmeli, bilançoda nasıl
+   durmalı, kiracı çıkarken mahsup nasıl işlenmeli?
+
+5. 3.880.000 TL'lik EV SATIŞI nereye yazılmalı? Gelir değil, varlık satışı.
+   Bu ERP'de nasıl modellenmeli ki hem izi kaybolmasın hem "gelir" sanılmasın?
+
+6. TÜRKİYE VERGİ TARAFI — hangi şeyler sistemde modellenmeli?
+   - Konut/işyeri kira geliri stopajı (işyerinde %20 tevkifat)
+   - GMSİ yıllık beyanı, istisna tutarı, götürü/gerçek gider yöntemi
+   - Emlak vergisi, DASK/sigorta, aidat kimin üzerinde
+   - Kiracı şirketse fatura/gider pusulası durumu
+   - Kira artış oranı (TÜFE 12 aylık ortalama sınırı) ve sözleşme yenileme
+   Bunlardan hangileri OTOMATİK hesaplanabilir, hangileri elle girilmeli?
+
+7. Benim aklıma gelmeyen ama 6 ay sonra "keşke baştan koysaydık" diyeceğim
+   3-5 şey nedir?
+
+8. DAHA AZ İŞLE aynı sonuç alınabilir mi? Daha az tablo, daha az ekran, daha
+   az veri girişiyle bu iş kurulabilir mi? Tasarımı sadeleştir.
+
+CEVABIN SONUNDA ŞU İKİ LİSTEYİ VER:
+  · EN RİSKLİ 3 ŞEY
+  · İLK YAPILACAK 3 ŞEY

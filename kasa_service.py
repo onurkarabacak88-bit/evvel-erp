@@ -44,7 +44,40 @@ KASA_ETKISI_MAP = {
     'KASA_GIRIS': True, 'KASA_DUZELTME': True, 'POS_KESINTI': True,
     'ONLINE_KESINTI': True, 'KISMI_ODE': True,
     'DEVIR': False,
+    # 🏠 MÜLK DEFTERİ (2026-09-08, sahip: "mülk kirası kasası ayrı gösterilsin").
+    # Hepsi kasa_etkisi=TRUE: para FİZİKEN elde/bankadadır, yalnız hangi
+    # ÇEKMECEye ait olduğu farklıdır. Aktarım çifti KASA_TESLIM ve SUBE_BORC
+    # ile aynı deseni izler: MULK −X ve TULIPI +X, TOPLAM KASA DEĞİŞMEZ.
+    'KIRA_TAHSILAT': True, 'KIRA_TAHSILAT_IPTAL': True,
+    'DEPOZITO_ALINDI': True, 'DEPOZITO_IADE': True,
+    'MULK_GIDER': True, 'MULK_GIDER_IPTAL': True,
+    'VARLIK_SATISI': True,
+    'MULK_AKTARIM_CIKIS': True, 'MULK_AKTARIM_GIRIS': True,
 }
+
+# ═══════════════════════════════════════════════════════════════════
+# 🏠 DEFTER TÜRETİMİ — "bu para kimin cebi?" sorusu ELLE cevaplanmaz.
+#
+# 🔴 NEDEN: `defter` bir parametre olsaydı çağıranlardan biri onu unutur ve
+# kira satırı TULİPİ çekmecesine düşerdi; hata SESSİZ olurdu (toplam doğru,
+# kırılım yanlış). Türü zaten yazan çağıran, defteri de yazmış olur.
+# Kural tek yerde durur; yeni tür eklendiğinde YALNIZ bu küme güncellenir.
+MULK_TURLER = {
+    'KIRA_TAHSILAT', 'KIRA_TAHSILAT_IPTAL',
+    'DEPOZITO_ALINDI', 'DEPOZITO_IADE',
+    'MULK_GIDER', 'MULK_GIDER_IPTAL',
+    'VARLIK_SATISI',
+    'MULK_AKTARIM_CIKIS',
+    # ⚠️ MULK_AKTARIM_GIRIS BİLEREK YOK: aktarımın VARIŞ ucu TULİPİ'nindir.
+    # Çıkış MULK'tan düşer, giriş TULİPİ'ye eklenir; ikisi de bu listede
+    # olsaydı para mülk defterinden hiç çıkmazdı.
+}
+
+
+def defter_turet(islem_turu: str) -> str:
+    """Hareket türünden defteri türet. 'TULIPI' varsayılan — bilinmeyen her
+    tür kahve işine aittir, çünkü sistem 2026-09'a kadar TEK defterdi."""
+    return 'MULK' if str(islem_turu or '') in MULK_TURLER else 'TULIPI'
 
 
 def insert_kasa_hareketi(cur, tarih, islem_turu, tutar, aciklama,
@@ -82,17 +115,18 @@ def insert_kasa_hareketi(cur, tarih, islem_turu, tutar, aciklama,
     _event_id = ref_id or str(uuid.uuid4())
     _ref_type = ref_type or (kaynak_tablo.upper() if kaynak_tablo else 'GENEL')
     _kasa_etkisi = KASA_ETKISI_MAP.get(islem_turu, True)
+    _defter = defter_turet(islem_turu)
     _idem = (idempotency_key or "").strip() or _make_idem_key()
 
     cur.execute("""
         INSERT INTO kasa_hareketleri
             (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id,
-             ref_type, kasa_etkisi, idempotency_key, sube_id, odeme_yontemi)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s,'nakit'))
+             ref_type, kasa_etkisi, idempotency_key, sube_id, odeme_yontemi, defter)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s,'nakit'), %s)
         ON CONFLICT (idempotency_key) DO NOTHING
     """, (str(uuid.uuid4()), str(tarih), islem_turu, tutar, aciklama,
           kaynak_tablo, kaynak_id, _event_id, _ref_type, _kasa_etkisi, _idem,
-          sube_id, odeme_yontemi))
+          sube_id, odeme_yontemi, _defter))
 
     if cur.rowcount == 0:
         # ⚠️ PARA-010 (2026-09-02): burada "anahtar var → idempotent başarı"
@@ -127,12 +161,12 @@ def insert_kasa_hareketi(cur, tarih, islem_turu, tutar, aciklama,
             cur.execute("""
                 INSERT INTO kasa_hareketleri
                     (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id,
-                     ref_type, kasa_etkisi, idempotency_key, sube_id, odeme_yontemi)
-                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s,'nakit'))
+                     ref_type, kasa_etkisi, idempotency_key, sube_id, odeme_yontemi, defter)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, COALESCE(%s,'nakit'), %s)
                 ON CONFLICT (idempotency_key) DO NOTHING
             """, (str(uuid.uuid4()), str(tarih), islem_turu, tutar, aciklama,
                   kaynak_tablo, kaynak_id, _event_id, _ref_type, _kasa_etkisi, _idem,
-                  sube_id, odeme_yontemi))
+                  sube_id, odeme_yontemi, _defter))
             if cur.rowcount > 0:
                 return
 
@@ -322,7 +356,7 @@ def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu, iptal_turu, ac
     """
     cur.execute(
         """
-        SELECT id, tutar FROM kasa_hareketleri
+        SELECT id, tutar, COALESCE(defter,'TULIPI') AS defter FROM kasa_hareketleri
         WHERE kaynak_id=%s AND islem_turu=%s AND kasa_etkisi=true AND durum='aktif'
     """,
         (kaynak_id, islem_turu),
@@ -348,14 +382,18 @@ def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu, iptal_turu, ac
     # set farklı → ters kayıt YAZILIR (eski kaynak_id-bazlı anahtar bunu sessizce yutuyordu —
     # K1'deki "olay yerine kap kimliği" dersinin birebir kopyası).
     _iptal_set = ",".join(sorted(str(m["id"]) for m in mevcutlar))
+    # Orijinal satırların defteri (hepsi aynı olmalı; değilse MULK öncelikli —
+    # mülk parasının kahve çekmecesine sızması, tersinden daha zararlıdır).
+    _defterler = {str(m.get("defter") or "TULIPI") for m in mevcutlar}
+    _iptal_defter = "MULK" if "MULK" in _defterler else "TULIPI"
     _iptal_idem = hashlib.sha256(
         f"v2|iptal|{iptal_turu}|{kaynak_tablo}|{kaynak_id}|{_iptal_set}".encode("utf-8")
     ).hexdigest()
     cur.execute(
         """
         INSERT INTO kasa_hareketleri
-            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type, kasa_etkisi, idempotency_key)
-        VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            (id, tarih, islem_turu, tutar, aciklama, kaynak_tablo, kaynak_id, ref_id, ref_type, kasa_etkisi, idempotency_key, defter)
+        VALUES (%s, CURRENT_DATE, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON CONFLICT (idempotency_key) DO NOTHING
     """,
         (
@@ -369,6 +407,11 @@ def iptal_kasa_hareketi(cur, kaynak_id, kaynak_tablo, islem_turu, iptal_turu, ac
             kaynak_tablo.upper(),
             _kasa_etkisi,
             _iptal_idem,
+            # ⚠️ Defter İPTAL TÜRÜNDEN DEĞİL, iptal edilen ORİJİNAL satırdan
+            # gelir. `KIRA_TAHSILAT_IPTAL` gibi eşleniği olmayan bir iptal
+            # türü kullanılırsa türetim 'TULIPI' derdi ve mülk satırının
+            # iptali kahve çekmecesine düşerdi: toplam doğru, kırılım YALAN.
+            _iptal_defter,
         ),
     )
 
