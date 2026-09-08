@@ -40,7 +40,10 @@ VARSAYILAN: Dict[str, Any] = {
     "aylik_gun": 30.0,             # maas_service.py:31 — İş K. izin günleri dahil
     "haftalik_calisma_gun": 6,     # maas_service.py:HAFTALIK_CALISMA_GUN
     "part_gunluk_saat": 5.5,       # maas_service.py:PART_GUNLUK_SAAT
-    "part_tam_gun_esigi": 9.4,     # gorev_api.py:2214 ⚠️ 9.5 ile ÇELİŞİYOR
+    # ⚠️ 9,5 ile ÇELİŞMEZ (2026-09-08 ölçümü): bu eşik YALNIZ part-time'da
+    # "tam gün mü" sorusunu, fm_gunluk_esik ise HERKESTE "fazla mesai mi"
+    # sorusunu cevaplar. 9,4 < 9,5 kasıtlı toleranstır.
+    "part_tam_gun_esigi": 9.4,     # gorev_api.py:2341 (yalnız is_part dalında)
     "fm_gunluk_esik": 9.5,         # gorev_api.py:2175 STANDART
     "yemek_mola_limit_dk": 60,     # sube.yemek_mola_limit_dk varsayılanı
     "varsayilan_saatlik": 99.0,    # maas_service.py — ücreti tanımsız part-time
@@ -142,15 +145,40 @@ def kural_coz(cur, tarih, personel_id: Optional[str] = None,
 
 
 def celiski_var_mi(p: Dict[str, Any]) -> Optional[str]:
-    """Bilinen çelişkiyi ADIYLA söyler — sessizce düzeltmez (ÖNERİ-ONLY).
+    """GERÇEK tutarsızlığı ADIYLA söyler — sessizce düzeltmez (ÖNERİ-ONLY).
 
-    part_tam_gun_esigi (9,4) ile fm_gunluk_esik (9,5) farklıysa aynı vardiya
-    bir ekranda "tam gün", diğerinde "eksik" görünür. Sahip kararı gerekir:
-    ikisi de 9,5 mi olacak, yoksa fark kasıtlı mı.
+    🔴 SAHTE ALARM KALDIRILDI (2026-09-08, sahip "bunları düzelt" dedi; ölçünce
+    düzeltilecek şeyin SAYI değil DUYU olduğu çıktı):
+    Eski hâli `part_tam_gun_esigi != fm_gunluk_esik` ise çelişki sayıyordu ve
+    canlıda 9,40 ↔ 9,50 yüzünden ekranda sürekli kırmızı uyarı duruyordu.
+    Oysa bu ikisi AYNI SORUYU ölçmüyor:
+      · part_tam_gun_esigi → YALNIZ part-time'da: "bu gün tam gün sayılır mı?"
+        (yemek hakkı buna bağlı — gorev_api.py:2341, `is_part and ...`)
+      · fm_gunluk_esik     → HERKESTE: "bu saatin üstü fazla mesai mi?"
+        (gorev_api.py:2359, `fazla = planlanan - STANDART`)
+    9,4 < 9,5 olması kasıtlı bir TOLERANStır: part-time 9,4 saat çalıştıysa tam
+    gün sayılır, ama fazla mesai ancak 9,5'i aşınca doğar. İkisini eşitlemek
+    part-time'ın yemek hakkını daraltırdı — yani sahte alarmı "düzeltmek" PARA
+    OYNATIRDI. Değiştirilmedi.
+
+    Yerine GERÇEK değişmezler kontrol edilir:
+      1. fm_gunluk_esik == gunluk_saat  → normal günün saati ile fazla mesai
+         eşiği ayrışırsa aynı gün hem "tam" hem "eksik" sayılır. ASIL çelişki bu.
+      2. part_tam_gun_esigi <= gunluk_saat → part-time'ın "tam gün" eşiği normal
+         günden BÜYÜK olamaz; olursa part-time asla tam gün sayılmaz.
     """
-    a = float(p.get("part_tam_gun_esigi") or 0)
-    b = float(p.get("fm_gunluk_esik") or 0)
-    if abs(a - b) > 0.001:
-        return ("part_tam_gun_esigi=%.2f ile fm_gunluk_esik=%.2f FARKLI — "
-                "ayni vardiya iki ekranda iki turlu sayilir (SAHIP KARARI)" % (a, b))
-    return None
+    uyari = []
+    gunluk = float(p.get("gunluk_saat") or 0)
+    fm = float(p.get("fm_gunluk_esik") or 0)
+    part_tam = float(p.get("part_tam_gun_esigi") or 0)
+    if gunluk > 0 and fm > 0 and abs(gunluk - fm) > 0.001:
+        uyari.append(
+            "gunluk_saat=%.2f ile fm_gunluk_esik=%.2f AYRISMIS — normal gunun "
+            "saati ile fazla mesai esigi ayni olmali, yoksa ayni gun hem tam "
+            "hem eksik sayilir (SAHIP KARARI)" % (gunluk, fm))
+    if part_tam > 0 and gunluk > 0 and part_tam > gunluk + 0.001:
+        uyari.append(
+            "part_tam_gun_esigi=%.2f, gunluk_saat=%.2f'den BUYUK — part-time "
+            "hicbir zaman tam gun sayilamaz, yemek hakki hic dogmaz "
+            "(SAHIP KARARI)" % (part_tam, gunluk))
+    return " · ".join(uyari) if uyari else None
