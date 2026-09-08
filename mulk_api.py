@@ -650,6 +650,33 @@ def goc_adaylari():
          for a, v in kume.items()),
         key=lambda r: -r["toplam"])
 
+    # 🔗 BİRLEŞTİRME ÖNERİLERİ — ÖNERİ-ONLY, hiçbir küme kendiliğinden birleşmez.
+    # "hamayoun / hamayoğun / hamoayoun faizi" gibi yazım farkları harf
+    # normalizasyonuyla yakalanmıyor (fazladan harf, yer değiştirme). Benzerlik
+    # ölçüsü ADAY üretir; kararı sahip verir.
+    # ⚠️ BİLEREK OTOMATİK DEĞİL: "Mehmet Turan" ile "Mustafa Haluk Turan"
+    # %70 benzer ama BAŞKA İNSAN olabilir. Yanlış birleştirme iki kiracının
+    # borcunu tek kişide toplar ve biri "ödemiş" görünür.
+    import difflib as _dl
+    oneriler = []
+    for i in range(len(kumeler)):
+        for j in range(i + 1, len(kumeler)):
+            a1, a2 = kumeler[i]["anahtar"], kumeler[j]["anahtar"]
+            if not a1 or not a2 or "adsız" in (a1 + a2):
+                continue
+            oran = _dl.SequenceMatcher(None, a1, a2).ratio()
+            # Bir taraf diğerinin içinde geçiyorsa (ad kısaltması) güçlü aday
+            _ic = a1 in a2 or a2 in a1
+            if oran >= 0.80 or _ic:
+                oneriler.append({
+                    "a": kumeler[i]["onerilen_ad"], "b": kumeler[j]["onerilen_ad"],
+                    "a_anahtar": a1, "b_anahtar": a2,
+                    "benzerlik": round(oran, 3),
+                    "gerekce": "biri diğerini içeriyor" if _ic else "yazım benzerliği",
+                    "toplam": round(kumeler[i]["toplam"] + kumeler[j]["toplam"], 2),
+                })
+    oneriler.sort(key=lambda r: -r["benzerlik"])
+
     def _t(x):
         return round(sum(float(r["tutar"]) for r in x), 2)
 
@@ -661,6 +688,7 @@ def goc_adaylari():
         "varlik_satisi": {"adet": len(varlik), "toplam": _t(varlik), "satirlar": varlik},
         "gercek_dis_kaynak": {"adet": len(disi), "toplam": _t(disi)},
         "kiraci_kumeleri": kumeler,
+        "birlestirme_onerileri": oneriler,
         "not": ("KURU ÇALIŞTIRMA — hiçbir kayıt yazılmadı, hiçbir satır "
                 "değişmedi. 'gercek_dis_kaynak' kovasına DOKUNULMAZ (emekli "
                 "maaşı, kredi, SGK iadesi). Kümeler ONAY bekler: aynı kiracının "
