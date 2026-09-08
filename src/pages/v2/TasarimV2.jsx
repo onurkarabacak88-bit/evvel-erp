@@ -27,6 +27,7 @@ import ParaModulu from './ParaModulu';
 import DenetimModulu from './DenetimModulu';
 import BelgeModulu from './BelgeModulu';
 import { OnayModulu, YukModulu, RaporModulu, SistemModulu, TanimModulu } from './KucukModuller';
+import KullaniciModulu from './KullaniciModulu';
 
 // ⚠️ TARİH TUZAĞI: `new Date('2026-07-28T00:00:00')` yerel saat olarak ayrıştırılır,
 // `toISOString()` ise UTC'ye çevirir. Türkiye'de (UTC+3) bu, tarihi BİR GÜN GERİ
@@ -1091,6 +1092,10 @@ export default function TasarimV2({ onGit }) {
     }
     if (mod === 'sistem') {
       return <SistemModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
+    }
+    // 👤 KULLANICILAR — kişiye özel giriş + ekran görünürlüğü (sahip 2026-09-08)
+    if (mod === 'kullanici') {
+      return <KullaniciModulu onToast={setToast} />;
     }
     if (mod === 'tanim') {
       return <TanimModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;

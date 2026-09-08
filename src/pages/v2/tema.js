@@ -359,4 +359,16 @@ export const MODULLER = [
     // Emeklilik kapısı: klasik tasarım silinmedi, acil durumda buradan açılır.
     { id: 'klasik', ad: 'Klasik Tasarım' },
   ]},
+  // 👤 KULLANICILAR — kişiye özel giriş + hangi ekranı göreceği.
+  // 🔴 Sahip kararı 2026-09-08: "kullanıcılar modülü ... sadece tanımladığım
+  // kişilere giriş ve şifre ile bağlanabilecek". Yerleşim denetçisi bunu
+  // Veri & Sistem'in bir görünümü olarak önermişti; sahip KENDİ MODÜLÜ dedi
+  // ve alan birimi olarak MODÜL değil GÖRÜNÜM (60 tane) seçti.
+  // ⚠️ Ekip ▸ Panel PIN & Görev QR ile KARIŞTIRILMAZ: orası baristanın ŞUBE
+  // paneli kimliği ("pini olan personel serbest" — sahip). Burası ofis
+  // panelinin kimliği. İki ayrı kavram, iki ayrı ekran.
+  { id: 'kullanici', blok: 'Kayıt & kurulum', ad: 'Kullanıcılar', kisa: 'Kullanıcı',
+    alt: 'giriş · ekran görünürlüğü', ikon: IK.anahtar, gorunumler: [
+      { id: 'liste', ad: 'Kullanıcılar & Ekran Görünürlüğü' },
+    ] },
 ];
