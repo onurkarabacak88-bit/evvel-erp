@@ -35,27 +35,59 @@ ADMIN_OTURUM_GUN = 30
 OTURUM_BASLIK = "X-Evvel-Oturum"
 
 
-def jeton_uret(gun: int = ADMIN_OTURUM_GUN) -> str:
-    bitis = int(time.time()) + gun * 86400
-    imza = hmac.new(ADMIN_SIFRE.encode("utf-8"), str(bitis).encode("ascii"),
+# 🆔 JETON ARTIK KİMLİK TAŞIYABİLİR (2026-09-08, sahip: kişiye şifre)
+#   eski biçim: "<bitis>.<imza>"              → kim olduğu BİLİNMEZ
+#   yeni biçim: "<bitis>.<kullanici_id>.<imza>"
+# İmza her iki biçimde de GÖVDENİN TAMAMINI kapsar, yani kimlik kısmı
+# kurcalanamaz. Eski biçim ÇALIŞMAYA DEVAM EDER: tek ADMIN_SIFRE ile girenler
+# kapıda kalmasın diye (geçiş güvenliği). Kimliksiz jeton "sahip (ortak şifre)"
+# sayılır ve denetim defterinde ÖYLE görünür — uydurma isim yazılmaz.
+def _imzala(govde: str) -> str:
+    return hmac.new(ADMIN_SIFRE.encode("utf-8"), govde.encode("utf-8"),
                     hashlib.sha256).hexdigest()[:32]
-    return f"{bitis}.{imza}"
+
+
+def jeton_uret(gun: int = ADMIN_OTURUM_GUN, kullanici_id: Optional[str] = None) -> str:
+    bitis = int(time.time()) + gun * 86400
+    if kullanici_id:
+        govde = f"{bitis}.{kullanici_id}"
+        return f"{govde}.{_imzala(govde)}"
+    # ⚠️ Kimliksiz jetonun imzası ESKİSİYLE BİREBİR aynı hesaplanır — bugün
+    # tarayıcılarda duran jetonlar geçersizleşmesin.
+    return f"{bitis}.{_imzala(str(bitis))}"
+
+
+def jeton_coz(jeton: str) -> Tuple[bool, int, Optional[str]]:
+    """(gecerli_mi, kalan_saniye, kullanici_id) — biçim/imza/süre üçünü doğrular.
+
+    Kimliksiz eski jetonda `kullanici_id` None döner; bu bir HATA DEĞİL,
+    "ortak şifreyle girilmiş" gerçeğidir.
+    """
+    parcalar = (jeton or "").split(".")
+    if len(parcalar) == 2:
+        bitis_s, imza = parcalar
+        kid = None
+        govde = bitis_s
+    elif len(parcalar) == 3:
+        bitis_s, kid, imza = parcalar
+        govde = f"{bitis_s}.{kid}"
+    else:
+        return False, 0, None
+    try:
+        bitis = int(bitis_s)
+    except ValueError:
+        return False, 0, None
+    # compare_digest: imza karşılaştırması zamanlama sızdırmasın.
+    if not hmac.compare_digest(imza, _imzala(govde)):
+        return False, 0, None
+    kalan = bitis - int(time.time())
+    return (kalan > 0), max(0, kalan), (kid or None)
 
 
 def jeton_gecerli(jeton: str) -> Tuple[bool, int]:
-    """(gecerli_mi, kalan_saniye) — biçim/imza/süre üçünü de doğrular."""
-    try:
-        bitis_s, imza = (jeton or "").split(".", 1)
-        bitis = int(bitis_s)
-    except Exception:
-        return False, 0
-    beklenen = hmac.new(ADMIN_SIFRE.encode("utf-8"), str(bitis).encode("ascii"),
-                        hashlib.sha256).hexdigest()[:32]
-    # compare_digest: imza karşılaştırması zamanlama sızdırmasın.
-    if not hmac.compare_digest(imza, beklenen):
-        return False, 0
-    kalan = bitis - int(time.time())
-    return (kalan > 0), max(0, kalan)
+    """(gecerli_mi, kalan_saniye). Geriye uyum — kimliği umursamayan çağıranlar."""
+    g, k, _ = jeton_coz(jeton)
+    return g, k
 
 
 def admin_kapisi(x_evvel_oturum: Optional[str] = Header(default=None)) -> bool:

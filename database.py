@@ -6628,3 +6628,51 @@ def ensure_gorev_tablolari(cur) -> None:
         CREATE INDEX IF NOT EXISTS idx_kasa_devir_onay_sube_tarih
         ON kasa_devir_onay (sube_id, tarih)
     """)
+
+
+def ensure_kullanici(cur) -> None:
+    """👤 KULLANICI TANIMI — kişiye özel giriş + hangi ekranı göreceği.
+
+    🔴 NEDEN (sahip 2026-09-08): "tanımlarla tek tek açılmasına ve şifresiyle
+    girmesine izin vereceğiz". Bugün yönetim paneline giriş TEK ortak şifreyle
+    (`ADMIN_SIFRE`) yapılıyor; giren herkes her şeyi görüyor ve denetim
+    defterinde herkes "yönetim (oturum)" olarak görünüyor — "bu bordroyu kim
+    onayladı" sorusunun cevabı YOK.
+
+    ⚠️ ÜÇÜNCÜ BİR KİMLİK (yerleşim denetçisi hükmü 2026-09-08):
+    · `personel` tablosuna BAĞLANMAZ — orası maaş/bordro verisi; kimlik
+      alanlarını oraya karıştırmak iki farklı kavramı tek satıra sıkıştırır.
+    · `sube_panel_kullanici` DİRİLTİLMEZ — o tablo ölü (uçları kaldırılmış).
+    · `personel.panel_pin_*` DOKUNULMAZ — o, baristanın ŞUBE PANELİ kimliği;
+      sahip kararı: "pini olan personel serbest", bu iş onu hiç ilgilendirmiyor.
+    `personel_id` yalnız OPSİYONEL bir görüntü bağıdır (kim kimdir), yetkiyle
+    ilgisi yoktur.
+
+    ⚠️ DÜRÜST SINIR: `gorunumler` bir GÖRÜNÜRLÜK ayarıdır, erişim güvenliği
+    DEĞİLDİR. API uçlarının çoğu hâlâ auth'suz (güvenlik backlog'u); adresi
+    bilen veriye ulaşır. Ekranda da böyle yazar — olmayan güvence satılmaz.
+    """
+    cur.execute("SET LOCAL lock_timeout = '3s'")
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kullanici (
+            id            TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            ad            TEXT NOT NULL,
+            kullanici_adi TEXT NOT NULL,
+            sifre_salt    TEXT NOT NULL,
+            sifre_hash    TEXT NOT NULL,
+            -- Serbest etiket ('müdür', 'muhasebe'…). Yetkiyi ROL DEĞİL,
+            -- `gorunumler` listesi belirler — rol yalnız insan için etikettir.
+            rol           TEXT,
+            -- Görebileceği v2 görünümleri: ["ekip:maas", "para:kasa", …]
+            -- ["*"] = hepsi. Sahip kararı 2026-09-08: birim MODÜL değil GÖRÜNÜM.
+            gorunumler    JSONB NOT NULL DEFAULT '[]'::jsonb,
+            personel_id   TEXT,
+            aktif         BOOLEAN NOT NULL DEFAULT TRUE,
+            son_giris     TIMESTAMPTZ,
+            olusturma     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
+    # Giriş adı benzersiz olmalı — iki kişi aynı adla girerse hangisi olduğu
+    # belirsizleşir ve denetim defteri yalan söyler.
+    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_kullanici_adi "
+                "ON kullanici (LOWER(kullanici_adi))")

@@ -200,6 +200,16 @@ except Exception as _ucret_err:
     logging.getLogger(__name__).warning(
         f"ucret modulu yuklenemedi (izole, ana akis etkilenmez): {_ucret_err}"
     )
+# 👤 KULLANICILAR — kişiye özel giriş + ekran görünürlüğü (sahip 2026-09-08).
+# İZOLE: yüklenemezse sistem bugünkü haliyle (tek ortak şifre) çalışmaya devam
+# eder — kimse kapıda kalmaz.
+try:
+    from kullanici_api import router as kullanici_router
+    app.include_router(kullanici_router)
+except Exception as _kul_err:
+    logging.getLogger(__name__).warning(
+        f"kullanici modulu yuklenemedi (izole, ortak sifre calismaya devam eder): {_kul_err}"
+    )
 # PERSONEL KİMLİĞİ — İZOLE: "aynı kişi mi?" + "gerçekten ne zaman başladı?"
 # ÖNERİ-ONLY: hiçbir kaydı kendiliğinden birleştirmez/düzeltmez.
 try:
@@ -1395,6 +1405,15 @@ def startup():
             ensure_bordro_defteri(cur)
     except Exception as e:
         logger.warning("bordro defteri migrasyonu (startup) atlandı: %s", e)
+    # 👤 KULLANICI TANIMI: kişiye özel giriş + görünüm listesi. Aynı desen —
+    # kendi kısa transaction'ı, lock_timeout'lu, hata yutulur. Tablo açılmazsa
+    # sistem bugünkü davranışına düşer (tek ortak şifre) ve uygulama YİNE AÇILIR.
+    try:
+        with db() as (conn, cur):
+            from database import ensure_kullanici
+            ensure_kullanici(cur)
+    except Exception as e:
+        logger.warning("kullanici migrasyonu (startup) atlandı: %s", e)
     # 🕐 PART-TIME ELLE SAAT: personel_aylik.saat_kaynagi ('elle' | NULL).
     # Aynı desen — kendi kısa transaction'ı, lock_timeout'lu, hata yutulur.
     # Kolon açılmazsa sistem eski davranışa düşer (saat vardiyadan gelir),
