@@ -706,8 +706,55 @@ export default function TasarimV2({ onGit }) {
   // CFO Panel ile v2 aynı sayıyı göstermek ZORUNDA.
   const kasaBanka = sayi(panel?.kasa);
 
+  // ── 👤 EKRAN GÖRÜNÜRLÜĞÜ (sahip 2026-09-08) ────────────────────────────────
+  // Kişiye özel giriş yapıldıysa jeton kimlik taşır; sunucu o kişinin
+  // görebileceği görünüm listesini döndürür. Ortak şifreyle girenlerde
+  // `hepsi=true` gelir ve HİÇBİR ŞEY DEĞİŞMEZ — bugünkü davranış birebir sürer.
+  // ⚠️ Uç düşerse de `hepsi=true` varsayılır: görünürlük ayarının kırılması
+  // sahibi kendi panelinin dışında bırakmamalı. Bu bir GÜVENLİK kapısı değil,
+  // bir SADELEŞTİRME aracıdır — kapalıyken açık kalmalıdır.
+  const [yetki, setYetki] = React.useState({ hepsi: true, gorunumler: ['*'], kullanici: null });
+  React.useEffect(() => {
+    let jeton = '';
+    try { jeton = localStorage.getItem('evvel_oturum') || ''; } catch (_) { jeton = ''; }
+    if (!jeton) return;
+    api(`/kullanici-ben?jeton=${encodeURIComponent(jeton)}`)
+      .then((d) => {
+        if (d && d.gecerli) {
+          setYetki({ hepsi: !!d.hepsi, gorunumler: d.gorunumler || [], kullanici: d.kullanici || null });
+        }
+      })
+      .catch(() => { /* uç yoksa/düşerse: hepsi açık kalır (yukarıdaki gerekçe) */ });
+  }, []);
+
+  const gorunurMu = React.useCallback((mid, gid) => {
+    if (yetki.hepsi) return true;
+    const g = yetki.gorunumler || [];
+    return g.includes('*') || g.includes(mid) || g.includes(`${mid}:${gid}`);
+  }, [yetki]);
+
+  /** Menüde çizilecek modüller — izinsiz görünümler ayıklanmış hâliyle. */
+  const gorunurModuller = React.useMemo(() => {
+    if (yetki.hepsi) return MODULLER;
+    return MODULLER
+      .map((m) => ({ ...m, gorunumler: (m.gorunumler || []).filter((g) => gorunurMu(m.id, g.id)) }))
+      .filter((m) => m.gorunumler.length > 0);
+  }, [yetki, gorunurMu]);
+
+  // İzni olmayan bir ekranda duruyorsa (ör. yetki sonradan daraltıldı) ilk
+  // izinli ekrana taşı — boş bir gövdeye bakıp "sistem bozuk" sanmasın.
+  React.useEffect(() => {
+    if (yetki.hepsi || !gorunurModuller.length) return;
+    if (!gorunurMu(mod, gorunum)) {
+      const m0 = gorunurModuller[0];
+      setMod(m0.id);
+      setGorunum(m0.gorunumler[0].id);
+    }
+  }, [yetki, gorunurModuller, gorunurMu, mod, gorunum]);
+
   // ── gezinme ────────────────────────────────────────────────────────────────
-  const modObj = MODULLER.find(m => m.id === mod) || MODULLER[0];
+  const modObj = gorunurModuller.find(m => m.id === mod)
+    || MODULLER.find(m => m.id === mod) || gorunurModuller[0] || MODULLER[0];
   const gorunumObj = modObj.gorunumler.find(g => g.id === gorunum) || modObj.gorunumler[0];
 
   /** Geçmiş gün modunda "Bugün" kelimesi KULLANILMAZ; etiket o günün tarihine
@@ -787,7 +834,9 @@ export default function TasarimV2({ onGit }) {
   const paletListe = () => {
     const q = sadeles(paletQ);
     const o = [];
-    MODULLER.forEach((m) => m.gorunumler.forEach((g) => {
+    // ⌘K paleti izinsiz ekranı ÖNERMEZ — arayıp bulup tıklayınca boş gövdeye
+    // düşmek, menüden gizlemiş olmayı anlamsızlaştırırdı.
+    gorunurModuller.forEach((m) => m.gorunumler.forEach((g) => {
       const metin = sadeles(`${m.ad} ${m.kisa} ${g.ad} ${m.blok}`);
       if (!q || metin.includes(q)) {
         o.push({ mod: m.id, view: g.id, ad: g.ad, modAd: m.ad, blok: m.blok, rozet: rozetler[g.rozet], renk: g.renk });
@@ -3086,14 +3135,14 @@ export default function TasarimV2({ onGit }) {
           }} />
         </div>
 
-        {MODULLER.map((m, i) => {
+        {gorunurModuller.map((m, i) => {
           const aktif = m.id === mod;
           // Tasarım kuralı: modülde KIRMIZI rozetli (acil) bir görünüm varsa
           // ray ikonunda kırmızı nokta belirir.
           const acilVar = m.gorunumler.some(g => g.renk === '#F87171' && rozetler[g.rozet]);
           // Yeni handoff: ray 4 anlamsal bloğa ayrılır; her blok başında
           // 44px genişliğinde üst kenarlıklı etiket durur.
-          const blokBasi = i === 0 || MODULLER[i - 1].blok !== m.blok;
+          const blokBasi = i === 0 || gorunurModuller[i - 1].blok !== m.blok;
           return (
             <React.Fragment key={m.id}>
             {blokBasi && (

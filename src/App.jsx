@@ -217,6 +217,13 @@ function syncHashForPage(pageId) {
 const OTURUM_ANAHTAR = 'evvel_oturum';
 
 function AdminGirisKapisi({ onBasarili }) {
+  // 👤 İKİ YOLLU GİRİŞ (sahip 2026-09-08: "tanımladığım kişilere giriş ve şifre")
+  // Giriş adı DOLUYSA kişiye özel yol (`/kullanici-giris`), BOŞSA eski ortak
+  // şifre yolu (`/admin-giris`) denenir.
+  // ⚠️ ORTAK ŞİFRE KALDIRILMADI — bilinçli: tek kullanıcı bile tanımlanmadan
+  // ortak yolu kapatmak sahibi KENDİ SİSTEMİNİN DIŞINDA bırakırdı. Kapı,
+  // içeridekini dışarıda bırakmamak üzere kurulur.
+  const [kadi, setKadi] = useState('');
   const [sifre, setSifre] = useState('');
   const [hata, setHata] = useState('');
   const [yukleniyor, setYukleniyor] = useState(false);
@@ -226,14 +233,20 @@ function AdminGirisKapisi({ onBasarili }) {
     setHata('');
     setYukleniyor(true);
     try {
-      const res = await api('/admin-giris', { method: 'POST', body: { sifre } });
+      const kisiselMi = !!kadi.trim();
+      const res = kisiselMi
+        ? await api('/kullanici-giris', { method: 'POST',
+          body: { kullanici_adi: kadi.trim(), sifre } })
+        : await api('/admin-giris', { method: 'POST', body: { sifre } });
       if (res?.ok) {
         // Sunucunun imzaladığı süreli jeton — F5'te yeniden şifre sorulmasın.
+        // Kişisel girişte jeton KİMLİK taşır; denetim defteri artık gerçek
+        // isim yazabilir.
         if (res.jeton) { try { localStorage.setItem(OTURUM_ANAHTAR, res.jeton); } catch (_) {} }
         onBasarili();
       }
     } catch (e2) {
-      setHata(e2.message || 'Şifre yanlış');
+      setHata(e2.message || 'Giriş bilgisi yanlış');
     } finally {
       setYukleniyor(false);
     }
@@ -252,15 +265,27 @@ function AdminGirisKapisi({ onBasarili }) {
         <div style={{ fontFamily: 'var(--font-display)', fontSize: 24, fontWeight: 600, color: 'var(--text)', marginBottom: 4 }}>
           EVVEL<span style={{ color: 'var(--accent)' }}>.</span>
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 24 }}>
-          Devam etmek için şifre girin
+        <div style={{ fontSize: 12, color: 'var(--text3)', marginBottom: 20 }}>
+          Kendi giriş adınız varsa yazın — yoksa boş bırakıp ortak şifreyi girin
         </div>
         <input
-          type="password"
           autoFocus
+          value={kadi}
+          onChange={e => setKadi(e.target.value)}
+          placeholder="Giriş adı (isteğe bağlı)"
+          autoComplete="username"
+          style={{
+            width: '100%', padding: '12px 14px', borderRadius: 8, marginBottom: 10,
+            border: '1px solid var(--border)', background: 'var(--bg)',
+            color: 'var(--text)', fontSize: 14, boxSizing: 'border-box',
+          }}
+        />
+        <input
+          type="password"
           value={sifre}
           onChange={e => setSifre(e.target.value)}
           placeholder="Şifre"
+          autoComplete="current-password"
           style={{
             width: '100%', padding: '12px 14px', borderRadius: 8, marginBottom: 12,
             border: '1px solid var(--border)', background: 'var(--bg)',
