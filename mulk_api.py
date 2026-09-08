@@ -399,6 +399,18 @@ def tahsilat_durum(donem: str = None):
             GROUP BY sozlesme_id
         """)
         tahsil = {r["sozlesme_id"]: float(r["tahsil"]) for r in (cur.fetchall() or [])}
+        # Ay ay dağılım için TEK TEK tahsilatlar (tarih sırası — FIFO çıpası)
+        cur.execute("""
+            SELECT id, sozlesme_id, tarih::text AS tarih, tutar::float AS tutar,
+                   donem, aciklama
+            FROM mulk_hareket
+            WHERE tur='KIRA_TAHSILAT' AND COALESCE(durum,'aktif')='aktif'
+              AND sozlesme_id IS NOT NULL
+            ORDER BY tarih, olusturma
+        """)
+        _hareketler: Dict[str, List[Dict[str, Any]]] = {}
+        for r in (cur.fetchall() or []):
+            _hareketler.setdefault(r["sozlesme_id"], []).append(dict(r))
 
     satirlar = []
     for s in sozlesmeler:
@@ -416,6 +428,43 @@ def tahsilat_durum(donem: str = None):
         bakiye = round(beklenen - alinan, 2)
         ay_kira = float(s["aylik_kira"])
         gecikme_ay = int(bakiye // ay_kira) if ay_kira > 0 and bakiye > 0 else 0
+
+        # 📅 AY AY DAĞILIM — "3 ay geride" iddiasının KANITI.
+        # 🔴 NEDEN: sahip 2026-09-09 "bence de görünmeli". Bir rakama bakıp
+        # "bu nereden çıktı" diyememek bordroda DÖRT AY fark edilmeyen bir
+        # eksik hesaba yol açmıştı ([[project-bordro-v2-kesim]]).
+        #
+        # FIFO: tahsilatlar tarih sırasıyla en ESKİ açık aya yazılır. Hangi ayı
+        # kapattığı SAKLANMAZ, okuma anında bulunur (BAĞLAMA ≠ KAPATMA) — böylece
+        # 3 aylık toplu ödeme, kısmi ödeme ve peşin ödeme aynı kuraldan çıkar.
+        # `donem` alanı varsa yalnızca İPUCU olarak gösterilir, tahsisi değiştirmez.
+        _bek_ay = beklenen / ay_sayisi if ay_sayisi else 0.0
+        _kalan = list(_hareketler.get(s["id"], []))
+        _kuyruk = [{"id": h["id"], "tarih": h["tarih"], "kalan": float(h["tutar"]),
+                    "donem": h.get("donem")} for h in _kalan]
+        aylar = []
+        _yi, _ai = bas.year, bas.month
+        for _n in range(ay_sayisi):
+            _don = "%04d-%02d" % (_yi, _ai)
+            _ihtiyac = round(_bek_ay, 2)
+            _kapatan = []
+            for h in _kuyruk:
+                if _ihtiyac <= 0.005 or h["kalan"] <= 0.005:
+                    continue
+                _al = min(h["kalan"], _ihtiyac)
+                h["kalan"] = round(h["kalan"] - _al, 2)
+                _ihtiyac = round(_ihtiyac - _al, 2)
+                _kapatan.append({"hareket_id": h["id"], "tarih": h["tarih"],
+                                 "tutar": round(_al, 2), "donem_ipucu": h["donem"]})
+            aylar.append({
+                "donem": _don, "beklenen": round(_bek_ay, 2),
+                "kapanan": round(_bek_ay - _ihtiyac, 2), "acik": round(_ihtiyac, 2),
+                "durum": ("kapandi" if _ihtiyac <= 0.005
+                          else "kismi" if _kapatan else "acik"),
+                "kapatan": _kapatan,
+            })
+            _yi, _ai = _ay_ekle(_yi, _ai, 1)
+        _fazla = round(sum(h["kalan"] for h in _kuyruk), 2)
         satirlar.append({
             "sozlesme_id": s["id"], "mulk_id": s["mulk_id"], "mulk_ad": s["mulk_ad"],
             "kiraci_id": s["kiraci_id"], "kiraci_ad": s["kiraci_ad"],
@@ -428,6 +477,10 @@ def tahsilat_durum(donem: str = None):
             "stopaj_orani": float(s.get("stopaj_orani") or 0),
             "durum": ("borclu" if bakiye > 0.5 else
                       "pesin" if bakiye < -0.5 else "guncel"),
+            "aylar": aylar,
+            # Aylara dağıtıldıktan sonra ARTAN para = peşin ödenmiş kısım.
+            "pesin_tutar": _fazla,
+            "acik_ay": sum(1 for a in aylar if a["durum"] != "kapandi"),
         })
     satirlar.sort(key=lambda r: -r["bakiye"])
     return {
@@ -586,17 +639,39 @@ def aktarim_yaz(b: AktarimBody):
 # DEFTER — tüm hareketler + kasa izi
 # ═══════════════════════════════════════════════════════════════════
 @router.get("/defter")
-def mulk_defteri(ay: str = None, limit: int = 300):
+def mulk_defteri(ay: str = None, kiraci_id: str = None, sozlesme_id: str = None,
+                 mulk_id: str = None, tur: str = None, limit: int = 300):
+    """Mülk defteri. Filtreler EKLEMELİ — hiçbiri verilmezse davranış eskisi.
+
+    ⚠️ `tur` virgülle çoklu alır ('DEPOZITO_ALINDI,DEPOZITO_IADE'). Çekmeceler
+    aynı ucu farklı süzgeçlerle okur; süzmek aritmetik DEĞİLDİR — ekran kendi
+    rakamını üretmez, sunucunun satırlarını daraltır.
+    """
     kos, par = "", []
     if ay and re.match(r"^\d{4}-\d{2}$", ay):
-        kos = " AND to_char(h.tarih,'YYYY-MM') = %s"
-        par = [ay]
+        kos += " AND to_char(h.tarih,'YYYY-MM') = %s"
+        par.append(ay)
+    if kiraci_id:
+        kos += " AND h.kiraci_id = %s"
+        par.append(kiraci_id)
+    if sozlesme_id:
+        kos += " AND h.sozlesme_id = %s"
+        par.append(sozlesme_id)
+    if mulk_id:
+        kos += " AND h.mulk_id = %s"
+        par.append(mulk_id)
+    if tur:
+        _t = [x.strip() for x in str(tur).split(",") if x.strip()]
+        if _t:
+            kos += " AND h.tur = ANY(%s)"
+            par.append(_t)
     with db() as (conn, cur):
         cur.execute(f"""
             SELECT h.*, h.tarih::text AS tarih, h.tutar::float AS tutar,
-                   m.ad AS mulk_ad, k.ad AS kiraci_ad,
+                   m.ad AS mulk_ad, m.simge AS mulk_simge, k.ad AS kiraci_ad,
                    kh.id AS kasa_iz, kh.islem_turu AS kasa_turu,
-                   COALESCE(kh.defter,'TULIPI') AS kasa_defter
+                   COALESCE(kh.defter,'TULIPI') AS kasa_defter,
+                   kh.odeme_yontemi, kh.kasa_etkisi
             FROM mulk_hareket h
             LEFT JOIN mulk m ON m.id = h.mulk_id
             LEFT JOIN kiraci k ON k.id = h.kiraci_id
@@ -606,9 +681,14 @@ def mulk_defteri(ay: str = None, limit: int = 300):
             LIMIT %s
         """, par + [max(1, min(1000, limit))])
         satirlar = [dict(r) for r in (cur.fetchall() or [])]
+    _lim = max(1, min(1000, limit))
     return {
         "satirlar": satirlar,
         "adet": len(satirlar),
+        "toplam": round(sum(float(r["tutar"]) for r in satirlar), 2),
+        # ⚠️ SESSİZ ELEME YASAK: liste tavana dayandıysa söylenir.
+        "kesildi": len(satirlar) >= _lim,
+        "izsiz": sum(1 for r in satirlar if not r.get("kasa_iz")),
         "not": ("Her satırın kasa izi vardır (kasa_iz). İz yoksa o satır "
                 "kasaya yansımamış demektir — sessiz geçilmez, görünür olur."),
     }
@@ -684,18 +764,24 @@ def goc_adaylari():
             anahtar = "(adsız)"
         k = kume.setdefault(anahtar, {"onerilen_ad": ad.strip().title() or "(adsız)",
                                       "yazimlar": set(), "adet": 0, "toplam": 0.0,
-                                      "aylar": set(), "kayit_id": []})
+                                      "aylar": set(), "kayit_id": [], "satirlar": []})
         k["yazimlar"].add(ad.strip())
         k["adet"] += 1
         k["toplam"] += float(r["tutar"])
         k["aylar"].add(r["tarih"][:7])
         k["kayit_id"].append(r["id"])
+        # ⚠️ HAM KAYIT DA GÖRÜNSÜN: sahip 46 kaydı körlemesine birleştirmesin.
+        # Para değiştiren toplu işlemin LİSTESİ okunur
+        # ([[feedback-kuru-calistirma-kapisi]]).
+        k["satirlar"].append({"id": r["id"], "tarih": r["tarih"],
+                              "tutar": r["tutar"], "aciklama": r["aciklama"]})
 
     kumeler = sorted(
         ({"anahtar": a, "onerilen_ad": v["onerilen_ad"],
           "yazimlar": sorted(v["yazimlar"]), "yazim_adedi": len(v["yazimlar"]),
           "adet": v["adet"], "toplam": round(v["toplam"], 2),
-          "aylar": sorted(v["aylar"]), "kayit_id": v["kayit_id"]}
+          "aylar": sorted(v["aylar"]), "kayit_id": v["kayit_id"],
+          "satirlar": sorted(v["satirlar"], key=lambda r: r["tarih"])}
          for a, v in kume.items()),
         key=lambda r: -r["toplam"])
 
@@ -745,12 +831,16 @@ def goc_adaylari():
         return round(sum(float(r["tutar"]) for r in x), 2)
 
     return {
-        "kira": {"adet": len(kira), "toplam": _t(kira)},
+        # ⚠️ KİRA ve GERÇEK DIŞ KAYNAK kovaları da satırlarını taşır: sınıflama
+        # yalnız açıklamadaki anahtar kelimeye bakıyor ("kira" geçmeyen bir kira
+        # kaydı yanlış kovaya düşer) ve bunu yakalamanın TEK yolu içini görmek.
+        "kira": {"adet": len(kira), "toplam": _t(kira), "satirlar": kira},
         "depozito": {"adet": len(depozito), "toplam": _t(depozito),
                      "satirlar": depozito},
         "mulk_gideri": {"adet": len(gider), "toplam": _t(gider), "satirlar": gider},
         "varlik_satisi": {"adet": len(varlik), "toplam": _t(varlik), "satirlar": varlik},
-        "gercek_dis_kaynak": {"adet": len(disi), "toplam": _t(disi)},
+        "gercek_dis_kaynak": {"adet": len(disi), "toplam": _t(disi),
+                              "satirlar": disi},
         "kiraci_kumeleri": kumeler,
         "birlestirme_onerileri": oneriler,
         "eslesen_kume": sum(1 for k in kumeler if k.get("eslesti")),
@@ -963,8 +1053,12 @@ def mulk_dosyasi(mid: str):
         abonelikler = [dict(r) for r in (cur.fetchall() or [])]
         cur.execute("""
             SELECT h.*, h.tarih::text AS tarih, h.tutar::float AS tutar,
-                   k.ad AS kiraci_ad, h.kasa_hareket_id AS kasa_iz
-            FROM mulk_hareket h LEFT JOIN kiraci k ON k.id=h.kiraci_id
+                   k.ad AS kiraci_ad, h.kasa_hareket_id AS kasa_iz,
+                   kh.odeme_yontemi, kh.islem_turu AS kasa_turu,
+                   COALESCE(kh.defter,'TULIPI') AS kasa_defter
+            FROM mulk_hareket h
+            LEFT JOIN kiraci k ON k.id=h.kiraci_id
+            LEFT JOIN kasa_hareketleri kh ON kh.id = h.kasa_hareket_id
             WHERE h.mulk_id=%s AND COALESCE(h.durum,'aktif')='aktif'
             ORDER BY h.tarih DESC LIMIT 200
         """, (mid,))

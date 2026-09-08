@@ -1146,7 +1146,8 @@ export default function TasarimV2({ onGit }) {
     // 🏠 KİRALIK MÜLKLER — Evvel'in içinde, AYRI mantıkta (sahip 2026-09-08).
     // Kahve işiyle tek kesişme: TOPLAM KASA = TULİPİ + MÜLK.
     if (mod === 'mulk') {
-      return <MulkModulu gorunum={gorunum} onCekmece={setCekmece} onToast={setToast} />;
+      return <MulkModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule}
+                         onToast={setToast} />;
     }
     // 👤 KULLANICILAR — kişiye özel giriş + ekran görünürlüğü (sahip 2026-09-08)
     if (mod === 'kullanici') {
