@@ -470,6 +470,33 @@ def admin_oturum(jeton: str = ""):
     gecerli, kalan = _admin_jeton_gecerli(jeton)
     return {"gecerli": gecerli, "kalan_gun": round(kalan / 86400, 1) if gecerli else 0}
 
+# 🔒 KİLİT GÖZLEMİ (sahip 2026-09-08: "kilitleri tak") — FAZ 1: SAY, ENGELLEME.
+# Kilidi doğrudan takmak CANLI DÜKKÂNLARI DURDURABİLİR: `/sube-panel` ayrı bir
+# HTML sayfasıdır ve yönetim jetonunu HİÇ taşımaz (PIN'le çalışır); QR ekranı,
+# başvuru formu, fire fotoğrafı da öyle. Hangi ucun jetonsuz çağrıldığını
+# TAHMİN etmek yerine ÖLÇÜYORUZ. İzin listesi kanıtla kurulacak, sonra Faz 2'de
+# engelleme açılacak ([[feedback-kuru-calistirma-kapisi]]).
+@app.middleware("http")
+async def kilit_gozlemi(request: Request, call_next):
+    try:
+        if request.url.path.startswith("/api/"):
+            import kilit_gozlem as _kg
+            _jeton = request.headers.get("X-Evvel-Oturum") or ""
+            _gecerli, _ = _admin_jeton_gecerli(_jeton) if _jeton else (False, 0)
+            _kg.kaydet(request.method, request.url.path, bool(_gecerli),
+                       kaynak=(request.headers.get("Referer") or ""))
+    except Exception:  # noqa: BLE001 — gözlem hiçbir koşulda isteği bozmaz
+        pass
+    return await call_next(request)
+
+
+@app.get("/api/kilit-gozlem")
+def kilit_gozlem_oku():
+    """Kilit takılınca hangi uçlar kırılırdı? SALT OKUR, hiçbir şey engellenmedi."""
+    import kilit_gozlem as _kg
+    return _kg.ozet()
+
+
 @app.middleware("http")
 async def log_requests(request: Request, call_next):
     start = time.time()
