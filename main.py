@@ -210,6 +210,15 @@ except Exception as _kul_err:
     logging.getLogger(__name__).warning(
         f"kullanici modulu yuklenemedi (izole, ortak sifre calismaya devam eder): {_kul_err}"
     )
+# 🏠 KİRALIK MÜLKLER — TULİPİ'den AYRI defter (sahip 2026-09-08).
+# İZOLE: yüklenemezse kahve işi hiç etkilenmez; mülk ekranı boş kalır.
+try:
+    from mulk_api import router as mulk_router
+    app.include_router(mulk_router)
+except Exception as _mulk_err:
+    logging.getLogger(__name__).warning(
+        f"mulk modulu yuklenemedi (izole, kahve isi etkilenmez): {_mulk_err}"
+    )
 # PERSONEL KİMLİĞİ — İZOLE: "aynı kişi mi?" + "gerçekten ne zaman başladı?"
 # ÖNERİ-ONLY: hiçbir kaydı kendiliğinden birleştirmez/düzeltmez.
 try:

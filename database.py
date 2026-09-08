@@ -6776,10 +6776,19 @@ def ensure_mulk_defteri(cur) -> None:
             depozito   NUMERIC(14,2) NOT NULL DEFAULT 0,
             odeme_gunu INTEGER NOT NULL DEFAULT 1, -- ayın kaçında beklenir
             durum      TEXT NOT NULL DEFAULT 'aktif',  -- aktif | bitti | iptal
+            -- ⚠️ STOPAJ: kiracı İŞYERİ ise kirayı brütten keser ve sahibe NET
+            -- öder (%20 tevkifat). Bu ayrım yoksa her ay "eksik ödedi" SAHTE
+            -- ALARMI doğar ([[feedback-sahte-alarmi-duzeltmek]]).
+            kiraci_tipi   TEXT NOT NULL DEFAULT 'sahis',   -- sahis | isyeri
+            stopaj_orani  NUMERIC(5,2) NOT NULL DEFAULT 0, -- işyeri: 20.00
             notlar     TEXT,
             olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """)
+    # ⚠️ KİRA ARTIŞI: yeni sözleşme satırı olarak yazılır (eskisi durum='bitti').
+    # Ayrı bir "kira_donem" tablosu AÇILMADI — sistemde zaten "dönemli tanım"
+    # deseni var (ucret_tanim) ve sözleşme yenilemesi zaten YENİ SÖZLEŞMEdir.
+    # Beklenen kira, tarih aralığı hangi sözleşmeye düşüyorsa ondan okunur.
     # Mülk defteri: TULİPİ kasasından BAĞIMSIZ hareket kaydı.
     # tutar: + defter'e giriş, − defter'den çıkış (aktarım/gider/iade)
     cur.execute("""
@@ -6803,8 +6812,22 @@ def ensure_mulk_defteri(cur) -> None:
             olusturma   TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """)
+    # 🏷️ TAKMA AD DEFTERİ — aynı kiracı üç ayrı yazımla geliyor
+    # ("hamayoun / hamayoğun / hamoayoun faizi"). Sistemde emsali var:
+    # tedarikçi "Kimlik Birleştirme" ve [[reference-maas-alici-takma-adlari]].
+    # Sahip adı BİR KEZ onaylar; sonraki serbest metin ve BANKA EKSTRESİ
+    # eşleşmesi otomatik çözülür — asıl kaldıraç budur.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS kiraci_takma_ad (
+            takma_ad  TEXT PRIMARY KEY,          -- normalize edilmiş hâli
+            kiraci_id TEXT NOT NULL,
+            kaynak    TEXT,                      -- 'goc' | 'elle' | 'ekstre'
+            olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
     for _sql in (
         "CREATE INDEX IF NOT EXISTS idx_kira_sozlesme_mulk ON kira_sozlesme (mulk_id)",
+        "CREATE INDEX IF NOT EXISTS idx_kiraci_takma_kiraci ON kiraci_takma_ad (kiraci_id)",
         "CREATE INDEX IF NOT EXISTS idx_kira_sozlesme_kiraci ON kira_sozlesme (kiraci_id)",
         "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_donem ON mulk_hareket (donem)",
         "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_sozlesme ON mulk_hareket (sozlesme_id)",
