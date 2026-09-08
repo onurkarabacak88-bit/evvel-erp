@@ -428,7 +428,7 @@ def tahsilat_durum(donem: str = None):
 # ═══════════════════════════════════════════════════════════════════
 def _mulk_yaz(cur, tur: str, tarih, tutar: float, aciklama: str,
               sozlesme_id=None, mulk_id=None, kiraci_id=None, donem=None,
-              odeme_yontemi=None) -> Dict[str, str]:
+              odeme_yontemi=None, kaynak_kasa_id=None) -> Dict[str, str]:
     """Mülk hareketi + karşılığı kasa satırı. İkisi `kasa_hareket_id` ile bağlı.
 
     ⚠️ `defter` BURADA VERİLMEZ — `kasa_service.defter_turet` türden çıkarır.
@@ -443,10 +443,10 @@ def _mulk_yaz(cur, tur: str, tarih, tutar: float, aciklama: str,
     _k = cur.fetchone()
     cur.execute("""INSERT INTO mulk_hareket
         (id, tarih, tur, sozlesme_id, mulk_id, kiraci_id, donem, tutar,
-         aciklama, kasa_hareket_id)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+         aciklama, kasa_hareket_id, kaynak_kasa_id)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (hid, tarih, tur, sozlesme_id, mulk_id, kiraci_id, donem,
-                 tutar, aciklama, (_k or {}).get("id")))
+                 tutar, aciklama, (_k or {}).get("id"), kaynak_kasa_id))
     return {"id": hid, "kasa_hareket_id": (_k or {}).get("id")}
 
 
@@ -1063,3 +1063,162 @@ def takma_ad_kaldir(takma_ad: str):
         if cur.rowcount == 0:
             raise HTTPException(404, "Takma ad bulunamadı")
     return {"islem": "ayrildi"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# GÖÇ YAZIMI — AYNALAMA (mevcut kayda DOKUNULMAZ)
+# ═══════════════════════════════════════════════════════════════════
+GOC_ETIKET = "MULK_GOC_2026_09"
+
+
+@router.post("/goc-yaz")
+def goc_yaz(kuru: bool = Query(True), etiket: str = Query(GOC_ETIKET)):
+    """Eski `DIS_KAYNAK` kira/depozito kayıtlarını mülk defterine AYNALAR.
+
+    🔴 SAHİP KARARI 2026-09-08: *"para dükkâna girdi"*. Bu yüzden kayıtlar
+    TAŞINMAZ, AYNALANIR:
+
+        mevcut DIS_KAYNAK satırı  ............ DOKUNULMAZ (TULİPİ, +X)
+        yeni  MULK KIRA_TAHSILAT ............. +X
+        yeni  MULK MULK_AKTARIM_CIKIS ........ −X   (dükkâna aktarıldı)
+
+    Sonuç: MÜLK net 0 · TULİPİ değişmez · TOPLAM KASA DEĞİŞMEZ.
+    Kazanılan: "kim, ne zaman, ne kadar ödedi" ayrıntısı.
+
+    ⚠️ TAŞIMA (retag) BİLEREK SEÇİLMEDİ: 46 satırı `defter='MULK'` yapmak
+    TULİPİ çekmecesinden 657 bin ₺ SESSİZCE düşürür ve fiziksel sayımla
+    çelişirdi ([[feedback-beklenen-etki-capaya-donmasin]]).
+
+    ⚠️ MÜKERRER KORUMASI: her satır `mulk_hareket.kaynak_kasa_id` ile eski
+    kasa satırına çıpalanır; ikinci çalıştırma o satırları ATLAR.
+
+    `kuru=true` (varsayılan) hiçbir şey yazmaz, ne olacağını döndürür.
+    """
+    from finans_core import kasa_bakiyesi
+
+    with db() as (conn, cur):
+        t0 = kasa_bakiyesi(cur)
+        tu0 = kasa_bakiyesi(cur, defter="TULIPI")
+        mu0 = kasa_bakiyesi(cur, defter="MULK")
+
+        cur.execute("""
+            SELECT id, tarih, tarih::text AS tarih_m, tutar::float AS tutar, aciklama
+            FROM kasa_hareketleri
+            WHERE islem_turu='DIS_KAYNAK' AND COALESCE(durum,'aktif')='aktif'
+            ORDER BY tarih
+        """)
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+
+        cur.execute("""SELECT t.takma_ad, t.kiraci_id, k.ad
+                       FROM kiraci_takma_ad t JOIN kiraci k ON k.id=t.kiraci_id""")
+        bagli = {r["takma_ad"]: (r["kiraci_id"], r["ad"]) for r in (cur.fetchall() or [])}
+
+        cur.execute("""SELECT kaynak_kasa_id FROM mulk_hareket
+                       WHERE kaynak_kasa_id IS NOT NULL""")
+        yazilmis = {r["kaynak_kasa_id"] for r in (cur.fetchall() or [])}
+
+        plan, atlanan = [], []
+        for r in satirlar:
+            a = tr_kucuk(r.get("aciklama"))
+            if "ev sat" in a or "satış fiyat" in a or "satis fiyat" in a:
+                continue                              # varlık satışı — sahip kararı
+            if "depozit" in a:
+                tur = "DEPOZITO_ALINDI"
+            elif "kira" in a:
+                tur = "KIRA_TAHSILAT"
+            else:
+                continue                              # gerçek dış kaynak — DOKUNULMAZ
+            if r["id"] in yazilmis:
+                atlanan.append({"id": r["id"], "neden": "zaten aynalanmış",
+                                "aciklama": r["aciklama"]})
+                continue
+            ham = (r.get("aciklama") or "").split(":", 1)[-1]
+            ad = re.sub(r"(?i)kira( bedeli)?|geliri|depozito|gecikmi[şs]|"
+                        r"[0-9]+ ?ayl[ıi]k|ay[ıi]", "", tr_kucuk(ham)).strip(" -–—.")
+            _e = bagli.get(ad_anahtari(ad))
+            plan.append({
+                "kasa_id": r["id"], "tarih": r["tarih_m"], "tutar": r["tutar"],
+                "tur": tur, "aciklama": r["aciklama"],
+                "kiraci_id": _e[0] if _e else None,
+                "kiraci_ad": _e[1] if _e else None,
+            })
+
+        ozet = {
+            "kuru": kuru,
+            "yazilacak": len(plan),
+            "atlanan": len(atlanan),
+            "kiraci_eslesen": sum(1 for p in plan if p["kiraci_id"]),
+            "kiraci_bos": sum(1 for p in plan if not p["kiraci_id"]),
+            "toplam_tutar": round(sum(p["tutar"] for p in plan), 2),
+            "once": {"toplam": round(t0, 2), "tulipi": round(tu0, 2), "mulk": round(mu0, 2)},
+            "plan": plan,
+            "atlananlar": atlanan,
+        }
+
+        if kuru:
+            ozet["not"] = ("KURU ÇALIŞTIRMA — hiçbir şey yazılmadı. Yazmak için "
+                           "kuru=false gönderin. Yazınca TOPLAM KASA DEĞİŞMEZ: "
+                           "her kira satırının karşısına aynı tutarda "
+                           "'dükkâna aktarıldı' satırı düşer.")
+            return ozet
+
+        yazilan = 0
+        for p in plan:
+            _r = _mulk_yaz(cur, p["tur"], p["tarih"], abs(p["tutar"]),
+                           p["aciklama"], kiraci_id=p["kiraci_id"],
+                           donem=str(p["tarih"])[:7], kaynak_kasa_id=p["kasa_id"])
+            # Para dükkâna girdi → aynı tutar mülk defterinden çıkar.
+            # ⚠️ Bu satır OLMAZSA toplam kasa şişer: aynı para hem eski
+            # DIS_KAYNAK satırında hem yeni MULK satırında sayılırdı.
+            _mulk_yaz(cur, "MULK_AKTARIM_CIKIS", p["tarih"], -abs(p["tutar"]),
+                      "Dükkâna aktarıldı — %s" % (p["aciklama"] or "")[:80],
+                      kiraci_id=p["kiraci_id"], kaynak_kasa_id=p["kasa_id"])
+            yazilan += 1
+
+        t1 = kasa_bakiyesi(cur)
+        tu1 = kasa_bakiyesi(cur, defter="TULIPI")
+        mu1 = kasa_bakiyesi(cur, defter="MULK")
+        ozet.update({
+            "yazilan": yazilan,
+            "sonra": {"toplam": round(t1, 2), "tulipi": round(tu1, 2), "mulk": round(mu1, 2)},
+            "toplam_kasa_farki": round(t1 - t0, 2),
+            "tulipi_farki": round(tu1 - tu0, 2),
+        })
+        # 🚨 DEĞİŞMEZLİK KONTROLÜ — tutmuyorsa sessiz geçilmez.
+        if abs(t1 - t0) > 0.01 or abs(tu1 - tu0) > 0.01:
+            ozet["ALARM"] = ("TOPLAM veya TULİPİ kasası DEĞİŞTİ — bu göç "
+                             "hiçbir bakiyeyi değiştirmemeliydi. /goc-geri-al "
+                             "ile geri alın ve sebebi araştırın.")
+            logger.error("MULK GOC ALARM: toplam %.2f→%.2f  tulipi %.2f→%.2f",
+                         t0, t1, tu0, tu1)
+        else:
+            ozet["not"] = ("Yazıldı. TOPLAM KASA ve TULİPİ kasası KURUŞU "
+                           "KURUŞUNA aynı kaldı; mülk defteri artık kimin ne "
+                           "zaman ödediğini biliyor.")
+        return ozet
+
+
+@router.post("/goc-geri-al")
+def goc_geri_al():
+    """Göçü geri alır: aynalanan satırlar `durum='iptal'` olur.
+
+    Göç yalnız YENİ satır eklediği için geri alma tamdır — hiçbir mevcut
+    kaydın tutarı, defteri ya da türü değişmediği için "geri alınamaz" nokta
+    yoktur.
+    """
+    from finans_core import kasa_bakiyesi
+    with db() as (conn, cur):
+        t0 = kasa_bakiyesi(cur)
+        cur.execute("""SELECT id, kasa_hareket_id FROM mulk_hareket
+                       WHERE kaynak_kasa_id IS NOT NULL
+                         AND COALESCE(durum,'aktif')='aktif'""")
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+        for r in satirlar:
+            if r["kasa_hareket_id"]:
+                cur.execute("UPDATE kasa_hareketleri SET durum='iptal' WHERE id=%s",
+                            (r["kasa_hareket_id"],))
+            cur.execute("UPDATE mulk_hareket SET durum='iptal' WHERE id=%s", (r["id"],))
+        t1 = kasa_bakiyesi(cur)
+    return {"islem": "geri_alindi", "satir": len(satirlar),
+            "toplam_kasa_farki": round(t1 - t0, 2),
+            "not": "Aynalanan satırlar iptal edildi; eski kayıtlara hiç dokunulmamıştı."}

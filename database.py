@@ -6876,6 +6876,12 @@ def ensure_mulk_defteri(cur) -> None:
         # ALTER ile eklenir — yoksa canlıda "column does not exist" olur.
         "ALTER TABLE mulk ADD COLUMN IF NOT EXISTS simge TEXT",
         "ALTER TABLE mulk ADD COLUMN IF NOT EXISTS bina TEXT",
+        # 🔗 GÖÇ ÇIPASI: bu mülk satırı hangi ESKİ kasa kaydından doğdu.
+        # Olmadan göç iki kez çalıştırılırsa aynı kira İKİ KEZ yazılır ve
+        # kimse fark etmez ([[feedback-duzeltme-mukerrerlesir]]).
+        "ALTER TABLE mulk_hareket ADD COLUMN IF NOT EXISTS kaynak_kasa_id TEXT",
+        "CREATE UNIQUE INDEX IF NOT EXISTS idx_mulk_hareket_kaynak "
+        "ON mulk_hareket (kaynak_kasa_id, tur) WHERE kaynak_kasa_id IS NOT NULL",
         "ALTER TABLE mulk ADD COLUMN IF NOT EXISTS birim TEXT",
         "CREATE INDEX IF NOT EXISTS idx_mulk_bina ON mulk (bina)",
         "ALTER TABLE kira_sozlesme ADD COLUMN IF NOT EXISTS kiraci_tipi TEXT NOT NULL DEFAULT 'sahis'",
