@@ -127,6 +127,19 @@ export default function KullaniciModulu({ onToast }) {
     } finally { setMesgul(false); }
   };
 
+  /** Hiç girmemiş kapalı kaydı KALICI sil. Girmiş olanda sunucu 400 döner. */
+  const kaliciSil = async (k) => {
+    setMesgul(true);
+    try {
+      await api(`/kullanici/${k.id}/kalici-sil`, { method: 'DELETE' });
+      onToast?.(`✓ ${k.ad} listeden kaldırıldı`);
+      setForm(null);
+      yukle();
+    } catch (e) {
+      onToast?.(`✕ ${e?.message || 'silinemedi'}`);
+    } finally { setMesgul(false); setSilSoru(null); }
+  };
+
   const kapat = async (k) => {
     setMesgul(true);
     try {
@@ -304,6 +317,27 @@ export default function KullaniciModulu({ onToast }) {
             <button disabled={mesgul} onClick={() => { setForm(null); setSilSoru(null); }} style={dugme}>
               Vazgeç
             </button>
+            {/* 🗑 KALICI SİLME YALNIZ HİÇ GİRMEMİŞ KAPALI KAYITTA.
+                Yanlış yazılmış bir giriş adı ekranda sonsuza kadar durmasın;
+                ama bir kez girmiş kimlik defterden kaybolmasın. */}
+            {form.id && !form.aktif && !form.son_giris && (
+              silSoru === `sil-${form.id}` ? (
+                <>
+                  <span style={{ fontSize: 12.5, color: R.amber, alignSelf: 'center' }}>
+                    Bu kişi hiç giriş yapmamış — kaydı tamamen silinecek. Emin misiniz?
+                  </span>
+                  <button disabled={mesgul} onClick={() => kaliciSil(form)}
+                    style={{ ...dugme, borderColor: `${R.kirmizi}66`, color: R.kirmizi }}>
+                    Evet, listeden kaldır
+                  </button>
+                </>
+              ) : (
+                <button onClick={() => setSilSoru(`sil-${form.id}`)}
+                  style={{ ...dugme, marginLeft: 'auto', color: R.not }}>
+                  Listeden kaldır
+                </button>
+              )
+            )}
             {form.id && form.aktif && (
               silSoru === form.id ? (
                 <>

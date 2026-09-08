@@ -163,6 +163,36 @@ def kullanici_kapat(kid: str):
     return {"ok": True, "ad": r.get("ad"), "durum": "kapatildi"}
 
 
+@router.delete("/kullanici/{kid}/kalici-sil")
+def kullanici_kalici_sil(kid: str):
+    """HİÇ GİRİŞ YAPMAMIŞ kapalı kullanıcıyı kalıcı sil.
+
+    🔴 SINIR İLKELİ (2026-09-08): Bu sistemde kayıt SİLİNMEZ, kapatılır —
+    çünkü denetim defterinde adı geçen bir kimlik ortadan kaybolmamalı.
+    Ama HİÇ GİRMEMİŞ bir kullanıcının defterde izi de YOKTUR: yanlış yazılmış
+    bir giriş adı ya da sınama kaydı, ekranda sonsuza kadar durmak zorunda
+    değil. Kural bu yüzden `son_giris IS NULL` — geçmişi olanı korur, olmayanı
+    temizlemeye izin verir.
+
+    Bir kez bile girmiş kullanıcı 400 alır; o kayıt kapatılır, silinmez.
+    """
+    with db() as (conn, cur):
+        cur.execute("SELECT ad, aktif, son_giris FROM kullanici WHERE id=%s", (str(kid),))
+        k = cur.fetchone()
+        if not k:
+            raise HTTPException(404, "kullanici bulunamadi")
+        if k.get("son_giris") is not None:
+            raise HTTPException(
+                400, "%s en az bir kez giris yapmis — kalici silinemez, yalniz "
+                     "kapatilir. Denetim defterindeki kimlik kaybolmamali."
+                     % (k.get("ad") or "Bu kullanici"))
+        if k.get("aktif"):
+            raise HTTPException(400, "once girisi kapatilmali")
+        cur.execute("DELETE FROM kullanici WHERE id=%s", (str(kid),))
+        conn.commit()
+    return {"ok": True, "ad": k.get("ad"), "durum": "kalici_silindi"}
+
+
 class GirisModel(BaseModel):
     kullanici_adi: str
     sifre: str
