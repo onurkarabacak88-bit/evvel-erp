@@ -284,10 +284,32 @@ export default function MulkModulu({ gorunum, onCekmece, onToast }) {
             </div>
           </div>
           {izgara(<>
-            <div><span style={etiketStil}>Ad *</span>
+            <div><span style={etiketStil}>Bina / yer</span>
+              <input style={alanStil} value={v.bina || ''}
+                     placeholder="Muhacır Pazarı"
+                     list="mulk-binalar"
+                     onChange={(e) => setV({ bina: e.target.value })} />
+              <datalist id="mulk-binalar">
+                {(mulkler?.binalar || []).filter((b) => b.bina !== '—')
+                  .map((b) => <option key={b.bina} value={b.bina} />)}
+              </datalist>
+              <div style={{ fontSize: 10.5, color: R.not2, marginTop: 4 }}>
+                Aynı binadaki birimler listede birlikte toplanır.
+              </div></div>
+            <div><span style={etiketStil}>Birim</span>
+              <input style={alanStil} value={v.birim || ''}
+                     placeholder="1. kat"
+                     onChange={(e) => setV({ birim: e.target.value })} /></div>
+            <div style={{ gridColumn: '1/-1' }}>
+              <span style={etiketStil}>Görünen ad</span>
               <input style={alanStil} value={v.ad || ''}
-                     placeholder="Huzur Sitesi B/4"
-                     onChange={(e) => setV({ ad: e.target.value })} /></div>
+                     placeholder={[v.bina, v.birim].filter(Boolean).join(' · ') || 'Muhacır Pazarı · 1. kat'}
+                     onChange={(e) => setV({ ad: e.target.value })} />
+              <div style={{ fontSize: 10.5, color: R.not2, marginTop: 4 }}>
+                Boş bırakırsanız <b>bina · birim</b> birleştirilerek yazılır.
+                Ad bir kimliktir — sonradan bina/birim düzeltilse bile defterdeki
+                isim kaymasın diye ayrıca saklanır.
+              </div></div>
             <div><span style={etiketStil}>Tür</span>
               <select style={alanStil} value={v.tur || ''}
                       onChange={(e) => setV({ tur: e.target.value })}>
@@ -306,8 +328,11 @@ export default function MulkModulu({ gorunum, onCekmece, onToast }) {
           </>)}
         </>,
         () => {
-          if (!String(v.ad || '').trim()) { onToast?.('⚠ Ad zorunlu'); return; }
-          const g = { ad: v.ad, adres: v.adres || null, tur: v.tur || null,
+          if (!String(v.ad || '').trim() && !String(v.bina || '').trim()) {
+            onToast?.('⚠ En az bina adı ya da görünen ad gerekli'); return;
+          }
+          const g = { ad: v.ad || null, bina: v.bina || null, birim: v.birim || null,
+                      adres: v.adres || null, tur: v.tur || null,
                       simge: v.simge || null,
                       aylik_kira: v.aylik_kira ? Number(v.aylik_kira) : null,
                       notlar: v.notlar || null };
@@ -565,6 +590,47 @@ export default function MulkModulu({ gorunum, onCekmece, onToast }) {
         });
     }
 
+    if (tip === 'birlestir') {
+      return sarmal('Kiracıyı tanımla',
+        'Bu yazımların hepsi tek kişiye bağlanacak. Bir daha sorulmayacak — banka ekstresinden gelen isim de bundan sonra bu kişiye eşleşir.',
+        <>
+          {izgara(<>
+            <div><span style={etiketStil}>Kanonik ad *</span>
+              <input style={alanStil} value={v.ad || ''}
+                     onChange={(e) => setV({ ad: e.target.value })} />
+              <div style={{ fontSize: 10.5, color: R.not2, marginTop: 4 }}>
+                Bundan sonra ekranda görünecek doğru yazım.
+              </div></div>
+            <div><span style={etiketStil}>Telefon</span>
+              <input style={alanStil} value={v.telefon || ''}
+                     onChange={(e) => setV({ telefon: e.target.value })} /></div>
+          </>)}
+          <div style={{ marginTop: 14 }}>
+            <span style={etiketStil}>Bağlanacak yazımlar</span>
+            <div style={{
+              padding: '10px 12px', borderRadius: 10, background: R.girinti,
+              border: `1px solid ${R.cizgi3}`, fontSize: 12, color: R.metin2,
+              lineHeight: 1.7,
+            }}>
+              {(v.yazimlar || []).map((y) => (
+                <div key={y}>· {y}</div>
+              ))}
+            </div>
+            <div style={{ fontSize: 10.5, color: R.not2, marginTop: 6 }}>
+              Yanlış birleştirdiyseniz Kiracılar sekmesinden tek tek ayırabilirsiniz.
+            </div>
+          </div>
+        </>,
+        () => {
+          if (!String(v.ad || '').trim()) { onToast?.('⚠ Kanonik ad zorunlu'); return; }
+          cagir('/api/mulk/kiraci/birlestir', 'POST', {
+            ad: v.ad, telefon: v.telefon || null,
+            anahtarlar: v.anahtarlar || [], yazimlar: v.yazimlar || [],
+          }).then(async () => { setGoc(await api('/api/mulk/goc-adaylari')); })
+            .catch(() => {});
+        });
+    }
+
     if (tip === 'gider') {
       return sarmal('Mülk gideri', 'Aidat · site faturası · emlak vergisi · tadilat. Kahve işinin giderine KARIŞMAZ.',
         izgara(<>
@@ -654,6 +720,26 @@ export default function MulkModulu({ gorunum, onCekmece, onToast }) {
             { ad: '↗ TULİPİ\'ye aktar', tikla: () => setForm({ tip: 'aktarim', veri: {} }) },
           ])}
           <Form />
+          {(mulkler?.binalar || []).filter((b) => b.bina !== '—').length > 1 ? (
+            <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', marginBottom: 16 }}>
+              {(mulkler.binalar || []).filter((b) => b.bina !== '—').map((b) => (
+                <div key={b.bina} style={{
+                  padding: '11px 14px', borderRadius: 12, background: kartYuzey,
+                  border: `1px solid ${R.cizgi2}`, minWidth: 150,
+                }}>
+                  <div style={{ fontSize: 13, color: R.krem, fontWeight: 600 }}>
+                    🏢 {b.bina}
+                  </div>
+                  <div style={{ fontSize: 11, color: R.not2, marginTop: 3 }}>
+                    {b.dolu}/{b.birim} birim dolu
+                  </div>
+                  <div style={{ fontSize: 15, color: '#D29A5B', fontWeight: 700, marginTop: 3 }}>
+                    {fmt(b.aylik)}<span style={{ fontSize: 10.5, color: R.not2 }}> /ay</span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
           {!liste.length ? (
             <BosDurum baslik="Henüz mülk yok"
                       aciklama="İlk mülkü ekleyin; sonra kiracı ve sözleşme tanımlayın."
@@ -662,13 +748,14 @@ export default function MulkModulu({ gorunum, onCekmece, onToast }) {
             <Tablo
               baslik={`Mülkler · ${mulkler.dolu} dolu, ${mulkler.bos} boş`}
               not={`Aylık beklenen: ${fmt(mulkler.aylik_beklenen)} · satıra tıklayın`}
-              kolonlar={[{ ad: '' }, { ad: 'Mülk' }, { ad: 'Tür' }, { ad: 'Kiracı' },
-                { ad: 'Aylık kira', sag: true }, { ad: 'Durum' }]}
+              kolonlar={[{ ad: '' }, { ad: 'Bina' }, { ad: 'Birim / ad' }, { ad: 'Tür' },
+                { ad: 'Kiracı' }, { ad: 'Aylık kira', sag: true }, { ad: 'Durum' }]}
               satirlar={liste.map((m) => ({
                 id: m.id, _m: m,
                 hucreler: [
                   { v: m.simge || '🏠' },
-                  { v: m.ad, kalin: true },
+                  { v: m.bina || '—', renk: m.bina ? R.metin2 : R.not3 },
+                  { v: m.birim || m.ad, kalin: true },
                   { v: m.tur || '—', renk: R.not2 },
                   { v: m.kiraci_ad || '—', renk: m.kiraci_ad ? R.krem : R.not3 },
                   { v: m.sozlesme_kira ? fmt(m.sozlesme_kira) : '—', sag: true, mono: true },
@@ -762,7 +849,7 @@ export default function MulkModulu({ gorunum, onCekmece, onToast }) {
           ) : (
             <Tablo
               baslik={`Kiracılar · ${liste.length}`}
-              not="satıra tıklayın — sözleşmesi varsa kiracı değişimi başlar"
+              not="satıra tıklayın — sözleşmesi varsa kiracı değişimi, yoksa düzenleme açılır"
               kolonlar={[{ ad: 'Ad Soyad' }, { ad: 'Telefon' }, { ad: 'Mülk' },
                 { ad: 'Aylık', sag: true }, { ad: 'Bilinen yazımlar' }]}
               satirlar={liste.map((k) => {
@@ -926,20 +1013,34 @@ export default function MulkModulu({ gorunum, onCekmece, onToast }) {
           <div style={{ height: 18 }} />
           <Tablo
             baslik={`Kiracı adayları · ${km.length} küme`}
-            not="Aynı kişinin farklı yazımları tek kümede toplanır. Küme sayısı gerçek kiracı sayısından fazlaysa aşağıdaki birleştirme önerilerine bakın."
+            not={`${goc.eslesen_kume || 0}/${km.length} tanımlı · satıra tıklayıp kiracıyı tanımlayın`}
             kolonlar={[{ ad: 'Önerilen ad' }, { ad: 'Kayıt', sag: true },
-              { ad: 'Toplam', sag: true }, { ad: 'Aylar' }, { ad: 'Yazım' }]}
+              { ad: 'Toplam', sag: true }, { ad: 'Aylar' }, { ad: 'Yazım' },
+              { ad: 'Durum' }]}
             satirlar={km.map((k, i) => ({
-              id: `${k.anahtar}-${i}`,
+              id: `${k.anahtar}-${i}`, _k: k,
               hucreler: [
-                { v: k.onerilen_ad, kalin: true },
+                { v: k.eslesti ? k.kiraci_ad : k.onerilen_ad, kalin: true },
                 { v: String(k.adet), sag: true, mono: true },
                 { v: fmt(k.toplam), sag: true, mono: true },
                 { v: (k.aylar || []).join(', '), renk: R.not2, mono: true },
                 { v: k.yazim_adedi > 1 ? `${k.yazim_adedi} farklı` : '—',
                   renk: k.yazim_adedi > 1 ? R.amber : R.not3 },
+                { v: k.eslesti ? 'tanımlı ✓' : 'tıkla → tanımla',
+                  rozet: k.eslesti ? R.yesil : R.amber },
               ],
             }))}
+            onSatir={(row) => {
+              const k = row._k;
+              if (k.eslesti) {
+                onToast?.(`Bu küme "${k.kiraci_ad}" kişisine bağlı`);
+                return;
+              }
+              setForm({ tip: 'birlestir', veri: {
+                ad: k.onerilen_ad, anahtarlar: [k.anahtar],
+                yazimlar: k.yazimlar || [],
+              } });
+            }}
           />
 
           {on.length ? (
@@ -947,11 +1048,21 @@ export default function MulkModulu({ gorunum, onCekmece, onToast }) {
               <div style={{ height: 18 }} />
               <Tablo
                 baslik={`Birleştirme önerileri · ${on.length}`}
-                not="⚠ ÖNERİ — otomatik birleştirilmedi. İki isim benzer olabilir ama BAŞKA İNSAN olabilir; yanlış birleştirme iki kiracının borcunu tek kişide toplar."
+                not="⚠ ÖNERİ — otomatik birleştirilmedi. Satıra tıklayın: ikisini tek kişide toplar. Benzer isim BAŞKA İNSAN olabilir; karar sizin."
                 kolonlar={[{ ad: 'Bu' }, { ad: 'ile bu' }, { ad: 'Neden' },
                   { ad: 'Benzerlik', sag: true }, { ad: 'Toplam', sag: true }]}
+                onSatir={(row) => {
+                  const o = row._o;
+                  const ka = km.find((x) => x.anahtar === o.a_anahtar);
+                  const kb = km.find((x) => x.anahtar === o.b_anahtar);
+                  setForm({ tip: 'birlestir', veri: {
+                    ad: (ka?.toplam >= kb?.toplam ? ka : kb)?.onerilen_ad || o.a,
+                    anahtarlar: [o.a_anahtar, o.b_anahtar],
+                    yazimlar: [...(ka?.yazimlar || []), ...(kb?.yazimlar || [])],
+                  } });
+                }}
                 satirlar={on.map((o, i) => ({
-                  id: `o${i}`,
+                  id: `o${i}`, _o: o,
                   hucreler: [
                     { v: o.a, kalin: true }, { v: o.b, kalin: true },
                     { v: o.gerekce, renk: R.not2 },

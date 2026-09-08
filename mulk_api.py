@@ -124,12 +124,27 @@ def mulk_kasa():
 # MÜLKLER
 # ═══════════════════════════════════════════════════════════════════
 class MulkBody(BaseModel):
-    ad: str
+    ad: Optional[str] = None        # boşsa "bina · birim"den kurulur
+    bina: Optional[str] = None      # "Muhacır Pazarı"
+    birim: Optional[str] = None     # "1. kat"
     adres: Optional[str] = None
     tur: Optional[str] = None
     simge: Optional[str] = None          # 🏠 🏢 🏬 … her mülkün kendi sembolü
     aylik_kira: Optional[float] = None
     notlar: Optional[str] = None
+
+
+def _mulk_adi(b) -> str:
+    """Görünen ad. Sahip ad yazmadıysa "bina · birim"den kurulur.
+
+    ⚠️ `ad` yine de SAKLANIR (türetilmez): bina/birim sonradan düzeltilirse
+    eski defter satırlarındaki isim kaymasın. Ad bir KİMLİKtir, formül değil.
+    """
+    a = (b.ad or "").strip()
+    if a:
+        return a
+    parca = [x for x in [(b.bina or "").strip(), (b.birim or "").strip()] if x]
+    return " · ".join(parca) or "Adsız mülk"
 
 
 @router.get("")
@@ -152,12 +167,24 @@ def mulk_listele(hepsi: bool = False):
         """, (hepsi,))
         satirlar = [dict(r) for r in (cur.fetchall() or [])]
     dolu = sum(1 for r in satirlar if r.get("sozlesme_id"))
+    # 🏢 BİNA ÖZETİ — sahip "Muhacır Pazarı'ndan bu ay ne geliyor?" diye sorar.
+    # Gruplama sunucuda yapılır ki ekran ile rapor aynı cevabı versin.
+    binalar: Dict[str, Dict[str, Any]] = {}
+    for r in satirlar:
+        b = (r.get("bina") or "").strip() or "—"
+        g = binalar.setdefault(b, {"bina": b, "birim": 0, "dolu": 0, "aylik": 0.0})
+        g["birim"] += 1
+        if r.get("sozlesme_id"):
+            g["dolu"] += 1
+            g["aylik"] += float(r.get("sozlesme_kira") or 0)
     return {
         "mulkler": satirlar,
         "adet": len(satirlar),
         "dolu": dolu,
         "bos": len(satirlar) - dolu,
         "aylik_beklenen": round(sum(float(r.get("sozlesme_kira") or 0) for r in satirlar), 2),
+        "binalar": sorted(({**v, "aylik": round(v["aylik"], 2)} for v in binalar.values()),
+                          key=lambda x: -x["aylik"]),
     }
 
 
@@ -165,19 +192,21 @@ def mulk_listele(hepsi: bool = False):
 def mulk_ekle(b: MulkBody):
     mid = str(uuid.uuid4())
     with db() as (conn, cur):
-        cur.execute("""INSERT INTO mulk (id, ad, adres, tur, simge, aylik_kira, notlar)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-                    (mid, b.ad.strip(), b.adres, b.tur, b.simge, b.aylik_kira, b.notlar))
+        cur.execute("""INSERT INTO mulk (id, ad, bina, birim, adres, tur, simge, aylik_kira, notlar)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (mid, _mulk_adi(b), b.bina, b.birim, b.adres, b.tur, b.simge,
+                     b.aylik_kira, b.notlar))
     return {"id": mid, "islem": "eklendi"}
 
 
 @router.put("/{mid}")
 def mulk_guncelle(mid: str, b: MulkBody):
     with db() as (conn, cur):
-        cur.execute("""UPDATE mulk SET ad=%s, adres=%s, tur=%s, simge=%s,
-                              aylik_kira=%s, notlar=%s
+        cur.execute("""UPDATE mulk SET ad=%s, bina=%s, birim=%s, adres=%s, tur=%s,
+                              simge=%s, aylik_kira=%s, notlar=%s
                        WHERE id=%s""",
-                    (b.ad.strip(), b.adres, b.tur, b.simge, b.aylik_kira, b.notlar, mid))
+                    (_mulk_adi(b), b.bina, b.birim, b.adres, b.tur, b.simge,
+                     b.aylik_kira, b.notlar, mid))
         if cur.rowcount == 0:
             raise HTTPException(404, "Mülk bulunamadı")
     return {"islem": "guncellendi"}
@@ -679,6 +708,21 @@ def goc_adaylari():
                 })
     oneriler.sort(key=lambda r: -r["benzerlik"])
 
+    # Küme zaten bir kiracıya bağlandı mı? Sahip aynı işi iki kez yapmasın.
+    with db() as (conn, cur):
+        cur.execute("""SELECT t.takma_ad, t.kiraci_id, k.ad
+                       FROM kiraci_takma_ad t JOIN kiraci k ON k.id = t.kiraci_id""")
+        _bagli = {r["takma_ad"]: {"kiraci_id": r["kiraci_id"], "ad": r["ad"]}
+                  for r in (cur.fetchall() or [])}
+    for k in kumeler:
+        _e = _bagli.get(k["anahtar"])
+        k["eslesti"] = bool(_e)
+        k["kiraci_id"] = _e["kiraci_id"] if _e else None
+        k["kiraci_ad"] = _e["ad"] if _e else None
+    # Eşleşmişleri birleştirme önerilerinden düş — iş bitmiş, gürültü kalmasın.
+    oneriler = [o for o in oneriler
+                if not (_bagli.get(o["a_anahtar"]) and _bagli.get(o["b_anahtar"]))]
+
     def _t(x):
         return round(sum(float(r["tutar"]) for r in x), 2)
 
@@ -691,6 +735,7 @@ def goc_adaylari():
         "gercek_dis_kaynak": {"adet": len(disi), "toplam": _t(disi)},
         "kiraci_kumeleri": kumeler,
         "birlestirme_onerileri": oneriler,
+        "eslesen_kume": sum(1 for k in kumeler if k.get("eslesti")),
         "not": ("KURU ÇALIŞTIRMA — hiçbir kayıt yazılmadı, hiçbir satır "
                 "değişmedi. 'gercek_dis_kaynak' kovasına DOKUNULMAZ (emekli "
                 "maaşı, kredi, SGK iadesi). Kümeler ONAY bekler: aynı kiracının "
@@ -915,3 +960,106 @@ def mulk_dosyasi(mid: str):
         "toplam_kira": round(sum(float(h["tutar"]) for h in hareketler
                                  if h["tur"] == "KIRA_TAHSILAT"), 2),
     }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# KİRACI BİRLEŞTİRME — yazım farklarını TEK kişide toplama
+# ═══════════════════════════════════════════════════════════════════
+class BirlestirBody(BaseModel):
+    ad: str                          # kanonik ad — sahip yazar
+    anahtarlar: List[str] = []       # göç kümelerinin ad anahtarları
+    yazimlar: List[str] = []         # ham yazımlar (anahtara çevrilir)
+    telefon: Optional[str] = None
+    kiraci_id: Optional[str] = None  # varsa mevcut kişiye ekle
+
+
+@router.post("/kiraci/birlestir")
+def kiraci_birlestir(b: BirlestirBody):
+    """Aynı kişinin farklı yazımlarını TEK kiracıya bağlar.
+
+    🔴 NEDEN: canlıda "hamayoun faizi / hamayoğun faizi / hamoayoun faizi"
+    üç ayrı kişi gibi duruyor; "bu ay kim ödemedi?" sorusu bu yüzden cevapsız.
+    Sahip adı BİR KEZ onaylar, takma adlar deftere yazılır ve bir daha
+    sorulmaz — sonraki serbest metin ve BANKA EKSTRESİ eşleşmesi otomatik
+    çözülür (emsali: tedarikçi "Kimlik Birleştirme").
+
+    ⚠️ OTOMATİK BİRLEŞTİRME YOK. Bu uç yalnız SAHİBİN seçtiklerini bağlar.
+    "Mehmet Turan" ile "Mustafa Haluk Turan" %70 benzer ama başka insan
+    olabilir; yanlış birleştirme iki kiracının borcunu tek kişide toplar ve
+    biri "ödemiş" görünür.
+    """
+    ad = (b.ad or "").strip()
+    if not ad:
+        raise HTTPException(400, "Kanonik ad zorunlu")
+    anahtarlar = {ad_anahtari(x) for x in (b.anahtarlar or []) if str(x).strip()}
+    anahtarlar |= {ad_anahtari(x) for x in (b.yazimlar or []) if str(x).strip()}
+    anahtarlar.add(ad_anahtari(ad))
+    anahtarlar = {a for a in anahtarlar if a}
+
+    with db() as (conn, cur):
+        kid = b.kiraci_id
+        if kid:
+            cur.execute("SELECT id FROM kiraci WHERE id=%s", (kid,))
+            if not cur.fetchone():
+                raise HTTPException(404, "Kiracı bulunamadı")
+            cur.execute("UPDATE kiraci SET ad=%s WHERE id=%s", (ad, kid))
+        else:
+            # Aynı anahtara bağlı kiracı zaten varsa ONA ekle — mükerrer kişi
+            # açmak, birleştirmenin tam tersini yapardı.
+            cur.execute("""SELECT kiraci_id FROM kiraci_takma_ad
+                           WHERE takma_ad = ANY(%s) LIMIT 1""",
+                        (list(anahtarlar),))
+            _v = cur.fetchone()
+            if _v:
+                kid = _v["kiraci_id"]
+                cur.execute("UPDATE kiraci SET ad=%s, aktif=TRUE WHERE id=%s", (ad, kid))
+            else:
+                kid = str(uuid.uuid4())
+                cur.execute("INSERT INTO kiraci (id, ad, telefon) VALUES (%s,%s,%s)",
+                            (kid, ad, b.telefon))
+        if b.telefon:
+            cur.execute("UPDATE kiraci SET telefon=%s WHERE id=%s", (b.telefon, kid))
+
+        eklenen = 0
+        for a in sorted(anahtarlar):
+            # ⚠️ Takma ad BAŞKA kiracıya bağlıysa ÜSTÜNE YAZILMAZ: sessizce
+            # çalmak, iki kiracının geçmişini karıştırırdı. Çakışma bildirilir.
+            cur.execute("""INSERT INTO kiraci_takma_ad (takma_ad, kiraci_id, kaynak)
+                           VALUES (%s,%s,'birlestirme')
+                           ON CONFLICT (takma_ad) DO NOTHING""", (a, kid))
+            eklenen += cur.rowcount
+        cur.execute("""SELECT takma_ad, kiraci_id FROM kiraci_takma_ad
+                       WHERE takma_ad = ANY(%s)""", (list(anahtarlar),))
+        mevcut = [dict(r) for r in (cur.fetchall() or [])]
+
+    catisan = [r["takma_ad"] for r in mevcut if r["kiraci_id"] != kid]
+    return {
+        "islem": "birlestirildi", "kiraci_id": kid, "ad": ad,
+        "takma_ad_eklendi": eklenen,
+        "toplam_takma_ad": len([r for r in mevcut if r["kiraci_id"] == kid]),
+        "catisan": catisan,
+        "not": ("Bu yazımlar artık tek kişiye bağlı. Çatışan varsa o yazım "
+                "BAŞKA bir kiracıda duruyor ve üstüne yazılmadı — önce oradan "
+                "ayırın." if catisan else
+                "Bu yazımlar artık tek kişiye bağlı; bir daha sorulmayacak."),
+    }
+
+
+@router.get("/kiraci/{kid}/takma-ad")
+def kiraci_takma_adlari(kid: str):
+    with db() as (conn, cur):
+        cur.execute("""SELECT takma_ad, kaynak, olusturma::text AS olusturma
+                       FROM kiraci_takma_ad WHERE kiraci_id=%s ORDER BY takma_ad""",
+                    (kid,))
+        return {"takma_adlar": [dict(r) for r in (cur.fetchall() or [])]}
+
+
+@router.delete("/kiraci/takma-ad/{takma_ad}")
+def takma_ad_kaldir(takma_ad: str):
+    """Yanlış birleştirilmiş bir yazımı geri ayır. Birleştirme geri alınabilir
+    olmalı — yoksa sahip 'yanlış olur mu' diye hiç birleştirmez."""
+    with db() as (conn, cur):
+        cur.execute("DELETE FROM kiraci_takma_ad WHERE takma_ad=%s", (takma_ad,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Takma ad bulunamadı")
+    return {"islem": "ayrildi"}

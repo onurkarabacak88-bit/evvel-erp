@@ -6744,7 +6744,15 @@ def ensure_mulk_defteri(cur) -> None:
     cur.execute("""
         CREATE TABLE IF NOT EXISTS mulk (
             id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
-            ad         TEXT NOT NULL,              -- "Huzur Sitesi B/4"
+            ad         TEXT NOT NULL,              -- "Muhacır Pazarı · 1. kat"
+            -- 🏢 BİNA + BİRİM (sahip 2026-09-09: "evlere de isim vermek
+            -- istiyorum, mesela muhacır pazarı 1. kat gibi").
+            -- İki ayrı alan olmasının sebebi: aynı binada birden çok birim var
+            -- ve sahip onları BİRLİKTE görmek ister ("Muhacır Pazarı'ndan bu
+            -- ay ne geldi?"). Tek metin alanı olsaydı gruplama serbest yazıma
+            -- kalırdı ve "Muhacir Pazari" ile "Muhacır Pazarı" ayrı bina olurdu.
+            bina       TEXT,                       -- "Muhacır Pazarı"
+            birim      TEXT,                       -- "1. kat" · "B/4" · "dükkan 2"
             adres      TEXT,
             tur        TEXT,                       -- daire | dükkan | depo | arsa
             -- 🏠 Her mülkün KENDİ sembolü (sahip 2026-09-08: "ev sembolleri
@@ -6867,6 +6875,9 @@ def ensure_mulk_defteri(cur) -> None:
         # EXISTS o durumda kolonu EKLEMEZ. Sonradan gelen her kolon ayrıca
         # ALTER ile eklenir — yoksa canlıda "column does not exist" olur.
         "ALTER TABLE mulk ADD COLUMN IF NOT EXISTS simge TEXT",
+        "ALTER TABLE mulk ADD COLUMN IF NOT EXISTS bina TEXT",
+        "ALTER TABLE mulk ADD COLUMN IF NOT EXISTS birim TEXT",
+        "CREATE INDEX IF NOT EXISTS idx_mulk_bina ON mulk (bina)",
         "ALTER TABLE kira_sozlesme ADD COLUMN IF NOT EXISTS kiraci_tipi TEXT NOT NULL DEFAULT 'sahis'",
         "ALTER TABLE kira_sozlesme ADD COLUMN IF NOT EXISTS stopaj_orani NUMERIC(5,2) NOT NULL DEFAULT 0",
     ):
