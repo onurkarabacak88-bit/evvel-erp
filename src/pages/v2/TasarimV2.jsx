@@ -28,6 +28,7 @@ import DenetimModulu from './DenetimModulu';
 import BelgeModulu from './BelgeModulu';
 import { OnayModulu, YukModulu, RaporModulu, SistemModulu, TanimModulu } from './KucukModuller';
 import KullaniciModulu from './KullaniciModulu';
+import MulkModulu from './MulkModulu';
 
 // ⚠️ TARİH TUZAĞI: `new Date('2026-07-28T00:00:00')` yerel saat olarak ayrıştırılır,
 // `toISOString()` ise UTC'ye çevirir. Türkiye'de (UTC+3) bu, tarihi BİR GÜN GERİ
@@ -1142,6 +1143,11 @@ export default function TasarimV2({ onGit }) {
     if (mod === 'sistem') {
       return <SistemModulu gorunum={gorunum} onCekmece={setCekmece} onKopru={koprule} onToast={setToast} />;
     }
+    // 🏠 KİRALIK MÜLKLER — Evvel'in içinde, AYRI mantıkta (sahip 2026-09-08).
+    // Kahve işiyle tek kesişme: TOPLAM KASA = TULİPİ + MÜLK.
+    if (mod === 'mulk') {
+      return <MulkModulu gorunum={gorunum} onCekmece={setCekmece} onToast={setToast} />;
+    }
     // 👤 KULLANICILAR — kişiye özel giriş + ekran görünürlüğü (sahip 2026-09-08)
     if (mod === 'kullanici') {
       return <KullaniciModulu onToast={setToast} />;
@@ -1623,9 +1629,15 @@ export default function TasarimV2({ onGit }) {
         // Yeterlilik tek başına anlamsız; 30 günlük zorunlu çıkışa göre ölçülür.
         // (Ay Özeti'ndeki «Kasa + banka» ile AYNI kural — iki ekran aynı soruya
         // farklı renk veremez.)
-        alt: sayi(panel.yuk_30) > 0
-          ? `30 günlük yükün %${yuzde(sayi(panel.kasa), sayi(panel.yuk_30)).toFixed(0)}'i · ayrım için tıkla`
-          : 'kanonik · kasa izi · ayrım için tıkla',
+        // 🏠 ÇEKMECE AYRIMI (2026-09-09): mülk defterinde para varsa alt satır
+        // "toplam = TULİPİ + mülk" der. Rakamın kendisi TOPLAM kalır — sahip
+        // "toplam kasa şu andaki kasayı göstersin" dedi. Mülk 0 iken bu satır
+        // hiç doğmaz, panel bugünküyle birebir aynı görünür.
+        alt: sayi(panel.kasa_mulk) !== 0
+          ? `TULİPİ ${fmt(sayi(panel.kasa_tulipi))} + mülk ${fmt(sayi(panel.kasa_mulk))} · ayrım için tıkla`
+          : (sayi(panel.yuk_30) > 0
+            ? `30 günlük yükün %${yuzde(sayi(panel.kasa), sayi(panel.yuk_30)).toFixed(0)}'i · ayrım için tıkla`
+            : 'kanonik · kasa izi · ayrım için tıkla'),
         renk: kasaYeterlilikRengi(sayi(panel.kasa), sayi(panel.yuk_30)),
         onTikla: () => koprule('__modul:genel:akis'),   // tema.js:168 doğrulandı
       },

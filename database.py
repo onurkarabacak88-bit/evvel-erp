@@ -6747,6 +6747,10 @@ def ensure_mulk_defteri(cur) -> None:
             ad         TEXT NOT NULL,              -- "Huzur Sitesi B/4"
             adres      TEXT,
             tur        TEXT,                       -- daire | dükkan | depo | arsa
+            -- 🏠 Her mülkün KENDİ sembolü (sahip 2026-09-08: "ev sembolleri
+            -- ayrı ayrı olmalı"). Listede mülkü isimle değil GÖZLE ayırt etmek
+            -- için; adres okumaya gerek kalmaz.
+            simge      TEXT,                       -- emoji: 🏠 🏢 🏬 🏘️ 🏚️ …
             aylik_kira NUMERIC(14,2),              -- referans/hedef kira
             notlar     TEXT,
             aktif      BOOLEAN NOT NULL DEFAULT TRUE,
@@ -6812,6 +6816,31 @@ def ensure_mulk_defteri(cur) -> None:
             olusturma   TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """)
+    # ⚡ ABONELİKLER — elektrik · su · doğalgaz · internet · aidat.
+    # 🔴 NEDEN (sahip 2026-09-08): "buraya gelen elektrik vs abonelikleri
+    # takip edebilmeliyim". İki ayrı soru vardır ve karıştırılmamalıdır:
+    #   1) ABONE KİM?  → sözleşme devrinde aboneliğin de devri gerekir;
+    #      devredilmezse kiracının borcu MÜLK SAHİBİNE kalır.
+    #   2) FATURA KİM ÖDÜYOR? → kiracı ödüyorsa mülk defterine hiç girmez;
+    #      sahip ödüyorsa MULK_GIDER olarak yazılır.
+    # Bu iki alan ayrı tutulmazsa "elektrik bende mi kiracıda mı" sorusu
+    # cevapsız kalır ve tahliyeden sonra fatura sahibe düşer.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS mulk_abonelik (
+            id         TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            mulk_id    TEXT NOT NULL,
+            tur        TEXT NOT NULL,          -- elektrik | su | dogalgaz | internet | aidat | diger
+            saglayici  TEXT,                   -- "Aydem" · "İZSU" …
+            abone_no   TEXT,
+            abone_kime TEXT,                   -- 'sahip' | 'kiraci'
+            odeyen     TEXT,                   -- 'sahip' | 'kiraci'
+            sozlesme_id TEXT,                  -- hangi kiracı döneminde devredildi
+            aylik_tahmin NUMERIC(14,2),
+            durum      TEXT NOT NULL DEFAULT 'aktif',   -- aktif | kapali
+            notlar     TEXT,
+            olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
     # 🏷️ TAKMA AD DEFTERİ — aynı kiracı üç ayrı yazımla geliyor
     # ("hamayoun / hamayoğun / hamoayoun faizi"). Sistemde emsali var:
     # tedarikçi "Kimlik Birleştirme" ve [[reference-maas-alici-takma-adlari]].
@@ -6828,10 +6857,17 @@ def ensure_mulk_defteri(cur) -> None:
     for _sql in (
         "CREATE INDEX IF NOT EXISTS idx_kira_sozlesme_mulk ON kira_sozlesme (mulk_id)",
         "CREATE INDEX IF NOT EXISTS idx_kiraci_takma_kiraci ON kiraci_takma_ad (kiraci_id)",
+        "CREATE INDEX IF NOT EXISTS idx_mulk_abonelik_mulk ON mulk_abonelik (mulk_id)",
         "CREATE INDEX IF NOT EXISTS idx_kira_sozlesme_kiraci ON kira_sozlesme (kiraci_id)",
         "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_donem ON mulk_hareket (donem)",
         "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_sozlesme ON mulk_hareket (sozlesme_id)",
         "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_tarih ON mulk_hareket (tarih DESC)",
         "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_kasa ON mulk_hareket (kasa_hareket_id)",
+        # ⚠️ Tablo ÖNCEKİ dağıtımda açılmış olabilir; CREATE TABLE IF NOT
+        # EXISTS o durumda kolonu EKLEMEZ. Sonradan gelen her kolon ayrıca
+        # ALTER ile eklenir — yoksa canlıda "column does not exist" olur.
+        "ALTER TABLE mulk ADD COLUMN IF NOT EXISTS simge TEXT",
+        "ALTER TABLE kira_sozlesme ADD COLUMN IF NOT EXISTS kiraci_tipi TEXT NOT NULL DEFAULT 'sahis'",
+        "ALTER TABLE kira_sozlesme ADD COLUMN IF NOT EXISTS stopaj_orani NUMERIC(5,2) NOT NULL DEFAULT 0",
     ):
         cur.execute(_sql)

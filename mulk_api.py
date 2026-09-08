@@ -127,6 +127,7 @@ class MulkBody(BaseModel):
     ad: str
     adres: Optional[str] = None
     tur: Optional[str] = None
+    simge: Optional[str] = None          # 🏠 🏢 🏬 … her mülkün kendi sembolü
     aylik_kira: Optional[float] = None
     notlar: Optional[str] = None
 
@@ -164,18 +165,19 @@ def mulk_listele(hepsi: bool = False):
 def mulk_ekle(b: MulkBody):
     mid = str(uuid.uuid4())
     with db() as (conn, cur):
-        cur.execute("""INSERT INTO mulk (id, ad, adres, tur, aylik_kira, notlar)
-                       VALUES (%s,%s,%s,%s,%s,%s)""",
-                    (mid, b.ad.strip(), b.adres, b.tur, b.aylik_kira, b.notlar))
+        cur.execute("""INSERT INTO mulk (id, ad, adres, tur, simge, aylik_kira, notlar)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                    (mid, b.ad.strip(), b.adres, b.tur, b.simge, b.aylik_kira, b.notlar))
     return {"id": mid, "islem": "eklendi"}
 
 
 @router.put("/{mid}")
 def mulk_guncelle(mid: str, b: MulkBody):
     with db() as (conn, cur):
-        cur.execute("""UPDATE mulk SET ad=%s, adres=%s, tur=%s, aylik_kira=%s, notlar=%s
+        cur.execute("""UPDATE mulk SET ad=%s, adres=%s, tur=%s, simge=%s,
+                              aylik_kira=%s, notlar=%s
                        WHERE id=%s""",
-                    (b.ad.strip(), b.adres, b.tur, b.aylik_kira, b.notlar, mid))
+                    (b.ad.strip(), b.adres, b.tur, b.simge, b.aylik_kira, b.notlar, mid))
         if cur.rowcount == 0:
             raise HTTPException(404, "Mülk bulunamadı")
     return {"islem": "guncellendi"}
@@ -693,4 +695,223 @@ def goc_adaylari():
                 "değişmedi. 'gercek_dis_kaynak' kovasına DOKUNULMAZ (emekli "
                 "maaşı, kredi, SGK iadesi). Kümeler ONAY bekler: aynı kiracının "
                 "farklı yazımları tek kişide toplanır, sonra bir daha sorulmaz."),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# KİRACI DEĞİŞİMİ (DEVİR)
+# ═══════════════════════════════════════════════════════════════════
+class DevirBody(BaseModel):
+    yeni_kiraci_id: str
+    tarih: date                             # eski çıkış = yeni giriş günü
+    aylik_kira: Optional[float] = None      # boşsa eskisi devam eder
+    depozito: float = 0
+    odeme_gunu: Optional[int] = None
+    kiraci_tipi: Optional[str] = None
+    stopaj_orani: Optional[float] = None
+    depozito_iade: bool = True              # eski kiracının depozitosu iade edildi mi
+    notlar: Optional[str] = None
+
+
+@router.post("/sozlesme/{sid}/devir")
+def sozlesme_devir(sid: str, b: DevirBody):
+    """🔁 Kiracı değişti: eski sözleşme KAPANIR, yenisi açılır.
+
+    ⚠️ Sözleşme GÜNCELLENMEZ, yenisi yazılır. Aynı satırın kiracısını
+    değiştirmek geçmişi yalanlardı: Mayıs'ta kimden kira aldığımız o satıra
+    bağlıdır; kiracı adı üstüne yazılınca eski tahsilatlar YENİ kiracının
+    ödemesi gibi görünürdü (aynı ders: [[reference-personel-kisi-kimligi]]).
+
+    Aynı işlemde yapılanlar:
+      · eski sözleşme durum='bitti', bitiş = devir tarihi
+      · varsa eski depozito iadesi mülk defterine yazılır (emanet kapanır)
+      · yeni sözleşme açılır, yeni depozito alındıysa yazılır
+      · abonelikler OTOMATİK DEVREDİLMEZ — sahibe listelenip sorulur
+    """
+    with db() as (conn, cur):
+        cur.execute("""SELECT s.*, s.aylik_kira::float AS aylik_kira,
+                              s.depozito::float AS depozito, m.ad AS mulk_ad,
+                              k.ad AS eski_kiraci_ad
+                       FROM kira_sozlesme s
+                       JOIN mulk m ON m.id=s.mulk_id
+                       JOIN kiraci k ON k.id=s.kiraci_id
+                       WHERE s.id=%s""", (sid,))
+        eski = cur.fetchone()
+        if not eski:
+            raise HTTPException(404, "Sözleşme bulunamadı")
+        if str(eski.get("durum")) != "aktif":
+            raise HTTPException(400, "Bu sözleşme zaten kapalı")
+
+        cur.execute("UPDATE kira_sozlesme SET durum='bitti', bitis=%s WHERE id=%s",
+                    (b.tarih, sid))
+
+        iade = None
+        _dep = float(eski.get("depozito") or 0)
+        if b.depozito_iade and _dep > 0:
+            iade = _mulk_yaz(cur, "DEPOZITO_IADE", b.tarih, -abs(_dep),
+                             "%s depozito iadesi (cikis)" % eski["eski_kiraci_ad"],
+                             sozlesme_id=sid, mulk_id=eski["mulk_id"],
+                             kiraci_id=eski["kiraci_id"])
+
+        yid = str(uuid.uuid4())
+        cur.execute("""INSERT INTO kira_sozlesme
+            (id, mulk_id, kiraci_id, baslangic, aylik_kira, depozito, odeme_gunu,
+             kiraci_tipi, stopaj_orani, notlar)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (yid, eski["mulk_id"], b.yeni_kiraci_id, b.tarih,
+                     b.aylik_kira if b.aylik_kira else eski["aylik_kira"],
+                     b.depozito,
+                     b.odeme_gunu if b.odeme_gunu else eski["odeme_gunu"],
+                     b.kiraci_tipi or eski.get("kiraci_tipi") or "sahis",
+                     (b.stopaj_orani if b.stopaj_orani is not None
+                      else float(eski.get("stopaj_orani") or 0)),
+                     b.notlar))
+        if b.depozito > 0:
+            _mulk_yaz(cur, "DEPOZITO_ALINDI", b.tarih, abs(b.depozito),
+                      "Yeni kiraci depozitosu", sozlesme_id=yid,
+                      mulk_id=eski["mulk_id"], kiraci_id=b.yeni_kiraci_id)
+
+        cur.execute("""SELECT id, tur, saglayici, abone_kime, odeyen
+                       FROM mulk_abonelik
+                       WHERE mulk_id=%s AND COALESCE(durum,'aktif')='aktif'""",
+                    (eski["mulk_id"],))
+        abonelikler = [dict(r) for r in (cur.fetchall() or [])]
+
+    return {
+        "islem": "devredildi",
+        "eski_sozlesme": sid, "yeni_sozlesme": yid,
+        "depozito_iade": iade,
+        "abonelik_uyarisi": abonelikler,
+        "not": ("Eski sözleşme kapandı, yenisi açıldı — geçmiş tahsilatlar eski "
+                "kiracıda KALDI. Abonelikler otomatik devredilmedi: her birinin "
+                "abonesi ve ödeyeni ayrıca işaretlenmeli, yoksa kiracının "
+                "faturası mülk sahibine kalır."),
+    }
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ABONELİKLER — elektrik · su · doğalgaz · internet · aidat
+# ═══════════════════════════════════════════════════════════════════
+class AbonelikBody(BaseModel):
+    mulk_id: str
+    tur: str
+    saglayici: Optional[str] = None
+    abone_no: Optional[str] = None
+    abone_kime: str = "sahip"        # sahip | kiraci
+    odeyen: str = "kiraci"           # sahip | kiraci
+    sozlesme_id: Optional[str] = None
+    aylik_tahmin: Optional[float] = None
+    notlar: Optional[str] = None
+
+
+@router.get("/abonelik")
+def abonelik_listele(mulk_id: str = None):
+    kos, par = "", []
+    if mulk_id:
+        kos = " AND a.mulk_id = %s"
+        par = [mulk_id]
+    with db() as (conn, cur):
+        cur.execute("""
+            SELECT a.*, a.aylik_tahmin::float AS aylik_tahmin,
+                   m.ad AS mulk_ad, m.simge AS mulk_simge
+            FROM mulk_abonelik a
+            JOIN mulk m ON m.id = a.mulk_id
+            WHERE COALESCE(a.durum,'aktif')='aktif'""" + kos + """
+            ORDER BY m.ad, a.tur
+        """, par)
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+    # ⚠️ RİSK: abonesi SAHİP olup faturasını KİRACI ödeyen abonelik, kiracı
+    # ödemediğinde borcu sahibe bırakır. Sessiz geçilmez, sayılır.
+    riskli = [r for r in satirlar
+              if str(r.get("abone_kime")) == "sahip" and str(r.get("odeyen")) == "kiraci"]
+    return {
+        "abonelikler": satirlar,
+        "riskli_adet": len(riskli),
+        "not": ("Abonesi SAHİP, ödeyeni KİRACI olan abonelikler risklidir: "
+                "kiracı ödemezse borç mülk sahibine kalır. Devirde aboneliğin "
+                "de devredilmesi gerekir."),
+    }
+
+
+@router.post("/abonelik")
+def abonelik_ekle(b: AbonelikBody):
+    aid = str(uuid.uuid4())
+    with db() as (conn, cur):
+        cur.execute("""INSERT INTO mulk_abonelik
+            (id, mulk_id, tur, saglayici, abone_no, abone_kime, odeyen,
+             sozlesme_id, aylik_tahmin, notlar)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (aid, b.mulk_id, b.tur, b.saglayici, b.abone_no, b.abone_kime,
+                     b.odeyen, b.sozlesme_id, b.aylik_tahmin, b.notlar))
+    return {"id": aid, "islem": "eklendi"}
+
+
+@router.put("/abonelik/{aid}")
+def abonelik_guncelle(aid: str, b: AbonelikBody):
+    with db() as (conn, cur):
+        cur.execute("""UPDATE mulk_abonelik SET tur=%s, saglayici=%s, abone_no=%s,
+                              abone_kime=%s, odeyen=%s, aylik_tahmin=%s, notlar=%s
+                       WHERE id=%s""",
+                    (b.tur, b.saglayici, b.abone_no, b.abone_kime, b.odeyen,
+                     b.aylik_tahmin, b.notlar, aid))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Abonelik bulunamadı")
+    return {"islem": "guncellendi"}
+
+
+@router.delete("/abonelik/{aid}")
+def abonelik_kapat(aid: str):
+    with db() as (conn, cur):
+        cur.execute("UPDATE mulk_abonelik SET durum='kapali' WHERE id=%s", (aid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Abonelik bulunamadı")
+    return {"islem": "kapatildi"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# MÜLK DOSYASI — tıklayınca açılan içerik (çekmece)
+# ═══════════════════════════════════════════════════════════════════
+@router.get("/{mid}/dosya")
+def mulk_dosyasi(mid: str):
+    """Tek mülkün her şeyi: sözleşme geçmişi · abonelikler · para hareketleri.
+
+    Çekmece deseni: kapı ancak ARKASINDA İÇERİK VARSA açılır. Bu uç içeriği
+    TEK okumada verir ki ekran dört ayrı istek atmasın.
+    """
+    with db() as (conn, cur):
+        cur.execute("SELECT *, aylik_kira::float AS aylik_kira FROM mulk WHERE id=%s",
+                    (mid,))
+        m = cur.fetchone()
+        if not m:
+            raise HTTPException(404, "Mülk bulunamadı")
+        cur.execute("""
+            SELECT s.*, s.aylik_kira::float AS aylik_kira, s.depozito::float AS depozito,
+                   s.stopaj_orani::float AS stopaj_orani,
+                   s.baslangic::text AS baslangic, s.bitis::text AS bitis,
+                   k.ad AS kiraci_ad, k.telefon
+            FROM kira_sozlesme s JOIN kiraci k ON k.id=s.kiraci_id
+            WHERE s.mulk_id=%s ORDER BY s.baslangic DESC
+        """, (mid,))
+        sozlesmeler = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("""SELECT *, aylik_tahmin::float AS aylik_tahmin
+                       FROM mulk_abonelik
+                       WHERE mulk_id=%s AND COALESCE(durum,'aktif')='aktif'
+                       ORDER BY tur""", (mid,))
+        abonelikler = [dict(r) for r in (cur.fetchall() or [])]
+        cur.execute("""
+            SELECT h.*, h.tarih::text AS tarih, h.tutar::float AS tutar,
+                   k.ad AS kiraci_ad, h.kasa_hareket_id AS kasa_iz
+            FROM mulk_hareket h LEFT JOIN kiraci k ON k.id=h.kiraci_id
+            WHERE h.mulk_id=%s AND COALESCE(h.durum,'aktif')='aktif'
+            ORDER BY h.tarih DESC LIMIT 200
+        """, (mid,))
+        hareketler = [dict(r) for r in (cur.fetchall() or [])]
+    return {
+        "mulk": dict(m),
+        "sozlesmeler": sozlesmeler,
+        "abonelikler": abonelikler,
+        "hareketler": hareketler,
+        "kiraci_gecmisi": len(sozlesmeler),
+        "toplam_kira": round(sum(float(h["tutar"]) for h in hareketler
+                                 if h["tur"] == "KIRA_TAHSILAT"), 2),
     }

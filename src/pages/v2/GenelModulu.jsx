@@ -2051,12 +2051,27 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
             renk: R.krem,          // yeşil DEĞİL: doğrulanmamış pay varken "iyi" denmez
             onTikla: kasaAc,
           } : {
-            etiket: 'Kasa',
+            etiket: 'Toplam kasa',
             deger: fmt(sayi(p.kasa)),
-            alt: 'tüm kasaların toplamı · ayrım için tıkla',
+            // 🏠 2026-09-09 (sahip: "kasaları ayrıştırarak göstersin, toplam
+            // kasa şu andaki kasayı göstersin"). Rakam TOPLAM kalır; ayrım
+            // alt satırda. Mülk defteri boşken eski metin aynen görünür.
+            alt: sayi(p.kasa_mulk) !== 0
+              ? `TULİPİ ${fmt(sayi(p.kasa_tulipi))} + mülk ${fmt(sayi(p.kasa_mulk))}`
+              : 'tüm kasaların toplamı · ayrım için tıkla',
             renk: sayi(p.kasa) >= 0 ? R.yesil : R.kirmizi,
             onTikla: kasaAc,
           },
+          // 🏠 MÜLK KASASI — yalnız içinde para varken görünür.
+          // Boşken KPI şeridine boş bir kutu koymak, olmayan bir kavramı
+          // varmış gibi gösterirdi; kira geldiği gün kendiliğinden doğar.
+          ...(sayi(p.kasa_mulk) !== 0 ? [{
+            etiket: 'Mülk kasası',
+            deger: fmt(sayi(p.kasa_mulk)),
+            alt: 'kira · aidat · depozito · kahve işine karışmaz',
+            renk: R.krem,
+            onTikla: () => onKopru?.('__modul:mulk:defter'),
+          }] : []),
           // 📉 GECİKMİŞ — rakamın yanında DEĞİŞİMİ de söyler (HAMLE 3).
           // Taban `gecmisOzet` (önceki günün anlık görüntüsü); yoksa delta yok.
           (() => {

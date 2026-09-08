@@ -1236,6 +1236,18 @@ def finans_ozet_motoru():
         son_30_gider = akis["gider"]
         net_akis_30  = akis["net"]
 
+        # 🏠 KASA ÇEKMECELERİ (2026-09-09, sahip: "panel ve BAKIŞ'ta kasaları
+        # ayrıştırarak göstersin, toplam kasa şu andaki kasayı göstersin").
+        # `kasa` alanı DEĞİŞMEZ — o TOPLAMdır ve sahibin bugüne kadar gördüğü
+        # rakamdır. Bunlar YANINA eklenir; okumayan ekran etkilenmez.
+        try:
+            kasa_tulipi = kasa_bakiyesi(cur, defter='TULIPI')
+            kasa_mulk   = kasa_bakiyesi(cur, defter='MULK')
+        except Exception:
+            # `defter` kolonu henüz açılmadıysa (göç kilit alamadıysa) panel
+            # YİNE ÇALIŞIR: ayrım yok sayılır, toplam kasa doğru kalır.
+            kasa_tulipi, kasa_mulk = None, None
+
         # Bu ayın cirosu (sadece ciro tablosundan — kasa'dan değil)
         # 🔴 PANEL-008 (2026-09-02): tarih İKİ kaynaktan geliyordu — Python
         # `bugun_tr()`, SQL ham `CURRENT_DATE`. Bugün hizalılar çünkü her
@@ -1712,7 +1724,9 @@ def finans_ozet_motoru():
 
     out = {
         # Temel göstergeler
-        'kasa': kasa,
+        'kasa': kasa,                    # TOPLAM — TULİPİ + MÜLK
+        'kasa_tulipi': kasa_tulipi,      # kahve işi çekmecesi
+        'kasa_mulk': kasa_mulk,          # kiralık mülk çekmecesi
         'serbest_nakit': serbest,
         'yuk_7': yuk_7,
         'yuk_15': yuk_15,

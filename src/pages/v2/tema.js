@@ -116,6 +116,8 @@ export const IK = {
   takvim: '<rect x="3" y="4.5" width="18" height="17" rx="2.5"/><path d="M3 10h18"/><path d="M8 2.5v4M16 2.5v4"/>',
   asagiOk: '<path d="m6 9.5 6 6 6-6"/>',
   kule: '<path d="M12 2.5v19"/><path d="M12 5.5 20 8v3l-8-2.5Z"/><path d="M12 12 4 14.5v3L12 15Z"/>',
+  // 🏠 Kiralık Mülkler modülü (2026-09-08) — aynı lucide dili, 24x24
+  ev: '<path d="M3 10.5 12 3l9 7.5"/><path d="M5.5 9.5V20a1 1 0 0 0 1 1h11a1 1 0 0 0 1-1V9.5"/><path d="M9.5 21v-6h5v6"/>',
 };
 
 // ─── Modül ağacı ─────────────────────────────────────────────────────────────
@@ -304,6 +306,22 @@ export const MODULLER = [
     { id: 'projeksiyon', ad: 'Nakit Projeksiyonu · 12 ay' },
     { id: 'hedef', ad: 'Hedef Ciro & Ölçek' },
     { id: 'katki', ad: 'Şube Katkısı' },
+  ]},
+  // 🏠 KİRALIK MÜLKLER (2026-09-08) — sahibin gayrimenkulleri.
+  // ⚠️ EVVEL'İN İÇİNDE AMA AYRI MANTIK (sahip: "ayrı mantıkta çalışan bir
+  // sistem; sadece panel ve BAKIŞ'ta kasaları ayrıştırarak göstersin").
+  // Kahve işinin cirosuna/giderine KARIŞMAZ; kesişme noktası yalnız
+  // TOPLAM KASA = TULİPİ + MÜLK eşitliğidir.
+  // Yerleşim denetçisi hükmü 2026-09-08: kira/kiracı/depozito/aidat kavramları
+  // v2'nin 60 görünümünün HİÇBİRİNDE yok; en yakın kavram sabit_giderler
+  // kategori='kira' ama o TERS YÖN (şubenin ödediği gider) — karıştırılmaz.
+  { id: 'mulk', blok: 'Finans', ad: 'Kiralık Mülkler', kisa: 'Mülk', alt: 'Kiracı · tahsilat · abonelik', ikon: IK.ev, gorunumler: [
+    { id: 'mulkler', ad: 'Mülkler' },
+    { id: 'tahsilat', ad: 'Tahsilat & Gecikme', rozet: 'mulkBorclu', renk: '#F87171' },
+    { id: 'kiracilar', ad: 'Kiracılar' },
+    { id: 'abonelik', ad: 'Abonelikler', rozet: 'mulkAbonelikRisk', renk: '#FBBF24' },
+    { id: 'defter', ad: 'Mülk Defteri' },
+    { id: 'goc', ad: 'Eski Kayıtları Aktar' },
   ]},
 
   // ══════════════════ BLOK: KAYIT & KURULUM ══════════════════
