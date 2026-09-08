@@ -1090,7 +1090,8 @@ GOC_ETIKET = "MULK_GOC_2026_09"
 
 
 @router.post("/goc-yaz")
-def goc_yaz(kuru: bool = Query(True), etiket: str = Query(GOC_ETIKET)):
+def goc_yaz(kuru: bool = Query(True), varlik: bool = Query(False),
+            etiket: str = Query(GOC_ETIKET)):
     """Eski `DIS_KAYNAK` kira/depozito kayıtlarını mülk defterine AYNALAR.
 
     🔴 SAHİP KARARI 2026-09-08: *"para dükkâna girdi"*. Bu yüzden kayıtlar
@@ -1139,8 +1140,14 @@ def goc_yaz(kuru: bool = Query(True), etiket: str = Query(GOC_ETIKET)):
         for r in satirlar:
             a = tr_kucuk(r.get("aciklama"))
             if "ev sat" in a or "satış fiyat" in a or "satis fiyat" in a:
-                continue                              # varlık satışı — sahip kararı
-            if "depozit" in a:
+                # 🏡 VARLIK SATIŞI — sahip 2026-09-09: "ev satışını da al".
+                # ⚠️ BİLEREK AYRI BAYRAK (`varlik=true`): 3,88 M ₺'lik tek bir
+                # satır, 46 küçük kira kaydıyla aynı komuta sığdırılmaz. Bir
+                # gün yanlışlıkla çalıştırılırsa fark edilmesi gereken şey bu.
+                if not varlik:
+                    continue
+                tur = "VARLIK_SATISI"
+            elif "depozit" in a:
                 tur = "DEPOZITO_ALINDI"
             elif "kira" in a:
                 tur = "KIRA_TAHSILAT"
@@ -1161,7 +1168,11 @@ def goc_yaz(kuru: bool = Query(True), etiket: str = Query(GOC_ETIKET)):
 
         ozet = {
             "kuru": kuru,
+            "varlik_dahil": varlik,
             "yazilacak": len(plan),
+            "varlik_satisi_adet": sum(1 for p in plan if p["tur"] == "VARLIK_SATISI"),
+            "varlik_satisi_tutar": round(
+                sum(p["tutar"] for p in plan if p["tur"] == "VARLIK_SATISI"), 2),
             "atlanan": len(atlanan),
             "kiraci_eslesen": sum(1 for p in plan if p["kiraci_id"]),
             "kiraci_bos": sum(1 for p in plan if not p["kiraci_id"]),
@@ -1188,7 +1199,8 @@ def goc_yaz(kuru: bool = Query(True), etiket: str = Query(GOC_ETIKET)):
             # DIS_KAYNAK satırında hem yeni MULK satırında sayılırdı.
             _mulk_yaz(cur, "MULK_AKTARIM_CIKIS", p["tarih"], -abs(p["tutar"]),
                       "Dükkâna aktarıldı — %s" % (p["aciklama"] or "")[:80],
-                      kiraci_id=p["kiraci_id"], kaynak_kasa_id=p["kasa_id"])
+                      kiraci_id=p["kiraci_id"], kaynak_kasa_id=p["kasa_id"],
+                      mulk_id=p.get("mulk_id"))
             yazilan += 1
 
         t1 = kasa_bakiyesi(cur)
