@@ -70,6 +70,27 @@ def ad_anahtari(s: str) -> str:
     return " ".join(sorted(t.split()))     # kelime sırası önemsiz
 
 
+AYLAR = ("ocak", "subat", "şubat", "mart", "nisan", "mayis", "mayıs", "haziran",
+         "temmuz", "agustos", "ağustos", "eylul", "eylül", "ekim", "kasim",
+         "kasım", "aralik", "aralık")
+
+
+def kiraci_adi_ayikla(ham: str) -> str:
+    """Serbest metinden kiracı adını çıkarır.
+
+    ⚠️ TEK YER OLMASI ŞART: bu temizlik ÖNCE göç adayları ucunda, SONRA göç
+    yazımında ayrı ayrı yazılmıştı ve ikisi farklı davranıyordu — yazım ucu ay
+    adlarını temizlemiyordu, bu yüzden "HASAN GÜÇLÜ MAYIS KİRA" tanımlı
+    kiracıya EŞLEŞMİYORDU (kuru çalıştırmada yakalandı). Aynı gerçeği iki
+    yerde ayrı yazmak bu sistemdeki hataların en sık kalıbı.
+    """
+    t = tr_kucuk(ham or "")
+    t = re.sub(r"(kira bedeli|kira|geliri|depozito|depozit|gecikmi[şs]|"
+               r"[0-9]+ ?ayl[ıi]k| ay[ıi] | ay[ıi]$)", " ", t)
+    t = re.sub(r"\b(" + "|".join(AYLAR) + r")\b", " ", t)
+    return re.sub(r"\s+", " ", t).strip(" -–—.()")
+
+
 def _ay_ekle(y: int, a: int, n: int):
     t = (y * 12 + (a - 1)) + n
     return t // 12, t % 12 + 1
@@ -657,10 +678,7 @@ def goc_adaylari():
     # Kiracı kümeleri — ad anahtarına göre
     kume: Dict[str, Dict[str, Any]] = {}
     for r in kira:
-        ham = (r.get("aciklama") or "").split(":", 1)[-1]
-        ad = re.sub(r"(?i)kira( bedeli)?|geliri|gecikmi[şs]|[0-9]+ ?ayl[ıi]k|ay[ıi]|"
-                    r"ocak|[şs]ubat|mart|nisan|may[ıi]s|haziran|temmuz|a[ğg]ustos|"
-                    r"eyl[üu]l|ekim|kas[ıi]m|aral[ıi]k", "", tr_kucuk(ham)).strip(" -–—.")
+        ad = kiraci_adi_ayikla((r.get("aciklama") or "").split(":", 1)[-1])
         anahtar = ad_anahtari(ad)
         if not anahtar:
             anahtar = "(adsız)"
@@ -1132,9 +1150,7 @@ def goc_yaz(kuru: bool = Query(True), etiket: str = Query(GOC_ETIKET)):
                 atlanan.append({"id": r["id"], "neden": "zaten aynalanmış",
                                 "aciklama": r["aciklama"]})
                 continue
-            ham = (r.get("aciklama") or "").split(":", 1)[-1]
-            ad = re.sub(r"(?i)kira( bedeli)?|geliri|depozito|gecikmi[şs]|"
-                        r"[0-9]+ ?ayl[ıi]k|ay[ıi]", "", tr_kucuk(ham)).strip(" -–—.")
+            ad = kiraci_adi_ayikla((r.get("aciklama") or "").split(":", 1)[-1])
             _e = bagli.get(ad_anahtari(ad))
             plan.append({
                 "kasa_id": r["id"], "tarih": r["tarih_m"], "tutar": r["tutar"],
