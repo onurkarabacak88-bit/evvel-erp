@@ -66,6 +66,12 @@ const TUR_ANLAM = {
   VARLIK_SATISI: 'Mülk satışı. Gelir sayılmaz; varlık el değiştirdi.',
 };
 
+// Belge türlerinin insan dili.
+const BELGE_TURU = {
+  sozlesme: 'Kira sözleşmesi', tapu: 'Tapu', fatura: 'Fatura',
+  tahliye: 'Tahliye belgesi', fotograf: 'Fotoğraf', diger: 'Diğer',
+};
+
 const alanStil = {
   width: '100%', boxSizing: 'border-box', padding: '9px 12px', borderRadius: 10,
   border: `1px solid ${R.cizgi3}`, background: R.girinti, color: R.krem,
@@ -91,6 +97,10 @@ const fmt = (v) => sayi(v).toLocaleString('tr-TR', {
   minimumFractionDigits: 0, maximumFractionDigits: 0,
 }) + ' ₺';
 const bugun = () => new Date().toISOString().slice(0, 10);
+const tarihTR = (d) => {
+  const [y, a, g] = String(d || '').split('-');
+  return (y && a && g) ? `${g}.${a}.${y}` : String(d || '—');
+};
 const AY_AD = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz',
   'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const donemAd = (d) => {
@@ -118,13 +128,19 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const yukle = useCallback(async () => {
     setHata(null);
     try {
-      const [k, m, kr, sz] = await Promise.all([
+      // ⚠️ Tahsilat da AÇILIŞTA yüklenir: gecikme kutusu her görünümün
+      // üstünde durur, yalnız Tahsilat sekmesinde değil. Sahip 2026-09-11:
+      // "gecikme olduğunda hangi dairenin ve kiracısının… görebileceğimiz".
+      // Kaçırılmaması gereken bilgi, gidilmesi gereken sekmede saklanmaz.
+      const [k, m, kr, sz, th] = await Promise.all([
         api('/mulk/kasa'),
         api('/mulk'),
         api('/mulk/kiraci'),
         api('/mulk/sozlesme'),
+        api('/mulk/tahsilat'),
       ]);
       setKasa(k); setMulkler(m); setKiracilar(kr); setSozlesmeler(sz);
+      setTahsilat(th);
     } catch (e) {
       setHata(String(e?.message || e));
     }
@@ -353,9 +369,40 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
             { ...h, mulk_ad: mm.ad, mulk_simge: mm.simge, mulk_id: mm.id }, bendenGeri),
         })),
       ],
+      // 📄 BELGE ARŞİVİ — çekmecenin "Belgeler" sekmesinde, YENİDEN ESKİYE.
+      // Sıra sunucudan gelir (belgenin KENDİ tarihi); ekran yeniden sıralamaz.
+      belgeler: (d.belgeler || []).map((b) => ({
+        ad: b.ad,
+        tur: (b.mime || '').includes('pdf') ? 'PDF' : 'FOTO',
+        detay: [
+          b.belge_tarihi ? tarihTR(b.belge_tarihi) : '⚠ tarih yok — arşivin sonunda',
+          BELGE_TURU[b.tur] || b.tur,
+          b.kiraci_ad,
+          `${Math.round((b.boyut || 0) / 1024)} KB`,
+        ].filter(Boolean).join(' · '),
+        url: `/api/mulk/belge/${b.id}/veri`,
+      })),
+      belgeYukle: async (f) => {
+        const fd = new FormData();
+        fd.append('dosya', f);
+        fd.append('tur', 'sozlesme');
+        fd.append('ad', f.name);
+        // Aktif sözleşme varsa belge ONA bağlanır ve tarihi sözleşmenin
+        // başlangıcından türetilir — sahip tarih yazmak zorunda kalmasın.
+        if (aktif?.id) fd.append('sozlesme_id', aktif.id);
+        const r = await fetch(`/api/mulk/${mm.id}/belge`, { method: 'POST', body: fd });
+        if (!r.ok) {
+          const h = await r.json().catch(() => ({}));
+          throw new Error(h?.detail || `Yüklenemedi (${r.status})`);
+        }
+        const s2 = await r.json();
+        onToast?.(s2?.not ? `⚠ ${s2.not}` : '✅ belge arşive eklendi');
+        mulkDosyasiAc(m, geri);          // çekmeceyi tazele
+      },
       dosyaBilgi: {
         Bina: mm.bina || '—', Birim: mm.birim || '—',
         Adres: mm.adres || '—', Tür: mm.tur || '—',
+        Belge: `${(d.belgeler || []).length} dosya`,
         Not: mm.notlar || '—',
         Kimlik: String(mm.id || '').slice(0, 8) + '…',
       },
@@ -1415,48 +1462,172 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
     </div>
   );
 
-  // ── KASA ŞERİDİ — dört kutu, üçü kapı ───────────────────────────
-  const kasaSeridi = () => {
+  // ── GECİKME DOSYASI ─────────────────────────────────────────────
+  // 🔴 sahip 2026-09-11: "hangi dairenin ve kiracısının, hatta KAÇ KİRASININ
+  // yatmadığını görebileceğimiz". Üç soru, üç ayrı alan:
+  //   hangi daire → mülk adı (bina · birim)
+  //   kim         → kiracı adı + telefonu (aramak için)
+  //   kaç kira    → açık AY SAYISI ve o ayların ADLARI
+  // Yalnız tutar göstermek üçünü de cevapsız bırakırdı.
+  const gecikmeAc = () => {
+    const borclu = (tahsilat?.satirlar || [])
+      .filter((r) => r.durum === 'borclu')
+      .sort((a, b) => sayi(b.bakiye) - sayi(a.bakiye));
+    if (!borclu.length) { onToast?.('Gecikmiş kira yok'); return; }
+    const bendenGeri = { ad: 'Gecikmiş kiralar', onTikla: gecikmeAc };
+    onCekmece?.({
+      tip: 'GECİKMİŞ KİRA',
+      baslik: `${borclu.length} kiracı geride`,
+      alt: `toplam ${fmt(borclu.reduce((t, r) => t + sayi(r.bakiye), 0))}`,
+      kpi: [
+        { etiket: 'Borçlu kiracı', deger: String(borclu.length), renk: R.kirmizi },
+        { etiket: 'Toplam borç',
+          deger: fmt(borclu.reduce((t, r) => t + sayi(r.bakiye), 0)), renk: R.kirmizi },
+        { etiket: 'En eski',
+          deger: `${Math.max(...borclu.map((r) => sayi(r.gecikme_ay)))} ay` },
+        { etiket: 'Açık ay toplamı',
+          deger: String(borclu.reduce((t, r) => t + sayi(r.acik_ay), 0)) },
+      ],
+      listeBaslik: 'Hangi daire · kim · kaç kira',
+      satirlar: borclu.map((r) => {
+        // Hangi aylar açık — ADLARIYLA. "3 ay geride" der ama hangi üç ay
+        // olduğunu söylemezse sahip kiracıyı arayıp "hangi aylar" diye
+        // soramaz; o zaman ekran sorunun yerine yenisini koymuş olur.
+        const acik = (r.aylar || []).filter((a) => a.durum !== 'kapandi');
+        const adlar = acik.map((a) => donemAd(a.donem).replace(/ \d{4}$/, ''));
+        return {
+          ad: `${r.mulk_ad} — ${r.kiraci_ad}`,
+          detay: [
+            `${r.gecikme_ay} kira yatmadı`,
+            adlar.length ? `açık: ${adlar.join(', ')}` : null,
+            `aylık ${fmt(r.aylik_kira)}`,
+            r.telefon || null,
+          ].filter(Boolean).join(' · '),
+          tutar: fmt(r.bakiye),
+          onTikla: () => kiraDosyasiAc({
+            id: r.sozlesme_id, kiraci_ad: r.kiraci_ad, kiraci_id: r.kiraci_id,
+            mulk_ad: r.mulk_ad, mulk_id: r.mulk_id, aylik_kira: r.aylik_kira,
+            baslangic: r.baslangic, odeme_gunu: r.odeme_gunu, durum: 'aktif',
+            telefon: r.telefon,
+          }, bendenGeri),
+        };
+      }),
+      not: 'Satıra tıklayın: o kiracının ay ay dökümü ve tahsilat yazma '
+        + 'düğmesi açılır. "Kaç kira yatmadı" sayısı borcun aylık kiraya '
+        + 'bölümüdür — kısmi ödeme yapan kiracıda tam ay çıkmayabilir.',
+    });
+  };
+
+  // ── KİRA TAKİBİ ŞERİDİ ──────────────────────────────────────────
+  // 🔴 sahip 2026-09-11: "mülkler alanında TULİPİ kasası görmemize gerek yok;
+  // aylık toplanması beklenen kira, toplanan kira, TULİPİ'ye aktarılan ve
+  // depozito toplamı olsun."
+  //
+  // ⚠️ TULİPİ kasası BURADAN KALKTI — Panel'de zaten var ve mülk ekranında
+  // kahve işinin rakamı, okuyanın dikkatini bölüyordu. Toplam kasa kaldı
+  // çünkü ayrımın DOĞRULANDIĞI tek yer odur (toplam = TULİPİ + mülk).
+  //
+  // ⚠️ Hiçbir rakam BURADA hesaplanmaz; hepsi /api/mulk/kasa'dan gelir.
+  const kiraSeridi = () => {
     if (!kasa) return null;
+    const eksik = sayi(kasa.kira_eksik_bu_ay);
+    const borclu = sayi(tahsilat?.borclu_adet);
+    const enEski = borclu
+      ? Math.max(...(tahsilat.satirlar || [])
+        .filter((r) => r.durum === 'borclu').map((r) => sayi(r.gecikme_ay)))
+      : 0;
     const kutular = [
       {
-        etiket: 'Toplam kasa', deger: fmt(kasa.toplam), renk: R.krem,
-        alt: onKopru ? "TULİPİ + mülk · ayrımlar Panel'de" : 'TULİPİ + mülk',
-        // 🔗 Toplam kasanın ayrıntısı ZATEN Panel'de (şube + tür + banka).
-        // Aynı çekmeceyi burada yeniden kurmak iki gerçek doğururdu.
-        onTikla: onKopru ? () => onKopru('__modul:genel:akis') : undefined,
+        etiket: 'Beklenen kira · aylık', deger: fmt(kasa.beklenen_aylik),
+        renk: R.krem,
+        alt: `${kasa.aktif_sozlesme || 0} aktif sözleşme`,
+        onTikla: () => beklenenAc(),
       },
       {
-        etiket: 'TULİPİ kasası', deger: fmt(kasa.tulipi), renk: R.bakir,
-        alt: 'kahve işi',
-        onTikla: onKopru ? () => onKopru('__modul:genel:akis') : undefined,
+        etiket: 'Toplanan · bu ay', deger: fmt(kasa.kira_bu_ay),
+        // Eksik varsa amber, fazla tahsilat varsa yeşil. Renk TEK BAŞINA
+        // taşıyıcı değil — alt satır rakamı da söyler.
+        renk: eksik > 0.5 ? R.amber : R.yesil,
+        alt: eksik > 0.5 ? `${fmt(eksik)} eksik`
+          : eksik < -0.5 ? `${fmt(-eksik)} fazla (gecikmiş tahsilat)`
+            : 'tamamı toplandı',
+        onTikla: () => onKopru?.('__gorunum:tahsilat'),
+      },
+      // 🔴 GECİKME — her görünümün üstünde durur, Tahsilat sekmesine
+      // girmeyi beklemez. Borç yokken de gösterilir: "gecikme yok" bir
+      // BULGUdur, veri yokluğu değil.
+      {
+        etiket: 'Gecikmiş kira',
+        deger: borclu ? fmt(tahsilat.toplam_bakiye) : '—',
+        renk: borclu ? R.kirmizi : R.yesil,
+        alt: borclu
+          ? `${borclu} kiracı · en eskisi ${enEski} ay`
+          : (tahsilat?.satirlar?.length ? 'herkes güncel' : 'sözleşme yok'),
+        onTikla: borclu ? gecikmeAc : undefined,
+      },
+      {
+        etiket: "TULİPİ'ye aktarılan", deger: fmt(kasa.aktarim_bu_ay),
+        renk: R.bakir,
+        alt: `bugüne kadar ${fmt(kasa.aktarim_toplam)}`,
+        onTikla: sayi(kasa.aktarim_toplam)
+          ? () => turListesiAc('MULK_AKTARIM_CIKIS') : undefined,
+      },
+      {
+        etiket: 'Depozito · elde', deger: fmt(kasa.depozito_emanet),
+        renk: R.amber,
+        alt: sayi(kasa.depozito_iade)
+          ? `${fmt(kasa.depozito_alinan)} alındı − ${fmt(kasa.depozito_iade)} iade`
+          : 'emanet — gelir DEĞİL',
+        onTikla: depozitoAc,
       },
       {
         etiket: 'Mülk kasası', deger: fmt(kasa.mulk), renk: R.yesil,
         alt: (kasa.kirilim || []).length
-          ? 'kira · aidat · depozito · içi için tıkla' : 'henüz hareket yok',
-        // 🚪 Kapı ancak arkasında içerik varsa: kırılım boşsa düz kutu.
+          ? `toplam kasanın içinde · ${fmt(kasa.toplam)}` : 'henüz hareket yok',
+        // 🚪 Kapı ancak arkasında içerik varsa açılır.
         onTikla: (kasa.kirilim || []).length ? mulkKasasiAc : undefined,
       },
     ];
-    const sozDepVar = (sozlesmeler?.sozlesmeler || [])
-      .some((x) => x.durum === 'aktif' && sayi(x.depozito) > 0);
-    if (sayi(kasa.depozito_emanet) !== 0 || sozDepVar) {
-      kutular.push({
-        etiket: 'Elde tutulan depozito', deger: fmt(kasa.depozito_emanet),
-        renk: R.amber, alt: 'emanet — gelir DEĞİL · ayrım için tıkla',
-        onTikla: depozitoAc,
-      });
-    }
     return (
       <>
         <KpiSeridi kpiler={kutular} />
         <div style={{ fontSize: 11.5, color: R.not2, lineHeight: 1.55, margin: '2px 0 4px' }}>
-          Toplam kasa = TULİPİ + Mülk. Para yerinden oynamadı; yalnız hangi
-          çekmeceye ait olduğu yazıldı.
+          Beklenen kira aktif sözleşmelerden toplanır; işyeri kiracıda stopaj
+          düşülmüş NET tutar beklenir. Toplam kasa {fmt(kasa.toplam)} — mülk
+          çekmecesi onun içindedir, kahve işine karışmaz.
         </div>
       </>
     );
+  };
+
+  // Beklenen kiranın NEREDEN çıktığı — sözleşme sözleşme.
+  const beklenenAc = () => {
+    const aktif = (sozlesmeler?.sozlesmeler || []).filter((x) => x.durum === 'aktif');
+    if (!aktif.length) { onToast?.('Aktif sözleşme yok'); return; }
+    onCekmece?.({
+      tip: 'BEKLENEN KİRA',
+      baslik: 'Aylık beklenen kira nereden çıkıyor',
+      alt: `${aktif.length} aktif sözleşme`,
+      kpi: [
+        { etiket: 'Aylık beklenen', deger: fmt(kasa?.beklenen_aylik) },
+        { etiket: 'Bu ay toplanan', deger: fmt(kasa?.kira_bu_ay) },
+        { etiket: 'Sözleşme', deger: String(aktif.length) },
+      ],
+      listeBaslik: 'Sözleşme sözleşme',
+      satirlar: aktif.map((x) => {
+        const st = sayi(x.stopaj_orani);
+        const net = st > 0 ? sayi(x.aylik_kira) * (1 - st / 100) : sayi(x.aylik_kira);
+        return {
+          ad: `${x.kiraci_ad} · ${x.mulk_ad}`,
+          detay: st > 0
+            ? `brüt ${fmt(x.aylik_kira)} − stopaj %${st} → NET beklenir`
+            : `her ayın ${x.odeme_gunu}'i`,
+          tutar: fmt(net),
+          onTikla: () => kiraDosyasiAc(x, { ad: 'Beklenen kira', onTikla: beklenenAc }),
+        };
+      }),
+      not: kasa?.beklenen_not,
+    });
   };
 
   // ═════════════════════════════════════════════════════════════════
@@ -1548,7 +1719,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
               not={`toplam bakiye ${fmt(tahsilat.toplam_bakiye)} · satıra tıklayın`}
               kolonlar={[{ ad: 'Mülk' }, { ad: 'Kiracı' }, { ad: 'Aylık', sag: true },
                 { ad: 'Beklenen', sag: true }, { ad: 'Alınan', sag: true },
-                { ad: 'Bakiye', sag: true }, { ad: 'Durum' }]}
+                { ad: 'Bakiye', sag: true }, { ad: 'Durum' }, { ad: 'Açık aylar' }]}
               satirlar={s.map((r) => ({
                 id: r.sozlesme_id, _r: r,
                 hucreler: [
@@ -1559,10 +1730,16 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
                   { v: fmt(r.bakiye), sag: true, mono: true, kalin: true,
                     renk: r.bakiye > 0.5 ? R.kirmizi
                       : r.bakiye < -0.5 ? R.yesil : R.metin2 },
-                  { v: r.durum === 'borclu' ? `${r.gecikme_ay} ay geride`
+                  { v: r.durum === 'borclu' ? `${r.gecikme_ay} kira yatmadı`
                       : r.durum === 'pesin' ? 'peşin' : 'güncel',
                     rozet: r.durum === 'borclu' ? R.kirmizi
                       : r.durum === 'pesin' ? R.yesil : R.not },
+                  // Hangi aylar açık — adlarıyla. Sayı tek başına
+                  // "kiracıyı arayıp ne soracağım" sorusunu cevaplamaz.
+                  { v: (r.aylar || []).filter((a) => a.durum !== 'kapandi')
+                    .map((a) => donemAd(a.donem).replace(/ \d{4}$/, ''))
+                    .join(', ') || '—',
+                    renk: r.acik_ay ? R.amber : R.not3 },
                 ],
               }))}
               onSatir={(row) => kiraDosyasiAc({
@@ -1813,7 +1990,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   return (
     <div>
-      {kasaSeridi()}
+      {kiraSeridi()}
       {govde()}
     </div>
   );

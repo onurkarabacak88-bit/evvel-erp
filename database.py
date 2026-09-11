@@ -6849,6 +6849,37 @@ def ensure_mulk_defteri(cur) -> None:
             olusturma  TIMESTAMPTZ NOT NULL DEFAULT NOW()
         )
     """)
+    # 📄 MÜLK BELGE ARŞİVİ (sahip 2026-09-11: "sözleşmeyi yükle olsun ama bu
+    # mülk bandında olsun, yeniden eski tarihe doğru dosyalama kurulsun").
+    #
+    # ⚠️ DOSYA VERİTABANINDA (BYTEA) DURUR, DİSKTE DEĞİL: Railway'de dosya
+    # sistemi kalıcı değildir — her dağıtımda silinir. Sistemde emsali var
+    # (`sube_fire_bildirim_foto`, `fatura.foto`).
+    #
+    # ⚠️ İKİ AYRI TARİH:
+    #   `belge_tarihi` → belgenin KENDİ tarihi (sözleşmenin başladığı gün).
+    #                    Dosyalama SIRASI budur; yeniden eskiye doğru.
+    #   `olusturma`    → dosyanın sisteme YÜKLENDİĞİ an.
+    # Karıştırılırsa 2024 sözleşmesi bugün yüklendiği için arşivin başına geçer
+    # ve "hangi sözleşme güncel" sorusu yanlış cevaplanır.
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS mulk_belge (
+            id           TEXT PRIMARY KEY DEFAULT gen_random_uuid()::text,
+            mulk_id      TEXT NOT NULL,
+            sozlesme_id  TEXT,                    -- hangi kiracı dönemine ait
+            tur          TEXT NOT NULL DEFAULT 'sozlesme',
+            -- sozlesme | tapu | fatura | tahliye | fotograf | diger
+            ad           TEXT NOT NULL,           -- görünen ad
+            belge_tarihi DATE,                    -- BELGENİN kendi tarihi
+            aciklama     TEXT,
+            veri         BYTEA NOT NULL,
+            mime         TEXT NOT NULL,
+            boyut        INTEGER NOT NULL,
+            sha256       TEXT NOT NULL,           -- mükerrer yükleme freni
+            durum        TEXT NOT NULL DEFAULT 'aktif',
+            olusturma    TIMESTAMPTZ NOT NULL DEFAULT NOW()
+        )
+    """)
     # 🏷️ TAKMA AD DEFTERİ — aynı kiracı üç ayrı yazımla geliyor
     # ("hamayoun / hamayoğun / hamoayoun faizi"). Sistemde emsali var:
     # tedarikçi "Kimlik Birleştirme" ve [[reference-maas-alici-takma-adlari]].
@@ -6866,6 +6897,10 @@ def ensure_mulk_defteri(cur) -> None:
         "CREATE INDEX IF NOT EXISTS idx_kira_sozlesme_mulk ON kira_sozlesme (mulk_id)",
         "CREATE INDEX IF NOT EXISTS idx_kiraci_takma_kiraci ON kiraci_takma_ad (kiraci_id)",
         "CREATE INDEX IF NOT EXISTS idx_mulk_abonelik_mulk ON mulk_abonelik (mulk_id)",
+        # Arşiv YENİDEN ESKİYE sıralanır — dosyalama sırası budur.
+        "CREATE INDEX IF NOT EXISTS idx_mulk_belge_mulk ON mulk_belge (mulk_id, belge_tarihi DESC)",
+        "CREATE INDEX IF NOT EXISTS idx_mulk_belge_sozlesme ON mulk_belge (sozlesme_id)",
+        "CREATE INDEX IF NOT EXISTS idx_mulk_belge_sha ON mulk_belge (sha256)",
         "CREATE INDEX IF NOT EXISTS idx_kira_sozlesme_kiraci ON kira_sozlesme (kiraci_id)",
         "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_donem ON mulk_hareket (donem)",
         "CREATE INDEX IF NOT EXISTS idx_mulk_hareket_sozlesme ON mulk_hareket (sozlesme_id)",

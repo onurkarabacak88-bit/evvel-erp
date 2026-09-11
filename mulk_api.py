@@ -40,7 +40,10 @@ import uuid
 from datetime import date
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+import hashlib
+
+from fastapi import APIRouter, File, Form, HTTPException, Query, UploadFile
+from fastapi.responses import Response
 from pydantic import BaseModel
 
 from database import db
@@ -141,16 +144,77 @@ def mulk_kasa():
             FROM mulk_hareket WHERE COALESCE(durum,'aktif')='aktif'
         """)
         emanet = float((cur.fetchone() or {}).get("emanet") or 0)
+
+        # ── KİRA TAKİBİ (sahip 2026-09-11) ───────────────────────────
+        # ⚠️ Hepsi SUNUCUDA toplanır. Ekran kendi aritmetiğini kurarsa iki
+        # yerde iki rakam doğar ve bir gün ayrışır.
+        #
+        # BEKLENEN = aktif sözleşmelerin aylık kirası. İşyeri kiracıda stopaj
+        # kaynağında kesilir ve sahibe NET ulaşır; brütü beklemek her ay
+        # "eksik ödedi" sahte alarmı doğururdu.
+        cur.execute("""
+            SELECT COALESCE(SUM(
+                       aylik_kira * (1 - COALESCE(stopaj_orani,0)/100.0)
+                   ),0)::float AS beklenen,
+                   COUNT(*) AS sozlesme
+            FROM kira_sozlesme WHERE durum='aktif'
+        """)
+        _b = dict(cur.fetchone() or {})
+        # TAHSİLAT / AKTARIM / GİDER — bu ay ve tüm zamanlar
+        cur.execute("""
+            SELECT
+              COALESCE(SUM(tutar) FILTER (
+                WHERE tur='KIRA_TAHSILAT'
+                  AND to_char(tarih,'YYYY-MM') = to_char(CURRENT_DATE,'YYYY-MM')
+              ),0)::float AS kira_ay,
+              COALESCE(SUM(tutar) FILTER (WHERE tur='KIRA_TAHSILAT'),0)::float AS kira_tum,
+              COALESCE(SUM(-tutar) FILTER (
+                WHERE tur='MULK_AKTARIM_CIKIS'
+                  AND to_char(tarih,'YYYY-MM') = to_char(CURRENT_DATE,'YYYY-MM')
+              ),0)::float AS aktarim_ay,
+              COALESCE(SUM(-tutar) FILTER (WHERE tur='MULK_AKTARIM_CIKIS'),0)::float AS aktarim_tum,
+              COALESCE(SUM(-tutar) FILTER (
+                WHERE tur='MULK_GIDER'
+                  AND to_char(tarih,'YYYY-MM') = to_char(CURRENT_DATE,'YYYY-MM')
+              ),0)::float AS gider_ay,
+              COALESCE(SUM(-tutar) FILTER (WHERE tur='MULK_GIDER'),0)::float AS gider_tum,
+              COALESCE(SUM(tutar) FILTER (WHERE tur='DEPOZITO_ALINDI'),0)::float AS dep_alinan,
+              COALESCE(SUM(-tutar) FILTER (WHERE tur='DEPOZITO_IADE'),0)::float AS dep_iade
+            FROM mulk_hareket WHERE COALESCE(durum,'aktif')='aktif'
+        """)
+        _h = dict(cur.fetchone() or {})
+
+    _beklenen = round(float(_b.get("beklenen") or 0), 2)
+    _kira_ay = round(float(_h.get("kira_ay") or 0), 2)
     return {
         "toplam": round(toplam, 2),
         "tulipi": round(tulipi, 2),
         "mulk": round(mulk, 2),
         "depozito_emanet": round(emanet, 2),
         "kirilim": kirilim,
+        # ── Mülk alanının kendi göstergeleri ──────────────────────────
+        "beklenen_aylik": _beklenen,
+        "aktif_sozlesme": int(_b.get("sozlesme") or 0),
+        "kira_bu_ay": _kira_ay,
+        "kira_toplam": round(float(_h.get("kira_tum") or 0), 2),
+        # ⚠️ EKSİK = beklenen − bu ay toplanan. NEGATİF olabilir (gecikmiş
+        # borcunu bu ay ödeyen kiracı) — kırpılmaz, olduğu gibi gösterilir;
+        # kırpılsaydı "fazla tahsilat" görünmez olurdu.
+        "kira_eksik_bu_ay": round(_beklenen - _kira_ay, 2),
+        "aktarim_bu_ay": round(float(_h.get("aktarim_ay") or 0), 2),
+        "aktarim_toplam": round(float(_h.get("aktarim_tum") or 0), 2),
+        "gider_bu_ay": round(float(_h.get("gider_ay") or 0), 2),
+        "gider_toplam": round(float(_h.get("gider_tum") or 0), 2),
+        "depozito_alinan": round(float(_h.get("dep_alinan") or 0), 2),
+        "depozito_iade": round(float(_h.get("dep_iade") or 0), 2),
         "not": ("TOPLAM KASA = TULİPİ + MÜLK. Toplam, sistemin bugüne kadar "
                 "gösterdiği rakamın aynısıdır; para yerinden oynamadı, yalnız "
                 "hangi çekmeceye ait olduğu yazıldı. Depozito emanettir — "
                 "mülk kasasının içindedir ama GELİR değildir."),
+        "beklenen_not": ("Beklenen kira AKTİF SÖZLEŞMELERDEN toplanır. İşyeri "
+                         "kiracıda stopaj kaynağında kesildiği için NET tutar "
+                         "beklenir — brüt beklemek her ay sahte 'eksik ödedi' "
+                         "alarmı doğururdu."),
     }
 
 
@@ -1139,11 +1203,26 @@ def mulk_dosyasi(mid: str):
             ORDER BY h.tarih DESC LIMIT 200
         """, (mid,))
         hareketler = [dict(r) for r in (cur.fetchall() or [])]
+        # 📄 Belge arşivi — YENİDEN ESKİYE. Sıralama `belge_tarihi`ne göredir
+        # (belgenin kendi tarihi), yüklenme anına göre DEĞİL: 2024 sözleşmesi
+        # bugün yüklendi diye arşivin başına geçmemeli.
+        cur.execute("""
+            SELECT b.id, b.mulk_id, b.sozlesme_id, b.tur, b.ad, b.aciklama,
+                   b.belge_tarihi::text AS belge_tarihi, b.mime, b.boyut,
+                   b.olusturma::text AS olusturma, k.ad AS kiraci_ad
+            FROM mulk_belge b
+            LEFT JOIN kira_sozlesme s ON s.id = b.sozlesme_id
+            LEFT JOIN kiraci k ON k.id = s.kiraci_id
+            WHERE b.mulk_id=%s AND COALESCE(b.durum,'aktif')='aktif'
+            ORDER BY b.belge_tarihi DESC NULLS LAST, b.olusturma DESC
+        """, (mid,))
+        belgeler = [dict(r) for r in (cur.fetchall() or [])]
     return {
         "mulk": dict(m),
         "sozlesmeler": sozlesmeler,
         "abonelikler": abonelikler,
         "hareketler": hareketler,
+        "belgeler": belgeler,
         "kiraci_gecmisi": len(sozlesmeler),
         "toplam_kira": round(sum(float(h["tutar"]) for h in hareketler
                                  if h["tur"] == "KIRA_TAHSILAT"), 2),
@@ -1420,3 +1499,205 @@ def goc_geri_al():
     return {"islem": "geri_alindi", "satir": len(satirlar),
             "toplam_kasa_farki": round(t1 - t0, 2),
             "not": "Aynalanan satırlar iptal edildi; eski kayıtlara hiç dokunulmamıştı."}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 📄 BELGE ARŞİVİ — sözleşme · tapu · fatura, MÜLK BANDINDA
+# ═══════════════════════════════════════════════════════════════════
+# 🔴 NEDEN (sahip 2026-09-11): *"sözleşmeyi yükle olsun ama bu mülk bandında
+# olsun, yeniden eski tarihe doğru dosyalama kurulsun."*
+#
+# Belge mülke bağlanır; sözleşmeye bağlanması İSTEĞE BAĞLIdır. Sebep: tapu ve
+# emlak vergisi kiracıdan bağımsızdır, kira sözleşmesi ise bir kiracı dönemine
+# aittir. İkisini aynı zorunlulukla bağlamak, tapuyu bir kiracının dosyasına
+# hapsederdi.
+_BELGE_TAVAN = 15 * 1024 * 1024          # 15 MB
+_BELGE_TURLERI = {"sozlesme", "tapu", "fatura", "tahliye", "fotograf", "diger"}
+_MIME_UZANTI = {
+    "application/pdf": "pdf", "image/jpeg": "jpg", "image/png": "png",
+    "image/webp": "webp", "image/heic": "heic",
+}
+
+
+@router.post("/{mid}/belge")
+async def mulk_belge_yukle(
+    mid: str,
+    dosya: UploadFile = File(...),
+    tur: str = Form("sozlesme"),
+    ad: str = Form(None),
+    belge_tarihi: str = Form(None),
+    sozlesme_id: str = Form(None),
+    aciklama: str = Form(None),
+):
+    """Mülke belge iliştir (PDF ya da fotoğraf).
+
+    ⚠️ Dosya VERİTABANINA yazılır. Railway'de disk kalıcı değildir; diske
+    yazılan belge ilk dağıtımda buhar olurdu. Emsal: `sube_fire_bildirim_foto`.
+
+    ⚠️ `belge_tarihi` verilmezse sözleşmenin BAŞLANGICINDAN türetilir; o da
+    yoksa boş kalır ve arşivin sonuna düşer. Yükleme anı ASLA belge tarihi
+    yerine geçmez — geçseydi 2024 sözleşmesi bugün yüklendiği için "en yeni"
+    görünürdü.
+    """
+    raw = await dosya.read()
+    if not raw:
+        raise HTTPException(400, "Boş dosya")
+    if len(raw) > _BELGE_TAVAN:
+        raise HTTPException(413,
+            f"Dosya çok büyük ({len(raw)/1048576:.1f} MB). Sınır 15 MB — "
+            "telefonla çekilmiş fotoğrafı küçültüp tekrar deneyin.")
+    mime = (dosya.content_type or "").lower().split(";")[0]
+    _adi = (dosya.filename or "").lower()
+    if mime not in _MIME_UZANTI:
+        if _adi.endswith(".pdf"):
+            mime = "application/pdf"
+        elif _adi.endswith((".jpg", ".jpeg")):
+            mime = "image/jpeg"
+        elif _adi.endswith(".png"):
+            mime = "image/png"
+        else:
+            raise HTTPException(400,
+                "Yalnız PDF ve fotoğraf (JPG/PNG/WEBP) yüklenebilir.")
+    _tur = (tur or "sozlesme").strip().lower()
+    if _tur not in _BELGE_TURLERI:
+        _tur = "diger"
+    sha = hashlib.sha256(raw).hexdigest()
+
+    with db() as (conn, cur):
+        cur.execute("SELECT id, ad FROM mulk WHERE id=%s", (mid,))
+        m = cur.fetchone()
+        if not m:
+            raise HTTPException(404, "Mülk bulunamadı")
+
+        # 🛑 MÜKERRER FRENİ: birebir aynı dosya bu mülke daha önce yüklendiyse
+        # ikinci kopya AÇILMAZ. Arşivde aynı sözleşmenin iki nüshası, "hangisi
+        # geçerli" sorusunu doğurur.
+        cur.execute("""SELECT id, ad, belge_tarihi::text AS belge_tarihi
+                       FROM mulk_belge
+                       WHERE mulk_id=%s AND sha256=%s
+                         AND COALESCE(durum,'aktif')='aktif'""", (mid, sha))
+        es = cur.fetchone()
+        if es:
+            raise HTTPException(409,
+                f"Bu dosya zaten yüklü: «{es['ad']}»"
+                + (f" ({es['belge_tarihi']})" if es.get("belge_tarihi") else ""))
+
+        _tarih = (belge_tarihi or "").strip() or None
+        _soz = (sozlesme_id or "").strip() or None
+        if _soz:
+            cur.execute("""SELECT baslangic::text AS baslangic, mulk_id
+                           FROM kira_sozlesme WHERE id=%s""", (_soz,))
+            sz = cur.fetchone()
+            if not sz:
+                raise HTTPException(404, "Sözleşme bulunamadı")
+            if str(sz["mulk_id"]) != str(mid):
+                raise HTTPException(400,
+                    "Bu sözleşme başka bir mülke ait — belge yanlış dosyaya "
+                    "gidiyordu, yazılmadı.")
+            if not _tarih:
+                _tarih = sz["baslangic"]
+
+        _ad = (ad or "").strip() or (dosya.filename or "Belge")
+        bid = str(uuid.uuid4())
+        cur.execute("""INSERT INTO mulk_belge
+            (id, mulk_id, sozlesme_id, tur, ad, belge_tarihi, aciklama,
+             veri, mime, boyut, sha256)
+            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                    (bid, mid, _soz, _tur, _ad, _tarih, (aciklama or None),
+                     raw, mime, len(raw), sha))
+    return {
+        "id": bid, "islem": "yuklendi", "ad": _ad, "tur": _tur,
+        "belge_tarihi": _tarih, "boyut": len(raw), "mime": mime,
+        "not": (None if _tarih else
+                "Belge tarihi girilmedi — arşivin sonunda duracak. "
+                "Sıralama belgenin KENDİ tarihine göredir, yüklenme anına göre değil."),
+    }
+
+
+@router.get("/{mid}/belge")
+def mulk_belge_listele(mid: str, sozlesme_id: str = None):
+    """Mülkün belge arşivi — YENİDEN ESKİYE. Dosya içeriği DÖNMEZ, yalnız künye."""
+    kos, par = "", [mid]
+    if sozlesme_id:
+        kos = " AND b.sozlesme_id = %s"
+        par.append(sozlesme_id)
+    with db() as (conn, cur):
+        cur.execute(f"""
+            SELECT b.id, b.sozlesme_id, b.tur, b.ad, b.aciklama, b.mime, b.boyut,
+                   b.belge_tarihi::text AS belge_tarihi,
+                   b.olusturma::text AS olusturma, k.ad AS kiraci_ad
+            FROM mulk_belge b
+            LEFT JOIN kira_sozlesme s ON s.id = b.sozlesme_id
+            LEFT JOIN kiraci k ON k.id = s.kiraci_id
+            WHERE b.mulk_id=%s AND COALESCE(b.durum,'aktif')='aktif'{kos}
+            ORDER BY b.belge_tarihi DESC NULLS LAST, b.olusturma DESC
+        """, par)
+        satirlar = [dict(r) for r in (cur.fetchall() or [])]
+    return {
+        "belgeler": satirlar,
+        "adet": len(satirlar),
+        "toplam_boyut": sum(int(r["boyut"] or 0) for r in satirlar),
+        "tarihsiz": sum(1 for r in satirlar if not r.get("belge_tarihi")),
+        "not": ("Arşiv YENİDEN ESKİYE dizilidir ve sıra belgenin KENDİ "
+                "tarihindendir — yüklenme anından değil."),
+    }
+
+
+@router.get("/belge/{bid}/veri")
+def mulk_belge_veri(bid: str):
+    """Belgenin kendisi — <img> ya da yeni sekmede PDF için."""
+    with db() as (conn, cur):
+        cur.execute("""SELECT veri, mime, ad FROM mulk_belge
+                       WHERE id=%s AND COALESCE(durum,'aktif')='aktif'""", (bid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Belge bulunamadı")
+        # inline: tarayıcı PDF'i yeni sekmede AÇSIN, indirmeye zorlamasın.
+        return Response(
+            content=bytes(r["veri"]), media_type=r["mime"],
+            headers={"Content-Disposition": "inline"})
+
+
+class BelgeGuncelle(BaseModel):
+    ad: Optional[str] = None
+    tur: Optional[str] = None
+    belge_tarihi: Optional[str] = None
+    sozlesme_id: Optional[str] = None
+    aciklama: Optional[str] = None
+
+
+@router.put("/belge/{bid}")
+def mulk_belge_guncelle(bid: str, b: BelgeGuncelle):
+    """Künyeyi düzelt (dosyanın kendisi değişmez).
+
+    ⚠️ Asıl işi `belge_tarihi` düzeltmektir: yanlış tarih arşivi yanlış sıraya
+    dizer ve "hangi sözleşme güncel" sorusu yanlış cevaplanır.
+    """
+    with db() as (conn, cur):
+        cur.execute("SELECT id FROM mulk_belge WHERE id=%s", (bid,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Belge bulunamadı")
+        cur.execute("""UPDATE mulk_belge SET
+                         ad = COALESCE(%s, ad),
+                         tur = COALESCE(%s, tur),
+                         belge_tarihi = COALESCE(%s::date, belge_tarihi),
+                         sozlesme_id = COALESCE(%s, sozlesme_id),
+                         aciklama = COALESCE(%s, aciklama)
+                       WHERE id=%s""",
+                    ((b.ad or None), (b.tur or None), (b.belge_tarihi or None),
+                     (b.sozlesme_id or None), (b.aciklama or None), bid))
+    return {"islem": "guncellendi"}
+
+
+@router.delete("/belge/{bid}")
+def mulk_belge_kaldir(bid: str):
+    """Belge SİLİNMEZ, arşivden kaldırılır (`durum='iptal'`).
+
+    Dosyanın baytları DURUR: bir sözleşme yanlışlıkla kaldırılırsa geri
+    getirilebilmeli. Kalıcı silme ayrı bir karardır ve bu uçtan yapılmaz.
+    """
+    with db() as (conn, cur):
+        cur.execute("UPDATE mulk_belge SET durum='iptal' WHERE id=%s", (bid,))
+        if cur.rowcount == 0:
+            raise HTTPException(404, "Belge bulunamadı")
+    return {"islem": "arsivden_kaldirildi"}
