@@ -53,6 +53,14 @@ KASA_ETKISI_MAP = {
     'MULK_GIDER': True, 'MULK_GIDER_IPTAL': True,
     'VARLIK_SATISI': True,
     'MULK_AKTARIM_CIKIS': True, 'MULK_AKTARIM_GIRIS': True,
+    # 🔴 2026-09-11: bu beş iptal türü EKSİKTİ. Yokken `iptal_kasa_hareketi`
+    # çağrılamıyordu; mülk hareketi 'iptal' işaretleniyor ama KASA SATIRI AKTİF
+    # kalıyordu → mülk kasası iptal edilmiş parayı saymaya devam ederdi.
+    # Depozito iptali ile depozito İADESİ AYRI ŞEYDİR: iade kiracıya para
+    # vermektir, iptal "bu kayıt yanlış yazılmıştı" demektir.
+    'DEPOZITO_ALINDI_IPTAL': True, 'DEPOZITO_IADE_IPTAL': True,
+    'VARLIK_SATISI_IPTAL': True,
+    'MULK_AKTARIM_CIKIS_IPTAL': True, 'MULK_AKTARIM_GIRIS_IPTAL': True,
 }
 
 # ═══════════════════════════════════════════════════════════════════
@@ -65,9 +73,13 @@ KASA_ETKISI_MAP = {
 MULK_TURLER = {
     'KIRA_TAHSILAT', 'KIRA_TAHSILAT_IPTAL',
     'DEPOZITO_ALINDI', 'DEPOZITO_IADE',
+    'DEPOZITO_ALINDI_IPTAL', 'DEPOZITO_IADE_IPTAL',
     'MULK_GIDER', 'MULK_GIDER_IPTAL',
-    'VARLIK_SATISI',
-    'MULK_AKTARIM_CIKIS',
+    'VARLIK_SATISI', 'VARLIK_SATISI_IPTAL',
+    'MULK_AKTARIM_CIKIS', 'MULK_AKTARIM_CIKIS_IPTAL',
+    # ⚠️ MULK_AKTARIM_GIRIS_IPTAL de BİLEREK YOK — varış ucu TULİPİ'nindir,
+    # iptali de TULİPİ'den düşmelidir. (Zaten `iptal_kasa_hareketi` defteri
+    # orijinal satırdan kopyalıyor; bu liste yalnız doğrudan yazımlar için.)
     # ⚠️ MULK_AKTARIM_GIRIS BİLEREK YOK: aktarımın VARIŞ ucu TULİPİ'nindir.
     # Çıkış MULK'tan düşer, giriş TULİPİ'ye eklenir; ikisi de bu listede
     # olsaydı para mülk defterinden hiç çıkmazdı.

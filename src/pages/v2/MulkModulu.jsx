@@ -169,7 +169,11 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // ── MÜLK HAREKETİ — diğer beş çekmecenin ORTAK alt kapısı ────────
   const mulkHareketiAc = (h, geri) => {
     const tur = String(h.tur || '');
-    const iptalEdilebilir = tur === 'KIRA_TAHSILAT' || tur === 'MULK_GIDER';
+    // 🔴 2026-09-11: eskiden yalnız iki türde iptal vardı çünkü sunucu
+    // diğerlerinde kasa ters kaydı yazmıyordu. Artık altısında da yazıyor
+    // ve YAZAMAZSA İŞLEMİ GERİ ALIYOR — düğmeyi gizlemeye gerek kalmadı.
+    const iptalEdilebilir = ['KIRA_TAHSILAT', 'MULK_GIDER', 'DEPOZITO_ALINDI',
+      'DEPOZITO_IADE', 'VARLIK_SATISI', 'MULK_AKTARIM_CIKIS'].includes(tur);
     const bendenGeri = { ad: TUR_AD[tur] || 'hareket',
       onTikla: () => mulkHareketiAc(h, geri) };
     onCekmece?.({
@@ -231,7 +235,18 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
         ad: 'Bu hareketi iptal et',
         onTikla: async () => {
           // eslint-disable-next-line no-alert
-          if (!window.confirm(`${TUR_AD[tur]} — ${fmt(h.tutar)} iptal edilsin mi?\n\nSatır silinmez, "iptal" işaretlenir; kasa karşılığı ters kayıtla kapanır.`)) return;
+          // Aktarım ÇİFT kayıttır; depozito iptali ile İADE farklı şeydir.
+          // İkisini de söylemeden onay istemek, kullanıcıyı yanlış bir
+          // zihinsel modelle tıklatmak olurdu.
+          const _ek = tur === 'MULK_AKTARIM_CIKIS'
+            ? '\n\nBu ÇİFT kayıttır: mülkten çıkış ve TULİPİ\'ye '
+              + 'giriş BİRLİKTE kapanır. Toplam kasa değişmez.'
+            : tur === 'DEPOZITO_ALINDI'
+              ? '\n\n⚠ Bu, depozitoyu kiracıya İADE ETTİM demek '
+                + 'DEĞİLDİR; bu kayıt yanlış yazılmıştı demektir. '
+                + 'İade için ayrı kayıt girin.'
+              : '';
+          if (!window.confirm(`${TUR_AD[tur]} — ${fmt(h.tutar)} iptal edilsin mi?\n\nSatır silinmez, "iptal" işaretlenir; kasa karşılığı ters kayıtla kapanır.${_ek}`)) return;
           onCekmece?.(null);
           try {
             await api(`/api/mulk/hareket/${h.id}`, { method: 'DELETE' });
@@ -1062,7 +1077,23 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
                    onChange={(e) => setV({ aylik_kira: e.target.value })} /></div>
           <div><span style={etiketStil}>Depozito</span>
             <input style={alanStil} type="number" value={v.depozito ?? ''}
-                   onChange={(e) => setV({ depozito: e.target.value })} /></div>
+                   onChange={(e) => setV({ depozito: e.target.value })} />
+            {sayi(v.depozito) > 0 ? (
+              <label style={{
+                display: 'flex', gap: 7, alignItems: 'flex-start', marginTop: 7,
+                cursor: 'pointer',
+              }}>
+                <input type="checkbox" checked={!!v.depozito_alindi} style={{ marginTop: 2 }}
+                       onChange={(e) => setV({ depozito_alindi: e.target.checked })} />
+                <span style={{ fontSize: 11, color: R.metin2, lineHeight: 1.45 }}>
+                  <b style={{ color: R.krem }}>Parayı fiilen aldım</b> — kasaya
+                  emanet olarak girsin.<br />
+                  İşaretlemezseniz depozito yalnız sözleşmede yazar, kasada iz
+                  bırakmaz — geçmişe dönük sözleşme giriyorsanız doğrusu budur.
+                </span>
+              </label>
+            ) : null}
+          </div>
           <div><span style={etiketStil}>Ödeme günü</span>
             <input style={alanStil} type="number" min="1" max="31" value={v.odeme_gunu ?? 1}
                    onChange={(e) => setV({ odeme_gunu: e.target.value })} /></div>
@@ -1094,10 +1125,11 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
             baslangic: v.baslangic || bugun(),
             aylik_kira: Number(v.aylik_kira),
             depozito: Number(v.depozito || 0),
+            depozito_alindi: !!v.depozito_alindi,
             odeme_gunu: Number(v.odeme_gunu || 1),
             kiraci_tipi: v.kiraci_tipi || 'sahis',
             stopaj_orani: Number(v.stopaj_orani || 0),
-          });
+          }).then((r) => { if (r?.not) onToast?.(`⚠ ${r.not}`); }).catch(() => {});
         });
     }
 

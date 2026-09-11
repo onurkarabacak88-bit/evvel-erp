@@ -91,6 +91,19 @@ def kiraci_adi_ayikla(ham: str) -> str:
     return re.sub(r"\s+", " ", t).strip(" -–—.()")
 
 
+# Tür adlarının insan dili — iptal açıklamalarında ve uyarılarda kullanılır.
+# Ekrandaki TUR_AD ile AYNI metinler; iki yerde farklı yazılırsa aynı hareket
+# defterde başka, ekranda başka görünürdü.
+TUR_ADI = {
+    "KIRA_TAHSILAT": "Kira tahsilatı",
+    "DEPOZITO_ALINDI": "Depozito alındı",
+    "DEPOZITO_IADE": "Depozito iadesi",
+    "MULK_GIDER": "Mülk gideri",
+    "MULK_AKTARIM_CIKIS": "Mülkten TULİPİ'ye çıkış",
+    "VARLIK_SATISI": "Varlık satışı",
+}
+
+
 def _ay_ekle(y: int, a: int, n: int):
     t = (y * 12 + (a - 1)) + n
     return t // 12, t % 12 + 1
@@ -304,6 +317,10 @@ def kiraci_kapat(kid: str):
 # SÖZLEŞMELER
 # ═══════════════════════════════════════════════════════════════════
 class SozlesmeBody(BaseModel):
+    # ⚠️ `depozito` sözleşmede YAZAN tutardır. `depozito_alindi` ise parayı
+    # FİİLEN alıp almadığınızı söyler — ikisi ayrı sorudur. Geçmişe dönük bir
+    # sözleşme girilirken depozito kâğıtta vardır ama kasaya BUGÜN girmez.
+    depozito_alindi: bool = False
     mulk_id: str
     kiraci_id: str
     baslangic: date
@@ -352,7 +369,21 @@ def sozlesme_ekle(b: SozlesmeBody):
             VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                     (sid, b.mulk_id, b.kiraci_id, b.baslangic, b.bitis, b.aylik_kira,
                      b.depozito, b.odeme_gunu, b.kiraci_tipi, b.stopaj_orani, b.notlar))
-    return {"id": sid, "islem": "eklendi"}
+        # 🔴 2026-09-11: burada depozito hareketi HİÇ yazılmıyordu. Sözleşmede
+        # "depozito 35.000" yazıyor, kasada hiçbir iz yok — "Depozito Emaneti"
+        # çekmecesi bu çelişkiyi gösteriyordu ama kaynağı açık kalmıştı.
+        # Artık AÇIK SORU: parayı aldıysanız işaretlersiniz, kasaya girer.
+        dep = None
+        if b.depozito_alindi and float(b.depozito or 0) > 0:
+            dep = _mulk_yaz(cur, "DEPOZITO_ALINDI", b.baslangic, abs(float(b.depozito)),
+                            "Sözleşme depozitosu", sozlesme_id=sid,
+                            mulk_id=b.mulk_id, kiraci_id=b.kiraci_id)
+    return {
+        "id": sid, "islem": "eklendi", "depozito_hareketi": dep,
+        "not": (None if (dep or not float(b.depozito or 0))
+                else "Depozito sözleşmeye yazıldı ama KASAYA GİRMEDİ — parayı "
+                     "aldıysanız 'depozito alındı' işaretiyle kaydedin."),
+    }
 
 
 @router.post("/sozlesme/{sid}/bitir")
@@ -613,11 +644,18 @@ def _aktarim_yaz(cur, tarih, tutar: float, aciklama: str) -> Dict[str, Any]:
 
     Emsali sistemde var: KASA_TESLIM_CIKIS/GIRIS ve SUBE_BORC_* aynı desen.
     """
-    grup = str(uuid.uuid4())
     cikis = _mulk_yaz(cur, "MULK_AKTARIM_CIKIS", tarih, -abs(tutar), aciklama)
+    # 🔴 2026-09-11 DÜZELTME: giriş satırı önceden RASTGELE bir "grup" kimliğine
+    # bağlanıyordu ve o kimlik HİÇBİR YERDE SAKLANMIYORDU → çiftin varış ucu
+    # sonradan bulunamıyordu. İptal edilmek istendiğinde yalnız çıkış ucu
+    # kapanır, giriş ucu TULİPİ kasasında AKTİF kalırdı: toplam kasa
+    # aktarım tutarı kadar ŞİŞERDİ.
+    # Artık iki uç da AYNI kaynak_id'yi (çıkış hareketinin kimliği) taşır;
+    # `islem_turu` ikisini ayırır, `iptal_kasa_hareketi` her birini kendi
+    # türüyle bulur.
     insert_kasa_hareketi(cur, tarih, "MULK_AKTARIM_GIRIS", abs(tutar), aciklama,
-                         "mulk_hareket", grup)
-    return {"grup": grup, "cikis": cikis["id"], "tutar": abs(tutar)}
+                         "mulk_hareket", cikis["id"])
+    return {"cikis": cikis["id"], "tutar": abs(tutar)}
 
 
 class AktarimBody(BaseModel):
@@ -694,9 +732,37 @@ def mulk_defteri(ay: str = None, kiraci_id: str = None, sozlesme_id: str = None,
     }
 
 
+# Her mülk hareketi türünün kasa ters-kayıt türü. TEK YER.
+# ⚠️ Aktarım ÇİFTTİR: çıkış iptal edilirken GİRİŞ ucu da kapanmalı, yoksa
+# TULİPİ kasasında karşılıksız para kalır ve TOPLAM KASA ŞİŞER.
+_IPTAL_TURU = {
+    "KIRA_TAHSILAT": ["KIRA_TAHSILAT_IPTAL"],
+    "MULK_GIDER": ["MULK_GIDER_IPTAL"],
+    "DEPOZITO_ALINDI": ["DEPOZITO_ALINDI_IPTAL"],
+    "DEPOZITO_IADE": ["DEPOZITO_IADE_IPTAL"],
+    "VARLIK_SATISI": ["VARLIK_SATISI_IPTAL"],
+    "MULK_AKTARIM_CIKIS": ["MULK_AKTARIM_CIKIS_IPTAL", "MULK_AKTARIM_GIRIS_IPTAL"],
+}
+# Ters kaydı hangi kasa türünden arayacağız (çift uçta ikisi ayrı satır).
+_IPTAL_KAYNAK = {
+    "MULK_AKTARIM_CIKIS_IPTAL": "MULK_AKTARIM_CIKIS",
+    "MULK_AKTARIM_GIRIS_IPTAL": "MULK_AKTARIM_GIRIS",
+}
+
+
 @router.delete("/hareket/{hid}")
 def hareket_iptal(hid: str):
-    """Satır SİLİNMEZ, iptal edilir; kasa karşılığı da ters kayıtla kapanır."""
+    """Satır SİLİNMEZ, iptal edilir; kasa karşılığı da ters kayıtla kapanır.
+
+    🔴 HATA YUTULMAZ (2026-09-11). Önceki sürüm kasa iptali patlarsa yalnız
+    uyarı logluyor ve mülk hareketini YİNE DE 'iptal' işaretliyordu. Sonuç:
+    defterde satır iptal görünür, kasada para DURUR — iki defter sessizce
+    ayrışır ve kimse fark etmez. Artık kasa kapanmazsa İŞLEM DE OLMAZ.
+
+    ⚠️ Göçten gelen aynalar (kaynak_kasa_id dolu): bunların TULİPİ ucu eski
+    DIS_KAYNAK satırıdır ve ona DOKUNULMAZ. İptal yalnız mülk tarafını geri
+    alır; toplam kasa yine değişmez çünkü mülk tarafı zaten net sıfırdır.
+    """
     from kasa_service import iptal_kasa_hareketi
     with db() as (conn, cur):
         cur.execute("SELECT * FROM mulk_hareket WHERE id=%s", (hid,))
@@ -706,18 +772,28 @@ def hareket_iptal(hid: str):
         if str(h.get("durum") or "aktif") != "aktif":
             return {"islem": "zaten_iptal"}
         tur = str(h["tur"])
-        _iptal_turu = {
-            "KIRA_TAHSILAT": "KIRA_TAHSILAT_IPTAL",
-            "MULK_GIDER": "MULK_GIDER_IPTAL",
-        }.get(tur)
-        if _iptal_turu:
+        turler = _IPTAL_TURU.get(tur)
+        if not turler:
+            raise HTTPException(400, f"'{tur}' türü için iptal tanımlı değil")
+
+        kapanan = []
+        for it in turler:
+            kaynak_turu = _IPTAL_KAYNAK.get(it, tur)
             try:
-                iptal_kasa_hareketi(cur, hid, "mulk_hareket", tur, _iptal_turu,
-                                    f"{tur} iptali")
+                iptal_kasa_hareketi(cur, hid, "mulk_hareket", kaynak_turu, it,
+                                    f"{TUR_ADI.get(tur, tur)} iptali")
+                kapanan.append(it)
             except Exception as e:
-                logger.warning("mülk kasa iptali atlandı (%s): %s", hid, e)
+                # Çift uçlu aktarımın GİRİŞ ucu eski kayıtlarda bulunamayabilir
+                # (2026-09-11 öncesi rastgele gruba bağlanmıştı). Bunu SESSİZ
+                # geçmek yerine 409 ile söylüyoruz: yanlış iptal, kasayı şişirir.
+                raise HTTPException(409,
+                    f"Kasa ters kaydı yazılamadı ({kaynak_turu} → {it}): {e}. "
+                    "Hareket İPTAL EDİLMEDİ — iki defter ayrışmasın diye işlem "
+                    "geri alındı.")
+
         cur.execute("UPDATE mulk_hareket SET durum='iptal' WHERE id=%s", (hid,))
-    return {"islem": "iptal"}
+    return {"islem": "iptal", "kapanan_kasa_kaydi": kapanan}
 
 
 # ═══════════════════════════════════════════════════════════════════
