@@ -119,10 +119,10 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
     setHata(null);
     try {
       const [k, m, kr, sz] = await Promise.all([
-        api('/api/mulk/kasa'),
-        api('/api/mulk'),
-        api('/api/mulk/kiraci'),
-        api('/api/mulk/sozlesme'),
+        api('/mulk/kasa'),
+        api('/mulk'),
+        api('/mulk/kiraci'),
+        api('/mulk/sozlesme'),
       ]);
       setKasa(k); setMulkler(m); setKiracilar(kr); setSozlesmeler(sz);
     } catch (e) {
@@ -134,10 +134,10 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   const gorunumYukle = useCallback(async (g) => {
     try {
-      if (g === 'tahsilat') setTahsilat(await api('/api/mulk/tahsilat'));
-      else if (g === 'abonelik') setAbonelikler(await api('/api/mulk/abonelik'));
-      else if (g === 'defter') setDefter(await api('/api/mulk/defter'));
-      else if (g === 'goc') setGoc(await api('/api/mulk/goc-adaylari'));
+      if (g === 'tahsilat') setTahsilat(await api('/mulk/tahsilat'));
+      else if (g === 'abonelik') setAbonelikler(await api('/mulk/abonelik'));
+      else if (g === 'defter') setDefter(await api('/mulk/defter'));
+      else if (g === 'goc') setGoc(await api('/mulk/goc-adaylari'));
     } catch (e) { setHata(String(e?.message || e)); }
   }, []);
 
@@ -249,7 +249,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
           if (!window.confirm(`${TUR_AD[tur]} — ${fmt(h.tutar)} iptal edilsin mi?\n\nSatır silinmez, "iptal" işaretlenir; kasa karşılığı ters kayıtla kapanır.${_ek}`)) return;
           onCekmece?.(null);
           try {
-            await api(`/api/mulk/hareket/${h.id}`, { method: 'DELETE' });
+            await api(`/mulk/hareket/${h.id}`, { method: 'DELETE' });
             onToast?.('✅ hareket iptal edildi');
             await yukle(); await gorunumYukle(gorunum);
           } catch (e) { onToast?.(`⚠ ${String(e?.message || e)}`); }
@@ -270,7 +270,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
       alt: 'yükleniyor…', geri, satirlar: [],
     });
     let d = null;
-    try { d = await api(`/api/mulk/${m.id}/dosya`); }
+    try { d = await api(`/mulk/${m.id}/dosya`); }
     catch (e) {
       onCekmece?.({
         tip: 'MÜLK DOSYASI', baslik: `${m.simge || '🏠'}  ${m.ad}`,
@@ -376,8 +376,8 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
     let t = tahsilat;
     let hareketler = [];
     try {
-      if (!t) { t = await api('/api/mulk/tahsilat'); setTahsilat(t); }
-      const d = await api(`/api/mulk/defter?sozlesme_id=${encodeURIComponent(soz.id)}`);
+      if (!t) { t = await api('/mulk/tahsilat'); setTahsilat(t); }
+      const d = await api(`/mulk/defter?sozlesme_id=${encodeURIComponent(soz.id)}`);
       hareketler = d.satirlar || [];
     } catch (e) {
       onCekmece?.({ tip: 'KİRA DOSYASI', baslik: soz.kiraci_ad || 'sözleşme',
@@ -516,12 +516,12 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
     let t = tahsilat;
     try {
       const [a, b] = await Promise.all([
-        api(`/api/mulk/kiraci/${encodeURIComponent(k.id)}/takma-ad`),
-        api(`/api/mulk/defter?kiraci_id=${encodeURIComponent(k.id)}`),
+        api(`/mulk/kiraci/${encodeURIComponent(k.id)}/takma-ad`),
+        api(`/mulk/defter?kiraci_id=${encodeURIComponent(k.id)}`),
       ]);
       takma = a.takma_adlar || [];
       har = b.satirlar || [];
-      if (!t) { t = await api('/api/mulk/tahsilat'); setTahsilat(t); }
+      if (!t) { t = await api('/mulk/tahsilat'); setTahsilat(t); }
     } catch (e) {
       onCekmece?.({ tip: 'KİRACI DOSYASI', baslik: k.ad || 'kiracı',
         alt: 'okunamadı', geri, satirlar: [],
@@ -575,7 +575,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
               // eslint-disable-next-line no-alert
               if (!window.confirm(`"${ta.takma_ad}" yazımı ${kisi.ad} kişisinden ayrılsın mı?\n\nBu yazımla gelen kayıtlar bir daha ona eşleşmez.`)) return;
               try {
-                await api(`/api/mulk/kiraci/takma-ad/${encodeURIComponent(ta.takma_ad)}`,
+                await api(`/mulk/kiraci/takma-ad/${encodeURIComponent(ta.takma_ad)}`,
                   { method: 'DELETE' });
                 onToast?.('✅ yazım ayrıldı');
                 await yukle();
@@ -659,7 +659,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
             if (!window.confirm(`${t?.ad || a.tur} aboneliği kapatılsın mı?`)) return;
             onCekmece?.(null);
             try {
-              await api(`/api/mulk/abonelik/${a.id}`, { method: 'DELETE' });
+              await api(`/mulk/abonelik/${a.id}`, { method: 'DELETE' });
               onToast?.('✅ abonelik kapatıldı');
               await yukle(); await gorunumYukle(gorunum);
             } catch (e) { onToast?.(`⚠ ${String(e?.message || e)}`); }
@@ -722,7 +722,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
     onCekmece?.({ tip: 'MÜLK HAREKETLERİ', baslik: TUR_AD[tur] || tur,
       alt: 'yükleniyor…', geri, satirlar: [] });
     let d = null;
-    try { d = await api(`/api/mulk/defter?tur=${encodeURIComponent(tur)}`); }
+    try { d = await api(`/mulk/defter?tur=${encodeURIComponent(tur)}`); }
     catch (e) {
       onCekmece?.({ tip: 'MÜLK HAREKETLERİ', baslik: TUR_AD[tur] || tur,
         alt: 'okunamadı', geri, satirlar: [],
@@ -758,7 +758,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
       alt: 'yükleniyor…', satirlar: [] });
     let har = [];
     try {
-      const d = await api('/api/mulk/defter?tur=DEPOZITO_ALINDI,DEPOZITO_IADE');
+      const d = await api('/mulk/defter?tur=DEPOZITO_ALINDI,DEPOZITO_IADE');
       har = d.satirlar || [];
     } catch (e) {
       onCekmece?.({ tip: 'DEPOZİTO EMANETİ', baslik: 'Elde tutulan depozito',
