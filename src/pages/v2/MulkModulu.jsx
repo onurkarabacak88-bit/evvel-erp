@@ -143,6 +143,12 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   useEffect(() => { gorunumYukle(gorunum); }, [gorunum, gorunumYukle]);
 
+  // 🔴 Sekme değişince AÇIK FORM KAPANIR (2026-09-11, ekranı gezerken görüldü).
+  // Yoksa "Yeni mülk" formu açıkken Kiracılar'a geçince form ekranda kalıyor ve
+  // kiracı listesinin önünü kapatıyordu: kullanıcı yanlış sekmede yanlış formu
+  // dolduruyor sanıyor. Çekmece de aynı sebeple kapanır — bayat veri göstermesin.
+  useEffect(() => { setForm(null); onCekmece?.(null); }, [gorunum]);   // eslint-disable-line react-hooks/exhaustive-deps
+
   const cagir = async (yol, yontem, govde) => {
     setMesgul(true);
     try {
