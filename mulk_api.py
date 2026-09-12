@@ -37,6 +37,7 @@ import logging
 import re
 import unicodedata
 import uuid
+import datetime as _dt
 from datetime import date
 from typing import Any, Dict, List, Optional
 
@@ -463,16 +464,17 @@ def sozlesme_bitir(sid: str, bitis: str = Query(None)):
 # ═══════════════════════════════════════════════════════════════════
 # TAHSİLAT & GECİKME — "bu ay kim ödemedi?"
 # ═══════════════════════════════════════════════════════════════════
-@router.get("/tahsilat")
-def tahsilat_durum(donem: str = None):
-    """Her aktif sözleşme için: bugüne kadar beklenen − tahsil edilen.
+def _tahsilat_hesapla(cur, bugun):
+    """Aktif sözleşmelerin tahsilat tablosu — TEK HESAP.
+
+    ⚠️ Hem `/tahsilat` hem `/uyarilar` BU fonksiyonu okur. İki yerde ayrı
+    hesaplansaydı bir gün ayrışır ve ekran "borçlu" derken uyarı susardı
+    (ya da tersi) — bu sistemdeki hataların en sık kalıbı.
 
     ⚠️ Beklenen satırlar SAKLANMAZ, burada türetilir. Yaşanmamış ay hiçbir
     zaman borç sayılmaz: sayaç sözleşme başlangıcından BUGÜNÜN AYINA kadar.
     """
-    from tr_saat import bugun_tr
-    bugun = bugun_tr()
-    with db() as (conn, cur):
+    if True:
         cur.execute("""
             SELECT s.id, s.baslangic, s.bitis, s.aylik_kira::float AS aylik_kira,
                    s.odeme_gunu, s.durum, s.kiraci_tipi, s.stopaj_orani::float AS stopaj_orani,
@@ -551,11 +553,24 @@ def tahsilat_durum(donem: str = None):
                 _ihtiyac = round(_ihtiyac - _al, 2)
                 _kapatan.append({"hareket_id": h["id"], "tarih": h["tarih"],
                                  "tutar": round(_al, 2), "donem_ipucu": h["donem"]})
+            # ⏰ ÖDEME GÜNÜ GEÇTİ Mİ? Ayın 5'i ödeme günüyse ve bugün 3'ü ise
+            # BU AY HENÜZ GECİKMİŞ DEĞİLDİR — "bekleniyor"dur. Bu ayrım
+            # olmasaydı her ayın 1'inde tüm kiracılar borçlu görünürdü ve
+            # uyarı hiçbir şey anlatmaz olurdu (alarm yorgunluğu).
+            _vade = _dt.date(_yi, _ai, min(int(s["odeme_gunu"] or 1), 28))
+            _gecti = _vade < bugun
+            _acik_mi = _ihtiyac > 0.005
             aylar.append({
                 "donem": _don, "beklenen": round(_bek_ay, 2),
                 "kapanan": round(_bek_ay - _ihtiyac, 2), "acik": round(_ihtiyac, 2),
-                "durum": ("kapandi" if _ihtiyac <= 0.005
+                "durum": ("kapandi" if not _acik_mi
                           else "kismi" if _kapatan else "acik"),
+                # gecikti → vadesi geçti ve hâlâ açık
+                # bekleniyor → vadesi gelmedi, açık olması NORMAL
+                "vade": _vade.isoformat(),
+                "vade_gecti": bool(_gecti),
+                "uyari": ("gecikti" if (_acik_mi and _gecti)
+                          else "bekleniyor" if _acik_mi else None),
                 "kapatan": _kapatan,
             })
             _yi, _ai = _ay_ekle(_yi, _ai, 1)
@@ -578,6 +593,16 @@ def tahsilat_durum(donem: str = None):
             "acik_ay": sum(1 for a in aylar if a["durum"] != "kapandi"),
         })
     satirlar.sort(key=lambda r: -r["bakiye"])
+    return satirlar
+
+
+@router.get("/tahsilat")
+def tahsilat_durum(donem: str = None):
+    """Her aktif sözleşme için: bugüne kadar beklenen − tahsil edilen."""
+    from tr_saat import bugun_tr
+    bugun = bugun_tr()
+    with db() as (conn, cur):
+        satirlar = _tahsilat_hesapla(cur, bugun)
     return {
         "donem": donem or bugun.strftime("%Y-%m"),
         "satirlar": satirlar,
@@ -1701,3 +1726,219 @@ def mulk_belge_kaldir(bid: str):
         if cur.rowcount == 0:
             raise HTTPException(404, "Belge bulunamadı")
     return {"islem": "arsivden_kaldirildi"}
+
+
+# ═══════════════════════════════════════════════════════════════════
+# 🔔 UYARI MOTORU — YALNIZ MÜLK ALANINDA
+# ═══════════════════════════════════════════════════════════════════
+# 🔴 NEDEN (sahip 2026-09-11/12): *"sadece bu alanda uyarıcılar çalışacak bir
+# durum olmalı; kiracı ödeme girişi yapılmamışsa kirası ödenmedi, her ay bilgi
+# verilsin."*
+#
+# ⚠️ UYARILAR SAKLANMAZ, HER OKUMADA YENİDEN ÖLÇÜLÜR. Saklansaydı kiracı
+# ödediği hâlde uyarı defterde kalır ve "gördüm" işaretlemek gerekirdi; o da
+# gerçeği değil OKUNMUŞLUĞU takip eden bir sisteme dönerdi.
+#
+# ⚠️ KAHVE İŞİNİN UYARILARINA KARIŞMAZ: bu uç yalnız mülk modülünce okunur.
+# Panel'in uyarı listesine eklenmedi — sahip "sadece bu alanda" dedi.
+#
+# ⏰ "ÖDEME GÜNÜ GEÇTİ Mİ" AYRIMI: ayın 5'i ödeme günüyse ve bugün 3'ü ise o ay
+# GECİKMİŞ değil BEKLENİYOR'dur. Bu ayrım olmasaydı her ayın 1'inde bütün
+# kiracılar "ödemedi" diye alarm verirdi ve uyarı anlamsızlaşırdı.
+_SEVIYE_SIRA = {"KRITIK": 0, "UYARI": 1, "BILGI": 2}
+
+
+@router.get("/uyarilar")
+def mulk_uyarilar():
+    """Mülk alanının kendi uyarıları. Hesaplanır, saklanmaz."""
+    from tr_saat import bugun_tr
+    bugun = bugun_tr()
+    u = []
+
+    with db() as (conn, cur):
+        satirlar = _tahsilat_hesapla(cur, bugun)
+
+        # ── 1) KİRA ÖDENMEDİ — sahibin asıl istediği uyarı ──────────
+        for r in satirlar:
+            gecikenler = [a for a in (r.get("aylar") or []) if a.get("uyari") == "gecikti"]
+            if not gecikenler:
+                continue
+            _aylar = [donem_ad_tr(a["donem"]) for a in gecikenler]
+            _tutar = round(sum(a["acik"] for a in gecikenler), 2)
+            u.append({
+                "tip": "KIRA_ODENMEDI",
+                "seviye": "KRITIK",
+                "baslik": f"{r['kiraci_ad']} — {len(gecikenler)} kira ödenmedi",
+                "detay": (f"{r['mulk_ad']} · açık aylar: {', '.join(_aylar)}"
+                          + (f" · {r['telefon']}" if r.get("telefon") else "")),
+                "tutar": _tutar,
+                "adet": len(gecikenler),
+                "sozlesme_id": r["sozlesme_id"], "mulk_id": r["mulk_id"],
+                "kiraci_id": r["kiraci_id"], "kiraci_ad": r["kiraci_ad"],
+                "mulk_ad": r["mulk_ad"], "telefon": r.get("telefon"),
+                "aylar": [a["donem"] for a in gecikenler],
+            })
+
+        # ── 2) BU AYIN KİRASI BEKLENİYOR (vadesi gelmemiş) ──────────
+        _bu_ay = bugun.strftime("%Y-%m")
+        for r in satirlar:
+            a = next((x for x in (r.get("aylar") or [])
+                      if x["donem"] == _bu_ay and x.get("uyari") == "bekleniyor"), None)
+            if not a:
+                continue
+            u.append({
+                "tip": "KIRA_BEKLENIYOR", "seviye": "BILGI",
+                "baslik": f"{r['kiraci_ad']} — {donem_ad_tr(_bu_ay)} kirası bekleniyor",
+                "detay": f"{r['mulk_ad']} · vade {a['vade']}",
+                "tutar": a["acik"], "adet": 1,
+                "sozlesme_id": r["sozlesme_id"], "mulk_id": r["mulk_id"],
+                "kiraci_id": r["kiraci_id"], "kiraci_ad": r["kiraci_ad"],
+                "mulk_ad": r["mulk_ad"],
+            })
+
+        # ── 3) SÖZLEŞME BİTİYOR (60 gün) ────────────────────────────
+        cur.execute("""
+            SELECT s.id, s.bitis::text AS bitis, s.aylik_kira::float AS aylik_kira,
+                   m.ad AS mulk_ad, m.id AS mulk_id, k.ad AS kiraci_ad, k.id AS kiraci_id
+            FROM kira_sozlesme s
+            JOIN mulk m ON m.id=s.mulk_id JOIN kiraci k ON k.id=s.kiraci_id
+            WHERE s.durum='aktif' AND s.bitis IS NOT NULL
+              AND s.bitis <= CURRENT_DATE + INTERVAL '60 days'
+            ORDER BY s.bitis
+        """)
+        for r in (cur.fetchall() or []):
+            _kalan = (_dt.date.fromisoformat(r["bitis"]) - bugun).days
+            u.append({
+                "tip": "SOZLESME_BITIYOR",
+                "seviye": "KRITIK" if _kalan <= 15 else "UYARI",
+                "baslik": (f"{r['kiraci_ad']} — sözleşme "
+                           + (f"{_kalan} gün sonra bitiyor" if _kalan >= 0
+                              else f"{-_kalan} gün önce BİTTİ")),
+                "detay": f"{r['mulk_ad']} · bitiş {r['bitis']}",
+                "tutar": r["aylik_kira"], "adet": 1,
+                "sozlesme_id": r["id"], "mulk_id": r["mulk_id"],
+                "kiraci_id": r["kiraci_id"], "kiraci_ad": r["kiraci_ad"],
+                "mulk_ad": r["mulk_ad"],
+            })
+
+        # ── 4) RİSKLİ ABONELİK ──────────────────────────────────────
+        cur.execute("""
+            SELECT a.id, a.tur, m.ad AS mulk_ad, m.id AS mulk_id
+            FROM mulk_abonelik a JOIN mulk m ON m.id=a.mulk_id
+            WHERE COALESCE(a.durum,'aktif')='aktif'
+              AND a.abone_kime='sahip' AND a.odeyen='kiraci'
+        """)
+        _ab = [dict(r) for r in (cur.fetchall() or [])]
+        if _ab:
+            u.append({
+                "tip": "ABONELIK_RISKLI", "seviye": "UYARI",
+                "baslik": f"{len(_ab)} abonelik sizin üstünüze kayıtlı",
+                "detay": ("Faturayı kiracı ödüyor. Kiracı ödemezse ya da çıkarsa "
+                          "borç sağlayıcı nezdinde SİZE kalır. — "
+                          + ", ".join(f"{x['mulk_ad']}/{x['tur']}" for x in _ab[:4])),
+                "tutar": 0, "adet": len(_ab),
+            })
+
+        # ── 5) DEPOZİTO KÂĞITTA, KASADA YOK ─────────────────────────
+        cur.execute("""
+            SELECT s.id, s.depozito::float AS depozito, m.ad AS mulk_ad,
+                   m.id AS mulk_id, k.ad AS kiraci_ad, k.id AS kiraci_id
+            FROM kira_sozlesme s
+            JOIN mulk m ON m.id=s.mulk_id JOIN kiraci k ON k.id=s.kiraci_id
+            WHERE s.durum='aktif' AND COALESCE(s.depozito,0) > 0
+              AND NOT EXISTS (
+                SELECT 1 FROM mulk_hareket h
+                WHERE h.sozlesme_id=s.id AND h.tur='DEPOZITO_ALINDI'
+                  AND COALESCE(h.durum,'aktif')='aktif')
+        """)
+        for r in (cur.fetchall() or []):
+            u.append({
+                "tip": "DEPOZITO_KASADA_YOK", "seviye": "UYARI",
+                "baslik": f"{r['kiraci_ad']} — depozito kasaya girmemiş",
+                "detay": (f"{r['mulk_ad']} · sözleşmede {r['depozito']:,.0f} ₺ yazıyor "
+                          "ama defterde hareketi yok. Parayı aldıysanız kaydedin."),
+                "tutar": r["depozito"], "adet": 1,
+                "sozlesme_id": r["id"], "mulk_id": r["mulk_id"],
+                "kiraci_id": r["kiraci_id"], "kiraci_ad": r["kiraci_ad"],
+                "mulk_ad": r["mulk_ad"],
+            })
+
+        # ── 6) SÖZLEŞME BELGESİ YÜKLENMEMİŞ ─────────────────────────
+        cur.execute("""
+            SELECT s.id, m.ad AS mulk_ad, m.id AS mulk_id, k.ad AS kiraci_ad
+            FROM kira_sozlesme s
+            JOIN mulk m ON m.id=s.mulk_id JOIN kiraci k ON k.id=s.kiraci_id
+            WHERE s.durum='aktif'
+              AND NOT EXISTS (
+                SELECT 1 FROM mulk_belge b
+                WHERE b.sozlesme_id=s.id AND COALESCE(b.durum,'aktif')='aktif')
+        """)
+        _bs = [dict(r) for r in (cur.fetchall() or [])]
+        if _bs:
+            u.append({
+                "tip": "BELGE_YOK", "seviye": "BILGI",
+                "baslik": f"{len(_bs)} sözleşmenin belgesi yüklenmemiş",
+                "detay": ("Kira sözleşmesinin taranmış hâli arşivde yok — "
+                          + ", ".join(f"{x['kiraci_ad']} ({x['mulk_ad']})" for x in _bs[:4])),
+                "tutar": 0, "adet": len(_bs),
+            })
+
+        # ── 7) KASA İZİ OLMAYAN HAREKET ─────────────────────────────
+        cur.execute("""
+            SELECT COUNT(*) AS n FROM mulk_hareket
+            WHERE COALESCE(durum,'aktif')='aktif' AND kasa_hareket_id IS NULL
+        """)
+        _iz = int((cur.fetchone() or {}).get("n") or 0)
+        if _iz:
+            u.append({
+                "tip": "KASA_IZI_YOK", "seviye": "KRITIK",
+                "baslik": f"{_iz} hareketin kasa izi yok",
+                "detay": ("Bu satırlar mülk defterinde görünüyor ama KASAYA "
+                          "yansımamış — mülk kasası o tutarları içermiyor."),
+                "tutar": 0, "adet": _iz,
+            })
+
+        # ── 8) BOŞ MÜLK ─────────────────────────────────────────────
+        cur.execute("""
+            SELECT m.id, m.ad, m.aylik_kira::float AS aylik_kira
+            FROM mulk m
+            WHERE m.aktif = TRUE
+              AND NOT EXISTS (SELECT 1 FROM kira_sozlesme s
+                              WHERE s.mulk_id=m.id AND s.durum='aktif')
+        """)
+        _bos = [dict(r) for r in (cur.fetchall() or [])]
+        if _bos:
+            u.append({
+                "tip": "MULK_BOS", "seviye": "BILGI",
+                "baslik": f"{len(_bos)} mülk boş",
+                "detay": ("Kiracısı yok — aylık kayıp: "
+                          + ", ".join(x["ad"] for x in _bos[:4])),
+                "tutar": round(sum(float(x.get("aylik_kira") or 0) for x in _bos), 2),
+                "adet": len(_bos),
+            })
+
+    u.sort(key=lambda x: (_SEVIYE_SIRA.get(x["seviye"], 9), -float(x.get("tutar") or 0)))
+    return {
+        "uyarilar": u,
+        "adet": len(u),
+        "kritik": sum(1 for x in u if x["seviye"] == "KRITIK"),
+        "uyari": sum(1 for x in u if x["seviye"] == "UYARI"),
+        "bilgi": sum(1 for x in u if x["seviye"] == "BILGI"),
+        "odenmeyen_kira": round(sum(float(x.get("tutar") or 0)
+                                    for x in u if x["tip"] == "KIRA_ODENMEDI"), 2),
+        "not": ("Uyarılar SAKLANMAZ, her okumada yeniden ölçülür — kiracı "
+                "ödediği an uyarı kendiliğinden kaybolur, 'gördüm' demeye gerek "
+                "yok. Bu liste yalnız MÜLK alanına aittir; kahve işinin "
+                "uyarılarına karışmaz. Vadesi gelmemiş ay 'gecikti' sayılmaz."),
+    }
+
+
+def donem_ad_tr(d: str) -> str:
+    """'2026-07' → 'Temmuz'. Uyarı metni ay ADIYLA konuşur; '2026-07' bir
+    insanın telefonda kiracıya söyleyeceği şey değildir."""
+    _AY = ["Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz",
+           "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık"]
+    try:
+        return _AY[int(str(d).split("-")[1]) - 1]
+    except Exception:
+        return str(d)

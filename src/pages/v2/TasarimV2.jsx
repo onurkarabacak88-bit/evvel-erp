@@ -453,6 +453,21 @@ export default function TasarimV2({ onGit }) {
       .then(d => koy('genelZam', (Array.isArray(d?.alarmlar) ? d.alarmlar : [])
         .filter(a => !a.goruldu).length))
       .catch(() => {});
+    // 🏠 Mülk rozetleri — ödenmeyen kira + riskli abonelik.
+    // ⚠️ Sayı UYDURULMAZ: uç düşerse rozet hiç çıkmaz, "0" da yazmaz.
+    // Rozet bir SAYIDIR; olmayan sayıyı göstermek sahte alarm üretir.
+    fetch('/api/mulk/uyarilar')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        const kira = (d.uyarilar || []).filter((u) => u.tip === 'KIRA_ODENMEDI');
+        const adet = kira.reduce((n, u) => n + (Number(u.adet) || 0), 0);
+        if (adet > 0) setRozetler((r) => ({ ...r, mulkBorclu: String(adet) }));
+        const ab = (d.uyarilar || []).find((u) => u.tip === 'ABONELIK_RISKLI');
+        if (ab?.adet) setRozetler((r) => ({ ...r, mulkAbonelikRisk: String(ab.adet) }));
+      })
+      .catch(() => {});
+
     // Belge rozetleri — kapsama (faturasız harcama adedi), istek (açık istek),
     // mükerrer (şüpheli + işlenemeyen). belge-merkezi tek uçtan ikisi birden.
     api(`/fatura/belge-merkezi?ay=${bugunISO().slice(0, 7)}`)

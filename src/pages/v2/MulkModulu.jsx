@@ -121,6 +121,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [abonelikler, setAbonelikler] = useState(null);
   const [defter, setDefter] = useState(null);
   const [goc, setGoc] = useState(null);
+  const [uyari, setUyari] = useState(null);
   const [hata, setHata] = useState(null);
   const [mesgul, setMesgul] = useState(false);
   const [form, setForm] = useState(null);   // { tip, veri }
@@ -132,15 +133,16 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
       // üstünde durur, yalnız Tahsilat sekmesinde değil. Sahip 2026-09-11:
       // "gecikme olduğunda hangi dairenin ve kiracısının… görebileceğimiz".
       // Kaçırılmaması gereken bilgi, gidilmesi gereken sekmede saklanmaz.
-      const [k, m, kr, sz, th] = await Promise.all([
+      const [k, m, kr, sz, th, uy] = await Promise.all([
         api('/mulk/kasa'),
         api('/mulk'),
         api('/mulk/kiraci'),
         api('/mulk/sozlesme'),
         api('/mulk/tahsilat'),
+        api('/mulk/uyarilar'),
       ]);
       setKasa(k); setMulkler(m); setKiracilar(kr); setSozlesmeler(sz);
-      setTahsilat(th);
+      setTahsilat(th); setUyari(uy);
     } catch (e) {
       setHata(String(e?.message || e));
     }
@@ -1518,6 +1520,132 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
     });
   };
 
+  // ── UYARI BANDI ─────────────────────────────────────────────────
+  // 🔴 sahip 2026-09-11/12: "sadece bu alanda uyarıcılar çalışacak bir durum
+  // olmalı; kiracı ödeme girişi yapılmamışsa kirası ödenmedi, her ay bilgi
+  // verilsin."
+  //
+  // ⚠️ Band HER GÖRÜNÜMÜN ÜSTÜNDE durur — ayrı bir "Uyarılar" sekmesine
+  // koymak, uyarıyı gidilmesi gereken bir yere saklamak olurdu.
+  // ⚠️ Uyarılar sunucuda HER OKUMADA yeniden ölçülür; "gördüm" işareti YOK.
+  //    Kiracı ödediği an uyarı kendiliğinden kaybolur.
+  const SEVIYE = {
+    KRITIK: { renk: R.kirmizi, zemin: 'rgba(248,113,113,.09)',
+              cerceve: 'rgba(248,113,113,.30)', ikon: '🔴' },
+    UYARI: { renk: R.amber, zemin: 'rgba(251,191,36,.07)',
+             cerceve: 'rgba(251,191,36,.28)', ikon: '⚠️' },
+    BILGI: { renk: R.metin2, zemin: 'rgba(243,233,220,.04)',
+             cerceve: R.cizgi2, ikon: 'ℹ️' },
+  };
+
+  const uyariDosyasiAc = (u) => {
+    const bendenGeri = { ad: 'Uyarılar', onTikla: uyarilarAc };
+    // 🚪 Kapı ancak GİDİLECEK BİR YER varsa açılır: sözleşmesi olan uyarı
+    // kira dosyasına iner, olmayan (boş mülk, abonelik) yalnız anlatır.
+    if (u.sozlesme_id) {
+      kiraDosyasiAc({
+        id: u.sozlesme_id, kiraci_ad: u.kiraci_ad, kiraci_id: u.kiraci_id,
+        mulk_ad: u.mulk_ad, mulk_id: u.mulk_id, durum: 'aktif',
+        telefon: u.telefon,
+      }, bendenGeri);
+      return;
+    }
+    if (u.mulk_id) { mulkDosyasiAc({ id: u.mulk_id, ad: u.mulk_ad }, bendenGeri); return; }
+    if (u.tip === 'ABONELIK_RISKLI') { onKopru?.('__gorunum:abonelik'); return; }
+    if (u.tip === 'KASA_IZI_YOK') { onKopru?.('__gorunum:defter'); return; }
+    if (u.tip === 'BELGE_YOK' || u.tip === 'MULK_BOS') { onKopru?.('__gorunum:mulkler'); return; }
+    onToast?.(u.detay);
+  };
+
+  const uyarilarAc = () => {
+    const liste = uyari?.uyarilar || [];
+    if (!liste.length) { onToast?.('Uyarı yok'); return; }
+    onCekmece?.({
+      tip: 'MÜLK UYARILARI',
+      baslik: `${liste.length} uyarı`,
+      alt: `${uyari.kritik} kritik · ${uyari.uyari} uyarı · ${uyari.bilgi} bilgi`,
+      kpi: [
+        { etiket: 'Kritik', deger: String(uyari.kritik),
+          renk: uyari.kritik ? R.kirmizi : R.yesil },
+        { etiket: 'Ödenmeyen kira', deger: fmt(uyari.odenmeyen_kira),
+          renk: sayi(uyari.odenmeyen_kira) ? R.kirmizi : R.yesil },
+        { etiket: 'Uyarı', deger: String(uyari.uyari), renk: R.amber },
+        { etiket: 'Bilgi', deger: String(uyari.bilgi), renk: R.metin2 },
+      ],
+      listeBaslik: 'Tümü',
+      satirlar: liste.map((u) => ({
+        ad: `${SEVIYE[u.seviye]?.ikon || ''} ${u.baslik}`,
+        detay: u.detay,
+        tutar: sayi(u.tutar) ? fmt(u.tutar) : '',
+        solgun: u.seviye === 'BILGI',
+        onTikla: () => uyariDosyasiAc(u),
+      })),
+      not: uyari?.not,
+    });
+  };
+
+  const uyariBandi = () => {
+    const liste = (uyari?.uyarilar || []).filter((u) => u.seviye !== 'BILGI');
+    if (!liste.length) return null;
+    const ilk = liste.slice(0, 3);
+    const kalan = liste.length - ilk.length;
+    const en = SEVIYE[liste[0].seviye] || SEVIYE.UYARI;
+    return (
+      <div style={{
+        padding: '13px 16px', borderRadius: 14, marginBottom: 14,
+        background: en.zemin, border: `1px solid ${en.cerceve}`,
+      }}>
+        <div style={{
+          display: 'flex', alignItems: 'center', justifyContent: 'space-between',
+          gap: 12, marginBottom: ilk.length ? 9 : 0, flexWrap: 'wrap',
+        }}>
+          <span style={{ fontFamily: F.baslik, fontSize: 14.5, color: en.renk }}>
+            {en.ikon} {uyari.kritik
+              ? `${uyari.kritik} kritik uyarı`
+              : `${liste.length} uyarı`}
+            {sayi(uyari.odenmeyen_kira)
+              ? ` · ${fmt(uyari.odenmeyen_kira)} kira ödenmedi` : ''}
+          </span>
+          <button onClick={uyarilarAc} style={{ ...dugme, padding: '6px 13px' }}>
+            Tümünü aç ({uyari.adet})
+          </button>
+        </div>
+        {ilk.map((u, i) => (
+          <div key={i} role="button" tabIndex={0}
+               onClick={() => uyariDosyasiAc(u)}
+               onKeyDown={(e) => {
+                 if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); uyariDosyasiAc(u); }
+               }}
+               style={{
+                 display: 'flex', alignItems: 'baseline', gap: 10, padding: '6px 0',
+                 borderTop: i ? `1px solid ${R.cizgi2}` : 'none', cursor: 'pointer',
+               }}>
+            <span style={{ fontSize: 12 }}>{SEVIYE[u.seviye]?.ikon}</span>
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span style={{ display: 'block', fontSize: 12.5, color: R.krem, fontWeight: 600 }}>
+                {u.baslik}
+              </span>
+              <span style={{ display: 'block', fontSize: 11, color: R.not2, marginTop: 1 }}>
+                {u.detay}
+              </span>
+            </span>
+            {sayi(u.tutar) ? (
+              <span style={{
+                fontFamily: F.mono, fontSize: 12.5, fontWeight: 700,
+                color: SEVIYE[u.seviye]?.renk, whiteSpace: 'nowrap',
+              }}>{fmt(u.tutar)}</span>
+            ) : null}
+          </div>
+        ))}
+        {kalan > 0 ? (
+          <div style={{ fontSize: 11, color: R.not2, marginTop: 7 }}>
+            + {kalan} uyarı daha
+          </div>
+        ) : null}
+      </div>
+    );
+  };
+
   // ── KİRA TAKİBİ ŞERİDİ ──────────────────────────────────────────
   // 🔴 sahip 2026-09-11: "mülkler alanında TULİPİ kasası görmemize gerek yok;
   // aylık toplanması beklenen kira, toplanan kira, TULİPİ'ye aktarılan ve
@@ -1990,6 +2118,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
 
   return (
     <div>
+      {uyariBandi()}
       {kiraSeridi()}
       {govde()}
     </div>
