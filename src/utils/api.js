@@ -73,6 +73,21 @@ export function istekHatasiDinle(fn) {
 }
 
 export async function api(path, opts = {}) {
+  // 🔴 ÇİFT /api FRENİ (2026-09-12). Bu fonksiyon aşağıda `${BASE}/api${path}`
+  // kuruyor; çağıran yola bir de '/api' koyarsa adres '/api/api/...' olur ve
+  // 404/405 döner. Mülk modülünde tam bu oldu: ÖNCE okuma uçları (ekran hiç
+  // açılmadı), sonra YAZMA uçları (form kaydetmedi) kırıldı — ikisi de ancak
+  // ekran gezilerek görüldü, 60+ uç sınaması hepsini ıskaladı çünkü testler
+  // doğru adresi kendileri kuruyordu.
+  // Sessizce düzeltmek yerine DÜZELTİP UYARIYORUZ: canlı iş durmasın ama
+  // hata görünür kalsın.
+  if (typeof path === 'string' && path.startsWith('/api/')) {
+    try {
+      // eslint-disable-next-line no-console
+      console.warn(`[api] yol '/api' ile başlamamalı — düzeltildi: ${path}`);
+    } catch { /* ignore */ }
+    path = path.slice(4);
+  }
   const method = (opts.method || 'GET').toUpperCase();
   const headers = { 'Content-Type': 'application/json', ...(opts.headers || {}) };
   try {

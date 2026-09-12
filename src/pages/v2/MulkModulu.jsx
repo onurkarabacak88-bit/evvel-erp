@@ -1076,7 +1076,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
           if (!String(v.ad || '').trim() && !String(v.bina || '').trim()) {
             onToast?.('⚠ En az bina adı ya da görünen ad gerekli'); return;
           }
-          cagir(v.id ? `/api/mulk/${v.id}` : '/api/mulk', v.id ? 'PUT' : 'POST', {
+          cagir(v.id ? `/mulk/${v.id}` : '/mulk', v.id ? 'PUT' : 'POST', {
             ad: v.ad || null, bina: v.bina || null, birim: v.birim || null,
             adres: v.adres || null, tur: v.tur || null, simge: v.simge || null,
             aylik_kira: v.aylik_kira ? Number(v.aylik_kira) : null,
@@ -1100,7 +1100,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
         </>),
         () => {
           if (!String(v.ad || '').trim()) { onToast?.('⚠ Ad zorunlu'); return; }
-          cagir(v.id ? `/api/mulk/kiraci/${v.id}` : '/api/mulk/kiraci',
+          cagir(v.id ? `/mulk/kiraci/${v.id}` : '/mulk/kiraci',
             v.id ? 'PUT' : 'POST',
             { ad: v.ad, telefon: v.telefon || null, notlar: v.notlar || null });
         });
@@ -1175,7 +1175,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
           if (!v.mulk_id || !v.kiraci_id || !v.aylik_kira) {
             onToast?.('⚠ Mülk, kiracı ve aylık kira zorunlu'); return;
           }
-          cagir('/api/mulk/sozlesme', 'POST', {
+          cagir('/mulk/sozlesme', 'POST', {
             mulk_id: v.mulk_id, kiraci_id: v.kiraci_id,
             baslangic: v.baslangic || bugun(),
             aylik_kira: Number(v.aylik_kira),
@@ -1241,7 +1241,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
         </>,
         () => {
           if (!v.tutar) { onToast?.('⚠ Tutar zorunlu'); return; }
-          cagir('/api/mulk/tahsilat', 'POST', {
+          cagir('/mulk/tahsilat', 'POST', {
             sozlesme_id: v.sozlesme_id, tarih: v.tarih || bugun(),
             tutar: Number(v.tutar), donem: v.donem || null,
             odeme_yontemi: v.odeme_yontemi || null,
@@ -1288,7 +1288,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
         </>),
         async () => {
           if (!v.yeni_kiraci_id) { onToast?.('⚠ Yeni kiracı seçin'); return; }
-          const r = await cagir(`/api/mulk/sozlesme/${v.sozlesme_id}/devir`, 'POST', {
+          const r = await cagir(`/mulk/sozlesme/${v.sozlesme_id}/devir`, 'POST', {
             yeni_kiraci_id: v.yeni_kiraci_id, tarih: v.tarih || bugun(),
             aylik_kira: v.aylik_kira ? Number(v.aylik_kira) : null,
             depozito: Number(v.depozito || 0),
@@ -1331,7 +1331,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
         </>,
         () => {
           if (!String(v.ad || '').trim()) { onToast?.('⚠ Kanonik ad zorunlu'); return; }
-          cagir('/api/mulk/kiraci/birlestir', 'POST', {
+          cagir('/mulk/kiraci/birlestir', 'POST', {
             ad: v.ad, telefon: v.telefon || null,
             anahtarlar: v.anahtarlar || [], yazimlar: v.yazimlar || [],
           }).catch(() => {});
@@ -1380,7 +1380,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
         </>),
         () => {
           if (!v.mulk_id || !v.tur) { onToast?.('⚠ Mülk ve tür zorunlu'); return; }
-          cagir(v.id ? `/api/mulk/abonelik/${v.id}` : '/api/mulk/abonelik',
+          cagir(v.id ? `/mulk/abonelik/${v.id}` : '/mulk/abonelik',
             v.id ? 'PUT' : 'POST', {
               mulk_id: v.mulk_id, tur: v.tur, saglayici: v.saglayici || null,
               abone_no: v.abone_no || null,
@@ -1423,7 +1423,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
           if (!v.tutar || !String(v.aciklama || '').trim()) {
             onToast?.('⚠ Tutar ve açıklama zorunlu'); return;
           }
-          cagir('/api/mulk/gider', 'POST', {
+          cagir('/mulk/gider', 'POST', {
             tarih: v.tarih || bugun(), tutar: Number(v.tutar),
             aciklama: v.aciklama, mulk_id: v.mulk_id || null,
             odeme_yontemi: v.odeme_yontemi || null,
@@ -1447,7 +1447,7 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
         </>),
         () => {
           if (!v.tutar) { onToast?.('⚠ Tutar zorunlu'); return; }
-          cagir('/api/mulk/aktarim', 'POST', {
+          cagir('/mulk/aktarim', 'POST', {
             tarih: v.tarih || bugun(), tutar: Number(v.tutar),
             aciklama: v.aciklama || null,
           });
