@@ -222,7 +222,8 @@ export default function EvoSatis() {
     try {
       await api('/evo/personel-isim-gir', {
         method: 'POST',
-        body: JSON.stringify({ personel_id: personelId, ad: yeniAd.trim() }),
+        // ⚠️ HAM NESNE — api() JSON'a kendisi çevirir; çift sarmak 422 verir.
+        body: { personel_id: personelId, ad: yeniAd.trim() },
       });
       setIsimDuzenle(null);
       subeAnalızYukle();

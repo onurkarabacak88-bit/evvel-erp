@@ -170,7 +170,12 @@ export default function MulkModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const cagir = async (yol, yontem, govde) => {
     setMesgul(true);
     try {
-      const r = await api(yol, { method: yontem, body: JSON.stringify(govde) });
+      // ⚠️ GÖVDE HAM NESNE olarak verilir — `api()` JSON'a KENDİSİ çevirir
+      // (src/utils/api.js: body: JSON.stringify(opts.body)). Burada bir kez
+      // daha stringify etmek gövdeyi ÇİFT SARARDI ve FastAPI "Input should be
+      // a valid dictionary" diyerek 422 döndürürdü — hiçbir form kaydetmezdi.
+      // v2'nin diğer modülleri de ham nesne yolluyor (KullaniciModulu:121).
+      const r = await api(yol, { method: yontem, body: govde });
       onToast?.(r?.islem ? `✅ ${r.islem}` : '✅ kaydedildi');
       setForm(null);
       await yukle();

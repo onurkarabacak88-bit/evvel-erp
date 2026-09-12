@@ -4188,13 +4188,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             try {
               const r = await api(`/ucret/mola-onay?yil=${donem.yil}&ay=${donem.ay}`, {
                 method: 'POST',
-                body: JSON.stringify({
+                // ⚠️ HAM NESNE — `api()` gövdeyi JSON'a KENDİSİ çevirir
+                // (src/utils/api.js). Çift sarılırsa FastAPI 422 döner
+                // ve buton HİÇ ÇALIŞMAZ. Bu satır 2026-09-12'ye kadar
+                // kırıktı: mola onayı ekrandan YAPILAMIYORDU.
+                body: {
                   kuru: false,
                   onaylayan: 'sahip',
                   gerekce: `Sahip ekrandan onayladı (Ekip modülü, ${new Date().toLocaleDateString('tr-TR')}). `
                     + `Vardiya planlanmış, çalışma gerçekleşmiş, mola kaydı teknik olarak düşmemiş.`,
                   gunler: (b.gunler || []).map((g) => ({ personel_id: b.personel_id, tarih: g })),
-                }),
+                },
               });
               onToast?.(`✓ ${b.ad_soyad} · ${r?.etkilenen ?? 0} gün onaylandı — ${fmt(sayi(b.toplam_tutar))}`);
               setMolaOnaySoru(null);
