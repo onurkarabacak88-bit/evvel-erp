@@ -22649,7 +22649,13 @@ def ops_analitik_ozet(gun: int = Query(default=30, ge=1, le=180)):
             "tamamlandi": tamamlandi,
             "uyusmazlik": int(ozet.get("uyusmazlik") or 0),
             "iptal": int(ozet.get("iptal") or 0),
-            "ort_sure_saat": round(float(ozet.get("ort_sure_saat") or 0), 1),
+            # ⚠️ `or 0` YAPILMAZ: ölçülebilen kayıt yokken 0 yazmak
+            # "ortalama teslim süresi SIFIR saat" yalanını üretir. Ölçüm yoksa
+            # NULL döner ve ekran "—" gösterir; `sure_notu` sebebini söyler.
+            "ort_sure_saat": (round(float(ozet["ort_sure_saat"]), 1)
+                              if ozet.get("ort_sure_saat") is not None else None),
+            "sure_olculebilen": int(ozet.get("sure_olculebilen") or 0),
+            "sure_notu": ozet.get("sure_notu"),
             "sube_performans": sube_perf,
             "gunluk_trend": trend,
             "tedarikciler": tedarikciler,
