@@ -22610,9 +22610,14 @@ def ops_analitik_ozet(gun: int = Query(default=30, ge=1, le=180)):
         # 4. Tedarikçi güvenilirlik (URUN_SEVK olaylarından)
         cur.execute(
             """
+            -- 🔴 2026-09-13: burada `COUNT(*)` vardı ve GROUP BY yoktu →
+            -- PostgreSQL "aciklama must appear in the GROUP BY clause" diyerek
+            -- ucu 500 yapıyordu. Sayım ZATEN AŞAĞIDA PYTHON'DA yapılıyor
+            -- (tedarikci_map): JSON açıklamayı ayrıştırmadan tedarikçi adı
+            -- bilinemez, dolayısıyla SQL tarafında gruplamak zaten imkânsızdı.
+            -- Gereksiz toplayıcı kaldırıldı; satırlar ham geliyor.
             SELECT
                 aciklama,
-                COUNT(*) AS teslimat_sayisi,
                 tarih
             FROM operasyon_defter
             WHERE etiket = 'URUN_SEVK'
