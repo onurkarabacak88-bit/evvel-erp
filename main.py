@@ -1454,6 +1454,13 @@ def startup():
     # + kasa_hareketleri.defter kolonu ('TULIPI' varsayılan). Aynı desen —
     # kendi kısa transaction'ı, lock_timeout'lu, hata yutulur. Kolon açılmazsa
     # kasa bugünkü haliyle TEK parça okunur ve uygulama YİNE AÇILIR.
+    # 🔧 siparis_talep.guncelleme — analitik özet ucu bu kolonu okuyor.
+    try:
+        with db() as (conn, cur):
+            from database import ensure_siparis_talep_guncelleme
+            ensure_siparis_talep_guncelleme(cur)
+    except Exception as e:
+        logger.warning("siparis_talep.guncelleme migrasyonu atlandı: %s", e)
     try:
         with db() as (conn, cur):
             from database import ensure_mulk_defteri

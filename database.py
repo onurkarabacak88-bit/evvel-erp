@@ -6679,6 +6679,21 @@ def ensure_kullanici(cur) -> None:
 
 
 # ═══════════════════════════════════════════════════════════════════
+def ensure_siparis_talep_guncelleme(cur) -> None:
+    """🔧 siparis_talep.guncelleme — `/api/ops/analitik-ozet` bu kolonu okuyor
+    ama kolon HİÇ VAR OLMAMIŞ; uç her çağrıda 500 veriyordu (2026-09-13 sağlık
+    taramasında bulundu).
+
+    ⚠️ DEFAULT YOK, NULL SERBEST — bilerek. `DEFAULT NOW()` verilseydi geçmiş
+    bütün siparişler "az önce güncellendi" olur ve ortalama teslim süresi
+    sıfıra yakın çıkardı: olmayan bir ölçümü UYDURMUŞ olurduk. NULL satır
+    "bu sipariş ölçülemiyor" demektir ve AVG onu kendiliğinden dışlar.
+    """
+    cur.execute("SET LOCAL lock_timeout = '3s'")
+    cur.execute("ALTER TABLE siparis_talep "
+                "ADD COLUMN IF NOT EXISTS guncelleme TIMESTAMPTZ")
+
+
 def ensure_mulk_defteri(cur) -> None:
     """🏠 KİRALIK MÜLK DEFTERİ — sahibin gayrimenkulleri, TULİPİ'den AYRI defter.
 

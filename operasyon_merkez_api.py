@@ -181,7 +181,7 @@ def _siparis_gonderilmedi_kapat(cur: Any) -> int:
     cur.execute(
         """
         UPDATE siparis_talep
-        SET durum          = 'gonderilmedi',
+        SET guncelleme = NOW(), durum          = 'gonderilmedi',
             gonderilmedi_ts = NOW()
         WHERE durum = 'bekliyor'
           AND tarih < CURRENT_DATE - (%s * INTERVAL '1 day')
@@ -11824,7 +11824,7 @@ def ops_toptanci_siparis_iptal(ts_id: str):
                     if bekleyen == 0 and teslim > 0 and not (n1 - disp):
                         cur.execute(
                             """UPDATE siparis_talep
-                               SET durum='teslim_edildi',
+                               SET guncelleme = NOW(), durum='teslim_edildi',
                                    kabul_durum=COALESCE(NULLIF(kabul_durum,''),'kabul_tam'),
                                    kabul_ts=COALESCE(kabul_ts, NOW())
                                WHERE id=%s AND durum NOT IN ('teslim_edildi','iptal')""",
@@ -22546,15 +22546,33 @@ def ops_analitik_ozet(gun: int = Query(default=30, ge=1, le=180)):
                 COUNT(*) FILTER (WHERE durum = 'kabul_uyusmazlik') AS uyusmazlik,
                 COUNT(*) FILTER (WHERE durum = 'iptal') AS iptal,
                 COUNT(*) AS toplam,
+                -- ⚠️ `guncelleme` 2026-09-13'te eklendi ve GEÇMİŞE DOLDURULMADI.
+                -- NULL olan satır "bu siparişin süresi ÖLÇÜLEMİYOR" demektir;
+                -- AVG onu kendiliğinden dışlar. Kaç satırın ölçülebildiği
+                -- aşağıda AYRICA sayılır — ortalama kaç kayda dayanıyor,
+                -- okuyan bunu bilmeden rakama güvenmemeli.
                 AVG(
                     EXTRACT(EPOCH FROM (guncelleme - olusturma)) / 3600.0
-                ) FILTER (WHERE durum IN ('teslim_edildi','kabul_edildi','tamamlandi')) AS ort_sure_saat
+                ) FILTER (WHERE durum IN ('teslim_edildi','kabul_edildi','tamamlandi')
+                          AND guncelleme IS NOT NULL) AS ort_sure_saat,
+                COUNT(*) FILTER (WHERE durum IN ('teslim_edildi','kabul_edildi','tamamlandi')
+                                 AND guncelleme IS NOT NULL) AS sure_olculebilen
             FROM siparis_talep
             WHERE olusturma >= NOW() - (%s * INTERVAL '1 day')
             """,
             (gun,),
         )
         ozet = dict(cur.fetchone() or {})
+        # Dürüst sınır: ortalama süre kaç kayda dayanıyor?
+        _olc = int(ozet.get("sure_olculebilen") or 0)
+        _tam = int(ozet.get("tamamlandi") or 0)
+        ozet["sure_notu"] = (
+            "Ortalama teslim süresi %d/%d siparişten ölçüldü." % (_olc, _tam)
+            if _olc else
+            "Ortalama teslim süresi ÖLÇÜLEMİYOR: güncelleme damgası "
+            "2026-09-13'te eklendi, geçmiş siparişlerde yok. Bundan sonra "
+            "durumu değişen her sipariş ölçülebilir olacak."
+        )
 
         # 2. Şube bazlı sipariş performansı (en çok sipariş veren 10 şube)
         cur.execute(
