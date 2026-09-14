@@ -279,7 +279,18 @@ def _fire_stok_hareket_yaz(
 ) -> None:
     _ensure_stok_hareket_tablosu(cur)
     onceki = _stok_onceki_adet(cur, sube_id, kalem_kodu)
-    sube_depo_stok_depo_cikis_dus(cur, sube_id, kalem_kodu, kalem_adi or None, adet)
+    # ⛔ ÇİFT SATIR KAPATILDI (2026-09-14 ölçümü: 12 fire bildiriminin
+    # 12'sinde aynı saniyede `URUN_AC` ikizi vardı). Stok BİR KEZ düşüyordu ama
+    # defter İKİ çıkış satırı alıyordu: ortak kapı koşulsuz URUN_AC yazıyor, fire
+    # de kendi zengin satırını (personel, belge no) yazıyordu.
+    # `defter_satiri=False` → kapı artık URUN_AC yazmaz; fire kendi satırını yazar.
+    # `bilgi` → defter yetmediyse kapının "bulduğu" adet geri gelir; FIRE satırının
+    # `onceki`si de o düzeltilmiş bakiyeden başlar ki satır kendi aritmetiğini sağlasın.
+    _bilgi: dict = {}
+    sube_depo_stok_depo_cikis_dus(cur, sube_id, kalem_kodu, kalem_adi or None, adet,
+                                  defter_satiri=False, kaynak_tip="fire",
+                                  bilgi=_bilgi)
+    onceki = float(onceki) + float(_bilgi.get("bulunan") or 0)
     sonraki = _stok_onceki_adet(cur, sube_id, kalem_kodu)
     cur.execute(
         """

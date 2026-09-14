@@ -4565,8 +4565,21 @@ def gunluk_acilis_stok_sayim_map(cur: Any, sube_id: str) -> Dict[str, int]:
     return {k: max(0, int(ac_blk.get(k) or 0)) for k in STOK_KEYS}
 
 
+# ═══════════════════════════════════════════════════════════════════════════
+# 📖 STOK ÇIKIŞ DOKTRİNİ (Fable kararı 2026-09-14)
+# ═══════════════════════════════════════════════════════════════════════════
+# "bulundu" : çıkış anında defter yetmezse fark BULUNDU sayılır, deftere
+#             `SAYIM_DUZELTME` satırı yazılır, sonra çıkış düşer. Mahsup YOK.
+# "borc"    : ESKİ davranış — fark borç yazılır, sonraki teslimattan sessizce
+#             düşülür. ⛔ Çift düşüm üretiyordu (bkz. yama başlığı).
+# Geri dönüş: bu sabiti "borc" yapmak eski davranışı aynen geri getirir.
+STOK_CIKIS_DOKTRIN = "bulundu"
+
+
 def _urun_ac_hareket_yaz(cur: Any, sube_id: str, kk: str, lab: str,
-                          ad: int, onceki_v) -> None:
+                          ad: int, onceki_v, bulunan: int = 0,
+                          defter_satiri: bool = True,
+                          kaynak_tip: str = "urun_ac") -> None:
     """TEMEL ONARIM #1 (2026-07-09): ürün-aç depo düşümü hareket defterine YAZILIR.
     Kayıtsız düşüm denge denklemini kirletiyordu (ZAFER -698 vakası: bara giden
     meşru akış 'kayıtsız eksik' görünüyordu). HATA-YUTAR + SAVEPOINT — ürün-aç
@@ -4580,13 +4593,38 @@ def _urun_ac_hareket_yaz(cur: Any, sube_id: str, kk: str, lab: str,
         sonraki = None
         if r is not None:
             sonraki = float((dict(r) if not isinstance(r, dict) else r).get("mevcut_adet") or 0)
-        cur.execute(
-            """INSERT INTO sube_depo_stok_hareket
-                   (sube_id, kalem_kodu, kalem_adi, hareket_turu, miktar,
-                    onceki_miktar, sonraki_miktar, kaynak_tip, aciklama, onay_durumu)
-               VALUES (%s,%s,%s,'URUN_AC',%s,%s,%s,'urun_ac',%s,'otomatik')""",
-            (sube_id, kk, lab, -float(ad), onceki_v, sonraki,
-             f"Ürün aç — {lab} x{ad} depodan bara"))
+        # ═══════════════════════════════════════════════════════════════════
+        # 📖 BULUNAN STOK SATIRI — defter artık kendini yalanlamıyor
+        # ═══════════════════════════════════════════════════════════════════
+        # Eskiden depoda 0 varken 50 açılınca TEK satır yazılıyordu:
+        #   miktar=-50, onceki=0, sonraki=0  →  0-0 ≠ -50
+        # 90 günde 120 satır / 3.815 adet böyle görünmez oldu.
+        # Artık hikâye iki tutarlı satırda:
+        #   0 --(+50 açma anında bulundu)--> 50 --(-50 ürün aç)--> 0
+        # Bu satır aynı zamanda İŞ SİNYALİ: "şu girişin kaydı düşmemiş".
+        _bas = float(onceki_v) if onceki_v is not None else None
+        if bulunan > 0 and _bas is not None:
+            cur.execute(
+                """INSERT INTO sube_depo_stok_hareket
+                       (sube_id, kalem_kodu, kalem_adi, hareket_turu, miktar,
+                        onceki_miktar, sonraki_miktar, kaynak_tip, aciklama, onay_durumu)
+                   VALUES (%s,%s,%s,'SAYIM_DUZELTME',%s,%s,%s,%s,%s,'otomatik')""",
+                (sube_id, kk, lab, float(bulunan), _bas, _bas + float(bulunan),
+                 kaynak_tip + "_bulunan",
+                 (f"Açma anında bulundu — {lab} x{bulunan}: defterde "
+                  f"{int(_bas)} görünüyordu, {ad} açıldı. Aradaki fark depo "
+                  "giriş kaydının düşmediğini gösterir.")))
+            _bas = _bas + float(bulunan)
+        # FIRE kendi satırını yazar — ona ikinci bir URUN_AC satırı yazma.
+        # (2026-09-14 ölçümü: 12 fire bildiriminin 12'sinde çift satır vardı.)
+        if defter_satiri:
+            cur.execute(
+                """INSERT INTO sube_depo_stok_hareket
+                       (sube_id, kalem_kodu, kalem_adi, hareket_turu, miktar,
+                        onceki_miktar, sonraki_miktar, kaynak_tip, aciklama, onay_durumu)
+                   VALUES (%s,%s,%s,'URUN_AC',%s,%s,%s,'urun_ac',%s,'otomatik')""",
+                (sube_id, kk, lab, -float(ad), _bas, sonraki,
+                 f"Ürün aç — {lab} x{ad} depodan bara"))
         cur.execute("RELEASE SAVEPOINT sp_urun_ac_hareket")
     except Exception:  # noqa: BLE001
         try:
@@ -4601,6 +4639,9 @@ def sube_depo_stok_depo_cikis_dus(
     kalem_kodu: str,
     kalem_adi: Optional[str],
     adet: int,
+    defter_satiri: bool = True,
+    kaynak_tip: str = "urun_ac",
+    bilgi: Optional[dict] = None,
 ) -> bool:
     """
     Depodan bara / aktif kullanım (ürün aç, kullanım API): fiziksel depo stoğu azalır.
@@ -4650,7 +4691,17 @@ def sube_depo_stok_depo_cikis_dus(
         (ad, ad, sube_id, kk),
     )
     if cur.rowcount:
-        _urun_ac_hareket_yaz(cur, sube_id, kk, lab, ad, onceki_v)
+        # 📖 Defter yetmediyse fark BULUNDU sayılır (koşulsuz tanım — koşullu
+        # tanım kapısı burada 500 üretirdi).
+        _bulunan = 0
+        if onceki_v is not None and onceki_v < ad:
+            _bulunan = int(ad - onceki_v)
+        _urun_ac_hareket_yaz(cur, sube_id, kk, lab, ad, onceki_v,
+                             bulunan=_bulunan, defter_satiri=defter_satiri,
+                             kaynak_tip=kaynak_tip)
+        if bilgi is not None:
+            bilgi["bulunan"] = _bulunan
+            bilgi["onceki"] = onceki_v
         return True
 
     baslangic = 0
@@ -4683,8 +4734,16 @@ def sube_depo_stok_depo_cikis_dus(
     )
     _basarili = cur.rowcount > 0
     if _basarili:
-        _urun_ac_hareket_yaz(cur, sube_id, kk, lab, ad,
-                             onceki_v if onceki_v is not None else float(baslangic))
+        _bas2 = onceki_v if onceki_v is not None else float(baslangic)
+        _bulunan2 = 0
+        if _bas2 is not None and _bas2 < ad:
+            _bulunan2 = int(ad - _bas2)
+        _urun_ac_hareket_yaz(cur, sube_id, kk, lab, ad, _bas2,
+                             bulunan=_bulunan2, defter_satiri=defter_satiri,
+                             kaynak_tip=kaynak_tip)
+        if bilgi is not None:
+            bilgi["bulunan"] = _bulunan2
+            bilgi["onceki"] = _bas2
     return _basarili
 
 
@@ -4752,6 +4811,16 @@ def sube_depo_stok_depo_giris_ekle(
     # ── Deferred Reconciliation ────────────────────────────────────────────────
     # Sevkiyat gelince bekleyen URUN_AC_UYUMSUZLUK borçlarını otomatik uygula.
     # (Negatif stok yerine "borç biriktirir, ürün gelince mahsup eder" — Dynamics 365 / NetSuite mantığı)
+    #
+    # ⛔ 2026-09-14'TEN İTİBAREN ETKİSİZ (STOK_CIKIS_DOKTRIN="bulundu").
+    # Bu blok ÇİFT DÜŞÜM üretiyordu: bar 500 bardak açtı (fiziken tüketildi),
+    # sistem 500 borç yazdı; sevkiyat 500 gelince `SEVK_GIRIS 0→500` yazıldı ve
+    # HEMEN ARDINDAN burası DEFTER SATIRI YAZMADAN 500'ü düştü → depo yine 0 →
+    # ertesi gün bar yine açtı → yine borç. Bir kez tüketilen mal İKİ KEZ
+    # düşülüyor, depo sonsuza dek 0'da kalıyordu.
+    # Canlı kanıt (90 gün): 32 satırda 1.588 adet görünmeyen düşüş;
+    # 50 açık borç / 2.551 adet; Plastik bardak 1.026 + plastik kapak 1.336.
+    # Kapatma aşağıdaki SELECT'in doktrin süzgeciyle yapılır — blok silinmedi.
     try:
         # transaction'i ABORT eder; commit sessiz ROLLBACK olurdu.
         # 🛟 SAVEPOINT (2026-09-01 zincir denetimi) — yutulan SQL hatasi
@@ -4759,13 +4828,14 @@ def sube_depo_stok_depo_giris_ekle(
             cur.execute(
                 """
                 SELECT id, detay FROM sube_operasyon_uyari
-                WHERE sube_id = %s AND kalem_kodu = %s
+                WHERE %s = 'borc'          -- 📖 DOKTRİN SÜZGECİ (2026-09-14)
+                  AND sube_id = %s AND kalem_kodu = %s
                   AND tarih >= CURRENT_DATE - INTERVAL '7 days'
                   AND tip = 'URUN_AC_UYUMSUZLUK'
                   AND okundu = FALSE
                 ORDER BY tarih ASC
                 """,
-                (sube_id, kk),
+                (STOK_CIKIS_DOKTRIN, sube_id, kk),
             )
             borclar = cur.fetchall()
             toplam_eksik = 0

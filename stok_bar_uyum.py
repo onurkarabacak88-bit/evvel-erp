@@ -594,7 +594,11 @@ def stok_uyum_depo_girisi(
     )
 
     # Geçmiş gün uyarısı: otomatik mahsup yalnızca bugünkü girişlerde çalışır
-    if uyari_gun != bugun and mahsup > 0:
+    # ⛔ 2026-09-14: bu düşüm de DEFTER SATIRI YAZMIYORDU — `operasyon_stok_motor`
+    # içindeki ikizi gibi çift düşüm üretiyordu. "bulundu" doktrininde fark zaten
+    # açma anında deftere `SAYIM_DUZELTME` olarak yazıldı; burada ikinci kez düşülmez.
+    from operasyon_stok_motor import STOK_CIKIS_DOKTRIN as _DOKTRIN
+    if _DOKTRIN != "bulundu" and uyari_gun != bugun and mahsup > 0:
         cur.execute(
             """
             UPDATE sube_depo_stok
