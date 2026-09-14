@@ -576,7 +576,26 @@ def stok_uyum_depo_girisi(
     uyari_gun = date.fromisoformat(str(u["tarih"])[:10])
     bugun = is_gunu_tr()
 
-    sube_depo_stok_depo_giris_ekle(cur, sube_id, kalem, lab, giris)
+    # ═══════════════════════════════════════════════════════════════════════
+    # 📖 BULUNDU DOKTRİNİ — bu tuş artık stoğu İKİNCİ KEZ artırmıyor
+    # ═══════════════════════════════════════════════════════════════════════
+    # Fark zaten AÇMA ANINDA deftere `SAYIM_DUZELTME` olarak girdi ve mal
+    # fiziken tüketildi. Tuş bir daha +N yaparsa aynı mal ikinci kez stoğa
+    # girer — kapattığımız çift-sayımın aynadaki hâli.
+    # Gerçek yeni sevkiyat zaten teslim-al/kabul akışından giriyor; o dokunulmadı.
+    # ⚠️ ESKİ (damgasız) kayıtlar eski davranışı görür — onlar ayrıca kapatılacak.
+    _detay = u.get("detay") or {}
+    if isinstance(_detay, str):
+        try:
+            _detay = json.loads(_detay)
+        except Exception:  # noqa: BLE001
+            _detay = {}
+    _bulundu_damgali = str((_detay or {}).get("doktrin") or "") == "bulundu"
+    if _bulundu_damgali:
+        giris = 0
+        mahsup = 0
+    else:
+        sube_depo_stok_depo_giris_ekle(cur, sube_id, kalem, lab, giris)
 
     delta = {k: 0 for k in _BAR_KEYS}
     if kalem in _BAR_KEYS:
@@ -615,7 +634,10 @@ def stok_uyum_depo_girisi(
         chk = cur.fetchone()
         if chk and chk.get("okundu"):
             kalan = 0
-    cozum_not = notu or f"Depo girişi: +{giris} adet, borç mahsup {mahsup}"
+    cozum_not = notu or (
+        ("BULUNDU doktrini: fark açma anında deftere yazıldı, stok İKİNCİ KEZ "
+         "artırılmadı — kayıt kapatıldı.") if _bulundu_damgali
+        else f"Depo girişi: +{giris} adet, borç mahsup {mahsup}")
     if kalan <= 0:
         cur.execute(
             """

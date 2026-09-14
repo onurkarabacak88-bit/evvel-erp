@@ -4297,10 +4297,15 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
         import uuid as _uuid
 
         def _uyumsuzluk_yaz(cur, sube_id, kalem_kodu, mevcut_oncesi, istenen, urun_ad_fallback=""):
-            """Karşılıksız URUN_AC borcunu loglar.
-            Aynı gün aynı kalem için kayıt varsa eksik_miktar toplanır (borç birikir).
-            Sevkiyat geldiğinde sube_depo_stok_depo_giris_ekle bu borcu otomatik uygular.
-            (Deferred Reconciliation — SAP/NetSuite/Dynamics 365 yaklaşımı)
+            """Defterde olmayan ürün açıldığında SİNYAL yazar.
+
+            📖 2026-09-14 BULUNDU DOKTRİNİ (Fable kararı): bu kayıt artık BORÇ
+            DEĞİL. Eskiden sevkiyat gelince otomatik mahsup ediliyordu ve bu
+            ÇİFT DÜŞÜM üretiyordu (mal bir kez tüketilip iki kez düşülüyor, depo
+            sonsuza dek 0'da kalıyordu — canlı: 1.588 adet görünmeyen düşüş).
+            Artık fark açma anında deftere `SAYIM_DUZELTME` olarak yazılıyor;
+            bu kayıt yalnız "şu kalemin depo GİRİŞİ kaydedilmemiş" sinyalidir.
+            Aynı gün aynı kalem için birikme DEVAM EDER (sinyalin büyüklüğü).
             """
             import json as _json2
             from operasyon_stok_motor import depo_kalem_gorunen_ad
@@ -4329,6 +4334,9 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                     "kalem_kodu": kalem_kodu,
                     "kalem_adi": kalem_adi,
                     "eksik_miktar": toplam_eksik,
+                    # 📖 Damga: E adımı (stok_bar_uyum "Depo girişi" tuşu) bunu
+                    # okuyup stoğu İKİNCİ KEZ artırmamak için kullanıyor.
+                    "doktrin": "bulundu",
                 }
                 cur.execute("""
                     UPDATE sube_operasyon_uyari
@@ -4336,7 +4344,9 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                     WHERE id=%s
                 """, (
                     _json2.dumps(yeni_detay, ensure_ascii=False),
-                    f"Karşılıksız açma: {kalem_adi} — toplam {toplam_eksik} adet borç birikti.",
+                    (f"Defter eksiği: {kalem_adi} — bugün toplam {toplam_eksik} adet "
+                     "defterde görünmeden açıldı (bulundu sayıldı). Depo giriş "
+                     "kaydı düşmemiş olabilir."),
                     str(mevcut_kayit["id"]),
                 ))
             else:
@@ -4346,14 +4356,20 @@ def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
                     "eksik_miktar": eksik,
                     "mevcut_oncesi": mevcut_oncesi,
                     "istenen": istenen,
+                    "doktrin": "bulundu",
                 }, ensure_ascii=False)
                 cur.execute("""
                     INSERT INTO sube_operasyon_uyari
                         (id, sube_id, tarih, tip, seviye, mesaj, kalem_kodu, detay)
-                    VALUES (%s, %s, CURRENT_DATE, 'URUN_AC_UYUMSUZLUK', 'kritik', %s, %s, %s)
+                    VALUES (%s, %s, CURRENT_DATE, 'URUN_AC_UYUMSUZLUK', 'uyari', %s, %s, %s)
                 """, (
                     str(_uuid.uuid4()), sube_id,
-                    f"Karşılıksız açma: {kalem_adi} — depoda {mevcut_oncesi} adet varken {istenen} adet açıldı.",
+                    # ⚠️ seviye 'kritik' → 'uyari': bu bir kriz değil, kayıt
+                    # eksikliği sinyali. Günde onlarca doğuyor; kritik kalırsa
+                    # alarm bütçesini doldurup gerçek krizleri boğardı.
+                    (f"Defter eksiği: {kalem_adi} — defterde {mevcut_oncesi} adet "
+                     f"görünürken {istenen} adet açıldı. Aradaki {istenen - mevcut_oncesi} "
+                     "adet bulundu sayıldı; depo giriş kaydı düşmemiş olabilir."),
                     kalem_kodu,
                     detay,
                 ))
