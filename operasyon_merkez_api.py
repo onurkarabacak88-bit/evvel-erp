@@ -10145,6 +10145,30 @@ def ops_siparis_sevkiyata_gonder(body: OpsSiparisSevkiyataGonderBody):
                 )
         if str(t.get("durum") or "") not in ("bekliyor", "hazirlaniyor", "gonderildi"):
             raise HTTPException(409, "Talep sevkiyat akışı için uygun durumda değil")
+        # ═══════════════════════════════════════════════════════════════════
+        # 🔁 KENDİNE SEVK FRENİ (2026-09-14, Fable denetimi)
+        # ═══════════════════════════════════════════════════════════════════
+        # Şube KENDİ deposundan KENDİ barına "sevkiyat" açtığında mal binadan
+        # hiç çıkmıyor; transit (`stok_yolda`) ve kabul adımı anlamsız hâle
+        # geliyor. Sonuç: talep "kabul bekliyor"da asılı kalıyor, çünkü aynı
+        # kişiden kendi malını kabul etmesi bekleniyor.
+        #
+        # Canlı ölçüm (180 gün): 8 kendine sevk, **7'si iptalle kapanmış**,
+        # yalnız 1'i teslim edilmiş. Yani bu neredeyse her zaman bir HATA.
+        # Üstelik her biri hayalet üretiyor: iptal, sevk edilen adedin TAMAMINI
+        # kaynağa iade ediyor — depoda o kadar mal hiç olmasa bile
+        # (TEMA 1925515b: 42 iade, gerçekte çıkan 9).
+        #
+        # Doğru yol depo→bar için "ürün aç"tır: tek adım, transit yok, kabul yok.
+        # ⚠️ ENGELLİYOR ama YOL GÖSTERİYOR — sessizce reddetmiyor.
+        if str(t.get("sube_id") or "").strip() == sevk_sube_id:
+            raise HTTPException(
+                409,
+                "Bu şubenin KENDİ deposu seçildi — mal binadan çıkmayacağı için "
+                "sevkiyat/kabul adımı anlamsız ve talep 'kabul bekliyor'da asılı "
+                "kalır. Depodan bara geçiş için sevkiyat değil ÜRÜN AÇ kullanın. "
+                "Başka bir şubenin deposundan gönderecekseniz onu seçin.",
+            )
         # 🚚 YOLDAKİ MAL FRENİ (2026-09-01 zincir denetimi) — P0.
         # Durum kapısı 'gonderildi'yi kabul ediyordu, yani mal FİİLEN YOLDAYKEN
         # aynı talep ikinci kez yönlendirilebiliyordu. Bu uç `kalem_durumlari`yı
