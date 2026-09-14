@@ -881,6 +881,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [opPersonelSube, setOpPersonelSube] = useState(null);
   const [dnKayip, setDnKayip] = useState(null);
   const [dnHata, setDnHata] = useState('');
+  // 🔭 Pencere (2026-09-14): uç eskiden TEK GÜN okuyordu; 90 günde biriken
+  // 3.815 adetlik "bulundu" sinyali görünmüyordu. 30 gün varsayılan.
+  const [dnGun, setDnGun] = useState(30);
+  const [dnCoz, setDnCoz] = useState(null);      // { kayit, notu }
+  const [dnCozMesgul, setDnCozMesgul] = useState(false);
   // ── TEDARİK & SİNYAL (ops-merkez P3 sekmeleri, 2026-07-30) ────────────────
   // toptancıdan gelenler · şube notları · stok tahmini · KPI delta
   const [tsSekme, setTsSekme] = useState('teslim');
@@ -1230,7 +1235,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     const t = tarih || isGunuBugun();
     const _bilet = ++dnIstekRef.current;
     const _guncel = () => dnIstekRef.current === _bilet;
-    api(`/ops/urun-uyumsuzluk?tarih=${t}`)
+    api(`/ops/urun-uyumsuzluk?tarih=${t}&gun=${dnGun}`)
       .then((d) => { if (_guncel()) setDnUyumsuz(d || {}); })
       .catch((e) => { if (_guncel()) setDnHata(e?.message || ''); });
     api(`/ops/fire-bildirimler?tarih=${t}`)
@@ -1262,7 +1267,27 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         setDnKayip(d || {});
       })
       .catch(() => setDnKayip({}));
-  }, []);
+  }, [dnGun]);
+
+  // 📖 BULUNDU sinyalini KAPAT. Stoğa DOKUNMAZ — yalnız kaydı "görüldü/karar
+  // verildi" diye işaretler (`okundu=TRUE` + gerekçe). Mahsup YOK: mal zaten
+  // tüketildi, ikinci kez düşmek çift sayım olurdu (2026-09-14 doktrini).
+  const uyumsuzCoz = async (kayit, notu) => {
+    if (dnCozMesgul) return;
+    const n = String(notu || '').trim();
+    if (n.length < 3) { onToast?.('Gerekçe zorunlu — kayıt sessizce kapanmaz.'); return; }
+    setDnCozMesgul(true);
+    try {
+      await api(`/ops/urun-uyumsuzluk/${encodeURIComponent(kayit.id)}/coz`, {
+        method: 'POST', body: { notu: n },
+      });
+      onToast?.('✓ Kayıt kapatıldı — stoğa dokunulmadı');
+      setDnCoz(null);
+      denetimYukle(barTarih);
+    } catch (e) {
+      onToast?.(e?.message || 'Kapatılamadı');
+    } finally { setDnCozMesgul(false); }
+  };
 
   const arsivYukle = useCallback((gun, durum, arama) => {
     setArsivHata('');
@@ -6794,18 +6819,38 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           ))}
         </div>
 
+        {dnSekme === 'uyumsuz' && (
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginBottom: 12, flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 11.5, color: R.not2 }}>Pencere:</span>
+            {[1, 7, 30, 90].map((g) => (
+              <button key={g} type="button" onClick={() => setDnGun(g)} style={{
+                padding: '5px 12px', borderRadius: 9, cursor: 'pointer', fontFamily: 'inherit',
+                fontSize: 11.5, fontWeight: dnGun === g ? 700 : 500,
+                border: `1px solid ${dnGun === g ? R.bakir : R.cizgi3}`,
+                background: dnGun === g ? 'rgba(217,154,78,.12)' : 'transparent',
+                color: dnGun === g ? R.bakir : R.metin2,
+              }}>{g === 1 ? 'bugün' : `${g} gün`}</button>
+            ))}
+            <span style={{ fontSize: 11, color: R.not2, marginLeft: 4 }}>
+              {dnUyumsuz?.pencere_notu || ''}
+            </span>
+          </div>
+        )}
         {dnSekme === 'uyumsuz' && (uyumsuzListe.length ? (
           <Tablo
-            baslik={`Ürün uyumsuzlukları · ${tarihKisa(barTarih)}`}
-            not={'formül → fark → çözüm; kararı sen verirsin'
+            baslik={`Ürün uyumsuzlukları · ${dnGun > 1 ? `son ${dnGun} gün` : tarihKisa(barTarih)}`}
+            not={'satıra tıkla → çöz · kararı sen verirsin'
               + (uyumsuzListe.length > 40
                 ? ` · ⚠ ${uyumsuzListe.length} kaydın ilk 40'ı gösteriliyor`
                 : '')}
-            kolonlar={[{ ad: 'Şube' }, { ad: 'Tip' }, { ad: 'Ürün' }, { ad: 'Dün → bugün' }, { ad: 'Fark', sag: 1 }, { ad: 'Durum' }]}
+            kolonlar={[{ ad: 'Şube' }, { ad: 'Tarih' }, { ad: 'Tip' }, { ad: 'Ürün' }, { ad: 'Dün → bugün' }, { ad: 'Fark', sag: 1 }, { ad: 'Durum' }]}
             satirlar={uyumsuzListe.slice(0, 40).map((x, i) => ({
-              id: x.id || `uy-${i}`,
+              id: x.id || `uy-${i}`, _x: x,
               hucreler: [
                 { v: x.sube_adi || x.sube_ad || '—', kalin: true },
+                // 🔭 Pencere açıldı — hangi güne ait olduğu artık GÖRÜNMELİ,
+                // yoksa 30 günlük liste tek güne aitmiş gibi okunur.
+                { v: tarihKisa(x.tarih), mono: true, renk: R.not },
                 { v: String(x.tip || '—').replace(/_/g, ' ').toLowerCase(), renk: R.not },
                 { v: x.urun_ad || x.kalem_adi || '—' },
                 // ══════════════════════════════════════════════════════════
@@ -6859,8 +6904,75 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   : { v: 'bekliyor', rozet: R.amber },
               ],
             }))}
+            onSatir={({ _x }) => {
+              if (_x.cozuldu || _x.durum === 'cozuldu') return;
+              setDnCoz({ kayit: _x, notu: '' });
+            }}
           />
-        ) : <BosDurum metin={`${tarihKisa(barTarih)} için ürün uyumsuzluğu yok — sayımlar tutuyor. ✓`} />)}
+        ) : <BosDurum metin={dnGun > 1
+          ? `Son ${dnGun} günde açık ürün uyumsuzluğu yok — sayımlar tutuyor. ✓`
+          : `${tarihKisa(barTarih)} için ürün uyumsuzluğu yok — sayımlar tutuyor. ✓`} />)}
+
+        {dnCoz && (() => {
+          const k = dnCoz.kayit || {};
+          const d = k.detay_json || {};
+          const kilit = dnCozMesgul;
+          const yeterli = String(dnCoz.notu || '').trim().length >= 3;
+          return (
+            <div onClick={(e) => { if (e.target === e.currentTarget && !kilit) setDnCoz(null); }} style={{
+              position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+              backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+            }}>
+              <div style={{ ...kartYuzey, width: 480, maxWidth: '96vw', maxHeight: '90vh', overflowY: 'auto', padding: '24px 26px' }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                  <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>Uyumsuzluğu kapat</div>
+                  <button onClick={() => !kilit && setDnCoz(null)} style={{
+                    marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                    fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>x</button>
+                </div>
+                <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+                  <b>{k.sube_adi || k.sube_ad || 'Şube'}</b> · {tarihKisa(k.tarih)} ·{' '}
+                  {k.urun_ad || k.kalem_adi || '—'}
+                </div>
+                <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 16, lineHeight: 1.6 }}>
+                  {(d.mevcut_oncesi != null || d.istenen != null)
+                    ? `Defterde ${sayi(d.mevcut_oncesi)} görünürken ${sayi(d.istenen)} açıldı — aradaki ${sayi(d.eksik_miktar) || (sayi(d.istenen) - sayi(d.mevcut_oncesi))} adet bulundu sayıldı.`
+                    : (k.mesaj || '—')}
+                </div>
+                <div style={{
+                  padding: '11px 14px', borderRadius: 11, marginBottom: 14, fontSize: 11.5, lineHeight: 1.6,
+                  background: 'rgba(217,154,78,.10)', border: `1px solid ${R.bakir}44`, color: R.metin2,
+                }}>
+                  <b style={{ color: R.bakir }}>Bu kayıt bir borç değil, sinyaldir.</b><br />
+                  Mal fiziken tüketildi ve fark açma anında deftere yazıldı.
+                  Kapatmak <b>stoğa dokunmaz</b>; yalnız "gördüm, karar verdim" demektir.
+                  Asıl iş, o kalemin <b>depo giriş kaydının</b> neden düşmediğini bulmaktır.
+                </div>
+                <label style={opsEtiket}>Gerekçe (zorunlu)</label>
+                <textarea value={dnCoz.notu} disabled={kilit}
+                  placeholder="Örn: sevkiyat girişi elle eklendi / sayım düzeltildi"
+                  onChange={(e) => setDnCoz((p) => ({ ...p, notu: e.target.value }))}
+                  style={{ ...opsAlanStil, minHeight: 70, resize: 'vertical' }} />
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end', marginTop: 6 }}>
+                  <button type="button" disabled={kilit} onClick={() => setDnCoz(null)} style={{
+                    padding: '9px 16px', borderRadius: 10, cursor: kilit ? 'default' : 'pointer',
+                    fontFamily: 'inherit', border: `1px solid ${R.cizgi3}`,
+                    background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600,
+                  }}>Vazgeç</button>
+                  <button type="button" disabled={kilit || !yeterli}
+                    onClick={() => uyumsuzCoz(dnCoz.kayit, dnCoz.notu)}
+                    style={{
+                      padding: '9px 18px', borderRadius: 10, fontFamily: 'inherit', fontSize: 12,
+                      fontWeight: 700, border: 'none', color: '#1a1006',
+                      background: yeterli ? R.bakir : R.cizgi3,
+                      cursor: (kilit || !yeterli) ? 'default' : 'pointer',
+                    }}>{kilit ? '…' : 'Kapat'}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
 
         {dnSekme === 'fire' && (fireKayit.length ? (
           <Tablo

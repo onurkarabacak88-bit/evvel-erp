@@ -4375,10 +4375,17 @@ def ops_urun_uyumsuzluk_listesi(
     tarih: Optional[str] = None,
     sadece_bekleyen: bool = False,
     sadece_cozuldu: bool = False,
+    gun: int = Query(1, ge=1, le=180),
 ):
     """
     Depo stok bar uyumsuzlukları — kasa uyumsuzluk ekranı ile aynı kuyruk modeli.
     STOK_BAR_DEVIR_FARK, STOK_BAR_GUN_ICI_FARK, URUN_AC_UYUMSUZLUK.
+
+    🔴 2026-09-14: uç TEK GÜN okuyordu. "Bulundu" sinyali 90 günde 3.815 adet
+    birikmişti ama görmek için 90 kez geri gitmek gerekiyordu — pratikte hiç
+    görülmedi. `gun` ile pencere açılır (varsayılan 1 = eski davranış birebir).
+    ⚠️ Pencere YALNIZ `URUN_AC_UYUMSUZLUK` için genişler; bar kayıtları o günün
+    sayımına bağlı olduğu için tek günde kalır.
     """
     from tr_saat import is_gunu_tr
     from stok_bar_uyum import build_stok_uyum_liste
@@ -4389,9 +4396,15 @@ def ops_urun_uyumsuzluk_listesi(
         raise HTTPException(400, "Geçersiz tarih formatı (YYYY-MM-DD bekleniyor)")
 
     with db() as (_, cur):
-        out = build_stok_uyum_liste(cur, hedef_tarih, sadece_bekleyen, sadece_cozuldu)
+        out = build_stok_uyum_liste(cur, hedef_tarih, sadece_bekleyen,
+                                    sadece_cozuldu, gun=int(gun or 1))
     out["sadece_bekleyen"] = sadece_bekleyen
     out["sadece_cozuldu"] = sadece_cozuldu
+    out["gun"] = int(gun or 1)
+    out["pencere_notu"] = (
+        "Tek gün" if int(gun or 1) <= 1 else
+        f"Son {int(gun)} gün — pencere yalnız 'ürün aç' kayıtları için açık; "
+        "bar sayım farkları o güne ait kalır.")
     return out
 
 

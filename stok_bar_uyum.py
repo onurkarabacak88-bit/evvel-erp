@@ -365,7 +365,17 @@ def build_stok_uyum_liste(
     hedef_tarih: date,
     sadece_bekleyen: bool,
     sadece_cozuldu: bool,
+    gun: int = 1,
 ) -> Dict[str, Any]:
+    """`gun` > 1 ise pencere YALNIZ `URUN_AC_UYUMSUZLUK` için geriye açılır.
+
+    🔴 2026-09-14: bu liste TEK GÜN okuyordu. "Bulundu" sinyali 90 günde 3.815
+    adet birikmişti ama sahip onu görmek için 90 kez geri gitmek zorundaydı —
+    pratikte hiç görülmedi. Pencere artık açılabiliyor.
+    ⚠️ Bar kayıtları (`STOK_BAR_*`) BİLEREK tek günde kaldı: onlar o günün
+    açılış/kapanış sayımına bağlı (`aktif_ids`) ve geriye açmak çözülmüş
+    arşivi iş listesine karıştırırdı. Genişleyen yalnız ürün-aç backlog'u.
+    """
     bar_rows = fetch_bar_satirlar_gun(cur, hedef_tarih)
     gun_str = str(hedef_tarih)
     aktif_ids: List[str] = []
@@ -448,11 +458,17 @@ def build_stok_uyum_liste(
                u.acilis_personel_ad, u.kapanis_personel_ad
         FROM sube_operasyon_uyari u
         LEFT JOIN subeler s ON s.id = u.sube_id
-        WHERE u.tarih = %s
-          AND u.tip IN ('STOK_BAR_DEVIR_FARK', 'STOK_BAR_GUN_ICI_FARK', 'URUN_AC_UYUMSUZLUK')
-        ORDER BY u.okundu ASC, ABS(COALESCE(u.cozum_duzeltilen_tl, u.fark_tl, 0)) DESC, u.olusturma DESC
+        WHERE u.tip IN ('STOK_BAR_DEVIR_FARK', 'STOK_BAR_GUN_ICI_FARK', 'URUN_AC_UYUMSUZLUK')
+          AND (
+                u.tarih = %s
+                -- Pencere yalnız ürün-aç için geriye açılır (bkz. docstring)
+                OR (u.tip = 'URUN_AC_UYUMSUZLUK'
+                    AND u.tarih >= %s AND u.tarih < %s)
+              )
+        ORDER BY u.okundu ASC, u.tarih DESC,
+                 ABS(COALESCE(u.cozum_duzeltilen_tl, u.fark_tl, 0)) DESC, u.olusturma DESC
         """,
-        (hedef_tarih,),
+        (hedef_tarih, hedef_tarih - timedelta(days=max(0, int(gun or 1) - 1)), hedef_tarih),
     )
     tum_satirlar: List[Dict[str, Any]] = []
     for r in cur.fetchall() or []:
