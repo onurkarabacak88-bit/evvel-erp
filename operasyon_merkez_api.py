@@ -4253,11 +4253,18 @@ def ops_urun_ac_uyumsuzluklar(
     gun: Optional[str] = None,
     year_month: Optional[str] = None,
     sube_id: Optional[str] = None,
+    durum: str = Query("acik", pattern="^(acik|cozulmus|hepsi)$"),
     limit: int = Query(500, ge=1, le=2000),
 ):
     """
     Karşılıksız ürün açma uyarıları (sube_operasyon_uyari, tip=URUN_AC_UYUMSUZLUK).
     Hub kartlarındaki «Ürün Aç» uyarıları ile aynı kaynak; bar-ozet sayım farkından bağımsızdır.
+
+    🔴 2026-09-14: bu uç `okundu`yu HİÇ SÜZMÜYORDU. Çözülmüş kayıtlar da listede
+    kalıyordu; 50 kayıt kapatıldıktan sonra ekran hâlâ "50 açık" gösteriyordu —
+    ölü sahte alarm. Artık `durum` süzgeci var ve VARSAYILAN 'acik'.
+    Sayaçlar (`acik_adet`/`cozulmus_adet`) her çağrıda ayrıca döner ki
+    "azaldı mı" sorusu tek bakışta cevaplanabilsin.
     """
     lim = max(1, min(2000, int(limit)))
     gun_v = (gun or "").strip()
@@ -4269,6 +4276,11 @@ def ops_urun_ac_uyumsuzluklar(
     with db() as (conn, cur):
         params: list = []
         where = ["u.tip = 'URUN_AC_UYUMSUZLUK'"]
+        _d = (durum or "acik").strip().lower()
+        if _d == "acik":
+            where.append("COALESCE(u.okundu, FALSE) = FALSE")
+        elif _d == "cozulmus":
+            where.append("COALESCE(u.okundu, FALSE) = TRUE")
         if sid:
             where.append("u.sube_id = %s")
             params.append(sid)
@@ -4317,7 +4329,37 @@ def ops_urun_ac_uyumsuzluklar(
             )
             satirlar.append(d)
 
-    return {"satirlar": satirlar, "year_month": ym, "gun": gun_v or None}
+        # 📊 Sayaçlar — süzgeçten BAĞIMSIZ, aynı pencerede. "Kapattık mı, azaldı mı?"
+        # sorusu tek çağrıda cevaplansın diye; ekran ikinci istek atmak zorunda kalmasın.
+        _say = {"acik_adet": 0, "cozulmus_adet": 0, "acik_toplam_adet": 0}
+        try:
+            with savepoint(cur, "sp_urun_ac_sayac"):
+                cur.execute(
+                    f"""
+                    SELECT COALESCE(u.okundu, FALSE) AS ok, COUNT(*)::int AS n,
+                           COALESCE(SUM(COALESCE((u.detay->>'eksik_miktar')::int, 0)), 0)::int AS adet
+                    FROM sube_operasyon_uyari u
+                    WHERE u.tip = 'URUN_AC_UYUMSUZLUK'
+                      AND to_char(u.tarih, 'YYYY-MM') = %s
+                      {"AND u.sube_id = %s" if sid else ""}
+                    GROUP BY 1
+                    """,
+                    ([ym, sid] if sid else [ym]),
+                )
+                for _r in (cur.fetchall() or []):
+                    _rd = dict(_r)
+                    if _rd.get("ok"):
+                        _say["cozulmus_adet"] = int(_rd.get("n") or 0)
+                    else:
+                        _say["acik_adet"] = int(_rd.get("n") or 0)
+                        _say["acik_toplam_adet"] = int(_rd.get("adet") or 0)
+        except Exception:  # noqa: BLE001
+            pass
+
+    return {"satirlar": satirlar, "year_month": ym, "gun": gun_v or None,
+            "durum": (durum or "acik"), **_say,
+            "not": ("`durum` varsayılanı 'acik' — çözülmüş kayıtlar listede GELMEZ. "
+                    "Hepsini görmek için durum=hepsi. Sayaçlar süzgeçten bağımsızdır.")}
 
 
 class StokKaynakDuzeltmeBody(BaseModel):
