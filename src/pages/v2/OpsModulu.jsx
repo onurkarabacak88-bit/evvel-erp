@@ -980,6 +980,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [arsivGun, setArsivGun] = useState(90);
   const [arsivDurum, setArsivDurum] = useState('');
   const [arsivArama, setArsivArama] = useState('');
+  // 🔓 Kabul uyuşmazlığı çözme kutusu (2026-09-14). Karar GEREKÇESİZ
+  // verilemez: arka uç 3 karakterden kısa gerekçeyi 400 ile reddeder
+  // ("uyuşmazlık sessizce kapanmaz"), ekran da aynı kapıyı önden kurar.
+  const [uyModal, setUyModal] = useState(null);
+  const [uyMesgul, setUyMesgul] = useState(false);
   const [arsivSekme, setArsivSekme] = useState('siparis');
   const [arsivMesgul, setArsivMesgul] = useState('');
   const [hareketHata, setHareketHata] = useState('');
@@ -5498,6 +5503,29 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         onToast?.(e?.message || 'Yeniden açılamadı');
       } finally { setArsivMesgul(''); }
     };
+
+    // ⚠️ STOĞA DOKUNMAZ. Mal hareketi kabul anında zaten yazıldı; bu uç
+    // yalnız TALEBİN durumunu çözer. (Mükerrer stok artışının sebebi tam da
+    // "ikinci kez teslim al" denemesiydi — o yol artık bu düğmeyle kapanıyor.)
+    const uyusmazlikCoz = async (talep, karar, gerekce) => {
+      if (uyMesgul) return;
+      const g = String(gerekce || '').trim();
+      if (g.length < 3) { onToast?.('Gerekçe zorunlu — uyuşmazlık sessizce kapanmaz.'); return; }
+      if (karar !== 'kapat' && karar !== 'yeniden_ac') { onToast?.('Önce bir karar seçin'); return; }
+      setUyMesgul(true);
+      try {
+        await api(`/ops/siparis/${encodeURIComponent(talep.id)}/kabul-uyusmazligi-coz`, {
+          method: 'POST', body: { karar, gerekce: g },
+        });
+        onToast?.(karar === 'kapat'
+          ? '✓ Uyuşmazlık kapatıldı — talep teslim edildi sayıldı'
+          : '✓ Talep kuyruğa döndü — Sipariş Akışı ▸ bekliyor');
+        setUyModal(null);
+        arsivYukle(arsivGun, arsivDurum, arsivArama);
+      } catch (e) {
+        onToast?.(e?.message || 'Uyuşmazlık çözülemedi');
+      } finally { setUyMesgul(false); }
+    };
     return (
       <>
         <KpiSeridi kpiler={[
@@ -5619,7 +5647,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                   { v: String(sayi(t.kalem_adet_toplam)), mono: true, sag: true, kalin: true },
                   t.durum === 'gonderilmedi'
                     ? { v: arsivMesgul === String(t.id) ? '…' : '↩ kuyruğa al', renk: R.bakirAcik }
-                    : { v: '', renk: R.not3 },
+                    : t.durum === 'kabul_uyusmazlik'
+                      ? { v: '🔓 çöz', renk: R.amber }
+                      : { v: '', renk: R.not3 },
                 ],
               };
             })}
@@ -5652,9 +5682,18 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                 ],
                 not: _t.durum === 'gonderilmedi'
                   ? 'Bu sipariş GÖNDERİLMEDİ olarak kapanmış. "Kuyruğa al" onu Sipariş Akışı\'nın bekliyor kolonuna geri döndürür — yeni kayıt açmaz.'
-                  : 'Arşiv salt-okurdur. Açık işler Sipariş Akışı kanbanında yönetilir.',
+                  : _t.durum === 'kabul_uyusmazlik'
+                    ? 'Şube "eksik/fazla geldi" dediği için bu talep KİLİTLİ. Kilitte kalan talep hiçbir listede iş olarak görünmez ve kendiliğinden çözülmez — kararı siz verirsiniz.'
+                    : 'Arşiv salt-okurdur. Açık işler Sipariş Akışı kanbanında yönetilir.',
                 ...(_t.durum === 'gonderilmedi' ? {
                   aksiyonlar: [{ ad: '↩ Kuyruğa geri al', birincil: true, onTikla: () => yenidenAc(_t) }],
+                } : {}),
+                ...(_t.durum === 'kabul_uyusmazlik' ? {
+                  aksiyonlar: [{
+                    ad: '🔓 Uyuşmazlığı çöz',
+                    birincil: true,
+                    onTikla: () => setUyModal({ talep: _t, karar: '', gerekce: '' }),
+                  }],
                 } : {}),
               });
             }}
@@ -5698,6 +5737,94 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             })}
           />
         ) : <BosDurum metin="Bu dönemde yazılmış sevkiyat raporu yok." />)}
+
+        {/* ═══ KABUL UYUŞMAZLIĞI — KİLİDİ AÇAN TEK EKRAN ═══════════════════
+            İki çıkış da GEREKÇELİ. Gerekçe siparişin notuna damgalanır ve
+            audit defterine yazılır; sonradan "neden kapatılmış" sorusunun
+            cevabı kayıtta durur. */}
+        {uyModal && (() => {
+          const t = uyModal.talep || {};
+          const dr = AR_DURUM[t.durum] || { ad: t.durum || '—', renk: R.not };
+          const kilit = uyMesgul;
+          const secim = (deger, baslik, aciklama) => {
+            const secili = uyModal.karar === deger;
+            return (
+              <button type="button" disabled={kilit}
+                onClick={() => setUyModal((p) => ({ ...p, karar: deger }))}
+                style={{
+                  display: 'block', width: '100%', textAlign: 'left', marginBottom: 10,
+                  padding: '12px 14px', borderRadius: 11, cursor: kilit ? 'default' : 'pointer',
+                  fontFamily: 'inherit', color: R.metin2,
+                  border: `1px solid ${secili ? R.bakir : R.cizgi3}`,
+                  background: secili ? 'rgba(217,154,78,.12)' : 'transparent',
+                }}>
+                <div style={{ fontSize: 13, fontWeight: 600, color: secili ? R.bakir : R.metin }}>{baslik}</div>
+                <div style={{ fontSize: 11.5, color: R.not2, marginTop: 3, lineHeight: 1.55 }}>{aciklama}</div>
+              </button>
+            );
+          };
+          return (
+            <div onClick={(e) => { if (e.target === e.currentTarget && !kilit) setUyModal(null); }} style={{
+              position: 'fixed', inset: 0, zIndex: 120, background: 'rgba(10,6,2,.7)',
+              backdropFilter: 'blur(4px)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 20,
+            }}>
+              <div style={{
+                ...kartYuzey, width: 500, maxWidth: '96vw', maxHeight: '90vh',
+                overflowY: 'auto', padding: '24px 26px',
+              }}>
+                <div style={{ display: 'flex', alignItems: 'baseline', gap: 12, marginBottom: 6 }}>
+                  <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>Kabul uyuşmazlığını çöz</div>
+                  <button onClick={() => !kilit && setUyModal(null)} style={{
+                    marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not,
+                    fontSize: 16, cursor: 'pointer', fontFamily: 'inherit',
+                  }}>x</button>
+                </div>
+                <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 4 }}>
+                  <b>{t.sube_adi || 'Şube'}</b> · {tarihKisa(t.tarih)} ·
+                  {' '}<span style={{ color: dr.renk }}>{dr.ad}</span>
+                </div>
+                <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 16, lineHeight: 1.6 }}>
+                  {(t.kalemler || []).length} kalem · {sayi(t.kalem_adet_toplam)} adet.
+                  Şube teslim alırken saydığı adet gönderilenle tutmadı ve talep kilitlendi.
+                </div>
+
+                {secim('kapat', '✓ Eksik kabul edildi — işi kapat',
+                  'Gelen kadarıyla yetinildi. Talep "teslim edildi" olur ve kuyruktan düşer. Kalan için yeni sipariş açılmaz.')}
+                {secim('yeniden_ac', '↩ Kalan sonra gelecek — kuyruğa döndür',
+                  'Talep "bekliyor"a döner ve kalan kalemler yeniden gönderilebilir. Hâlâ YOLDA olan parti varsa o yine engeller (mal iki kez gelmesin).')}
+
+                <label style={opsEtiket}>Gerekçe (zorunlu)</label>
+                <textarea value={uyModal.gerekce} disabled={kilit}
+                  placeholder="Örn: sayım koli/adet karışıklığıymış, fiili eksik yok"
+                  onChange={(e) => setUyModal((p) => ({ ...p, gerekce: e.target.value }))}
+                  style={{ ...opsAlanStil, minHeight: 72, resize: 'vertical' }} />
+                <div style={{ fontSize: 11, color: R.not2, marginTop: -6, marginBottom: 14, lineHeight: 1.55 }}>
+                  Gerekçe siparişin notuna damgalanır ve audit defterine yazılır.
+                  <b style={{ color: R.metin2 }}> Stoğa dokunmaz</b> — mal hareketi kabul anında zaten yazılmıştı.
+                </div>
+
+                <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                  <button type="button" disabled={kilit} onClick={() => setUyModal(null)} style={{
+                    padding: '9px 16px', borderRadius: 10, cursor: kilit ? 'default' : 'pointer',
+                    fontFamily: 'inherit', border: `1px solid ${R.cizgi3}`,
+                    background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600,
+                  }}>Vazgeç</button>
+                  <button type="button"
+                    disabled={kilit || !uyModal.karar || String(uyModal.gerekce || '').trim().length < 3}
+                    onClick={() => uyusmazlikCoz(uyModal.talep, uyModal.karar, uyModal.gerekce)}
+                    style={{
+                      padding: '9px 18px', borderRadius: 10, fontFamily: 'inherit',
+                      fontSize: 12, fontWeight: 700, border: 'none', color: '#1a1006',
+                      background: (!uyModal.karar || String(uyModal.gerekce || '').trim().length < 3)
+                        ? R.cizgi3 : R.bakir,
+                      cursor: (kilit || !uyModal.karar || String(uyModal.gerekce || '').trim().length < 3)
+                        ? 'default' : 'pointer',
+                    }}>{kilit ? '…' : 'Uygula'}</button>
+                </div>
+              </div>
+            </div>
+          );
+        })()}
       </>
     );
   }

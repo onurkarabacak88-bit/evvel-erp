@@ -14615,6 +14615,13 @@ def ops_siparis_gecmis(
         "teslim_edildi",
         "iptal",
         "gonderilmedi",
+        # 🔓 2026-09-14: ekranın KENDİ ürettiği filtre çipi burada yoktu.
+        # Arşiv ekranı durum çiplerini `AR_DURUM` sözlüğünden üretiyor ve o
+        # sözlükte `kabul_uyusmazlik` VAR; çipe basan kullanıcı 400 alıyordu.
+        # "Tümü"de satırlar görünüyordu (durum parametresi gitmediği için),
+        # yani kusur yalnız SÜZMEK isteyeni vuruyordu — tam da kilitli
+        # siparişleri arayan kişiyi.
+        "kabul_uyusmazlik",
     }
     # ⚠️ 2026-09-01 zincir denetimi (D-4): geçersiz `durum` sessizce None
     # yapılıyordu — filtre uygulanmadığı hâlde kullanıcı doğru durumu
