@@ -11648,15 +11648,24 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
         else:
             # Tarih belirtilmemişse — sadece bu kaydı güncelle
             tip_guncelle = g.tip or eski.get('tip') or 'sabit'
+            # ⚠️ COALESCE: gönderilmeyen alan SİLİNMEZ, eskisi korunur.
+            # 2026-09-14'te `baslangic_tarihi` gönderilmediği için NULL'landı —
+            # kaydın ne zaman başladığı kayboldu. Bir güncelleme, dokunulmayan
+            # alanı YOK ETMEMELİ; kısmi düzenleme normal bir iştir.
             cur.execute("""UPDATE sabit_giderler SET gider_adi=%s,kategori=%s,tutar=%s,
-                tip=%s,periyot=%s,odeme_gunu=%s,baslangic_tarihi=%s,sube_id=%s,
+                tip=%s,periyot=%s,odeme_gunu=%s,
+                baslangic_tarihi=COALESCE(%s, baslangic_tarihi),sube_id=%s,
                 odeme_yontemi=%s,kart_id=%s,stopaj_oran=%s,
-                kdv_oran=COALESCE(%s, kdv_oran) WHERE id=%s""",
+                kdv_oran=COALESCE(%s, kdv_oran),
+                sozlesme_sure_ay=COALESCE(%s, sozlesme_sure_ay),
+                sozlesme_bitis_tarihi=COALESCE(%s, sozlesme_bitis_tarihi)
+                WHERE id=%s""",
                 (gider_adi, kategori, g.tutar, tip_guncelle, periyot, odeme_gunu,
                  g.baslangic_tarihi, sube_id, odeme_yontemi, kart_id or None,
                  max(0.0, min(1.0, float(g.stopaj_oran or 0))),
                  (None if g.kdv_oran is None
-                  else max(0.0, min(1.0, float(g.kdv_oran)))), gid))
+                  else max(0.0, min(1.0, float(g.kdv_oran)))),
+                 g.sozlesme_sure_ay, g.sozlesme_bitis_tarihi, gid))
             # 🔴 P1 (2026-08-13, EVV-YUK / Codex): tutar yerinde güncellenince
             # BEKLEYEN onay satırının tutarı eski kalıyordu — 1.000₺ açılıp 1.500₺'ye
             # düzeltilen gider onaylanınca kasa 1.000 düşüyor, kayıt 1.500 görünüyordu.
