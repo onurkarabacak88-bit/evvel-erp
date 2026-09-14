@@ -3656,6 +3656,11 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
         _rez_dus = min(sevk_adet, max(0, _kalan_tahsis))
         if _tahsis_sira is not None:
             _tahsis_kalan[_tahsis_sira] = max(0, _kalan_tahsis - _rez_dus)
+        # 👻 "Sevk anında bulunan stok" (2026-09-14). Kaynakta defter yetmezse
+        # aradaki fark burada birikir ve AŞAĞIDA kendi defter satırını alır.
+        # ⚠️ KOŞULSUZ tanım: `_hayalet` yalnız bir dalda doğuyor ama defter
+        # yazımı o dalın dışında — koşullu tanım kapısı burada 500 üretirdi.
+        _bulunan = 0
         if kaynak_depo:
             urun_id_item = str(item.get("urun_id") or "").strip()
             # P1 tespiti — sevk öncesi kaynak stoğu oku. Sevke ENGEL OLMAZ (kullanıcı
@@ -3774,6 +3779,8 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                 # depo sayımı düzeltilsin.
                 if _mevcut_before is not None and _mevcut_before < sevk_adet:
                     _hayalet = sevk_adet - _mevcut_before
+                    # Defter bu farkı "sevk anında bulundu" diye YAZACAK.
+                    _bulunan = _hayalet
                     logger.warning(
                         "sevk_cikti_kaydet: kaynak stok yetersiz — HAYALET STOK %s adet! "
                         "siparis=%s depo=%s kalem=%s mevcut=%s sevk=%s",
@@ -3882,6 +3889,47 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
             _iz_kod = dusulecek_kod if kaynak_depo else kalem_kodu
             _once = (float(_mevcut_before)
                      if (kaynak_depo and _mevcut_before is not None) else None)
+            # ═══════════════════════════════════════════════════════════════
+            # 👻 BULUNAN STOK SATIRI — defter artık yalan söylemiyor
+            # ═══════════════════════════════════════════════════════════════
+            # Eskiden tek satır yazılıyordu: `miktar=-12, onceki=0, sonraki=0`.
+            # Bu satır kendi aritmetiğini yalanlıyor (0-0 ≠ 12) ve farkı GÖRÜNMEZ
+            # kılıyordu: 90 günde 509 adet böyle kayboldu, kimse fark etmedi.
+            # Artık hikâye iki satırda ve tutarlı anlatılıyor:
+            #     0 --(+12 sevk anında bulundu)--> 12 --(-12 sevk)--> 0
+            # ⚠️ `sube_depo_stok` DEĞİŞMİYOR — sonuç yine 0. Yalnız defter dürüst.
+            # Bu satır aynı zamanda İŞ SİNYALİ: "şu girişin kaydı düşmemiş".
+            if _bulunan > 0 and _once is not None:
+                try:
+                    cur.execute("SAVEPOINT sp_sevk_bulunan")
+                    cur.execute(
+                        """
+                        INSERT INTO sube_depo_stok_hareket
+                            (id, sube_id, kalem_kodu, kalem_adi, hareket_turu,
+                             miktar, onceki_miktar, sonraki_miktar,
+                             kaynak_tip, kaynak_id, aciklama)
+                        VALUES (%s, %s, %s, %s, 'SAYIM_DUZELTME', %s, %s, %s,
+                                'sevk_bulunan', %s, %s)
+                        """,
+                        (str(uuid.uuid4()), (kaynak_depo or "MERKEZ"), _iz_kod,
+                         kalem_adi, float(_bulunan), _once, _once + float(_bulunan),
+                         yid,
+                         (f"Sevk anında bulundu — {kalem_adi} x{_bulunan}: defterde "
+                          f"{int(_once)} görünüyordu, {sevk_adet} gönderildi. "
+                          "Aradaki fark depo girişinin kaydedilmediğini gösterir.")),
+                    )
+                    cur.execute("RELEASE SAVEPOINT sp_sevk_bulunan")
+                except Exception:  # noqa: BLE001
+                    # Defter satırı yazılamazsa sevk DURMAZ; yalnız fark eski
+                    # hâlindeki gibi görünmez kalır.
+                    try:
+                        cur.execute("ROLLBACK TO SAVEPOINT sp_sevk_bulunan")
+                    except Exception:
+                        pass
+                    _bulunan = 0
+            # SEVK_CIKIS artık DÜZELTİLMİŞ bakiyeden düşer → satır kendi içinde
+            # tutar: (sonraki - onceki) == miktar.
+            _cikis_once = (_once + float(_bulunan)) if _once is not None else None
             cur.execute(
                 """
                 INSERT INTO sube_depo_stok_hareket
@@ -3891,8 +3939,8 @@ def sevk_cikti_kaydet(cur: Any, siparis_talep_id: str,
                 VALUES (%s, %s, %s, %s, 'SEVK_CIKIS', %s, %s, %s, 'sevkiyat', %s, %s)
                 """,
                 (str(uuid.uuid4()), (kaynak_depo or "MERKEZ"), _iz_kod, kalem_adi,
-                 -float(sevk_adet), _once,
-                 (max(0.0, _once - sevk_adet) if _once is not None else None),
+                 -float(sevk_adet), _cikis_once,
+                 (max(0.0, _cikis_once - sevk_adet) if _cikis_once is not None else None),
                  yid, f"Sevk çıkışı — {kalem_adi} x{sevk_adet} yola çıktı"),
             )
             cur.execute("RELEASE SAVEPOINT sp_sevk_cikis_iz")
