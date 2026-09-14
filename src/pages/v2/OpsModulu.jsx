@@ -6887,10 +6887,27 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       mono: true, renk: R.not2,
                     };
                   }
+                  // ⚠️ ALAN ADI TUZAĞI (2026-09-14): sevk tarafı (HAYALET_STOK)
+                  // AYNI bilgiyi BAŞKA adlarla yazıyor — `mevcut_before` /
+                  // `sevk_adet`. Yalnız ürün-aç adlarını okusaydım sevk
+                  // satırları "—" görünürdü: kanıtı olan bir kaydı kanıtsız
+                  // göstermek, okuyanı "burada bir şey yok" sanmaya iter.
+                  if (d.mevcut_before != null || d.sevk_adet != null) {
+                    return {
+                      v: `depoda ${sayi(d.mevcut_before)} · sevk ${sayi(d.sevk_adet)}`,
+                      mono: true, renk: R.not2,
+                    };
+                  }
                   return { v: '—', renk: R.not3 };
                 })(),
                 (() => {
-                  const f = x.efektif_fark_tl != null ? x.efektif_fark_tl : x.fark_tl;
+                  const _d2 = x.detay_json || {};
+                  // Sevk/fire tipinde `fark_tl` YOK; büyüklük detayda duruyor.
+                  // Okumazsam "ölçülemedi" derdim — oysa ölçü var.
+                  const f = x.efektif_fark_tl != null ? x.efektif_fark_tl
+                    : (x.fark_tl != null ? x.fark_tl
+                      : (_d2.hayalet_adet != null ? _d2.hayalet_adet
+                        : (_d2.eksik_miktar != null ? _d2.eksik_miktar : null)));
                   if (f == null) return { v: 'ölçülemedi', sag: true, renk: R.not3 };
                   const n = sayi(f);
                   return {

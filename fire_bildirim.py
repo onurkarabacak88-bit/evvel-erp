@@ -292,6 +292,49 @@ def _fire_stok_hareket_yaz(
                                   bilgi=_bilgi)
     onceki = float(onceki) + float(_bilgi.get("bulunan") or 0)
     sonraki = _stok_onceki_adet(cur, sube_id, kalem_kodu)
+    # ══════════════════════════════════════════════════════════════════════
+    # 🔭 FIRE "BULUNDU" SİNYALİ GÖRÜNÜR OLSUN (2026-09-14)
+    # ══════════════════════════════════════════════════════════════════════
+    # Fire anında defter yetmezse fark deftere `SAYIM_DUZELTME` olarak
+    # yazılıyor ama `sube_operasyon_uyari`ye HİÇBİR kayıt düşmüyordu →
+    # sinyal hiçbir ekranda görünmüyordu (sevk tarafında `HAYALET_STOK`
+    # vardı, fire'da o da yoktu). Artık `FIRE_BULUNAN` tipiyle yazılıyor ve
+    # Denetim ▸ Uyumsuz listesinde çıkıyor.
+    # ⚠️ HATA-YUTAR + SAVEPOINT: fire bildirimi hiçbir koşulda bozulamaz.
+    _bul = int(_bilgi.get("bulunan") or 0)
+    if _bul > 0:
+        try:
+            cur.execute("SAVEPOINT sp_fire_bulunan_uyari")
+            cur.execute(
+                """
+                INSERT INTO sube_operasyon_uyari
+                    (id, sube_id, tarih, tip, seviye, mesaj, kalem_kodu, detay)
+                VALUES (%s, %s, CURRENT_DATE, 'FIRE_BULUNAN', 'uyari', %s, %s, %s::jsonb)
+                """,
+                (
+                    str(uuid.uuid4()), sube_id,
+                    (f"Defter eksigi (fire): {(kalem_adi or kalem_kodu)} — defterde "
+                     f"{int(float(onceki) - _bul)} gorunurken {adet} fire bildirildi. "
+                     f"Aradaki {_bul} adet bulundu sayildi; depo giris kaydi dusmemis olabilir."),
+                    kalem_kodu,
+                    json.dumps({
+                        "kalem_kodu": kalem_kodu,
+                        "kalem_adi": kalem_adi,
+                        "eksik_miktar": _bul,
+                        "mevcut_oncesi": int(float(onceki) - _bul),
+                        "istenen": int(adet),
+                        "doktrin": "bulundu",
+                        "kaynak": "fire_bildirim",
+                        "bildirim_id": bildirim_id,
+                    }, ensure_ascii=False),
+                ),
+            )
+            cur.execute("RELEASE SAVEPOINT sp_fire_bulunan_uyari")
+        except Exception:  # noqa: BLE001
+            try:
+                cur.execute("ROLLBACK TO SAVEPOINT sp_fire_bulunan_uyari")
+            except Exception:  # noqa: BLE001
+                pass
     cur.execute(
         """
         INSERT INTO sube_depo_stok_hareket

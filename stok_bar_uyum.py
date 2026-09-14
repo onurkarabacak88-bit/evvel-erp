@@ -39,7 +39,12 @@ GUN_ICI_DENETIM_KEYS = frozenset({
     "pasta_adet",
 })
 
-STOK_UYUM_TIPS = ("STOK_BAR_DEVIR_FARK", "STOK_BAR_GUN_ICI_FARK", "URUN_AC_UYUMSUZLUK")
+# 🔭 2026-09-14: `HAYALET_STOK` (sevk anında defter yetmedi) ve
+# `FIRE_BULUNAN` (fire anında yetmedi) buraya EKLENDİ. İkisi de
+# `sube_operasyon_uyari`ye yazılıyordu ama liste sorgusu bu tipleri
+# almadığı için HİÇBİR EKRANDA görünmüyorlardı (509 + 18 adet).
+STOK_UYUM_TIPS = ("STOK_BAR_DEVIR_FARK", "STOK_BAR_GUN_ICI_FARK",
+                  "URUN_AC_UYUMSUZLUK", "HAYALET_STOK", "FIRE_BULUNAN")
 
 
 def _bar_stok_from_meta(meta_raw: Any, alan: str) -> Dict[str, int]:
@@ -458,11 +463,13 @@ def build_stok_uyum_liste(
                u.acilis_personel_ad, u.kapanis_personel_ad
         FROM sube_operasyon_uyari u
         LEFT JOIN subeler s ON s.id = u.sube_id
-        WHERE u.tip IN ('STOK_BAR_DEVIR_FARK', 'STOK_BAR_GUN_ICI_FARK', 'URUN_AC_UYUMSUZLUK')
+        WHERE u.tip IN ('STOK_BAR_DEVIR_FARK', 'STOK_BAR_GUN_ICI_FARK',
+                        'URUN_AC_UYUMSUZLUK', 'HAYALET_STOK', 'FIRE_BULUNAN')
           AND (
                 u.tarih = %s
-                -- Pencere yalnız ürün-aç için geriye açılır (bkz. docstring)
-                OR (u.tip = 'URUN_AC_UYUMSUZLUK'
+                -- Pencere yalnız "defter yetmedi" tipleri için geriye açılır;
+                -- bar sayım farkları o günün açılış/kapanışına bağlı kalır.
+                OR (u.tip IN ('URUN_AC_UYUMSUZLUK', 'HAYALET_STOK', 'FIRE_BULUNAN')
                     AND u.tarih >= %s AND u.tarih < %s)
               )
         ORDER BY u.okundu ASC, u.tarih DESC,
@@ -752,7 +759,8 @@ def stok_uyum_kaynak_duzelt(
         """
         SELECT id, sube_id::text, tarih::text, tip, fark_tl, kalem_kodu, detay_json, okundu
         FROM sube_operasyon_uyari
-        WHERE id=%s AND tip IN ('STOK_BAR_DEVIR_FARK', 'STOK_BAR_GUN_ICI_FARK', 'URUN_AC_UYUMSUZLUK')
+        WHERE id=%s AND tip IN ('STOK_BAR_DEVIR_FARK', 'STOK_BAR_GUN_ICI_FARK',
+                                'URUN_AC_UYUMSUZLUK', 'HAYALET_STOK', 'FIRE_BULUNAN')
         FOR UPDATE
         """,
         (uyari_id,),
@@ -882,7 +890,8 @@ def stok_uyum_coz(cur: Any, uyari_id: str, notu: Optional[str], duzeltilen: Opti
         """
         SELECT id, sube_id::text, fark_tl, okundu
         FROM sube_operasyon_uyari
-        WHERE id=%s AND tip IN ('STOK_BAR_DEVIR_FARK', 'STOK_BAR_GUN_ICI_FARK', 'URUN_AC_UYUMSUZLUK')
+        WHERE id=%s AND tip IN ('STOK_BAR_DEVIR_FARK', 'STOK_BAR_GUN_ICI_FARK',
+                                'URUN_AC_UYUMSUZLUK', 'HAYALET_STOK', 'FIRE_BULUNAN')
         FOR UPDATE
         """,
         (uyari_id,),
