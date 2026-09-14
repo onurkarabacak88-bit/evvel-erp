@@ -11491,6 +11491,10 @@ class SabitGider(BaseModel):
     odeme_yontemi: str = 'nakit'
     kart_id: Optional[str] = None  # Kart talimatı için
     stopaj_oran: float = 0         # kira stopajı: şahıstan işyeri kirasında 0.20; 0=stopajsız
+    # 🧾 KDV oranı (2026-09-14): model bu alanı taşımıyordu; güncellemede
+    # yeni kayıt varsayılanla (0) açılıyor ve KDV beyanı EKSİK çıkıyordu.
+    # None = dokunma (eskiyi koru) — 0.0 ise KDV'siz demektir, ayrı anlam.
+    kdv_oran: Optional[float] = None
 
 KIRA_ARTIS_PERIYOT_MAP = {"6ay": 6, "1yil": 12, "2yil": 24, "5yil": 60}
 
@@ -11610,19 +11614,31 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
                     and g.kira_artis_periyot and g.kira_artis_periyot in KIRA_ARTIS_PERIYOT_MAP):
                 kira_artis_tarihi_g = ay_ekle(g.gecerlilik_tarihi,
                                               KIRA_ARTIS_PERIYOT_MAP[g.kira_artis_periyot])
-            sozlesme_bitis = None
-            if g.gecerlilik_tarihi and g.sozlesme_sure_ay:
+            # 🔴 2026-09-14: burada sözleşme bitişi HER GÜNCELLEMEDE
+            # `gecerlilik + sure_ay` ile SIFIRDAN hesaplanıyordu. Kira artışı
+            # sözleşmeyi UZATMAZ — tema kirasında bitiş 2029-01-15'ten
+            # 2029-06-01'e kaydı. Doğru sıra: (1) çağıran açıkça verdiyse onu
+            # kullan, (2) eski kayıtta varsa KORU, (3) ikisi de yoksa türet.
+            sozlesme_bitis = (g.sozlesme_bitis_tarihi
+                              or eski.get('sozlesme_bitis_tarihi'))
+            if sozlesme_bitis is None and g.gecerlilik_tarihi and g.sozlesme_sure_ay:
                 sozlesme_bitis = ay_ekle(g.gecerlilik_tarihi, g.sozlesme_sure_ay)
+            # 🧾 KDV oranı da sözleşmenin özelliğidir — taşınır.
+            kdv_oran_g = (g.kdv_oran if g.kdv_oran is not None
+                          else (eski.get('kdv_oran') if eski.get('kdv_oran') is not None else 0.0))
             tip = g.tip or eski.get('tip') or 'sabit'
             cur.execute("""INSERT INTO sabit_giderler
                 (id,gider_adi,kategori,tutar,tip,periyot,odeme_gunu,baslangic_tarihi,sube_id,
                  sozlesme_sure_ay,kira_artis_periyot,kira_artis_tarihi,sozlesme_bitis_tarihi,
-                 odeme_yontemi,kart_id,stopaj_oran)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                 odeme_yontemi,kart_id,stopaj_oran,kdv_oran)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (yeni_id, gider_adi, kategori, g.tutar, tip, periyot,
                  odeme_gunu, g.gecerlilik_tarihi, sube_id,
-                 g.sozlesme_sure_ay, g.kira_artis_periyot, kira_artis_tarihi_g, sozlesme_bitis,
-                 odeme_yontemi, kart_id or None, max(0.0, min(1.0, float(g.stopaj_oran or 0)))))
+                 g.sozlesme_sure_ay or eski.get('sozlesme_sure_ay'),
+                 g.kira_artis_periyot, kira_artis_tarihi_g, sozlesme_bitis,
+                 odeme_yontemi, kart_id or None,
+                 max(0.0, min(1.0, float(g.stopaj_oran or 0))),
+                 max(0.0, min(1.0, float(kdv_oran_g or 0)))))
             # KRİTİK 3: degisken gider onay kuyruğuna girmesin
             if tip == 'sabit' and odeme_yontemi != 'kart':
                 onay_ekle(cur, 'SABIT_GIDER', 'sabit_giderler', yeni_id,
@@ -11634,10 +11650,13 @@ def sabit_gider_guncelle(gid: str, g: SabitGider):
             tip_guncelle = g.tip or eski.get('tip') or 'sabit'
             cur.execute("""UPDATE sabit_giderler SET gider_adi=%s,kategori=%s,tutar=%s,
                 tip=%s,periyot=%s,odeme_gunu=%s,baslangic_tarihi=%s,sube_id=%s,
-                odeme_yontemi=%s,kart_id=%s,stopaj_oran=%s WHERE id=%s""",
+                odeme_yontemi=%s,kart_id=%s,stopaj_oran=%s,
+                kdv_oran=COALESCE(%s, kdv_oran) WHERE id=%s""",
                 (gider_adi, kategori, g.tutar, tip_guncelle, periyot, odeme_gunu,
                  g.baslangic_tarihi, sube_id, odeme_yontemi, kart_id or None,
-                 max(0.0, min(1.0, float(g.stopaj_oran or 0))), gid))
+                 max(0.0, min(1.0, float(g.stopaj_oran or 0))),
+                 (None if g.kdv_oran is None
+                  else max(0.0, min(1.0, float(g.kdv_oran)))), gid))
             # 🔴 P1 (2026-08-13, EVV-YUK / Codex): tutar yerinde güncellenince
             # BEKLEYEN onay satırının tutarı eski kalıyordu — 1.000₺ açılıp 1.500₺'ye
             # düzeltilen gider onaylanınca kasa 1.000 düşüyor, kayıt 1.500 görünüyordu.
