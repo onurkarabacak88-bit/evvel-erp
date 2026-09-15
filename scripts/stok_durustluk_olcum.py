@@ -43,14 +43,42 @@ def g(yol, t=180):
     return json.loads(urllib.request.urlopen(r, timeout=t).read().decode("utf-8"))
 
 
-def hareketler():
-    d = g("/ops/stok-hareketleri?gun=%d&limit=1000" % GUN)
-    sat = d.get("hareketler") or d.get("satirlar") or []
-    if not sat and isinstance(d, dict):
+LIMIT = 2000   # ucun tavani
+
+
+def _liste(d):
+    s = d.get("hareketler") or d.get("satirlar") or []
+    if not s and isinstance(d, dict):
         for v in d.values():
             if isinstance(v, list) and v:
                 return v
+    return s
+
+
+def hareketler():
+    """⚠️ KESİLME KAPISI (2026-09-14, canlı hata): bu uç `limit` ile kesiyor ve
+    KESTİĞİNİ SÖYLEMİYOR. `gun=90&limit=1000` istedim, 1000 satır döndü ve ben
+    90 günü ölçtüğümü sandım — oysa veri yalnız 26 güne iniyordu. Sonuç:
+    "Redbull girişi 90 gündür HİÇ kaydedilmemiş" diye rapor ettim; gerçekte
+    10 Temmuz'da +384'lük bir teslim girişi VARDI, penceremin dışındaydı.
+    Sahip düzeltti. Artık kesilme tespit edilir ve AÇIKÇA söylenir."""
+    d = g("/ops/stok-hareketleri?gun=%d&limit=%d" % (GUN, LIMIT))
+    sat = _liste(d)
+    global KESILDI
+    KESILDI = len(sat) >= LIMIT
+    if KESILDI:
+        _z = [str(x.get("zaman"))[:10] for x in sat if x.get("zaman")]
+        print("")
+        print("🔴 VERİ KESİLDİ — %d satır tavana dayandı." % len(sat))
+        print("   İstenen pencere %d gün ama eldeki veri yalnız %s tarihine iniyor."
+              % (GUN, min(_z) if _z else "?"))
+        print("   Genel oranlar BU DAR pencereye aittir; 3. bölüm kalem bazında")
+        print("   KESİNTİSİZ ölçüldüğü için ondan etkilenmez.")
+        print("")
     return sat
+
+
+KESILDI = False
 
 
 def bas(t):
@@ -138,34 +166,59 @@ for k, n in bul.most_common():
 
 # ── 3) KÖK NEDEN: girişi hiç kaydedilmemiş kalemler ───────────────────
 bas("KÖK NEDEN — girişi HİÇ kaydedilmemiş ama çıkışı olan kalemler")
-ix = collections.defaultdict(lambda: {"gir": 0.0, "cik": 0.0, "k": 0.0})
+# ⚠️ Bu bölüm KALEM BAZINDA sorgulanır (uç `kalem_kodu` süzgeci kabul ediyor).
+# Sebep: genel sorgu `limit` ile kesiliyor ve bir kalemin ESKİ girişini
+# pencere dışında bırakabiliyor — "hiç giriş yok" diye YANLIŞ rapor doğar.
+# Canlı hata (2026-09-14): Redbull'un 10 Temmuz'daki +384 teslim girişi
+# kesik pencerenin dışında kalmıştı; "hiç kaydedilmemiş" dedim, yanlıştı.
+import urllib.parse as _up  # noqa: E402
+
+adaylar = {}
 for x in sat:
-    key = (str(x.get("sube_id")), str(x.get("kalem_adi") or x.get("kalem_kodu")))
+    if kars(x):
+        adaylar[(str(x.get("sube_id")), str(x.get("kalem_kodu")))] = str(x.get("kalem_adi") or "")
+print("karşılıksız üreten %d (şube,kalem) çifti — her biri 365 günle, KESİNTİSİZ sorgulanıyor…"
+      % len(adaylar))
+rows = []
+for (sb, kod), kad in adaylar.items():
     try:
-        m = float(x.get("miktar") or 0)
-    except (TypeError, ValueError):
+        li = _liste(g("/ops/stok-hareketleri?gun=365&sube_id=%s&kalem_kodu=%s&limit=%d"
+                      % (_up.quote(sb), _up.quote(kod), LIMIT)))
+    except Exception:  # noqa: BLE001
         continue
-    r = ix[key]
-    if m > 0:
-        r["gir"] += m
-    else:
-        r["cik"] += abs(m)
-    r["k"] += kars(x)
-kotu = sorted([(k, v) for k, v in ix.items() if v["gir"] == 0 and v["cik"] > 0 and v["k"] > 0],
-              key=lambda z: -z[1]["k"])
-print("%-11s %-24s %8s %11s" % ("ŞUBE", "KALEM", "ÇIKIŞ", "KARŞILIKSIZ"))
-print("-" * 60)
-for (sb, kad), v in kotu[:15]:
-    print("%-11s %-24s %8g %11g" % (sb[:11], kad[:24], v["cik"], v["k"]))
-print("-" * 60)
-print("%-36s %8g %11g" % ("TOPLAM (%d kalem)" % len(kotu),
-      sum(v["cik"] for _, v in kotu), sum(v["k"] for _, v in kotu)))
-sb_c = collections.Counter(sb for (sb, _), _ in kotu)
-print("şube dağılımı: %s" % dict(sb_c))
+    gir = cik = 0.0
+    songir = "-"
+    for y in li:
+        try:
+            m = float(y.get("miktar") or 0)
+        except (TypeError, ValueError):
+            continue
+        if m > 0:
+            gir += m
+            z = str(y.get("zaman"))[:10]
+            if z > songir:
+                songir = z
+        else:
+            cik += abs(m)
+    rows.append((sb, kad or kod, gir, cik, cik - gir, songir))
+rows.sort(key=lambda r: -r[4])
 print()
-print("▸ Bu liste ASIL İŞTİR: mal fiziken geliyor, deftere HİÇ yazılmıyor.")
-print("  'Yanlış rakam girilmiş' değil — 'hiç girilmemiş'. Kalem sayısı")
-print("  azalmıyorsa düzeltme çalışıyor ama KAYIT DİSİPLİNİ değişmemiş demektir.")
+print("%-11s %-22s %9s %9s %9s %s" % ("ŞUBE", "KALEM", "GİRİŞ", "ÇIKIŞ", "AÇIK", "SON GİRİŞ"))
+print("-" * 78)
+for sb, kad, gir, cik, ack, songir in rows[:15]:
+    print("%-11s %-22s %9g %9g %9g %s" % (sb[:11], kad[:22], gir, cik, ack, songir))
+print("-" * 78)
+hic = [r for r in rows if r[2] == 0]
+print("%-34s %9g %9g %9g" % ("TOPLAM (%d kalem)" % len(rows),
+      sum(r[2] for r in rows), sum(r[3] for r in rows), sum(r[4] for r in rows)))
+print()
+print("  girişi GERÇEKTEN hiç olmayan : %d kalem" % len(hic))
+print("  girişi var ama YETMEYEN      : %d kalem" % len([r for r in rows if r[2] > 0 and r[4] > 0]))
+print()
+print("▸ AÇIK = çıkış − giriş. Pozitifse deftere girenden ÇOK çıkmış.")
+print("  ⚠️ 'Giriş hiç yok' ile 'giriş var ama DURMUŞ' AYRI sorunlardır:")
+print("     birincisi kayıt hiç açılmamış, ikincisi kayıt bir süre sonra bırakılmış.")
+print("     SON GİRİŞ sütunu bunu söyler — eski tarihse akış kesilmiş demektir.")
 
 # ── 4) AÇIK SİNYAL SAYISI ─────────────────────────────────────────────
 bas("AÇIK SİNYAL — ekranda iş olarak bekleyen")
