@@ -10828,6 +10828,21 @@ def _toptanci_siparis_wa_mesaj(
     return bas
 
 
+def _wa_me_link(tel, mesaj: str):
+    """B PLANI köprüsü (2026-09-17): sistem hattı gönderemezse mesaj sahibin KENDİ
+    telefonundan gitsin — wa.me linki (Cep'teki waGonder deseninin aynısı).
+    Numara çözülemezse None."""
+    try:
+        from urllib.parse import quote
+        from whatsapp_bildirim import wa_chatid_normalize
+        chat = wa_chatid_normalize(tel or "")
+        if not chat:
+            return None
+        return f"https://wa.me/{chat.split('@')[0]}?text={quote(mesaj or '')}"
+    except Exception:
+        return None
+
+
 def _kanonik_urun_id(cur, kalem_kodu, urun_ad):
     """V2 — kaynakta kanonik kimlik. Sipariş satırı için siparis_urun.id'yi çöz:
     (1) kalem_kodu zaten kanonik UUID mi (siparis_urun'da var) → onu;
@@ -11148,6 +11163,7 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
         # Toplu gönderimde (wa_gonder=False) per-talep göndermeyiz; Cep tek birleşik
         # mesaj açar (N ayrı mesaj/kota tüketimi olmasın).
         wa_sonuc: Optional[Dict[str, Any]] = None
+        wa_me = None  # B planı: gönderilemezse sahibin telefonundan gidecek köprü
         if tedarikci_tel and body.wa_gonder:
             mesaj = _toptanci_siparis_wa_mesaj(tedarikci_ad, sube_adi, kalemler, notu)
             try:
@@ -11165,6 +11181,10 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
             #    MESAJDIR. O yüzden `wa_durum='hata'` kalır ve gerçek YANITTA
             #    açıkça söylenir (aşağıda `wa_uyari`).
             _wa_ok = bool(wa_sonuc.get("basarili"))
+            if not _wa_ok:
+                # B PLANI (2026-09-17): sistem gönderemedi — hazır mesaj sahibin
+                # KENDİ WhatsApp'ında açılsın (wa.me köprüsü, Cep'teki desen).
+                wa_me = _wa_me_link(tedarikci_tel, mesaj)
             cur.execute(
                 """
                 UPDATE toptanci_siparis
@@ -11412,6 +11432,9 @@ def ops_siparis_toptanciya_yolla(body: OpsSiparisToptanciyaYollaBody):
                   "Tedarikçi bu siparişten HABERSİZ — telefonla teyit edin "
                   "veya 'WhatsApp'ı yeniden gönder' düğmesini kullanın.")
         ),
+        # B PLANI (2026-09-17): sistem gönderemediyse hazır mesaj sahibin KENDİ
+        # WhatsApp'ında açılsın — wa.me köprüsü (başarılıysa None).
+        "wa_me_link": wa_me,
     }
 
 
@@ -12384,6 +12407,7 @@ def ops_toptanci_siparis_wa_yeniden(ts_id: str):
         "telefon": tel,
         "mesaj_id": wa.get("mesaj_id"),
         "hata": wa.get("hata"),
+        "wa_me_link": (None if wa.get("basarili") else _wa_me_link(tel, mesaj)),
     }
 
 

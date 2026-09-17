@@ -1158,6 +1158,19 @@ def _wa_send(chat_id: str, mesaj: str) -> dict:
         logger.warning("WhatsApp: ortam değişkenleri veya chatId eksik — atlanıyor")
         return {"basarili": False, "mesaj_id": None, "hata": "config_eksik"}
 
+    # SAHTE YEŞİL FRENİ (2026-09-17): hat kopukken (notAuthorized) Green API mesajı
+    # KUYRUĞA alıp yine idMessage döner — "gönderildi" damgası yalan olur, alıcıya
+    # hiçbir şey ulaşmaz. Önce hattın durumuna bak; authorized değilse hiç gönderme,
+    # dürüstçe hata dön. Durum sorgusunun KENDİSİ hata verirse (ağ vb.) gönderimi
+    # engelleme — eski davranışa düş.
+    try:
+        _st = wa_instance_durum().get("state")
+        if _st and _st != "authorized":
+            logger.error(f"WhatsApp: hat kopuk (state={_st}) — mesaj gönderilmedi")
+            return {"basarili": False, "mesaj_id": None, "hata": f"hat_kopuk_{_st}"}
+    except Exception:
+        pass
+
     url     = f"https://api.green-api.com/waInstance{instance_id}/sendMessage/{token}"
     payload = json.dumps({"chatId": chat_id, "message": mesaj}).encode("utf-8")
     req     = urllib.request.Request(url, data=payload,

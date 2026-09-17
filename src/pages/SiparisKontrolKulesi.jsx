@@ -952,6 +952,7 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
     try {
       let toplamAdet = 0;
       let waBasarili = 0;
+      const waDusen = []; // B planı: sistem hattı gönderemedi — wa.me ile sahibin telefonundan
       let sonResp = null;
       for (const liste of listeler) {
         const r = await api('/ops/siparis/toptanciya-yolla', {
@@ -966,19 +967,32 @@ export default function SiparisKontrolKulesi({ vurgulaTalepId: vurgulaProp = nul
         });
         toplamAdet += Number(r?.toplam_adet || 0);
         if (r?.wa_basarili) waBasarili += 1;
+        else if (r?.wa_me_link) waDusen.push({ ad: liste.toptanciAd, link: r.wa_me_link });
         sonResp = r;
       }
       kuyrukTalepTemizle(talepId);
       setToptanciModalSip(null); // modalı kapat — kuyruk tazelensin
       publishGlobalDataRefresh('siparis-kontrol-toptanci-yonlendir');
       const adlar = listeler.map(l => l.toptanciAd).join(', ');
-      const waNot = waBasarili ? ` · 📲 ${waBasarili} tedarikçiye WhatsApp gönderildi` : '';
+      const waNot = waBasarili
+        ? ` · 📲 ${waBasarili} tedarikçiye WhatsApp gönderildi`
+        : (waDusen.length ? ' · 📵 sistem WhatsApp gönderemedi — telefonunuzdan gönderin' : '');
       // Kısmi gönderim: gönderilmeyen kalemler kuyrukta KALIR (kaybolmaz)
       const kalanAdet = Number(sonResp?.kalan_adet || 0);
       const kuyrukNot = (sonResp && sonResp.tam_gonderildi === false)
         ? ` · ⏳ ${kalanAdet} adet kuyrukta kaldı (gönderilmeyen kalemler)`
         : ' · kuyruktan düştü';
       islemSonucGoster(true, `${listeler.length} toptancıya yönlendirildi (${adlar}) — ${toplamAdet} adet${kuyrukNot}${waNot}.`);
+      // B PLANI (2026-09-17): sistem WhatsApp hattı kopuksa mesaj kaybolmasın —
+      // hazır sipariş metni sahibin KENDİ WhatsApp'ında açılır (Cep'teki desen).
+      if (waDusen.length) {
+        const ok = window.confirm(
+          `📵 Sistem WhatsApp hattı şu an bağlı değil — şu tedarikçilere sipariş mesajı GÖNDERİLEMEDİ:\n` +
+          waDusen.map(x => `  • ${x.ad}`).join('\n') +
+          `\n\nSipariş kaydı oluştu, kaybolmadı. "Tamam"a basarsanız hazır mesaj kendi WhatsApp'ınızda açılır — tek dokunuşla siz gönderirsiniz.`
+        );
+        if (ok) waDusen.forEach(x => window.open(x.link, '_blank'));
+      }
       yukle();
     } catch (e) {
       islemSonucGoster(false, e.message || 'Toptancıya gönderim hatası');
