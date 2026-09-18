@@ -22,6 +22,14 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey } from './tema';
 import { KpiSeridi, Tablo, Liste, VardiyaIzgara, HataBandi } from './parcalar';
+// ⚠️ 2026-09-18 SAHİP BULGUSU: bu ekran başvuru kaydında OLMAYAN alan adlarını
+// okuyordu (`sube_tercihi`/`deneyim`/`olusturma`) — 120 başvurunun hepsinde
+// "ayrıntı girilmemiş" yazıyor, "Yönet" penceresinde adayın doldurduğu formdan
+// tek satır görünmüyordu. Alan adları artık TEK sözlükten okunur.
+import {
+  basvuruSatirOzeti, basvuruBloklari, basvuruMetinBloklari, okunmadi,
+  SIRALAMA_SECENEKLERI, basvuruSirala,
+} from '../../utils/basvuruEtiket';
 
 const sayi = (v) => Number(v) || 0;
 const trSayi = (n, b = 1) => (Number(n) || 0).toFixed(b).replace('.', ',');
@@ -745,6 +753,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   const [bvModal, setBvModal] = useState(null);   // {tip, basvuru?, ...}
   const [bvMesgul, setBvMesgul] = useState(false);
   const [bvSecim, setBvSecim] = useState([]);     // toplu arşiv için id listesi
+  const [bvSira, setBvSira] = useState('oncelik');   // sıralama: öncelik | yeni | eski | skor…
+  const [bvFiltre, setBvFiltre] = useState('hepsi'); // hepsi | okunmamis | oncelik | durum:*
+  const [bvHepsi, setBvHepsi] = useState(false);     // 40'lık kesmeyi kaldır
 
   const bvUygula = async () => {
     const m = bvModal;
@@ -2007,12 +2018,84 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             <div style={{ fontFamily: F.baslik, fontSize: 20, fontWeight: 600 }}>{b.ad_soyad || 'Başvuru'}</div>
             <button onClick={kapat} style={{ marginLeft: 'auto', border: 'none', background: 'transparent', color: R.not, fontSize: 16, cursor: 'pointer', fontFamily: 'inherit' }}>x</button>
           </div>
+          {/* ⚠️ Burada eskiden `b.sube_tercihi` / `b.olusturma` okunuyordu — ikisi
+              de kayıtta YOK. Doğru adlar tek sözlükte (utils/basvuruEtiket). */}
           <div style={{ fontSize: 12.5, color: R.metin2, marginBottom: 16, lineHeight: 1.7 }}>
-            {[b.pozisyon, b.telefon, b.sube_tercihi || b.sube, b.ilce,
+            {[b.pozisyon, b.telefon, b.ilce,
               b.dogum_yili ? `${b.dogum_yili} doğumlu` : null,
-              b.olusturma ? kisaTarih(b.olusturma) : null].filter(Boolean).join(' · ')}
-            {b.personel_id && <><br /><span style={{ color: R.yesil, fontWeight: 700 }}>✓ İşe alınmış — personel kaydı var</span></>}
+              b.olusturma_ts ? kisaTarih(b.olusturma_ts) : null].filter(Boolean).join(' · ')}
+            {okunmadi(b) && <><br /><span style={{ color: R.yesil, fontWeight: 700 }}>🟢 Bu başvuru ilk kez açılıyor</span></>}
+            {(b.personel_id || b.ise_alindi) && <><br /><span style={{ color: R.yesil, fontWeight: 700 }}>✓ İşe alınmış — personel kaydı var</span></>}
           </div>
+
+          {/* ── IK DEĞERLENDİRMESİ — backend'in hesapladığı skor (5 boyut × 20) ──
+              Kadife ekranı bu skoru HİÇ göstermiyordu; aday 94/100 alsa bile
+              yönetici pencereyi açtığında tek rakam görmüyordu. */}
+          {b.skor && (
+            <div style={{
+              borderRadius: 12, padding: '14px 16px', marginBottom: 14,
+              background: `${R.bakir}10`, border: `1px solid ${R.bakir}33`,
+            }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 10 }}>
+                <div>
+                  <div style={{ fontSize: 10, letterSpacing: 0.8, fontWeight: 700, color: R.not2 }}>IK DEĞERLENDİRMESİ</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: R.bakir, marginTop: 2 }}>{b.skor.genel_label}</div>
+                </div>
+                <div style={{ textAlign: 'right' }}>
+                  <div style={{ fontSize: 26, fontWeight: 800, color: R.bakir, lineHeight: 1 }}>{b.skor.toplam}</div>
+                  <div style={{ fontSize: 10, color: R.not2 }}>/ 100 puan</div>
+                </div>
+              </div>
+              {Object.entries(b.skor.boyutlar || {}).map(([k, bo]) => (
+                <div key={k} style={{ marginBottom: 7 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 11.5, marginBottom: 3 }}>
+                    <span style={{ color: R.metin2 }}>{bo.label}</span>
+                    <span style={{ color: R.krem, fontWeight: 700 }}>{bo.puan}/20</span>
+                  </div>
+                  <div style={{ height: 5, borderRadius: 99, background: `${R.cizgi3}66` }}>
+                    <div style={{
+                      height: 5, borderRadius: 99, width: `${(Number(bo.puan) / 20) * 100}%`,
+                      background: bo.puan >= 16 ? R.yesil : bo.puan >= 12 ? R.bakir : bo.puan >= 8 ? R.amber : R.kirmizi,
+                    }} />
+                  </div>
+                </div>
+              ))}
+              {(b.skor.sinyaller || []).map((s, i) => (
+                <div key={i} style={{
+                  fontSize: 11.5, marginTop: 5, display: 'flex', gap: 6, lineHeight: 1.5,
+                  color: s.tip === 'olumlu' ? R.yesil : s.tip === 'dikkat' ? R.amber : R.mavi,
+                }}>
+                  <span>{s.tip === 'olumlu' ? '✅' : s.tip === 'dikkat' ? '⚠️' : '🔍'}</span>
+                  <span>{s.mesaj}</span>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {/* ── ADAYIN DOLDURDUĞU FORM — tamamı ──────────────────────────────
+              Kadife ekranı bu bölümü hiç taşımıyordu: 30 soruluk başvuru
+              formunun cevapları yalnız klasik ekranda görünüyordu. Aynı
+              sözlükten okunduğu için iki ekran artık ayrışamaz. */}
+          {basvuruBloklari(b).map((blok) => (
+            <div key={blok.baslik} style={{ marginBottom: 12 }}>
+              <div style={{ fontSize: 10, letterSpacing: 0.9, fontWeight: 700, color: R.bakir, margin: '4px 0 6px' }}>{blok.baslik}</div>
+              {blok.satirlar.map(([etk, deg]) => (
+                <div key={etk} style={{ display: 'flex', gap: 12, padding: '6px 0', borderBottom: `1px solid ${R.cizgi3}55` }}>
+                  <span style={{ fontSize: 11.5, color: R.not2, minWidth: 150, fontWeight: 600 }}>{etk}</span>
+                  <span style={{ fontSize: 12.5, color: R.krem, flex: 1, lineHeight: 1.5 }}>{deg}</span>
+                </div>
+              ))}
+            </div>
+          ))}
+          {basvuruMetinBloklari(b).map(([baslik, metin]) => (
+            <div key={baslik} style={{
+              borderRadius: 10, padding: '12px 14px', marginBottom: 12,
+              background: `${R.cizgi3}22`, border: `1px solid ${R.cizgi3}66`,
+            }}>
+              <div style={{ fontSize: 10, letterSpacing: 0.9, fontWeight: 700, color: R.bakir, marginBottom: 5 }}>{baslik}</div>
+              <div style={{ fontSize: 12.5, color: R.krem, lineHeight: 1.7 }}>{metin}</div>
+            </div>
+          ))}
 
           <label style={ekEtiket}>Durum</label>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 12 }}>
@@ -5790,24 +5873,82 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
 
   if (gorunum === 'basvuru') {
     const bs = basvurular;
-    const yeni = bs.filter(b => trKucuk(b.durum) === 'yeni');
-    const gorusme = bs.filter(b => trKucuk(b.durum).includes('görüş') || trKucuk(b.durum).includes('gorus'));
+    // ⚠️ OKUNMAMIŞ = DURUM DEĞİL, GÖRÜLDÜ İZİ. Bu ekran eskiden `durum === 'yeni'`
+    // arıyordu; oysa durum alanı yalnız bekliyor/gorusme/olumlu/olumsuz alır —
+    // 'yeni' diye bir durum HİÇ yazılmaz. Okunmamışlık `goruldu_ts`nin boş
+    // olmasıdır (backend /ozet de böyle sayar), o yüzden ikisi tutuyor.
+    const okunmamisSayi = bs.filter(okunmadi).length;
+    const durumSay = (d) => bs.filter((b) => trKucuk(b.durum) === d).length;
+    const oncelikliSayi = bs.filter((b) => sayi(b.oncelik) > 0).length;
+
+    const BV_FILTRELER = [
+      { id: 'hepsi', ad: 'Tümü', adet: bs.length },
+      { id: 'okunmamis', ad: 'Okunmamış', adet: okunmamisSayi },
+      { id: 'oncelik', ad: 'Öncelikli', adet: oncelikliSayi },
+      { id: 'bekliyor', ad: BV_DURUM_AD.bekliyor || 'Bekliyor', adet: durumSay('bekliyor') },
+      { id: 'gorusme', ad: BV_DURUM_AD.gorusme || 'Görüşme', adet: durumSay('gorusme') },
+      { id: 'olumlu', ad: BV_DURUM_AD.olumlu || 'Olumlu', adet: durumSay('olumlu') },
+      { id: 'olumsuz', ad: BV_DURUM_AD.olumsuz || 'Olumsuz', adet: durumSay('olumsuz') },
+      { id: 'ise_alindi', ad: 'İşe alınanlar', adet: bs.filter((b) => b.ise_alindi || b.personel_id).length },
+    ];
+
+    const suzulmus = bs.filter((b) => {
+      if (bvFiltre === 'okunmamis') return okunmadi(b);
+      if (bvFiltre === 'oncelik') return sayi(b.oncelik) > 0;
+      if (bvFiltre === 'ise_alindi') return !!(b.ise_alindi || b.personel_id);
+      if (['bekliyor', 'gorusme', 'olumlu', 'olumsuz'].includes(bvFiltre)) return trKucuk(b.durum) === bvFiltre;
+      return true;
+    });
+    const sirali = basvuruSirala(suzulmus, bvSira);
+    // Kesme kalkabilir olmalı: "ilk 40" uyarısı iyiydi ama ÇIKIŞI yoktu —
+    // 80 aday görünmüyorsa okuyanın onları açacak bir düğmesi olmalı.
+    const gorunenListe = bvHepsi ? sirali : sirali.slice(0, 40);
+    const tasan = sirali.length - gorunenListe.length;
+
+    const bvSecimDugmesi = {
+      padding: '6px 13px', borderRadius: 20, cursor: 'pointer', fontFamily: 'inherit',
+      fontSize: 11.5, fontWeight: 600,
+    };
+
     return (
       <>
         {bvModalBlok}
         <KpiSeridi kpiler={[
-          { etiket: 'Yeni başvuru', deger: String(basvuruOzet?.yeni ?? yeni.length), alt: 'okunmamış', renk: (basvuruOzet?.yeni ?? yeni.length) ? R.yesil : R.krem },
-          { etiket: 'Görüşme aşamasında', deger: String(gorusme.length), alt: gorusme.length ? 'planlandı' : 'yok', renk: R.mavi },
+          { etiket: 'Yeni başvuru', deger: String(basvuruOzet?.yeni ?? okunmamisSayi), alt: 'okunmamış · aşağıdaki «Okunmamış» süzgeciyle açılır', renk: okunmamisSayi ? R.yesil : R.krem },
+          { etiket: 'Görüşme aşamasında', deger: String(durumSay('gorusme')), alt: durumSay('gorusme') ? 'planlandı' : 'yok', renk: R.mavi },
           // ⚠️ ÇERÇEVELEME: bu şeritte aynı havuzun DÖRT ayrı sayısı yan yana
-          // duruyor (yeni 25 · görüşmede 0 · toplam 111 · öncelikli 33) ve
-          // aralarındaki ilişki hiçbir yerde yazmıyor. 25+0+33 ≠ 111 olduğu
-          // için okuyan bunları toplamaya çalışıp tutturamaz. Bunlar TOPLANAN
-          // parçalar değil, AYNI havuzun farklı süzgeçleridir — bu yazıldı.
+          // duruyor ve aralarındaki ilişki yazmazsa okuyan bunları toplamaya
+          // çalışıp tutturamaz. Bunlar TOPLANAN parçalar değil, AYNI havuzun
+          // farklı süzgeçleridir — bu yazıldı.
           { etiket: 'Toplam başvuru', deger: String(bs.length), alt: 'arşivsiz kayıt · aşağıdakiler bunun alt kümeleri' },
-          { etiket: 'Öncelikli', deger: String(bs.filter(b => sayi(b.oncelik) > 0).length), alt: `${bs.length} kaydın içinde · işaretlenmiş`, renk: R.amber },
+          { etiket: 'Öncelikli', deger: String(oncelikliSayi), alt: `${bs.length} kaydın içinde · işaretlenmiş`, renk: R.amber },
         ]} />
         {bs.length ? (
           <>
+            {/* Süzgeç + sıralama — ikisi de eskiden YOKTU: liste hep aynı sırada
+                geliyordu ve okunmamışı ayırmanın hiçbir yolu bulunmuyordu. */}
+            <div style={{
+              display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12,
+            }}>
+              {BV_FILTRELER.map((f) => (
+                <button key={f.id} onClick={() => setBvFiltre(f.id)} style={{
+                  ...bvSecimDugmesi,
+                  border: `1px solid ${bvFiltre === f.id ? R.bakir : R.cizgi3}`,
+                  background: bvFiltre === f.id ? `${R.bakir}1E` : 'transparent',
+                  color: bvFiltre === f.id ? R.bakir : R.metin2,
+                }}>{f.ad}{f.adet ? ` · ${f.adet}` : ''}</button>
+              ))}
+              <select value={bvSira} onChange={(e) => setBvSira(e.target.value)} style={{
+                marginLeft: 'auto', padding: '7px 12px', borderRadius: 9, cursor: 'pointer',
+                border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+                fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+              }}>
+                {SIRALAMA_SECENEKLERI.map((s) => (
+                  <option key={s.id} value={s.id} style={{ background: R.zemin, color: R.krem }}>{s.ad}</option>
+                ))}
+              </select>
+            </div>
+
             {/* Faz 8: toplu arşiv çubuğu — seçim varken görünür */}
             {!!bvSecim.length && (
               <div style={{
@@ -5831,51 +5972,60 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               secilebilir
               secili={bvSecim}
               onSec={(id) => setBvSecim((p) => (p.includes(id) ? p.filter((x) => x !== id) : [...p, id]))}
-              // "Hepsini seç" yalnız GÖRÜNEN 40 kaydı seçer (Codex: canlıda 96 kayıt
-              // var — görünmeyen 56 başvuru sessizce toplu arşive gidebiliyordu).
+              // "Hepsini seç" yalnız GÖRÜNEN kayıtları seçer — görünmeyen bir
+              // başvuru sessizce toplu arşive gidemez.
               onHepsi={() => {
-                const gorunen = bs.slice(0, 40).map((b) => b.id);
+                const gorunen = gorunenListe.map((b) => b.id);
                 setBvSecim((p) => {
-                  // Karar görünür-kesişimden verilir (diff-review): görünmeyen/bayat
-                  // id seçimde kalmışsa da doğru davranır — hepsi seçiliyken TAMAMEN
-                  // temizler (artıklar dahil), değilse seçim = yalnız görünenler.
                   const gorunenSecili = gorunen.filter((id) => p.includes(id));
                   return gorunenSecili.length === gorunen.length ? [] : gorunen;
                 });
               }}
-              // ⚠️ SESSİZ ELEME — EN AĞIRI (Fable, 2026-08-27): liste 40'ta
-              // kesiliyor ve kesildiği HİÇBİR YERDE yazmıyordu. Kod içi not
-              // canlıda 96 başvuru olduğunu söylüyor — yani 56 aday görünmez.
-              // Bir adayın sessizce yok sayılması bu ekranın en ağır günahıdır:
-              // kişi başvurmuş, sistem almış, kimse görmemiş.
-              satirlar={(bs.length > 40 ? [{ _tasan: bs.length - 40 }] : []).concat(bs.slice(0, 40)).map(b => {
+              // ⚠️ SESSİZ ELEME: liste kesiliyorsa bu YAZILIR ve kesmeyi kaldıran
+              // düğme hemen orada durur. Bir adayın sessizce yok sayılması bu
+              // ekranın en ağır günahıdır: kişi başvurmuş, sistem almış, kimse görmemiş.
+              satirlar={(tasan > 0 ? [{ _tasan: tasan }] : []).concat(gorunenListe).map((b) => {
                 if (b._tasan) {
                   return {
                     id: 'bs-tasan',
-                    baslik: `⚠ ${bs.length} başvurudan ilk 40'ı gösteriliyor`,
-                    alt: `${b._tasan} başvuru listede yok — filtre daraltın ya da arşivi kullanın`,
+                    baslik: `⚠ ${sirali.length} başvurudan ilk ${gorunenListe.length}'i gösteriliyor`,
+                    alt: `${b._tasan} başvuru listede yok — «Tümünü göster» ile aç`,
                     tutar: '', tier: 'uyari',
+                    aksiyonlar: [{ ad: 'Tümünü göster', onTikla: () => setBvHepsi(true) }],
                   };
                 }
-                return (() => {
-                const d = trKucuk(b.durum) || 'yeni';
+                const d = trKucuk(b.durum) || 'bekliyor';
                 const onc = sayi(b.oncelik);
+                const yeniMi = okunmadi(b);
                 return {
                   id: b.id, _b: b,
-                  baslik: `${onc ? `${onc === 1 ? '★' : '☆'} ` : ''}${b.ad_soyad || b.ad || 'Başvuru'}${b.pozisyon ? ` · ${b.pozisyon}` : ''}`,
-                  alt: [b.sube_tercihi || b.sube, b.deneyim, b.olusturma ? kisaTarih(b.olusturma) : null,
-                        b.arsivli ? 'arşivde' : null, b.personel_id ? 'işe alındı ✓' : null]
+                  baslik: `${yeniMi ? '🟢 ' : ''}${onc ? `${onc === 1 ? '★' : '☆'} ` : ''}${b.ad_soyad || 'Başvuru'}${b.pozisyon ? ` · ${b.pozisyon}` : ''}`,
+                  // Alt satır artık GERÇEK alan adlarından kuruluyor (semt · yaş ·
+                  // çalışma şekli · kahve deneyimi · tercih ettiği şubeler).
+                  alt: [basvuruSatirOzeti(b), b.olusturma_ts ? kisaTarih(b.olusturma_ts) : null]
                     .filter(Boolean).join(' · ') || 'ayrıntı girilmemiş',
-                  tutar: '',
+                  tutar: b.skor?.toplam != null ? `${b.skor.toplam}/100` : '',
                   rozet: BV_DURUM_AD[d] || d,
-                  rozetRenk: d === 'yeni' ? R.yesil : d === 'olumlu' ? R.yesil : d === 'olumsuz' ? R.kirmizi : R.mavi,
-                  tier: b.personel_id ? 'iyi' : d === 'yeni' ? 'uyari' : 'bilgi',
+                  rozetRenk: d === 'olumlu' ? R.yesil : d === 'olumsuz' ? R.kirmizi : d === 'gorusme' ? R.mavi : R.amber,
+                  tier: (b.personel_id || b.ise_alindi) ? 'iyi' : yeniMi ? 'uyari' : 'bilgi',
                   aksiyonlar: [{ ad: 'Yönet', onTikla: () => { bvGor(b); setBvModal({ tip: 'yonet', basvuru: b }); } }],
                 };
-                })();
               })}
               onAc={(r) => { bvGor(r?._b || r); setBvModal({ tip: 'yonet', basvuru: r?._b || r }); }}
             />
+            {bvHepsi && sirali.length > 40 && (
+              <div style={{ textAlign: 'center', marginTop: 10 }}>
+                <button onClick={() => setBvHepsi(false)} style={{
+                  padding: '7px 16px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, cursor: 'pointer',
+                  background: 'transparent', color: R.metin2, fontSize: 12, fontWeight: 600, fontFamily: 'inherit',
+                }}>İlk 40'a dön</button>
+              </div>
+            )}
+            {!sirali.length && (
+              <div style={{ ...kartYuzey, padding: '30px', textAlign: 'center', color: R.not, marginTop: 10 }}>
+                Bu süzgeçte başvuru yok.
+              </div>
+            )}
           </>
         ) : (
           <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not }}>

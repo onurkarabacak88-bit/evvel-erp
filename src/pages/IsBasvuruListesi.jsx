@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { api } from '../utils/api';
 import { publishGlobalDataRefresh } from '../utils/globalDataRefresh';
+import { DENEYIM_LABEL, BASLANGIC_LABEL, CALISMA_LABEL, YASAM_LABEL, EGITIM_LABEL, ULASIM_LABEL, NEDEN_LABEL, TEMPO_LABEL, NEREDE_LABEL, OGRENILEN_LABEL, EN_IYI_LABEL, EN_ZOR_LABEL, MAKINE_LABEL, YOGUN_LABEL, GUNPLAN_LABEL, ARKADASLAR_LABEL, SOSYAL_LABEL, MUSTERI_LABEL, SABAH_LABEL, YORUCU_LABEL, SIRALAMA_SECENEKLERI, basvuruSirala, okunmadi, tercihSubeMetni, musaitGunMetni } from '../utils/basvuruEtiket';
 
 // Durum = SADECE iş akışı (öncelik & arşiv & işe-alındı AYRI boyutlar)
 const DURUM_CFG = {
@@ -22,27 +23,6 @@ const SKOR_CFG = {
   zayif:  { renk: '#e05c5c', bg: 'rgba(224,92,92,0.12)',   border: 'rgba(224,92,92,0.3)'   },
 };
 
-const DENEYIM_LABEL = { var_1yil: '1 yıldan az', var_2yil: '1–3 yıl', var_uzun: '3+ yıl', kismi: 'Biraz biliyor', yok_ogreneyim: 'Yeni başlayacak' };
-const BASLANGIC_LABEL = { hemen: '⚡ Hemen', '2hafta': '📅 2 Hafta', '1ay': '🗓️ 1 Ay' };
-const CALISMA_LABEL = { tam: 'Tam Zamanlı', yari: 'Yarı Zamanlı', esnek: 'Esnek' };
-const YASAM_LABEL   = { aile: '🏠 Aileyle', yurt: '🏫 Yurtta', arkadas: '👥 Arkadaşlarla', tek: '🔑 Tek başına' };
-const EGITIM_LABEL  = { lise: '📚 Lise öğrencisi', universite: '🎓 Üniversite', mezun: '✅ Mezun', calisiyor: '💼 Çalışıyor+part-time', diger: '✨ Diğer' };
-const ULASIM_LABEL  = { yurume: '🚶 Yürüme', toplu: '🚌 Toplu taşıma', arac: '🚗 Araç/moto', bisiklet: '🚲 Bisiklet' };
-const NEDEN_LABEL   = { part_time: '💰 Ek gelir', tam_zamanli: '💼 Kariyer', barista: '☕ Barista olmak', deneyim: '📈 Deneyim', insan: '🙋 İnsanlarla çalışmak', diger: '✨ Diğer' };
-const TEMPO_LABEL   = { hizli: '⚡ Hızlı tempo', sakin: '🌿 Sakin', ikisi: '😄 İkisi de olur' };
-
-const NEREDE_LABEL   = { kurumsal: '🏢 Kurumsal zincir', yerel_bagimsiz: '☕ Yerel/bağımsız', sektor_disi: '🔄 Sektör dışı', hic_calismadim: '🌱 İlk iş' };
-const OGRENILEN_LABEL = { musteri_iletisim: '💬 Müşteri iletişimi', hiz_tempo: '⚡ Hız & tempo', duzen_temizlik: '🧹 Düzen & temizlik ✅', takim: '🤝 Takım çalışması', tek_sorumluluk: '🎯 Tek sorumluluk', cok_ogrenmedim: '🤷 Az öğrendi ⚠️' };
-const EN_IYI_LABEL   = { musteri_insan: '👥 Müşteri ilişkileri', tempolu_ortam: '🏃 Tempolu ortam ✅', ogrenme: '📚 Öğrenme fırsatı', ekip: '💪 Ekip', para_bagimsizlik: '💰 Para/bağımsızlık' };
-const EN_ZOR_LABEL   = { uzun_saatler: '⏰ Uzun saatler 🚩', zor_musteriler: '😤 Zor müşteriler ⚠️', dusuk_ucret: '💸 Düşük ücret', yonetim_sorun: '🚧 Yönetim sorunu ⚠️', monoton: '😴 Monoton' };
-const MAKINE_LABEL   = { hemen_siler: 'Hemen siler ✅', vardiya_sonu: 'Vardiya sonunda', kime_duserse: 'Kime düşerse', pek_dusunmem: 'Düşünmemiş ⚠️' };
-const YOGUN_LABEL    = { araliklarda: 'Aralıklarda toplar ✅', rush_bitti: 'Rush sonrası', oldugu_gibi: 'Bırakır', fark_etmez: 'Fark etmez ⚠️' };
-const GUNPLAN_LABEL  = { esnek_akis: 'Esnek ✅', plan_degisir: 'Esnek ama planlı', saatler_belli: 'Saate bağlı', onceden_netlesin: 'Katı plan 🚩' };
-const ARKADASLAR_LABEL = { her_an_hazir: 'Her an hazır ✅', sakin_olculu: 'Sakin & ölçülü', kendi_isine: 'Kendi işine bakan', haklarini_bilen: 'Haklarını bilen 🚩' };
-const SOSYAL_LABEL   = { dogal_isinirim: 'Doğal ısınır ✅', zaman_lazim: 'Zaman ister', karsi_baslasın: 'Bekleme', pek_rahat_degil: 'Zor ⚠️' };
-const MUSTERI_LABEL  = { adini_ogrenip: 'Adını öğrenir ✅', selam_sorar: 'Selamlayıp sorar', hizlica_hazirlar: 'Hızlı geçer', hepsi_ayni: 'Fark etmez ⚠️' };
-const SABAH_LABEL    = { kahve_icer: 'Gelir ✅', zor_gelir: 'Zor ama gelir', izin_dusunur: 'İzin düşünür 🚩', duruma_gore: 'Duruma göre' };
-const YORUCU_LABEL   = { beklenmedik: 'Sürprizler', isler_uzayinca: 'Uzayan işler ⚠️', plan_disi: 'Plan dışı ⚠️', gunun_sonu: 'Günün sonu' };
 
 function DurumBadge({ durum }) {
   const c = DURUM_CFG[durum] || DURUM_CFG.bekliyor;
@@ -170,6 +150,9 @@ function CVModal({ b, onKapat, onPatch, onSil }) {
           <Satir label="📱 Telefon" deger={b.telefon} />
           <Satir label="📅 Doğum Yılı" deger={b.dogum_yili ? `${b.dogum_yili} · ${new Date().getFullYear() - b.dogum_yili} yaşında` : null} />
           <Satir label="📍 Semt" deger={b.ilce} />
+          {/* Adayın hangi şubede çalışmak istediği DB'de vardı ama hiçbir ekranda
+              gösterilmiyordu — aday yazdı, sistem sakladı, kimse görmedi. */}
+          <Satir label="🏬 Tercih ettiği şubeler" deger={tercihSubeMetni(b)} />
           <Baslik label="YAŞAM & EĞİTİM" />
           <Satir label="🏠 Nerede Kalıyor" deger={YASAM_LABEL[b.yasam_durumu] || b.yasam_durumu} />
           <Satir label="🎓 Eğitim" deger={EGITIM_LABEL[b.egitim_durumu] || b.egitim_durumu} />
@@ -178,7 +161,7 @@ function CVModal({ b, onKapat, onPatch, onSil }) {
           <Satir label="🚌 Ulaşım" deger={ULASIM_LABEL[b.ulasim] || b.ulasim} />
           <Baslik label="ÇALIŞMA TERCİHİ" />
           <Satir label="⏱️ Çalışma Şekli" deger={CALISMA_LABEL[b.calisma_tercihi] || b.calisma_tercihi} />
-          <Satir label="📅 Müsait Günler" deger={(b.musait_gunler || []).join(', ') || null} />
+          <Satir label="📅 Müsait Günler" deger={musaitGunMetni(b)} />
           <Satir label="🚀 Başlangıç" deger={BASLANGIC_LABEL[b.baslangic] || b.baslangic} />
           {b.ek_not && (
             <div style={{ marginTop: 8, padding: 12, background: 'var(--bg3)', borderRadius: 8, border: '1px solid var(--border)' }}>
@@ -345,7 +328,7 @@ export default function IsBasvuruListesi() {
   const [view, setView]            = useState('aktif');   // aktif | arsiv
   const [yukleniyor, setYukleniyor]= useState(true);
   const [arama, setArama]          = useState('');
-  const [siralama, setSiralama]    = useState('tarih');
+  const [siralama, setSiralama]    = useState('oncelik');
   const [topluYukleniyor, setTopluYukleniyor] = useState(false);
 
   const yukle = () => {
@@ -359,8 +342,13 @@ export default function IsBasvuruListesi() {
   useEffect(() => { setSecimler(new Set()); yukle(); }, [view]);
 
   const aramaKucuk = arama.toLowerCase().trim();
-  const filtrelenmis = basvurular
-    .filter(b => {
+  // ⚠️ OKUNMAMIŞ = DURUM DEĞİL, GÖRÜLDÜ İZİ (goruldu_ts boş). Durum alanında
+  // 'yeni' diye bir değer YOKTUR (bekliyor/gorusme/olumlu/olumsuz) — okunmamışı
+  // duruma sorarsan sonuç her zaman sıfır çıkar.
+  const okunmamisSayi = basvurular.filter(okunmadi).length;
+  const filtrelenmis = basvuruSirala(
+    basvurular.filter(b => {
+      if (filtre === 'okunmamis' && !okunmadi(b)) return false;
       if (filtre === 'oncelik1' && b.oncelik !== 1) return false;
       if (filtre === 'oncelik2' && b.oncelik !== 2) return false;
       if (filtre === 'ise_alindi' && !b.ise_alindi) return false;
@@ -371,14 +359,9 @@ export default function IsBasvuruListesi() {
         if (!ad.includes(aramaKucuk) && !tel.includes(aramaKucuk)) return false;
       }
       return true;
-    })
-    .sort((a, b) => {
-      if (siralama === 'skor_desc') return (b.skor?.toplam || 0) - (a.skor?.toplam || 0);
-      if (siralama === 'skor_asc')  return (a.skor?.toplam || 0) - (b.skor?.toplam || 0);
-      const oa = a.oncelik || 99, ob = b.oncelik || 99;
-      if (oa !== ob) return oa - ob;
-      return new Date(b.olusturma_ts) - new Date(a.olusturma_ts);
-    });
+    }),
+    siralama,
+  );
 
   const onPatch = (id, patch) => setBasvurular(prev => prev.map(b => b.id === id ? { ...b, ...patch } : b));
   const onSil = (id) => setBasvurular(prev => prev.filter(b => b.id !== id));
@@ -414,6 +397,7 @@ export default function IsBasvuruListesi() {
 
   const filtreler = [
     { id: 'hepsi', label: 'Tümü' },
+    { id: 'okunmamis', label: '🟢 Okunmamış', sayi: okunmamisSayi },
     { id: 'oncelik1', label: '🥇 1. Öncelik', sayi: ozet.oncelik1 },
     { id: 'oncelik2', label: '🥈 2. Öncelik', sayi: ozet.oncelik2 },
     { id: 'bekliyor', label: '⏳ Bekliyor', sayi: ozet.bekliyor },
@@ -471,9 +455,7 @@ export default function IsBasvuruListesi() {
           style={{ flex: 1, minWidth: 180, background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 12px', fontSize: 13, color: 'var(--text)', outline: 'none' }} />
         <select value={siralama} onChange={e => setSiralama(e.target.value)}
           style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '8px 12px', fontSize: 12, color: 'var(--text)', cursor: 'pointer' }}>
-          <option value="tarih">🥇 Öncelik / Yeni</option>
-          <option value="skor_desc">⭐ En yüksek skor</option>
-          <option value="skor_asc">🔻 En düşük skor</option>
+          {SIRALAMA_SECENEKLERI.map(s => <option key={s.id} value={s.id}>{s.ad}</option>)}
         </select>
       </div>
 
