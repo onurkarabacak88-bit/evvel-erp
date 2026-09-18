@@ -754,6 +754,9 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const sgUyarilar = Array.isArray(sgUyariHam) ? sgUyariHam
     : (Array.isArray(sgUyariHam?.uyarilar) ? sgUyariHam.uyarilar : []);
   const sgDurduran = sgUyarilar.filter((u) => u.durduruldu === true);
+  // 🖱️ "Bu ay bekleyen 9" olu rakamdi — hangi dokuz gider oldugunu bulmak icin
+  // butun sabit gider listesini gozle taramak gerekiyordu. '' | 'odendi' | 'bekleyen'
+  const [sgFiltre, setSgFiltre] = useState('');
   const krediler = (Array.isArray(krediHam) ? krediHam : []).filter(k => k.aktif !== false);
   const sabitler = (Array.isArray(sabitHam) ? sabitHam : []).filter(g => g.aktif !== false);
 
@@ -1004,10 +1007,13 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
   return (
     <>
       <KpiSeridi kpiler={[
-        { etiket: 'Aylık sabit gider', deger: fmt(toplamSabit), alt: `${sabitler.length} kalem` },
+        { etiket: 'Aylık sabit gider', deger: fmt(toplamSabit), alt: `${sabitler.length} kalem${sgFiltre ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+          onTikla: sgFiltre ? () => setSgFiltre('') : undefined },
         { etiket: 'Kira payı', deger: fmt(kira.reduce((s, g) => s + sayi(g.tutar), 0)), alt: toplamSabit ? `%${trSayi((kira.reduce((s, g) => s + sayi(g.tutar), 0) / toplamSabit) * 100, 0)}` : '—', renk: R.krem },
-        { etiket: 'Bu ay ödenen', deger: String(odendi.length), alt: fmt(odendi.reduce((s, g) => s + sayi(g.tutar), 0)), renk: R.yesil },
-        { etiket: 'Bu ay bekleyen', deger: String(bekleyen.length), alt: fmt(bekleyen.reduce((s, g) => s + sayi(g.tutar), 0)), renk: bekleyen.length ? R.amber : R.yesil },
+        { etiket: 'Bu ay ödenen', deger: String(odendi.length), alt: `${fmt(odendi.reduce((s, g) => s + sayi(g.tutar), 0))}${sgFiltre === 'odendi' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.yesil,
+          onTikla: odendi.length ? () => setSgFiltre((p) => (p === 'odendi' ? '' : 'odendi')) : undefined },
+        { etiket: 'Bu ay bekleyen', deger: String(bekleyen.length), alt: `${fmt(bekleyen.reduce((s, g) => s + sayi(g.tutar), 0))}${sgFiltre === 'bekleyen' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: bekleyen.length ? R.amber : R.yesil,
+          onTikla: bekleyen.length ? () => setSgFiltre((p) => (p === 'bekleyen' ? '' : 'bekleyen')) : undefined },
         ...(sgUyarilar.length ? [{
           etiket: 'Plan durduran',
           deger: String(sgDurduran.length),
@@ -1058,7 +1064,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
       </div>
       {sabitler.length ? (
         <Liste
-          satirlar={sabitler.map(g => ({
+          satirlar={(sgFiltre === 'odendi' ? odendi : sgFiltre === 'bekleyen' ? bekleyen : sabitler).map(g => ({
             id: g.id, _g: g,
             baslik: g.gider_adi,
             alt: `${g.kategori || '—'} · ${g.sube_adi || 'genel'} · ${slugAd(g.periyot) || 'aylık'}${g.odeme_gunu ? ` · ayın ${g.odeme_gunu}` : ''}`,

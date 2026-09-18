@@ -97,6 +97,10 @@ const kMini = {
 };
 
 export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
+  // 🖱️ Kart Hareketleri: "Siniflandirilmayan 37 hareket" olu rakamdi — o 37
+  // harcama KARAR BEKLIYOR (isletme mi sahsi mi) ama hangileri oldugunu bulmak
+  // icin 120 satirlik hareket tablosunu gozle taramak gerekiyordu.
+  const [khSinif, setKhSinif] = React.useState(''); // '' | 'isletme' | 'sahsi' | 'belirsiz'
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
   const [kartlar, setKartlar] = useState([]);
@@ -2138,10 +2142,14 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <KpiSeridi kpiler={[
           // Tutar yalnız HARCAMA evreninden; listede ödeme/faiz de var — etiket
           // iki evreni karıştırmasın (Codex: "62 hareket" 50 harcamayı temsil ediyordu).
-          { etiket: 'Toplam harcama', deger: fmt(toplam), alt: g.toplam_adet != null ? `${sayi(g.toplam_adet)} harcama · listede son ${hareketler.length} hareket (ödeme/faiz dahil)` : `listede son ${hareketler.length} hareket` },
-          { etiket: 'İşletme', deger: pay(g.isletme), alt: fmt(sayi(g.isletme)), renk: R.yesil },
-          { etiket: 'Şahsi', deger: pay(g.sahsi), alt: fmt(sayi(g.sahsi)), renk: R.mavi },
-          { etiket: 'Sınıflandırılmayan', deger: `${belirsizAdet} hareket`, alt: `${fmt(sayi(g.belirsiz))} · karar bekliyor`, renk: belirsizAdet ? R.amber : R.yesil },
+          { etiket: 'Toplam harcama', deger: fmt(toplam), alt: `${g.toplam_adet != null ? `${sayi(g.toplam_adet)} harcama · listede son ${hareketler.length} hareket (ödeme/faiz dahil)` : `listede son ${hareketler.length} hareket`}${khSinif ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: khSinif ? () => setKhSinif('') : undefined },
+          { etiket: 'İşletme', deger: pay(g.isletme), alt: `${fmt(sayi(g.isletme))}${khSinif === 'isletme' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.yesil,
+            onTikla: () => setKhSinif((p) => (p === 'isletme' ? '' : 'isletme')) },
+          { etiket: 'Şahsi', deger: pay(g.sahsi), alt: `${fmt(sayi(g.sahsi))}${khSinif === 'sahsi' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.mavi,
+            onTikla: () => setKhSinif((p) => (p === 'sahsi' ? '' : 'sahsi')) },
+          { etiket: 'Sınıflandırılmayan', deger: `${belirsizAdet} hareket`, alt: `${fmt(sayi(g.belirsiz))} · karar bekliyor${khSinif === 'belirsiz' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: belirsizAdet ? R.amber : R.yesil,
+            onTikla: belirsizAdet ? () => setKhSinif((p) => (p === 'belirsiz' ? '' : 'belirsiz')) : undefined },
         ]} />
         {khModalBlok}
 
@@ -2276,7 +2284,9 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
             { ad: 'Tarih' }, { ad: 'Kart' }, { ad: 'Açıklama' },
             { ad: 'Tutar', sag: true }, { ad: 'Tür' }, { ad: 'Sınıf' }, { ad: 'İşlem' },
           ]}
-          satirlar={hareketler.slice(0, 120).map(h => {
+          satirlar={(khSinif
+            ? hareketler.filter(h => h.islem_turu === 'HARCAMA' && (h.harcama_tipi || 'belirsiz') === khSinif)
+            : hareketler).slice(0, 120).map(h => {
             const sinif = h.harcama_tipi || 'belirsiz';
             const odeme = h.islem_turu === 'ODEME';
             return {
