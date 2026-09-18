@@ -422,19 +422,46 @@ export default function IsBasvuruListesi() {
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(86px,1fr))', gap: 8 }}>
           {[
-            { label: '🥇 1.Öncelik', val: ozet.oncelik1||0, renk: '#fbbf24' },
-            { label: '🥈 2.Öncelik', val: ozet.oncelik2||0, renk: '#a78bfa' },
-            { label: '⏳ Bekleyen', val: ozet.bekliyor||0, renk: 'var(--orange)' },
-            { label: '📞 Görüşme',  val: ozet.gorusme||0,  renk: '#4a9eff' },
-            { label: '✅ Olumlu',   val: ozet.olumlu||0,   renk: '#4caf84' },
-            { label: '👤 İşe Alınan', val: ozet.ise_alindi||0, renk: '#34d399' },
-            { label: '📦 Arşiv',    val: ozet.arsiv||0,    renk: 'var(--text2)' },
-          ].map(k => (
-            <div key={k.label} style={{ background: 'var(--bg2)', border: '1px solid var(--border)', borderRadius: 10, padding: '10px 12px', textAlign: 'center' }}>
+            // 🖱️ Sayaç kutuları TIKLANIR: tıklanan kutu listeyi süzer ve
+            // yeniden eskiye sıralar. Eskiden bunlar ölü rakamdı — kullanıcı
+            // "28 okunmamış" görüyor ama onlara ulaşmanın yolu yoktu.
+            { label: '🟢 Okunmamış', val: okunmamisSayi, renk: 'var(--green)', git: 'okunmamis' },
+            { label: '🥇 1.Öncelik', val: ozet.oncelik1||0, renk: '#fbbf24', git: 'oncelik1' },
+            { label: '🥈 2.Öncelik', val: ozet.oncelik2||0, renk: '#a78bfa', git: 'oncelik2' },
+            { label: '⏳ Bekleyen', val: ozet.bekliyor||0, renk: 'var(--orange)', git: 'bekliyor' },
+            { label: '📞 Görüşme',  val: ozet.gorusme||0,  renk: '#4a9eff', git: 'gorusme' },
+            { label: '✅ Olumlu',   val: ozet.olumlu||0,   renk: '#4caf84', git: 'olumlu' },
+            { label: '👤 İşe Alınan', val: ozet.ise_alindi||0, renk: '#34d399', git: 'ise_alindi' },
+            // Arşiv bir SÜZGEÇ değil ayrı görünüm — tıklaması oraya geçirir.
+            { label: '📦 Arşiv',    val: ozet.arsiv||0,    renk: 'var(--text2)', gorunum: 'arsiv' },
+          ].map(k => {
+            const tiklanir = !!(k.git || k.gorunum);
+            const etkin = k.git && filtre === k.git && view === 'aktif';
+            return (
+            <div key={k.label}
+              onClick={tiklanir ? () => {
+                if (k.gorunum) { setView(k.gorunum); setFiltre('hepsi'); return; }
+                setView('aktif'); setFiltre(k.git); setSiralama('yeni');
+              } : undefined}
+              tabIndex={tiklanir ? 0 : undefined}
+              role={tiklanir ? 'button' : undefined}
+              onKeyDown={tiklanir ? (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  if (k.gorunum) { setView(k.gorunum); setFiltre('hepsi'); return; }
+                  setView('aktif'); setFiltre(k.git); setSiralama('yeni');
+                }
+              } : undefined}
+              title={tiklanir ? 'Tıkla — listeyi bu sayıya göre süz' : undefined}
+              style={{
+                background: 'var(--bg2)', borderRadius: 10, padding: '10px 12px', textAlign: 'center',
+                border: `1px solid ${etkin ? 'var(--accent)' : 'var(--border)'}`,
+                cursor: tiklanir ? 'pointer' : 'default',
+              }}>
               <div style={{ fontSize: 20, fontWeight: 800, color: k.renk }}>{k.val}</div>
-              <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 2 }}>{k.label}</div>
+              <div style={{ fontSize: 10, color: 'var(--text2)', marginTop: 2 }}>{k.label}{tiklanir ? ' ▸' : ''}</div>
             </div>
-          ))}
+          );})}
         </div>
       </div>
 

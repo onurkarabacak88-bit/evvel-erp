@@ -5922,14 +5922,22 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
       <>
         {bvModalBlok}
         <KpiSeridi kpiler={[
-          { etiket: 'Yeni başvuru', deger: String(basvuruOzet?.yeni ?? okunmamisSayi), alt: 'okunmamış · aşağıdaki «Okunmamış» süzgeciyle açılır', renk: okunmamisSayi ? R.yesil : R.krem },
-          { etiket: 'Görüşme aşamasında', deger: String(durumSay('gorusme')), alt: durumSay('gorusme') ? 'planlandı' : 'yok', renk: R.mavi },
+          // 🖱️ KPI'lar TIKLANIR (sahip: "yeni başvuruya tıklayınca yeni
+          // başvurular sıralanıyor mu?" — hayır, kutu ölü sayıydı). Tıklanan
+          // kutu hem listeyi süzer hem o kutuya uygun sıraya geçer: okunmamışta
+          // en yenisi üstte, önceliklide öncelik sırası.
+          { etiket: 'Yeni başvuru', deger: String(basvuruOzet?.yeni ?? okunmamisSayi), alt: 'okunmamış · tıkla, yeniden eskiye sırala', renk: okunmamisSayi ? R.yesil : R.krem,
+            onTikla: () => { setBvFiltre('okunmamis'); setBvSira('yeni'); } },
+          { etiket: 'Görüşme aşamasında', deger: String(durumSay('gorusme')), alt: durumSay('gorusme') ? 'planlandı · tıkla, süz' : 'yok', renk: R.mavi,
+            onTikla: () => { setBvFiltre('gorusme'); setBvSira('yeni'); } },
           // ⚠️ ÇERÇEVELEME: bu şeritte aynı havuzun DÖRT ayrı sayısı yan yana
           // duruyor ve aralarındaki ilişki yazmazsa okuyan bunları toplamaya
           // çalışıp tutturamaz. Bunlar TOPLANAN parçalar değil, AYNI havuzun
           // farklı süzgeçleridir — bu yazıldı.
-          { etiket: 'Toplam başvuru', deger: String(bs.length), alt: 'arşivsiz kayıt · aşağıdakiler bunun alt kümeleri' },
-          { etiket: 'Öncelikli', deger: String(oncelikliSayi), alt: `${bs.length} kaydın içinde · işaretlenmiş`, renk: R.amber },
+          { etiket: 'Toplam başvuru', deger: String(bs.length), alt: 'arşivsiz kayıt · aşağıdakiler bunun alt kümeleri',
+            onTikla: () => { setBvFiltre('hepsi'); setBvSira('yeni'); } },
+          { etiket: 'Öncelikli', deger: String(oncelikliSayi), alt: `${bs.length} kaydın içinde · tıkla, süz`, renk: R.amber,
+            onTikla: () => { setBvFiltre('oncelik'); setBvSira('oncelik'); } },
         ]} />
         {bs.length ? (
           <>
