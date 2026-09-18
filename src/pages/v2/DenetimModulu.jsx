@@ -1040,7 +1040,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
               : (olculen.length ? 'yok' : '⚠ hiçbir şube ölçülmedi — «yok» denemez'),
             renk: alarmli.length > 0 ? R.kirmizi : (olculen.length ? R.yesil : R.amber),
           },
-          { etiket: 'Uyumlu şube', deger: `${uyumlu.length} / ${olculen.length}`,
+          { etiket: 'Uyumlu şube',
+            onTikla: () => dnGit('dn-subeler'), deger: `${uyumlu.length} / ${olculen.length}`,
             alt: olculmeyen.length ? `ölçülen içinde · ${olculmeyen.map((s) => s.sube_ad).join(', ')} hariç` : 'ana tanı UYUMLU',
             renk: olculen.length ? R.yesil : R.not },
           {

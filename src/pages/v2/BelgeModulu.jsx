@@ -1151,10 +1151,12 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Bu ay belge', deger: String(arsiv.length), alt: merkez.ay || buAyISO() },
+          { etiket: 'Bu ay belge', deger: String(arsiv.length), alt: `${merkez.ay || buAyISO()} · kapsama ekranına git`,
+            onTikla: () => onKopru?.('__modul:belge:kapsama') },
           { etiket: 'Toptancı', deger: String(toptancilar.length), alt: 'arşivde temsil edilen · cari ekstreye git',
             onTikla: toptancilar.length ? () => onKopru?.('__modul:belge:cari') : undefined },
-          { etiket: 'Arşiv toplamı', deger: fmt(toptancilar.reduce((t, x) => t + sayi(x.toplam), 0)), alt: 'toptancı faturaları' },
+          { etiket: 'Arşiv toplamı', deger: fmt(toptancilar.reduce((t, x) => t + sayi(x.toplam), 0)), alt: 'toptancı faturaları · cari ekstreye git',
+            onTikla: toptancilar.length ? () => onKopru?.('__modul:belge:cari') : undefined },
           {
             etiket: 'Arşiv deposu',
             deger: depo ? `${trSayi(depoMb, depoMb >= 100 ? 0 : 1)} MB` : '—',
@@ -1809,7 +1811,8 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
               { etiket: 'Hesaplanan açık', deger: fmt(sayi(cari.hesaplanan_acik)), alt: 'fatura − ödeme izi + devir · tedarikçi bakiyesine git', renk: sayi(cari.hesaplanan_acik) > 0 ? R.kirmizi : R.yesil,
                 onTikla: () => onKopru?.('__modul:odeme:tedarikci') },
               { etiket: 'Tedarikçi beyanı', deger: cari.beyan_bakiye != null ? fmt(sayi(cari.beyan_bakiye)) : '—', alt: cari.beyan_bakiye != null ? 'iki göz kıyası' : 'beyan girilmemiş' },
-              { etiket: 'Açılış devri', deger: fmt(sayi(cari.devir)), alt: kisalt(cari.devir_not, 30) || 'sistem öncesi beyan' },
+              { etiket: 'Açılış devri', deger: fmt(sayi(cari.devir)), alt: `${kisalt(cari.devir_not, 30) || 'sistem öncesi beyan'} · tedarikçi bakiyesine git`,
+                onTikla: () => onKopru?.('__modul:odeme:tedarikci') },
               { etiket: '6 ay hacim', deger: fmt(sayi(cari.fatura_toplam_6ay)), alt: `${sayi(cari.fatura_adet)} fatura · ödeme izi ${fmt(sayi(cari.odeme_izi_toplam_6ay))} · arşive git`,
                 onTikla: () => onKopru?.('__modul:belge:arsiv') },
             ]} />
@@ -2168,6 +2171,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
             const cogunluk = t > 0 && d / t > 0.5;
             return {
               etiket: 'Bant dışı',
+              onTikla: () => blGit('belge-bantdisi'),
               deger: String(d),
               alt: t > 0
                 ? `${t} izlenen kalemin ${d}'i · medyana ya da karta göre ≥%10`

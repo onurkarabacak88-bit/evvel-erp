@@ -4887,11 +4887,15 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               ? `${acikSb.length} açık şube · ${kapaliGorev} görev sezon kapalı şubede`
               : `${subeler.length} şube · vardiya blokları`,
           },
-          { etiket: 'Tamamlanan', deger: String(aTamam), alt: aToplam ? `%${trSayi((aTamam / aToplam) * 100, 0)}` : '—', renk: R.yesil },
-          { etiket: 'Açık', deger: String(aToplam - aTamam), alt: (aToplam - aTamam) ? 'henüz işaretlenmedi' : 'hepsi kapandı', renk: (aToplam - aTamam) ? R.amber : R.yesil },
+          // Gorev kirilimi sube sube asagida; kutu oraya kaydirir.
+          { etiket: 'Tamamlanan', deger: String(aTamam), alt: `${aToplam ? `%${trSayi((aTamam / aToplam) * 100, 0)}` : '—'} · şube kırılımına in`, renk: R.yesil,
+            onTikla: () => { const el = document.getElementById('ekip-gorev'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } },
+          { etiket: 'Açık', deger: String(aToplam - aTamam), alt: `${(aToplam - aTamam) ? 'henüz işaretlenmedi' : 'hepsi kapandı'} · şube kırılımına in`, renk: (aToplam - aTamam) ? R.amber : R.yesil,
+            onTikla: () => { const el = document.getElementById('ekip-gorev'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); } },
           { etiket: 'Aktif kadro', deger: String(personel.length), alt: 'görev atanabilir personel · kadroya git', renk: R.krem,
             onTikla: () => onKopru?.('__modul:ekip:kadro') },
         ]} />
+        <div id="ekip-gorev" />
         {subeler.length ? (
           <Tablo
             baslik={`Görev takibi · ${kisaTarih(gorevTarih)}`}

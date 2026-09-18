@@ -1601,6 +1601,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           // (canlı denetim 2026-08-03). İlk 2 ad + sayı; tamamı alttaki tabloda.
           {
             etiket: 'Bu ay eksik ekstre',
+            onTikla: () => onKopru?.('__modul:kart:ekstre'),
             deger: `${eksik.length} kart`,
             alt: eksik.length
               ? `${eksik.slice(0, 2).map(k => k.ad).join(', ')}${eksik.length > 2 ? ` +${eksik.length - 2} kart` : ''} · tamamı tabloda`

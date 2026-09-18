@@ -1529,7 +1529,8 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           </button>
         </div>
         <KpiSeridi kpiler={[
-          { etiket: 'Tanımlı reçete', deger: String(receteler.length), alt: 'ürün kartı' },
+          { etiket: 'Tanımlı reçete', deger: String(receteler.length), alt: 'ürün kartı · ürün maliyetine git',
+            onTikla: () => onKopru?.('__modul:maliyet:urun') },
           { etiket: 'Aktif alış fiyatı', deger: String((fiyatlar || []).filter((f) => !f.gecerli_bitis).length), alt: 'hammadde fiyatı · fiyat zincirine git',
             onTikla: () => onKopru?.('__modul:maliyet:fiyat') },
           {

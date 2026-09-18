@@ -401,8 +401,10 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
   return (
     <>
       <KpiSeridi kpiler={[
-        { etiket: 'Bekleyen ciro onayı', deger: String(ciro.length), alt: gunler.length ? gunler.map(kisaTarih).join(', ') : 'yok', renk: ciro.length ? R.amber : R.yesil },
-        { etiket: 'Toplam ciro', deger: fmt(toplamCiro), alt: 'onaylanınca deftere işlenir', renk: R.krem },
+        { etiket: 'Bekleyen ciro onayı', deger: String(ciro.length), alt: `${gunler.length ? gunler.map(kisaTarih).join(', ') : 'yok'} · ciro girişine git`, renk: ciro.length ? R.amber : R.yesil,
+          onTikla: () => onKopru?.('__modul:para:girisi') },
+        { etiket: 'Toplam ciro', deger: fmt(toplamCiro), alt: 'onaylanınca deftere işlenir · işlem defterine git', renk: R.krem,
+          onTikla: () => onKopru?.('__modul:rapor:defter') },
         { etiket: 'Şube', deger: String(new Set(ciro.map(c => c.sube_id)).size), alt: 'taslak gönderen', renk: R.krem },
         { etiket: 'Onay sonrası', deger: 'deftere işlenir', alt: 'geri alma: ters kayıt', renk: R.not },
       ]} />
