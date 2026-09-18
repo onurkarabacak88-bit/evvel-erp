@@ -791,8 +791,16 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   };
 
   /** Başvuruyu açarken okundu damgası — sessiz, hata yutulur (izleme verisi). */
+  // ⚠️ Eskiden `b.goruldu` diye bir alan aranıyordu — kayıtta YOK; doğrusu
+  // `goruldu_ts`. Sonuç: her açılışta gereksiz istek gidiyor, buna karşılık
+  // ekrandaki yeşil "okunmamış" işareti ve sayaç YENİLE'ye basılana kadar
+  // olduğu yerde duruyordu. Artık iz hem sunucuya yazılır hem ekranda düşer.
   const bvGor = (b) => {
-    if (b?.id && !b.goruldu) api(`/is-basvurusu/${b.id}/gor`, { method: 'PATCH' }).catch(() => {});
+    if (!b?.id || !okunmadi(b)) return;
+    const simdi = new Date().toISOString();
+    setBasvurular((p) => p.map((x) => (x.id === b.id ? { ...x, goruldu_ts: simdi } : x)));
+    setBasvuruOzet((o) => (o && sayi(o.yeni) > 0 ? { ...o, yeni: sayi(o.yeni) - 1 } : o));
+    api(`/is-basvurusu/${b.id}/gor`, { method: 'PATCH' }).catch(() => {});
   };
 
   useEffect(yukle, []);
