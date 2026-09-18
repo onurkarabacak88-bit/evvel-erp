@@ -322,6 +322,10 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
   // olduğunu tek bakışta verir ve tıklayınca o türe süzer.
   // Sayılar mevcut `tutarli` kümesinden türetilir — ikinci bir hesap yolu YOK.
   const [turFiltre, setTurFiltre] = useState('');
+  // 🖱️ Sahip: "sayiya tikladigimda gorebilmeliyim." KPI'lar olu rakamdi —
+  // "Bugun odenecek 18.210 TL" yaziyor ama o kalemlere ulasmanin yolu yoktu.
+  // '' = suzgec yok · 'bugun' · 'hafta' · 'gecikmis'
+  const [vadeFiltre, setVadeFiltre] = useState('');
   const turOzet = useMemo(() => {
     const m = new Map();
     tutarli.forEach((o) => {
@@ -362,11 +366,16 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
 
   // Süzgeç listeye uygulanır; KPI toplamları DEĞİŞMEZ (tüm kuyruğun gerçeği).
   const gorunenSatirlar = useMemo(() => {
-    const taban = ileriGoster ? satirlar : vadesiGelen;
+    let taban = ileriGoster ? satirlar : vadesiGelen;
+    // Vade suzgeci (KPI tiklamasi) — tur suzgecinden ONCE, cunku KPI'lar
+    // vade penceresini anlatir. Ikisi birlikte de calisir.
+    if (vadeFiltre === 'bugun')    taban = taban.filter((o) => !o.tutar_girilmedi && (o._gecikmis || o._bugunMu || !o._tarih));
+    if (vadeFiltre === 'hafta')    taban = taban.filter((o) => !o.tutar_girilmedi && o._tarih && o._tarih <= isoEkle(bugun, 7));
+    if (vadeFiltre === 'gecikmis') taban = taban.filter((o) => !o.tutar_girilmedi && o._gecikmis);
     if (!turFiltre) return taban;
     if (turFiltre === '__tutarsiz__') return taban.filter((o) => o.tutar_girilmedi);
     return taban.filter((o) => (o.tip || 'Diğer') === turFiltre && !o.tutar_girilmedi);
-  }, [satirlar, vadesiGelen, ileriGoster, turFiltre]);
+  }, [satirlar, vadesiGelen, ileriGoster, turFiltre, vadeFiltre, bugun]);
 
   // ── ÖDEME KOŞUSU v2-YERLİ (köprü kaldırma turu, 2026-07-30) ────────────────
   // Klasik ÖM sihirbazının çekirdeği: tam/kısmi + nakit/kart + fatura eki +
@@ -1414,8 +1423,11 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
           );
         })()}
         <KpiSeridi kpiler={[
-          { etiket: 'Bugün ödenecek', deger: fmt(bugunToplam), alt: `${bugunVeGecmis.length} kalem · vade bugün/geçmiş${tutarsizNot}`, renk: bugunToplam > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'Bu hafta', deger: fmt(haftaToplam), alt: `${haftaSatir.length} kalem`, renk: R.krem },
+          // 🖱️ Tiklaninca asagidaki liste O PENCEREYE suzulur; ikinci tiklama birakir.
+          { etiket: 'Bugün ödenecek', deger: fmt(bugunToplam), alt: `${bugunVeGecmis.length} kalem · vade bugün/geçmiş${tutarsizNot}${vadeFiltre === 'bugun' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: bugunToplam > 0 ? R.kirmizi : R.yesil,
+            onTikla: bugunVeGecmis.length ? () => { setIleriGoster(true); setVadeFiltre((p) => (p === 'bugun' ? '' : 'bugun')); } : undefined },
+          { etiket: 'Bu hafta', deger: fmt(haftaToplam), alt: `${haftaSatir.length} kalem${vadeFiltre === 'hafta' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.krem,
+            onTikla: haftaSatir.length ? () => { setIleriGoster(true); setVadeFiltre((p) => (p === 'hafta' ? '' : 'hafta')); } : undefined },
           {
             etiket: 'Gecikmiş',
             // ⚠️ TEK DOĞRULUK KAYNAĞI: gecikmiş toplamı kokpit ucundan gelir
@@ -1425,8 +1437,9 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
             // (ör. ileri pencere) sessizce sapar. Kart limit_doluluk'ta tam bu
             // olmuştu. Sunucu alanı yoksa eski hesaba düşülür.
             deger: fmt(kokpit?.gecikmis_toplam != null ? sayi(kokpit.gecikmis_toplam) : gecikmisToplam),
-            alt: gecikmisSatir.length ? `${gecikmisSatir.length} kalem` : 'gecikme yok',
+            alt: gecikmisSatir.length ? `${gecikmisSatir.length} kalem${vadeFiltre === 'gecikmis' ? ' · SÜZGEÇ AÇIK' : ''}` : 'gecikme yok',
             renk: sayi(kokpit?.gecikmis_toplam ?? gecikmisToplam) > 0 ? R.kirmizi : R.yesil,
+            onTikla: gecikmisSatir.length ? () => { setIleriGoster(true); setVadeFiltre((p) => (p === 'gecikmis' ? '' : 'gecikmis')); } : undefined,
           },
           { etiket: 'Ödeme sonrası kasa', deger: fmt(kasa - bugunToplam), alt: 'bugünküler düşülmüş', renk: kasa - bugunToplam >= 0 ? R.yesil : R.kirmizi },
         ]} />
@@ -1821,10 +1834,19 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
               ]}
               onAc={(s) => setTurFiltre(s.ad === '↩ Tümü' ? '' : (s._tur === turFiltre ? '' : s._tur))}
             />
-            {turFiltre && (
-              <div style={{ fontSize: 11.5, color: R.not, marginTop: -8, marginBottom: 12 }}>
-                «{turFiltre === '__tutarsiz__' ? 'Tutarı girilmemiş' : turFiltre}» süzgeci açık —
-                {' '}{gorunenSatirlar.length} kalem gösteriliyor. Üstteki toplamlar TÜM kuyruğu anlatır.
+            {(turFiltre || vadeFiltre) && (
+              <div style={{ fontSize: 11.5, color: R.not, marginTop: -8, marginBottom: 12, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span>
+                  «{[vadeFiltre && ({ bugun: 'Bugün ödenecek', hafta: 'Bu hafta', gecikmis: 'Gecikmiş' }[vadeFiltre]),
+                     turFiltre && (turFiltre === '__tutarsiz__' ? 'Tutarı girilmemiş' : turFiltre)].filter(Boolean).join(' + ')}»
+                  {' '}süzgeci açık — {gorunenSatirlar.length} kalem gösteriliyor.
+                  {' '}Üstteki toplamlar TÜM kuyruğu anlatır.
+                </span>
+                <button onClick={() => { setTurFiltre(''); setVadeFiltre(''); }} style={{
+                  padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+                  border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+                  fontSize: 11, fontWeight: 600,
+                }}>Süzgeci kaldır</button>
               </div>
             )}
           </>
