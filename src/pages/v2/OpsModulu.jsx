@@ -831,6 +831,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // 🖱️ Depo Stok: "Kritik kalem 12" yaziyor ama HANGI 12 kalem oldugunu bulmak
   // icin yuzlerce satirlik tabloyu gozle taramak gerekiyordu. '' | 'kritik' | 'dusuk'
   const [depoFiltre, setDepoFiltre] = useState('');
+  // Stok Hareketi: "Bugun kayit 12" / "Fire 3" olu rakamdi — 60 satirlik
+  // hareket tablosunda o kayitlari gozle aramak gerekiyordu.
+  // '' | 'bugun' | 'giris' | 'cikis' | 'fire'
+  const [hrFiltre, setHrFiltre] = useState('');
   const [kd, setKd] = useState({});               // kalem durumları (indeks anahtarlı)
   const [notu, setNotu] = useState('');
   const [busy, setBusy] = useState(false);
@@ -5472,7 +5476,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Bugün kayıt', deger: String(bugunku.length), alt: 'stok hareketi' },
+          { etiket: 'Bugün kayıt', deger: String(bugunku.length), alt: `stok hareketi${hrFiltre === 'bugun' ? ' · SÜZGEÇ AÇIK' : (hrFiltre ? ' · süzgeci kaldırmak için tıkla' : '')}`,
+            onTikla: bugunku.length ? () => setHrFiltre((p) => (p === 'bugun' ? '' : 'bugun')) : (hrFiltre ? () => setHrFiltre('') : undefined) },
           // ⚠️ Codex: hemen üstte sunucunun `tur_ozet` kırılımı DURUYOR ama
           // KPI'lar istemcide `turCoz()` ile yeniden sayılıyordu. Sunucu yeni
           // bir tür ekler ya da adlandırmayı değiştirirse KPI ile altındaki
@@ -5485,7 +5490,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             return {
               etiket: 'Giriş (3 gün)',
               deger: String(hrTur.length ? sunucu : say((h) => turCoz(h.hareket_turu).ad === 'giriş')),
-              alt: hrTur.length ? 'teslim + kabul' : 'teslim + kabul · ekrandan sayıldı',
+              alt: `${hrTur.length ? 'teslim + kabul' : 'teslim + kabul · ekrandan sayıldı'}${hrFiltre === 'giris' ? ' · SÜZGEÇ AÇIK' : ''}`,
+              onTikla: () => setHrFiltre((p) => (p === 'giris' ? '' : 'giris')),
               renk: R.yesil,
             };
           })(),
@@ -5495,7 +5501,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             return {
               etiket: 'Çıkış (3 gün)',
               deger: String(hrTur.length ? sunucu : say((h) => turCoz(h.hareket_turu).ad === 'çıkış')),
-              alt: hrTur.length ? 'sevk + ürün aç' : 'sevk + ürün aç · ekrandan sayıldı',
+              alt: `${hrTur.length ? 'sevk + ürün aç' : 'sevk + ürün aç · ekrandan sayıldı'}${hrFiltre === 'cikis' ? ' · SÜZGEÇ AÇIK' : ''}`,
+              onTikla: () => setHrFiltre((p) => (p === 'cikis' ? '' : 'cikis')),
             };
           })(),
           // ⚠️ Fable: bu KPI hâlâ istemcide, üstelik sunucudan `limit=150` ile
@@ -5515,11 +5522,24 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             return {
               etiket: 'Fire + sayım (3 gün)',
               deger: String(deger),
-              alt: varmi ? 'düzeltme dahil' : 'düzeltme dahil · ekrandan sayıldı (150 kayıt penceresi)',
+              alt: `${varmi ? 'düzeltme dahil' : 'düzeltme dahil · ekrandan sayıldı (150 kayıt penceresi)'}${hrFiltre === 'fire' ? ' · SÜZGEÇ AÇIK' : ''}`,
               renk: fire > 0 ? R.kirmizi : R.krem,
+              // Fire dogrudan para kaybi — hangi kayitlar oldugu bir tiklamayla gorunur.
+              onTikla: () => setHrFiltre((p) => (p === 'fire' ? '' : 'fire')),
             };
           })(),
         ]} />
+
+        {hrFiltre && (
+          <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>«{{ bugun: 'Bugünkü kayıtlar', giris: 'Girişler', cikis: 'Çıkışlar', fire: 'Fire + sayım' }[hrFiltre]}» süzgeci açık. Üstteki sayılar 3 GÜNÜN tamamını anlatır.</span>
+            <button onClick={() => setHrFiltre('')} style={{
+              padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+              border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+              fontSize: 11, fontWeight: 600,
+            }}>Süzgeci kaldır</button>
+          </div>
+        )}
 
         {/* ŞUBE KIRILIMI — sunucu hareket adedinin yanında MİKTAR toplamlarını
             da veriyor (giriş/çıkış adedi). Satır listesinden bu türetilemezdi;
@@ -5577,7 +5597,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               + (hrSatir.length > 60
                 ? ` · ⚠ ${hrSatir.length} hareketin ilk 60'ı gösteriliyor, ${hrSatir.length - 60} kayıt listede yok (defter eksik görünür)`
                 : '')}
-            satirlar={hrSatir.slice(0, 60).map((h, i) => {
+            satirlar={(hrFiltre === 'bugun' ? bugunku
+              : hrFiltre === 'giris' ? hrSatir.filter((h) => turCoz(h.hareket_turu).ad === 'giriş')
+              : hrFiltre === 'cikis' ? hrSatir.filter((h) => turCoz(h.hareket_turu).ad === 'çıkış')
+              : hrFiltre === 'fire' ? hrSatir.filter((h) => turCoz(h.hareket_turu).ad === 'fire')
+              : hrSatir).slice(0, 60).map((h, i) => {
               const tur = turCoz(h.hareket_turu);
               const m = sayi(h.miktar);
               return {
@@ -5663,7 +5687,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Kayıt', deger: String(sayi(arsivVeri.toplam)), alt: `son ${sayi(arsivVeri.gun) || arsivGun} gün${arsivVeri.sube_arama ? ` · "${arsivVeri.sube_arama}"` : ''}` },
+          { etiket: 'Kayıt', deger: String(sayi(arsivVeri.toplam)), alt: `son ${sayi(arsivVeri.gun) || arsivGun} gün${arsivVeri.sube_arama ? ` · "${arsivVeri.sube_arama}"` : ''}${arsivDurum ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: arsivDurum ? () => { setArsivDurum(''); filtrele(arsivGun, '', arsivArama); } : undefined },
           // ══════════════════════════════════════════════════════════════
           // ⚠️ KENDİ YANLIŞ DÜZELTMEMİ GERİ ALDIM — 2026-08-27
           // ══════════════════════════════════════════════════════════════
@@ -5679,11 +5704,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           // yok saymak).
           // ⚠️ DOĞRU AYRIM: ÖZETİN KENDİSİ yoksa "—" (okunamadı); özet varsa
           // eksik anahtar 0'dır ve 0 yazılır.
+          // 🖱️ Durum suzgeci ZATEN vardi (asagidaki cipler) — KPI'lar ona
+          // BAGLANMAMISTI. Sayiyi goren, altta cipi bulup tiklamak zorundaydi.
           {
             etiket: 'Teslim edildi',
             deger: arsivVeri.ozet ? String(sayi(arOzet.teslim_edildi)) : '—',
-            alt: arsivVeri.ozet ? 'zincir kapandı' : 'özet okunamadı',
+            alt: arsivVeri.ozet ? `zincir kapandı${arsivDurum === 'teslim_edildi' ? ' · SÜZGEÇ AÇIK' : ''}` : 'özet okunamadı',
             renk: arsivVeri.ozet ? R.yesil : R.not3,
+            onTikla: sayi(arOzet.teslim_edildi) ? () => { const k = arsivDurum === 'teslim_edildi' ? '' : 'teslim_edildi'; setArsivDurum(k); filtrele(arsivGun, k, arsivArama); } : undefined,
           },
           {
             etiket: 'Gönderilmedi',
@@ -5692,12 +5720,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               : (sayi(arOzet.gonderilmedi) ? 'kuyruğa geri alınabilir' : 'takılan yok'),
             renk: !arsivVeri.ozet ? R.not3
               : (sayi(arOzet.gonderilmedi) ? R.kirmizi : R.yesil),
+            onTikla: sayi(arOzet.gonderilmedi) ? () => { const k = arsivDurum === 'gonderilmedi' ? '' : 'gonderilmedi'; setArsivDurum(k); filtrele(arsivGun, k, arsivArama); } : undefined,
           },
           {
             etiket: 'İptal',
             deger: arsivVeri.ozet ? String(sayi(arOzet.iptal)) : '—',
-            alt: arsivVeri.ozet ? `bekleyen ${sayi(arOzet.bekliyor)}` : 'özet okunamadı',
+            alt: arsivVeri.ozet ? `bekleyen ${sayi(arOzet.bekliyor)}${arsivDurum === 'iptal' ? ' · SÜZGEÇ AÇIK' : ''}` : 'özet okunamadı',
             renk: R.not,
+            onTikla: sayi(arOzet.iptal) ? () => { const k = arsivDurum === 'iptal' ? '' : 'iptal'; setArsivDurum(k); filtrele(arsivGun, k, arsivArama); } : undefined,
           },
           // ⚠️ Fable: özet histogramında DOLU ve KIRMIZI bir durum vardı —
           // `kabul_uyusmazlik` (şube teslim aldı ama adet tutmadı = stok/para
@@ -5711,6 +5741,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               : (sayi(arOzet.kabul_uyusmazlik) ? 'teslim alındı, adet tutmadı' : 'adet farkı yok'),
             renk: !arsivVeri.ozet ? R.not3
               : (sayi(arOzet.kabul_uyusmazlik) ? R.kirmizi : R.yesil),
+            onTikla: sayi(arOzet.kabul_uyusmazlik) ? () => { const k = arsivDurum === 'kabul_uyusmazlik' ? '' : 'kabul_uyusmazlik'; setArsivDurum(k); filtrele(arsivGun, k, arsivArama); } : undefined,
           },
         ]} />
 
