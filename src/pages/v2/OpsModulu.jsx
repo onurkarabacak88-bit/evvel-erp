@@ -4717,7 +4717,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Hazırlıkta talep', deger: String(sevkListe.length), alt: 'son 14 gün', renk: sevkListe.length > 0 ? R.mavi : R.krem },
+          { etiket: 'Hazırlıkta talep', deger: String(sevkListe.length), alt: 'son 14 gün · sipariş akışına git', renk: sevkListe.length > 0 ? R.mavi : R.krem,
+            onTikla: () => onKopru?.('__modul:ops:akis') },
           { etiket: 'Seçili talep', deger: seciliTalep ? `${(seciliTalep.kalemler || []).length} kalem` : '—', alt: seciliTalep ? (seciliTalep.sube_adi || '') : 'listeden seç' },
           { etiket: 'Eksik / kısmi', deger: seciliTalep ? String(eksik) : '—', alt: 'yok veya kısmi işaretli', renk: eksik > 0 ? R.amber : R.krem },
           { etiket: 'Hedef depo', deger: seciliTalep?.hedef_depo_sube_adi || '—', alt: 'sevkiyatı yapacak şube' },

@@ -66,7 +66,9 @@ export default function KimlikBirlestirme({ onToast, Bos, KucukModal }) {
           renk: oneri.hata ? R.kirmizi : oneriler.length ? R.amber : R.yesil },
         { etiket: 'Karar sayısı', deger: defter.hata ? '—' : String(kararlar.length),
           alt: 'append-only defter', renk: R.krem },
-        { etiket: 'Aktif bağ', deger: String(Object.keys(defter.veri?.guncel_baglar || {}).length),
+        { etiket: 'Aktif bağ',
+          // Aktif baglar defterde satir satir duruyor.
+          onTikla: () => { const el = document.getElementById('kb-defter'); if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' }); }, deger: String(Object.keys(defter.veri?.guncel_baglar || {}).length),
           alt: 'birleşik ad', renk: R.mavi },
       ]} />
 
@@ -129,6 +131,7 @@ export default function KimlikBirlestirme({ onToast, Bos, KucukModal }) {
         </div>
       ) : kararlar.length > 0 && (
         <Tablo
+          id="kb-defter"
           baslik="Kimlik karar defteri"
           not="append-only · satır silinmez, geri alma ters karar yazar"
           kolonlar={[{ ad: 'Zaman' }, { ad: 'Kanonik' }, { ad: 'Alias' }, { ad: 'Karar' }, { ad: '' }]}
