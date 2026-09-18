@@ -78,6 +78,12 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
   // 🖱️ "Fiyatsiz hammaddeli 14" yaziyordu ama HANGI 14 urun oldugunu bulmak
   // icin recete tablosunu gozle taramak gerekiyordu.
   const [urunFiltre, setUrunFiltre] = React.useState('');
+  // Tuketim Kontrolu: "Fazla kullanim 37" olu rakamdi — hangi malzemelerde
+  // oldugunu bulmak icin butun malzeme kartlarini taramak gerekiyordu.
+  const [tukFazlaSuz, setTukFazlaSuz] = React.useState(false);
+  // Receteler: "Eksiksiz recete 18" yaziyordu ama EKSIK olanlari (asil is
+  // kuyrugu) ayirmanin yolu yoktu. '' | 'tam' | 'eksik'
+  const [rcFiltre, setRcFiltre] = React.useState('');
   const [ozet, setOzet] = useState(null);
   const [ozetHata, setOzetHata] = useState('');
   // Vergi & KDV (P&L DIŞI, izole) — /ops/maliyet/kdv-pozisyon + /vergi-ozet
@@ -1526,9 +1532,24 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             deger: String(receteler.filter((r) => (r.durum
               ? (r.durum === 'exact' || r.durum === 'approx')
               : receteMaliyet(r).fiyatsiz === 0)).length),
-            alt: 'tüm kalemleri fiyatlandı',
+            alt: `tüm kalemleri fiyatlandı${rcFiltre === 'tam' ? ' · SÜZGEÇ AÇIK' : ''}`,
             renk: R.yesil,
+            onTikla: () => setRcFiltre((p) => (p === 'tam' ? '' : 'tam')),
           },
+          // 🖱️ EKSIK recete = asil is kuyrugu: o urunun maliyeti hesaplanamaz.
+          // Eskiden yalniz "eksiksiz" sayiliyordu, eksikler hic ayrilamiyordu.
+          (() => {
+            const eksikSay = receteler.filter((r) => (r.durum
+              ? !(r.durum === 'exact' || r.durum === 'approx')
+              : receteMaliyet(r).fiyatsiz > 0)).length;
+            return {
+              etiket: 'Eksik reçete',
+              deger: String(eksikSay),
+              alt: eksikSay ? `fiyatsız hammadde var · maliyet hesaplanamaz${rcFiltre === 'eksik' ? ' · SÜZGEÇ AÇIK' : ''}` : 'eksik yok',
+              renk: eksikSay ? R.amber : R.yesil,
+              onTikla: eksikSay ? () => setRcFiltre((p) => (p === 'eksik' ? '' : 'eksik')) : undefined,
+            };
+          })(),
           { etiket: 'Düzenleme', deger: 'Reçete Eşleştirme', alt: 'ekleme/değiştirme orada' },
         ]} />
         {receteler.length === 0 ? (
@@ -1538,7 +1559,9 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))',
             gap: 12, marginBottom: 16,
           }}>
-            {receteler.slice(0, 30).map((r) => {
+            {(rcFiltre === 'tam' ? receteler.filter((r) => (r.durum ? (r.durum === 'exact' || r.durum === 'approx') : receteMaliyet(r).fiyatsiz === 0))
+              : rcFiltre === 'eksik' ? receteler.filter((r) => (r.durum ? !(r.durum === 'exact' || r.durum === 'approx') : receteMaliyet(r).fiyatsiz > 0))
+              : receteler).slice(0, 30).map((r) => {
               const h = receteMaliyet(r);
               return (
                 <div key={r.urun_id} style={{ ...kartYuzey, padding: '18px 20px' }}>
@@ -1869,8 +1892,10 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'İzlenen malzeme', deger: String(grupListe.length), alt: `son ${sayi(kontrol.kesit_gun)} gün · onaylı eşleşme${sayi(kontrol.kesilen_satir) > 0 ? ` · ⚠ ${sayi(kontrol.kesilen_satir)} satır kesildi` : ''}` },
-          { etiket: 'Fazla kullanım', deger: String(toplamFazla), alt: `beklenenden %${fazlaE}+ fazla (gün×malzeme)`, renk: toplamFazla > 0 ? R.kirmizi : R.yesil },
+          { etiket: 'İzlenen malzeme', deger: String(grupListe.length), alt: `son ${sayi(kontrol.kesit_gun)} gün · onaylı eşleşme${sayi(kontrol.kesilen_satir) > 0 ? ` · ⚠ ${sayi(kontrol.kesilen_satir)} satır kesildi` : ''}${tukFazlaSuz ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: tukFazlaSuz ? () => setTukFazlaSuz(false) : undefined },
+          { etiket: 'Fazla kullanım', deger: String(toplamFazla), alt: `beklenenden %${fazlaE}+ fazla (gün×malzeme)${tukFazlaSuz ? ' · SÜZGEÇ AÇIK' : ''}`, renk: toplamFazla > 0 ? R.kirmizi : R.yesil,
+            onTikla: toplamFazla > 0 ? () => setTukFazlaSuz((p) => !p) : undefined },
           { etiket: 'En sert sapma', deger: _sapmalar.length ? pct(enSert) : '—', alt: 'tek günde (±)', renk: _sapmalar.length && Math.abs(enSert) >= fazlaE ? R.kirmizi : R.krem },
           { etiket: 'Eşleşme', deger: `${sayi(kontrol.onayli_urun_es)} ürün · ${sayi(kontrol.onayli_malzeme_es)} malzeme`, alt: 'onaylı köprüler' },
         ]} />
@@ -1890,7 +1915,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           <BosDurum metin="Kıyaslanabilir gün yok — satış verisi ve ürün-aç kaydı biriktikçe bu ekran dolar." />
         ) : (
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12, marginBottom: 16 }}>
-            {grupListe.map((g) => (
+            {(tukFazlaSuz ? grupListe.filter((g) => g.fazla.length > 0) : grupListe).map((g) => (
               <div key={`${g.malzeme}|${g.birim}`} style={{
                 ...kartYuzey, padding: '16px 18px',
                 border: g.kalici ? `1px solid ${g.ort > 0 ? R.kirmizi : R.amber}55` : kartYuzey.border,
