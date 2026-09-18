@@ -835,6 +835,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // hareket tablosunda o kayitlari gozle aramak gerekiyordu.
   // '' | 'bugun' | 'giris' | 'cikis' | 'fire'
   const [hrFiltre, setHrFiltre] = useState('');
+  // Sayim: "Fark bulunan 3" olu rakamdi — hangi gorevlerde fark ciktigini
+  // bulmak icin butun sayim kartlarini acmak gerekiyordu. Fark = stok/para farki.
+  const [syFarkli, setSyFarkli] = useState(false);
+  // Katalog: "Depo eslesmesi yok 8" -> o urunlerde STOK DUSMEZ (sessiz stok
+  // sismesi). Hangileri oldugunu bulmak icin her kategoriyi acmak gerekiyordu.
+  const [ktFiltre, setKtFiltre] = useState(''); // '' | 'fiyatsiz' | 'eslesmez'
   const [kd, setKd] = useState({});               // kalem durumları (indeks anahtarlı)
   const [notu, setNotu] = useState('');
   const [busy, setBusy] = useState(false);
@@ -3485,6 +3491,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     // Granül... hepsi kayıtlı. Fiyatsız + depo-eşleşmesiz sayaçları da 0 çıkıyordu.
     const kItems = (k) => (k.items || k.urunler || []);
     const toplamUrun = ktKatalog.reduce((a, k) => a + kItems(k).length, 0);
+    // Suzgec YALNIZ gorunen urunleri daraltir; ustteki sayilar tum katalogun gercegi.
+    const ktSuz = (liste) => (ktFiltre === 'fiyatsiz' ? liste.filter((u) => !(sayi(u.birim_fiyat_tl) > 0))
+      : ktFiltre === 'eslesmez' ? liste.filter((u) => !u.depo_stok_kalem_kodu)
+      : liste);
     // 🔵 EVV-OPS3-F: eskiden yalnız `== null` fiyatsız sayılıyordu → 0/''/bozuk değer
     // "fiyatlı ₺0" görünüp maliyet hesabına 0 basıyordu. Pozitif olmayan = fiyatsız.
     const fiyatsiz = ktKatalog.reduce((a, k) =>
@@ -3496,9 +3506,12 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Kategori', deger: String(ktKatalog.length), alt: 'aktif katalog başlığı' },
-          { etiket: 'Ürün', deger: String(toplamUrun), alt: 'şubelerin sipariş edebildiği' },
-          { etiket: 'Fiyatsız ürün', deger: String(fiyatsiz), alt: fiyatsiz ? 'maliyet hesabına girmez' : 'hepsi fiyatlı', renk: fiyatsiz ? R.amber : R.yesil },
-          { etiket: 'Depo eşleşmesi yok', deger: String(eslesmemis), alt: eslesmemis ? 'stok düşmez' : 'hepsi eşleşti', renk: eslesmemis ? R.amber : R.yesil },
+          { etiket: 'Ürün', deger: String(toplamUrun), alt: `şubelerin sipariş edebildiği${ktFiltre ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: ktFiltre ? () => setKtFiltre('') : undefined },
+          { etiket: 'Fiyatsız ürün', deger: String(fiyatsiz), alt: fiyatsiz ? `maliyet hesabına girmez${ktFiltre === 'fiyatsiz' ? ' · SÜZGEÇ AÇIK' : ''}` : 'hepsi fiyatlı', renk: fiyatsiz ? R.amber : R.yesil,
+            onTikla: fiyatsiz ? () => setKtFiltre((p) => (p === 'fiyatsiz' ? '' : 'fiyatsiz')) : undefined },
+          { etiket: 'Depo eşleşmesi yok', deger: String(eslesmemis), alt: eslesmemis ? `stok düşmez${ktFiltre === 'eslesmez' ? ' · SÜZGEÇ AÇIK' : ''}` : 'hepsi eşleşti', renk: eslesmemis ? R.amber : R.yesil,
+            onTikla: eslesmemis ? () => setKtFiltre((p) => (p === 'eslesmez' ? '' : 'eslesmez')) : undefined },
         ]} />
 
         <div style={{
@@ -3538,9 +3551,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               }}>+ Ürün</button>
             </div>
 
-            {kItems(k).length === 0 ? (
-              <div style={{ fontSize: 12, color: R.not2 }}>Bu kategoride ürün yok.</div>
-            ) : kItems(k).map((u) => (
+            {ktSuz(kItems(k)).length === 0 ? (
+              <div style={{ fontSize: 12, color: R.not2 }}>
+                {ktFiltre ? 'Bu kategoride süzgece uyan ürün yok.' : 'Bu kategoride ürün yok.'}
+              </div>
+            ) : ktSuz(kItems(k)).map((u) => (
               <div key={u.id} style={{
                 display: 'flex', alignItems: 'center', gap: 10, padding: '9px 0',
                 borderBottom: `1px solid ${R.cizgi2}`, fontSize: 12.5, flexWrap: 'wrap',
@@ -5261,8 +5276,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Onay bekleyen sayım', deger: String(gorevler.length), alt: 'sahip onayı gerekli', renk: gorevler.length > 0 ? R.amber : R.yesil },
-          { etiket: 'Fark bulunan', deger: String(farkli.length), alt: 'sistemle uyuşmayan görev', renk: farkli.length > 0 ? R.kirmizi : R.krem },
+          { etiket: 'Onay bekleyen sayım', deger: String(gorevler.length), alt: `sahip onayı gerekli${syFarkli ? ' · süzgeci kaldırmak için tıkla' : ''}`, renk: gorevler.length > 0 ? R.amber : R.yesil,
+            onTikla: syFarkli ? () => setSyFarkli(false) : undefined },
+          { etiket: 'Fark bulunan', deger: String(farkli.length), alt: `sistemle uyuşmayan görev${syFarkli ? ' · SÜZGEÇ AÇIK' : ''}`, renk: farkli.length > 0 ? R.kirmizi : R.krem,
+            onTikla: farkli.length ? () => setSyFarkli((p) => !p) : undefined },
           // ⚠️ DOYMA KONTROLÜ: sayılar pencere üzerinden hesaplandığı için,
           // kayıt sayısı istenen limite DAYANDIYSA rakamlar tavana takılmış
           // demektir ve toplam değil, pencere toplamıdır. Bunu söylemek
@@ -5306,7 +5323,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           <BosDurum metin="Onay bekleyen sayım yok — tüm sayımlar işlenmiş." />
         ) : (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 16 }}>
-            {gorevler.map((g) => {
+            {(syFarkli ? farkli : gorevler).map((g) => {
               const fark = sayi(g.fark_sayisi);
               const acik = sayimAcikId === String(g.id);
               const det = sayimDetay[String(g.id)];
