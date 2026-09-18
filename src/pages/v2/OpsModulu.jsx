@@ -828,6 +828,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   // Bu liste kanban'ın YAPAMADIĞINI yapar: kabul uyumsuzlukları kanban
   // kolonlarında YOK — açık sayıya giriyor ama panoda görünmüyordu.
   const [akisListe, setAkisListe] = useState(null);
+  // 🖱️ Depo Stok: "Kritik kalem 12" yaziyor ama HANGI 12 kalem oldugunu bulmak
+  // icin yuzlerce satirlik tabloyu gozle taramak gerekiyordu. '' | 'kritik' | 'dusuk'
+  const [depoFiltre, setDepoFiltre] = useState('');
   const [kd, setKd] = useState({});               // kalem durumları (indeks anahtarlı)
   const [notu, setNotu] = useState('');
   const [busy, setBusy] = useState(false);
@@ -4983,6 +4986,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             if (sunucuKritik == null) {
               return {
                 etiket: 'Kritik kalem',
+                onTikla: (!kapsamZayif && kritik.length) ? () => setDepoFiltre((x) => (x === 'kritik' ? '' : 'kritik')) : undefined,
                 deger: kapsamZayif ? '—' : String(kritik.length),
                 alt: kapsamZayif
                   ? `⚠ ölçülemedi · ${kalemler.length} kalemin ${esikli} tanesinde eşik var`
@@ -4996,8 +5000,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               deger: String(sayi(sunucuKritik)),
               alt: ayristi
                 ? `tüm şubeler · bu tablo ${kritik.length} görüyor (${kalemler.length} kalemin ${esikli}'inde eşik var)`
-                : 'eşiğin altında',
+                : `eşiğin altında${depoFiltre === 'kritik' ? ' · SÜZGEÇ AÇIK' : ''}`,
               renk: sayi(sunucuKritik) > 0 ? R.kirmizi : R.not,
+              onTikla: kritik.length ? () => setDepoFiltre((x) => (x === 'kritik' ? '' : 'kritik')) : undefined,
             };
           })(),
           // Düşük kalem yalnız EŞİĞİ OLAN kalemler için anlamlıdır; kapsam
@@ -5010,12 +5015,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               deger: kapsamZayif ? '—' : String(dusuk.length),
               alt: kapsamZayif
                 ? `⚠ ${kalemler.length} kalemin yalnız ${esikli}'inde eşik tanımlı`
-                : 'eşiğe yaklaşıyor',
+                : `eşiğe yaklaşıyor${depoFiltre === 'dusuk' ? ' · SÜZGEÇ AÇIK' : ''}`,
               renk: kapsamZayif ? R.not3 : (dusuk.length > 0 ? R.amber : R.not),
+              onTikla: (!kapsamZayif && dusuk.length) ? () => setDepoFiltre((x) => (x === 'dusuk' ? '' : 'dusuk')) : undefined,
             };
           })(),
           {
             etiket: 'Toplam kalem',
+            onTikla: depoFiltre ? () => setDepoFiltre('') : undefined,
             deger: String(kalemler.length),
             // ⚠️ KPI şeridindeki para/sıfır sayıları 4 ŞUBEYİ, bu tablo 2
             // ŞUBEYİ anlatıyor (canlı ölçüm). Yan yana duran iki sayının
@@ -5141,6 +5148,20 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         {kalemler.length === 0 ? (
           <BosDurum metin="Depo stok kartı yok — henüz stok tanımlanmamış." />
         ) : (
+          <>
+          {depoFiltre && (() => {
+            const n = (depoFiltre === 'kritik' ? kritik : dusuk).length;
+            return (
+              <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                <span>«{depoFiltre === 'kritik' ? 'Kritik kalemler' : 'Düşük kalemler'}» süzgeci açık — {n} kalem. Üstteki sayılar TÜM kataloğu anlatır.</span>
+                <button onClick={() => setDepoFiltre('')} style={{
+                  padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+                  border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+                  fontSize: 11, fontWeight: 600,
+                }}>Süzgeci kaldır</button>
+              </div>
+            );
+          })()}
           <Tablo
             baslik={`Depo stok durumu · ${depoSube ? (subeler.find((s) => s.id === depoSube)?.ad || '') : 'tüm şubeler toplamı'}`}
             not={'satıra tıkla → şube kırılımı'
@@ -5152,7 +5173,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               { ad: 'Bağlı para', sag: 1 },
               { ad: 'Kritik seviye', sag: 1 }, { ad: 'Min\'e oran', sag: 1 }, { ad: 'Durum' },
             ]}
-            satirlar={[...kalemler]
+            satirlar={[...(depoFiltre === 'kritik' ? kritik : depoFiltre === 'dusuk' ? dusuk : kalemler)]
               .sort((a, b) => {
                 const da = durumAl(a).ad; const db2 = durumAl(b).ad;
                 const sira = { kritik: 0, 'düşük': 1, yeterli: 2, 'eşik yok': 3 };
@@ -5213,6 +5234,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               });
             }}
           />
+          </>
         )}
       </>
     );
