@@ -301,14 +301,15 @@ function SecimKutusu({ isaretli, boyut = 18, onTikla }) {
 // `satirAktif` opsiyoneldir: VERİLMEZSE davranış birebir eskisi gibidir
 // (çağıran yerlerin hiçbiri bozulmaz). Verildiğinde, yalnız o yordamın
 // "evet" dediği satır tıklanabilir görünür.
-export function Liste({ satirlar, baslik, onAc, satirAktif, secilebilir, secili, onSec, onHepsi }) {
+// `id` — KPI kutusundan bu listeye kaydirmak icin capa (Tablo ile ayni desen).
+export function Liste({ satirlar, baslik, onAc, satirAktif, secilebilir, secili, onSec, onHepsi, id }) {
   if (!satirlar?.length) return null;
   // Seçilebilir satır = kendi `secilemez` bayrağı olmayan satır
   const uygun = satirlar.filter((l) => !l.secilemez);
   const secilenSayi = uygun.filter((l) => secili?.[l.id]).length;
   const hepsiSecili = uygun.length > 0 && secilenSayi === uygun.length;
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
+    <div id={id} style={{ display: 'flex', flexDirection: 'column', gap: 7 }}>
       {secilebilir && uygun.length > 1 && (
         <div
           onClick={() => onHepsi?.(!hepsiSecili)}

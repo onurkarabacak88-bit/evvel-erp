@@ -118,6 +118,12 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   // 🖱️ "Kritik kova 3" olu rakamdi — hangi uc kova oldugunu bulmak icin
   // butun kova kartlarini gozle taramak gerekiyordu.
   const [mmSadeceKritik, setMmSadeceKritik] = useState(false);
+  // Duyu Mutabakati / Strateji: kutular olu rakamdi. Bu ekranlarda kayitlar
+  // ZATEN asagida duruyor ama sayfa uzun — kutu artik oraya goturuyor.
+  const dnGit = (id) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   const [mmYuklenen, setMmYuklenen] = useState('');  // PDF yüklenen satır id
   const [rapor, setRapor] = useState(null);          // truth gunluk-rapor
   const [durum, setDurum] = useState(null);          // truth durum
@@ -1382,15 +1388,18 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           // `kesit` NESNE: {bas, gun} — sayi(obje)=0 olduğu için hep "60 gün"
           // yazıyordu; sunucu farklı pencere kullansa ekran yanlış söylerdi.
           { etiket: 'Eşleşen', deger: String(eslesen), alt: `son ${sayi(mutabakat.kesit?.gun) || 60} gün`, renk: R.yesil },
-          { etiket: 'Açık fark', deger: String(acikFark), alt: 'iki yönlü uyumsuzluk', renk: acikFark > 0 ? R.amber : R.yesil },
+          { etiket: 'Açık fark', deger: String(acikFark), alt: 'iki yönlü uyumsuzluk · listeye in', renk: acikFark > 0 ? R.amber : R.yesil,
+            onTikla: acikFark ? () => dnGit('dn-mutabakat-gruplar') : undefined },
           // 🐞 DİL DÜZELTMESİ (2026-08-03): eski alt yazılar "kasadan çıktı /
           // kasada iz yok" diyordu — bu uç KASA mutabakatı DEĞİL; sol taraf
           // TEDARİKÇİNİN fatura-üstü bakiye zinciri, sağ taraf bizim ödeme
           // olaylarımız. "Kasada iz yok" okuyan sahip kasa açığı sanıyordu;
           // gerçek anlam "tedarikçinin sonraki faturasında düşüş görünmüyor
           // (zincir eksik olabilir — bilgi)".
-          { etiket: 'Düşüş var · kayıt yok', deger: String(dusumsuz.length), alt: 'tedarikçi bakiyesi erimiş, bizde ödeme kaydı yok', renk: dusumsuz.length > 0 ? R.kirmizi : R.krem },
-          { etiket: 'Kayıt var · düşüş yok', deger: String(kayitsiz.length), alt: 'ödememiz var, tedarikçi zincirinde erime görünmüyor (bilgi)', renk: kayitsiz.length > 0 ? R.amber : R.krem },
+          { etiket: 'Düşüş var · kayıt yok', deger: String(dusumsuz.length), alt: 'tedarikçi bakiyesi erimiş, bizde ödeme kaydı yok · listeye in', renk: dusumsuz.length > 0 ? R.kirmizi : R.krem,
+            onTikla: dusumsuz.length ? () => dnGit('dn-mutabakat-gruplar') : undefined },
+          { etiket: 'Kayıt var · düşüş yok', deger: String(kayitsiz.length), alt: 'ödememiz var, tedarikçi zincirinde erime görünmüyor (bilgi) · listeye in', renk: kayitsiz.length > 0 ? R.amber : R.krem,
+            onTikla: kayitsiz.length ? () => dnGit('dn-mutabakat-gruplar') : undefined },
         ]} />
         <OneriSeridi metin="Bu ekran tedarikçi fatura-zinciri ↔ ödeme olayları ADAY eşleşmesidir (kasa mutabakatı değil). Bakiye düşüşü muhasebe sinyalidir — iade/iskonto da düşürür; hüküm yok." />
         {yonOkunamadi ? (
@@ -1401,7 +1410,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
         ) : acikFark === 0 ? (
           <BosDurum metin="İki yön de mutabık — ödeme kayıtları ile kasa düşüşleri örtüşüyor." />
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12, marginBottom: 16 }}>
+          <div id="dn-mutabakat-gruplar" style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(300px, 1fr))', gap: 12, marginBottom: 16 }}>
             {[{ ad: 'Düşüş var · ödeme kaydı yok', rows: dusumsuz, renk: R.kirmizi, cevir: satirDusus },
               { ad: 'Ödeme kaydı var · düşüş görülmedi', rows: kayitsiz, renk: R.amber, cevir: satirKayit }].map((grup) => (
               <div key={grup.ad} style={{ ...kartYuzey, padding: '16px 18px', border: grup.rows.length ? `1px solid ${grup.renk}44` : kartYuzey.border }}>
@@ -2437,7 +2446,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Açık öneri', deger: String(oneriler.length), alt: 'motor üretimi', renk: oneriler.length > 0 ? R.amber : R.yesil },
+          { etiket: 'Açık öneri', deger: String(oneriler.length), alt: 'motor üretimi · listeye in', renk: oneriler.length > 0 ? R.amber : R.yesil,
+            onTikla: oneriler.length ? () => dnGit('dn-oneriler') : undefined },
           { etiket: 'Uygulanan (30g)', deger: String(sayi(iziOzet?.uygulanan)), alt: 'işaret defterinden', renk: sayi(iziOzet?.uygulanan) > 0 ? R.yesil : R.krem },
           // "Kasa 2,7M ama kullanılabilir 344K" çelişik görünüyordu (canlı
           // denetim 2026-08-03) — formül alt metne yazıldı: kasadan bu ayın
@@ -2493,6 +2503,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           <BosDurum metin="Tüm öneriler yukarıdaki nakit grubunda — açmak için satıra dokunun." />
         ) : (
           <Liste
+            id="dn-oneriler"
             satirlar={gosterilenOneriler.map((o, i) => {
               const ham = String(o.baslik || o.oneri || o.aciklama || `oneri-${i}`);
               // 🔴 (2026-08-27, Codex) KİMLİK ÇAKIŞMASI: ref YALNIZ başlıktan
