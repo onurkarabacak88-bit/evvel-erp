@@ -194,6 +194,12 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
   // secim yapilmiyor -> `cari` null kaliyor -> spinner hic durmuyor.
   // Oysa 6 aylik cari ozetinde 12 tedarikci VAR. Liste artik oradan da beslenir.
   const [cariOzet, setCariOzet] = useState(null);
+  // Bu ekranlarda kayitlar ZATEN asagida duruyor ama sayfa uzun — kutu artik
+  // ilgili tabloya kaydiriyor.
+  const blGit = (id) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   const [istek, setIstek] = useState(null);
   const [istekHata, setIstekHata] = useState('');
   // ── YERLİ BELGE TALEP YÖNETİMİ (köprü kaldırma turu, 2026-07-30) ──────────
@@ -1146,7 +1152,8 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Bu ay belge', deger: String(arsiv.length), alt: merkez.ay || buAyISO() },
-          { etiket: 'Toptancı', deger: String(toptancilar.length), alt: 'arşivde temsil edilen' },
+          { etiket: 'Toptancı', deger: String(toptancilar.length), alt: 'arşivde temsil edilen · cari ekstreye git',
+            onTikla: toptancilar.length ? () => onKopru?.('__modul:belge:cari') : undefined },
           { etiket: 'Arşiv toplamı', deger: fmt(toptancilar.reduce((t, x) => t + sayi(x.toplam), 0)), alt: 'toptancı faturaları' },
           {
             etiket: 'Arşiv deposu',
@@ -1292,8 +1299,10 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
       <>
         <KpiSeridi kpiler={[
           { etiket: 'Bekleyen istek', deger: String(sayi(istek.acik_adet)), alt: 'teslim alındı, belge yok', renk: sayi(istek.acik_adet) > 0 ? R.amber : R.yesil },
-          { etiket: 'Toplam açık', deger: fmt(sayi(istek.acik_toplam)), alt: 'KDV kanıtı bekliyor', renk: sayi(istek.acik_toplam) > 0 ? R.kirmizi : R.krem },
-          { etiket: 'KDV riski', deger: fmt(sayi(istek.kdv_riski)), alt: 'belgesiz kısımda tahmini' },
+          { etiket: 'Toplam açık', deger: fmt(sayi(istek.acik_toplam)), alt: 'KDV kanıtı bekliyor · kanıt paketine git', renk: sayi(istek.acik_toplam) > 0 ? R.kirmizi : R.krem,
+            onTikla: () => onKopru?.('__modul:belge:kdv') },
+          { etiket: 'KDV riski', deger: fmt(sayi(istek.kdv_riski)), alt: 'belgesiz kısımda tahmini · vergi etkisine git',
+            onTikla: () => onKopru?.('__modul:belge:vergi') },
           // ⚠️ SABİT YEŞİL (Fable P1-5): bu kart hiçbir veriye bakmadan HER
           // ZAMAN yeşil "açık" yazıyordu. Oto-kapanış motoru bozulsa, tarama
           // hiç çalışmasa bile ekran "fatura gelince istek kapanır" güvencesi
@@ -1790,10 +1799,13 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
           : !cari ? <Yukleniyor /> : (
           <>
             <KpiSeridi kpiler={[
-              { etiket: 'Hesaplanan açık', deger: fmt(sayi(cari.hesaplanan_acik)), alt: 'fatura − ödeme izi + devir', renk: sayi(cari.hesaplanan_acik) > 0 ? R.kirmizi : R.yesil },
+              // 🔗 Bu tedarikcinin odeme kuyrugu Odeme Merkezi'nde acilir.
+              { etiket: 'Hesaplanan açık', deger: fmt(sayi(cari.hesaplanan_acik)), alt: 'fatura − ödeme izi + devir · tedarikçi bakiyesine git', renk: sayi(cari.hesaplanan_acik) > 0 ? R.kirmizi : R.yesil,
+                onTikla: () => onKopru?.('__modul:odeme:tedarikci') },
               { etiket: 'Tedarikçi beyanı', deger: cari.beyan_bakiye != null ? fmt(sayi(cari.beyan_bakiye)) : '—', alt: cari.beyan_bakiye != null ? 'iki göz kıyası' : 'beyan girilmemiş' },
               { etiket: 'Açılış devri', deger: fmt(sayi(cari.devir)), alt: kisalt(cari.devir_not, 30) || 'sistem öncesi beyan' },
-              { etiket: '6 ay hacim', deger: fmt(sayi(cari.fatura_toplam_6ay)), alt: `${sayi(cari.fatura_adet)} fatura · ödeme izi ${fmt(sayi(cari.odeme_izi_toplam_6ay))}` },
+              { etiket: '6 ay hacim', deger: fmt(sayi(cari.fatura_toplam_6ay)), alt: `${sayi(cari.fatura_adet)} fatura · ödeme izi ${fmt(sayi(cari.odeme_izi_toplam_6ay))} · arşive git`,
+                onTikla: () => onKopru?.('__modul:belge:arsiv') },
             ]} />
             {/* ── BEKLEYEN VADELER (varsa önce, çünkü aksiyon gerektirir) ── */}
             {vadeler.length > 0 && (
@@ -2135,7 +2147,8 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
             negatif sapma hep + işaretli). Sunucu alanları esas: sapma_yuzde /
             kart_sapma_yuzde; mutlakça büyüğü gösterilir, kaynağı yazılır. */}
         <KpiSeridi kpiler={[
-          { etiket: 'İzlenen kalem', deger: String(sayi(bant.urun_adet)), alt: 'fatura fiyat geçmişi' },
+          { etiket: 'İzlenen kalem', deger: String(sayi(bant.urun_adet)), alt: 'fatura fiyat geçmişi · bant dışı listesine in',
+            onTikla: () => blGit('belge-bantdisi') },
           // ⚠️ ALARM BÜTÇESİ (çerçeveleme taraması, 2026-08-28): canlıda
           // izlenen 18 kalemin 11'i "bant dışı" işaretliydi — %61. Çoğunluğu
           // işaretleyen bir etiket hiçbir şeyi ayırt etmez; sahip ya hepsini
@@ -2172,6 +2185,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
           <BosDurum metin="Bant dışı alış yok — son fiyatlar 90 günlük aralığın içinde." />
         ) : (
           <Tablo
+            id="belge-bantdisi"
             baslik="Fiyat bandı · son alış vs geçmiş aralık"
             // ⚠️ Fable P2-9: "3 zam bu bantla yakalandı" ELLE YAZILMIŞ bir
             // başarı iddiasıydı — veriden gelmiyor, zamanla bayatlar ve yanlış

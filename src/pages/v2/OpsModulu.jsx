@@ -6125,7 +6125,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               renk: farkUyariAdet ? R.kirmizi : (temiz ? R.yesil : R.amber),
             };
           })(),
-          { etiket: 'Teslim bekleyen', deger: String(teslimBekleyen.length), alt: 'kapandı ama kasa teslim edilmedi', renk: teslimBekleyen.length ? R.amber : R.yesil },
+          { etiket: 'Teslim bekleyen', deger: String(teslimBekleyen.length), alt: 'kapandı ama kasa teslim edilmedi · kasaya git', renk: teslimBekleyen.length ? R.amber : R.yesil,
+            onTikla: teslimBekleyen.length ? () => onKopru?.('__modul:para:kasa') : undefined },
           {
             etiket: 'Ciro onayı',
             deger: `${ciroOnaylanan} / ${kapanisSatir.length}`,
@@ -7771,9 +7772,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           return (
             <>
               <KpiSeridi kpiler={[
-                { etiket: 'Acil sipariş', deger: fmt(sayi(oneriOzet.acil_tutar_tl)), alt: `${sayi(oneriOzet.acil_kalem)} kalem · hemen`, renk: sayi(oneriOzet.acil_kalem) ? R.kirmizi : R.yesil },
-                { etiket: 'Önerilen toplam', deger: fmt(sayi(oneriOzet.onerilen_tutar_tl)), alt: `21 günlük hedefe göre`, renk: R.bakirAcik },
-                { etiket: 'Rafta bekleyen', deger: fmt(sayi(oneriOzet.fazla_bagli_para_tl)), alt: `${sayi(oneriOzet.fazla_kalem)} kalem · ALMA`, renk: R.amber },
+                // 🖱️ Kova suzgeci (acil/normal/fazla) ZATEN vardi — KPI'lar ona
+                // baglanmamisti, sayiyi goren asagida cipi bulmak zorundaydi.
+                { etiket: 'Acil sipariş', deger: fmt(sayi(oneriOzet.acil_tutar_tl)), alt: `${sayi(oneriOzet.acil_kalem)} kalem · hemen${oneriKova === 'acil' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: sayi(oneriOzet.acil_kalem) ? R.kirmizi : R.yesil,
+                  onTikla: sayi(oneriOzet.acil_kalem) ? () => setOneriKova('acil') : undefined },
+                { etiket: 'Önerilen toplam', deger: fmt(sayi(oneriOzet.onerilen_tutar_tl)), alt: `21 günlük hedefe göre${oneriKova === 'yakin' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.bakirAcik,
+                  onTikla: () => setOneriKova('yakin') },
+                { etiket: 'Rafta bekleyen', deger: fmt(sayi(oneriOzet.fazla_bagli_para_tl)), alt: `${sayi(oneriOzet.fazla_kalem)} kalem · ALMA${oneriKova === 'fazla' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.amber,
+                  onTikla: sayi(oneriOzet.fazla_kalem) ? () => setOneriKova('fazla') : undefined },
                 {
                   etiket: 'Kasa yeterli mi',
                   deger: kasaYeter == null ? '—' : (kasaYeter ? 'evet' : 'HAYIR'),
@@ -8259,10 +8265,16 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Açık sipariş', deger: String(acik), alt: 'son 14 gün' },
-          { etiket: 'Uyumsuzluk', deger: String(sayi(ozet.uyumsuzluk)), alt: sayi(ozet.uyumsuzluk) > 0 ? 'müdahale gerekli' : 'temiz', renk: sayi(ozet.uyumsuzluk) > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'Yolda', deger: String(sayi(ozet.yolda) + sayi(ozet.toptanci_bekliyor)), alt: 'kabul bekleyen', renk: R.bakir },
-          { etiket: 'Tamamlanan', deger: String(sayi(ozet.tamamlandi)), alt: 'son 14 gün', renk: R.yesil },
+          // 🔗 Bu ekran depo bazli ozet; kayitlarin kendisi Siparis Akisi ve
+          // Merkez Denetim'de acilir.
+          { etiket: 'Açık sipariş', deger: String(acik), alt: 'son 14 gün · sipariş akışına git',
+            onTikla: () => onKopru?.('__modul:ops:akis') },
+          { etiket: 'Uyumsuzluk', deger: String(sayi(ozet.uyumsuzluk)), alt: sayi(ozet.uyumsuzluk) > 0 ? 'müdahale gerekli · denetime git' : 'temiz', renk: sayi(ozet.uyumsuzluk) > 0 ? R.kirmizi : R.yesil,
+            onTikla: sayi(ozet.uyumsuzluk) > 0 ? () => onKopru?.('__modul:ops:denetim') : undefined },
+          { etiket: 'Yolda', deger: String(sayi(ozet.yolda) + sayi(ozet.toptanci_bekliyor)), alt: 'kabul bekleyen · sipariş akışına git', renk: R.bakir,
+            onTikla: () => onKopru?.('__modul:ops:akis') },
+          { etiket: 'Tamamlanan', deger: String(sayi(ozet.tamamlandi)), alt: 'son 14 gün · arşive git', renk: R.yesil,
+            onTikla: () => onKopru?.('__modul:ops:siparisarsiv') },
         ]} />
         {hizSeridi}
         {yuklu.length === 0 ? (
