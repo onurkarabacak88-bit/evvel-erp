@@ -21,6 +21,13 @@ const sayi = (v) => Number(v) || 0;
 const kisaTarih = (s) => (s ? String(s).slice(0, 10).split('-').reverse().slice(0, 2).join('.') : '—');
 
 export default function TeshisModulu({ onCekmece }) {
+  // 🖱️ Bu ekranda her KPI'in KENDI bolumu var ama sayfa uzun: kutuyu goren
+  // asagi kaydirip hangi tablonun o sayiya ait oldugunu tahmin etmek zorundaydi.
+  // Tiklama o bolume goturur (suzgec degil, KAPI).
+  const teshisGit = (id) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   const [rontgen, setRontgen] = useState(null);
   const [kuyruk, setKuyruk] = useState(null);
   const [odenmis, setOdenmis] = useState(null);
@@ -55,17 +62,20 @@ export default function TeshisModulu({ onCekmece }) {
       <KpiSeridi kpiler={[
         {
           etiket: 'Borç dışı belirsiz', deger: fmt(sayi(kuyruk?.borc_disi_toplam)),
-          alt: 'fatura var, borç listesinde yok',
+          alt: 'fatura var, borç listesinde yok · tıkla, kuyruğa in',
+          onTikla: () => teshisGit('teshis-kuyruk'),
           renk: sayi(kuyruk?.borc_disi_toplam) > 0 ? R.amber : R.yesil,
         },
         {
           etiket: 'Şüpheli "ödendi"', deger: fmt(riskli),
-          alt: `${sayi(odenmis?.damgali_fatura)} damgalı fatura incelendi`,
+          alt: `${sayi(odenmis?.damgali_fatura)} damgalı fatura incelendi · tıkla, denetime in`,
+          onTikla: () => teshisGit('teshis-odenmis'),
           renk: riskli > 0 ? R.kirmizi : R.yesil,
         },
         {
           etiket: 'Kayıp borç', deger: fmt(sayi(kayip.kayip_tutar)),
-          alt: `${sayi(kayip.satir)} satır · kart dışı`,
+          alt: `${sayi(kayip.satir)} satır · kart dışı · tıkla, katmana in`,
+          onTikla: () => teshisGit('teshis-katman'),
           renk: sayi(kayip.kayip_tutar) > 0 ? R.amber : R.yesil,
         },
         {
@@ -108,6 +118,7 @@ export default function TeshisModulu({ onCekmece }) {
       {/* FATURA → BORÇ KUYRUĞU KIRILIMI */}
       {(kuyruk?.kirilim || []).length > 0 && (
         <Tablo
+          id="teshis-kuyruk"
           baslik="Fatura → borç kuyruğu"
           not="her faturanın borç listesine girip girmediği ve sebebi"
           kolonlar={[{ ad: 'Durum' }, { ad: 'Adet', sag: true }, { ad: 'Tutar', sag: true }]}
@@ -129,6 +140,7 @@ export default function TeshisModulu({ onCekmece }) {
       {(odenmis?.satirlar || []).length > 0 && (
         <div style={{ marginTop: 12 }}>
           <Tablo
+            id="teshis-odenmis"
             baslik='"Ödendi" sayılan faturaların denetimi'
             not="ödeme izi gerçekten o tedarikçiye mi ait?"
             kolonlar={[
@@ -158,6 +170,7 @@ export default function TeshisModulu({ onCekmece }) {
       {(kiyas?.kiyas || []).length > 0 && (
         <div style={{ marginTop: 12 }}>
           <Tablo
+            id="teshis-katman"
             baslik="Kanonik ödeme katmanı ↔ cari hesap"
             not="iki katman aynı gerçeği mi üretiyor? (fark 0 olmalı)"
             kolonlar={[

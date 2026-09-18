@@ -27,6 +27,12 @@ const yuzde = (v) => `%${((Number(v) || 0) * 100).toFixed(0)}`;
 const kisaTarih = (s) => (s ? String(s).slice(0, 10).split('-').reverse().slice(0, 2).join('.') : '—');
 
 export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
+  // 🖱️ Karar defteri KPI'lari olu rakamdi: "Baglanan 42" yaziyor ama o 42 karari
+  // ayirmak icin butun defteri gozle taramak gerekiyordu. '' | 'bagla' | 'reddet' | 'geri_al'
+  const [dfKarar, setDfKarar] = React.useState('');
+  // Kart Izi Eslestirme: "Sistem baglayabilir 12 · %95+ guven" olu rakamdi —
+  // o yuksek guvenli adaylari 50 satirlik aday tablosunda aramak gerekiyordu.
+  const [esGuvenli, setEsGuvenli] = React.useState(false);
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
   const [tara, setTara] = useState(null);      // otomatik tarama sonucu
@@ -149,10 +155,14 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Toplam karar', deger: String(sayi(defter?.ozet?.toplam)), alt: 'append-only — silinmez' },
-          { etiket: 'Bağlanan', deger: String(sayi(defter?.ozet?.bagla)), alt: 'tedarikçi borcuna', renk: R.yesil },
-          { etiket: 'İlgisiz denilen', deger: String(sayi(defter?.ozet?.reddet)), alt: 'bizim ödememiz değil', renk: R.not },
-          { etiket: 'Geri alınan', deger: String(sayi(defter?.ozet?.geri_al)), alt: 'karar düzeltmesi', renk: R.amber },
+          { etiket: 'Toplam karar', deger: String(sayi(defter?.ozet?.toplam)), alt: `append-only — silinmez${dfKarar ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: dfKarar ? () => setDfKarar('') : undefined },
+          { etiket: 'Bağlanan', deger: String(sayi(defter?.ozet?.bagla)), alt: `tedarikçi borcuna${dfKarar === 'bagla' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.yesil,
+            onTikla: sayi(defter?.ozet?.bagla) ? () => setDfKarar((p) => (p === 'bagla' ? '' : 'bagla')) : undefined },
+          { etiket: 'İlgisiz denilen', deger: String(sayi(defter?.ozet?.reddet)), alt: `bizim ödememiz değil${dfKarar === 'reddet' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.not,
+            onTikla: sayi(defter?.ozet?.reddet) ? () => setDfKarar((p) => (p === 'reddet' ? '' : 'reddet')) : undefined },
+          { etiket: 'Geri alınan', deger: String(sayi(defter?.ozet?.geri_al)), alt: `karar düzeltmesi${dfKarar === 'geri_al' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.amber,
+            onTikla: sayi(defter?.ozet?.geri_al) ? () => setDfKarar((p) => (p === 'geri_al' ? '' : 'geri_al')) : undefined },
         ]} />
         {k.length ? (
           <Tablo
@@ -173,7 +183,7 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
                 tedarikci: x.yeni_deger, tutar: sayi(x.tutar),
               });
             }}
-            satirlar={k.map((x) => ({
+            satirlar={(dfKarar ? k.filter((x) => x.karar === dfKarar) : k).map((x) => ({
               id: x.id, _x: x,
               hucreler: [
                 { v: String(x.ts || '').slice(0, 16).replace('T', ' '), mono: true },
@@ -237,14 +247,16 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
       <KpiSeridi kpiler={[
         {
           etiket: 'Onayını bekleyen', deger: String(adaylar.length),
-          alt: adaylar.length ? `${fmt(adaylar.reduce((t, a) => t + a.tutar, 0))} tutarında` : 'temiz',
+          alt: adaylar.length ? `${fmt(adaylar.reduce((t, a) => t + a.tutar, 0))} tutarında${esGuvenli ? ' · süzgeci kaldırmak için tıkla' : ''}` : 'temiz',
           renk: adaylar.length ? R.amber : R.yesil,
+          onTikla: esGuvenli ? () => setEsGuvenli(false) : undefined,
         },
         otoOneri
           ? {
             etiket: 'Sistem bağlayabilir', deger: String(otoAdet),
-            alt: `${fmt(sayi(tara?.otomatik_tutar))} · %95+ güven — HENÜZ bağlanmadı`,
+            alt: `${fmt(sayi(tara?.otomatik_tutar))} · %95+ güven — HENÜZ bağlanmadı${esGuvenli ? ' · SÜZGEÇ AÇIK' : ''}`,
             renk: R.amber,
+            onTikla: adaylar.some((a) => a.guven >= 95) ? () => setEsGuvenli((p) => !p) : undefined,
           }
           : {
             etiket: 'Sistem bağladı', deger: String(otoAdet),
@@ -330,7 +342,7 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
             { ad: 'Tutar', sag: true }, { ad: 'Tedarikçi' },
             { ad: 'Açık borç', sag: true }, { ad: 'Güven' },
           ]}
-          satirlar={adaylar.map((a) => ({
+          satirlar={(esGuvenli ? adaylar.filter((a) => a.guven >= 95) : adaylar).map((a) => ({
             id: a.hareketId, _a: a,
             hucreler: [
               { v: secim[a.hareketId] ? '☑' : '☐' },

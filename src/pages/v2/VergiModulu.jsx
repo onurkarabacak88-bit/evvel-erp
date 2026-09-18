@@ -49,6 +49,12 @@ const KOVA_ANLAM = {
 };
 
 export default function VergiModulu({ onCekmece }) {
+  // 🖱️ Her KPI'in kendi tablosu ASAGIDA duruyor ama sayfa uzun — kutuyu goren
+  // hangi tablonun o sayiya ait oldugunu tahmin etmek zorundaydi.
+  const vgGit = (id) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   const [d, setD] = useState(null);
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
@@ -94,7 +100,8 @@ export default function VergiModulu({ onCekmece }) {
       <KpiSeridi kpiler={[
         {
           etiket: 'KAYIP vergi avantajı', deger: fmt(kayip),
-          alt: 'faturası olması gerekip gelmeyenler', renk: R.kirmizi,
+          alt: 'faturası olması gerekip gelmeyenler · tıkla, belgesizlere in', renk: R.kirmizi,
+          onTikla: () => vgGit('vergi-belgesiz'),
         },
         {
           etiket: 'Kullanılabilir', deger: fmt(sayi(belgeli.vergi_tasarrufu)),
@@ -102,11 +109,13 @@ export default function VergiModulu({ onCekmece }) {
         },
         {
           etiket: 'Belgesiz tutar', deger: fmt(sayi(belgesiz.tutar)),
-          alt: `${sayi(belgesiz.adet)} harcama · belge bekliyor`, renk: R.amber,
+          alt: `${sayi(belgesiz.adet)} harcama · belge bekliyor · tıkla, listeye in`, renk: R.amber,
+          onTikla: () => vgGit('vergi-belgesiz'),
         },
         {
           etiket: 'Belirsiz', deger: fmt(sayi((k.belirsiz || {}).tutar)),
-          alt: `${sayi((k.belirsiz || {}).adet)} harcama · işletme mi şahsi mi?`, renk: R.krem,
+          alt: `${sayi((k.belirsiz || {}).adet)} harcama · işletme mi şahsi mi? · tıkla, listeye in`, renk: R.krem,
+          onTikla: () => vgGit('vergi-belirsiz'),
         },
       ]} />
 
@@ -161,6 +170,7 @@ export default function VergiModulu({ onCekmece }) {
       {/* BELGESİZ LİSTESİ — en büyükten */}
       {(d?.belgesiz_harcamalar || []).length > 0 && (
         <Tablo
+          id="vergi-belgesiz"
           baslik="Belgesiz işletme harcamaları"
           not={`belge gelirse KDV indirimi + gider yazımı kazanılır${(d.belgesiz_harcamalar || []).length > 30 ? ` · en büyük 30 / ${d.belgesiz_harcamalar.length}` : ''}`}
           kolonlar={[
@@ -185,6 +195,7 @@ export default function VergiModulu({ onCekmece }) {
       {(d?.belirsiz_harcamalar || []).length > 0 && (
         <div style={{ marginTop: 12 }}>
           <Tablo
+            id="vergi-belirsiz"
             baslik="İşletme mi şahsi mi belli değil"
             not="sistem kaydından doğanlar tartışmasız işletmedir — öneri sütununa bak"
             kolonlar={[

@@ -600,7 +600,9 @@ function siralamaDegeri(h) {
   return { s: null, m: metin };
 }
 
-export function Tablo({ baslik, not, kolonlar, satirlar, onSatir }) {
+// `id` — KPI kutusundan bu tabloya kaydirmak icin capa (Teshis/Vergi ekranlarinda
+// her kutunun kendi tablosu var ama sayfa uzun; kutu artik oraya goturuyor).
+export function Tablo({ baslik, not, kolonlar, satirlar, onSatir, id }) {
   // Yeni handoff: başlığa tık → 1. artan, 2. azalan, 3. sıfırla (özgün sıra).
   // Sıralama SALT GÖRSEL — veriyi değiştirmez, sunucuya gitmez.
   const [sirala, setSirala] = React.useState(null);   // {kol, yon}
@@ -625,7 +627,7 @@ export function Tablo({ baslik, not, kolonlar, satirlar, onSatir }) {
   }, [satirlar, sirala]);
 
   return (
-    <div style={{ ...kartYuzey, overflow: 'hidden', marginBottom: 16 }}>
+    <div id={id} style={{ ...kartYuzey, overflow: 'hidden', marginBottom: 16 }}>
       <div style={{
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '16px 20px 13px', borderBottom: `1px solid ${R.cizgi2}`,
