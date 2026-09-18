@@ -762,6 +762,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   // Vardiya Takip: "Giris yok 4 gun" yaziyor ama KIMIN oldugu tabloda
   // aranmaliydi. '' | 'gecikme' | 'fm' | 'girisyok'
   const [takipFiltre, setTakipFiltre] = useState('');
+  // Maas & Avans: "Onay bekleyen 4 taslak bordro" olu rakamdi — hangi dort
+  // personel oldugunu bulmak icin butun bordro tablosunu taramak gerekiyordu.
+  const [bordroBekleyen, setBordroBekleyen] = useState(false);
 
   const bvUygula = async () => {
     const m = bvModal;
@@ -4250,7 +4253,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                 : `${bordro.length} kişi · hesaplanan net`,
             };
           })(),
-          { etiket: 'Onay bekleyen', deger: String(bekleyen.length), alt: bekleyen.length ? 'taslak bordro' : 'hepsi onaylı', renk: bekleyen.length ? R.amber : R.yesil },
+          { etiket: 'Onay bekleyen', deger: String(bekleyen.length), alt: bekleyen.length ? `taslak bordro${bordroBekleyen ? ' · SÜZGEÇ AÇIK' : ''}` : 'hepsi onaylı', renk: bekleyen.length ? R.amber : R.yesil,
+            onTikla: bekleyen.length ? () => setBordroBekleyen((p) => !p) : undefined },
           { etiket: 'Avans mahsubu', deger: fmt(toplamAvans), alt: 'bu ay maaştan düşülecek', renk: R.krem },
           {
             etiket: 'Onay bekleyen avans',
@@ -4261,6 +4265,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             alt: avans == null ? '⚠ avans verisi okunamadı — "talep yok" DEMEK DEĞİL'
               : (avansBekleyen ? `${fmt(sayi(avans?.bekleyen_tutar))} · QR talebi` : 'bekleyen talep yok'),
             renk: avans == null ? R.not3 : (avansBekleyen ? R.amber : R.yesil),
+            // 🔗 Avans talepleri onay kuyrugunda karara baglanir.
+            onTikla: avansBekleyen ? () => onKopru?.('__modul:onaylar:kuyruk') : undefined,
           },
           {
             etiket: 'Teslim bekleyen',
@@ -4554,7 +4560,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               { ad: 'Personel' }, { ad: 'Ücret', sag: true }, { ad: 'Fazla mesai', sag: true },
               { ad: 'Avans', sag: true }, { ad: 'Net', sag: true }, { ad: 'Aşama' },
             ]}
-            satirlar={bordro.map(b => ({
+            satirlar={(bordroBekleyen ? bekleyen : bordro).map(b => ({
               id: b.personel_id, _b: b,
               hucreler: [
                 {
