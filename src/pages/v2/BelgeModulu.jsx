@@ -188,6 +188,12 @@ const fiBtn = {
 export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cariHedef, arsivHedef }) {
   const [merkez, setMerkez] = useState(null);
   const [merkezHata, setMerkezHata] = useState('');
+  // 🔴 CANLI ARIZA (2026-09-18 gezintisi): Cari Ekstre ekrani SONSUZA KADAR
+  // "Yukleniyor..." diyordu. Sebep: tedarikci listesi AYIN belge merkezinden
+  // geliyordu ve bu ay (2026-09) hic toptanci faturasi yok -> liste bos ->
+  // secim yapilmiyor -> `cari` null kaliyor -> spinner hic durmuyor.
+  // Oysa 6 aylik cari ozetinde 12 tedarikci VAR. Liste artik oradan da beslenir.
+  const [cariOzet, setCariOzet] = useState(null);
   const [istek, setIstek] = useState(null);
   const [istekHata, setIstekHata] = useState('');
   // ── YERLİ BELGE TALEP YÖNETİMİ (köprü kaldırma turu, 2026-07-30) ──────────
@@ -537,6 +543,12 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
 
   useEffect(() => {
     if (['kapsama', 'arsiv', 'uyarilar', 'kdv', 'cari'].includes(gorunum) && !merkez) merkezYukle();
+    // Cari ekranin tedarikci listesi AYA bagli kalmasin — 6 aylik ozet yedegi.
+    if (gorunum === 'cari' && !cariOzet) {
+      api('/fatura/cari-ozet')
+        .then((d) => setCariOzet(d || {}))
+        .catch(() => setCariOzet({}));
+    }
     // ⚠️ KUYRUĞUN KENDİ SESSİZ ELEMESİ (kendi bulgum, canlı, 2026-08-28):
     // `istek` yalnız İstek sekmesinde yükleniyordu; Kapsama'daki iş kuyruğu
     // bu yüzden 14 bekleyen fatura isteğini (560.776 ₺ · 93.463 ₺ KDV riski)
@@ -551,7 +563,21 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [gorunum]);
 
-  const toptancilar = useMemo(() => (Array.isArray(merkez?.toptancilar) ? merkez.toptancilar : []), [merkez]);
+  // ⚠️ ALAN ADI: belge-merkezi ucu kayitlari `toptanci` anahtariyla, cari-ozet
+  // ucu ise `tedarikci` anahtariyla verir. Yedek liste BURADA normalize edilir;
+  // asagidaki ekran tek bir ada (`toptanci`) bakar, iki sekilde okumaz.
+  const toptancilar = useMemo(() => {
+    const ayListesi = Array.isArray(merkez?.toptancilar) ? merkez.toptancilar : [];
+    if (ayListesi.length) return ayListesi;
+    const genel = Array.isArray(cariOzet?.tedarikciler) ? cariOzet.tedarikciler : [];
+    return genel
+      .map((t) => ({
+        ...t,
+        toptanci: t.toptanci || t.tedarikci,
+        toplam: t.toplam != null ? t.toplam : t.fatura_toplam_6ay,
+      }))
+      .filter((t) => t.toptanci);
+  }, [merkez, cariOzet]);
 
   // Cari görünümüne ilk girişte en büyük toptancıyı seç.
   // 🔗 PARAMETRELİ KÖPRÜ (2026-08-15): başka ekrandan '__modul:belge:cari:<ad>'
@@ -1748,7 +1774,16 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
             );
           })}
         </div>
-        {cariHata ? <HataBandi mesaj={cariHata} onTekrar={() => cariYukle(cariSecim)} /> : !cari ? <Yukleniyor /> : (
+        {cariHata ? <HataBandi mesaj={cariHata} onTekrar={() => cariYukle(cariSecim)} />
+          : !toptancilar.length ? (
+            // Liste bosken spinner dondurmek YALANDIR: beklenecek bir sey yok.
+            <div style={{ ...kartYuzey, padding: '34px 30px', textAlign: 'center', color: R.not }}>
+              {cariOzet == null
+                ? 'Tedarikçi listesi yükleniyor…'
+                : 'Hiç tedarikçi kaydı bulunamadı — fatura arşivinde de cari özetinde de kayıt yok.'}
+            </div>
+          )
+          : !cari ? <Yukleniyor /> : (
           <>
             <KpiSeridi kpiler={[
               { etiket: 'Hesaplanan açık', deger: fmt(sayi(cari.hesaplanan_acik)), alt: 'fatura − ödeme izi + devir', renk: sayi(cari.hesaplanan_acik) > 0 ? R.kirmizi : R.yesil },
