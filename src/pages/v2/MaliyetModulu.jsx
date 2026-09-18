@@ -791,6 +791,8 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
           { etiket: 'Food cost (30 gün)', deger: foodCost == null ? '—' : pct(foodCost), alt: `benchmark ${bandMetni}${cirosuzGun > 0 ? ` · ${cirosuzGun} cirosuz gün hariç` : ''}`, renk: foodCost == null ? R.not : foodCost > bmax ? R.kirmizi : R.yesil },
           {
             etiket: 'Stok değeri',
+            // 🔗 Stok kalem kalem Depo Stok ekraninda duruyor.
+            onTikla: () => onKopru?.('__modul:ops:depo'),
             deger: fmt(sayi(ozet.stok_degeri_tl ?? ozet.toplam_stok_degeri_tl)),
             alt: sayi(ozet.stok_kalem_sayisi)
               ? `${sayi(ozet.stok_kalem_sayisi)} kalem × alış fiyatı`
@@ -1388,7 +1390,8 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             onTikla: urunFiltre ? () => setUrunFiltre('') : undefined },
           { etiket: 'Fiyatsız hammaddeli', deger: String(eksikli.length), alt: `teyit EKSİK kalır${urunFiltre === 'eksik' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: eksikli.length > 0 ? R.amber : R.yesil,
             onTikla: eksikli.length ? () => setUrunFiltre((p) => (p === 'eksik' ? '' : 'eksik')) : undefined },
-          { etiket: 'Tanımlı alış fiyatı', deger: String((fiyatlar || []).filter((f) => !f.gecerli_bitis).length), alt: 'aktif kayıt' },
+          { etiket: 'Tanımlı alış fiyatı', deger: String((fiyatlar || []).filter((f) => !f.gecerli_bitis).length), alt: 'aktif kayıt · fiyat zincirine git',
+            onTikla: () => onKopru?.('__modul:maliyet:fiyat') },
         ]} />
 
         {/* ── 1) GERÇEK — personelin açtığı üründen ─────────────────────────── */}
@@ -1827,9 +1830,12 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
       return (
         <>
           <KpiSeridi kpiler={[
-            { etiket: 'Onaylı ürün eşleşmesi', deger: String(sayi(kontrol.onayli_urun)), alt: 'reçete ↔ Evo satış adı', renk: R.amber },
-            { etiket: 'Onaylı malzeme', deger: String(sayi(kontrol.onayli_malzeme)), alt: 'reçete ↔ depo kalemi', renk: R.amber },
-            { etiket: 'Bekleyen öneri', deger: String(sayi(kontrol.bekleyen_oneri)), alt: 'onayını bekliyor', renk: R.kirmizi },
+            { etiket: 'Onaylı ürün eşleşmesi', deger: String(sayi(kontrol.onayli_urun)), alt: 'reçete ↔ Evo satış adı · eşleştirmeye git', renk: R.amber,
+              onTikla: () => onKopru?.('__modul:maliyet:recete') },
+            { etiket: 'Onaylı malzeme', deger: String(sayi(kontrol.onayli_malzeme)), alt: 'reçete ↔ depo kalemi · eşleştirmeye git', renk: R.amber,
+              onTikla: () => onKopru?.('__modul:maliyet:recete') },
+            { etiket: 'Bekleyen öneri', deger: String(sayi(kontrol.bekleyen_oneri)), alt: 'onayını bekliyor · eşleştirmeye git', renk: R.kirmizi,
+              onTikla: sayi(kontrol.bekleyen_oneri) ? () => onKopru?.('__modul:maliyet:recete') : undefined },
             { etiket: 'Durum', deger: 'kurulum', alt: 'eşleştirme tamamlanmalı' },
           ]} />
           <div style={{ ...kartYuzey, padding: '30px 26px', textAlign: 'center' }}>
@@ -2107,7 +2113,10 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             renk: odenecek > 0 ? R.kirmizi : R.yesil,
           },
           { etiket: 'Hesaplanan KDV', deger: fmt(sayi(kdv.toplam_hesaplanan_tl)), alt: 'satıştan · ciro KDV dahil girilir', renk: R.krem },
-          { etiket: 'İndirilecek KDV', deger: fmt(sayi(kdv.toplam_indirilecek_tl)), alt: 'alış + gider · kalem bazlı oran', renk: R.yesil },
+          // 🔗 Indirilecek KDV'nin KANITI (faturalar) Belge Merkezi'nde durur —
+          // belge yoksa bu rakam indirilemez, o yuzden kapi oraya acilir.
+          { etiket: 'İndirilecek KDV', deger: fmt(sayi(kdv.toplam_indirilecek_tl)), alt: 'alış + gider · kanıt paketine git', renk: R.yesil,
+            onTikla: () => onKopru?.('__modul:belge:kdv') },
           {
             etiket: 'Tahminî vergi',
             deger: fmt(sayi(vrg.toplam_vergi_tl)),

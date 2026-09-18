@@ -1445,7 +1445,8 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
             renk: sayi(kokpit?.gecikmis_toplam ?? gecikmisToplam) > 0 ? R.kirmizi : R.yesil,
             onTikla: gecikmisSatir.length ? () => { setIleriGoster(true); setVadeFiltre((p) => (p === 'gecikmis' ? '' : 'gecikmis')); } : undefined,
           },
-          { etiket: 'Ödeme sonrası kasa', deger: fmt(kasa - bugunToplam), alt: 'bugünküler düşülmüş', renk: kasa - bugunToplam >= 0 ? R.yesil : R.kirmizi },
+          { etiket: 'Ödeme sonrası kasa', deger: fmt(kasa - bugunToplam), alt: 'bugünküler düşülmüş · kasaya git', renk: kasa - bugunToplam >= 0 ? R.yesil : R.kirmizi,
+            onTikla: () => onKopru?.('__modul:para:kasa') },
         ]} />
         <div style={{ display: 'flex', gap: 9, marginBottom: 12, flexWrap: 'wrap' }}>
           <button onClick={() => setModal({ tip: 'taahhut', tedarikci: '', tutar: '', vade: isoEkle(bugun, 7), aciklama: '' })} style={{
@@ -2050,7 +2051,8 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: '14 günlük yük', deger: fmt(toplamKuyruk), alt: `${tutarli.length} kalem${tutarsizNot}` },
+          { etiket: '14 günlük yük', deger: fmt(toplamKuyruk), alt: `${tutarli.length} kalem${tutarsizNot} · kuyruğa git`,
+            onTikla: () => onKopru?.('__modul:odeme:bekleyen') },
           { etiket: 'En yoğun gün', deger: enYogun ? kisaTarih(enYogun.iso) : '—', alt: enYogun ? `${fmt(enYogun.tutar)} · ${enYogun.adet} kalem` : 'ödeme yok', renk: R.amber },
           { etiket: 'Boş gün', deger: String(14 - doluGun.length), alt: 'ödeme yok', renk: R.krem },
           {
@@ -2177,7 +2179,8 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
           },
           { etiket: 'GERÇEK BORÇ', deger: fmt(sayi(cari?.toplam_gercek_borc)), alt: `açık bakiye + faturasız teslimat${tedFiltre === 'gercek' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.bakir,
             onTikla: () => setTedFiltre((p) => (p === 'gercek' ? '' : 'gercek')) },
-          { etiket: 'Bekleyen vade sözü', deger: fmt(sayi(cari?.toplam_bekleyen_vade)), alt: 'ödeme kuyruğunda', renk: R.amber },
+          { etiket: 'Bekleyen vade sözü', deger: fmt(sayi(cari?.toplam_bekleyen_vade)), alt: 'ödeme kuyruğunda · kuyruğa git', renk: R.amber,
+            onTikla: () => onKopru?.('__modul:odeme:bekleyen') },
           { etiket: 'En büyük hacim', deger: enBuyuk ? enBuyuk.ad : '—', alt: enBuyuk ? `6 ay ${fmt(enBuyuk.hacim)}` : '—', renk: R.krem },
         ]} />
         {tedFiltre && (
@@ -2305,10 +2308,16 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
   return (
     <>
       <KpiSeridi kpiler={[
-        { etiket: `${ayAdi} ödemesi`, deger: fmt(toplamOdenen), alt: `${gercekOdemeler.length} kayıt${duzeltmeler.length ? ` · ${duzeltmeler.length} iptal/düzeltme hariç` : ''}` },
-        { etiket: 'Kartla ödenen', deger: fmt(kartla.reduce((s, r) => s + Math.abs(sayi(r.tutar)), 0)), alt: `${kartla.length} kayıt`, renk: R.amber },
-        { etiket: 'Gecikmiş kalan', deger: fmt(gecikmisToplam), alt: gecikmisSatir.length ? `${gecikmisSatir.length} kalem` : 'gecikme yok', renk: gecikmisSatir.length ? R.kirmizi : R.yesil },
-        { etiket: 'Kasa', deger: fmt(kasa), alt: 'anlık bakiye', renk: kasa >= 0 ? R.yesil : R.kirmizi },
+        { etiket: `${ayAdi} ödemesi`, deger: fmt(toplamOdenen), alt: `${gercekOdemeler.length} kayıt${duzeltmeler.length ? ` · ${duzeltmeler.length} iptal/düzeltme hariç` : ''}${tedKanal ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+          onTikla: tedKanal ? () => setTedKanal('') : undefined },
+        // 🖱️ Kanal suzgeci (nakit/kart) ZATEN vardi, KPI'lar ona baglanmamisti.
+        { etiket: 'Kartla ödenen', deger: fmt(kartla.reduce((s, r) => s + Math.abs(sayi(r.tutar)), 0)), alt: `${kartla.length} kayıt${tedKanal === 'kart' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.amber,
+          onTikla: kartla.length ? () => setTedKanal((p) => (p === 'kart' ? '' : 'kart')) : undefined },
+        // Gecikmisin KENDISI bu ekranda degil — kuyrukta. Kutu oraya goturur.
+        { etiket: 'Gecikmiş kalan', deger: fmt(gecikmisToplam), alt: gecikmisSatir.length ? `${gecikmisSatir.length} kalem · kuyruğa git` : 'gecikme yok', renk: gecikmisSatir.length ? R.kirmizi : R.yesil,
+          onTikla: gecikmisSatir.length ? () => onKopru?.('__modul:odeme:bekleyen') : undefined },
+        { etiket: 'Kasa', deger: fmt(kasa), alt: 'anlık bakiye · kasa teslimlerine git', renk: kasa >= 0 ? R.yesil : R.kirmizi,
+          onTikla: () => onKopru?.('__modul:para:kasa') },
       ]} />
       {/* DUYU 5/6 — VADE DİSİPLİNİ: plan vadesi ↔ gerçek ödeme günü (salt-okur).
           Koç Finans vakası tam bu kör noktadandı — gecikme deseni artık görünür. */}

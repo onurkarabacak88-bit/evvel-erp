@@ -119,6 +119,9 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [teslimTur, setTeslimTur] = useState('');
   // KPI'dan gelen GUN suzgeci ('' | 'YYYY-MM-DD') — "Bugun teslim" kutusu icin.
   const [teslimGun, setTeslimGun] = useState('');
+  // Anlik Gider: "Bugunku anlik gider 3 kayit" olu rakamdi — aydaki butun
+  // giderlerin icinde bugunkuleri ayirmanin yolu yoktu.
+  const [giderBugun, setGiderBugun] = useState(false);
   const [aliciModal, setAliciModal] = useState(false);
   const [alicilar, setAlicilar] = useState(null);
   const [aliciForm, setAliciForm] = useState(null);  // {id?, ad, unvan, sube_id}
@@ -511,6 +514,8 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
           {
             etiket: 'Bugün girilen',
             deger: `${girilenAcik} / ${acikSubeler.length} şube`,
+            // Eksik sube varsa Ciro Onayi kuyruguna gecis (taslak oradadir).
+            onTikla: girilenAcik < acikSubeler.length ? () => onKopru?.('__modul:onaylar:ciro') : undefined,
             alt: kapaliSubeler.length
               ? `${girilenAcik < acikSubeler.length ? 'eksik şube var' : 'tamamlandı'} · ${kapaliSubeler.length} şube sezon kapalı`
               : (girilenAcik < acikSubeler.length ? 'eksik şube var' : 'tamamlandı'),
@@ -1778,11 +1783,14 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             ama sunucu özeti yalnız sube_bekleyen taşıyordu → KPI sessizce LIMIT'li
             listeden toplanıyordu. Sunucu artık gerçek dönem toplam/adet gönderiyor. */}
         <KpiSeridi kpiler={[
-          { etiket: 'Bugünkü anlık gider', deger: fmt(toplam(bugunku)), alt: `${bugunku.length} kayıt`, renk: bugunku.length > 0 ? R.amber : R.krem },
-          { etiket: 'Bu ay toplam', deger: fmt(sayi(giderOzet?.toplam) || toplam(giderler)), alt: 'plan dışı harcama' },
+          { etiket: 'Bugünkü anlık gider', deger: fmt(toplam(bugunku)), alt: `${bugunku.length} kayıt${giderBugun ? ' · SÜZGEÇ AÇIK' : ''}`, renk: bugunku.length > 0 ? R.amber : R.krem,
+            onTikla: bugunku.length ? () => setGiderBugun((p) => !p) : undefined },
+          { etiket: 'Bu ay toplam', deger: fmt(sayi(giderOzet?.toplam) || toplam(giderler)), alt: `plan dışı harcama${giderBugun ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: giderBugun ? () => setGiderBugun(false) : undefined },
           { etiket: 'Kayıt sayısı', deger: String(sayi(giderOzet?.adet) || giderler.length), alt: 'bu ay' },
           sayi(giderOzet?.sube_bekleyen?.adet) > 0
-            ? { etiket: 'Şube onay bekleyen', deger: String(sayi(giderOzet.sube_bekleyen.adet)), alt: `${fmt(sayi(giderOzet.sube_bekleyen.toplam))} · onay kuyruğunda`, renk: R.amber }
+            ? { etiket: 'Şube onay bekleyen', deger: String(sayi(giderOzet.sube_bekleyen.adet)), alt: `${fmt(sayi(giderOzet.sube_bekleyen.toplam))} · onay kuyruğuna git`, renk: R.amber,
+                onTikla: () => onKopru?.('__modul:onaylar:kuyruk') }
             : { etiket: 'En büyük kalem', deger: enBuyuk ? fmt(sayi(enBuyuk.tutar)) : '—', alt: enBuyuk ? String(enBuyuk.aciklama || '').slice(0, 26) : 'kayıt yok' },
         ]} />
         <div style={{ display: 'flex', gap: 9, marginBottom: 14 }}>
@@ -1792,7 +1800,7 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
           <BosDurum metin="Bu ay anlık gider kaydı yok — plan dışı harcama girilmemiş." />
         ) : (
           <Liste
-            satirlar={[...giderler]
+            satirlar={[...(giderBugun ? bugunku : giderler)]
               .sort((a, b) => String(b.tarih).localeCompare(String(a.tarih)))
               .slice(0, 40)
               .map((g, i) => ({
