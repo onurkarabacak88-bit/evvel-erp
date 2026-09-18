@@ -1298,7 +1298,8 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Bekleyen istek', deger: String(sayi(istek.acik_adet)), alt: 'teslim alındı, belge yok', renk: sayi(istek.acik_adet) > 0 ? R.amber : R.yesil },
+          { etiket: 'Bekleyen istek', deger: String(sayi(istek.acik_adet)), alt: 'teslim alındı, belge yok · cari ekstreye git', renk: sayi(istek.acik_adet) > 0 ? R.amber : R.yesil,
+            onTikla: sayi(istek.acik_adet) ? () => onKopru?.('__modul:belge:cari') : undefined },
           { etiket: 'Toplam açık', deger: fmt(sayi(istek.acik_toplam)), alt: 'KDV kanıtı bekliyor · kanıt paketine git', renk: sayi(istek.acik_toplam) > 0 ? R.kirmizi : R.krem,
             onTikla: () => onKopru?.('__modul:belge:kdv') },
           { etiket: 'KDV riski', deger: fmt(sayi(istek.kdv_riski)), alt: 'belgesiz kısımda tahmini · vergi etkisine git',
@@ -1619,8 +1620,10 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Şüpheli belge', deger: String(sayi(supheli.adet)), alt: 'GİB damgası / mükerrer şüphesi', renk: sayi(supheli.adet) > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'İnceleme kuyruğu', deger: String(sayi(inceleme.adet)), alt: `no/VKN eksik · ${fmt(sayi(inceleme.toplam))}`, renk: sayi(inceleme.adet) > 0 ? R.amber : R.yesil },
+          { etiket: 'Şüpheli belge', deger: String(sayi(supheli.adet)), alt: `GİB damgası / mükerrer şüphesi${sayi(supheli.adet) ? ' · listeye in' : ''}`, renk: sayi(supheli.adet) > 0 ? R.kirmizi : R.yesil,
+            onTikla: sayi(supheli.adet) ? () => blGit('belge-inceleme') : undefined },
+          { etiket: 'İnceleme kuyruğu', deger: String(sayi(inceleme.adet)), alt: `no/VKN eksik · ${fmt(sayi(inceleme.toplam))}${sayi(inceleme.adet) ? ' · listeye in' : ''}`, renk: sayi(inceleme.adet) > 0 ? R.amber : R.yesil,
+            onTikla: sayi(inceleme.adet) ? () => blGit('belge-inceleme') : undefined },
           // ⚠️ HAM HATA METNİ EKRANA SIZIYORDU (canlı, 2026-08-28):
           // alt yazı sunucunun `son_hata` alanını olduğu gibi basıyordu:
           //   "[geçici, deneme 2/5] Error code: 429 - […"
@@ -1632,6 +1635,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
           // insan diline çevrilmiş hâli durur.
           {
             etiket: 'İşlenemeyen foto',
+            onTikla: islenemeyenAdet ? () => blGit('belge-islenemeyen') : undefined,
             deger: String(islenemeyenAdet),
             // ⚠️ SUNUCU ZATEN SINIFLIYOR: her fotoğrafta `hata_tipi` alanı var
             // (canlı: hepsi "kota"). Ham metni regex'le tahmin etmek yerine
@@ -1665,6 +1669,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
             {/* İŞLENEMEYEN FOTOĞRAFLAR — kök nedeniyle birlikte. Sebep sunucudan
                 gelir; "daha net çek" tavsiyesi her hatada doğru değil (kota
                 dolduysa fotoğrafın netliğiyle ilgisi yok). */}
+            <div id="belge-islenemeyen" />
             {islenemeyenAdet > 0 && (
               <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14, border: `1px solid ${R.amber}44` }}>
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 5 }}>
@@ -1711,6 +1716,7 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
                   : 'İşlenemeyen belge: fotoğraf okunamadı — 📎 Belge yükle ile daha net bir kopya yükleyin.')}
               />
             )}
+            <div id="belge-inceleme" />
             {sayi(inceleme.adet) > 0 && (
               <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14, border: `1px solid ${R.amber}44` }}>
                 <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 5 }}>

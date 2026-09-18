@@ -806,6 +806,9 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             const sSorus = sayi(ozet?.benchmark?.shrinkage_sorusturma_pct) || 5;
             return {
               etiket: 'Fire (30 gün)',
+            // 🔗 Fire = dogrudan para kaybi. Kayitlar Stok Hareketi'nde durur,
+            // orada "Fire + sayim" kutusu tabloyu o kayitlara suzuyor.
+            onTikla: () => onKopru?.('__modul:ops:hareket'),
               deger: fmt(toplamFire),
               alt: fireOran == null
                 ? 'shrinkage toplamı · oran için ciro gerekli'
@@ -1527,7 +1530,8 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
         </div>
         <KpiSeridi kpiler={[
           { etiket: 'Tanımlı reçete', deger: String(receteler.length), alt: 'ürün kartı' },
-          { etiket: 'Aktif alış fiyatı', deger: String((fiyatlar || []).filter((f) => !f.gecerli_bitis).length), alt: 'hammadde fiyatı' },
+          { etiket: 'Aktif alış fiyatı', deger: String((fiyatlar || []).filter((f) => !f.gecerli_bitis).length), alt: 'hammadde fiyatı · fiyat zincirine git',
+            onTikla: () => onKopru?.('__modul:maliyet:fiyat') },
           {
             etiket: 'Eksiksiz reçete',
             // durum sunucudan geliyorsa onu say (exact+approx = tamamı fiyatlı);

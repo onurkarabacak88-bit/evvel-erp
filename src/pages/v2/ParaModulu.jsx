@@ -521,8 +521,10 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
               : (girilenAcik < acikSubeler.length ? 'eksik şube var' : 'tamamlandı'),
             renk: girilenAcik < acikSubeler.length ? R.amber : R.yesil,
           },
-          { etiket: 'Bugünkü toplam', deger: fmt(toplam(bugunku)), alt: 'onaylı ciro kayıtları' },
-          { etiket: 'Dün', deger: fmt(toplam(dunku)), alt: `${dunku.length} şube kaydı` },
+          { etiket: 'Bugünkü toplam', deger: fmt(toplam(bugunku)), alt: 'onaylı ciro kayıtları · ürün satışlarına git',
+            onTikla: () => onKopru?.('__modul:para:satis') },
+          { etiket: 'Dün', deger: fmt(toplam(dunku)), alt: `${dunku.length} şube kaydı · ürün satışlarına git`,
+            onTikla: () => onKopru?.('__modul:para:satis') },
           // 🔗 Olu rakamdi: "3 taslak onayda" yaziyor ama onay ekranina gitmek
           // icin sol raydan Onay Kuyrugu'nu bulmak gerekiyordu.
           { etiket: 'Onay bekleyen taslak', deger: String(taslaklar.length), alt: taslaklar.length ? 'ciro onayında · tıkla, kuyruğu aç' : 'ciro onayında', renk: taslaklar.length > 0 ? R.amber : R.krem,
@@ -1787,7 +1789,8 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
             onTikla: bugunku.length ? () => setGiderBugun((p) => !p) : undefined },
           { etiket: 'Bu ay toplam', deger: fmt(sayi(giderOzet?.toplam) || toplam(giderler)), alt: `plan dışı harcama${giderBugun ? ' · süzgeci kaldırmak için tıkla' : ''}`,
             onTikla: giderBugun ? () => setGiderBugun(false) : undefined },
-          { etiket: 'Kayıt sayısı', deger: String(sayi(giderOzet?.adet) || giderler.length), alt: 'bu ay' },
+          { etiket: 'Kayıt sayısı', deger: String(sayi(giderOzet?.adet) || giderler.length), alt: 'bu ay · sabit giderlere git',
+            onTikla: () => onKopru?.('__modul:odeme:sabit') },
           sayi(giderOzet?.sube_bekleyen?.adet) > 0
             ? { etiket: 'Şube onay bekleyen', deger: String(sayi(giderOzet.sube_bekleyen.adet)), alt: `${fmt(sayi(giderOzet.sube_bekleyen.toplam))} · onay kuyruğuna git`, renk: R.amber,
                 onTikla: () => onKopru?.('__modul:onaylar:kuyruk') }

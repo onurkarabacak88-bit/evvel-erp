@@ -6088,7 +6088,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         <KpiSeridi kpiler={[
           // ⚠️ "bugün" etiketi artık İŞ GÜNÜNE göre; gece penceresindeyse
           // takvimle iş gününün ayrıştığı SÖYLENİYOR.
-          { etiket: 'Açılan şube', deger: `${acilanSube} / ${acilisSatir.length}`, alt: barTarih === isGunuBugun() ? (isGunuKaymasiVar() ? 'bugün (iş günü — takvim yarını gösteriyor)' : 'bugün') : barTarih, renk: acilanSube === acilisSatir.length && acilisSatir.length ? R.yesil : R.amber },
+          { etiket: 'Açılan şube', deger: `${acilanSube} / ${acilisSatir.length}`,
+            onTikla: () => onKopru?.('__modul:para:girisi'), alt: barTarih === isGunuBugun() ? (isGunuKaymasiVar() ? 'bugün (iş günü — takvim yarını gösteriyor)' : 'bugün') : barTarih, renk: acilanSube === acilisSatir.length && acilisSatir.length ? R.yesil : R.amber },
           { etiket: 'Kapanan şube', deger: `${kapananSube} / ${kapanisSatir.length}`, alt: kapananSube < kapanisSatir.length ? 'kapanış bekleniyor' : 'tamamlandı', renk: kapananSube === kapanisSatir.length && kapanisSatir.length ? R.yesil : R.amber },
           // ══════════════════════════════════════════════════════════════
           // 🔴 SAHTE SAKİNLİK — canlı gözlem 2026-08-27
@@ -6129,6 +6130,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             onTikla: teslimBekleyen.length ? () => onKopru?.('__modul:para:kasa') : undefined },
           {
             etiket: 'Ciro onayı',
+            onTikla: () => onKopru?.('__modul:onaylar:ciro'),
             deger: `${ciroOnaylanan} / ${kapanisSatir.length}`,
             alt: eksikCiro
               ? `${eksikCiro} şubede ciro hiç girilmedi`

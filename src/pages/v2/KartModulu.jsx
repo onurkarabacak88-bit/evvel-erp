@@ -1804,7 +1804,8 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Aktif kart', deger: String(kartSatir.length), alt: `${kartSatir.length - sirket} kişisel · ${sirket} işletme${havuzluKart ? ` · ${havuzluKart} kart ortak limitte` : ''}` },
+          { etiket: 'Aktif kart', deger: String(kartSatir.length), alt: `${kartSatir.length - sirket} kişisel · ${sirket} işletme${havuzluKart ? ` · ${havuzluKart} kart ortak limitte` : ''} · hareketlere git`,
+            onTikla: () => onKopru?.('__modul:kart:hareket') },
           { etiket: 'Toplam limit', deger: fmt(toplamLimit), alt: `kullanım %${trSayi(toplamLimit ? (toplamBorc / toplamLimit) * 100 : 0, 0)}${havuzluKart ? ' · ortak havuz tek sayıldı' : ''}`, renk: R.krem },
           {
             etiket: 'Kalan limit',
@@ -2365,8 +2366,11 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
       <KpiSeridi kpiler={[
         { etiket: 'Yüklenen ekstre', deger: `${kartSatir.length - eksikler.length} / ${kartSatir.length}`, alt: 'bu dönem · kart dosyalarına git', renk: eksikler.length ? R.amber : R.yesil,
           onTikla: () => onKopru?.('__modul:kart:kartlar') },
-        { etiket: 'Eksik', deger: String(eksikler.length), alt: eksikler.length ? eksikler.map(k => k.ad).join(', ') : 'yok', renk: eksikler.length ? R.amber : R.yesil },
-        { etiket: 'Gecikmiş kart', deger: String(gecikmis.length), alt: gecikmis.length ? gecikmis.map(k => k.ad).join(', ') : 'yok', renk: gecikmis.length ? R.kirmizi : R.yesil },
+        // 🔗 Kartin dosyasi (limit, faiz, ekstre gecmisi) Kart Dosyalari'nda acilir.
+        { etiket: 'Eksik', deger: String(eksikler.length), alt: eksikler.length ? `${eksikler.map(k => k.ad).join(', ')} · dosyalara git` : 'yok', renk: eksikler.length ? R.amber : R.yesil,
+          onTikla: eksikler.length ? () => onKopru?.('__modul:kart:kartlar') : undefined },
+        { etiket: 'Gecikmiş kart', deger: String(gecikmis.length), alt: gecikmis.length ? `${gecikmis.map(k => k.ad).join(', ')} · ödeme kuyruğuna git` : 'yok', renk: gecikmis.length ? R.kirmizi : R.yesil,
+          onTikla: gecikmis.length ? () => onKopru?.('__modul:odeme:bekleyen') : undefined },
         { etiket: 'Sonraki son ödeme', deger: yakinlar[0] ? gunMetni(yakinlar[0].gunKaldi) : '—', alt: yakinlar[0] ? yakinlar[0].ad : 'vadesi gelen yok', renk: R.krem },
       ]} />
       {/* ── 🔗 ABONELİK KİMLİĞİ & KARTTAN ÖDENDİ EŞLEŞTİRMESİ ─────────────────
