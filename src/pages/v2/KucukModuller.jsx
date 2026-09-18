@@ -757,6 +757,14 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // 🖱️ "Bu ay bekleyen 9" olu rakamdi — hangi dokuz gider oldugunu bulmak icin
   // butun sabit gider listesini gozle taramak gerekiyordu. '' | 'odendi' | 'bekleyen'
   const [sgFiltre, setSgFiltre] = useState('');
+  // Krediler: "Odemesiz donemde 2" olu rakamdi — hangi iki kredinin taksiti
+  // henuz baslamadigini bulmak icin listeyi taramak gerekiyordu.
+  const [krOdemesiz, setKrOdemesiz] = useState(false);
+  // Excel Import: "Hatali satir 14" olu rakamdi — hangi yuklemelerde hata
+  // ciktigini bulmak icin 30 satirlik iz tablosunu taramak gerekiyordu.
+  const [imHatali, setImHatali] = useState(false);
+  // Bilgi Teslim: "Gorulmemis 5" -> o bes teslimi ayirir.
+  const [btGorulmemis, setBtGorulmemis] = useState(false);
   const krediler = (Array.isArray(krediHam) ? krediHam : []).filter(k => k.aktif !== false);
   const sabitler = (Array.isArray(sabitHam) ? sabitHam : []).filter(g => g.aktif !== false);
 
@@ -903,9 +911,12 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Kalan borç', deger: fmt(kalanTop), alt: `${krediler.length} kredi`, renk: R.kirmizi },
-          { etiket: 'Aylık taksit', deger: fmt(taksitTop), alt: 'toplam yük', renk: R.amber },
-          { etiket: 'Ödemesiz dönemde', deger: String(odemesiz.length), alt: odemesiz.length ? 'taksiti henüz başlamadı' : 'yok', renk: odemesiz.length ? R.amber : R.yesil },
+          { etiket: 'Kalan borç', deger: fmt(kalanTop), alt: `${krediler.length} kredi${krOdemesiz ? ' · süzgeci kaldırmak için tıkla' : ''}`, renk: R.kirmizi,
+            onTikla: krOdemesiz ? () => setKrOdemesiz(false) : undefined },
+          { etiket: 'Aylık taksit', deger: fmt(taksitTop), alt: 'toplam yük · borç takvimine git', renk: R.amber,
+            onTikla: () => onKopru?.('__modul:borc:takvim') },
+          { etiket: 'Ödemesiz dönemde', deger: String(odemesiz.length), alt: odemesiz.length ? `taksiti henüz başlamadı${krOdemesiz ? ' · SÜZGEÇ AÇIK' : ''}` : 'yok', renk: odemesiz.length ? R.amber : R.yesil,
+            onTikla: odemesiz.length ? () => setKrOdemesiz((p) => !p) : undefined },
           { etiket: 'İlk biten', deger: enYakinBitis ? `${enYakinBitis.kalan_vade} taksit` : '—', alt: enYakinBitis ? enYakinBitis.kurum : 'veri yok', renk: R.yesil },
         ]} />
         {brModalBlok}
@@ -921,7 +932,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
               { ad: 'Aylık taksit', sag: true }, { ad: 'Kalan vade', sag: true },
               { ad: 'Ödeme günü', sag: true }, { ad: 'Durum' }, { ad: 'İşlem' },
             ]}
-            satirlar={krediler.map(k => ({
+            satirlar={(krOdemesiz ? odemesiz : krediler).map(k => ({
               id: k.id, _k: k,
               hucreler: [
                 { v: k.kurum, kalin: true },
@@ -2633,10 +2644,12 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
       <>
         <KpiSeridi kpiler={[
           // Pencere dürüstlüğü (Codex M15): sayılar SON 30 izin toplamı — defterin tamamı değil.
-          { etiket: 'Kayıtlı yükleme', deger: String(izler.length), alt: 'son 30 iz penceresi · append-only' },
+          { etiket: 'Kayıtlı yükleme', deger: String(izler.length), alt: `son 30 iz penceresi · append-only${imHatali ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: imHatali ? () => setImHatali(false) : undefined },
           { etiket: 'Son yükleme', deger: izler[0] ? String(izler[0].olusturma).slice(5, 16) : '—', alt: izler[0] ? `${izler[0].toplam_eklenen ?? 0} satır eklendi` : 'henüz iz yok' },
           { etiket: 'Toplam eklenen', deger: String(izler.reduce((s, r) => s + (Number(r.toplam_eklenen) || 0), 0)), alt: 'son 30 yüklemede', renk: R.yesil },
-          { etiket: 'Hatalı satır', deger: String(izler.reduce((s, r) => s + (Number(r.hata_sayisi) || 0), 0)), alt: 'son 30 yüklemede atlanan', renk: izler.some(r => Number(r.hata_sayisi) > 0) ? R.amber : R.yesil },
+          { etiket: 'Hatalı satır', deger: String(izler.reduce((s, r) => s + (Number(r.hata_sayisi) || 0), 0)), alt: `son 30 yüklemede atlanan${imHatali ? ' · SÜZGEÇ AÇIK' : ''}`, renk: izler.some(r => Number(r.hata_sayisi) > 0) ? R.amber : R.yesil,
+            onTikla: izler.some(r => Number(r.hata_sayisi) > 0) ? () => setImHatali((p) => !p) : undefined },
         ]} />
         {/* ── YÜKLEME — iz defteri vardı ama dosya yükleme yoktu (ölü döngü:
             "Excel Import'u aç" düğmesi kendi görünümüne dönüyordu) ── */}
@@ -2720,7 +2733,7 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
             baslik="Yükleme iz defteri"
             not="her import kim/ne zaman/kaç satır iziyle damgalanır"
             kolonlar={[{ ad: 'Zaman' }, { ad: 'Dosya' }, { ad: 'Eklenen', sag: true }, { ad: 'Hata', sag: true }]}
-            satirlar={izler.map((r, i) => ({
+            satirlar={(imHatali ? izler.filter((r) => Number(r.hata_sayisi) > 0) : izler).map((r, i) => ({
               id: `iz-${i}`,
               hucreler: [
                 { v: String(r.olusturma || '—'), mono: true, renk: R.not },
@@ -2743,15 +2756,17 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Son 7 gün teslim', deger: String(olaylar.length), alt: 'şube depo teslimleri' },
-          { etiket: 'Görülmemiş', deger: String(gorulmemis.length), alt: gorulmemis.length ? 'bildirim bekliyor' : 'hepsi görüldü', renk: gorulmemis.length ? R.mavi : R.yesil },
+          { etiket: 'Son 7 gün teslim', deger: String(olaylar.length), alt: `şube depo teslimleri${btGorulmemis ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: btGorulmemis ? () => setBtGorulmemis(false) : undefined },
+          { etiket: 'Görülmemiş', deger: String(gorulmemis.length), alt: gorulmemis.length ? `bildirim bekliyor${btGorulmemis ? ' · SÜZGEÇ AÇIK' : ''}` : 'hepsi görüldü', renk: gorulmemis.length ? R.mavi : R.yesil,
+            onTikla: gorulmemis.length ? () => setBtGorulmemis((p) => !p) : undefined },
           { etiket: 'Bilgi teslimi', deger: String(bilgiKayitlari.length), alt: `son 30 gün · ${bkSube} şube`, renk: R.krem },
           { etiket: 'Kalıcı onay', deger: '«Görüldü» sunucuda', alt: 'işaretlenen bir daha bildirilmez', renk: R.not },
         ]} />
         {olaylar.length ? (
           <Liste
             baslik={`Depo teslim bildirimleri · son 7 gün${olaylar.length > 40 ? ` · ilk 40 / ${olaylar.length}` : ''}`}
-            satirlar={olaylar.slice(0, 40).map((o, i) => ({
+            satirlar={(btGorulmemis ? gorulmemis : olaylar).slice(0, 40).map((o, i) => ({
               id: o.anahtar || i, _o: o,
               baslik: `${o.sube_adi || 'Şube'} · ${o.baslik || o.tur || 'teslim işlendi'}`,
               alt: [o.zaman ? kisaTarih(o.zaman) : null, o.detay].filter(Boolean).join(' · ') || 'ayrıntı yok',
