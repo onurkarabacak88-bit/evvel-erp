@@ -220,7 +220,8 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <KpiSeridi kpiler={[
           { etiket: 'Bekleyen onay', deger: String(satir.length), alt: `gider · avans · fire · tanım${kuyKasa ? ' · onay listesine dön' : ''}`, renk: satir.length ? R.amber : R.yesil,
             onTikla: kuyKasa ? () => setKuyKasa(false) : undefined },
-          { etiket: 'Toplam tutar', deger: fmt(toplam), alt: 'onay bekleyen', renk: toplam ? R.amber : R.krem },
+          { etiket: 'Toplam tutar', deger: fmt(toplam), alt: `onay bekleyen${kuyKasa ? ' · onay listesine dön' : ''}`, renk: toplam ? R.amber : R.krem,
+            onTikla: kuyKasa ? () => setKuyKasa(false) : undefined },
           { etiket: 'En eski', deger: enEski ? `${enEski} gün` : '—', alt: enEski > 2 ? 'gecikiyor' : 'taze', renk: enEski > 2 ? R.kirmizi : R.krem },
           { etiket: 'Kasa hatası ayrı', deger: String(kasaSatir.length), alt: `onay değil · kasa uyumsuzluğu${kuyKasa ? ' · GÖSTERİLİYOR' : (kasaSatir.length ? ' · tıkla, göster' : '')}`, renk: R.not,
             onTikla: kasaSatir.length ? () => setKuyKasa((p) => !p) : undefined },
@@ -1020,7 +1021,8 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
       <KpiSeridi kpiler={[
         { etiket: 'Aylık sabit gider', deger: fmt(toplamSabit), alt: `${sabitler.length} kalem${sgFiltre ? ' · süzgeci kaldırmak için tıkla' : ''}`,
           onTikla: sgFiltre ? () => setSgFiltre('') : undefined },
-        { etiket: 'Kira payı', deger: fmt(kira.reduce((s, g) => s + sayi(g.tutar), 0)), alt: toplamSabit ? `%${trSayi((kira.reduce((s, g) => s + sayi(g.tutar), 0) / toplamSabit) * 100, 0)}` : '—', renk: R.krem },
+        { etiket: 'Kira payı', deger: fmt(kira.reduce((s, g) => s + sayi(g.tutar), 0)), alt: `${toplamSabit ? `%${trSayi((kira.reduce((s, g) => s + sayi(g.tutar), 0) / toplamSabit) * 100, 0)}` : '—'} · mülk defterine git`, renk: R.krem,
+          onTikla: () => onKopru?.('__modul:mulk:defter') },
         { etiket: 'Bu ay ödenen', deger: String(odendi.length), alt: `${fmt(odendi.reduce((s, g) => s + sayi(g.tutar), 0))}${sgFiltre === 'odendi' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.yesil,
           onTikla: odendi.length ? () => setSgFiltre((p) => (p === 'odendi' ? '' : 'odendi')) : undefined },
         { etiket: 'Bu ay bekleyen', deger: String(bekleyen.length), alt: `${fmt(bekleyen.reduce((s, g) => s + sayi(g.tutar), 0))}${sgFiltre === 'bekleyen' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: bekleyen.length ? R.amber : R.yesil,
@@ -2196,12 +2198,16 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
   // ⚠️ İÇ TRANSFER İŞARETLENİR: gruplarda kasa teslimi de görünür ama
   // "kendi cebin" diye etiketlenir — gizlenmez (ham veri kaybolmaz),
   // yanlış okunmaz da.
+  // yon: '+' giren · '-' cikan · '*' HEPSI (Kayit/Net kutulari icin — o iki kutu
+  // tek yonu degil defterin tamamini anlatir, yarisini gostermek yanlis olurdu).
   const turDokumuAc = (yon) => {
     const artiMi = yon === '+';
+    const hepsi = yon === '*';
     const grup = {};
     satir.forEach((r) => {
       const t = sayi(r.tutar);
-      if (artiMi ? t <= 0 : t >= 0) return;
+      if (!hepsi && (artiMi ? t <= 0 : t >= 0)) return;
+      if (hepsi && t === 0) return;
       const k = String(r.islem_turu || '—').toUpperCase();
       if (!grup[k]) grup[k] = { adet: 0, tutar: 0 };
       grup[k].adet += 1;
@@ -2210,11 +2216,11 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
     const liste = Object.entries(grup).sort((a, b) => b[1].tutar - a[1].tutar);
     const toplam = liste.reduce((s2, [, v]) => s2 + v.tutar, 0);
     onCekmece?.({
-      tip: artiMi ? 'GİREN DÖKÜMÜ' : 'ÇIKAN DÖKÜMÜ',
-      baslik: `${ayEtiket} · ${artiMi ? 'kasaya giren' : 'kasadan çıkan'}`,
+      tip: hepsi ? 'DEFTER DÖKÜMÜ' : artiMi ? 'GİREN DÖKÜMÜ' : 'ÇIKAN DÖKÜMÜ',
+      baslik: `${ayEtiket} · ${hepsi ? 'tüm hareketler' : artiMi ? 'kasaya giren' : 'kasadan çıkan'}`,
       alt: `${liste.length} işlem türü · ${satir.length} kayıt içinden`,
       kpi: [
-        { etiket: 'Toplam', deger: fmt(toplam), renk: artiMi ? R.yesil : R.kirmizi },
+        { etiket: 'Toplam', deger: fmt(toplam), renk: hepsi ? R.krem : artiMi ? R.yesil : R.kirmizi },
         { etiket: 'Tür', deger: String(liste.length) },
       ],
       listeBaslik: 'İşlem türüne göre · büyükten küçüğe',
@@ -2238,7 +2244,9 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
     <>
       {donemGezgini}
       <KpiSeridi kpiler={[
-        { etiket: 'Kayıt', deger: String(satir.length), alt: ayEtiket },
+        // 🖱️ Kardesleri (Giren/Cikan) dokum aciyor, bu ikisi olu kalmisti.
+        { etiket: 'Kayıt', deger: String(satir.length), alt: `${ayEtiket} · tüm dökümü aç`,
+          onTikla: () => turDokumuAc('*') },
         // ⚠️ ETİKET ARTIK YALAN SÖYLEMİYOR: "kasa girişi" doğruydu ama sahip
         // onu GELİR diye okuyordu. Ne içerdiği alt yazıda duruyor.
         {
@@ -2250,12 +2258,14 @@ export function RaporModulu({ gorunum, onCekmece, onKopru, onToast, defterHedef 
           etiket: 'Çıkan', deger: fmt(gider), alt: 'kasa çıkışı · dökümü aç', renk: R.kirmizi,
           onTikla: () => turDokumuAc('-'),
         },
-        { etiket: 'Net', deger: fmt(gelir - gider), alt: ayEtiket, renk: gelir - gider >= 0 ? R.yesil : R.kirmizi },
+        { etiket: 'Net', deger: fmt(gelir - gider), alt: `${ayEtiket} · tüm dökümü aç`, renk: gelir - gider >= 0 ? R.yesil : R.kirmizi,
+          onTikla: () => turDokumuAc('*') },
         // 🎯 ASIL SAYI: dışarıdan gerçekten giren para. Sahip "bu ay ne
         // kazandım" diye sorduğunda cevabı budur; yukarıdaki "Giren" değil.
         ...(defterAyrim ? [{
           etiket: 'Dışarıdan giren', deger: fmt(defterAyrim.disGelir),
-          alt: 'transfer ve iade hariç', renk: R.krem,
+          alt: 'transfer ve iade hariç · giriş dökümünü aç', renk: R.krem,
+          onTikla: () => turDokumuAc('+'),
         }] : []),
       ]} />
       {/* 🧮 AYRIŞTIRMA — "Giren" niye "Gelir"den büyük?
@@ -3443,23 +3453,27 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
               {
                 etiket: 'Kısmi fatura',
                 deger: String(kismi.length),
-                alt: 'kalan faturalar bekleniyor',
+                alt: 'kalan faturalar bekleniyor · fatura isteğine git',
+                onTikla: kismi.length ? () => onKopru?.('__modul:belge:istek') : undefined,
                 renk: kismi.length ? R.amber : R.yesil,
               },
               {
                 etiket: 'Kalem okuması',
                 deger: String(ocr?.kalemsiz ?? '—'),
-                alt: `${ocr?.kalemli ?? 0} fatura tam okundu`,
+                alt: `${ocr?.kalemli ?? 0} fatura tam okundu · arşive git`,
+                onTikla: () => onKopru?.('__modul:belge:arsiv'),
                 renk: (ocr?.kalemsiz || 0) ? R.amber : R.yesil,
               },
               {
                 etiket: 'Merkez alımı',
                 deger: String(mkz?.sistemden_gecmeyen_alim ?? '—'),
-                alt: mkz?.durum || 'sistemden geçmeyen',
+                alt: `${mkz?.durum || 'sistemden geçmeyen'} · stok hareketine git`,
+                onTikla: () => onKopru?.('__modul:ops:hareket'),
                 renk: (mkz?.sistemden_gecmeyen_alim || 0) ? R.amber : R.yesil,
               },
               {
                 etiket: 'Sipariş patlaması',
+                onTikla: () => onKopru?.('__modul:ops:siparisarsiv'),
                 deger: String(pat?.patlama_sayisi ?? '—'),
                 alt: 'aynı şube+tedarikçi, kısa sürede',
                 renk: (pat?.hala_acik_toplam || 0) ? R.kirmizi : R.yesil,
