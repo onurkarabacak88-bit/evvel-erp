@@ -3002,6 +3002,9 @@ export default function TasarimV2({ onGit }) {
         const gercekOnay = onaylar.length - kasaAdet;
         return {
           etiket: 'Onay kuyruğu',
+          // 🔗 Olu rakamdi: "Onay kuyrugu 12" yaziyor ama oraya gitmek icin
+          // sol raydan modulu bulmak gerekiyordu.
+          onTikla: () => koprule('__modul:onaylar:kuyruk'),
           deger: String(gercekOnay),
           alt: kasaAdet ? `bekleyen onay · kasa hatası ${kasaAdet} ayrı sayılır` : 'bekleyen işlem',
           renk: gercekOnay ? R.amber : R.yesil,
@@ -3019,6 +3022,7 @@ export default function TasarimV2({ onGit }) {
       // sayı çelişebilir. Birim artık AÇIKÇA yazılıyor; kaynak da aynı yerden.
       {
         etiket: 'Ciro eksik gün',
+        onTikla: () => koprule('__modul:para:girisi'),
         deger: eksikCiro?.eksik_gun_adet != null ? String(sayi(eksikCiro.eksik_gun_adet))
           : (panelDustu ? '—' : String(eksikGunler.length)),
         alt: eksikCiro?.eksik_adet != null
@@ -3033,6 +3037,7 @@ export default function TasarimV2({ onGit }) {
       // hiç görünmüyordu — 2 kalem 900 K ₺ ile 9 kalem 4 K ₺ aynı ağırlıkta duruyordu.
       ...(gecikmisToplam > 0 ? [{
         etiket: 'Gecikmiş yük',
+        onTikla: () => koprule('__modul:odeme:bekleyen'),
         deger: fmt(gecikmisToplam),
         alt: `${gecikmisOdemeler.length} kalem · ${enEskiGecikme > 0 ? `en eskisi ${enEskiGecikme} gün` : 'yaş ölçülemedi'}`,
         renk: R.kirmizi,

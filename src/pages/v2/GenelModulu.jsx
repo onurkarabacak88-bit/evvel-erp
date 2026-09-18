@@ -2487,9 +2487,13 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         <KpiSeridi kpiler={[
           { /* PROD-V2-CIRO-001 FIX: BRÜT bu_ay_ciro (ciro tablosu) — "Bu ay ciro" etiketi brüt olmalı;
                önce NET bu_ay_sadece_ciro tercih ediliyordu, aşağıdaki tahsilat kanalları brütken tutarsızdı. */
-            etiket: 'Bu ay ciro', deger: p.bu_ay_ciro == null ? '—' : fmt(sayi(p.bu_ay_ciro)), alt: 'sadece ciro', renk: R.krem },
-          { etiket: 'Nakit giriş', deger: giris ? fmt(giris) : '—', alt: 'bu ay', renk: giris ? R.yesil : R.not },
-          { etiket: 'Nakit çıkış', deger: cikis ? fmt(cikis) : '—', alt: 'bu ay', renk: cikis ? R.kirmizi : R.not },
+            // 🔗 Olu rakamlardi — her biri baska bir ekranda kayit kayit duruyor.
+            etiket: 'Bu ay ciro', deger: p.bu_ay_ciro == null ? '—' : fmt(sayi(p.bu_ay_ciro)), alt: 'sadece ciro · ciro girişine git', renk: R.krem,
+            onTikla: () => onKopru?.('__modul:para:girisi') },
+          { etiket: 'Nakit giriş', deger: giris ? fmt(giris) : '—', alt: 'bu ay · kasa teslimlerine git', renk: giris ? R.yesil : R.not,
+            onTikla: () => onKopru?.('__modul:para:kasa') },
+          { etiket: 'Nakit çıkış', deger: cikis ? fmt(cikis) : '—', alt: 'bu ay · ödemelere git', renk: cikis ? R.kirmizi : R.not,
+            onTikla: () => onKopru?.('__modul:odeme:bekleyen') },
           // ⚠️ `net === 0` GERÇEK BİR CEVAPTIR: eski koşul `net ? … : '—'` idi,
           // yani tam denk bir ay "okunamadı" gibi görünürdü. null ile 0 ayrıldı.
           {
