@@ -765,6 +765,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   // Maas & Avans: "Onay bekleyen 4 taslak bordro" olu rakamdi — hangi dort
   // personel oldugunu bulmak icin butun bordro tablosunu taramak gerekiyordu.
   const [bordroBekleyen, setBordroBekleyen] = useState(false);
+  // 🔴 "PIN eksik 3" yaziyordu ama O UC KISININ ADI hicbir yerde yoktu — tablo
+  // sube bazliydi. Sayiyi gorup kisiyi gorememek, o kisilerin sessizce panele
+  // giremiyor kalmasi demekti (Onay Kuyrugu'ndaki kasa vakasinin ayni turu).
+  const [pinEksikAc, setPinEksikAc] = useState(false);
 
   const bvUygula = async () => {
     const m = bvModal;
@@ -3111,7 +3115,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             renk: bosHucre ? R.amber : R.yesil,
           },
           { etiket: 'Toplam atama', deger: String(atamaSayisi), alt: `${subeler.length} şube · 7 gün` },
-          { etiket: 'Fazla mesai riski', deger: `${fazlaMesai} kişi`, alt: 'bu ay 8 saat üzeri', renk: fazlaMesai ? R.kirmizi : R.yesil },
+          // 🔗 Kimler oldugu Kadro ekraninda suzulebiliyor (fm > 8 kutusu).
+          { etiket: 'Fazla mesai riski', deger: `${fazlaMesai} kişi`, alt: 'bu ay 8 saat üzeri · kadroda süz', renk: fazlaMesai ? R.kirmizi : R.yesil,
+            onTikla: fazlaMesai ? () => { setKadroFiltre('fm'); onKopru?.('__modul:ekip:kadro'); } : undefined },
           { etiket: 'Doluluk', deger: toplamHucre ? `%${trSayi(((toplamHucre - bosHucre) / toplamHucre) * 100, 0)}` : '—', alt: 'gün-şube hücresi · kapalı şubeler de paydada', renk: R.krem },
         ]} />
         <VardiyaIzgara
@@ -4255,7 +4261,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           })(),
           { etiket: 'Onay bekleyen', deger: String(bekleyen.length), alt: bekleyen.length ? `taslak bordro${bordroBekleyen ? ' · SÜZGEÇ AÇIK' : ''}` : 'hepsi onaylı', renk: bekleyen.length ? R.amber : R.yesil,
             onTikla: bekleyen.length ? () => setBordroBekleyen((p) => !p) : undefined },
-          { etiket: 'Avans mahsubu', deger: fmt(toplamAvans), alt: 'bu ay maaştan düşülecek', renk: R.krem },
+          { etiket: 'Avans mahsubu', deger: fmt(toplamAvans), alt: 'bu ay maaştan düşülecek · onay kuyruğuna git', renk: R.krem,
+            onTikla: () => onKopru?.('__modul:onaylar:kuyruk') },
           {
             etiket: 'Onay bekleyen avans',
             // ⚠️ Fable: `avans` null ise (uç düştü) sayaç 0 olup kart "bekleyen
@@ -4278,7 +4285,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
                 : (sayi(avans?.bu_ay_odenen) ? `bu ay ${fmt(sayi(avans.bu_ay_odenen))} ödendi` : 'teslim bekleyen yok')),
             renk: avans == null ? R.not3 : (avansTeslimBekleyen ? R.kirmizi : R.yesil),
           },
-          { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: 'bu ay toplam', renk: toplamFm > 0 ? R.kirmizi : R.krem },
+          { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: 'bu ay toplam · vardiya takibinde süz', renk: toplamFm > 0 ? R.kirmizi : R.krem,
+            onTikla: toplamFm > 0 ? () => { setTakipFiltre('fm'); onKopru?.('__modul:ekip:takip'); } : undefined },
         ]} />
         {/* 🍽 MOLA ONAY KUYRUĞU (BORDRO V2 · Adım 7) — bordro onayından AYRI aşama.
             Bordro onayı HESAPLANMIŞ net'i kilitler; bu ondan ÖNCE gelir ve
@@ -4878,7 +4886,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           },
           { etiket: 'Tamamlanan', deger: String(aTamam), alt: aToplam ? `%${trSayi((aTamam / aToplam) * 100, 0)}` : '—', renk: R.yesil },
           { etiket: 'Açık', deger: String(aToplam - aTamam), alt: (aToplam - aTamam) ? 'henüz işaretlenmedi' : 'hepsi kapandı', renk: (aToplam - aTamam) ? R.amber : R.yesil },
-          { etiket: 'Aktif kadro', deger: String(personel.length), alt: 'görev atanabilir personel', renk: R.krem },
+          { etiket: 'Aktif kadro', deger: String(personel.length), alt: 'görev atanabilir personel · kadroya git', renk: R.krem,
+            onTikla: () => onKopru?.('__modul:ekip:kadro') },
         ]} />
         {subeler.length ? (
           <Tablo
@@ -4985,7 +4994,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           ileriKapali={yil === buYil && ay === buAy}
         />
         <KpiSeridi kpiler={[
-          { etiket: 'Aylık toplam saat', deger: `${trSayi(toplamSaat, 0)} sa`, alt: `${satir.length} personel · ${AY_KISA[ay - 1]}` },
+          { etiket: 'Aylık toplam saat', deger: `${trSayi(toplamSaat, 0)} sa`, alt: `${satir.length} personel · ${AY_KISA[ay - 1]}${takipFiltre ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: takipFiltre ? () => setTakipFiltre('') : undefined },
           { etiket: 'Toplam gecikme', deger: `${trSayi(toplamGecikme, 0)} dk`, alt: gecikenler.length ? `${gecikenler.length} personel${takipFiltre === 'gecikme' ? ' · SÜZGEÇ AÇIK' : ''}` : 'gecikme yok', renk: toplamGecikme > 0 ? R.amber : R.yesil,
             onTikla: gecikenler.length ? () => setTakipFiltre((p) => (p === 'gecikme' ? '' : 'gecikme')) : undefined },
           { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: `plan üstü çalışma${takipFiltre === 'fm' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: toplamFm > 0 ? R.kirmizi : R.yesil,
@@ -6124,10 +6134,39 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     <>
       <KpiSeridi kpiler={[
         { etiket: 'PIN tanımlı personel', deger: `${toplamTanimli} / ${pinler.length}`, alt: 'şube paneline girebilen', renk: eksikPin ? R.amber : R.yesil },
-        { etiket: 'PIN eksik', deger: String(eksikPin), alt: eksikPin ? 'panele giremez' : 'hepsi tanımlı', renk: eksikPin ? R.amber : R.yesil },
+        { etiket: 'PIN eksik', deger: String(eksikPin), alt: eksikPin ? `panele giremez${pinEksikAc ? ' · GÖSTERİLİYOR' : ' · tıkla, kimler?'}` : 'hepsi tanımlı', renk: eksikPin ? R.amber : R.yesil,
+          onTikla: eksikPin ? () => setPinEksikAc((p) => !p) : undefined },
         { etiket: 'Panel yöneticisi', deger: String(pinler.filter(p => p.yonetici).length), alt: 'cep override yetkisi', renk: R.krem },
         { etiket: 'Şube', deger: String(gercekSube), alt: 'PIN dağılımı', renk: R.krem },
       ]} />
+      {pinEksikAc && (
+        <div style={{ ...kartYuzey, padding: '14px 18px', marginBottom: 12 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 9 }}>
+            <div style={{ fontFamily: F.baslik, fontSize: 14.5, fontWeight: 600 }}>
+              PIN'i tanımlı olmayanlar · {eksikPin} kişi
+            </div>
+            <button onClick={() => setPinEksikAc(false)} style={{
+              marginLeft: 'auto', padding: '4px 12px', borderRadius: 8, cursor: 'pointer',
+              border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+              fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+            }}>Kapat</button>
+          </div>
+          <div style={{ fontSize: 11.5, color: R.not2, marginBottom: 9, lineHeight: 1.6 }}>
+            Bu kişiler şube paneline giremez — vardiya açamaz, görev kapatamaz, kapanış yapamaz.
+            PIN şube panelinden tanımlanır.
+          </div>
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 7 }}>
+            {pinler.filter((p) => !p.panel_pin_tanimli).map((p) => (
+              <span key={p.id || p.ad_soyad} style={{
+                padding: '5px 12px', borderRadius: 99, fontSize: 12, fontWeight: 600,
+                background: `${R.amber}1A`, color: R.amber, border: `1px solid ${R.amber}44`,
+              }}>
+                {p.ad_soyad || '—'}{p.sube_adi ? ` · ${p.sube_adi}` : ''}
+              </span>
+            ))}
+          </div>
+        </div>
+      )}
       {pinSube.length ? (
         <Tablo
           baslik="Şube panel PIN durumu"
