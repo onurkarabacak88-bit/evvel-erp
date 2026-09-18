@@ -157,6 +157,8 @@ const modalAlanStil = {
 // guard'lı uçları AYNEN kullanılır (onayla=kasadan düşer, reddet neden'li).
 // ═════════════════════════════════════════════════════════════════════════════
 export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
+  // Kasa uyumsuzluklarini GOSTER anahtari — o kayitlar listede hic yoktu.
+  const [kuyKasa, setKuyKasa] = useState(false);
   const { yukleniyor, hata, veri, yukle } = useVeri([
     // kritik=true: bu iki uç düşerse "kuyruk temiz" YALANI yerine hata bandı
     // limit 500 > render 400: kesme notu gerçekten tetiklenebilsin (uç tavanı 1000)
@@ -199,6 +201,11 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
     // ⚠️ Kasa hatası kuralı korundu: islem_turu'nde KASA geçen kayıtlar kuyruğa
     // düşmez (bunlar kasa uyumsuzluğu, onay işi değil) — eski ekrandaki filtre.
     const satir = kuyruk.filter(o => !String(o.islem_turu || '').toUpperCase().includes('KASA'));
+    // ⚠️ KASA UYUMSUZLUKLARI listede HIC GORUNMUYORDU — yalnizca sayilari
+    // yaziliyordu ("Kasa hatasi ayri: 4"). Sayi gorunup kaydin kendisi
+    // gorunmemesi, o kayitlarin sessizce yok sayilmasi demekti.
+    const kasaSatir = kuyruk.filter(o => String(o.islem_turu || '').toUpperCase().includes('KASA'));
+    const gorunenSatir = kuyKasa ? kasaSatir : satir;
     const toplam = satir.reduce((s, o) => s + sayi(o.tutar), 0);
     const gunFark = (t) => {
       if (!t) return null;
@@ -211,12 +218,24 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Bekleyen onay', deger: String(satir.length), alt: 'gider · avans · fire · tanım', renk: satir.length ? R.amber : R.yesil },
+          { etiket: 'Bekleyen onay', deger: String(satir.length), alt: `gider · avans · fire · tanım${kuyKasa ? ' · onay listesine dön' : ''}`, renk: satir.length ? R.amber : R.yesil,
+            onTikla: kuyKasa ? () => setKuyKasa(false) : undefined },
           { etiket: 'Toplam tutar', deger: fmt(toplam), alt: 'onay bekleyen', renk: toplam ? R.amber : R.krem },
           { etiket: 'En eski', deger: enEski ? `${enEski} gün` : '—', alt: enEski > 2 ? 'gecikiyor' : 'taze', renk: enEski > 2 ? R.kirmizi : R.krem },
-          { etiket: 'Kasa hatası ayrı', deger: String(kuyruk.length - satir.length), alt: 'onay değil · kasa uyumsuzluğu', renk: R.not },
+          { etiket: 'Kasa hatası ayrı', deger: String(kasaSatir.length), alt: `onay değil · kasa uyumsuzluğu${kuyKasa ? ' · GÖSTERİLİYOR' : (kasaSatir.length ? ' · tıkla, göster' : '')}`, renk: R.not,
+            onTikla: kasaSatir.length ? () => setKuyKasa((p) => !p) : undefined },
         ]} />
-        {satir.length ? (
+        {kuyKasa && (
+          <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>«Kasa uyumsuzlukları» gösteriliyor — {kasaSatir.length} kayıt. Bunlar ONAY kalemi değildir; toplu onay uygulanmaz, kasa defterinden düzeltilir.</span>
+            <button onClick={() => setKuyKasa(false)} style={{
+              padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+              border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+              fontSize: 11, fontWeight: 600,
+            }}>Onay listesine dön</button>
+          </div>
+        )}
+        {gorunenSatir.length ? (
           <Liste
             secilebilir
             secili={secili}
@@ -231,7 +250,7 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
             onHepsi={(hepsiMi) => setSecili(hepsiMi
               ? Object.fromEntries(satir.slice(0, 400).map(o => [o.id, true]))
               : {})}
-            satirlar={satir.slice(0, 400).map(o => ({
+            satirlar={gorunenSatir.slice(0, 400).map(o => ({
               id: o.id, _o: o,
               baslik: o.aciklama || slugAd(o.islem_turu) || 'Onay kaydı',
               alt: `${slugAd(o.islem_turu)} · ${kisaTarih(o.tarih)}${o.kaynak_tablo ? ` · ${o.kaynak_tablo}` : ''}`,
