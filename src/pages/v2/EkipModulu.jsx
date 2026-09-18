@@ -761,7 +761,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   const [kadroFiltre, setKadroFiltre] = useState(''); // '' | 'yeni' | 'fm'
   // Vardiya Takip: "Giris yok 4 gun" yaziyor ama KIMIN oldugu tabloda
   // aranmaliydi. '' | 'gecikme' | 'fm' | 'girisyok'
-  const [takipFiltre, setTakipFiltre] = useState('');
+  const [takipFiltre, setTakipFiltre] = useState(''); // '' | gecikme | fm | girisyok | yemek
   // Maas & Avans: "Onay bekleyen 4 taslak bordro" olu rakamdi — hangi dort
   // personel oldugunu bulmak icin butun bordro tablosunu taramak gerekiyordu.
   const [bordroBekleyen, setBordroBekleyen] = useState(false);
@@ -3108,6 +3108,9 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           // SÖYLÜYOR; gerçek ayrım ancak uç bayrağı verirse yapılabilir.
           {
             etiket: 'Boş slot',
+            // Bos slot = o gun o subede KIMSE yok. Izgara zaten asagida; kutu
+            // kadroya goturur ki atanacak kisi secilebilsin.
+            onTikla: bosHucre ? () => onKopru?.('__modul:ekip:kadro') : undefined,
             deger: String(bosHucre),
             alt: bosHucre
               ? `${subeler.length} şube × 7 gün içinde · sezon kapalı şubeler de sayılır`
@@ -4975,6 +4978,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     const takipGorunen = takipFiltre === 'gecikme' ? analizler.filter((x) => sayi(x.t.toplam_gecikme_dk) > 0)
       : takipFiltre === 'fm' ? analizler.filter((x) => sayi(x.t.toplam_fazla_mesai_saat) > 0)
       : takipFiltre === 'girisyok' ? analizler.filter((x) => x.a.girisYok.length > 0)
+      : takipFiltre === 'yemek' ? analizler.filter((x) => x.a.yemekKayip.length > 0)
       : analizler;
     const yemekKayipGun = analizler.reduce((s, x) => s + x.a.yemekKayip.length, 0);
     const yemekKayipKisi = analizler.filter((x) => x.a.yemekKayip.length).length;
@@ -5011,15 +5015,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           {
             etiket: 'Yemek hakkı kaybı',
             deger: `${yemekKayipGun} gün`,
-            alt: yemekKayipGun ? `${yemekKayipKisi} personel · mola limiti aşıldı` : 'hak kaybı yok',
+            alt: yemekKayipGun ? `${yemekKayipKisi} personel · mola limiti aşıldı${takipFiltre === 'yemek' ? ' · SÜZGEÇ AÇIK' : ''}` : 'hak kaybı yok',
             renk: yemekKayipGun ? R.amber : R.yesil,
+            // Yemek hakki kaybi PARA kaybidir — kimde oldugu bir tiklamayla gorunur.
+            onTikla: yemekKayipGun ? () => setTakipFiltre((p) => (p === 'yemek' ? '' : 'yemek')) : undefined,
           },
         ]} />
         {satir.length ? (
           <>
           {takipFiltre && (
             <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-              <span>«{{ gecikme: 'Gecikmesi olanlar', fm: 'Fazla mesai yapanlar', girisyok: 'Girişi olmayanlar' }[takipFiltre]}» süzgeci açık — {takipGorunen.length} personel. Üstteki toplamlar TÜM ayı anlatır.</span>
+              <span>«{{ gecikme: 'Gecikmesi olanlar', fm: 'Fazla mesai yapanlar', girisyok: 'Girişi olmayanlar', yemek: 'Yemek hakkı kaybı olanlar' }[takipFiltre]}» süzgeci açık — {takipGorunen.length} personel. Üstteki toplamlar TÜM ayı anlatır.</span>
               <button onClick={() => setTakipFiltre('')} style={{
                 padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
                 border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
@@ -6133,7 +6139,8 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   return (
     <>
       <KpiSeridi kpiler={[
-        { etiket: 'PIN tanımlı personel', deger: `${toplamTanimli} / ${pinler.length}`, alt: 'şube paneline girebilen', renk: eksikPin ? R.amber : R.yesil },
+        { etiket: 'PIN tanımlı personel', deger: `${toplamTanimli} / ${pinler.length}`, alt: `şube paneline girebilen${pinEksikAc ? ' · listeyi kapat' : ''}`, renk: eksikPin ? R.amber : R.yesil,
+          onTikla: pinEksikAc ? () => setPinEksikAc(false) : undefined },
         { etiket: 'PIN eksik', deger: String(eksikPin), alt: eksikPin ? `panele giremez${pinEksikAc ? ' · GÖSTERİLİYOR' : ' · tıkla, kimler?'}` : 'hepsi tanımlı', renk: eksikPin ? R.amber : R.yesil,
           onTikla: eksikPin ? () => setPinEksikAc((p) => !p) : undefined },
         { etiket: 'Panel yöneticisi', deger: String(pinler.filter(p => p.yonetici).length), alt: 'cep override yetkisi', renk: R.krem },

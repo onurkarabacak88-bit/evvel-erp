@@ -1029,6 +1029,11 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
           onTikla: bekleyen.length ? () => setSgFiltre((p) => (p === 'bekleyen' ? '' : 'bekleyen')) : undefined },
         ...(sgUyarilar.length ? [{
           etiket: 'Plan durduran',
+          // Durduran uyarilar ASAGIDA listeleniyor; kutu oraya goturur.
+          onTikla: sgDurduran.length ? () => {
+            const el = document.getElementById('sg-uyarilar');
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } : undefined,
           deger: String(sgDurduran.length),
           alt: sgDurduran.length
             ? 'kira artışı/sözleşme bitti — plan üretilmiyor'
@@ -1037,6 +1042,7 @@ export function YukModulu({ gorunum, onCekmece, onKopru, onToast }) {
         }] : []),
       ]} />
 
+      <div id="sg-uyarilar" />
       {/* ── KİRA ARTIŞI / SÖZLEŞME BİTİŞİ UYARILARI ──
           KRİTİK olanlarda sunucu ödeme planı üretmeyi DURDURUR — gider
           sessizce planlardan düşer, kimse fark etmez. Uyarı burada. */}
@@ -2657,7 +2663,8 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Kayıtlı yükleme', deger: String(izler.length), alt: `son 30 iz penceresi · append-only${imHatali ? ' · süzgeci kaldırmak için tıkla' : ''}`,
             onTikla: imHatali ? () => setImHatali(false) : undefined },
           { etiket: 'Son yükleme', deger: izler[0] ? String(izler[0].olusturma).slice(5, 16) : '—', alt: izler[0] ? `${izler[0].toplam_eklenen ?? 0} satır eklendi` : 'henüz iz yok' },
-          { etiket: 'Toplam eklenen', deger: String(izler.reduce((s, r) => s + (Number(r.toplam_eklenen) || 0), 0)), alt: 'son 30 yüklemede', renk: R.yesil },
+          { etiket: 'Toplam eklenen', deger: String(izler.reduce((s, r) => s + (Number(r.toplam_eklenen) || 0), 0)), alt: `son 30 yüklemede${imHatali ? ' · süzgeci kaldırmak için tıkla' : ''}`, renk: R.yesil,
+            onTikla: imHatali ? () => setImHatali(false) : undefined },
           { etiket: 'Hatalı satır', deger: String(izler.reduce((s, r) => s + (Number(r.hata_sayisi) || 0), 0)), alt: `son 30 yüklemede atlanan${imHatali ? ' · SÜZGEÇ AÇIK' : ''}`, renk: izler.some(r => Number(r.hata_sayisi) > 0) ? R.amber : R.yesil,
             onTikla: izler.some(r => Number(r.hata_sayisi) > 0) ? () => setImHatali((p) => !p) : undefined },
         ]} />
@@ -2770,7 +2777,8 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
             onTikla: btGorulmemis ? () => setBtGorulmemis(false) : undefined },
           { etiket: 'Görülmemiş', deger: String(gorulmemis.length), alt: gorulmemis.length ? `bildirim bekliyor${btGorulmemis ? ' · SÜZGEÇ AÇIK' : ''}` : 'hepsi görüldü', renk: gorulmemis.length ? R.mavi : R.yesil,
             onTikla: gorulmemis.length ? () => setBtGorulmemis((p) => !p) : undefined },
-          { etiket: 'Bilgi teslimi', deger: String(bilgiKayitlari.length), alt: `son 30 gün · ${bkSube} şube`, renk: R.krem },
+          { etiket: 'Bilgi teslimi', deger: String(bilgiKayitlari.length), alt: `son 30 gün · ${bkSube} şube${btGorulmemis ? ' · süzgeci kaldırmak için tıkla' : ''}`, renk: R.krem,
+            onTikla: btGorulmemis ? () => setBtGorulmemis(false) : undefined },
           { etiket: 'Kalıcı onay', deger: '«Görüldü» sunucuda', alt: 'işaretlenen bir daha bildirilmez', renk: R.not },
         ]} />
         {olaylar.length ? (

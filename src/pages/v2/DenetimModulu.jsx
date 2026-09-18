@@ -638,7 +638,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
         <KpiSeridi kpiler={[
           { etiket: 'Açık kalem', deger: String(sayi(o.acik_kalem)), alt: `${sayi(o.kova_sayisi)} kovada · son ${sayi(mm.pencere_gun)} gün${mmSadeceKritik ? ' · süzgeci kaldırmak için tıkla' : ''}`, renk: sayi(o.acik_kalem) ? R.kirmizi : R.yesil,
             onTikla: mmSadeceKritik ? () => setMmSadeceKritik(false) : undefined },
-          { etiket: 'Toplam tutar', deger: fmt(sayi(o.toplam_tutar_tl)), alt: 'izi/belgesi eksik para', renk: R.bakirAcik },
+          { etiket: 'Toplam tutar', deger: fmt(sayi(o.toplam_tutar_tl)), alt: 'izi/belgesi eksik para · kovalara in', renk: R.bakirAcik,
+            onTikla: () => dnGit('dn-kovalar') },
           { etiket: 'Kritik kova', deger: String((o.kritik_kovalar || []).length), alt: (o.kritik_kovalar || []).length ? `acil bakılmalı${mmSadeceKritik ? ' · SÜZGEÇ AÇIK' : ''}` : 'kritik yok', renk: (o.kritik_kovalar || []).length ? R.kirmizi : R.yesil,
             onTikla: (o.kritik_kovalar || []).length ? () => setMmSadeceKritik((p) => !p) : undefined },
           { etiket: 'İlke', deger: 'öneri-only', alt: 'sistem hüküm vermez', renk: R.not },
@@ -664,6 +665,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           </div>
         )}
         {/* Kova kartları */}
+        <div id="dn-kovalar" />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(268px, 1fr))', gap: 10, marginBottom: 14 }}>
           {(mmSadeceKritik ? kovalar.filter((k) => k.kritik) : kovalar).map((k) => {
             const acik = k.kod === mmKova;
@@ -1022,6 +1024,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
         <KpiSeridi kpiler={[
           // Payda artık ÖLÇÜLEN şube — "4 şube tarandı" derken 2'si hiç koşmamışsa yalan olur.
           { etiket: 'Bugün anomali', deger: String(toplamAnomali),
+            onTikla: () => dnGit('dn-subeler'),
             alt: `${olculen.length} şube tarandı${olculmeyen.length ? ` · ${olculmeyen.length} analiz edilmedi` : ''}`,
             renk: toplamAnomali > 0 ? R.kirmizi : (olculen.length ? R.yesil : R.amber) },
           // 🔴 CANLI GEZİNTİ (2026-08-27) — GUARD'I BU KPI'YA UYGULAMAYI ATLAMIŞIM.
@@ -1155,6 +1158,7 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           <BosDurum metin="Bugün için tanı raporu yok — motor gece koşusuyla dolar." />
         ) : (
           <Liste
+            id="dn-subeler"
             satirlar={subeler.map((s) => {
               const ref = `truth:${s.sube_id}:${String(s.tarih || rapor.tarih || '').slice(0, 10)}:${s.ana_tani || 'GENEL'}`;
               const isaret = isaretliler[ref];
@@ -2448,7 +2452,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
         <KpiSeridi kpiler={[
           { etiket: 'Açık öneri', deger: String(oneriler.length), alt: 'motor üretimi · listeye in', renk: oneriler.length > 0 ? R.amber : R.yesil,
             onTikla: oneriler.length ? () => dnGit('dn-oneriler') : undefined },
-          { etiket: 'Uygulanan (30g)', deger: String(sayi(iziOzet?.uygulanan)), alt: 'işaret defterinden', renk: sayi(iziOzet?.uygulanan) > 0 ? R.yesil : R.krem },
+          { etiket: 'Uygulanan (30g)', deger: String(sayi(iziOzet?.uygulanan)), alt: 'işaret defterinden · listeye in', renk: sayi(iziOzet?.uygulanan) > 0 ? R.yesil : R.krem,
+            onTikla: () => dnGit('dn-oneriler') },
           // "Kasa 2,7M ama kullanılabilir 344K" çelişik görünüyordu (canlı
           // denetim 2026-08-03) — formül alt metne yazıldı: kasadan bu ayın
           // zorunlu yükü (kart asgari + kredi taksiti + sabit) düşülmüş hâli.
@@ -2462,7 +2467,8 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
             renk: strateji.kullanilabilir_nakit == null ? R.not3
               : (sayi(strateji.kullanilabilir_nakit) >= 0 ? R.yesil : R.kirmizi),
           },
-          { etiket: 'Öneri toplamı', deger: fmt(sayi(strateji.toplam_oneri_tutari)), alt: 'önerilen hareket tutarı' },
+          { etiket: 'Öneri toplamı', deger: fmt(sayi(strateji.toplam_oneri_tutari)), alt: 'önerilen hareket tutarı · listeye in',
+            onTikla: () => dnGit('dn-oneriler') },
         ]} />
         {/* DUYU 4/6 — öneri akıbeti: "Uyguladım" işareti append-only deftere yazılır.
             Otomatik "ölçülen etki" hesabı BİLEREK yok: hangi KPI'ya bağlanacağı

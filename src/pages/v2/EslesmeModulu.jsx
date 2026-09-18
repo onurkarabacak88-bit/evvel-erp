@@ -265,7 +265,11 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
           },
         {
           etiket: 'Borcu var, izi yok', deger: String(izsizler.length),
-          alt: 'kartta karşılığı bulunamadı', renk: izsizler.length ? R.not : R.yesil,
+          alt: 'kartta karşılığı bulunamadı · listeye in', renk: izsizler.length ? R.not : R.yesil,
+          onTikla: izsizler.length ? () => {
+            const el = document.getElementById('es-izsizler');
+            if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+          } : undefined,
         },
         {
           etiket: 'Taranan kart satırı', deger: String(sayi(izler?.taranan_kart_hareketi)),
@@ -373,6 +377,7 @@ export default function EslesmeModulu({ gorunum, onCekmece, onToast }) {
         </div>
       )}
 
+      <div id="es-izsizler" />
       {izsizler.length > 0 && (
         <div style={{ ...kartYuzey, padding: '12px 16px', marginTop: 12 }}>
           <div style={{ fontSize: 12.5, fontWeight: 700, color: R.krem, marginBottom: 8 }}>

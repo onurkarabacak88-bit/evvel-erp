@@ -6090,7 +6090,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           // takvimle iş gününün ayrıştığı SÖYLENİYOR.
           { etiket: 'Açılan şube', deger: `${acilanSube} / ${acilisSatir.length}`,
             onTikla: () => onKopru?.('__modul:para:girisi'), alt: barTarih === isGunuBugun() ? (isGunuKaymasiVar() ? 'bugün (iş günü — takvim yarını gösteriyor)' : 'bugün') : barTarih, renk: acilanSube === acilisSatir.length && acilisSatir.length ? R.yesil : R.amber },
-          { etiket: 'Kapanan şube', deger: `${kapananSube} / ${kapanisSatir.length}`, alt: kapananSube < kapanisSatir.length ? 'kapanış bekleniyor' : 'tamamlandı', renk: kapananSube === kapanisSatir.length && kapanisSatir.length ? R.yesil : R.amber },
+          { etiket: 'Kapanan şube', deger: `${kapananSube} / ${kapanisSatir.length}`,
+            onTikla: () => onKopru?.('__modul:para:kasa'), alt: kapananSube < kapanisSatir.length ? 'kapanış bekleniyor' : 'tamamlandı', renk: kapananSube === kapanisSatir.length && kapanisSatir.length ? R.yesil : R.amber },
           // ══════════════════════════════════════════════════════════════
           // 🔴 SAHTE SAKİNLİK — canlı gözlem 2026-08-27
           // ══════════════════════════════════════════════════════════════
@@ -6115,6 +6116,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             const temiz = !farkUyariAdet && !acikVar && !eksikOlcum;
             return {
               etiket: 'Açılış farkı',
+              onTikla: () => onKopru?.('__modul:para:kasa'),
               deger: String(farkUyariAdet),
               alt: [
                 farkUyariAdet ? 'tolerans üstü' : (eksikOlcum ? 'ölçülen şubelerde tolerans içi' : 'devirle uyumlu (±50 tolerans)'),
@@ -8120,7 +8122,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                       { etiket: 'Geliş', deger: String(sayi(ist?.gelis_adet)), alt: `${sayi(ist?.farkli_gun)} farklı gün`, renk: R.krem },
                       { etiket: 'Son geliş', deger: ist?.son_gelis ? tarihKisa(ist.son_gelis) : '—', alt: ist?.ilk_gelis ? `ilk: ${tarihKisa(ist.ilk_gelis)}` : '', renk: R.bakirAcik },
                       { etiket: 'Ortalama aralık', deger: ist?.ortalama_aralik_gun != null ? `${ist.ortalama_aralik_gun} gün` : '—', alt: sayi(ist?.farkli_gun) < 3 ? 'az veri' : 'farklı günler arası', renk: R.mavi },
-                      { etiket: 'Bekleyen sipariş', deger: String(bekleyenler.length), alt: bekleyenler.length ? 'gönderildi · teslim yok' : 'yok', renk: bekleyenler.length ? R.amber : R.yesil },
+                      { etiket: 'Bekleyen sipariş',
+            onTikla: () => onKopru?.('__modul:ops:akis'), deger: String(bekleyenler.length), alt: bekleyenler.length ? 'gönderildi · teslim yok' : 'yok', renk: bekleyenler.length ? R.amber : R.yesil },
                     ]} />
                     {gecikmeNotu && (
                       <div style={{ ...kartYuzey, padding: '9px 13px', marginBottom: 12, fontSize: 12, color: gecikmeNotu.renk, borderLeft: `3px solid ${gecikmeNotu.renk}` }}>
