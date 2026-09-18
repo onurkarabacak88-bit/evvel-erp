@@ -117,6 +117,8 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const [borcForm, setBorcForm] = useState(null);   // {veren, alan, tutar, aciklama}
   const [borcMesgul, setBorcMesgul] = useState(false);
   const [teslimTur, setTeslimTur] = useState('');
+  // KPI'dan gelen GUN suzgeci ('' | 'YYYY-MM-DD') — "Bugun teslim" kutusu icin.
+  const [teslimGun, setTeslimGun] = useState('');
   const [aliciModal, setAliciModal] = useState(false);
   const [alicilar, setAlicilar] = useState(null);
   const [aliciForm, setAliciForm] = useState(null);  // {id?, ad, unvan, sube_id}
@@ -516,7 +518,10 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
           },
           { etiket: 'Bugünkü toplam', deger: fmt(toplam(bugunku)), alt: 'onaylı ciro kayıtları' },
           { etiket: 'Dün', deger: fmt(toplam(dunku)), alt: `${dunku.length} şube kaydı` },
-          { etiket: 'Onay bekleyen taslak', deger: String(taslaklar.length), alt: 'ciro onayında', renk: taslaklar.length > 0 ? R.amber : R.krem },
+          // 🔗 Olu rakamdi: "3 taslak onayda" yaziyor ama onay ekranina gitmek
+          // icin sol raydan Onay Kuyrugu'nu bulmak gerekiyordu.
+          { etiket: 'Onay bekleyen taslak', deger: String(taslaklar.length), alt: taslaklar.length ? 'ciro onayında · tıkla, kuyruğu aç' : 'ciro onayında', renk: taslaklar.length > 0 ? R.amber : R.krem,
+            onTikla: taslaklar.length ? () => onKopru?.('__modul:onaylar:ciro') : undefined },
         ]} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8, marginBottom: 14 }}>
           {magazalar.map((s) => {
@@ -1054,10 +1059,16 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Bugün teslim', deger: `${bugunku.length} kayıt`, alt: fmt(toplam(bugunku)), renk: bugunku.length > 0 ? R.yesil : R.krem },
-          { etiket: 'Bu ay ara teslim', deger: String(ara.length), alt: fmt(toplam(ara)) },
-          { etiket: 'Bu ay gün sonu', deger: String(gunSonu.length), alt: fmt(toplam(gunSonu)) },
-          { etiket: 'Bu ay toplam', deger: fmt(toplam(teslimler)), alt: `${teslimler.length} teslim kaydı` },
+          // 🖱️ Kutular alttaki teslim tablosunu suzer (suzgec altyapisi zaten
+          // vardi — KPI'lar ona BAGLANMAMISTI, o yuzden olu rakamdi).
+          { etiket: 'Bugün teslim', deger: `${bugunku.length} kayıt`, alt: `${fmt(toplam(bugunku))}${teslimGun ? ' · SÜZGEÇ AÇIK' : ''}`, renk: bugunku.length > 0 ? R.yesil : R.krem,
+            onTikla: bugunku.length ? () => { setTeslimGun((p) => (p ? '' : bugun)); setTeslimTur(''); } : undefined },
+          { etiket: 'Bu ay ara teslim', deger: String(ara.length), alt: `${fmt(toplam(ara))}${teslimTur === 'ara' ? ' · SÜZGEÇ AÇIK' : ''}`,
+            onTikla: ara.length ? () => { setTeslimTur((p) => (p === 'ara' ? '' : 'ara')); setTeslimGun(''); } : undefined },
+          { etiket: 'Bu ay gün sonu', deger: String(gunSonu.length), alt: `${fmt(toplam(gunSonu))}${teslimTur === 'gun_sonu' ? ' · SÜZGEÇ AÇIK' : ''}`,
+            onTikla: gunSonu.length ? () => { setTeslimTur((p) => (p === 'gun_sonu' ? '' : 'gun_sonu')); setTeslimGun(''); } : undefined },
+          { etiket: 'Bu ay toplam', deger: fmt(toplam(teslimler)), alt: `${teslimler.length} teslim kaydı${(teslimTur || teslimGun || teslimSube) ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: (teslimTur || teslimGun || teslimSube) ? () => { setTeslimTur(''); setTeslimGun(''); setTeslimSube(''); } : undefined },
           // 🤝 Şubeler arası açık borç — teslimle aynı aileden (şubeler arası
           // para taşıması), o yüzden aynı şeritte durur.
           {
@@ -1506,7 +1517,8 @@ export default function ParaModulu({ gorunum, onCekmece, onKopru, onToast }) {
         {(() => {
           const suzulmus = teslimler.filter((t) =>
             (!teslimSube || String(t.sube_id) === teslimSube) &&
-            (!teslimTur || t.teslim_turu === teslimTur));
+            (!teslimTur || t.teslim_turu === teslimTur) &&
+            (!teslimGun || String(t.tarih || '').slice(0, 10) === teslimGun));
           return suzulmus.length === 0 ? (
             <BosDurum metin={teslimler.length === 0 ? 'Bu ay kasa teslim kaydı yok.' : 'Bu filtrede teslim kaydı yok.'} />
           ) : (
