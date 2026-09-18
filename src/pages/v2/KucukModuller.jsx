@@ -2973,6 +2973,8 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
 // 5) TANIMLAR — tanim.tedarikciler / zincir / dosya / tv
 // ═════════════════════════════════════════════════════════════════════════════
 export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
+  // TV menu suzgeci: '' | 'yayinda' | 'gizli' | 'fiyatsiz'
+  const [tvFiltre, setTvFiltre] = useState('');
   const { yukleniyor, hata, veri, yukle } = useVeri([
     ['/tedarikciler', []],
     ['/ops/tedarik-dosyasi?gun=60&limit=150', null],
@@ -3031,7 +3033,12 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
     if (gorunum === 'zincir' && tmSekme === 'mutabakat' && !tm && !tmYukleniyor) tmYukle();
   }, [gorunum, tmSekme, tm, tmYukleniyor, tmYukle]);
 
-  const [tedForm, setTedForm] = useState(null);   // {duzenleId?, ad, kategori, telefon, aciklama}
+  const [tedForm, setTedForm] = useState(null);
+  // 🖱️ "Telefonu eksik 7" olu rakamdi — hangi yedi tedarikci oldugunu bulmak
+  // icin butun listeyi gozle taramak gerekiyordu. Telefonu olmayana fatura
+  // istegi GONDERILEMEZ; bu yuzden o yedi kisi is kuyrugudur.
+  const [tedTelFiltre, setTedTelFiltre] = useState(''); // '' | 'var' | 'yok'
+   // {duzenleId?, ad, kategori, telefon, aciklama}
   const [tedMesgul, setTedMesgul] = useState(false);
   const [tedPasifSor, setTedPasifSor] = useState('');
   // ── YERLİ TV MENÜ DÜZENLEME (köprü kaldırma turu, 2026-07-30) ─────────────
@@ -3183,9 +3190,12 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Aktif tedarikçi', deger: String(tedarikciler.length), alt: `${kategoriler.length} kategori` },
-          { etiket: 'Telefonu kayıtlı', deger: String(tedarikciler.filter(t => t.telefon).length), alt: 'WhatsApp ile ulaşılabilir', renk: R.yesil },
-          { etiket: 'Telefonu eksik', deger: String(tedarikciler.filter(t => !t.telefon).length), alt: 'fatura isteği gönderilemez', renk: tedarikciler.some(t => !t.telefon) ? R.amber : R.yesil },
+          { etiket: 'Aktif tedarikçi', deger: String(tedarikciler.length), alt: `${kategoriler.length} kategori${tedTelFiltre ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: tedTelFiltre ? () => setTedTelFiltre('') : undefined },
+          { etiket: 'Telefonu kayıtlı', deger: String(tedarikciler.filter(t => t.telefon).length), alt: `WhatsApp ile ulaşılabilir${tedTelFiltre === 'var' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.yesil,
+            onTikla: tedarikciler.some(t => t.telefon) ? () => setTedTelFiltre((p) => (p === 'var' ? '' : 'var')) : undefined },
+          { etiket: 'Telefonu eksik', deger: String(tedarikciler.filter(t => !t.telefon).length), alt: `fatura isteği gönderilemez${tedTelFiltre === 'yok' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: tedarikciler.some(t => !t.telefon) ? R.amber : R.yesil,
+            onTikla: tedarikciler.some(t => !t.telefon) ? () => setTedTelFiltre((p) => (p === 'yok' ? '' : 'yok')) : undefined },
           { etiket: 'Kategori', deger: String(kategoriler.length), alt: kategoriler.slice(0, 3).join(', ') || '—', renk: R.krem },
         ]} />
         <div style={{ display: 'flex', gap: 9, marginBottom: 12 }}>
@@ -3202,7 +3212,9 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
         </div>
         {tedarikciler.length ? (
           <Liste
-            satirlar={tedarikciler.map(t => ({
+            satirlar={(tedTelFiltre === 'var' ? tedarikciler.filter(t => t.telefon)
+              : tedTelFiltre === 'yok' ? tedarikciler.filter(t => !t.telefon)
+              : tedarikciler).map(t => ({
               id: t.id, _t: t,
               baslik: t.ad,
               alt: `${t.kategori || 'kategori yok'} · ${t.telefon || 'telefon eksik'}${t.aciklama ? ` · ${t.aciklama}` : ''}`,
@@ -3714,6 +3726,9 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   const yayinda = tv.filter(u => u.aktif !== false && u.gorunur !== false);
   const kategoriler = [...new Set(tv.map(u => u.kategori).filter(Boolean))];
   const fiyatli = tv.filter(u => sayi(u.f8) > 0 || sayi(u.f14) > 0 || sayi(u.fice) > 0);
+  // 🖱️ "Fiyati girilmemis 9" olu rakamdi: o urunler TV EKRANINDA BOS gorunuyor
+  // ama hangileri oldugunu bulmak icin 150 satirlik tabloyu taramak gerekiyordu.
+  // '' | 'yayinda' | 'gizli' | 'fiyatsiz'
   const fiyatMetni = (u) => {
     const p = [sayi(u.f8), sayi(u.f14), sayi(u.fice)].filter(x => x > 0);
     return p.length ? `${fmt(Math.min(...p)).replace(' ₺', '')}–${fmt(Math.max(...p))}` : '—';
@@ -3721,17 +3736,24 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   return (
     <>
       <KpiSeridi kpiler={[
-        { etiket: 'Yayındaki ürün', deger: String(yayinda.length), alt: `${tv.length} tanımlı ürün`, renk: R.yesil },
-        { etiket: 'Gizli', deger: String(tv.length - yayinda.length), alt: 'menüden kaldırılmış', renk: tv.length - yayinda.length ? R.amber : R.krem },
-        { etiket: 'Kategori', deger: String(kategoriler.length), alt: kategoriler.slice(0, 3).join(', ') || '—', renk: R.krem },
-        { etiket: 'Fiyatı girilmemiş', deger: String(tv.length - fiyatli.length), alt: 'ekranda boş görünür', renk: tv.length - fiyatli.length ? R.kirmizi : R.yesil },
+        { etiket: 'Yayındaki ürün', deger: String(yayinda.length), alt: `${tv.length} tanımlı ürün${tvFiltre === 'yayinda' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.yesil,
+          onTikla: yayinda.length ? () => setTvFiltre((p) => (p === 'yayinda' ? '' : 'yayinda')) : undefined },
+        { etiket: 'Gizli', deger: String(tv.length - yayinda.length), alt: `menüden kaldırılmış${tvFiltre === 'gizli' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: tv.length - yayinda.length ? R.amber : R.krem,
+          onTikla: (tv.length - yayinda.length) ? () => setTvFiltre((p) => (p === 'gizli' ? '' : 'gizli')) : undefined },
+        { etiket: 'Kategori', deger: String(kategoriler.length), alt: `${kategoriler.slice(0, 3).join(', ') || '—'}${tvFiltre ? ' · süzgeci kaldırmak için tıkla' : ''}`, renk: R.krem,
+          onTikla: tvFiltre ? () => setTvFiltre('') : undefined },
+        { etiket: 'Fiyatı girilmemiş', deger: String(tv.length - fiyatli.length), alt: `ekranda boş görünür${tvFiltre === 'fiyatsiz' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: tv.length - fiyatli.length ? R.kirmizi : R.yesil,
+          onTikla: (tv.length - fiyatli.length) ? () => setTvFiltre((p) => (p === 'fiyatsiz' ? '' : 'fiyatsiz')) : undefined },
       ]} />
       {tv.length ? (
         <Tablo
           baslik="TV menü içeriği"
           not={`satıra tıkla → ürün ayrıntısı ve düzenleme (çekmecede)${tv.length > 150 ? ` · ilk 150 / ${tv.length}` : ''}`}
           kolonlar={[{ ad: 'Ürün' }, { ad: 'Kategori' }, { ad: 'Fiyat', sag: true }, { ad: 'Sıra', sag: true }, { ad: 'Yayın' }]}
-          satirlar={tv.slice(0, 150).map(u => ({
+          satirlar={(tvFiltre === 'yayinda' ? yayinda
+            : tvFiltre === 'gizli' ? tv.filter(u => !(u.aktif !== false && u.gorunur !== false))
+            : tvFiltre === 'fiyatsiz' ? tv.filter(u => !(sayi(u.f8) > 0 || sayi(u.f14) > 0 || sayi(u.fice) > 0))
+            : tv).slice(0, 150).map(u => ({
             id: u.id, _u: u,
             hucreler: [
               { v: u.ad, kalin: true },

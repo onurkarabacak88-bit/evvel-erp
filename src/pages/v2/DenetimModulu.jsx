@@ -115,6 +115,9 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
   const [mm, setMm] = useState(null);                // /ops/mutabakat-merkezi
   const [mmYukleniyor, setMmYukleniyor] = useState(false);
   const [mmKova, setMmKova] = useState(null);        // açık kova kodu
+  // 🖱️ "Kritik kova 3" olu rakamdi — hangi uc kova oldugunu bulmak icin
+  // butun kova kartlarini gozle taramak gerekiyordu.
+  const [mmSadeceKritik, setMmSadeceKritik] = useState(false);
   const [mmYuklenen, setMmYuklenen] = useState('');  // PDF yüklenen satır id
   const [rapor, setRapor] = useState(null);          // truth gunluk-rapor
   const [durum, setDurum] = useState(null);          // truth durum
@@ -627,9 +630,11 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Açık kalem', deger: String(sayi(o.acik_kalem)), alt: `${sayi(o.kova_sayisi)} kovada · son ${sayi(mm.pencere_gun)} gün`, renk: sayi(o.acik_kalem) ? R.kirmizi : R.yesil },
+          { etiket: 'Açık kalem', deger: String(sayi(o.acik_kalem)), alt: `${sayi(o.kova_sayisi)} kovada · son ${sayi(mm.pencere_gun)} gün${mmSadeceKritik ? ' · süzgeci kaldırmak için tıkla' : ''}`, renk: sayi(o.acik_kalem) ? R.kirmizi : R.yesil,
+            onTikla: mmSadeceKritik ? () => setMmSadeceKritik(false) : undefined },
           { etiket: 'Toplam tutar', deger: fmt(sayi(o.toplam_tutar_tl)), alt: 'izi/belgesi eksik para', renk: R.bakirAcik },
-          { etiket: 'Kritik kova', deger: String((o.kritik_kovalar || []).length), alt: (o.kritik_kovalar || []).length ? 'acil bakılmalı' : 'kritik yok', renk: (o.kritik_kovalar || []).length ? R.kirmizi : R.yesil },
+          { etiket: 'Kritik kova', deger: String((o.kritik_kovalar || []).length), alt: (o.kritik_kovalar || []).length ? `acil bakılmalı${mmSadeceKritik ? ' · SÜZGEÇ AÇIK' : ''}` : 'kritik yok', renk: (o.kritik_kovalar || []).length ? R.kirmizi : R.yesil,
+            onTikla: (o.kritik_kovalar || []).length ? () => setMmSadeceKritik((p) => !p) : undefined },
           { etiket: 'İlke', deger: 'öneri-only', alt: 'sistem hüküm vermez', renk: R.not },
         ]} />
 
@@ -642,9 +647,19 @@ export default function DenetimModulu({ gorunum, onCekmece, onKopru, onToast, on
           Hiçbir kayıt silinmez, otomatik düzeltilmez — karar sizin.
         </div>
 
+        {mmSadeceKritik && (
+          <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>«Kritik kovalar» süzgeci açık — {kovalar.filter((k) => k.kritik).length} kova. Üstteki sayılar TÜM kovaları anlatır.</span>
+            <button onClick={() => setMmSadeceKritik(false)} style={{
+              padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+              border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+              fontSize: 11, fontWeight: 600,
+            }}>Süzgeci kaldır</button>
+          </div>
+        )}
         {/* Kova kartları */}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(268px, 1fr))', gap: 10, marginBottom: 14 }}>
-          {kovalar.map((k) => {
+          {(mmSadeceKritik ? kovalar.filter((k) => k.kritik) : kovalar).map((k) => {
             const acik = k.kod === mmKova;
             // 🔴 (2026-08-27, Codex) `k.adet` NULL/eksik gelirse falsy → YEŞİL.
             // «Bu kovada iş yok» ile «bu kovayı okuyamadım» aynı renge düşüyordu.
