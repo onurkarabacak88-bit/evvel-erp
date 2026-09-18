@@ -756,6 +756,12 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
   const [bvSira, setBvSira] = useState('oncelik');   // sıralama: öncelik | yeni | eski | skor…
   const [bvFiltre, setBvFiltre] = useState('hepsi'); // hepsi | okunmamis | oncelik | durum:*
   const [bvHepsi, setBvHepsi] = useState(false);     // 40'lık kesmeyi kaldır
+  // 🖱️ Kadro KPI'lari olu rakamdi: "Fazla mesai riski 3" yaziyor ama HANGI uc
+  // kisi oldugunu bulmak icin tabloyu gozle taramak gerekiyordu.
+  const [kadroFiltre, setKadroFiltre] = useState(''); // '' | 'yeni' | 'fm'
+  // Vardiya Takip: "Giris yok 4 gun" yaziyor ama KIMIN oldugu tabloda
+  // aranmaliydi. '' | 'gecikme' | 'fm' | 'girisyok'
+  const [takipFiltre, setTakipFiltre] = useState('');
 
   const bvUygula = async () => {
     const m = bvModal;
@@ -2805,6 +2811,10 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
       };
     });
     const yeni = satir.filter(x => x.kd != null && x.kd < 1).length;
+    // Suzgec YALNIZ tabloyu daraltir; ustteki sayilar tum kadronun gercegi.
+    const kadroGorunen = kadroFiltre === 'yeni' ? satir.filter(x => x.kd != null && x.kd < 1)
+      : kadroFiltre === 'fm' ? satir.filter(x => x.fm > 8)
+      : satir;
     const kidemli = satir.filter(x => x.kd != null);
     const ortKidem = kidemli.length ? kidemli.reduce((s, x) => s + x.kd, 0) / kidemli.length : null;
     // Şube sayısı yalnız GERÇEK şubelerden: sube_id'si olmayan (merkez/depo)
@@ -2882,10 +2892,13 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           // kişiyi sayar (9 — ay içinde ayrılanlar dâhil). İki farklı nüfus yan
           // yana duruyor ve hangisinin ne olduğu yazmıyordu; okuyan "6 mı 9 mu"
           // diye takılır. Sayılar doğru, ETİKETLER eksikti.
-          { etiket: 'Toplam personel', deger: String(personel.length), alt: `${subeSayisi} şube${subesiz ? ` + ${subesiz} merkez` : ''} · bugün aktif` },
+          { etiket: 'Toplam personel', deger: String(personel.length), alt: `${subeSayisi} şube${subesiz ? ` + ${subesiz} merkez` : ''} · bugün aktif${kadroFiltre ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: kadroFiltre ? () => setKadroFiltre('') : undefined },
           // Etiket dürüstlüğü (Codex): kd<1 takvim ayı değil "son ~30 gün" demek.
-          { etiket: 'Yeni işe giren', deger: String(yeni), alt: yeni ? 'ilk ayında (son ~30 gün)' : 'yeni giriş yok', renk: yeni ? R.yesil : R.krem },
-          { etiket: 'Fazla mesai riski', deger: String(satir.filter(x => x.fm > 8).length), alt: 'bu ay 8 saatten fazla', renk: satir.some(x => x.fm > 8) ? R.kirmizi : R.yesil },
+          { etiket: 'Yeni işe giren', deger: String(yeni), alt: yeni ? `ilk ayında (son ~30 gün)${kadroFiltre === 'yeni' ? ' · SÜZGEÇ AÇIK' : ''}` : 'yeni giriş yok', renk: yeni ? R.yesil : R.krem,
+            onTikla: yeni ? () => setKadroFiltre((p) => (p === 'yeni' ? '' : 'yeni')) : undefined },
+          { etiket: 'Fazla mesai riski', deger: String(satir.filter(x => x.fm > 8).length), alt: `bu ay 8 saatten fazla${kadroFiltre === 'fm' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: satir.some(x => x.fm > 8) ? R.kirmizi : R.yesil,
+            onTikla: satir.some(x => x.fm > 8) ? () => setKadroFiltre((p) => (p === 'fm' ? '' : 'fm')) : undefined },
           // ⚠️ "Ortalama kıdem" yerini İŞGÜCÜ VERİMLİLİĞİNE bıraktı (2026-08-08):
           // kıdem bilgisi zaten tabloda kişi kişi var; asıl eksik olan "bir
           // adam-saat kaç ₺ ciro üretiyor" sorusuydu — ciro ile çalışma saati
@@ -2952,6 +2965,16 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             </div>
           );
         })()}
+        {kadroFiltre && (
+          <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>«{kadroFiltre === 'yeni' ? 'Yeni işe girenler' : 'Fazla mesai riski'}» süzgeci açık — {kadroGorunen.length} kişi. Üstteki sayılar TÜM kadroyu anlatır.</span>
+            <button onClick={() => setKadroFiltre('')} style={{
+              padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+              border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+              fontSize: 11, fontWeight: 600,
+            }}>Süzgeci kaldır</button>
+          </div>
+        )}
         <Tablo
           baslik="Kadro"
           not="satıra tıkla → personel dosyası"
@@ -2959,7 +2982,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
             { ad: 'Personel' }, { ad: 'Görev' }, { ad: 'Şube' },
             { ad: 'Kıdem', sag: true }, { ad: 'Bu ay saat', sag: true }, { ad: 'Durum' },
           ]}
-          satirlar={satir.map(x => ({
+          satirlar={kadroGorunen.map(x => ({
             id: x.p.id, _p: x.p,
             // 🎯 (2026-08-26) Aramadan gelinen personel işaretlenir.
             // Kimlikle DE adla DA eşleşir: arama kimlik bulabildiyse onu
@@ -4933,6 +4956,11 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
     const analizler = satir.map((t) => ({ t, a: gunAnaliz(t) }));
     const girisYokGun = analizler.reduce((s, x) => s + x.a.girisYok.length, 0);
     const girisYokKisi = analizler.filter((x) => x.a.girisYok.length).length;
+    // Suzgec YALNIZ tabloyu daraltir; ustteki toplamlar tum ayin gercegi.
+    const takipGorunen = takipFiltre === 'gecikme' ? analizler.filter((x) => sayi(x.t.toplam_gecikme_dk) > 0)
+      : takipFiltre === 'fm' ? analizler.filter((x) => sayi(x.t.toplam_fazla_mesai_saat) > 0)
+      : takipFiltre === 'girisyok' ? analizler.filter((x) => x.a.girisYok.length > 0)
+      : analizler;
     const yemekKayipGun = analizler.reduce((s, x) => s + x.a.yemekKayip.length, 0);
     const yemekKayipKisi = analizler.filter((x) => x.a.yemekKayip.length).length;
     const partTamKisi = analizler.filter((x) => x.a.partTam.length).length;
@@ -4952,14 +4980,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
         />
         <KpiSeridi kpiler={[
           { etiket: 'Aylık toplam saat', deger: `${trSayi(toplamSaat, 0)} sa`, alt: `${satir.length} personel · ${AY_KISA[ay - 1]}` },
-          { etiket: 'Toplam gecikme', deger: `${trSayi(toplamGecikme, 0)} dk`, alt: gecikenler.length ? `${gecikenler.length} personel` : 'gecikme yok', renk: toplamGecikme > 0 ? R.amber : R.yesil },
-          { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: 'plan üstü çalışma', renk: toplamFm > 0 ? R.kirmizi : R.yesil },
+          { etiket: 'Toplam gecikme', deger: `${trSayi(toplamGecikme, 0)} dk`, alt: gecikenler.length ? `${gecikenler.length} personel${takipFiltre === 'gecikme' ? ' · SÜZGEÇ AÇIK' : ''}` : 'gecikme yok', renk: toplamGecikme > 0 ? R.amber : R.yesil,
+            onTikla: gecikenler.length ? () => setTakipFiltre((p) => (p === 'gecikme' ? '' : 'gecikme')) : undefined },
+          { etiket: 'Fazla mesai', deger: `${trSayi(toplamFm, 0)} sa`, alt: `plan üstü çalışma${takipFiltre === 'fm' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: toplamFm > 0 ? R.kirmizi : R.yesil,
+            onTikla: toplamFm > 0 ? () => setTakipFiltre((p) => (p === 'fm' ? '' : 'fm')) : undefined },
           { etiket: 'Tahminî hakediş', deger: toplamNet > 0 ? fmt(toplamNet) : '—', alt: toplamNet > 0 ? `${satir.length} personel · bugüne kadar` : 'ücret verisi yok', renk: R.bakirAcik },
           {
             etiket: 'Giriş yok',
             deger: `${girisYokGun} gün`,
-            alt: girisYokGun ? `${girisYokKisi} personel · vardiya planlı, yoklama yok` : 'her planlı günde giriş var',
+            alt: girisYokGun ? `${girisYokKisi} personel · vardiya planlı, yoklama yok${takipFiltre === 'girisyok' ? ' · SÜZGEÇ AÇIK' : ''}` : 'her planlı günde giriş var',
             renk: girisYokGun ? R.kirmizi : R.yesil,
+            onTikla: girisYokGun ? () => setTakipFiltre((p) => (p === 'girisyok' ? '' : 'girisyok')) : undefined,
           },
           {
             etiket: 'Yemek hakkı kaybı',
@@ -4969,6 +5000,17 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
           },
         ]} />
         {satir.length ? (
+          <>
+          {takipFiltre && (
+            <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span>«{{ gecikme: 'Gecikmesi olanlar', fm: 'Fazla mesai yapanlar', girisyok: 'Girişi olmayanlar' }[takipFiltre]}» süzgeci açık — {takipGorunen.length} personel. Üstteki toplamlar TÜM ayı anlatır.</span>
+              <button onClick={() => setTakipFiltre('')} style={{
+                padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+                border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+                fontSize: 11, fontWeight: 600,
+              }}>Süzgeci kaldır</button>
+            </div>
+          )}
           <Tablo
             baslik={`Vardiya takip · ${AY_KISA[ay - 1]} ${yil}`}
             not="satıra tıkla → hakediş kırılımı + gün gün iz defteri"
@@ -4977,7 +5019,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               { ad: 'Gecikme', sag: true }, { ad: 'Fazla mesai', sag: true },
               { ad: 'Tahminî hakediş', sag: true }, { ad: 'Uyarılar' },
             ]}
-            satirlar={analizler.map(({ t, a }) => {
+            satirlar={takipGorunen.map(({ t, a }) => {
               const gec = sayi(t.toplam_gecikme_dk);
               const fm = sayi(t.toplam_fazla_mesai_saat);
               // Uyarılar TEK rozete ezilmez — üç ayrı sinyal üç ayrı haptır
@@ -5134,6 +5176,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               });
             }}
           />
+          </>
         ) : (
           <div style={{ ...kartYuzey, padding: '38px 30px', textAlign: 'center', color: R.not }}>
             {AY_KISA[ay - 1]} {yil} için vardiya takip kaydı yok.
