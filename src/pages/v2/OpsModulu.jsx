@@ -823,6 +823,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const [sevkListe, setSevkListe] = useState(null);
   const [sevkHata, setSevkHata] = useState('');
   const [seciliId, setSeciliId] = useState('');
+  // 🖱️ Sahip: "açık siparişe tıkladığımda görebilmeliyim." KPI'lar ölü rakamdı.
+  // Değer: null = kapalı, 'hepsi' = tüm açık siparişler, ya da tek aşama adı.
+  // Bu liste kanban'ın YAPAMADIĞINI yapar: kabul uyumsuzlukları kanban
+  // kolonlarında YOK — açık sayıya giriyor ama panoda görünmüyordu.
+  const [akisListe, setAkisListe] = useState(null);
   const [kd, setKd] = useState({});               // kalem durumları (indeks anahtarlı)
   const [notu, setNotu] = useState('');
   const [busy, setBusy] = useState(false);
@@ -2640,7 +2645,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Açık sipariş', deger: String(acik), alt: 'son 14 gün · tüm aşamalar' },
+          // 🖱️ Sahip: "açık siparişe tıkladığımda görebilmeliyim." Kutu ölü
+          // rakamdı. Tıklanınca AÇIK SİPARİŞLERİN TAMAMI listelenir — kanban'ın
+          // gösteremediği kabul uyumsuzlukları dahil.
+          { etiket: 'Açık sipariş', deger: String(acik), alt: 'son 14 gün · tıkla, hepsini listele',
+            onTikla: () => setAkisListe((p) => (p === 'hepsi' ? null : 'hepsi')) },
           // ⚠️ MÜKERRER SAYI (bilişsel yük ölçümü, 2026-08-27): bu iki rakam
           // aşağıdaki kanban kolon başlıklarında ZATEN aynen duruyor. Tek
           // ekranda 70 sayı sayıldı; aynı sayıyı iki kez göstermek Tufte'nin
@@ -2660,6 +2669,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               alt: sayi(ozet.bekliyor) === 0 ? 'boş — yönlendirme beklemiyor'
                 : (enEski != null ? `depo yönlendirmesi bekliyor · en eskisi ${enEski} gün` : 'depo yönlendirmesi bekliyor'),
               renk: sayi(ozet.bekliyor) > 0 ? R.amber : R.krem,
+              onTikla: () => setAkisListe((p) => (p === 'bekliyor' ? null : 'bekliyor')),
             };
           })(),
           (() => {
@@ -2673,11 +2683,88 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               alt: sayi(ozet.depoda) === 0 ? 'boş — hazırlık beklemiyor'
                 : (enEski != null ? `sevk bekliyor · en eskisi ${enEski} gün` : 'sevk bekliyor'),
               renk: sayi(ozet.depoda) > 0 ? R.mavi : R.krem,
+              onTikla: () => setAkisListe((p) => (p === 'depoda' ? null : 'depoda')),
             };
           })(),
-          { etiket: 'Kabul uyumsuzluğu', deger: String(sayi(ozet.uyumsuzluk)), alt: sayi(ozet.uyumsuzluk) > 0 ? 'merkez müdahalesi gerekli' : 'temiz', renk: sayi(ozet.uyumsuzluk) > 0 ? R.kirmizi : R.yesil },
+          // Uyumsuzluk kanban KOLONU YOK — açık sayıya giriyor ama panoda
+          // görünmüyordu. Tıklama onu görünür kılan tek yol.
+          { etiket: 'Kabul uyumsuzluğu', deger: String(sayi(ozet.uyumsuzluk)), alt: sayi(ozet.uyumsuzluk) > 0 ? 'merkez müdahalesi gerekli · tıkla, listele' : 'temiz', renk: sayi(ozet.uyumsuzluk) > 0 ? R.kirmizi : R.yesil,
+            onTikla: sayi(ozet.uyumsuzluk) > 0 ? () => setAkisListe((p) => (p === 'uyumsuzluk' ? null : 'uyumsuzluk')) : undefined },
         ]} />
 
+        {/* 📋 AÇIK SİPARİŞ LİSTESİ — KPI'a tıklanınca açılır.
+            Sahip: "açık siparişe tıkladığımda görebilmeliyim."
+            Kanban'ın YAPAMADIĞI iki şeyi yapar:
+            (1) KABUL UYUMSUZLUKLARI kanban kolonlarında yok — açık sayıya
+                giriyor ama panoda hiç görünmüyordu;
+            (2) kanban kolonu 8 kartta kesiliyor, burada hepsi var.
+            Satıra tıklamak aynı sipariş çekmecesini açar (tek kapı). */}
+        {akisListe && (() => {
+          const ACIK = ['bekliyor', 'depoda', 'yolda', 'toptanci_bekliyor', 'uyumsuzluk'];
+          const kapsam = akisListe === 'hepsi' ? ACIK : [akisListe];
+          const kayitlar = satirlar
+            .filter((s) => kapsam.includes(s.asama))
+            .sort((a, b) => String(b.tarih || '').localeCompare(String(a.tarih || '')));
+          const basligi = akisListe === 'hepsi'
+            ? `Açık siparişler · ${kayitlar.length} kayıt`
+            : `${(ASAMA[akisListe] || {}).ad || akisListe} · ${kayitlar.length} kayıt`;
+          return (
+            <div style={{ ...kartYuzey, padding: '15px 18px', marginBottom: 14 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginBottom: 10 }}>
+                <div style={{ fontFamily: F.baslik, fontSize: 15.5, fontWeight: 600 }}>{basligi}</div>
+                <button onClick={() => setAkisListe(null)} style={{
+                  marginLeft: 'auto', padding: '5px 13px', borderRadius: 8, cursor: 'pointer',
+                  border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+                  fontSize: 11.5, fontWeight: 600, fontFamily: 'inherit',
+                }}>Kapat</button>
+              </div>
+              {/* Aşama süzgeci — listeyi kapatmadan daraltılır */}
+              <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginBottom: 11 }}>
+                {[{ id: 'hepsi', ad: 'Tümü' }].concat(
+                  ACIK.map((a) => ({ id: a, ad: (ASAMA[a] || {}).ad || a,
+                    adet: satirlar.filter((s) => s.asama === a).length }))
+                ).map((f) => (
+                  <button key={f.id} onClick={() => setAkisListe(f.id)} style={{
+                    padding: '5px 12px', borderRadius: 20, cursor: 'pointer', fontFamily: 'inherit',
+                    fontSize: 11, fontWeight: 600,
+                    border: `1px solid ${akisListe === f.id ? R.bakir : R.cizgi3}`,
+                    background: akisListe === f.id ? `${R.bakir}1E` : 'transparent',
+                    color: akisListe === f.id ? R.bakir : R.metin2,
+                  }}>{f.ad}{f.adet ? ` · ${f.adet}` : ''}</button>
+                ))}
+              </div>
+              {kayitlar.length === 0 ? (
+                <div style={{ fontSize: 12.5, color: R.not, padding: '18px 0', textAlign: 'center' }}>
+                  Bu aşamada açık sipariş yok.
+                </div>
+              ) : (
+                <Liste
+                  satirlar={kayitlar.map((s) => {
+                    const a = ASAMA[s.asama] || ASAMA.bekliyor;
+                    const yas = opsGunFarki(s.tarih, isGunuBugun());
+                    return {
+                      id: s.id, _s: s,
+                      baslik: `${s.sube_adi || 'Şube'}${s.hedef_depo_sube_adi ? ` → ${s.hedef_depo_sube_adi}` : ''}`,
+                      alt: [
+                        `${(s.kalemler || []).length} kalem · ${sayi(s.kalem_sayisi)} adet`,
+                        tarihKisa(s.tarih),
+                        yas != null ? `${yas} gün önce` : null,
+                        s.personel_ad || null,
+                      ].filter(Boolean).join(' · '),
+                      tutar: '',
+                      rozet: a.ad,
+                      rozetRenk: a.renk,
+                      tier: s.asama === 'uyumsuzluk' ? 'kritik'
+                        : (yas != null && yas >= 7) ? 'uyari' : 'bilgi',
+                      aksiyonlar: [{ ad: 'Aç', onTikla: () => siparisAc(s) }],
+                    };
+                  })}
+                  onAc={(r) => siparisAc(r?._s || r)}
+                />
+              )}
+            </div>
+          );
+        })()}
         {/* 🧭 İŞ KUYRUĞU — ekranın İLK bloğu (hero-önce deseni).
             Boşsa gösterilmez: boş bir "yapılacak yok" kartı ekran yer kaplar,
             iş üretmez. */}
