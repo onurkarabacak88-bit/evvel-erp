@@ -147,9 +147,12 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Toplam borç', deger: fmt(sayi(borc.toplam)), alt: `kart ${fmt(sayi(borc.kart_toplam)).replace(' ₺', '')} + kredi ${fmt(sayi(borc.kredi_kalan))}`, renk: R.kirmizi },
+          // 🔗 Olu rakamdi: borcun kart kart dokumu baska modulde duruyor.
+          { etiket: 'Toplam borç', deger: fmt(sayi(borc.toplam)), alt: `kart ${fmt(sayi(borc.kart_toplam)).replace(' ₺', '')} + kredi ${fmt(sayi(borc.kredi_kalan))} · dosyalara git`, renk: R.kirmizi,
+            onTikla: () => onKopru?.('__modul:kart:ozet') },
           { etiket: 'ABEK · aylık kapasite', deger: fmt(sayi(abek.deger)), alt: `ciro ${fmt(sayi(abek.ciro_ay)).replace(' ₺', '')} · nakit marj %${trSayi(sayi(abek.nakit_marj_pct))}`, renk: sayi(abek.deger) > 0 ? R.yesil : R.kirmizi },
-          { etiket: 'Zorunlu yük', deger: fmt(sayi(borc.zorunlu_yuk)), alt: `kart asgari ${fmt(sayi(borc.kart_asgari)).replace(' ₺', '')} + kredi ${fmt(sayi(borc.kredi_taksiti)).replace(' ₺', '')}`, renk: R.krem },
+          { etiket: 'Zorunlu yük', deger: fmt(sayi(borc.zorunlu_yuk)), alt: `kart asgari ${fmt(sayi(borc.kart_asgari)).replace(' ₺', '')} + kredi ${fmt(sayi(borc.kredi_taksiti)).replace(' ₺', '')} · takvime git`, renk: R.krem,
+            onTikla: () => onKopru?.('__modul:borc:takvim') },
           // 🐞 CANLI DENETİM (2026-08-03): etiket işaret TAHMİNİYLE seçiliyordu
           // (aylikAcik<0) — sunucu açığı POZİTİF gönderince 700K açığın altında
           // "kapasite yetiyor" yazdı. Hüküm sunucunun: ozet.surdurulemez.

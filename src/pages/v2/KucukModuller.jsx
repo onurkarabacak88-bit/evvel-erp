@@ -2994,6 +2994,10 @@ export function SistemModulu({ gorunum, onCekmece, onKopru, onToast }) {
 export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // TV menu suzgeci: '' | 'yayinda' | 'gizli' | 'fiyatsiz'
   const [tvFiltre, setTvFiltre] = useState('');
+  // Teslimat Zinciri: "Teslim yok 5" olu rakamdi — zincirin NEREDE koptugunu
+  // sayiyor ama hangi siparislerde oldugunu 40 satirlik tabloda aramak
+  // gerekiyordu. '' | 'teslim_yok' | 'belge' | 'odeme_izi_yok'
+  const [znFiltre, setZnFiltre] = useState('');
   const { yukleniyor, hata, veri, yukle } = useVeri([
     ['/tedarikciler', []],
     ['/ops/tedarik-dosyasi?gun=60&limit=150', null],
@@ -3564,19 +3568,23 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
         <KpiSeridi kpiler={[
           {
             etiket: 'Tam zincir',
+            onTikla: znFiltre ? () => setZnFiltre('') : undefined,
             deger: `${sayi(sayac.tam)} / ${sayi(bm2.siparis_adet)}`,
-            alt: `son ${sayi(bm2.pencere_gun) || 60} gün · 5 halka kapandı`,
+            alt: `son ${sayi(bm2.pencere_gun) || 60} gün · 5 halka kapandı${znFiltre ? ' · süzgeci kaldırmak için tıkla' : ''}`,
             renk: sayi(sayac.tam) === sayi(bm2.siparis_adet) && sayi(bm2.siparis_adet) ? R.yesil : R.krem,
           },
-          { etiket: 'Teslim yok', deger: String(sayi(sayac.teslim_yok)), alt: 'sipariş verildi, teslim izi yok', renk: sayi(sayac.teslim_yok) ? R.kirmizi : R.yesil },
+          { etiket: 'Teslim yok', deger: String(sayi(sayac.teslim_yok)), alt: `sipariş verildi, teslim izi yok${znFiltre === 'teslim_yok' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: sayi(sayac.teslim_yok) ? R.kirmizi : R.yesil,
+            onTikla: sayi(sayac.teslim_yok) ? () => setZnFiltre((p) => (p === 'teslim_yok' ? '' : 'teslim_yok')) : undefined },
           {
             etiket: 'Belge / fatura eksik',
             deger: String(sayi(sayac.belge_acik) + sayi(sayac.fatura_yok)),
-            alt: `belge açık ${sayi(sayac.belge_acik)} · fatura yok ${sayi(sayac.fatura_yok)}`,
+            alt: `belge açık ${sayi(sayac.belge_acik)} · fatura yok ${sayi(sayac.fatura_yok)}${znFiltre === 'belge' ? ' · SÜZGEÇ AÇIK' : ''}`,
             renk: (sayi(sayac.belge_acik) + sayi(sayac.fatura_yok)) ? R.amber : R.yesil,
+            onTikla: (sayi(sayac.belge_acik) + sayi(sayac.fatura_yok)) ? () => setZnFiltre((p) => (p === 'belge' ? '' : 'belge')) : undefined,
           },
           {
             etiket: 'Ödeme izi yok',
+            onTikla: sayi(sayac.odeme_izi_yok) ? () => setZnFiltre((p) => (p === 'odeme_izi_yok' ? '' : 'odeme_izi_yok')) : undefined,
             deger: String(sayi(sayac.odeme_izi_yok)),
             alt: 'fatura var, para çıkışı eşleşmedi',
             renk: sayi(sayac.odeme_izi_yok) ? R.amber : R.yesil,
@@ -3590,7 +3598,9 @@ export function TanimModulu({ gorunum, onCekmece, onKopru, onToast }) {
             kolonlar={[
               { ad: 'Tedarikçi' }, { ad: 'Sipariş tarihi' }, { ad: 'Zincir' }, { ad: 'Kopuk halka' },
             ]}
-            satirlar={eksikler.slice(0, 40).map((z, i) => {
+            satirlar={(znFiltre === 'belge' ? eksikler.filter((z) => z.eksik === 'belge_acik' || z.eksik === 'fatura_yok')
+              : znFiltre ? eksikler.filter((z) => z.eksik === znFiltre)
+              : eksikler).slice(0, 40).map((z, i) => {
               const h = z.halkalar || {};
               const ek = EKSIK_AD[z.eksik] || { ad: z.eksik || '—', renk: R.not };
               return {
