@@ -944,10 +944,14 @@ export default function BelgeModulu({ gorunum, onCekmece, onKopru, onToast, cari
               alt: 'belge bekleyen harcama yok',
               renk: R.yesil,
             }),
-          { etiket: 'Faturalı', deger: fmt(faturali), alt: 'eşleşen + kurumsal otomatik', renk: R.yesil },
+          // 🔗 Olu rakamlardi: "Faturali 245.000 TL" yaziyor ama o faturalarin
+          // durdugu arsive gitmek icin sekme aramak gerekiyordu.
+          { etiket: 'Faturalı', deger: fmt(faturali), alt: 'eşleşen + kurumsal otomatik · arşive git', renk: R.yesil,
+            onTikla: () => onKopru?.('__modul:belge:arsiv') },
           // 🚪 KAPI: faturasız harcama, fatura isteme akışının girdisi.
           { etiket: 'Faturasız', deger: fmt(faturasiz), onTikla: () => onKopru?.('__modul:belge:istek'), alt: 'belge isteme adayı · isteklere git', renk: faturasiz > 0 ? R.kirmizi : R.yesil },
-          { etiket: 'Kart harcaması', deger: fmt(sayi(k.isletme_kart_harcamasi)), alt: `${merkez.ay || buAyISO()} · işletme` },
+          { etiket: 'Kart harcaması', deger: fmt(sayi(k.isletme_kart_harcamasi)), alt: `${merkez.ay || buAyISO()} · işletme · kart hareketlerine git`,
+            onTikla: () => onKopru?.('__modul:kart:hareket') },
         ]} />
 
         {/* Yerli belge yükleme (köprü kaldırma turu): faturasız harcamaya ek */}

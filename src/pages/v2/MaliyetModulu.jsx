@@ -75,6 +75,9 @@ const mlMini = {
 };
 
 export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) {
+  // 🖱️ "Fiyatsiz hammaddeli 14" yaziyordu ama HANGI 14 urun oldugunu bulmak
+  // icin recete tablosunu gozle taramak gerekiyordu.
+  const [urunFiltre, setUrunFiltre] = React.useState('');
   const [ozet, setOzet] = useState(null);
   const [ozetHata, setOzetHata] = useState('');
   // Vergi & KDV (P&L DIŞI, izole) — /ops/maliyet/kdv-pozisyon + /vergi-ozet
@@ -1375,8 +1378,10 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
             alt: gercekGruplar ? `ürün-aç defteri · son ${gercekGruplar.gun} gün` : 'ürün-aç verisi yok',
             renk: gercekGruplar ? R.bakirAcik : R.not,
           },
-          { etiket: 'Reçeteli ürün', deger: String(receteler.length), alt: 'teyit için tanımlı' },
-          { etiket: 'Fiyatsız hammaddeli', deger: String(eksikli.length), alt: 'teyit EKSİK kalır', renk: eksikli.length > 0 ? R.amber : R.yesil },
+          { etiket: 'Reçeteli ürün', deger: String(receteler.length), alt: `teyit için tanımlı${urunFiltre ? ' · süzgeci kaldırmak için tıkla' : ''}`,
+            onTikla: urunFiltre ? () => setUrunFiltre('') : undefined },
+          { etiket: 'Fiyatsız hammaddeli', deger: String(eksikli.length), alt: `teyit EKSİK kalır${urunFiltre === 'eksik' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: eksikli.length > 0 ? R.amber : R.yesil,
+            onTikla: eksikli.length ? () => setUrunFiltre((p) => (p === 'eksik' ? '' : 'eksik')) : undefined },
           { etiket: 'Tanımlı alış fiyatı', deger: String((fiyatlar || []).filter((f) => !f.gecerli_bitis).length), alt: 'aktif kayıt' },
         ]} />
 
@@ -1436,6 +1441,17 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
         {receteler.length === 0 ? (
           <BosDurum metin="Henüz reçete tanımlı değil — Reçete Eşleştirme ekranından tanımlanır." />
         ) : (
+          <>
+          {urunFiltre === 'eksik' && (
+            <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span>«Fiyatsız hammaddesi olan ürünler» süzgeci açık — {eksikli.length} ürün. Üstteki sayılar TÜM reçeteleri anlatır.</span>
+              <button onClick={() => setUrunFiltre('')} style={{
+                padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+                border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+                fontSize: 11, fontWeight: 600,
+              }}>Süzgeci kaldır</button>
+            </div>
+          )}
           <Tablo
             baslik="Beklenen ürün maliyeti · reçete × alış fiyatı (teyit katmanı)"
             not={`satıra tıkla → reçete kırılımı${hesapli.length > 80 ? ` · ilk 80 / ${hesapli.length} ürün` : ''}`}
@@ -1443,7 +1459,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
               { ad: 'Ürün' }, { ad: 'Hammadde', sag: 1 }, { ad: 'Fiyatsız', sag: 1 },
               { ad: 'Malzeme maliyeti', sag: 1 }, { ad: 'Durum' },
             ]}
-            satirlar={hesapli
+            satirlar={(urunFiltre === 'eksik' ? eksikli : hesapli)
               .sort((a, b) => b.h.toplam - a.h.toplam)
               .slice(0, 80)
               .map(({ r, h }) => ({
@@ -1482,6 +1498,7 @@ export default function MaliyetModulu({ gorunum, onCekmece, onKopru, onToast }) 
               _hedef: '__modul:maliyet:ozet',
             })}
           />
+          </>
         )}
       </>
     );
