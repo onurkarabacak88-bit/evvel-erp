@@ -108,6 +108,10 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
   // ayrı blok: nakit satırlar iki kaynakta da var, birleştirilmez.
   const [tedOdeme, setTedOdeme] = useState(null);
   const [tedKanal, setTedKanal] = useState('');
+  // 🖱️ Tedarikci bakiyesi KPI'lari olu rakamdi: "Faturasiz teslimat 3" yaziyor
+  // ama HANGI tedarikcide oldugunu bulmak icin 50 satirlik tabloyu gozle
+  // taramak gerekiyordu. '' | 'kritik' | 'acik' | 'faturasiz' | 'gercek'
+  const [tedFiltre, setTedFiltre] = useState('');
   const [vade, setVade] = useState(null);   // duyu 5/6: vade disiplini (salt-okur)
   const [modal, setModal] = useState(null);
   const [calisiyor, setCalisiyor] = useState(false);
@@ -2145,6 +2149,12 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
       _ham: t,
     }));
     const kritik = ted.filter(t => t.enYakinVade && String(t.enYakinVade).slice(0, 10) <= isoEkle(bugun, 3));
+    // Suzgec YALNIZ tabloyu daraltir; yukaridaki toplamlar tum listenin gercegi.
+    const tedGorunen = tedFiltre === 'kritik' ? kritik
+      : tedFiltre === 'acik' ? ted.filter((t) => t.acik > 0.01)
+      : tedFiltre === 'faturasiz' ? ted.filter((t) => t.grniAdet > 0 || t.grniTl > 0)
+      : tedFiltre === 'gercek' ? ted.filter((t) => t.gercek > 0.01)
+      : ted;
     const enBuyuk = ted.length ? ted.reduce((a, b) => (a.hacim > b.hacim ? a : b)) : null;
     return (
       <>
@@ -2153,19 +2163,33 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
             etiket: 'Aktif tedarikçi',
             // Sunucu artık toplam sayıyı da söylüyor; tablo ilk 50 ile sınırlı.
             deger: String(sayi(cari?.toplam_tedarikci) || ted.length),
-            alt: `${kritik.length} kritik (3 gün içinde)${sayi(cari?.toplam_tedarikci) > ted.length ? ` · tabloda ilk ${ted.length}` : ''}`,
+            alt: `${kritik.length} kritik (3 gün içinde)${sayi(cari?.toplam_tedarikci) > ted.length ? ` · tabloda ilk ${ted.length}` : ''}${tedFiltre === 'kritik' ? ' · SÜZGEÇ AÇIK' : ''}`,
+            onTikla: kritik.length ? () => setTedFiltre((p) => (p === 'kritik' ? '' : 'kritik')) : undefined,
           },
-          { etiket: 'Toplam açık bakiye', deger: fmt(sayi(cari?.toplam_hesaplanan_acik)), alt: 'hesaplanan · ödeme izi düşülmüş', renk: R.kirmizi },
+          { etiket: 'Toplam açık bakiye', deger: fmt(sayi(cari?.toplam_hesaplanan_acik)), alt: `hesaplanan · ödeme izi düşülmüş${tedFiltre === 'acik' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.kirmizi,
+            onTikla: () => setTedFiltre((p) => (p === 'acik' ? '' : 'acik')) },
           {
             etiket: 'Faturasız teslimat',
             deger: fmt(sayi(cari?.toplam_faturasiz_teslimat)),
-            alt: `${sayi(cari?.faturasiz_teslimat_adet)} teslimat · mal alındı, fatura yok`,
+            alt: `${sayi(cari?.faturasiz_teslimat_adet)} teslimat · mal alındı, fatura yok${tedFiltre === 'faturasiz' ? ' · SÜZGEÇ AÇIK' : ''}`,
             renk: sayi(cari?.toplam_faturasiz_teslimat) > 0 ? R.amber : R.not,
+            onTikla: ted.some((t) => t.grniAdet > 0 || t.grniTl > 0) ? () => setTedFiltre((p) => (p === 'faturasiz' ? '' : 'faturasiz')) : undefined,
           },
-          { etiket: 'GERÇEK BORÇ', deger: fmt(sayi(cari?.toplam_gercek_borc)), alt: 'açık bakiye + faturasız teslimat', renk: R.bakir },
+          { etiket: 'GERÇEK BORÇ', deger: fmt(sayi(cari?.toplam_gercek_borc)), alt: `açık bakiye + faturasız teslimat${tedFiltre === 'gercek' ? ' · SÜZGEÇ AÇIK' : ''}`, renk: R.bakir,
+            onTikla: () => setTedFiltre((p) => (p === 'gercek' ? '' : 'gercek')) },
           { etiket: 'Bekleyen vade sözü', deger: fmt(sayi(cari?.toplam_bekleyen_vade)), alt: 'ödeme kuyruğunda', renk: R.amber },
           { etiket: 'En büyük hacim', deger: enBuyuk ? enBuyuk.ad : '—', alt: enBuyuk ? `6 ay ${fmt(enBuyuk.hacim)}` : '—', renk: R.krem },
         ]} />
+        {tedFiltre && (
+          <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>«{{ kritik: 'Vadesi 3 gün içinde', acik: 'Açık bakiyesi olan', faturasiz: 'Faturasız teslimatı olan', gercek: 'Gerçek borcu olan' }[tedFiltre]}» süzgeci açık — {tedGorunen.length} tedarikçi. Üstteki toplamlar TÜM listeyi anlatır.</span>
+            <button onClick={() => setTedFiltre('')} style={{
+              padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+              border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
+              fontSize: 11, fontWeight: 600,
+            }}>Süzgeci kaldır</button>
+          </div>
+        )}
         {ted.length ? (
           <Tablo
             baslik="Tedarikçi bakiyesi"
@@ -2180,7 +2204,7 @@ export default function OdemeModulu({ gorunum, onCekmece, onKopru, onToast, hede
             // ekranın manşetinde İKİ borç rakamı yan yana durmayacak.
             { ad: 'Fark', sag: true }, { ad: 'Vade', sag: true }, { ad: '6 ay hacim', sag: true }, { ad: 'Durum' },
             ]}
-            satirlar={ted.map(t => {
+            satirlar={tedGorunen.map(t => {
               const uyumsuz = t.fark != null && Math.abs(t.fark) > Math.max(500, t.acik * 0.05);
               return {
                 id: t.ad, _t: t,
