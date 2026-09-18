@@ -35,6 +35,10 @@ const RENK_AD = { KIRMIZI: R.kirmizi, TURUNCU: R.amber, SARI: R.amber, YESIL: R.
 const renkCoz = (ad, varsayilan = R.amber) => RENK_AD[String(ad || '').toUpperCase()] || varsayilan;
 
 export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
+  // 🖱️ "Acik veren ay 7 / 36" olu rakamdi — hangi yedi ay oldugunu bulmak icin
+  // 36 satirlik takvimi gozle taramak gerekiyordu. O aylar ABEK'in yetmedigi,
+  // yani borcun buyudugu aylardir.
+  const [tkAcik, setTkAcik] = React.useState(false);
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
   // undefined = HENÜZ GELMEDİ (uç yolda) · null = alınamadı · nesne = geldi.
@@ -265,10 +269,13 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Finansal borç', deger: fmt(sayi(takvim.finansal_borc)), alt: 'bugün gerçekte borçlu olunan', renk: R.kirmizi },
-          { etiket: 'Toplam gelecek ödeme', deger: fmt(sayi(takvim.toplam_gelecek_odeme)), alt: 'kredi faiz dahil + kart bugünkü borç', renk: R.amber },
+          { etiket: 'Finansal borç', deger: fmt(sayi(takvim.finansal_borc)), alt: 'bugün gerçekte borçlu olunan · dosyalara git', renk: R.kirmizi,
+            onTikla: () => onKopru?.('__modul:kart:ozet') },
+          { etiket: 'Toplam gelecek ödeme', deger: fmt(sayi(takvim.toplam_gelecek_odeme)), alt: `kredi faiz dahil + kart bugünkü borç${tkAcik ? ' · süzgeci kaldırmak için tıkla' : ''}`, renk: R.amber,
+            onTikla: tkAcik ? () => setTkAcik(false) : undefined },
           { etiket: 'En zor ay', deger: peak ? kisaAy(peak.ay) : '—', alt: peak ? `zorunlu yük ${fmt(sayi(peak.zorunlu_yuk))}` : '—', renk: R.kirmizi },
-          { etiket: 'Açık veren ay', deger: `${acikAylar.length} / ${grid.length}`, alt: acikAylar.length ? 'ABEK yetmiyor' : 'hepsi karşılanıyor', renk: acikAylar.length ? R.amber : R.yesil },
+          { etiket: 'Açık veren ay', deger: `${acikAylar.length} / ${grid.length}`, alt: acikAylar.length ? `ABEK yetmiyor${tkAcik ? ' · SÜZGEÇ AÇIK' : ''}` : 'hepsi karşılanıyor', renk: acikAylar.length ? R.amber : R.yesil,
+            onTikla: acikAylar.length ? () => setTkAcik((p) => !p) : undefined },
         ]} />
 
         <YukEgrisi
@@ -298,7 +305,7 @@ export default function BorcModulu({ gorunum, onCekmece, onKopru }) {
             { ad: 'Ay' }, { ad: 'Kredi taksiti', sag: true }, { ad: 'Kart asgarisi', sag: true },
             { ad: 'Zorunlu yük', sag: true }, { ad: 'ABEK', sag: true }, { ad: 'Açık', sag: true }, { ad: 'Durum' },
           ]}
-          satirlar={grid.slice(0, 36).map(g => ({
+          satirlar={(tkAcik ? acikAylar : grid).slice(0, 36).map(g => ({
             id: g.ay, _g: g,
             hucreler: [
               { v: kisaAy(g.ay), kalin: true, mono: true },

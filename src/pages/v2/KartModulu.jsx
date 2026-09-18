@@ -101,6 +101,13 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // harcama KARAR BEKLIYOR (isletme mi sahsi mi) ama hangileri oldugunu bulmak
   // icin 120 satirlik hareket tablosunu gozle taramak gerekiyordu.
   const [khSinif, setKhSinif] = React.useState(''); // '' | 'isletme' | 'sahsi' | 'belirsiz'
+  // Ekstre↔Defter: "Sapan 19 · toplam 1.187.001 TL" olu rakamdi — hangi 19 donem
+  // oldugunu bulmak icin kart kart donem listesini acmak gerekiyordu.
+  const [mtSapan, setMtSapan] = React.useState(false);
+  const kartGit = (id) => {
+    const el = document.getElementById(id);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  };
   const [yukleniyor, setYukleniyor] = useState(true);
   const [hata, setHata] = useState('');
   const [kartlar, setKartlar] = useState([]);
@@ -1314,10 +1321,14 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Ölçülen dönem', deger: String(olculen), alt: `${kartlarM.length} kart · geçmişi olmayan dönemler ölçüm dışı`, renk: R.krem },
-          { etiket: 'Tutan', deger: String(tutan), alt: 'banka değişimi = defter değişimi', renk: tutan ? R.yesil : R.not2 },
-          { etiket: 'Sapan', deger: String(sapan), alt: `toplam ${fmt(sayi(donemMut?.toplam_sapma))}`, renk: sapan ? R.kirmizi : R.yesil },
-          { etiket: 'Mükerrer ödeme adayı', deger: String(supheli.length), alt: supheli.length ? `${fmt(sayi(mukerrer?.supheli_toplam))} · karar sende` : 'şüpheli çift yok', renk: supheli.length ? R.amber : R.yesil },
+          { etiket: 'Ölçülen dönem', deger: String(olculen), alt: `${kartlarM.length} kart · geçmişi olmayan dönemler ölçüm dışı${mtSapan ? ' · süzgeci kaldırmak için tıkla' : ''}`, renk: R.krem,
+            onTikla: () => { setMtSapan(false); kartGit('kart-donemler'); } },
+          { etiket: 'Tutan', deger: String(tutan), alt: 'banka değişimi = defter değişimi', renk: tutan ? R.yesil : R.not2,
+            onTikla: () => { setMtSapan(false); kartGit('kart-donemler'); } },
+          { etiket: 'Sapan', deger: String(sapan), alt: `toplam ${fmt(sayi(donemMut?.toplam_sapma))}${mtSapan ? ' · SÜZGEÇ AÇIK' : ''}`, renk: sapan ? R.kirmizi : R.yesil,
+            onTikla: sapan ? () => { setMtSapan((p) => !p); kartGit('kart-donemler'); } : undefined },
+          { etiket: 'Mükerrer ödeme adayı', deger: String(supheli.length), alt: supheli.length ? `${fmt(sayi(mukerrer?.supheli_toplam))} · karar sende · listeye in` : 'şüpheli çift yok', renk: supheli.length ? R.amber : R.yesil,
+            onTikla: supheli.length ? () => kartGit('kart-mukerrer') : undefined },
         ]} />
 
         {/* NE ÖLÇÜLDÜĞÜ AÇIKÇA YAZILIR — sayının anlamı gizli kalmasın. */}
@@ -1337,6 +1348,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           </div>
         </div>
 
+        <div id="kart-mukerrer" />
         {/* MÜKERRER ÖDEME ADAYLARI — ÖNERİ-ONLY, hiçbir şey silinmez */}
         {supheli.length > 0 && (
           <div style={{ ...kartYuzey, padding: '13px 16px', marginBottom: 12, fontSize: 12.5, lineHeight: 1.6, border: `1px solid ${R.amber}44` }}>
@@ -1393,6 +1405,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
             açığını tek satıra indirmişti: 19.841,75 ₺'lik 6 taksitli alım
             defterde TEK ÇEKİM 3.306,96 ₺ olarak duruyordu.
             ⚠️ Önce ÖLÇÜM ALETİ denetlenir: PDF okunamıyorsa defter suçlanmaz. */}
+        <div id="kart-donemler" />
         {satirDen && (satirDen.donemler || []).length > 0 && (() => {
           const dl = satirDen.donemler || [];
           const gecerli = dl.filter(x => x.olcum_gecerli);
@@ -1413,7 +1426,7 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
                 eksik olan ölçüm aletidir.
               </div>
               <div style={{ display: 'grid', gap: 6 }}>
-                {dl.map((x) => {
+                {(mtSapan ? dl.filter((x) => x.olcum_gecerli && ((x.pdf_eksik || []).length || (x.defter_fazla || []).length)) : dl).map((x) => {
                   const eksik = x.pdf_eksik || [];
                   const fazla = x.defter_fazla || [];
                   const yakin = x.yakin_eslesme || [];
@@ -1578,8 +1591,12 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
           onAc={(s) => kartAc(s._k)}
         />
         <KpiSeridi kpiler={[
-          { etiket: 'Toplam kart borcu', deger: fmt(sayi(ozet?.toplam_borc_taksitli) || donem + taksit), alt: `dönem ${fmt(donem).replace(' ₺','')} + taksit ${fmt(taksit)}`, renk: R.kirmizi },
-          { etiket: 'Bankaya ödenen faiz', deger: fmt(sayi(ozet?.toplam_odenen_faiz)), alt: 'ekstrelerden birikimli', renk: R.amber },
+          // 🔗 Borcun kart kart dokumu Kart Dosyalari'nda, hareket dokumu
+          // Kart Hareketleri'nde durur.
+          { etiket: 'Toplam kart borcu', deger: fmt(sayi(ozet?.toplam_borc_taksitli) || donem + taksit), alt: `dönem ${fmt(donem).replace(' ₺','')} + taksit ${fmt(taksit)} · dosyalara git`, renk: R.kirmizi,
+            onTikla: () => onKopru?.('__modul:kart:kartlar') },
+          { etiket: 'Bankaya ödenen faiz', deger: fmt(sayi(ozet?.toplam_odenen_faiz)), alt: 'ekstrelerden birikimli · hareketlere git', renk: R.amber,
+            onTikla: () => onKopru?.('__modul:kart:hareket') },
           // Alt metin TÜM kart adlarını diziyordu — 7 kartta KPI bantlaşıyordu
           // (canlı denetim 2026-08-03). İlk 2 ad + sayı; tamamı alttaki tabloda.
           {
@@ -2023,9 +2040,12 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
     return (
       <>
         <KpiSeridi kpiler={[
-          { etiket: 'Toplam borç', deger: fmt(toplamBorc), alt: `${kartSatir.length} kart`, renk: R.kirmizi },
-          { etiket: 'Aylık faiz kaybı', deger: fmt(aylikFaiz), alt: 'hiçbir şey yapmazsan bankaya', renk: R.amber },
-          { etiket: 'Toplam asgari', deger: fmt(toplamAsgari), alt: 'bu ay minimum', renk: R.krem },
+          { etiket: 'Toplam borç', deger: fmt(toplamBorc), alt: `${kartSatir.length} kart · dosyalara git`, renk: R.kirmizi,
+            onTikla: () => onKopru?.('__modul:kart:kartlar') },
+          { etiket: 'Aylık faiz kaybı', deger: fmt(aylikFaiz), alt: 'hiçbir şey yapmazsan bankaya · dosyalara git', renk: R.amber,
+            onTikla: () => onKopru?.('__modul:kart:kartlar') },
+          { etiket: 'Toplam asgari', deger: fmt(toplamAsgari), alt: 'bu ay minimum · ödeme kuyruğuna git', renk: R.krem,
+            onTikla: () => onKopru?.('__modul:odeme:bekleyen') },
           {
             etiket: 'Kurtuluş',
             deger: projBitmedi ? 'bitmiyor' : kurtulusAy ? `${kurtulusAy} ay` : '—',
@@ -2343,7 +2363,8 @@ export default function KartModulu({ gorunum, onCekmece, onKopru, onToast }) {
   return (
     <>
       <KpiSeridi kpiler={[
-        { etiket: 'Yüklenen ekstre', deger: `${kartSatir.length - eksikler.length} / ${kartSatir.length}`, alt: 'bu dönem', renk: eksikler.length ? R.amber : R.yesil },
+        { etiket: 'Yüklenen ekstre', deger: `${kartSatir.length - eksikler.length} / ${kartSatir.length}`, alt: 'bu dönem · kart dosyalarına git', renk: eksikler.length ? R.amber : R.yesil,
+          onTikla: () => onKopru?.('__modul:kart:kartlar') },
         { etiket: 'Eksik', deger: String(eksikler.length), alt: eksikler.length ? eksikler.map(k => k.ad).join(', ') : 'yok', renk: eksikler.length ? R.amber : R.yesil },
         { etiket: 'Gecikmiş kart', deger: String(gecikmis.length), alt: gecikmis.length ? gecikmis.map(k => k.ad).join(', ') : 'yok', renk: gecikmis.length ? R.kirmizi : R.yesil },
         { etiket: 'Sonraki son ödeme', deger: yakinlar[0] ? gunMetni(yakinlar[0].gunKaldi) : '—', alt: yakinlar[0] ? yakinlar[0].ad : 'vadesi gelen yok', renk: R.krem },
