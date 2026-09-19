@@ -736,8 +736,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
 
   /**
    * KAYNAĞI DÜZELT — /coz'dan farkı: bu uç gerçek mali kaydı (ciro/açılış/gider/
-   * devir) değiştirir, sonra farkı yeniden hesaplar. Bu yüzden İŞLETME onayı
-   * (Merve Karabacak PIN) ister; sunucu doğrular, hatalıysa 403 döner.
+   * devir) değiştirir, sonra farkı yeniden hesaplar.
+   *
+   * 🔓 PIN KALDIRILDI (sahip kararı, 2026-09-19): 233 kasa uyumsuzluğunun her
+   * biri için ikinci kişiyi beklemek düzeltmeyi fiilen durduruyordu.
+   * Koruma kaybolmadı, yer değiştirdi: uç YÖNETİM kapısının arkasında ve her
+   * düzeltme audit satırı yazıyor (kim · ne zaman · eski → yeni), geri de
+   * alınabiliyor. PIN girilirse sunucu yine doğrular — isteyen kullanmaya
+   * devam eder, ama artık ŞART değil.
    */
   const kdGonder = async () => {
     const m = uzModal;
@@ -747,8 +753,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
     if (!sebep) { onToast?.('Önce yanlış olan kutuyu düzelt veya bir sebep seç'); return; }
     const hata = kdDogrula(sebep, m.payload, uyariTip);
     if (hata) { onToast?.(hata); return; }
+    // PIN artık ZORUNLU DEĞİL — girilirse 4 hane olmalı, boşsa onaysız geçer.
     const pin = String(m.pin || '').replace(/\s/g, '');
-    if (!/^\d{4}$/.test(pin)) { onToast?.('İşletme onay PIN kodu 4 haneli olmalı'); return; }
+    if (pin && !/^\d{4}$/.test(pin)) { onToast?.('PIN girdiysen 4 haneli olmalı — ya da boş bırak'); return; }
 
     setKdMesgul(true);
     try {
@@ -758,7 +765,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           sebep,
           payload: m.payload || {},
           notu: (m.notu || '').trim() || null,
-          onay_pin: pin,
+          onay_pin: pin || null,
         },
       });
       if (r?.durum === 'zaten_cozulmus') {
@@ -800,8 +807,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
   const thGeriAl = async () => {
     const o = thOnay;
     if (!o?.kayit?.id || !uzModal?.kayit?.id) return;
+    // 🔓 PIN zorunlu DEĞİL (sahip kararı 2026-09-19) — kardeş uç "kaynağı
+    // düzelt" ile aynı. Geri alma zaten audit satırına dayanır ve aynı
+    // düzeltme iki kez geri alınamaz.
     const pin = String(o.pin || '').replace(/\s/g, '');
-    if (!/^\d{4}$/.test(pin)) { onToast?.('İşletme onay PIN kodu 4 haneli olmalı'); return; }
+    if (pin && !/^\d{4}$/.test(pin)) { onToast?.('PIN girdiysen 4 haneli olmalı — ya da boş bırak'); return; }
     setThMesgul(o.kayit.id);
     try {
       const r = await api(`/ops/kasa-uyumsuzluk/duzeltme/${encodeURIComponent(o.kayit.id)}/geri-al`, {
@@ -4195,7 +4205,8 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           Kasa satırında <b>iki ayrı iş</b> var: <b>Farkı kapat</b> kaynağa dokunmaz, farkı
           olduğu gibi kabul edip kaydı çözüldü işaretler. <b>Kaynağı düzelt</b> ise gerçek
           mali kaydı (ciro / açılış / gider / devir) değiştirir, fark yeniden hesaplanır —
-          bu yüzden <b>işletme onay PIN'i</b> ister ve <b>Tarihçe</b> sayfasından geri alınabilir.
+          bu yüzden her düzeltme <b>denetim defterine</b> yazılır (kim · ne zaman · eski → yeni)
+          ve <b>Tarihçe</b> sayfasından geri alınabilir. PIN artık zorunlu değil — girilirse doğrulanır.
         </div>}
 
         {uzModal && (() => {
@@ -4530,9 +4541,9 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
                         onChange={(e) => setUzModal((p) => ({ ...p, notu: e.target.value }))}
                         style={opsAlanStil} />
 
-                      <label style={opsEtiket}>İşletme onay PIN kodu (4 hane)</label>
+                      <label style={opsEtiket}>İşletme onay PIN kodu — isteğe bağlı</label>
                       <input type="password" inputMode="numeric" maxLength={4} disabled={kilit}
-                        value={m.pin || ''} placeholder="••••"
+                        value={m.pin || ''} placeholder="boş bırakılabilir"
                         onChange={(e) => setUzModal((p) => ({ ...p, pin: e.target.value.replace(/\D/g, '') }))}
                         style={{ ...opsAlanStil, letterSpacing: '6px', fontFamily: F.mono, marginBottom: 6 }} />
                       <div style={{ fontSize: 11, color: R.not2, marginBottom: 14, lineHeight: 1.6 }}>

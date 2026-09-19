@@ -7821,8 +7821,17 @@ def ops_kasa_kaynak_duzelt(uyari_id: str, body: KasaKaynakDuzeltmeBody):
         # Kilit transaction commit/rollback olunca otomatik düşer.
         kasa_gun_lock(cur, _pre["sube_id"], _pre["tarih"])
 
-        # #2 Yetki: mali kayıt değiştiriliyor → İşletme (Merve Karabacak) PIN onayı şart
-        _isletme_onay_dogrula(cur, body.onay_pin)
+        # 🔓 PIN KALDIRILDI (sahip kararı, 2026-09-19): kasa kaynak düzeltmesi
+        # İşletme PIN'i istemiyordu artık. Gerekçe: düzeltilmesi gereken kayıt
+        # sayısı yüksek (233 kasa uyumsuzluğu) ve her biri için ikinci kişiyi
+        # beklemek düzeltmeyi fiilen durduruyordu.
+        # ⚠️ KORUMA KAYBOLMADI, YER DEĞİŞTİRDİ: bu uç YONETIM kapısının
+        # arkasında ve her düzeltme `kasa_fark_kaynak_duzeltme` audit satırı
+        # yazıyor (kim · ne zaman · eski → yeni · sebep · not). Düzeltme
+        # geri de alınabiliyor (/duzeltme/{audit_id}/geri-al).
+        # PIN yine de gönderilirse doğrulanır — eski akış bozulmaz.
+        if (body.onay_pin or "").strip():
+            _isletme_onay_dogrula(cur, body.onay_pin)
 
         # Kilidi aldıktan sonra row'u FOR UPDATE ile yeniden oku (en güncel hali)
         uyari = _kk_uyari_getir(cur, uyari_id)
@@ -8273,8 +8282,11 @@ def ops_kasa_duzeltme_geri_al(audit_id: str, body: KasaGeriAlBody = KasaGeriAlBo
         if a.get("geri_alindi_mi"):
             raise HTTPException(409, "Bu düzeltme zaten geri alınmış")
 
-        # #2 Yetki: geri alma mali kaydı geri yazar → İşletme (Merve) PIN onayı şart
-        _isletme_onay_dogrula(cur, body.onay_pin)
+        # 🔓 PIN KALDIRILDI (sahip kararı, 2026-09-19) — kardeş uçla aynı gerekçe.
+        # Geri alma zaten AUDIT satırına dayanır: neyin geri alındığı kayıtlıdır
+        # ve aynı düzeltme iki kez geri alınamaz (geri_alindi_mi kapısı üstte).
+        if (body.onay_pin or "").strip():
+            _isletme_onay_dogrula(cur, body.onay_pin)
 
         uyari_id = a["uyari_id"]
         sube_id = a["sube_id"]
