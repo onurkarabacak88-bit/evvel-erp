@@ -159,10 +159,137 @@ const modalAlanStil = {
 export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
   // Kasa uyumsuzluklarini GOSTER anahtari — o kayitlar listede hic yoktu.
   const [kuyKasa, setKuyKasa] = useState(false);
+  // 🧾 KASA TESLİM kıyası aşağıda `teslimHam`dan gelir — sahip (2026-09-19):
+  // "bu tutarlar kasa teslim". Kanıt: 19 Tem TEMA'da -17.986 ₺ "kayıp"
+  // görünüyordu; 18 Tem'in teslim kaydı hiç girilmemişti, para 19'unda teslim
+  // edilmişti. Fark GERÇEK KAYIP değil, EKSİK KAYIT'tı.
+
+  // 📊 KASA FARKI DÖKÜMÜ (sahip isteği, 2026-09-19)
+  // "233 kayıt" listelenince ilk soru "hangi şubede ve toplamı ne?" oldu.
+  // Kayıtlar tek tek okunabiliyordu ama ŞUBE KIRILIMI ve +/− toplamı hiçbir
+  // yerde yoktu — 233 satırı gözle toplamak gerekiyordu.
+  // ⚠️ Şube adı açıklamanın başındaki '[sube-xxx]' etiketinden okunur; kasa
+  // farkı kaydında ayrı bir sube_id alanı YOK (uydurulmaz, etiketten alınır).
+  const kasaFarkDokum = (kayitlar) => {
+    const subeAl = (a2) => {
+      const m = String(a2 || '').match(/^\[([^\]]+)\]/);
+      return m ? m[1].replace(/^sube-/, '').toLocaleUpperCase('tr') : 'ŞUBESİZ';
+    };
+    // ⚠️ İKİ AYRI OLAY tek kuyrukta duruyor ve toplandığında anlamı kayboluyor:
+    //  · KAPANIŞ farkı  = açılış + Z nakit − teslim − devir  (günün içi tutmadı)
+    //  · AÇILIŞ devir farkı = dün akşam kalan ≠ bugün sabah sayılan (gece arası)
+    // İkincisi çoğu zaman "para götürüldü ama teslim yazılmadı" demektir;
+    // birincisiyle aynı torbaya konursa hangi sorunun büyüdüğü görünmez.
+    const turAl = (a2) => (/Açılış kasası dün devirine göre/.test(String(a2)) ? 'acilis' : 'kapanis');
+    const g = {};
+    const tur = { kapanis: { adet: 0, net: 0 }, acilis: { adet: 0, net: 0 } };
+    kayitlar.forEach((o) => {
+      const sb = subeAl(o.aciklama);
+      const t = sayi(o.tutar);
+      const tp = turAl(o.aciklama);
+      tur[tp].adet += 1; tur[tp].net += t;
+      if (!g[sb]) g[sb] = { ad: sb, adet: 0, arti: 0, eksi: 0, net: 0, acilis: 0, kapanis: 0 };
+      g[sb].adet += 1;
+      g[sb].net += t;
+      g[sb][tp] += t;
+      if (t > 0) g[sb].arti += t; else g[sb].eksi += t;
+    });
+    const liste = Object.values(g).sort((x, y) => Math.abs(y.net) - Math.abs(x.net));
+    const T = liste.reduce((a2, x) => ({
+      adet: a2.adet + x.adet, arti: a2.arti + x.arti, eksi: a2.eksi + x.eksi, net: a2.net + x.net,
+    }), { adet: 0, arti: 0, eksi: 0, net: 0 });
+    const tarihler = kayitlar.map((o) => o.tarih).filter(Boolean).sort();
+    // En büyük tek kayıplar — bir günün tek başına açığı taşıyıp taşımadığını
+    // söyler (TEMA'da 19 Tem tek başına açığın üçte biriydi).
+    const enBuyuk = [...kayitlar].filter((o) => sayi(o.tutar) < 0)
+      .sort((a2, b2) => sayi(a2.tutar) - sayi(b2.tutar)).slice(0, 5);
+    return { liste, T, tur, enBuyuk, ilk: tarihler[0], son: tarihler[tarihler.length - 1] };
+  };
+
+  // ⚠️ `kasaSatir` bu satırın ALTINDA (render kapsamında) hesaplanıyor —
+  // buradan okunamaz, o yüzden PARAMETRE olarak geçilir.
+  const kasaDokumAc = (kayitlar) => {
+    const d = kasaFarkDokum(kayitlar || []);
+    // "Dün teslim kaydı var mıydı?" — açılış devir farkının GERÇEK kayıp mı
+    // yoksa EKSİK KAYIT mı olduğunu ayıran tek soru.
+    const teslimler = Array.isArray(teslimHam?.satirlar) ? teslimHam.satirlar : [];
+    const dunTeslimVarMi = (o) => {
+      const m = String(o.aciklama || '').match(/^\[([^\]]+)\]/);
+      const sb = m ? m[1] : '';
+      const g = new Date(String(o.tarih));
+      g.setDate(g.getDate() - 1);
+      const dun = g.toISOString().slice(0, 10);
+      return teslimler.some((t) => String(t.sube_id) === sb && String(t.tarih).slice(0, 10) === dun);
+    };
+    const acilisEksi = (kayitlar || []).filter((o) => sayi(o.tutar) < 0
+      && /Açılış kasası dün devirine göre/.test(String(o.aciklama || '')));
+    const kayitsiz = acilisEksi.filter((o) => !dunTeslimVarMi(o));
+    const kayitsizTutar = kayitsiz.reduce((a2, o) => a2 + sayi(o.tutar), 0);
+    onCekmece?.({
+      tip: 'KASA FARKI DÖKÜMÜ',
+      baslik: `${d.T.adet} kasa uyumsuzluğu · şube kırılımı`,
+      alt: d.ilk ? `${kisaTarih(d.ilk)} → ${kisaTarih(d.son)}` : 'tarih okunamadı',
+      kpi: [
+        // ⚠️ ARTI ve EKSİ AYRI durur: netleşmiş rakam iki tarafın büyüklüğünü
+        // gizler. -44.743 ₺ net, 89.384 ₺'lik açığın 44.641 ₺'sinin başka
+        // günlerde fazlayla örtülmesi demektir — ikisi ayrı sorundur.
+        { etiket: 'Kasa fazlası (+)', deger: fmt(d.T.arti), renk: R.yesil },
+        { etiket: 'Kasa açığı (−)', deger: fmt(d.T.eksi), renk: R.kirmizi },
+        { etiket: 'NET', deger: fmt(d.T.net), renk: d.T.net < 0 ? R.kirmizi : R.yesil },
+        { etiket: 'Kayıt', deger: String(d.T.adet) },
+      ],
+      listeBaslik: 'Şube kırılımı · net farkı büyükten küçüğe',
+      satirlar: [
+        ...d.liste.map((x) => ({
+          ad: x.ad,
+          detay: `${x.adet} kayıt · fazla ${fmt(x.arti)} · açık ${fmt(x.eksi)}`
+            + ` — kapanış ${fmt(x.kapanis)} · açılış devri ${fmt(x.acilis)}`,
+          tutar: fmt(x.net),
+          renk: x.net < 0 ? R.kirmizi : R.yesil,
+        })),
+        { ad: '── TÜRE GÖRE ──', detay: 'aynı kuyrukta iki farklı olay var', tutar: '' },
+        {
+          ad: 'Kapanış farkı',
+          detay: `${d.tur.kapanis.adet} kayıt · açılış + Z nakit − teslim − devir tutmadı`,
+          tutar: fmt(d.tur.kapanis.net),
+          renk: d.tur.kapanis.net < 0 ? R.kirmizi : R.yesil,
+        },
+        {
+          ad: 'Açılış devir farkı',
+          detay: `${d.tur.acilis.adet} kayıt · dün akşam kalan ≠ bugün sabah sayılan`,
+          tutar: fmt(d.tur.acilis.net),
+          renk: d.tur.acilis.net < 0 ? R.kirmizi : R.yesil,
+        },
+        ...(teslimler.length ? [{
+          ad: '   ↳ dün TESLİM KAYDI YOK',
+          detay: kayitsiz.length
+            ? `${kayitsiz.length} gün · para teslim edilmiş olabilir ama o günün kaydı girilmemiş`
+              + ' — bu tutar gerçek kayıp DEĞİL, eksik kayıt olabilir'
+            : 'yok — eksi farkların hepsinde dün teslim kaydı var',
+          tutar: kayitsiz.length ? fmt(kayitsizTutar) : '—',
+          renk: kayitsiz.length ? R.amber : R.yesil,
+        }] : []),
+        ...(d.enBuyuk.length ? [{ ad: '── EN BÜYÜK 5 KAYIP ──', detay: 'tek gün açığı taşıyor olabilir', tutar: '' }] : []),
+        ...d.enBuyuk.map((o) => ({
+          ad: kisaTarih(o.tarih),
+          detay: kisalt(String(o.aciklama).replace(/^\[[^\]]+\]\s*/, ''), 92),
+          tutar: fmt(sayi(o.tutar)),
+          renk: R.kirmizi,
+        })),
+      ],
+      not: 'Bunlar ONAY kalemi değildir — kasa defterinden düzeltilir. '
+        + 'Fazla ve açık ayrı gösterilir: net rakam iki tarafın büyüklüğünü gizler. '
+        + '⚠️ "Dün teslim kaydı yok" satırındaki tutar muhtemelen GERÇEK KAYIP DEĞİL: '
+        + 'para teslim edilmiş ama o günün kapanış/teslim kaydı girilmemiş demektir '
+        + '(19 Tem TEMA: 17.986 ₺ böyle çıkmıştı).',
+    });
+  };
   const { yukleniyor, hata, veri, yukle } = useVeri([
     // kritik=true: bu iki uç düşerse "kuyruk temiz" YALANI yerine hata bandı
     // limit 500 > render 400: kesme notu gerçekten tetiklenebilsin (uç tavanı 1000)
     ['/onay-kuyrugu?durum=bekliyor&limit=500', [], true],
+    // Kasa farkı dökümünde teslim kıyası için (salt-okur, 4 aylık pencere).
+    ['/kasa-teslim?tarih_baslangic=2026-05-01&tarih_bitis=2099-12-31', null, false],
     ['/ciro-taslak?durum=bekliyor', [], true],
     ['/subeler', []],
   ]);
@@ -192,7 +319,7 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
     }
   };
 
-  const [kuyrukHam, ciroHam, subeler] = veri;
+  const [kuyrukHam, teslimHam, ciroHam, subeler] = veri;
   const kuyruk = Array.isArray(kuyrukHam) ? kuyrukHam : [];
   const ciro = Array.isArray(ciroHam) ? ciroHam : [];
   const subeAd = (id) => (subeler || []).find(s => String(s.id) === String(id))?.ad || '—';
@@ -223,12 +350,19 @@ export function OnayModulu({ gorunum, onCekmece, onKopru, onToast }) {
           { etiket: 'Toplam tutar', deger: fmt(toplam), alt: `onay bekleyen${kuyKasa ? ' · onay listesine dön' : ''}`, renk: toplam ? R.amber : R.krem,
             onTikla: kuyKasa ? () => setKuyKasa(false) : undefined },
           { etiket: 'En eski', deger: enEski ? `${enEski} gün` : '—', alt: enEski > 2 ? 'gecikiyor' : 'taze', renk: enEski > 2 ? R.kirmizi : R.krem },
-          { etiket: 'Kasa hatası ayrı', deger: String(kasaSatir.length), alt: `onay değil · kasa uyumsuzluğu${kuyKasa ? ' · GÖSTERİLİYOR' : (kasaSatir.length ? ' · tıkla, göster' : '')}`, renk: R.not,
-            onTikla: kasaSatir.length ? () => setKuyKasa((p) => !p) : undefined },
+          { etiket: 'Kasa hatası ayrı', deger: String(kasaSatir.length), alt: `onay değil · kasa uyumsuzluğu${kuyKasa ? ' · dökümü aç' : (kasaSatir.length ? ' · tıkla, göster' : '')}`, renk: R.not,
+            // İlk tıklama kayıtları açar; liste açıkken ikinci tıklama şube
+            // kırılımı + toplam dökümünü çekmecede verir.
+            onTikla: kasaSatir.length ? () => { if (kuyKasa) kasaDokumAc(kasaSatir); else setKuyKasa(true); } : undefined },
         ]} />
         {kuyKasa && (
           <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span>«Kasa uyumsuzlukları» gösteriliyor — {kasaSatir.length} kayıt. Bunlar ONAY kalemi değildir; toplu onay uygulanmaz, kasa defterinden düzeltilir.</span>
+            <button onClick={() => kasaDokumAc(kasaSatir)} style={{
+              padding: '3px 12px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
+              border: 'none', background: 'linear-gradient(150deg, #E0A559, #AF6C29)',
+              color: '#1C1309', fontSize: 11, fontWeight: 700,
+            }}>📊 Şube kırılımı & toplam</button>
             <button onClick={() => setKuyKasa(false)} style={{
               padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
               border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
