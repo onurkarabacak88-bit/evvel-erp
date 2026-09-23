@@ -5960,7 +5960,7 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
 
     const BV_FILTRELER = [
       { id: 'hepsi', ad: 'Tümü', adet: bs.length },
-      { id: 'okunmamis', ad: 'Okunmamış', adet: okunmamisSayi },
+      { id: 'okunmamis', ad: 'Yeni Başvurular', adet: okunmamisSayi, sira: 'yeni' },
       { id: 'oncelik', ad: 'Öncelikli', adet: oncelikliSayi },
       { id: 'bekliyor', ad: BV_DURUM_AD.bekliyor || 'Bekliyor', adet: durumSay('bekliyor') },
       { id: 'gorusme', ad: BV_DURUM_AD.gorusme || 'Görüşme', adet: durumSay('gorusme') },
@@ -6016,7 +6016,14 @@ export default function EkipModulu({ gorunum, onCekmece, onKopru, onToast, kadro
               display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', marginBottom: 12,
             }}>
               {BV_FILTRELER.map((f) => (
-                <button key={f.id} onClick={() => setBvFiltre(f.id)} style={{
+                /* 🕐 SEKME KENDİ SIRALAMASINI GETİRİR (2026-09-23, sahip bildirimi):
+                   KPI kutusu tıklanınca sıralama 'yeni'ye geçiyordu, SEKME
+                   tıklanınca geçmiyordu — "Yeni Başvurular" sekmesi açılıyor
+                   ama liste ÖNCELİKLİLER ÜSTTE kalıyordu. Sekmenin adı "yeni"
+                   derken sırası "öncelik" diyordu. Artık sekmenin doğal sırası
+                   (f.sira) varsa uygulanır; kullanıcı açılır listeden
+                   değiştirirse seçimi korunur. */
+                <button key={f.id} onClick={() => { setBvFiltre(f.id); if (f.sira) setBvSira(f.sira); }} style={{
                   ...bvSecimDugmesi,
                   border: `1px solid ${bvFiltre === f.id ? R.bakir : R.cizgi3}`,
                   background: bvFiltre === f.id ? `${R.bakir}1E` : 'transparent',

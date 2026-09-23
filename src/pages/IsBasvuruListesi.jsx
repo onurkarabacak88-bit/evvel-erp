@@ -397,7 +397,7 @@ export default function IsBasvuruListesi() {
 
   const filtreler = [
     { id: 'hepsi', label: 'Tümü' },
-    { id: 'okunmamis', label: '🟢 Okunmamış', sayi: okunmamisSayi },
+    { id: 'okunmamis', label: '🟢 Yeni Başvurular', sayi: okunmamisSayi, sira: 'yeni' },
     { id: 'oncelik1', label: '🥇 1. Öncelik', sayi: ozet.oncelik1 },
     { id: 'oncelik2', label: '🥈 2. Öncelik', sayi: ozet.oncelik2 },
     { id: 'bekliyor', label: '⏳ Bekliyor', sayi: ozet.bekliyor },
@@ -488,8 +488,15 @@ export default function IsBasvuruListesi() {
 
       {/* Filtre */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', marginBottom: 14 }}>
+        {/* 🕐 SEKME KENDİ SIRALAMASINI GETİRİR (2026-09-23, sahip bildirimi):
+            Eskiden KPI kutusuna tıklayınca sıralama 'yeni'ye geçiyordu ama
+            SEKMEYE tıklayınca geçmiyordu — "Yeni Başvurular" sekmesi açılıyor,
+            liste yine ÖNCELİKLİLER ÜSTTE sıralı kalıyordu. Yani sekmenin adı
+            "yeni" diyor, sırası "öncelik" diyordu. Sekmenin kendi doğal sırası
+            varsa (f.sira) tıklandığında onu uygular; kullanıcı sonradan
+            açılır listeden değiştirirse seçimi korunur. */}
         {filtreler.map(f => (
-          <button key={f.id} onClick={() => setFiltre(f.id)} style={{
+          <button key={f.id} onClick={() => { setFiltre(f.id); if (f.sira) setSiralama(f.sira); }} style={{
             padding: '6px 14px', borderRadius: 20, cursor: 'pointer', fontSize: 12, fontWeight: 600,
             background: filtre === f.id ? 'var(--accent)' : 'var(--bg2)', color: filtre === f.id ? '#fff' : 'var(--text3)',
             border: `1px solid ${filtre === f.id ? 'var(--accent)' : 'var(--border)'}`,
