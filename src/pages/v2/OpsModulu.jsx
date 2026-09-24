@@ -3850,7 +3850,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
           },
           { onTikla: acikKasa.length ? () => setUzAlt('kasa') : undefined, etiket: 'Kasa uyumsuzluğu', deger: String(acikKasa.length), alt: acikKasa.length ? 'açık kayıt' : 'temiz', renk: acikKasa.length ? R.kirmizi : R.yesil },
           { onTikla: acikPers.length ? () => setUzAlt('personel') : undefined, etiket: 'Personel-vardiya', deger: String(acikPers.length), alt: acikPers.length ? 'açık kayıt' : 'temiz', renk: acikPers.length ? R.amber : R.yesil },
-          { etiket: 'Talep ↔ tahsis', deger: String(uzTahsis.length), alt: uzTahsis.length ? 'kalem uyuşmuyor' : 'temiz', renk: uzTahsis.length ? R.amber : R.yesil },
+          // 🚪 BAĞLAM (2026-09-24): 3 kardeş KPI kendi alt-sekmesine geçiyordu,
+          // bu geçmiyordu — 'tahsis' alt-sekmesi + tablosu (aşağıda) ZATEN var,
+          // eksik olan tek şey buradan oraya gitmekti (uzlastir asimetri onarımı).
+          { onTikla: uzTahsis.length ? () => setUzAlt('tahsis') : undefined, etiket: 'Talep ↔ tahsis', deger: String(uzTahsis.length), alt: uzTahsis.length ? 'kalem uyuşmuyor' : 'temiz', renk: uzTahsis.length ? R.amber : R.yesil },
         ]} />
 
         <OneriSeridi metin="Uzlaştırma kaydı SİLMEZ — farkı kapatır ve kararı audit defterine yazar. Uzlaşma adedi hem talebin hem tahsisin yeni değeri olur; kalem 'tam' duruma geçer." />
@@ -4955,6 +4958,11 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
       const a = adetAl(k); const m = sayi(k.min_stok);
       return m > 0 && a >= m && a < m * 1.5;
     });
+    // 🚪 BAĞLAM (2026-09-24): "Stokta yok" KPI'ı Kritik/Düşük gibi tabloyu süzsün.
+    // Bu YEREL sıfır (bu tablodaki, seçili şube/toplam bazında adet<=0); KPI'daki
+    // sayı sunucu-geneli (tüm şubeler, şube-kalem çifti) — süzgeç şeridi ikisinin
+    // farkını açıkça yazar (Kritik/Düşük'teki "üstteki sayılar tüm kataloğu anlatır" gibi).
+    const sifir = kalemler.filter((k) => adetAl(k) <= 0);
     // A-2. tur: değer motoru artık TAM saklanıyor — ozet + kalem başına TL.
     const dOzet = depoDeger?.ozet || null;
     const degerMap = {};
@@ -4989,10 +4997,14 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             // kalem KARTI. Okuyan "367 nasıl 134'ten büyük olur" diye takılır ya
             // da — daha kötüsü — takılmaz ve yanlış bir büyüklük hissi taşır.
             etiket: 'Stokta yok',
+            // 🚪 BAĞLAM (2026-09-24): Kritik/Düşük gibi tabloyu YEREL sıfır kalemlere
+            // süzer (bu tablodaki adet<=0). KPI sayısı sunucu-geneli kaldığı için
+            // süzgeç şeridi farkı açıkça yazar — tıklama yerel kanıta götürür.
+            onTikla: sifir.length ? () => setDepoFiltre((x) => (x === 'sifir' ? '' : 'sifir')) : undefined,
             deger: dOzet ? String(sayi(dOzet.sifir_kalem_sayisi)) : '—',
             // 🔵 EVV-OPS3-C: dOzet yokken deger '—' ama renk yeşildi (bilinmeyen=temiz). Nötr.
             alt: dOzet
-              ? `${sayi(dOzet.urun_sayisi)} ürün × tüm şubeler içinde · adet DEĞİL, şube-kalem çifti`
+              ? `${sayi(dOzet.urun_sayisi)} ürün × tüm şubeler içinde · adet DEĞİL, şube-kalem çifti${depoFiltre === 'sifir' ? ' · SÜZGEÇ AÇIK' : ''}`
               : 'şube-kalem · mevcut sıfır',
             renk: !dOzet ? R.not3 : sayi(dOzet.sifir_kalem_sayisi) > 0 ? R.kirmizi : R.yesil,
           },
@@ -5181,10 +5193,16 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
         ) : (
           <>
           {depoFiltre && (() => {
-            const n = (depoFiltre === 'kritik' ? kritik : dusuk).length;
+            const n = (depoFiltre === 'kritik' ? kritik : depoFiltre === 'sifir' ? sifir : dusuk).length;
+            const ad = depoFiltre === 'kritik' ? 'Kritik kalemler' : depoFiltre === 'sifir' ? 'Stokta olmayan kalemler' : 'Düşük kalemler';
+            // Sıfır süzgecinde ek uyarı: KPI sayısı tüm şubeleri (şube-kalem çifti)
+            // sayar, bu liste yalnız bu tabloyu — ikisi eşleşmeyebilir, dürüstçe söylenir.
+            const ekBilgi = depoFiltre === 'sifir'
+              ? ' Üstteki «Stokta yok» sayısı TÜM şubeleri (şube-kalem çifti) sayar; bu liste yalnız bu tablodaki sıfır kalemler.'
+              : ' Üstteki sayılar TÜM kataloğu anlatır.';
             return (
               <div style={{ fontSize: 11.5, color: R.not, marginBottom: 10, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-                <span>«{depoFiltre === 'kritik' ? 'Kritik kalemler' : 'Düşük kalemler'}» süzgeci açık — {n} kalem. Üstteki sayılar TÜM kataloğu anlatır.</span>
+                <span>«{ad}» süzgeci açık — {n} kalem.{ekBilgi}</span>
                 <button onClick={() => setDepoFiltre('')} style={{
                   padding: '3px 11px', borderRadius: 8, cursor: 'pointer', fontFamily: 'inherit',
                   border: `1px solid ${R.cizgi3}`, background: 'transparent', color: R.metin2,
@@ -5204,7 +5222,7 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
               { ad: 'Bağlı para', sag: 1 },
               { ad: 'Kritik seviye', sag: 1 }, { ad: 'Min\'e oran', sag: 1 }, { ad: 'Durum' },
             ]}
-            satirlar={[...(depoFiltre === 'kritik' ? kritik : depoFiltre === 'dusuk' ? dusuk : kalemler)]
+            satirlar={[...(depoFiltre === 'kritik' ? kritik : depoFiltre === 'dusuk' ? dusuk : depoFiltre === 'sifir' ? sifir : kalemler)]
               .sort((a, b) => {
                 const da = durumAl(a).ad; const db2 = durumAl(b).ad;
                 const sira = { kritik: 0, 'düşük': 1, yeterli: 2, 'eşik yok': 3 };
@@ -6160,6 +6178,10 @@ export default function OpsModulu({ gorunum, onCekmece, onKopru, onToast, onGoru
             const temiz = !kasaFarkli.length && kapananSube > 0 && kapanmayan === 0;
             return {
               etiket: 'Nakit Δ',
+              // 🚪 BAĞLAM (2026-09-24): fark VARSA aynı görünümün 'kapanış' alt-sekmesi
+              // hangi şubede olduğunu adıyla yazıyor (aşağıda kasaFarkli bloğu) —
+              // sayı kırmızı yanarken kanıta gidecek yol yoktu. Kardeş KPI'lar gibi tıklanır.
+              onTikla: kasaFarkli.length ? () => setBarSekme('kapanis') : undefined,
               deger: kasaFarkli.length ? String(kasaFarkli.length) : '0',
               alt: [
                 kasaFarkli.length
