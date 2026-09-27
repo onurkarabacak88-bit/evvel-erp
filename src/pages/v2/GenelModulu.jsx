@@ -22,7 +22,7 @@
 import React, { useEffect, useState } from 'react';
 import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey, IK } from './tema';
-import { KpiSeridi, Liste, Tablo, BosDurum, HataBandi, Ikon } from './parcalar';
+import { KpiSeridi, Liste, Tablo, BosDurum, HataBandi, Ikon, ParaNerede } from './parcalar';
 import { kayitDosyasiYukle, belgeYukleyiciUret, cariEkstreAksiyonu } from './kayitDosyasi';
 import { enKritikOneri } from './oneriGrup';
 // 📈 Zam Takibi ayrı dosyada: kendi verisini kendi çeker, Bakış'ın /panel
@@ -1173,35 +1173,12 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
    *  Üç gerçek, hep bu sırayla: (1) kesin olan (2) belirsiz olan (3) süre.
    *  ⚠️ Hiçbir rakam BURADA türetilmez; hepsi sunucudan gelir. Veri yoksa
    *  cümle HİÇ çizilmez — yarım bir para cümlesi, hiç olmayandan kötüdür. */
-  const ParaCipasi = ({ ust }) => {
-    if (!nakitDurum.saglam) return null;
-    const gunUst = p?.kac_gun_dayanir != null ? sayi(p.kac_gun_dayanir) : null;
-    const alt = nakitDurum.ciddiFark ? nakitDurum.gunDogrulanmis : null;
-    const sure = gunUst == null ? null
-      : (alt != null && alt < gunUst) ? `${alt}–${gunUst} gün` : `${gunUst} gün`;
-    return (
-      <div style={{
-        ...kartYuzey, padding: '11px 16px', marginBottom: ust ? 0 : 13,
-        fontSize: 12.5, lineHeight: 1.65, color: R.metin2,
-        borderLeft: `3px solid ${nakitDurum.ciddiFark ? R.amber : R.yesil}`,
-      }}>
-        Elinde <b style={{ fontFamily: F.mono, color: R.krem }}>{fmt(nakitDurum.dogrulanmis)}</b> kesin para var.
-        {nakitDurum.ciddiFark && (
-          <>
-            {' '}Ayrıca <b style={{ fontFamily: F.mono, color: R.amber }}>{fmt(nakitDurum.mut)}</b>{' '}
-            kayıtlarda görünüyor ama <b>yeri doğrulanmamış</b>
-            {/* ⚠️ (canlı) Sunucu 47.9 döndürüyordu, ekranda "%47.9'i" çıkıyordu:
-                NOKTA Türkçe değil (virgül olmalı) ve ek yanlış. Cümlede ondalık
-                hassasiyetin bir işi yok — bu bir BÜYÜKLÜK duygusu, ölçüm değil.
-                Tam sayıya yuvarlanır: "%48'i". Yuvarlama BİÇİMLENDİRMEDİR,
-                türetme değil: oranın kendisi sunucudan gelir. */}
-            {nakitDurum.pay != null ? ` (defterin %${Math.round(nakitDurum.pay)}'i)` : ''}.
-          </>
-        )}
-        {sure && <> Bu parayla <b style={{ color: R.krem }}>{sure}</b> dayanırsın.</>}
-      </div>
-    );
-  };
+  // ⛔ `ParaCipasi` KALDIRILDI (2026-09-27): tek cümle 'Elinde X kesin para
+  // var, N gün dayanırsın' diyordu ve içinde BORÇ YOKTU. Yerine ParaNerede
+  // şelalesi geldi (parcalar.jsx) — aynı üç gerçek + gecikmiş + kart borcu,
+  // TEK kartta. Cümlenin taşıdığı 'yeri doğrulanmamış' bilgisi o bloğun
+  // 'Nerede duruyor' satırında yaşıyor; `nakitDurum` iş kuyruğu ve KPI şeridi
+  // için DURUYOR (S1 mutabakat maddesi onu okuyor).
 
   const kasaCekmecesiniAc = async () => {
     // Önce iskeleti aç — veri gelene kadar boş ekran yerine "yükleniyor".
@@ -2021,7 +1998,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         {/* 💰 PARA ÇIPASI — Para Akışı görünümündekiyle BİRE BİR AYNI cümle.
             Dört ayrı çıpanın (kasa · doğrulanmış · duraklar · dayanıklılık)
             önüne tek bir hikâye konur; rakamlar altta detaylanmaya devam eder. */}
-        <ParaCipasi ust />
+        <ParaNerede onKopru={onKopru} />
         {/* `sik` — şerit bir BANDIN içinde; kendi alt boşluğunu taşımaz,
             aralığı bandın flex gap'i verir (çift boşluk = boşa 16px). */}
         <KpiSeridi sik kpiler={[
@@ -2470,7 +2447,7 @@ export default function GenelModulu({ gorunum, onCekmece, onKopru, onToast, onZa
         {/* 💰 Karar Alanı'ndakiyle BİRE BİR AYNI cümle — bilinçli tekrar.
             Sahip hangi görünümde olursa olsun para hikâyesi değişmez; altındaki
             duraklar bloğu o hikâyenin KANITIDIR, alternatifi değil. */}
-        <ParaCipasi />
+        <ParaNerede onKopru={onKopru} />
         {nakitHataBlok}
         {nakitBlok}
 

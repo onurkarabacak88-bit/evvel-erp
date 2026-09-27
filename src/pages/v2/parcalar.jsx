@@ -3,6 +3,7 @@
 // Tasarım kaynağı: tasarim/cloud-v2/03_evvel-erp-v2_GUNCEL.dc.html
 // ─────────────────────────────────────────────────────────────────────────────
 import React from 'react';
+import { api, fmt } from '../../utils/api';
 import { R, F, kartYuzey, TIER_RENK } from './tema';
 
 /** Tasarımdaki inline SVG ikonları (ham path stringi) React'e bağlar. */
@@ -1958,5 +1959,200 @@ export function KopruDurumu({ ad, onGit }) {
         </button>
       )}
     </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 💰 PARA NEREDE — TEK ŞELALE (2026-09-27)
+// ═══════════════════════════════════════════════════════════════════════════
+// Sahip: "paranın nerede olduğu tamamen karmaşık ve hatalı hale geldi; eski
+// haldeyken daha kolay bakıyorduk, kart borçlarımız da dahil."
+//
+// Eski klasik ekran (Panel.jsx:984) TEK hero sayı gösteriyordu: "Kasa". Kolaylık
+// buydu — ama o sayı gecikmiş borcu ve kart borcunu içermiyordu. Bu blok o
+// kolaylığı geri verir: TEK KOLON, yukarıdan aşağı çıkarma, banka ekstresi gibi.
+//
+// ⛔ BU BİLEŞEN KENDİ ARİTMETİĞİNİ KURMAZ. Satırlar, işaretler, ara toplamlar
+// ve uyarı metinleri `/api/para-nerede`den HAZIR gelir. Sebep: aynı çıkarma
+// istemcide bir kez daha yapılırsa iki rakam bir gün ayrışır ve "hangisi doğru"
+// sorusu doğar — panelde tam bu yüzden 14 rakip kart borcu toplamı vardı.
+//
+// ⛔ TEK KOPYA: BAKIŞ ve PANEL aynı bileşeni çağırır, kopyalamaz. Kopyalansaydı
+// bir düzeltme birinde kalır, iki ekran farklı şey söylerdi (bu dosyanın
+// geçmişinde tam bu hata üç kez yaşandı).
+// ═══════════════════════════════════════════════════════════════════════════
+export function ParaNerede({ onKopru, baslikGoster = true }) {
+  const [veri, setVeri] = React.useState(undefined);   // undefined=yükleniyor, null=düştü
+  // "Nerede DURUYOR" ayrı bir sorudur ve cevabı zaten var: /metrics/nakit-konum.
+  // SQL'i buraya KOPYALANMADI — kopya bir gün ayrışır ve iki "kasa dökümü"
+  // doğurur (bu tam olarak PANEL'de bir kez yapılıp geri alınmış bir hata).
+  const [konum, setKonum] = React.useState(undefined);
+
+  React.useEffect(() => {
+    let iptal = false;
+    api('/para-nerede')
+      .then((d) => { if (!iptal) setVeri(d && typeof d === 'object' ? d : null); })
+      .catch(() => { if (!iptal) setVeri(null); });     // sentinel null — "0" DEĞİL
+    api('/ops/metrics/nakit-konum')
+      .then((d) => { if (!iptal) setKonum(d && typeof d === 'object' ? d : null); })
+      .catch(() => { if (!iptal) setKonum(null); });
+    return () => { iptal = true; };
+  }, []);
+
+  const kabuk = (icerik, kenar) => (
+    <div style={{
+      ...kartYuzey, padding: '15px 18px', marginBottom: 13,
+      borderLeft: `3px solid ${kenar || R.cizgi3}`,
+    }}>
+      {baslikGoster && (
+        <div style={{
+          fontFamily: F.baslik, fontSize: 13, letterSpacing: '.08em',
+          textTransform: 'uppercase', color: R.not, marginBottom: 11,
+        }}>
+          Para nerede?
+        </div>
+      )}
+      {icerik}
+    </div>
+  );
+
+  if (veri === undefined) {
+    return kabuk(<div style={{ fontSize: 12.5, color: R.not2 }}>okunuyor…</div>);
+  }
+  // ⚠️ Düşen uç "0 ₺" ya da "borç yok" diye GÖSTERİLMEZ — sahte yeşil yasağı.
+  if (veri === null || veri.hata || !Array.isArray(veri.selale) || !veri.selale.length) {
+    return kabuk(
+      <div style={{ fontSize: 12.5, color: R.amber, lineHeight: 1.6 }}>
+        ⚠ Para durumu okunamadı — bu blok boş, <b>sıfır demiyor</b>.
+        Ekrandaki diğer rakamlar bu arızadan etkilenmedi.
+      </div>,
+      R.amber,
+    );
+  }
+
+  const son = veri.selale[veri.selale.length - 1];
+  const sonTutar = son?.tutar;
+  const kenarRenk = sonTutar == null ? R.amber : sonTutar < 0 ? R.kirmiziAcik : R.yesil;
+
+  return kabuk(
+    <>
+      <div style={{ display: 'grid', gap: 1 }}>
+        {veri.selale.map((s, i) => {
+          const araToplam = !!s.ara_toplam;
+          const sonSatir = i === veri.selale.length - 1;
+          const tiklanir = !!(s.kapi && onKopru);
+          // Ara toplam negatifse kırmızı; çıkış satırları nötr kalır ki
+          // "her satır kırmızı" körlüğü doğmasın (renk bütçesi).
+          const tutarRenk = s.olculemedi
+            ? R.amber
+            : araToplam
+              ? (s.tutar < 0 ? R.kirmiziAcik : sonSatir ? R.yesil : R.krem)
+              : R.metin2;
+          return (
+            <div
+              key={s.ad}
+              onClick={tiklanir ? () => onKopru(s.kapi) : undefined}
+              title={tiklanir ? 'İlgili ekranı açar' : undefined}
+              style={{
+                display: 'grid', gridTemplateColumns: '1fr auto',
+                alignItems: 'baseline', gap: 12,
+                padding: araToplam ? '9px 8px 9px 0' : '6px 8px 6px 0',
+                borderTop: araToplam ? `1px solid ${R.cizgi3}` : 'none',
+                marginTop: araToplam ? 4 : 0,
+                cursor: tiklanir ? 'pointer' : 'default',
+                borderRadius: 6,
+              }}
+            >
+              <div style={{ minWidth: 0 }}>
+                <div style={{
+                  fontSize: araToplam ? 12.5 : 12,
+                  fontWeight: araToplam ? 700 : 500,
+                  color: araToplam ? R.krem : R.metin2,
+                  letterSpacing: araToplam ? '.03em' : 0,
+                }}>
+                  {s.isaret === '-' ? '− ' : ''}{s.ad}
+                  {tiklanir && <span style={{ color: R.not3, marginLeft: 6 }}>→</span>}
+                </div>
+                {s.aciklama && (
+                  <div style={{ fontSize: 10.5, color: R.not3, marginTop: 2 }}>
+                    {s.aciklama}
+                  </div>
+                )}
+              </div>
+              <div style={{
+                fontFamily: F.mono,
+                fontSize: sonSatir ? 19 : araToplam ? 15.5 : 13,
+                fontWeight: araToplam ? 700 : 500,
+                color: tutarRenk, whiteSpace: 'nowrap',
+              }}>
+                {s.olculemedi
+                  ? 'ölçülemedi'
+                  : `${s.isaret === '-' ? '−' : ''}${fmt(Math.abs(s.tutar))}`}
+              </div>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* ── NEREDE DURUYOR — kasanın kendisi nerede bekliyor ──
+          Bu satır eskiden AYRI bir blokta ("Para Çıpası") tek cümle olarak
+          duruyordu ve içinde borç YOKTU: "Elinde 1.124.083 ₺ kesin para var,
+          11 gün dayanırsın" derken 417.878 ₺ gecikmiş ve 349.220 ₺ kart borcu
+          o cümlede hiç geçmiyordu. Aynı üç gerçek artık borçlarla AYNI KARTTA.
+          konum === undefined ise henüz okunuyor; null ise düştü ve SUSMAZ. */}
+      {konum !== undefined && (
+        <div style={{
+          marginTop: 10, paddingTop: 9, borderTop: `1px solid ${R.cizgi2}`,
+          fontSize: 11, color: R.not2, lineHeight: 1.6,
+        }}>
+          {konum === null || !konum.duraklar ? (
+            <span style={{ color: R.amber }}>
+              ⚠ Paranın hangi durakta beklediği okunamadı — kasa toplamı yine de geçerli.
+            </span>
+          ) : (
+            <>
+              <b style={{ color: R.not }}>Nerede duruyor:</b>{' '}
+              şube kasalarında {fmt(konum.duraklar.sube_kasalarinda_tl)} ·{' '}
+              yolda {fmt(konum.duraklar.yolda_tl)} ·{' '}
+              bankada {fmt(konum.duraklar.bankada_tl)}
+              {konum.mutabakatsiz_ciddi && konum.mutabakatsiz_tl != null && (
+                <div style={{ color: R.amber, marginTop: 3 }}>
+                  ⚠ {fmt(konum.mutabakatsiz_tl)} kayıtlarda görünüyor ama{' '}
+                  <b>yeri doğrulanmamış</b>
+                  {konum.mutabakatsiz_pay_pct != null
+                    ? ` (defterin %${Math.round(konum.mutabakatsiz_pay_pct)}'i)`
+                    : ''} — yukarıdaki kasa rakamı bu kadar iyimser olabilir.
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Uyarılar: rakam doğru ama SORU eksikse söylenir — susulmaz. */}
+      {Array.isArray(veri.uyarilar) && veri.uyarilar.length > 0 && (
+        <div style={{ marginTop: 11, display: 'grid', gap: 6 }}>
+          {veri.uyarilar.map((u) => (
+            <div key={u.tur} style={{
+              fontSize: 10.8, color: R.not2, lineHeight: 1.55,
+              paddingLeft: 9, borderLeft: `2px solid ${R.cizgi3}`,
+            }}>
+              {/* Biçimlendirme TEK yerde (fmt): sunucu ham tutar yollar. */}
+              {String(u.metin || '')
+                .replace('{tutar}', u.tutar != null ? fmt(u.tutar) : '—')
+                .replace('{adet}', u.adet != null ? String(u.adet) : '—')}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Ölçülemeyen bacak varsa bu blok "tam" diye okunmasın. */}
+      {Array.isArray(veri.eksikler) && veri.eksikler.length > 0 && (
+        <div style={{ marginTop: 9, fontSize: 10.8, color: R.amber }}>
+          ⚠ Şu bacaklar okunamadı, şelale EKSİK: {veri.eksikler.join(', ')}
+        </div>
+      )}
+    </>,
+    kenarRenk,
   );
 }

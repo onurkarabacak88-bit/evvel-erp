@@ -12,7 +12,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api, fmt, istekHatalari, istekHatalariniTemizle, istekHatasiDinle } from '../../utils/api';
 import { R, F, MODULLER, GUN_SONU_MODULLERI, TARIH_GEZGINI_EKRANLARI, kartYuzey } from './tema';
-import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu, HataBandi } from './parcalar';
+import { Ikon, KpiSeridi, Hero, Liste, Tablo, Cekmece, Toast, KopruDurumu, HataBandi, ParaNerede } from './parcalar';
 import GenelModulu from './GenelModulu';
 import KartModulu from './KartModulu';
 import OdemeModulu from './OdemeModulu';
@@ -1746,6 +1746,15 @@ export default function TasarimV2({ onGit }) {
 
     return (
       <>
+        {/* ── 💰 PARA NEREDE — ekranın İLK bloğu ────────────────────────────
+            Sahip (2026-09-27): "paranın nerede olduğu tamamen karmaşık ve
+            hatalı hale geldi; eski haldeyken daha kolay bakıyorduk, kart
+            borçlarımız da dahil."
+            AYNI bileşen BAKIŞ'ta da çağrılıyor (parcalar.jsx) — kopya DEĞİL.
+            Kopyalanırsa bir düzeltme birinde kalır ve iki ekran aynı soruya
+            farklı cevap verir; bu dosyanın geçmişinde tam bu hata var. */}
+        <ParaNerede onKopru={koprule} />
+
         {/* ── 📅 EKSİK CİRO ŞERİDİ — para rakamlarından ÖNCE ──────────────
             Sahip 2026-08-09: "panel bir şubenin cirosunu 8 Ağustos için
             gösteriyor, neden?" Panel doğruydu; TEMA o gün ciro girmemişti.

@@ -2250,8 +2250,8 @@ def odeme_plani_kovalar(cur, bugun: date = None) -> dict:
                 WHERE op.kart_id IS NULL AND op.tarih < %(b)s), 0) AS gec,
             COUNT(*) FILTER (
                 WHERE op.kart_id IS NULL AND op.tarih < %(b)s) AS gec_adet,
-            MIN(op.tarih) FILTER (
-                WHERE op.kart_id IS NULL AND op.tarih < %(b)s) AS gec_en_eski,
+            (MIN(op.tarih) FILTER (
+                WHERE op.kart_id IS NULL AND op.tarih < %(b)s))::TEXT AS gec_en_eski,
 
             COALESCE(SUM(op.odenecek_tutar) FILTER (
                 WHERE op.kart_id IS NULL
@@ -2273,7 +2273,11 @@ def odeme_plani_kovalar(cur, bugun: date = None) -> dict:
                 WHERE op.kart_id IS NOT NULL), 0) AS kart_plani,
             COUNT(*) FILTER (WHERE op.kart_id IS NOT NULL) AS kart_plani_adet,
 
-            MAX(op.tarih) FILTER (WHERE op.kart_id IS NULL) AS en_uzak_vade
+            -- ⚠️ TARİHLER AÇIKÇA ::TEXT: sürücünün date/str dönüşümüne
+            -- güvenmek yerine tek biçim. motors.py de aynı yolu kullanıyor
+            -- (`op.tarih::TEXT` + date.fromisoformat) — iki yer aynı dili
+            -- konuşsun, biri date biri str dönüp `-` operatörü patlamasın.
+            (MAX(op.tarih) FILTER (WHERE op.kart_id IS NULL))::TEXT AS en_uzak_vade
         FROM odeme_plani op
         WHERE op.durum IN ('bekliyor', 'onay_bekliyor')
           AND {PLAN_ODENMIS_GUARD}
@@ -2283,13 +2287,25 @@ def odeme_plani_kovalar(cur, bugun: date = None) -> dict:
     def _f(k):
         return float(r.get(k) or 0)
 
+    def _gun_farki(ham):
+        """'YYYY-MM-DD' → bugüne kaç gün. Bozuk/boş gelirse None (0 DEĞİL:
+        0 gün 'bugün vadesi' demektir, ölçülemedi demek değil)."""
+        if not ham:
+            return None
+        try:
+            return (bugun - date.fromisoformat(str(ham)[:10])).days
+        except Exception:  # noqa: BLE001
+            logging.getLogger(__name__).warning(
+                "odeme_plani_kovalar: tarih cozulemedi: %r", ham)
+            return None
+
     en_uzak = r.get("en_uzak_vade")
     gec_eski = r.get("gec_en_eski")
     return {
         "gecikmis": _f("gec"),
         "gecikmis_adet": int(r.get("gec_adet") or 0),
         "gecikmis_en_eski_tarih": str(gec_eski)[:10] if gec_eski else None,
-        "gecikmis_en_eski_gun": (bugun - gec_eski).days if gec_eski else None,
+        "gecikmis_en_eski_gun": _gun_farki(gec_eski),
         "vade_7": _f("v7"),
         "vade_7_adet": int(r.get("v7_adet") or 0),
         "vade_8_30": _f("v830"),
@@ -2297,7 +2313,7 @@ def odeme_plani_kovalar(cur, bugun: date = None) -> dict:
         # Kart ekstresi planı — ŞELALEYE GİRMEZ (kart bacağında sayılıyor).
         "kart_plani": _f("kart_plani"),
         "kart_plani_adet": int(r.get("kart_plani_adet") or 0),
-        "plan_ufku_gun": (en_uzak - bugun).days if en_uzak else None,
+        "plan_ufku_gun": (lambda g: -g if g is not None else None)(_gun_farki(en_uzak)),
     }
 
 
