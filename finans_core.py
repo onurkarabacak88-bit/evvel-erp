@@ -17,6 +17,7 @@ Kapsam:
   - Faiz tahmini
 """
 
+import logging
 from datetime import date, timedelta
 # 🔴 ZORUNLU (2026-08-17): kart_bakiye_ozeti imzası Optional/Dict/Any kullanıyor.
 # Bu satır olmadan modül, tip açıklamaları değerlendirilirken NameError veriyor →
@@ -2176,4 +2177,356 @@ def net_akis_30_gun(cur) -> dict:
         "gelir": gelir,
         "gider": gider,
         "net":   gelir - gider,
+    }
+
+
+# ══════════════════════════════════════════════════════════════════════════════
+# 💰 PARA NEREDE — TEK GERÇEK (2026-09-27)
+# ══════════════════════════════════════════════════════════════════════════════
+# SAHİBİN ŞİKÂYETİ: "Paranın nerede olduğu tamamen karmaşık ve hatalı hale
+# geldi; eski haldeyken daha kolay bakıyorduk, kart borçlarımız da dahil."
+#
+# ÖLÇÜM (canlı, 2026-09-25) şikâyeti doğruladı — aynı soruya farklı cevaplar:
+#   "ne kadar ödemem lazım?" →  222.719 (yuk_7/15/30) · 314.932 (yaklaşan liste)
+#                               · 417.878 (gecikmiş, ama ekranda "bugün" yazıyor)
+#   "kart borcum ne?"        →  /api/kartlar tek çağrıda 14 rakip toplam
+#                               (248.389 · 349.220 · 485.387 · 1.739.557 …)
+#   "elimde ne var?"         →  "Elinde 1.124.083 ₺ kesin para var" cümlesinde
+#                               417.878 gecikmiş ve 349.220 kart borcu YOK.
+#
+# BU FONKSİYON tek bir soruyu tek bir şelale ile cevaplar ve HER SATIRIN
+# NEREDEN GELDİĞİNİ yazar. Kayıt ÜRETMEZ (öneri-only), yalnız okur.
+#
+# ⛔ ÇİFT SAYIM KAPISI: kart ekstreleri odeme_plani'na da yazılıyor
+# (`odeme_plani.kart_id` dolu satırlar — canlı örnek "Kart ekstre: Ziraat …").
+# Kart borcu şelalede kart bacağından geldiği için, plan bacağı kart_id dolu
+# satırları AYRI kovaya alır ve şelaleye SOKMAZ. Bugün canlıda bekleyen kart
+# planı yok (38 kalemin 38'i kartsız) ama yarın olursa sessizce iki kez düşmez.
+# ══════════════════════════════════════════════════════════════════════════════
+
+# Planı "zaten ödenmiş" sayan guard — motors.py'deki iki kopyanın AYNISI.
+# Sebep (motors.py'den): tüm ödeme yolları planı 'odendi' yaparken vade ayı
+# filtresi kullanır; ödeme başka ayda yapılırsa plan 'bekliyor' kalır ve borç
+# ÇİFT görünür. Kart planlarının kendi asgari guard'ı olduğu için yalnız
+# kart_id'siz satırlara uygulanır.
+PLAN_ODENMIS_GUARD = """
+    NOT (
+        op.kart_id IS NULL
+        AND EXISTS (
+            SELECT 1 FROM kasa_hareketleri kh
+            WHERE kh.kasa_etkisi = TRUE AND kh.durum = 'aktif'
+              AND (
+                    (kh.kaynak_tablo = 'odeme_plani' AND kh.kaynak_id = op.id)
+                 OR (op.kaynak_id IS NOT NULL
+                     AND kh.kaynak_tablo = op.kaynak_tablo AND kh.kaynak_id = op.kaynak_id
+                     AND DATE_TRUNC('month', kh.tarih) = DATE_TRUNC('month', op.tarih))
+              )
+        )
+    )
+"""
+
+
+def odeme_plani_kovalar(cur, bugun: date = None) -> dict:
+    """Bekleyen ödeme planını ZAMAN kovalarına ayırır — gecikmiş DAHİL.
+
+    `odeme_yuku()` ile farkı iki tanedir ve ikisi de bilinçlidir:
+      1. **Gecikmiş gizlenmiyor.** `odeme_yuku` `tarih BETWEEN bugun AND +30`
+         diyor; yani 94 gün gecikmiş 417.878 ₺ hiçbir yüke girmiyor ve
+         `serbest_nakit = kasa - t7` onu yok sayıyor.
+      2. **Ödenmiş plan elenir** (PLAN_ODENMIS_GUARD) — `odeme_yuku`'da bu guard
+         yok, motors.py'nin listelerinde var. Bu yüzden liste ile yük ayrışıyordu.
+
+    Ayrıca `plan_ufku_gun` döner: bekleyen en uzak vadenin kaç gün sonrası
+    olduğu. Canlıda bu 7 idi — bu yüzden yuk_7 = yuk_15 = yuk_30 çıkıyordu.
+    "30 günlük yük" rakamı plan tablosu 30 gün ileriye dolu DEĞİLSE yapısal
+    olarak eksiktir; ekran bunu artık yazıyor, sayı gibi sunmuyor.
+    """
+    if bugun is None:
+        bugun = bugun_tr()
+
+    cur.execute(f"""
+        SELECT
+            COALESCE(SUM(op.odenecek_tutar) FILTER (
+                WHERE op.kart_id IS NULL AND op.tarih < %(b)s), 0) AS gec,
+            COUNT(*) FILTER (
+                WHERE op.kart_id IS NULL AND op.tarih < %(b)s) AS gec_adet,
+            MIN(op.tarih) FILTER (
+                WHERE op.kart_id IS NULL AND op.tarih < %(b)s) AS gec_en_eski,
+
+            COALESCE(SUM(op.odenecek_tutar) FILTER (
+                WHERE op.kart_id IS NULL
+                  AND op.tarih BETWEEN %(b)s AND %(b)s + INTERVAL '7 days'), 0) AS v7,
+            COUNT(*) FILTER (
+                WHERE op.kart_id IS NULL
+                  AND op.tarih BETWEEN %(b)s AND %(b)s + INTERVAL '7 days') AS v7_adet,
+
+            COALESCE(SUM(op.odenecek_tutar) FILTER (
+                WHERE op.kart_id IS NULL
+                  AND op.tarih > %(b)s + INTERVAL '7 days'
+                  AND op.tarih <= %(b)s + INTERVAL '30 days'), 0) AS v830,
+            COUNT(*) FILTER (
+                WHERE op.kart_id IS NULL
+                  AND op.tarih > %(b)s + INTERVAL '7 days'
+                  AND op.tarih <= %(b)s + INTERVAL '30 days') AS v830_adet,
+
+            COALESCE(SUM(op.odenecek_tutar) FILTER (
+                WHERE op.kart_id IS NOT NULL), 0) AS kart_plani,
+            COUNT(*) FILTER (WHERE op.kart_id IS NOT NULL) AS kart_plani_adet,
+
+            MAX(op.tarih) FILTER (WHERE op.kart_id IS NULL) AS en_uzak_vade
+        FROM odeme_plani op
+        WHERE op.durum IN ('bekliyor', 'onay_bekliyor')
+          AND {PLAN_ODENMIS_GUARD}
+    """, {"b": bugun})
+    r = dict(cur.fetchone() or {})
+
+    def _f(k):
+        return float(r.get(k) or 0)
+
+    en_uzak = r.get("en_uzak_vade")
+    gec_eski = r.get("gec_en_eski")
+    return {
+        "gecikmis": _f("gec"),
+        "gecikmis_adet": int(r.get("gec_adet") or 0),
+        "gecikmis_en_eski_tarih": str(gec_eski)[:10] if gec_eski else None,
+        "gecikmis_en_eski_gun": (bugun - gec_eski).days if gec_eski else None,
+        "vade_7": _f("v7"),
+        "vade_7_adet": int(r.get("v7_adet") or 0),
+        "vade_8_30": _f("v830"),
+        "vade_8_30_adet": int(r.get("v830_adet") or 0),
+        # Kart ekstresi planı — ŞELALEYE GİRMEZ (kart bacağında sayılıyor).
+        "kart_plani": _f("kart_plani"),
+        "kart_plani_adet": int(r.get("kart_plani_adet") or 0),
+        "plan_ufku_gun": (en_uzak - bugun).days if en_uzak else None,
+    }
+
+
+def kart_borc_kanonik(cur) -> dict:
+    """Kart borcunun TEK rakamı — `kart_bakiye_ozeti().anlik_borc` toplamı.
+
+    Neden bu alan: `kart_bakiye_ozeti` docstring'i (KANONİK MODEL, ADIM 4/12)
+    dokuz ismi ayırdıktan sonra `anlik_borc` için aynen *"← EKRANDAKİ SAYI"*
+    diyor. O model kuruldu ama tüketiciler ona HİÇ taşınmadı (ADIM 9); bu
+    yüzden bugün /api/kartlar tek çağrıda 14 farklı toplam döndürüyor. Burası
+    ADIM 9'un para görünümü için yapılmış hâlidir.
+
+    ⚠️ NEGATİF BAKİYE SESSİZCE YUTULMAZ. Canlıda bir kart -10.270,23 ₺ (fazla
+    ödenmiş = alacak). `borc-kocu` onu atlıyor, `/api/kartlar` topluyor; ikisi
+    arasındaki 10.270 ₺ fark tam olarak bu. Artık borç toplamına karışmaz,
+    `fazla_odenmis` diye AYRI yazılır.
+    ⚠️ |x| < 0,01 ₺ float artığıdır (canlıda -2e-16 ve 0,00333 gördük) → 0.
+    """
+    cur.execute("""
+        SELECT id::text AS id, kart_adi, banka, faiz_orani
+          FROM kartlar
+         WHERE COALESCE(aktif, TRUE) = TRUE
+         ORDER BY kart_adi
+    """)
+    kartlar = [dict(r) for r in cur.fetchall()]
+
+    borc = 0.0
+    fazla = 0.0
+    faiz = 0.0
+    kalemler = []
+    okunamayan = []
+    for k in kartlar:
+        try:
+            oz = kart_bakiye_ozeti(cur, k["id"])
+        except Exception as e:  # noqa: BLE001
+            okunamayan.append(k.get("kart_adi") or k["id"])
+            logging.getLogger(__name__).warning(
+                "para-nerede: kart bakiyesi okunamadi (%s): %s", k.get("kart_adi"), str(e)[:150])
+            continue
+        if not isinstance(oz, dict) or oz.get("hata"):
+            okunamayan.append(k.get("kart_adi") or k["id"])
+            continue
+        anlik = float(oz.get("anlik_borc") or 0)
+        if abs(anlik) < 0.01:
+            anlik = 0.0
+        kf = 0.0
+        if anlik > 0:
+            borc += anlik
+            try:
+                kf = float(kart_faiz_tahmini(float(k.get("faiz_orani") or 0), anlik))
+            except Exception:  # noqa: BLE001
+                kf = 0.0
+            faiz += kf
+        elif anlik < 0:
+            fazla += -anlik
+        kalemler.append({
+            "kart_id": k["id"],
+            "kart_adi": k.get("kart_adi"),
+            "banka": k.get("banka"),
+            "anlik_borc": round(anlik, 2),
+            "aylik_faiz": round(kf, 2),
+            "mutabakat_farki": round(float(oz.get("mutabakat_farki") or 0), 2),
+        })
+
+    kalemler.sort(key=lambda x: -x["anlik_borc"])
+    return {
+        "anlik_borc": round(borc, 2),
+        "fazla_odenmis": round(fazla, 2),
+        "aylik_faiz": round(faiz, 2),
+        "kart_adet": len(kartlar),
+        "borclu_kart_adet": sum(1 for x in kalemler if x["anlik_borc"] > 0),
+        "kalemler": kalemler,
+        "okunamayan": okunamayan,
+    }
+
+
+def para_nerede(cur) -> dict:
+    """💰 "Param nerede, ne kadarı gerçekten benim?" — TEK ŞELALE, TEK CEVAP.
+
+    Eski klasik ekran (Panel.jsx) tek bir hero sayı gösteriyordu: "Kasa".
+    Sahibin "eski hali daha kolaydı" dediği kolaylık buydu — ama o sayı da
+    gecikmiş borcu ve kart borcunu içermiyordu. Bu fonksiyon o kolaylığı geri
+    verir (tek kolon, yukarıdan aşağı çıkarma) ama DOĞRU olarak:
+
+        KASA (defter)
+        − gecikmiş ödemeler
+        − önümüzdeki 7 günün vadesi
+        = BİR HAFTA SONRA ELDE KALAN
+        − kart anlık borcu
+        = HER ŞEY ÖDENİRSE ELDE KALAN
+
+    Kayıt üretmez. Bir bacak okunamazsa sayı UYDURULMAZ: `eksikler` listesine
+    yazılır ve o satır `null` döner ("sessizlik iyi haber değildir").
+    """
+    bugun = bugun_tr()
+    eksikler = []
+
+    def _dene(ad, fn, yedek=None):
+        try:
+            return fn()
+        except Exception as e:  # noqa: BLE001
+            eksikler.append(ad)
+            logging.getLogger(__name__).warning(
+                "para-nerede: %s okunamadi: %s", ad, str(e)[:200])
+            return yedek
+
+    kasa = _dene("kasa", lambda: round(kasa_bakiyesi(cur), 2))
+    kovalar = _dene("odeme_plani", lambda: odeme_plani_kovalar(cur, bugun), {})
+    kart = _dene("kart_borcu", lambda: kart_borc_kanonik(cur), {})
+
+    gecikmis = kovalar.get("gecikmis")
+    vade_7 = kovalar.get("vade_7")
+    kart_borc_tl = kart.get("anlik_borc")
+
+    hafta_sonrasi = None
+    if kasa is not None and gecikmis is not None and vade_7 is not None:
+        hafta_sonrasi = round(kasa - gecikmis - vade_7, 2)
+
+    her_sey = None
+    if hafta_sonrasi is not None and kart_borc_tl is not None:
+        her_sey = round(hafta_sonrasi - kart_borc_tl, 2)
+
+    # Dayanıklılık: aynı payda (gunluk_nakit_yuku) — istemci bölme yapmaz.
+    dayanir_kasa = _dene("dayaniklilik", lambda: kac_gun_dayanir(cur))
+    dayanir_gercek = None
+    if hafta_sonrasi is not None:
+        dayanir_gercek = _dene(
+            "dayaniklilik_gercek",
+            lambda: kac_gun_dayanir_tutarla(cur, max(hafta_sonrasi, 0)),
+        )
+
+    # ── ŞELALE: ekran kendi aritmetiğini kurmasın, satırlar hazır gelsin ──
+    selale = []
+
+    def _satir(ad, tutar, isaret, kapi=None, aciklama=None, ara_toplam=False):
+        selale.append({
+            "ad": ad,
+            "tutar": tutar,
+            "isaret": isaret,          # '+' | '-' | '='
+            "kapi": kapi,              # v2 modül anahtarı (tıklanınca açılacak ekran)
+            "aciklama": aciklama,
+            "ara_toplam": ara_toplam,
+            "olculemedi": tutar is None,
+        })
+
+    _satir("Kasa (defterin dediği)", kasa, "+", "__modul:genel:akis",
+           "kasa_hareketleri toplamı — nakit/havale ayrımı yok, kasa tek havuz")
+    _satir(
+        "Gecikmiş ödemeler", gecikmis, "-", "__modul:odeme:bekleyen",
+        (f"{kovalar.get('gecikmis_adet')} kalem · en eskisi "
+         f"{kovalar.get('gecikmis_en_eski_gun')} gün gecikmiş")
+        if kovalar.get("gecikmis_adet") else "gecikmiş ödeme yok",
+    )
+    _satir(
+        "Önümüzdeki 7 günün vadesi", vade_7, "-", "__modul:odeme:takvim",
+        f"{kovalar.get('vade_7_adet')} kalem",
+    )
+    _satir("BİR HAFTA SONRA ELDE KALAN", hafta_sonrasi, "=", None,
+           (f"bu parayla {dayanir_gercek} gün dayanırsın"
+            if dayanir_gercek is not None else None), ara_toplam=True)
+    _satir(
+        "Kart anlık borcu", kart_borc_tl, "-", "__modul:kart:kartlar",
+        (f"{kart.get('borclu_kart_adet')} kart · aylık "
+         f"{kart.get('aylik_faiz')} ₺ faiz işliyor")
+        if kart.get("borclu_kart_adet") else "kart borcu yok",
+    )
+    _satir("HER ŞEY ÖDENİRSE ELDE KALAN", her_sey, "=", None, None, ara_toplam=True)
+
+    # ── UYARILAR: rakamın kendisi doğru ama SORU eksikse söyle ──
+    uyarilar = []
+    ufuk = kovalar.get("plan_ufku_gun")
+    if ufuk is not None and ufuk < 30:
+        uyarilar.append({
+            "tur": "plan_ufku",
+            "metin": (f"Ödeme planı yalnız {ufuk} gün ileriye dolu. Bu yüzden "
+                      f"panelde 7 / 15 / 30 günlük yük AYNI rakam çıkıyor — "
+                      f"30 günlük yük eksik ölçüm, düşük tahmin."),
+        })
+    # ⚠️ Tutarlar HAM döner; Türkçe biçimlendirme (binlik nokta, ondalık virgül)
+    # istemcinin işidir. Sunucuda `f"{x:,.2f}"` + replace zinciri kurmak
+    # 1.234,56 ile 1,234.56'yı bir gün karıştırır — biçim tek yerde (fmt).
+    if kovalar.get("vade_8_30"):
+        uyarilar.append({
+            "tur": "vade_8_30",
+            "tutar": kovalar["vade_8_30"],
+            "adet": kovalar.get("vade_8_30_adet"),
+            "metin": ("8–30 gün arasında ayrıca {tutar} ({adet} kalem) vadesi "
+                      "geliyor — şelalede yok, bir haftadan sonrasını ilgilendirir."),
+        })
+    if kart.get("fazla_odenmis"):
+        uyarilar.append({
+            "tur": "kart_fazla",
+            "tutar": kart["fazla_odenmis"],
+            "metin": ("Bir veya daha çok kartta {tutar} FAZLA ödeme var (alacak). "
+                      "Borç toplamına karıştırılmadı."),
+        })
+    if kovalar.get("kart_plani_adet"):
+        uyarilar.append({
+            "tur": "kart_plani",
+            "metin": (f"{kovalar['kart_plani_adet']} kart ekstresi ödeme planında "
+                      f"da bekliyor; çift saymamak için şelaleye eklenmedi "
+                      f"(kart bacağında sayılıyor)."),
+        })
+    if kart.get("okunamayan"):
+        uyarilar.append({
+            "tur": "kart_okunamadi",
+            "metin": ("Şu kartların bakiyesi okunamadı, borç toplamı EKSİK: "
+                      + ", ".join(str(x) for x in kart["okunamayan"])),
+        })
+
+    return {
+        "uretildi": str(bugun),
+        "kasa": kasa,
+        "gecikmis": gecikmis,
+        "gecikmis_adet": kovalar.get("gecikmis_adet"),
+        "gecikmis_en_eski_gun": kovalar.get("gecikmis_en_eski_gun"),
+        "vade_7": vade_7,
+        "vade_7_adet": kovalar.get("vade_7_adet"),
+        "vade_8_30": kovalar.get("vade_8_30"),
+        "vade_8_30_adet": kovalar.get("vade_8_30_adet"),
+        "plan_ufku_gun": ufuk,
+        "kart": kart,
+        "hafta_sonrasi": hafta_sonrasi,
+        "her_sey_odenirse": her_sey,
+        "dayanir_gun_kasayla": dayanir_kasa,
+        "dayanir_gun_gercek": dayanir_gercek,
+        "selale": selale,
+        "uyarilar": uyarilar,
+        "eksikler": eksikler,
+        "not": ("Öneri-only: kayıt üretmez, yalnız mevcut defterleri okur. "
+                "Kart rakamı kanonik `anlik_borc`tır (kart_bakiye_ozeti)."),
     }

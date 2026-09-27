@@ -246,6 +246,17 @@ except Exception as _bakis_olcum_err:
     logging.getLogger(__name__).warning(
         f"bakis_olcum modulu yuklenemedi (izole, ana akis etkilenmez): {_bakis_olcum_err}"
     )
+# 💰 PARA NEREDE — İZOLE okuma ucu (2026-09-27). Sahip "paranın nerede olduğu
+# karmaşık ve hatalı" dedi; ölçüm doğruladı (aynı soruya 3, kart borcuna 14
+# farklı cevap). Tek şelale tek cevap. Yazma YOK, tablo YOK; çökse ana akış
+# etkilenmez.
+try:
+    from para_nerede_api import router as para_nerede_router
+    app.include_router(para_nerede_router)
+except Exception as _para_nerede_err:
+    logging.getLogger(__name__).warning(
+        f"para_nerede modulu yuklenemedi (izole, ana akis etkilenmez): {_para_nerede_err}"
+    )
 # OPS ÖLÇÜM — "iş kuyruğu işe yarıyor mu?" (2026-08-27). AYRI modül, AYRI iki
 # tablo. bakis_olcum'a yazılmadı: onun ozet sorguları `gorunum`a göre süzmüyor,
 # OPS oturumları oraya girseydi BAKIŞ'ın M1-M5 medyanları iki farklı ekranın
