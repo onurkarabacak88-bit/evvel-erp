@@ -27,7 +27,8 @@ import { HataBandi } from './parcalar';
 
 const AY = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const GUNLER = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
-const fmt = (n) => Math.round(Number(n) || 0).toLocaleString('tr-TR');
+// Kuruş görünür (Codex): 999,75 ₺ "1.000" diye yuvarlanmaz.
+const fmt = (n) => (Number(n) || 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 });
 const tl = (n) => `${fmt(n)} ₺`;
 const tUzun = (s) => { if (!s) return ''; const p = s.split('-'); return `${+p[2]} ${AY[+p[1] - 1]}`; };
 const tKisa = (s) => tUzun(s).replace(/(\S+)$/, (m) => m.slice(0, 3));
@@ -121,17 +122,18 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit }) {
   if (h.tur === 'dis') { ust = h.alt_ad + (h.kimden ? ` · ${h.kimden}` : ''); alt = `${cepAd(h.cep)} cebine girdi${h.not_ ? ` · ${h.not_}` : ''}`; renk = R.yesil; tutar = `+${tutar}`; cip = h.geri_odenecek ? <Cip tur="sari">geri ödenecek</Cip> : null; cipTur = 'yesil'; }
   if (h.tur === 'teslim') {
     ust = `${cepAd(h.kaynak)} → ${cepAd(h.hedef)}`;
+    alt = 'Şube kasasından çıktı · patron "aldım" deyince evine girer';
     cip = h.durum !== 'onaylandi' ? <Cip tur="sari">onay bekliyor</Cip>
-      : (h.alinan !== h.tutar ? <Cip tur="kirmizi">sayılan {fmt(h.alinan)} · eksik {fmt(h.tutar - h.alinan)}</Cip> : <Cip tur="yesil">alındı</Cip>);
+      : (h.fark ? <Cip tur="kirmizi">sayılan {fmt(h.alinan)} · {h.fark > 0 ? 'eksik' : 'fazla'} {fmt(Math.abs(h.fark))}</Cip> : <Cip tur="yesil">alındı</Cip>);
+    if (h.durum === 'onaylandi' && h.onay_gunu && h.onay_gunu !== h.tarih) alt = `${tUzun(h.onay_gunu)} günü alındı — o güne kadar "yolda"`;
   }
   if (h.tur === 'tasima') { ust = `${cepAd(h.kaynak)} → ${cepAd(h.hedef)}`; }
   if (h.tur === 'sayim') {
     ust = cepAd(h.cep); alt = `Defterde ${fmt(h.beklenen)} · sayılan ${fmt(h.sayilan)}`;
-    const f = h.beklenen - h.sayilan;
-    cip = Math.abs(f) < 0.5 ? <Cip tur="yesil">tuttu</Cip> : <Cip tur="kirmizi">{fmt(Math.abs(f))} {f > 0 ? 'eksik' : 'fazla'}</Cip>;
+    cip = !h.fark ? <Cip tur="yesil">tuttu</Cip> : <Cip tur="kirmizi">{fmt(Math.abs(h.fark))} {h.fark > 0 ? 'eksik' : 'fazla'}</Cip>;
   }
   if (h.tur === 'cozum') {
-    const zarar = ['kayip', 'harcandi'].includes(h.sebep);
+    const zarar = h.zarar;
     ust = h.sebep_ad; alt = `${h.fark_ad || ''}${h.sorumlu ? ` · sorumlu: ${h.sorumlu}` : ''}${h.not_ ? ` · ${h.not_}` : ''}`;
     renk = zarar ? R.kirmizi : R.krem; tutar = zarar ? `−${fmt(Math.abs(h.f))}` : fmt(Math.abs(h.f));
   }
@@ -143,7 +145,7 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit }) {
     <div style={{ ...kart, padding: '9px 13px', display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: 10, alignItems: 'center' }}>
       <Cip tur={h.tur === 'odeme' ? 'kirmizi' : cipTur}>{TUR_AD[h.tur]}</Cip>
       <div style={{ minWidth: 0 }}>
-        <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>{ust} {cip}{h.eski_sistem && <Cip>eski sistemden</Cip>}</div>
+        <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>{ust} {cip}{h.eski_sistem && <Cip>eski sistemden</Cip>}{h.kaydeden && <span style={{ fontSize: 11, color: R.not2, fontWeight: 400 }}>· {h.kaydeden}</span>}</div>
         {alt && <div style={{ fontSize: 11.5, color: R.not }}>{alt}</div>}
       </div>
       <span style={{ ...num, fontSize: 15, fontWeight: 600, color: renk }}>{tutar}</span>
@@ -237,7 +239,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
     <Alan etiket="Gün"><input type="date" value={d.is_gunu} min={veri.baslangic} max={veri.bugun} onChange={set('is_gunu')} style={alanStil} /></Alan>
   );
   const tutarAlani = (etiket = 'Tutar (₺)') => (
-    <Alan etiket={etiket}><input type="number" min="0" step="1" inputMode="numeric" value={d.tutar || ''} onChange={set('tutar')} style={alanStil} /></Alan>
+    <Alan etiket={etiket}><input type="number" min="0" step="0.01" inputMode="decimal" value={d.tutar || ''} onChange={set('tutar')} style={alanStil} /></Alan>
   );
   const izgara = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 10 };
   const secili = d.parcalar.map((p) => p.cep);
@@ -264,7 +266,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
             <Alan etiket="Şube"><select value={d.cep} onChange={set('cep')} style={alanStil}>{secenek(['sube'])}</select></Alan>
             {gunAlani}
             {tutarAlani('Nakit (₺)')}
-            <Alan etiket="Kart / online (₺)" ipucu="Bankaya geçer, nakde girmez"><input type="number" min="0" value={d.kart || ''} onChange={set('kart')} style={alanStil} /></Alan>
+            <Alan etiket="Kart / online (₺)" ipucu="Bankaya geçer, nakde girmez"><input type="number" min="0" step="0.01" value={d.kart || ''} onChange={set('kart')} style={alanStil} /></Alan>
           </div>
         </>)}
 
@@ -293,7 +295,9 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         {tip === 'tasima' && (
           <div style={izgara}>
             <Alan etiket="Nereden"><select value={d.kaynak} onChange={set('kaynak')} style={alanStil}>{secenek(null, true)}</select></Alan>
-            <Alan etiket="Nereye"><select value={d.hedef} onChange={set('hedef')} style={alanStil}>{secenek(['ev', 'hesap'])}</select></Alan>
+            <Alan etiket="Nereye" ipucu={(cepler.find((c) => c.id === d.kaynak) || {}).tur === 'sube' ? 'Şubeden patrona para TESLİM ile geçer' : null}>
+              <select value={d.hedef} onChange={set('hedef')} style={alanStil}>{secenek((cepler.find((c) => c.id === d.kaynak) || {}).tur === 'sube' ? ['hesap'] : null)}</select>
+            </Alan>
             {tutarAlani()}{gunAlani}
           </div>
         )}
@@ -302,7 +306,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
           <div style={izgara}>
             <Alan etiket="Neresi sayıldı"><select value={d.cep} onChange={set('cep')} style={alanStil}>{secenek(null)}</select></Alan>
             {gunAlani}
-            <Alan etiket="Sayılan (₺)"><input type="number" min="0" value={d.sayilan ?? ''} onChange={set('sayilan')} style={alanStil} /></Alan>
+            <Alan etiket="Sayılan (₺)"><input type="number" min="0" step="0.01" value={d.sayilan ?? ''} onChange={set('sayilan')} style={alanStil} /></Alan>
           </div>
           {sayimDefter !== null && (() => {
             const s = d.sayilan === undefined || d.sayilan === '' ? null : Number(d.sayilan);
@@ -331,7 +335,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
                 <option value="">Cep seç</option>
                 {cepler.map((c) => <option key={c.id} value={c.id} disabled={(secili.includes(c.id) && p.cep !== c.id) || (bak[c.id] || 0) < 0.5}>{c.ad} · {(bak[c.id] || 0) < 0.5 ? 'boş' : `${fmt(bak[c.id])} ₺`}</option>)}
               </select>
-              <input type="number" min="0" placeholder="Tutar" value={p.tutar} onChange={(e) => setD((x) => ({ ...x, parcalar: x.parcalar.map((q, j) => (j === i ? { ...q, tutar: e.target.value } : q)) }))} style={alanStil} />
+              <input type="number" min="0" step="0.01" placeholder="Tutar" value={p.tutar} onChange={(e) => setD((x) => ({ ...x, parcalar: x.parcalar.map((q, j) => (j === i ? { ...q, tutar: e.target.value } : q)) }))} style={alanStil} />
               <Dugme kucuk onClick={() => setD((x) => ({ ...x, parcalar: x.parcalar.filter((_, j) => j !== i) }))}>Sil</Dugme>
             </div>
           ))}
@@ -396,23 +400,32 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
   const [form, setForm] = useState(null);
   const yigin = useRef([]);
   const islerRef = useRef(null);
+  // ⚠️ İSTEK SIRASI (Codex): gün hızlı değişince eski yanıt yenisini ezmesin.
+  const istekNo = useRef(0);
+  const cekmeceNo = useRef(0);
+  const [sonYukleme, setSonYukleme] = useState(null);
 
   const yukle = useCallback(async () => {
+    const no = ++istekNo.current;
     setHata(null);
     try {
-      setVeri(await api(`/para-izi/durum?gun=${gun}${hepsi ? '&hepsi=true' : ''}`));
-    } catch (e) { setHata(e?.message || 'okunamadı'); }
+      const r = await api(`/para-izi/durum?gun=${gun}${hepsi ? '&hepsi=true' : ''}`);
+      if (no !== istekNo.current) return;
+      setVeri(r); setSonYukleme(new Date());
+    } catch (e) { if (no === istekNo.current) setHata(e?.message || 'okunamadı'); }
   }, [gun, hepsi]);
   useEffect(() => { yukle(); }, [yukle]);
   useEffect(() => { try { localStorage.setItem('paraIziGun', gun); } catch { /* yut */ } }, [gun]);
   useEffect(() => () => onCekmece?.(null), []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const cepAd = (id) => (veri?.cepler.find((c) => c.id === id) || {}).ad || id;
-  const formAc = (tip, ek = {}) => { onCekmece?.(null); setForm({ tip, ...ek }); };
+  // Formu çekmeceden açınca kapanışta aynı çekmeceye geri dönülür (Codex: geldiği yere dönemiyordu).
+  const formAc = (tip, ek = {}, donus = null) => { cekmeceNo.current += 1; onCekmece?.(null); setForm({ tip, ...ek, donus }); };
   const teyit = async (id) => {
     try { await api(`/para-izi/hareket/${id}/onay`, { method: 'POST', body: {} }); onToast?.('Onaylandı'); yukle(); } catch (e) { onToast?.(e.message); }
   };
   const teslimAl = async (id, sayilan) => {
+    if (sayilan === '' || sayilan == null || Number.isNaN(Number(sayilan))) { onToast?.('Önce saydığın tutarı yaz'); return; }
     try { await api(`/para-izi/hareket/${id}/onay`, { method: 'POST', body: { alinan: Number(sayilan) } }); onToast?.('Teslim alındı'); yukle(); } catch (e) { onToast?.(e.message); }
   };
 
@@ -420,6 +433,8 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
   const cekmeceAc = useCallback(async (g, kok) => {
     if (kok) yigin.current = [];
     yigin.current.push(g);
+    const no = ++cekmeceNo.current;
+    const guncel = () => no === cekmeceNo.current;
     const onc = yigin.current[yigin.current.length - 2];
     const geri = onc ? { ad: onc.ad, onTikla: () => { yigin.current.pop(); const p = yigin.current.pop(); cekmeceAc(p, false); } } : undefined;
     const temel = { geri, onKapat: () => onCekmece?.(null) };
@@ -427,6 +442,7 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
     try {
       if (g.tur === 'cep') {
         const r = await api(`/para-izi/cep/${encodeURIComponent(g.id)}?gun=${gun}${hepsi ? '&hepsi=true' : ''}`);
+        if (!guncel()) return;
         const c = r.cep;
         g.ad = c.ad;
         onCekmece?.({
@@ -434,7 +450,7 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
           alt: hepsi ? 'Şu an' : `${tUzun(gun)} akşamı`,
           kpi: [
             { etiket: 'Bakiye', deger: tl(c.bakiye), renk: R.krem },
-            { etiket: 'Gelen', deger: tl(r.gelen_toplam), renk: R.yesil },
+            { etiket: 'Gelen', deger: tl(c.gelen_toplam), renk: R.yesil },
             { etiket: 'Çıkan', deger: tl(c.cikan), renk: R.kirmizi },
           ],
           not: [...c.kirmizi.map((t) => `🔴 ${t}`), ...c.sari.map((t) => `🟡 ${t}`)].join(' · ') || 'Sorun yok.',
@@ -450,10 +466,11 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
             })),
           ],
           iz: r.iz.map((x) => ({ ad: `${x.etiket} · ${x.d < 0 ? '−' : '+'}${fmt(Math.abs(x.d))}`, detay: `bakiye ${tl(x.bakiye)}${x.fark ? ' · fark var' : ''}`, zaman: tUzun(x.tarih), renk: x.d < 0 ? R.kirmizi : R.yesil })),
-          aksiyonlar: [{ ad: 'Bu cebi say', birincil: true, onTikla: () => formAc('sayim', { cep: c.id }) }],
+          aksiyonlar: [{ ad: 'Bu cebi say', birincil: true, onTikla: () => formAc('sayim', { cep: c.id }, { tur: 'cep', id: c.id, ad: c.ad }) }],
         });
       } else if (g.tur === 'fark') {
         const f = await api(`/para-izi/fark/${g.id}`);
+        if (!guncel()) return;
         g.ad = f.ad;
         onCekmece?.({
           ...temel, tip: f.tur === 'teslim' ? 'TESLİM FARKI' : 'SAYIM FARKI', baslik: f.ad, alt: tUzun(f.tarih),
@@ -461,24 +478,27 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
             { etiket: f.f > 0 ? 'Eksik' : 'Fazla', deger: tl(Math.abs(f.f)), renk: R.kirmizi },
             { etiket: 'Durum', deger: f.coz ? 'Kapandı' : 'Açık', renk: f.coz ? R.yesil : R.kirmizi },
           ],
-          not: f.coz ? `${f.coz.sebep_ad} · ${tUzun(f.coz.tarih)}${f.coz.sorumlu ? ` · sorumlu: ${f.coz.sorumlu}` : ''}${f.coz.not ? `\n${f.coz.not}` : ''}`
+          not: f.coz ? `${f.coz.sebep_ad} · ${tUzun(f.coz.tarih)}${f.coz.sorumlu ? ` · sorumlu: ${f.coz.sorumlu}` : ''}${f.coz.kaydeden ? ` · kaydeden: ${f.coz.kaydeden}` : ''}${f.coz.not ? ` · ${f.coz.not}` : ''}`
             : 'Para silinmedi, gider de sayılmadı. Sebebi bulunana kadar "açık fark" olarak bekliyor.',
           listeBaslik: 'İlgili cepler',
           satirlar: [
             { ad: 'Farkın görüldüğü yer', detay: f.cep_ad, onTikla: () => cekmeceAc({ tur: 'cep', id: f.cep, ad: f.cep_ad }, false) },
             ...(f.sube_cep ? [{ ad: 'Teslim eden', detay: f.sube_cep_ad, onTikla: () => cekmeceAc({ tur: 'cep', id: f.sube_cep, ad: f.sube_cep_ad }, false) }] : []),
           ],
-          aksiyonlar: f.coz ? [] : [{ ad: 'Farkı çöz', birincil: true, onTikla: () => formAc('coz', { id: f.id }) }],
+          aksiyonlar: f.coz ? [] : [{ ad: 'Farkı çöz', birincil: true, onTikla: () => formAc('coz', { id: f.id }, { tur: 'fark', id: f.id, ad: f.ad }) }],
         });
       } else if (g.tur === 'acik') {
         const a = await api('/para-izi/acik-defter');
+        if (!guncel()) return;
         const acik = a.farklar.filter((x) => !x.coz);
         onCekmece?.({
           ...temel, tip: 'AÇIK FARKLAR DEFTERİ', baslik: 'Açık farklar', alt: 'Gün gün toplam açık · İz sekmesinde',
           kpi: [
-            { etiket: 'Şu an açık', deger: tl(a.acik), renk: a.acik > 0.5 ? R.kirmizi : R.yesil },
-            { etiket: 'Çözülmemiş', deger: `${acik.length} fark`, renk: R.krem },
+            { etiket: 'Açık eksik', deger: tl(a.acik_eksik), renk: a.acik_eksik ? R.kirmizi : R.yesil },
+            { etiket: 'Açık fazla', deger: tl(a.acik_fazla), renk: a.acik_fazla ? R.amber : R.yesil },
+            { etiket: 'Çözülmemiş', deger: `${acik.length} fark`, renk: acik.length ? R.kirmizi : R.yesil },
             { etiket: 'Kayba yazılan', deger: tl(a.kayip), renk: R.kirmizi },
+            { etiket: 'Kayıtsız harcama', deger: tl(a.harcanan), renk: R.amber },
           ],
           listeBaslik: 'Farklar · çözülmemişler önce',
           satirlar: [...acik, ...a.farklar.filter((x) => x.coz)].map((x) => ({
@@ -488,12 +508,13 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
           not: a.farklar.length ? null : 'Henüz hiç fark yok.',
           iz: a.gun_gun.slice().reverse().map((x) => ({
             ad: `Gün sonu açık ${tl(x.gun_sonu_acik)}`, zaman: tUzun(x.gun),
-            detay: `yeni ${fmt(x.yeni)} · geri dönen ${fmt(x.geri_donen)} · kayba yazılan ${fmt(x.kayba_yazilan)} · toplam kayıp ${fmt(x.toplam_kayip)}`,
-            renk: x.gun_sonu_acik > 0.5 ? R.kirmizi : R.yesil,
+            detay: `yeni ${fmt(x.yeni)} · geri dönen ${fmt(x.geri_donen)} · kayba ${fmt(x.kayba_yazilan)} · harcamaya ${fmt(x.harcamaya_yazilan)} · toplam kayıp ${fmt(x.toplam_kayip)} · toplam kayıtsız harcama ${fmt(x.toplam_harcanan)}`,
+            renk: x.gun_sonu_acik ? R.kirmizi : R.yesil,
           })),
         });
       }
     } catch (e) {
+      if (!guncel()) return;
       onCekmece?.({ ...temel, tip: 'PARA İZİ', baslik: g.ad || 'Ayrıntı', alt: 'okunamadı', not: `Okunamadı: ${e?.message || ''}. Kayıt yok demek DEĞİL.` });
     }
   }, [gun, hepsi, onCekmece]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -506,7 +527,7 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
   const subeler = veri.cepler.filter((c) => c.tur === 'sube');
   const hesaplar = veri.cepler.filter((c) => c.tur === 'hesap');
   const acilisEksik = veri.cepler.filter((c) => !(veri.acilis_girilen || []).includes(c.id));
-  const deg = veri.onceki_toplam == null ? null : o.toplam - veri.onceki_toplam;
+  const deg = veri.degisim;
   const k = veri.kpi;
 
   return (
@@ -535,6 +556,12 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
         </div>
       </div>
 
+      {hata && veri && (
+        <div style={{ ...kart, padding: '9px 14px', borderColor: `${R.kirmizi}88`, fontSize: 12.5, color: R.kirmizi, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          Güncellenemedi: {hata}. Ekrandaki rakamlar {sonYukleme ? sonYukleme.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : 'önceki'} itibarıyla — güncel olmayabilir.
+          <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme>
+        </div>
+      )}
       {acilisEksik.length > 0 && (
         <div style={{ ...kart, padding: '10px 14px', borderColor: `${R.amber}88`, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5 }}>
           <Cip tur="sari">Başlangıç</Cip>
@@ -548,10 +575,13 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
         <div style={{ ...kart, padding: '12px 16px', background: `linear-gradient(160deg, ${R.kartUst1}, ${R.kartUst2})`, gridColumn: 'span 2', minWidth: 0 }}>
           <div style={etiketStil}>{hepsi ? 'Şu an' : `${tUzun(gun)} akşamı`} · toplam kasa (banka hariç)</div>
           <div style={{ ...num, fontSize: 30, fontWeight: 700, color: R.bakirAcik, lineHeight: 1.15 }}>{tl(o.toplam)}</div>
-          {Math.abs(o.acik) >= 0.5 && <div style={{ fontSize: 12, marginTop: 2 }}><Cip tur="kirmizi">Açık fark {fmt(o.acik)}</Cip> <span style={{ color: R.not }}>defterde {fmt(o.defter)}</span></div>}
+          {o.acik_fark_sayisi > 0 && <div style={{ fontSize: 12, marginTop: 2, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+            {o.acik_eksik > 0 && <Cip tur="kirmizi">Açık eksik {fmt(o.acik_eksik)}</Cip>}
+            {o.acik_fazla > 0 && <Cip tur="sari">Açık fazla {fmt(o.acik_fazla)}</Cip>}
+            <span style={{ color: R.not }}>defterde {fmt(o.defter)}</span></div>}
           {deg != null && <div style={{ fontSize: 12, color: R.metin2, marginTop: 2 }}>Önceki akşama göre <b style={{ ...num, color: deg < 0 ? R.kirmizi : deg > 0 ? R.yesil : R.metin2 }}>{deg > 0 ? '+' : ''}{fmt(deg)}</b></div>}
           <div style={{ display: 'flex', gap: 18, marginTop: 8, flexWrap: 'wrap' }}>
-            {[['Evler', o.ev], ['Kasalar', o.sube], ['Geçiş + yolda', o.gecis + o.yolda]].map(([a, v]) => (
+            {[['Evler', o.ev], ['Kasalar', o.sube], ['Geçiş + yolda', o.gecis_yolda]].map(([a, v]) => (
               <div key={a}><div style={etiketStil}>{a}</div><div style={{ ...num, fontSize: 15 }}>{fmt(v)}</div></div>
             ))}
           </div>
@@ -564,12 +594,13 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
         {evler.map((c) => <CepKart key={c.id} c={c} serit onAc={(id) => cekmeceAc({ tur: 'cep', id, ad: c.ad }, true)} />)}
         <button type="button" onClick={() => cekmeceAc({ tur: 'acik', ad: 'Açık farklar' }, true)} style={{
           ...kart, textAlign: 'left', cursor: 'pointer', fontFamily: 'inherit', color: R.krem, padding: '12px 14px',
-          borderLeft: `4px solid ${Math.abs(o.acik) >= 0.5 ? R.kirmizi : R.yesil}`, display: 'flex', flexDirection: 'column', gap: 3,
+          borderLeft: `4px solid ${o.acik_fark_sayisi ? R.kirmizi : R.yesil}`, display: 'flex', flexDirection: 'column', gap: 3,
         }}>
           <span style={etiketStil}>Açık farklar</span>
-          <span style={{ ...num, fontSize: 21, fontWeight: 600, color: Math.abs(o.acik) >= 0.5 ? R.kirmizi : R.krem }}>{tl(o.acik)}</span>
-          <span style={{ fontSize: 11.5, color: veri.acik_fark_sayisi ? R.kirmizi : R.not, fontWeight: 700 }}>{veri.acik_fark_sayisi ? `● ${veri.acik_fark_sayisi} fark çözülmedi` : 'Çözülmemiş fark yok'}</span>
-          <span style={{ fontSize: 11.5, color: R.not }}>Kayba yazılan {fmt(o.kayip)} ₺ · gün gün defter ›</span>
+          <span style={{ ...num, fontSize: 21, fontWeight: 600, color: o.acik_fark_sayisi ? R.kirmizi : R.krem }}>{tl(o.acik_eksik)}</span>
+          {o.acik_fazla > 0 && <span style={{ fontSize: 11.5, color: R.amber, fontWeight: 700 }}>+ {fmt(o.acik_fazla)} ₺ açık fazla</span>}
+          <span style={{ fontSize: 11.5, color: o.acik_fark_sayisi ? R.kirmizi : R.not, fontWeight: 700 }}>{o.acik_fark_sayisi ? `● ${o.acik_fark_sayisi} fark çözülmedi` : 'Çözülmemiş fark yok'}</span>
+          <span style={{ fontSize: 11.5, color: R.not }}>Kayıp {fmt(o.kayip)} · kayıtsız harcama {fmt(o.harcanan)} · gün gün ›</span>
         </button>
       </div>
 
@@ -608,6 +639,17 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
               <div key={a} style={{ ...kart, padding: '8px 11px' }}><div style={etiketStil}>{a}</div><div style={{ ...num, fontSize: 16, color: r }}>{fmt(v)}</div></div>
             ))}
           </div>
+          {(veri.gec_alimlar || []).map((x) => (
+            <div key={`al${x.id}`} style={{ ...kart, padding: '9px 13px', fontSize: 12.5, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Cip tur="yesil">Teslim alındı</Cip><b>{x.ad}</b><span style={{ color: R.not }}>{tUzun(x.teslim_gunu)} teslimi bugün eve girdi</span>
+              <span style={{ ...num, marginLeft: 'auto', color: R.yesil }}>+{fmt(x.alinan)}</span>
+            </div>
+          ))}
+          {(veri.iptaller || []).map((x) => (
+            <div key={`ip${x.id}`} style={{ ...kart, padding: '9px 13px', fontSize: 12.5, color: R.not, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Cip>İptal</Cip><span>Bir {TUR_AD[x.hedef_tur] || 'kayıt'} kaydı iptal edildi · {x.sebep}{x.kaydeden ? ` · ${x.kaydeden}` : ''}</span>
+            </div>
+          ))}
           {veri.hareketler.length === 0
             ? <div style={{ padding: 22, textAlign: 'center', color: R.not, border: `1px dashed ${R.cizgi3}`, borderRadius: 12 }}>{hepsi ? 'Henüz kayıt yok.' : `${tUzun(gun)} günü hiç hareket yok.`}</div>
             : (hepsi ? veri.hareketler.slice().reverse() : veri.hareketler).map((h, i, arr) => (
@@ -620,15 +662,16 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
       </div>
 
       {form && (
-        <FormPenceresi form={form} veri={veri} gun={hepsi ? veri.bugun : gun} onToast={onToast} onKapat={() => setForm(null)}
-          onBitti={(g) => { setForm(null); if (g) { setGun(g); setHepsi(false); } yukle(); }} />
+        <FormPenceresi form={form} veri={veri} gun={hepsi ? veri.bugun : gun} onToast={onToast}
+          onKapat={() => { const dn = form.donus; setForm(null); if (dn) cekmeceAc(dn, true); }}
+          onBitti={(g) => { const dn = form.donus; setForm(null); if (g) { setGun(g); setHepsi(false); } yukle(); if (dn) cekmeceAc(dn, true); }} />
       )}
     </div>
   );
 }
 
 function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz }) {
-  const [say, setSay] = useState(x.tutar);
+  const [say, setSay] = useState('');   // Codex: dolu gelirse saymadan onaylanır — boş başlar
   const g = Math.max(0, Math.round((new Date(`${bugun}T12:00:00`) - new Date(`${x.tarih}T12:00:00`)) / 864e5));
   const yas = g === 0 ? 'bugün' : `${g} gündür`;
   const satir = { display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10, alignItems: 'center', padding: '8px 10px', borderRadius: 9, background: R.girinti, border: `1px solid ${x.tur === 'fark' ? `${R.kirmizi}88` : R.cizgi2}` };
@@ -636,7 +679,7 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz }) {
     return (
       <div style={satir}>
         <Cip tur="sari">Kapanış onayı</Cip>
-        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Nakit <b style={num}>{fmt(x.nakit)}</b> · kart <b style={num}>{fmt(x.kart)}</b> · karşılaştır, doğruysa onayla · {yas}</div></div>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)} {x.eski_sistem && <Cip>eski sistemden</Cip>}<div style={{ fontSize: 11.5, color: R.not }}>Nakit <b style={num}>{fmt(x.nakit)}</b> · kart <b style={num}>{fmt(x.kart)}</b> · karşılaştır, doğruysa onayla · {yas}</div></div>
         <Dugme ana kucuk onClick={() => onTeyit(x.id)}>Onayla</Dugme>
       </div>
     );
@@ -647,8 +690,8 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz }) {
         <Cip tur="sari">Teslim onayı</Cip>
         <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · <span style={num}>{fmt(x.tutar)}</span> ₺<div style={{ fontSize: 11.5, color: R.not }}>{x.hedef_kisa} saydığı tutarı yazıp onaylar · {yas}</div></div>
         <span style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
-          <input type="number" min="0" value={say} onChange={(e) => setSay(e.target.value)} aria-label="Sayılan tutar" style={{ ...alanStil, width: 100, padding: '4px 7px' }} />
-          <Dugme ana kucuk onClick={() => onTeslim(x.id, say)}>{x.hedef_kisa} aldı</Dugme>
+          <input type="number" min="0" step="0.01" value={say} placeholder="saydığın" onChange={(e) => setSay(e.target.value)} aria-label="Sayılan tutar" style={{ ...alanStil, width: 110, padding: '4px 7px' }} />
+          <Dugme ana kucuk disabled={say === ''} onClick={() => onTeslim(x.id, say)}>{x.hedef_kisa} aldı</Dugme>
         </span>
       </div>
     );
