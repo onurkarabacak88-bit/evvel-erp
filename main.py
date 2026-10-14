@@ -257,6 +257,16 @@ except Exception as _para_nerede_err:
     logging.getLogger(__name__).warning(
         f"para_nerede modulu yuklenemedi (izole, ana akis etkilenmez): {_para_nerede_err}"
     )
+# 🧵 PARA İZİ (2026-10-15) — sade çekirdeğin ilk tuğlası. Sahip: "eski sistemden
+# AYRI modül olarak kur, bu aydan itibaren". Kendi 2 tablosu var, eski para
+# tablolarına HİÇ yazmaz; eskiden yalnız okuyarak tek yönlü aktarır.
+try:
+    from para_izi_api import router as para_izi_router
+    app.include_router(para_izi_router)
+except Exception as _para_izi_err:
+    logging.getLogger(__name__).warning(
+        f"para_izi modulu yuklenemedi (izole, ana akis etkilenmez): {_para_izi_err}"
+    )
 # OPS ÖLÇÜM — "iş kuyruğu işe yarıyor mu?" (2026-08-27). AYRI modül, AYRI iki
 # tablo. bakis_olcum'a yazılmadı: onun ozet sorguları `gorunum`a göre süzmüyor,
 # OPS oturumları oraya girseydi BAKIŞ'ın M1-M5 medyanları iki farklı ekranın
