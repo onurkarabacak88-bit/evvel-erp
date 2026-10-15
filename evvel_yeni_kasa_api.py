@@ -1526,6 +1526,12 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
             r = dict(r)
             # Sahip (2026-10-16): Evo'nun ürettiği taslak = şube KAPANIŞ YAPMAMIŞ; ayrı işaretlenir
             evo = "evo" in str(r.get("gonderen_ad") or "").lower()
+            if evo and (str(r["sube_id"]), r["tarih"]) not in gunluk:
+                # Sahip (2026-10-16): "Evo'yu kaldır" → Evo YENİ VERİ KAYNAĞI DEĞİL. Daha önce gelenler
+                # sarı "Evo tahmini" etiketiyle kalır ("Gerçeğini gir" ile değişir); yenisi ALINMAZ —
+                # o gün "Kapanış YOK" uyarısı olur ve şubeden istenir.
+                rapor.setdefault("evo_alinmadi", []).append({"gun": r["tarih"].isoformat(), "sube_id": str(r["sube_id"])})
+                continue
             gunluk.setdefault((str(r["sube_id"]), r["tarih"]),
                               (r["nakit"] or 0, (r["pos"] or 0, r["online"] or 0), "bekliyor", "evo_taslak" if evo else "taslak"))
         for (sid, gun_), (n, k, durum_, kaynak_) in sorted(gunluk.items(), key=lambda x: (x[0][1], x[0][0])):
