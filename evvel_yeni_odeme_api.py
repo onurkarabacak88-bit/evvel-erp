@@ -26,7 +26,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 from decimal import Decimal
 
-from database import db, savepoint
+from database import db
 from evvel_yeni_kasa_api import (_aktor, _hareket_dto, _bakiye, _baslangic, _bugun, _eksi_denetle, _etki, _hazirla, _kilit,
                                  _kilit_denetle, _kurus, _olaylar, _sahte, _sayim_kilidi, _tl, _tl_sayi, _yaz, _yukle)
 
@@ -47,19 +47,9 @@ PERSONEL_KALEMLERI = ["Maaş", "Avans", "Yemek ücreti", "Prim", "SGK / vergi"]
 
 
 def _listeler(cur) -> dict:
-    out = {"toptancilar": [], "personel": [], "kartlar": []}
-    for ad, sql in (
-        ("toptancilar", "SELECT id, ad, kategori FROM tedarikciler WHERE COALESCE(aktif, TRUE) ORDER BY ad"),
-        ("personel", "SELECT id, ad_soyad AS ad, sube_id, gorev, yemek_ucreti FROM personel WHERE COALESCE(aktif, TRUE) ORDER BY ad_soyad"),
-        ("kartlar", "SELECT id, kart_adi AS ad, banka FROM kartlar WHERE COALESCE(aktif, TRUE) ORDER BY kart_adi"),
-    ):
-        try:
-            with savepoint(cur, "sp_ey_liste_" + ad):
-                cur.execute(sql)
-                out[ad] = [{k: (float(v) if isinstance(v, Decimal) else v) for k, v in dict(r).items()} for r in cur.fetchall() or []]
-        except Exception:  # noqa: BLE001 — liste okunamazsa form yine açılır, alan boş kalır
-            out[ad] = []
-    return out
+    """Toptancı / personel / kart — Evvel Yeni'nin KENDİ tanımlarından (Tanımlar bölümü). Eski tablolara bağlı DEĞİL."""
+    from evvel_yeni_tanim_api import secim_listeleri
+    return secim_listeleri(cur)
 
 
 @router.get("/listeler")
@@ -295,22 +285,18 @@ def _ucret_tablosu(cur):
 
 
 def _ucret(cur, personel_id: str, ay: str) -> dict:
+    from evvel_yeni_tanim_api import tanim_hazirla
+    tanim_hazirla(cur)   # ey_personel_ucret + eski sistemden ilk kopya ("eski sistem kopyası")
     _ucret_tablosu(cur)
     cur.execute("""SELECT maas, yemek, gecerli_ay, degistiren FROM ey_personel_ucret
                     WHERE personel_id=%s AND gecerli_ay <= %s ORDER BY gecerli_ay DESC LIMIT 1""", (str(personel_id), ay[:7]))
     r = cur.fetchone()
-    if r:
-        r = dict(r)
-        return {"maas": int(r["maas"]), "yemek": int(r["yemek"]), "kaynak": "evvel_yeni", "gecerli_ay": r["gecerli_ay"], "degistiren": r["degistiren"]}
-    try:
-        with savepoint(cur, "sp_ey_ucret_eski"):
-            cur.execute("SELECT maas, yemek_ucreti FROM personel WHERE id::text=%s", (str(personel_id),))
-            e = cur.fetchone()
-    except Exception:  # noqa: BLE001
-        e = None
-    e = dict(e) if e else {}
-    return {"maas": _kurus(e.get("maas") or 0), "yemek": _kurus(e.get("yemek_ucreti") or 0), "kaynak": "eski_sistem",
-            "gecerli_ay": None, "degistiren": None}
+    if not r:
+        return {"maas": 0, "yemek": 0, "kaynak": "tanimsiz", "gecerli_ay": None, "degistiren": None}
+    r = dict(r)
+    eski = r["degistiren"] == "eski sistem kopyası"
+    return {"maas": int(r["maas"]), "yemek": int(r["yemek"]), "kaynak": "eski_sistem" if eski else "evvel_yeni",
+            "gecerli_ay": None if eski else r["gecerli_ay"], "degistiren": r["degistiren"]}
 
 
 @router.get("/personel-durum")

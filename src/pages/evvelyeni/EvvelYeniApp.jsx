@@ -14,6 +14,7 @@ import GelirModulu, { GELIR_SAYFALAR } from './GelirModulu';
 import GiderModulu, { GIDER_SAYFALAR } from './GiderModulu';
 import OdemeModulu, { ODEME_SAYFALAR } from './OdemeModulu';
 import KazancModulu, { KAZANC_SAYFALAR } from './KazancModulu';
+import TanimModulu, { TANIM_SAYFALAR } from './TanimModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
@@ -27,6 +28,7 @@ const BOLUMLER = [
   { ad: 'Gider', mod: 'gider', sayfalar: GIDER_SAYFALAR },
   { ad: 'Ödeme', mod: 'odeme', sayfalar: ODEME_SAYFALAR },
   { ad: 'Şube kazancı', mod: 'kazanc', sayfalar: KAZANC_SAYFALAR },
+  { ad: 'Tanımlar', mod: 'tanim', sayfalar: TANIM_SAYFALAR },
 ];
 const TUM_SAYFALAR = BOLUMLER.flatMap((b) => b.sayfalar.map((x) => ({ ...x, mod: b.mod })));
 
@@ -144,7 +146,9 @@ export default function EvvelYeniApp() {
             ))}</React.Fragment>))}
           </nav>
           <main className="piapp-ic">
-            {(TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'kazanc'
+            {(TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'tanim'
+              ? <TanimModulu gorunum={sekme} onToast={setToast} />
+              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'kazanc'
               ? <KazancModulu />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'odeme'
               ? <OdemeModulu onToast={setToast} />

@@ -300,6 +300,14 @@ except Exception as _ey_kazanc_err:
     logging.getLogger(__name__).warning(
         f"evvel_yeni_kazanc modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_kazanc_err}"
     )
+# ⚙️ EVVEL YENİ · TANIMLAR (2026-10-16) — şube/personel/banka/kart/toptancı Evvel Yeni'nin KENDİ tablolarında.
+try:
+    from evvel_yeni_tanim_api import router as evvel_yeni_tanim_router
+    app.include_router(evvel_yeni_tanim_router)
+except Exception as _ey_tanim_err:
+    logging.getLogger(__name__).warning(
+        f"evvel_yeni_tanim modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_tanim_err}"
+    )
 # OPS ÖLÇÜM — "iş kuyruğu işe yarıyor mu?" (2026-08-27). AYRI modül, AYRI iki
 # tablo. bakis_olcum'a yazılmadı: onun ozet sorguları `gorunum`a göre süzmüyor,
 # OPS oturumları oraya girseydi BAKIŞ'ın M1-M5 medyanları iki farklı ekranın

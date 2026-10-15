@@ -163,7 +163,7 @@ export default function OdemeModulu({ onToast }) {
                 <div style={{ gridColumn: '1 / -1', padding: '10px 12px', borderRadius: 10, background: 'var(--pi-accent-soft)', fontSize: 13.5, display: 'flex', flexDirection: 'column', gap: 6 }}>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
                     <span>{ayAdi(pd.ay)} hak edişi: maaş <b style={num}>{fmt(pd.ucret.maas)}</b> ₺ · yemek <b style={num}>{fmt(pd.ucret.yemek)}</b> ₺</span>
-                    <Cip tur={pd.ucret.kaynak === 'eski_sistem' ? 'sari' : undefined}>{pd.ucret.kaynak === 'eski_sistem' ? 'eski sistemden — kontrol et' : `Evvel Yeni tanımı · ${pd.ucret.gecerli_ay}'dan beri`}</Cip>
+                    <Cip tur={pd.ucret.kaynak === 'evvel_yeni' ? undefined : 'sari'}>{pd.ucret.kaynak === 'eski_sistem' ? 'eski sistemden — kontrol et' : pd.ucret.kaynak === 'tanimsiz' ? 'ücret tanımlı değil' : `Evvel Yeni tanımı · ${pd.ucret.gecerli_ay}'dan beri`}</Cip>
                     {!ucretDuz && <Dugme kucuk onClick={() => setUcretDuz({ maas: String(pd.ucret.maas || ''), yemek: String(pd.ucret.yemek || '') })}>Ücreti değiştir</Dugme>}
                   </div>
                   {ucretDuz && (

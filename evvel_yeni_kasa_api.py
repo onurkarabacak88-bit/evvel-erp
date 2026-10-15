@@ -175,23 +175,29 @@ def _hazirla() -> None:
                         "ON CONFLICT (id) DO NOTHING", (cid, ad, kisa, tur, sira))
         try:
             with savepoint(cur, "sp_pi_sube"):
-                cur.execute("SELECT id, ad FROM subeler WHERE aktif = TRUE ORDER BY ad")
-                for i, r in enumerate(cur.fetchall() or []):
-                    r = dict(r)
-                    ad = _tr_baslik((r.get("ad") or "").strip() or str(r["id"]))
-                    cur.execute(
-                        "INSERT INTO para_izi_cep (id, ad, kisa, tur, sube_id, sira) VALUES (%s,%s,%s,'sube',%s,%s) "
-                        "ON CONFLICT (id) DO UPDATE SET ad=EXCLUDED.ad, kisa=EXCLUDED.kisa",
-                        ("sube:" + str(r["id"]), ad + " dükkân nakdi", ad, str(r["id"]), 20 + i))   # sahip: "şube kasası ismini daha ayrıştırıcı kullan"
-                    # Her şubenin TEK banka hesabı (sahip) — "Zafer bankası"
-                    cur.execute(
-                        "INSERT INTO para_izi_cep (id, ad, kisa, tur, sube_id, sira) VALUES (%s,%s,%s,'banka',%s,%s) "
-                        "ON CONFLICT (id) DO UPDATE SET ad=EXCLUDED.ad, kisa=EXCLUDED.kisa",
-                        ("banka:" + str(r["id"]), ad + " bankası", ad + " banka", str(r["id"]), 50 + i))
+                sube_cepleri_yaz(cur)
                 sube_tamam = True
         except Exception as e:  # noqa: BLE001
             log.warning("evvel-yeni kasa: subeler okunamadi: %s", str(e)[:200])
     _HAZIR = sube_tamam   # şube listesi okunamadıysa bir sonraki istekte yeniden dene
+
+
+def sube_cepleri_yaz(cur) -> None:
+    """Her AKTİF şubeye dükkân nakdi + şube bankası cebi. Şube listesi Evvel Yeni'nin KENDİ tablosundan (ey_sube);
+    eski 'subeler' tablosuna bağımlılık YOK (sahip: eski sistem tamamen kalkacak)."""
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    for i, r in enumerate(_ey_subeler(cur)):
+        r = dict(r)
+        ad = _tr_baslik((r.get("ad") or "").strip() or str(r["id"]))
+        cur.execute(
+            "INSERT INTO para_izi_cep (id, ad, kisa, tur, sube_id, sira) VALUES (%s,%s,%s,'sube',%s,%s) "
+            "ON CONFLICT (id) DO UPDATE SET ad=EXCLUDED.ad, kisa=EXCLUDED.kisa",
+            ("sube:" + str(r["id"]), ad + " dükkân nakdi", ad, str(r["id"]), 20 + i))   # sahip: "şube kasası ismini daha ayrıştırıcı kullan"
+        # Her şubenin TEK banka hesabı (sahip) — "Zafer bankası"
+        cur.execute(
+            "INSERT INTO para_izi_cep (id, ad, kisa, tur, sube_id, sira) VALUES (%s,%s,%s,'banka',%s,%s) "
+            "ON CONFLICT (id) DO UPDATE SET ad=EXCLUDED.ad, kisa=EXCLUDED.kisa",
+            ("banka:" + str(r["id"]), ad + " bankası", ad + " banka", str(r["id"]), 50 + i))
 
 
 def _baslangic(cur) -> date:
@@ -419,7 +425,7 @@ def _pos_durumu(ol: List[dict], C: dict, oranlar: Dict[str, tuple], ref: str) ->
 def _oranlar(cur) -> Dict[str, tuple]:
     try:
         with savepoint(cur, "sp_pi_oran"):
-            cur.execute("SELECT id, pos_oran, online_oran FROM subeler")
+            cur.execute("SELECT id, pos_oran, online_oran FROM ey_sube")
             return {str(dict(r)["id"]): (float(dict(r)["pos_oran"] or 0), float(dict(r)["online_oran"] or 0)) for r in cur.fetchall() or []}
     except Exception:  # noqa: BLE001
         return {}
