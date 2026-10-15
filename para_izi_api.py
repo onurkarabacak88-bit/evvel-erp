@@ -69,7 +69,13 @@ PATRON_CEPLERI = [
     ("ev:fethi", "Fethi'nin evi", "Fethi", "ev", 11),
     ("ev:fatma", "Fatma'nın evi", "Fatma", "ev", 12),
     ("hesap:fethi", "Fethi'nin hesabı", "Fethi hesabı", "hesap", 40),
+    ("banka:fatma_kira", "Fatma'nın kira hesabı", "Fatma kira", "banka", 59),
 ]
+# Sahip: "Fatma'nın kirasından ödeme yaparken destek alıyoruz" → kira hesabı havuzun
+# İÇİNDE (ödemede kaynak seçilebilir) ama işletme parasından AYRI görünür; ondan çıkan
+# ödeme "kiradan destek" diye işaretlenir. ([[project_mulk_defteri]] ayrımı korunur.)
+KIRA_CEPLERI = {"banka:fatma_kira"}
+SAYIM_UYARI_GUN = 7   # ev son boşalmasından bu yana bu kadar gün doluysa sarı (kalıntı = olası eksik)
 DIS_TURLERI = {
     "borc": ("Borç alındı", "Borç", True),
     "kredi": ("Kredi çekildi", "Kredi", True),
@@ -120,7 +126,7 @@ def _hazirla() -> None:
                 id      TEXT PRIMARY KEY,
                 ad      TEXT NOT NULL,
                 kisa    TEXT NOT NULL,
-                tur     TEXT NOT NULL CHECK (tur IN ('sube','ev','hesap')),
+                tur     TEXT NOT NULL CHECK (tur IN ('sube','ev','hesap','banka')),
                 sube_id TEXT,
                 sira    INTEGER NOT NULL DEFAULT 0,
                 aktif   BOOLEAN NOT NULL DEFAULT TRUE
@@ -145,6 +151,11 @@ def _hazirla() -> None:
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_para_izi_hareket_gun ON para_izi_hareket (is_gunu, kayit_zamani)")
+        # 🏦 BANKA (sahip 2026-10-15): "bankadan gelen ve bankalarda olan parayı görelim" ·
+        # "her şubenin tek banka hesabı var, şube adıyla" · "Fatma kira hesabı olarak da gir".
+        # Kendi küçük tablomuz — eski CHECK'i genişlet (sıcak tablo değil, modülün kendisi).
+        cur.execute("ALTER TABLE para_izi_cep DROP CONSTRAINT IF EXISTS para_izi_cep_tur_check")
+        cur.execute("ALTER TABLE para_izi_cep ADD CONSTRAINT para_izi_cep_tur_check CHECK (tur IN ('sube','ev','hesap','banka'))")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS para_izi_ayar (
                 anahtar   TEXT PRIMARY KEY,
@@ -166,6 +177,11 @@ def _hazirla() -> None:
                         "INSERT INTO para_izi_cep (id, ad, kisa, tur, sube_id, sira) VALUES (%s,%s,%s,'sube',%s,%s) "
                         "ON CONFLICT (id) DO UPDATE SET ad=EXCLUDED.ad, kisa=EXCLUDED.kisa",
                         ("sube:" + str(r["id"]), ad + " kasası", ad, str(r["id"]), 20 + i))
+                    # Her şubenin TEK banka hesabı (sahip) — "Zafer bankası"
+                    cur.execute(
+                        "INSERT INTO para_izi_cep (id, ad, kisa, tur, sube_id, sira) VALUES (%s,%s,%s,'banka',%s,%s) "
+                        "ON CONFLICT (id) DO UPDATE SET ad=EXCLUDED.ad, kisa=EXCLUDED.kisa",
+                        ("banka:" + str(r["id"]), ad + " bankası", ad + " banka", str(r["id"]), 50 + i))
                 sube_tamam = True
         except Exception as e:  # noqa: BLE001
             log.warning("para-izi: subeler okunamadi: %s", str(e)[:200])
@@ -261,6 +277,10 @@ def _etki(o: dict, C: dict) -> List[dict]:
     if t == "kapanis":
         return [{"cep": o["cep"], "d": o["tutar"],
                  "etiket": "Kapanış nakdi" + ("" if o["durum"] == "onaylandi" else " (onay bekliyor)"), "kaynak": "Satış"}]
+    if t == "pos_yatis":
+        k_ = "POS" if v.get("kanal", "pos") == "pos" else "Online"
+        return [{"cep": o["cep"], "d": o["tutar"], "etiket": f"{k_} yatışı · {C.get(v.get('sube_cep'), {}).get('kisa', '')}".rstrip(" ·"),
+                 "kaynak": f"{k_} " + (C.get(v.get('sube_cep'), {}).get('kisa') or "")}]
     if t == "dis":
         alt = v.get("alt", "diger")
         tanim = DIS_TURLERI.get(alt, DIS_TURLERI["diger"])
@@ -310,10 +330,13 @@ def _bakiye(ol: List[dict], C: dict) -> dict:
                 kayip += int(o["veri"].get("f", 0))
             elif o["veri"].get("sebep") == "harcandi":
                 harcanan += int(o["veri"].get("f", 0))
-    top = lambda tur: sum(b[c] for c, x in C.items() if x["tur"] == tur)  # noqa: E731
-    ev, sube, gecis = top("ev"), top("sube"), top("hesap")
-    toplam = ev + sube + gecis + b[YOLDA]
-    return {"b": b, "ev": ev, "sube": sube, "gecis": gecis, "yolda": b[YOLDA], "gecis_yolda": gecis + b[YOLDA],
+    top = lambda tur: sum(b[c] for c, x in C.items() if x["tur"] == tur and c not in KIRA_CEPLERI)  # noqa: E731
+    ev, sube, gecis, banka = top("ev"), top("sube"), top("hesap"), top("banka")
+    kira = sum(b.get(c, 0) for c in KIRA_CEPLERI)
+    toplam = ev + sube + gecis + banka + b[YOLDA]          # İŞLETME parası (kira hariç)
+    return {"b": b, "ev": ev, "sube": sube, "gecis": gecis, "banka": banka, "nakit": ev + sube,
+            "kira": kira, "hepsi": toplam + kira,
+            "yolda": b[YOLDA], "gecis_yolda": gecis + b[YOLDA],
             "toplam": toplam, "acik": b[ACIK], "defter": toplam + b[ACIK], "kayip": kayip, "harcanan": harcanan}
 
 
@@ -343,6 +366,54 @@ def _gun_fark(a: str, b: str) -> int:
     return (date.fromisoformat(b) - date.fromisoformat(a)).days
 
 
+def _pos_durumu(ol: List[dict], C: dict, oranlar: Dict[str, tuple], ref: str) -> List[dict]:
+    """💳 BANKAYA GELECEK (Codex): kapanıştaki kart/online satışı, bankaya YATANA kadar
+    bekler; HARCANABİLİR PARAYA KATILMAZ. Şube + kanal başına: brüt satış − yatışların
+    karşıladığı brüt = bekleyen. En eski karşılanmamış gün ilk-giren-ilk-çıkar ile bulunur
+    (yalnız 'ne zamandır bekliyor' içindir, paraya dokunmaz)."""
+    out = []
+    for c in C.values():
+        if c["tur"] != "sube":
+            continue
+        sid = c.get("sube_id")
+        for kanal in ("pos", "online"):
+            gunler = []
+            for o in ol:
+                if o["olay"] == "kapanis" and o["cep"] == c["id"]:
+                    v = o["veri"]
+                    t = int(v.get(kanal, 0)) if (kanal in v) else (int(v.get("kart", 0)) if kanal == "pos" else 0)
+                    if t:
+                        gunler.append((o["gun"], t))
+            yatan = sum(int(o["veri"].get("brut", o["tutar"])) for o in ol
+                        if o["olay"] == "pos_yatis" and o["veri"].get("sube_cep") == c["id"] and o["veri"].get("kanal", "pos") == kanal)
+            brut = sum(t for _, t in gunler)
+            bekleyen = brut - yatan
+            kalan, en_eski = yatan, None
+            for g_, t in sorted(gunler):
+                if kalan >= t:
+                    kalan -= t
+                    continue
+                en_eski = g_
+                break
+            if not brut and not yatan:
+                continue
+            oran = (oranlar.get(sid) or (0, 0))[0 if kanal == "pos" else 1]
+            out.append({"sube_cep": c["id"], "sube": c["kisa"], "banka_cep": "banka:" + str(sid), "kanal": kanal,
+                        "brut_satis": _tl_sayi(brut), "yatan_brut": _tl_sayi(yatan), "bekleyen_brut": _tl_sayi(bekleyen),
+                        "oran": float(oran or 0), "beklenen_net": _tl_sayi(round(bekleyen * (1 - float(oran or 0) / 100))),
+                        "en_eski_gun": en_eski, "gun_sayisi": _gun_fark(en_eski, ref) if en_eski else 0})
+    return out
+
+
+def _oranlar(cur) -> Dict[str, tuple]:
+    try:
+        with savepoint(cur, "sp_pi_oran"):
+            cur.execute("SELECT id, pos_oran, online_oran FROM subeler")
+            return {str(dict(r)["id"]): (float(dict(r)["pos_oran"] or 0), float(dict(r)["online_oran"] or 0)) for r in cur.fetchall() or []}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _iz_kim(o: dict, C: dict) -> dict:
     """Excel görünümü için: hareketin ŞUBESİ ve onu yapan KİŞİ."""
     v, t = o["veri"], o["olay"]
@@ -359,6 +430,8 @@ def _iz_kim(o: dict, C: dict) -> dict:
         return {"sube": kisa(o["cep"]), "personel": kaydeden or None, "alan": None}
     if t == "dis":
         return {"sube": None, "personel": v.get("kimden") or None, "alan": None}
+    if t == "pos_yatis":
+        return {"sube": kisa(v.get("sube_cep")), "personel": kaydeden or None, "alan": None}
     if t == "tasima":
         return {"sube": kisa(o["kaynak"]) if C.get(o["kaynak"], {}).get("tur") == "sube" else None, "personel": kaydeden or None, "alan": None}
     return {"sube": None, "personel": kaydeden or None, "alan": None}
@@ -410,6 +483,14 @@ def _cep_durum(c: dict, ol: List[dict], D: dict, ref: str, fl: List[dict], C: di
                 kir.append("Bu dönemde hiç teslim yok" if g is None else f"{g} gündür teslim yok")
             elif g >= 4:
                 sar.append(f"{g} gündür teslim yok")
+    if c["tur"] == "ev" and bal > 0:
+        # Sahip: "evdeki para hep taşınıyor ödeme için zaten" → ev düzenli SIFIRLANIR; eksik
+        # para, hiç hareket etmeyen KALINTI olarak kalır. Ev son boşalmasından bu yana 7+ gün
+        # dolu duruyorsa sor: "bu para gerçekten evde mi?" (sayım gerekirse o zaman).
+        ilk = next((r for r in iz["seg"] if r["d"] > 0), None)
+        g = _gun_fark(ilk["tarih"], ref) if ilk else 0
+        if g >= SAYIM_UYARI_GUN:
+            sar.append(f"{_tl(bal)} {g} gündür evde bekliyor — gerçekten evde mi? (değilse 'Sayım' gir)")
     if c["tur"] == "hesap" and bal > 0:
         ilk = next((r for r in iz["seg"] if r["d"] > 0), None)
         g = _gun_fark(ilk["tarih"], ref) if ilk else 0
@@ -463,6 +544,11 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
          "eski_sistem": bool(r.get("kaynak_ref"))}
     if r["tur"] == "kapanis":
         d["kart"] = _tl_sayi(int(v.get("kart", 0)))
+        d["pos"] = _tl_sayi(int(v["pos"])) if "pos" in v else None
+        d["online"] = _tl_sayi(int(v["online"])) if "online" in v else None
+    elif r["tur"] == "pos_yatis":
+        d.update(kanal=v.get("kanal", "pos"), sube_cep=v.get("sube_cep"), brut=_tl_sayi(int(v.get("brut", r["tutar"]))),
+                 brut_tahmini=bool(v.get("brut_tahmini")), not_=v.get("not"))
     elif r["tur"] == "teslim":
         al = int(v.get("alinan", r["tutar"]))
         d.update(alinan=_tl_sayi(al), fark=_tl_sayi(r["tutar"] - al) if r["durum"] == "onaylandi" else 0.0,
@@ -486,12 +572,13 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
                  parcalar=[{"cep": p["cep"], "tutar": _tl_sayi(int(p["tutar"])), "pay": round(int(p["tutar"]) * 100 / max(r["tutar"], 1)),
                             "once": _tl_sayi(once["b"].get(p["cep"], 0)), "sonra": _tl_sayi(sonra["b"].get(p["cep"], 0))}
                            for p in v.get("parcalar", [])],
-                 toplam_once=_tl_sayi(once["toplam"]), toplam_sonra=_tl_sayi(sonra["toplam"]))
+                 toplam_once=_tl_sayi(once["toplam"]), toplam_sonra=_tl_sayi(sonra["toplam"]),
+                 kiradan_destek=_tl_sayi(sum(int(p["tutar"]) for p in v.get("parcalar", []) if p["cep"] in KIRA_CEPLERI)))
     return d
 
 
 def _ozet(D: dict, fl: List[dict]) -> dict:
-    o = {k: _tl_sayi(D[k]) for k in ("toplam", "ev", "sube", "gecis", "yolda", "gecis_yolda", "acik", "defter", "kayip", "harcanan")}
+    o = {k: _tl_sayi(D[k]) for k in ("toplam", "ev", "sube", "gecis", "banka", "nakit", "kira", "hepsi", "yolda", "gecis_yolda", "acik", "defter", "kayip", "harcanan")}
     acik = [x for x in fl if not x["coz"]]
     o["acik_eksik"] = _tl_sayi(sum(x["f"] for x in acik if x["f"] > 0))
     o["acik_fazla"] = _tl_sayi(-sum(x["f"] for x in acik if x["f"] < 0))
@@ -586,6 +673,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
     with db() as (conn, cur):
         cep_list, C, kayit, iptaller = _yukle(cur)
         bas = _baslangic(cur)
+        oranlar = _oranlar(cur)
     bugun = _bugun().isoformat()
     g = _gun_coz(gun)
     ref = bugun if hepsi else g
@@ -601,11 +689,24 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
         "kart": _tl_sayi(sum(int(o["veri"].get("kart", 0)) for o in gunun_ol if o["olay"] == "kapanis")),
         "dis_giris": _tl_sayi(sum(o["tutar"] for o in gunun_ol if o["olay"] == "dis")),
         "teslim": _tl_sayi(sum(o["tutar"] for o in gunun_ol if o["olay"] == "teslim_cikis")),
+        "kiradan_destek": _tl_sayi(sum(int(p["tutar"]) for o in gunun_ol if o["olay"] == "odeme"
+                                       for p in o["veri"].get("parcalar", []) if p["cep"] in KIRA_CEPLERI)),
+        "bankaya_giren": _tl_sayi(sum(e["d"] for o in gunun_ol for e in _etki(o, C) if e["d"] > 0 and C.get(e["cep"], {}).get("tur") == "banka")),
         # Kayıtsız elden harcama da ödemedir (Codex): bir kez sayılır, cebi tekrar düşmez.
         "odenen": _tl_sayi(sum(o["tutar"] for o in gunun_ol if o["olay"] == "odeme")
                            + sum(int(o["veri"].get("f", 0)) for o in gunun_ol if o["olay"] == "cozum" and o["veri"].get("sebep") == "harcandi")),
     }
     cep_durumlari = [_cep_durum(c, ol, D, ref, fl, C) for c in cep_list]
+    pos_list = _pos_durumu(ol, C, oranlar, ref)
+    for cd in cep_durumlari:
+        if cd["tur"] != "banka":
+            continue
+        cd["kira"] = cd["id"] in KIRA_CEPLERI
+        for x in pos_list:
+            if x["banka_cep"] == cd["id"] and x["bekleyen_brut"] > 0.004:
+                m = f"{'POS' if x['kanal'] == 'pos' else 'Online'} {_tl(_kurus(x['bekleyen_brut']))} bankaya gelecek" + (f" · {x['gun_sayisi']} gündür" if x["gun_sayisi"] else "")
+                (cd["kirmizi"] if x["gun_sayisi"] >= 5 else cd["sari"]).append(m)
+        cd["seviye"] = "kirmizi" if cd["kirmizi"] else "sari" if cd["sari"] else cd["seviye"]
     alimlar = [o for o in gunun_ol if o["olay"] == "teslim_alim" and o["gun"] != o["is_gunu"]] if not hepsi else []
     gunun_iptal = iptaller if hepsi else [i for i in iptaller if i["kayit_zamani"].date().isoformat() == g]
     tum_ad = {h["id"]: h for h in kayit}
@@ -618,6 +719,8 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
         "seviye_sayim": {"kirmizi": sum(1 for c in cep_durumlari if c["seviye"] == "kirmizi"),
                          "sari": sum(1 for c in cep_durumlari if c["seviye"] == "sari")},
         "kpi": kpi,
+        "pos": pos_list,
+        "pos_bekleyen_brut": _tl_sayi(sum(_kurus(x["bekleyen_brut"]) for x in pos_list)),
         "hareketler": [_hareket_dto(h, C, ol_tum) for h in gunun],
         "gec_alimlar": [{"id": o["id"], "teslim_gunu": o["is_gunu"], "ad": f"{C.get(o['kaynak'], {}).get('ad')} → {C.get(o['hedef'], {}).get('ad')}",
                          "alinan": _tl_sayi(int(o["veri"].get("alinan", o["tutar"])))} for o in alimlar],
@@ -793,7 +896,7 @@ def _sahte(tur, gun, **kw) -> dict:
 def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Tek yazma kapısı. Tek transaction + modül kilidi: ya tamamı yazılır ya hiçbiri."""
     t = body.tur
-    if t not in {"acilis", "kapanis", "dis", "teslim", "tasima", "odeme", "sayim", "cozum"}:
+    if t not in {"acilis", "kapanis", "dis", "teslim", "tasima", "odeme", "sayim", "cozum", "pos_yatis"}:
         raise HTTPException(400, "Geçersiz tür")
     bugun = _bugun()
     gun = (body.is_gunu or bugun.isoformat())[:10]
@@ -891,6 +994,27 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
             if top != tut:
                 raise HTTPException(400, f"Kaynaklar ({_tl(top)}) ödemeye ({_tl(tut)}) eşit olmalı")
             yeni = _sahte(t, gun, tutar=top, veri={"aciklama": ac[:120], "kimin": (body.kimin or "Ortak")[:40], "parcalar": ps})
+        elif t == "pos_yatis":
+            # 💳 POS/online parası bankaya YATTI (net). Brüt karşılığı: verilmezse şubenin
+            # komisyon oranıyla TAHMİN edilir (etiketli) — fark otomatik "komisyon" sayılmaz.
+            cep_var(body.cep, {"banka"})
+            sube_cep = body.kaynak if body.kaynak in C and C[body.kaynak]["tur"] == "sube" else None
+            if not sube_cep:
+                sid = C[body.cep].get("sube_id")
+                sube_cep = ("sube:" + sid) if sid and ("sube:" + sid) in C else None
+            if not sube_cep:
+                raise HTTPException(400, "POS yatışı hangi şubenin satışı? Şube seç.")
+            if tut <= 0:
+                raise HTTPException(400, "Yatan tutarı gir")
+            kanal = body.alt if body.alt in ("pos", "online") else "pos"
+            if body.kart is not None and body.kart > 0:
+                brut, tahmini = _kurus(body.kart), False
+            else:
+                oran = (_oranlar(cur).get(C[sube_cep].get("sube_id")) or (0, 0))[0 if kanal == "pos" else 1]
+                brut, tahmini = (round(tut / (1 - oran / 100)) if 0 <= oran < 100 else tut), True
+            yeni = _sahte(t, gun, cep=body.cep, tutar=tut,
+                          veri={"kanal": kanal, "sube_cep": sube_cep, "brut": brut, "brut_tahmini": tahmini,
+                                "not": (body.not_ or "").strip()[:200]})
         elif t == "sayim":
             cep_var(body.cep)
             if body.sayilan is None or body.sayilan < 0:
@@ -1185,26 +1309,34 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
         rapor = {"kapanis": [], "teslim": [], "eslesmeyen_teslim": [], "kilitli": [], "dis_kaynak": [], "atlanan": 0}
 
         gunluk = {}
-        cur.execute("""SELECT sube_id, tarih, SUM(nakit) AS nakit, SUM(pos) + SUM(online) AS kart
+        cur.execute("""SELECT sube_id, tarih, SUM(nakit) AS nakit, SUM(pos) AS pos, SUM(online) AS online
                          FROM ciro WHERE tarih >= %s AND COALESCE(durum,'aktif')='aktif'
                         GROUP BY sube_id, tarih""", (bas,))
         for r in cur.fetchall() or []:
             r = dict(r)
-            gunluk[(str(r["sube_id"]), r["tarih"])] = (r["nakit"] or 0, r["kart"] or 0, "onaylandi", "ciro")
+            gunluk[(str(r["sube_id"]), r["tarih"])] = (r["nakit"] or 0, (r["pos"] or 0, r["online"] or 0), "onaylandi", "ciro")
         cur.execute("""SELECT DISTINCT ON (sube_id, tarih) sube_id, tarih, nakit, pos, online FROM ciro_taslak
                         WHERE tarih >= %s AND durum = 'bekliyor' ORDER BY sube_id, tarih, olusturma DESC""", (bas,))
         for r in cur.fetchall() or []:
             r = dict(r)
             gunluk.setdefault((str(r["sube_id"]), r["tarih"]),
-                              (r["nakit"] or 0, (r["pos"] or 0) + (r["online"] or 0), "bekliyor", "taslak"))
+                              (r["nakit"] or 0, (r["pos"] or 0, r["online"] or 0), "bekliyor", "taslak"))
         for (sid, gun_), (n, k, durum_, kaynak_) in sorted(gunluk.items(), key=lambda x: (x[0][1], x[0][0])):
             g = gun_.isoformat()
             ref = f"kapanis:{sid}:{g}"
             cid = sube_cep.get(sid)
+            # Önceden aktarılmış kapanışta POS/online ayrımı yoksa tamamla (Codex: ayrı izlenmeli)
+            if not kuru:
+                for h in kayit:
+                    if h["tur"] == "kapanis" and h["cep"] == cid and h["is_gunu"] == g and "pos" not in h["veri"]:
+                        v2 = dict(h["veri"])
+                        v2.update(pos=_kurus(k[0]), online=_kurus(k[1]))
+                        cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(v2, ensure_ascii=False), h["id"]))
             if ref in var or not cid or any(h["tur"] == "kapanis" and h["cep"] == cid and h["is_gunu"] == g for h in kayit):
                 rapor["atlanan"] += 1
                 continue
-            nakit, kart = _kurus(n), _kurus(k)
+            nakit, pos_, onl_ = _kurus(n), _kurus(k[0]), _kurus(k[1])
+            kart = pos_ + onl_
             satir = {"gun": g, "sube": C[cid]["kisa"], "nakit": _tl_sayi(nakit), "kart": _tl_sayi(kart), "durum": durum_, "kaynak": kaynak_}
             if cid in kilit and g <= kilit[cid]:
                 rapor["kilitli"].append(satir)
@@ -1212,7 +1344,7 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
             rapor["kapanis"].append(satir)
             if not kuru:
                 _yaz(cur, "kapanis", g, kim, cep=cid, tutar=nakit, durum=durum_,
-                     veri={"kart": kart, "eski_kaynak": kaynak_}, kaynak_ref=ref)
+                     veri={"kart": kart, "pos": pos_, "online": onl_, "eski_kaynak": kaynak_}, kaynak_ref=ref)
 
         try:
             with savepoint(cur, "sp_pi_teslim"):
@@ -1290,7 +1422,7 @@ def _tablo_var(cur) -> bool:
     return bool(dict(cur.fetchone() or {}).get("var"))
 
 
-def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None) -> None:
+def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None, pos=None, online=None) -> None:
     """Panel kapanışı (X raporu) → Para İzi kapanış beyanı. Onaylanmamışsa şube
     düzeltince tutar güncellenir (beyan); onaylanmışsa tutar DEĞİŞMEZ, not düşülür."""
     try:
@@ -1305,6 +1437,7 @@ def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None)
             if not cur.fetchone():
                 return
             n, k = _kurus(round(float(nakit or 0), 2)), _kurus(round(float(kart or 0), 2))   # panel float gönderir
+            ayrim = {} if pos is None else {"pos": _kurus(round(float(pos or 0), 2)), "online": _kurus(round(float(online or 0), 2))}
             ref = f"kapanis:{sube_id}:{g}"
             iptal_edilen = "SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal'"
             cur.execute(f"""SELECT id, durum, tutar, veri, kaynak_ref FROM para_izi_hareket
@@ -1313,7 +1446,7 @@ def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None)
             r = cur.fetchone()
             if not r:
                 _yaz(cur, "kapanis", g, "şube paneli" + (f" · {kim}" if kim else ""), cep=cep, tutar=n,
-                     durum="bekliyor", veri={"kart": k, "eski_kaynak": "panel"}, kaynak_ref=ref)
+                     durum="bekliyor", veri={"kart": k, "eski_kaynak": "panel", **ayrim}, kaynak_ref=ref)
                 return
             r = dict(r)
             veri = r["veri"] if isinstance(r["veri"], dict) else json.loads(r["veri"] or "{}")
@@ -1321,6 +1454,7 @@ def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None)
                 return
             if r["durum"] != "onaylandi":
                 veri["kart"] = k
+                veri.update(ayrim)
                 cur.execute("UPDATE para_izi_hareket SET tutar=%s, veri=%s::jsonb WHERE id=%s",
                             (n, json.dumps(veri, ensure_ascii=False), r["id"]))
             else:

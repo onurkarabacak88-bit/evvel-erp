@@ -222,7 +222,7 @@ def _upsert_ciro_taslak(
         # 🧵 PARA İZİ (2026-10-15): kapanış beyanı DOĞRUDAN yeni çekirdeğe — köprüsüz.
         try:
             from para_izi_api import panel_kapanis_yaz
-            panel_kapanis_yaz(cur, sube_id, gun, nakit, (pos or 0) + (online or 0), gonderen_ad)
+            panel_kapanis_yaz(cur, sube_id, gun, nakit, (pos or 0) + (online or 0), gonderen_ad, pos=pos, online=online)
         except Exception:  # noqa: BLE001 — panel ASLA durmaz
             pass
         return
@@ -252,7 +252,7 @@ def _upsert_ciro_taslak(
     # 🧵 PARA İZİ (2026-10-15): kapanış beyanı DOĞRUDAN yeni çekirdeğe — köprüsüz.
     try:
         from para_izi_api import panel_kapanis_yaz
-        panel_kapanis_yaz(cur, sube_id, gun, nakit, (pos or 0) + (online or 0), gonderen_ad)
+        panel_kapanis_yaz(cur, sube_id, gun, nakit, (pos or 0) + (online or 0), gonderen_ad, pos=pos, online=online)
     except Exception:  # noqa: BLE001 — panel ASLA durmaz
         pass
 
