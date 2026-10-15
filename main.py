@@ -257,15 +257,15 @@ except Exception as _para_nerede_err:
     logging.getLogger(__name__).warning(
         f"para_nerede modulu yuklenemedi (izole, ana akis etkilenmez): {_para_nerede_err}"
     )
-# 🧵 PARA İZİ (2026-10-15) — sade çekirdeğin ilk tuğlası. Sahip: "eski sistemden
-# AYRI modül olarak kur, bu aydan itibaren". Kendi 2 tablosu var, eski para
+# 💰 EVVEL YENİ · KASA (2026-10-15) — sade çekirdeğin ilk bölümü (/evvel-yeni).
+# Sahip: "eski sistemden AYRI kur, bu aydan itibaren". Kendi tabloları var, eski para
 # tablolarına HİÇ yazmaz; eskiden yalnız okuyarak tek yönlü aktarır.
 try:
-    from para_izi_api import router as para_izi_router
-    app.include_router(para_izi_router)
-except Exception as _para_izi_err:
+    from evvel_yeni_kasa_api import router as evvel_yeni_kasa_router
+    app.include_router(evvel_yeni_kasa_router)
+except Exception as _ey_kasa_err:
     logging.getLogger(__name__).warning(
-        f"para_izi modulu yuklenemedi (izole, ana akis etkilenmez): {_para_izi_err}"
+        f"evvel_yeni_kasa modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_kasa_err}"
     )
 # OPS ÖLÇÜM — "iş kuyruğu işe yarıyor mu?" (2026-08-27). AYRI modül, AYRI iki
 # tablo. bakis_olcum'a yazılmadı: onun ozet sorguları `gorunum`a göre süzmüyor,

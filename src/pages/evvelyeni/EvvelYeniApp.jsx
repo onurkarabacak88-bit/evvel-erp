@@ -1,15 +1,15 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// 🧵 PARA İZİ — KENDİ ADRESİNDE, AYRI UYGULAMA (/para-izi)
+// 🌱 EVVEL YENİ — KENDİ ADRESİNDE, AYRI UYGULAMA (/evvel-yeni)
 //
 // Sahip (2026-10-15): "Bunu kadife tasarımda değil, başka bir alanda ayrı olarak yap;
 // sonra (eskiyi) tamamen kaldırsak."
 // → Evvel'in kadife kabuğuna (v2) hiçbir bağı yok. Yalnız ortak `api` yardımcısını ve
 //   Evvel'in oturum jetonunu kullanır: Evvel'e girmiş tarayıcıda yeniden şifre sormaz.
-// Adresler: /para-izi · /para-izi/teslim · /para-izi/banka
+// Adresler: /evvel-yeni · /evvel-yeni/<sayfa>
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import ParaIziModulu, { SAYFALAR } from './ParaIziModulu';
+import KasaModulu, { SAYFALAR } from './KasaModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
@@ -22,7 +22,7 @@ const BOLUMLER = [
 
 const sekmeAdresten = () => {
   const p = (window.location.pathname || '').replace(/\/+$/, '');
-  const son = p.replace(/^\/(evvel-yeni|para-izi)/, '').split('/').filter(Boolean).pop() || '';
+  const son = p.replace(/^\/evvel-yeni/, '').split('/').filter(Boolean).pop() || '';
   return SAYFALAR.some((x) => x.id === son) ? son : 'kasam';
 };
 
@@ -78,7 +78,7 @@ function Giris({ onTamam }) {
   );
 }
 
-export default function ParaIziApp() {
+export default function EvvelYeniApp() {
   const [durum, setDurum] = useState('soruluyor');   // soruluyor | giris | tamam
   const [sekme, setSekme] = useState(sekmeAdresten);
   const [toast, setToast] = useState('');
@@ -89,10 +89,6 @@ export default function ParaIziApp() {
 
   useEffect(() => {
     document.title = 'Evvel Yeni';
-    // eski adres → yeni adres (geçmişi kirletmeden)
-    if (window.location.pathname.startsWith('/para-izi')) {
-      window.history.replaceState(null, '', window.location.pathname.replace(/^\/para-izi/, TABAN));
-    }
     let jeton = null;
     try { jeton = localStorage.getItem(OTURUM_ANAHTAR); } catch { /* yut */ }
     if (!jeton) { setDurum('giris'); return; }
@@ -138,7 +134,7 @@ export default function ParaIziApp() {
             ))}</React.Fragment>))}
           </nav>
           <main className="piapp-ic">
-            <ParaIziModulu gorunum={sekme} onSekme={sekmeDegis} onToast={setToast} onVeri={veriGeldi} sekmesiz />
+            <KasaModulu gorunum={sekme} onSekme={sekmeDegis} onToast={setToast} onVeri={veriGeldi} sekmesiz />
           </main>
         </div>
       )}

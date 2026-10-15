@@ -713,10 +713,10 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
             (sube_id, tarih),
         )
         teslim_silindi = cur.rowcount
-        # 🧵 PARA İZİ (2026-10-15): teslim DOĞRUDAN yeni çekirdeğe — köprüsüz.
+        # 💰 EVVEL YENİ KASA (2026-10-15): teslim DOĞRUDAN yeni çekirdeğe — köprüsüz.
         # Kendi savepoint'i var; hata paneli ASLA durdurmaz (köprü yedekte yakalar).
         try:
-            from para_izi_api import panel_teslim_esle
+            from evvel_yeni_kasa_api import panel_teslim_esle
             panel_teslim_esle(cur)
         except Exception:  # noqa: BLE001
             pass
@@ -2753,10 +2753,10 @@ def sube_ara_kasa_teslim(sube_id: str, body: AraTeslimModel):
             ensure_kasa_teslim_defterlesme(cur)
         except Exception:  # noqa: BLE001 — teslim kaydını ASLA kilitlemez
             pass
-        # 🧵 PARA İZİ (2026-10-15): teslim DOĞRUDAN yeni çekirdeğe — köprüsüz.
+        # 💰 EVVEL YENİ KASA (2026-10-15): teslim DOĞRUDAN yeni çekirdeğe — köprüsüz.
         # Kendi savepoint'i var; hata paneli ASLA durdurmaz (köprü yedekte yakalar).
         try:
-            from para_izi_api import panel_teslim_esle
+            from evvel_yeni_kasa_api import panel_teslim_esle
             panel_teslim_esle(cur)
         except Exception:  # noqa: BLE001
             pass

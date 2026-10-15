@@ -50,7 +50,7 @@ import Maliyet from './pages/Maliyet';
 import EvTasarim from './pages/EvTasarim';
 import FireFotoYukle from './pages/FireFotoYukle';
 import CepApp from './pages/cep/CepApp';
-import ParaIziApp from './pages/paraizi/ParaIziApp';
+import EvvelYeniApp from './pages/evvelyeni/EvvelYeniApp';
 import DuyuPaneli from './pages/DuyuPaneli';
 import ReceteEslestirme from './pages/ReceteEslestirme';
 import BelgeMerkezi from './pages/BelgeMerkezi';
@@ -308,11 +308,11 @@ function AdminGirisKapisi({ onBasarili }) {
 }
 
 export default function App() {
-  // 🧵 PARA İZİ — sade çekirdek, KENDİ ADRESİNDE ayrı uygulama (sahip 2026-10-15:
+  // 🌱 EVVEL YENİ — sade çekirdek, KENDİ ADRESİNDE ayrı uygulama (sahip 2026-10-15:
   // "kadife tasarımda değil ayrı bir alanda yap, sonra eskiyi tamamen kaldırsak").
-  // Sahip: "evvel yeni yapalım" → /evvel-yeni; eski /para-izi aynı uygulamaya düşer (içeride yönlenir).
-  if (/^\/(evvel-yeni|para-izi)(\/|$)/.test(window.location.pathname)) {
-    return <ParaIziApp />;
+  // Sahip: "evvel yeni yapalım" · "para izi hiç kullanma" → yalnız /evvel-yeni.
+  if (/^\/evvel-yeni(\/|$)/.test(window.location.pathname)) {
+    return <EvvelYeniApp />;
   }
 
   // EVVEL · CEP — işletme sahibi mobil kabuğu (sidebar yok, ayrı kabuk)

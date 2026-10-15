@@ -1,4 +1,5 @@
-"""🧵 PARA İZİ — sade çekirdeğin ilk tuğlası (2026-10-15).
+"""💰 EVVEL YENİ · KASA — sade çekirdeğin ilk bölümü (2026-10-15; eski adı "Para İzi",
+sahip: "para izi hiç kullanma").
 
 Sahip: *"Evvel her şeyi takip etsin dedik ama hem çok karışık hem sürekli hata
 yapıyor; sade kurup sonra işlevi artıralım. Eski sistemden AYRI bir modül
@@ -45,7 +46,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from database import db, savepoint
 
 log = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/para-izi", tags=["para-izi"])
+router = APIRouter(prefix="/api/evvel-yeni/kasa", tags=["evvel-yeni-kasa"])
 
 BASLANGIC = date(2026, 10, 1)          # ilk dönem — sahip: "bu aydan itibaren kurgula"
 # Sahip (2026-10-15): "Şimdi eskiyle birlikte çalışsın; 1 Kasım'da sistemi tamamen
@@ -189,7 +190,7 @@ def _hazirla() -> None:
                         ("banka:" + str(r["id"]), ad + " bankası", ad + " banka", str(r["id"]), 50 + i))
                 sube_tamam = True
         except Exception as e:  # noqa: BLE001
-            log.warning("para-izi: subeler okunamadi: %s", str(e)[:200])
+            log.warning("evvel-yeni kasa: subeler okunamadi: %s", str(e)[:200])
     _HAZIR = sube_tamam   # şube listesi okunamadıysa bir sonraki istekte yeniden dene
 
 
@@ -1253,7 +1254,7 @@ def _otomatik_senkron() -> dict:
                                      "pos_otomatik": r["ozet"].get("pos_otomatik", 0),
                                      "eslesmeyen_teslim": r["ozet"]["eslesmeyen_teslim"], "kilitli": r["ozet"]["kilitli"]}
         except Exception as e:  # noqa: BLE001
-            log.warning("para-izi otomatik senkron: %s", str(e)[:200])
+            log.warning("evvel-yeni kasa otomatik senkron: %s", str(e)[:200])
             _SON_SENKRON["sonuc"] = {"tamam": False, "hata": str(e)[:160]}
     from datetime import datetime, timezone
     zz = _SON_SENKRON["zaman"]
@@ -1293,7 +1294,7 @@ def _pos_otomatik(cur) -> int:
     kilit = _sayim_kilidi(_olaylar([h for h in kayit if h["is_gunu"] >= bas]))
     oranlar = _oranlar(cur)
     if not oranlar:
-        log.warning("para-izi POS otomatik: şube komisyon oranları okunamadı — yatış yazılmadı")
+        log.warning("evvel-yeni kasa POS otomatik: şube komisyon oranları okunamadı — yatış yazılmadı")
         return 0
     bugun = _bugun()
     var = {h.get("kaynak_ref"): h for h in kayit if (h.get("kaynak_ref") or "").startswith("pos_oto:")}
@@ -1611,9 +1612,9 @@ def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None,
                 veri.setdefault("panel_sonradan", []).append({"nakit": n, "kart": k})
                 cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s",
                             (json.dumps(veri, ensure_ascii=False), r["id"]))
-                log.warning("para-izi: onaylı kapanış panelde değişti %s %s", cep, g)
+                log.warning("evvel-yeni kasa: onaylı kapanış panelde değişti %s %s", cep, g)
     except Exception as e:  # noqa: BLE001 — panel ASLA durmaz
-        log.warning("para-izi panel kapanış yazılamadı: %s", str(e)[:200])
+        log.warning("evvel-yeni kasa panel kapanış yazılamadı: %s", str(e)[:200])
 
 
 def panel_teslim_esle(cur) -> None:
@@ -1653,4 +1654,4 @@ def panel_teslim_esle(cur) -> None:
                     _yaz(cur, "iptal", _bugun().isoformat(), "şube paneli",
                          veri={"hedef_id": h["id"], "sebep": "Şube panelinde geri alındı (kapanış geri al)"})
     except Exception as e:  # noqa: BLE001 — panel ASLA durmaz
-        log.warning("para-izi panel teslim eşlenemedi: %s", str(e)[:200])
+        log.warning("evvel-yeni kasa panel teslim eşlenemedi: %s", str(e)[:200])

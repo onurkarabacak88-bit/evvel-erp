@@ -1,5 +1,5 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// 🧵 PARA İZİ — sade çekirdeğin ilk tuğlası (2026-10-15)
+// 💰 EVVEL YENİ · KASA — sade çekirdeğin ilk bölümü (2026-10-15; eski adı Para İzi)
 //
 // Sahip: "Evvel her şeyi takip etsin dedik ama hem çok karışık hem sürekli
 // hata yapıyor. Sade kurup sonra işlevi artıralım; eski sistemden AYRI modül
@@ -24,8 +24,8 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 
 // Kadife (v2) bileşenlerine BAĞIMLILIK YOK — sahip: "kadife tasarımda değil ayrı bir
-// alanda yap, sonra (eskiyi) tamamen kaldırsak". Bu dosya src/pages/paraizi altında,
-// kendi adresinde (/para-izi) çalışır; v2 silinse de etkilenmez.
+// alanda yap, sonra (eskiyi) tamamen kaldırsak". Bu dosya src/pages/evvelyeni altında,
+// kendi adresinde (/evvel-yeni) çalışır; v2 silinse de etkilenmez.
 function HataBandi({ mesaj, kod, onTekrar }) {
   return (
     <div className="pi" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -268,15 +268,15 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
   });
 
   useEffect(() => {
-    if (tip === 'coz') api(`/para-izi/fark/${form.id}`).then((f) => { setFark(f); setD((x) => ({ ...x, sebep: f.sebep_secenekleri[0]?.kod, is_gunu: (form.gun || gun) < f.tarih ? f.tarih : (form.gun || gun) })); }).catch((e) => setHata(e.message));
-    if (tip === 'aktar') api('/para-izi/aktar?kuru=true', { method: 'POST' }).then(setAktar).catch((e) => setHata(e.message));
+    if (tip === 'coz') api(`/evvel-yeni/kasa/fark/${form.id}`).then((f) => { setFark(f); setD((x) => ({ ...x, sebep: f.sebep_secenekleri[0]?.kod, is_gunu: (form.gun || gun) < f.tarih ? f.tarih : (form.gun || gun) })); }).catch((e) => setHata(e.message));
+    if (tip === 'aktar') api('/evvel-yeni/kasa/aktar?kuru=true', { method: 'POST' }).then(setAktar).catch((e) => setHata(e.message));
     if (tip === 'donem') setD((x) => ({ ...x, is_gunu: veri.bugun }));
   }, [tip, form.id]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sayımda "defterde ne olmalı" bilgisi sunucudan, seçilen günün akşamı itibarıyla
   useEffect(() => {
     if (tip !== 'sayim' || !d.cep) return;
-    api(`/para-izi/cep/${encodeURIComponent(d.cep)}?gun=${d.is_gunu}`).then((r) => setSayimDefter(r.cep.bakiye)).catch(() => setSayimDefter(null));
+    api(`/evvel-yeni/kasa/cep/${encodeURIComponent(d.cep)}?gun=${d.is_gunu}`).then((r) => setSayimDefter(r.cep.bakiye)).catch(() => setSayimDefter(null));
   }, [tip, d.cep, d.is_gunu]);
 
   const parcaToplam = d.parcalar.reduce((a, p) => a + (Number(p.tutar) || 0), 0);
@@ -285,19 +285,19 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
     try {
       if (tip === 'donem') {
         if (!donem) {   // 1. adım: KURU — ne olacağını göster
-          setDonem(await api('/para-izi/donem', { method: 'POST', body: { gun: d.is_gunu, kuru: true } }));
+          setDonem(await api('/evvel-yeni/kasa/donem', { method: 'POST', body: { gun: d.is_gunu, kuru: true } }));
           setMesgul(false);
           return;
         }
-        await api('/para-izi/donem', { method: 'POST', body: { gun: d.is_gunu, kuru: false } });
+        await api('/evvel-yeni/kasa/donem', { method: 'POST', body: { gun: d.is_gunu, kuru: false } });
         onToast?.(`Yeni dönem ${tUzun(d.is_gunu)} başladı — her cebin açılışını gir`);
         onBitti(d.is_gunu);
         return;
       } else if (tip === 'aktar') {
-        const r = await api('/para-izi/aktar?kuru=false', { method: 'POST' });
+        const r = await api('/evvel-yeni/kasa/aktar?kuru=false', { method: 'POST' });
         onToast?.(`Aktarıldı: ${r.ozet.kapanis} kapanış · ${r.ozet.teslim} teslim`);
       } else if (tip === 'iptal') {
-        await api(`/para-izi/hareket/${form.id}/iptal`, { method: 'POST', body: { sebep: d.sebep } });
+        await api(`/evvel-yeni/kasa/hareket/${form.id}/iptal`, { method: 'POST', body: { sebep: d.sebep } });
         onToast?.('Kayıt iptal edildi (iz duruyor)');
       } else {
         const body = { tur: tip === 'coz' ? 'cozum' : tip, is_gunu: d.is_gunu };
@@ -317,7 +317,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
           body.parcalar = d.parcalar.filter((p) => p.cep && Number(p.tutar) > 0).map((p) => ({ cep: p.cep, tutar: Number(p.tutar) }));
         }
         if (tip === 'coz') { body.fark_id = form.id; body.sebep = d.sebep; body.sorumlu = d.sorumlu; body.not = d.not; }
-        await api('/para-izi/hareket', { method: 'POST', body });
+        await api('/evvel-yeni/kasa/hareket', { method: 'POST', body });
         onToast?.('Kaydedildi');
       }
       onBitti(tip === 'aktar' || tip === 'iptal' || tip === 'coz' ? null : d.is_gunu);
@@ -663,7 +663,7 @@ function TeslimSekmesi({ onToast, onDegisti }) {
   const no = useRef(0);
   const yukle = useCallback(async () => {
     const n = ++no.current;
-    try { const r = await api('/para-izi/teslimler'); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
+    try { const r = await api('/evvel-yeni/kasa/teslimler'); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
   }, []);
   useEffect(() => { yukle(); }, [yukle]);
   // Sahip: "annem 65 yaşında, her gün nasıl onaylayacak?" → TEK DOKUNUŞ: rakam yazmadan
@@ -672,7 +672,7 @@ function TeslimSekmesi({ onToast, onDegisti }) {
     const t = tutar !== undefined ? tutar : say[x.id];
     if (t === undefined || t === '') { onToast?.('Önce saydığın tutarı yaz'); return; }
     try {
-      await api(`/para-izi/hareket/${x.id}/onay`, { method: 'POST', body: { alinan: Number(t) } });
+      await api(`/evvel-yeni/kasa/hareket/${x.id}/onay`, { method: 'POST', body: { alinan: Number(t) } });
       const f = x.tutar - Number(t);
       onToast?.(f ? `Alındı — ${fmt(Math.abs(f))} ₺ ${f > 0 ? 'eksik' : 'fazla'}, açık farka yazıldı` : 'Alındı, tuttu');
       setSay((s0) => { const k = { ...s0 }; delete k[x.id]; return k; });
@@ -684,7 +684,7 @@ function TeslimSekmesi({ onToast, onDegisti }) {
     const t = duz[x.id];
     if (t === undefined || t === '') { onToast?.('Saydığın tutarı yaz'); return; }
     try {
-      await api(`/para-izi/hareket/${x.id}/teslim-duzelt`, { method: 'POST', body: { alinan: Number(t) } });
+      await api(`/evvel-yeni/kasa/hareket/${x.id}/teslim-duzelt`, { method: 'POST', body: { alinan: Number(t) } });
       onToast?.('Düzeltildi — fark açık farka yazıldı');
       setDuz((s0) => { const k = { ...s0 }; delete k[x.id]; return k; });
       yukle(); onDegisti?.();
@@ -804,7 +804,7 @@ function BankaSekmesi({ onToast, onDegisti }) {
   const no = useRef(0);
   const yukle = useCallback(async () => {
     const n = ++no.current;
-    try { const r = await api(`/para-izi/banka-mutabakat?ay=${ay}`); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
+    try { const r = await api(`/evvel-yeni/kasa/banka-mutabakat?ay=${ay}`); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
   }, [ay]);
   useEffect(() => { yukle(); }, [yukle]);
   const karsilastir = async (b) => {
@@ -812,7 +812,7 @@ function BankaSekmesi({ onToast, onDegisti }) {
     const t = ekstre[anahtar];
     if (t === undefined || t === '') { onToast?.('Ekstredeki bakiyeyi yaz'); return; }
     try {
-      await api('/para-izi/hareket', { method: 'POST', body: { tur: 'sayim', cep: b.cep, is_gunu: v.kesit, sayilan: Number(t) } });
+      await api('/evvel-yeni/kasa/hareket', { method: 'POST', body: { tur: 'sayim', cep: b.cep, is_gunu: v.kesit, sayilan: Number(t) } });
       onToast?.('Ekstre bakiyesi kaydedildi');
       setEkstre((x) => { const k = { ...x }; delete k[anahtar]; return k; });
       yukle(); onDegisti?.();
@@ -859,7 +859,7 @@ function BankaSekmesi({ onToast, onDegisti }) {
                   value={ekstre[an] ?? ''} onChange={(ev) => setEkstre((x) => ({ ...x, [an]: ev.target.value }))} style={{ ...alanStil, flex: 1, minWidth: 160 }} />
                 <Dugme ana disabled={ekstre[an] === undefined || ekstre[an] === ''} onClick={() => karsilastir(b)}>{e ? 'Yeni ekstre' : 'Karşılaştır'}</Dugme>
               </div>
-              {b.acik_farklar.length > 0 && <div style={{ fontSize: 12, color: R.kirmizi }}>● {b.acik_farklar.length} açık fark çözülmeyi bekliyor (Para İzi → Bekleyen işler)</div>}
+              {b.acik_farklar.length > 0 && <div style={{ fontSize: 12, color: R.kirmizi }}>● {b.acik_farklar.length} açık fark çözülmeyi bekliyor (Açık farklar sayfası)</div>}
               {b.satir_sayisi > 0 && (
                 <div>
                   <button type="button" onClick={() => setAcik((x) => ({ ...x, [b.cep]: !x[b.cep] }))} style={{ border: 'none', background: 'transparent', color: 'var(--pi-accent)', cursor: 'pointer', font: 'inherit', fontSize: 12.5, padding: 0 }}>
@@ -910,7 +910,7 @@ export const SAYFALAR = [
 ];
 const SEVIYE_SIRA = { kirmizi: 3, sari: 2, yesil: 1, gri: 0 };
 
-export default function ParaIziModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri }) {
+export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri }) {
   const [ck, setCk] = useState(null);
   const sayfaCoz = (g) => (SAYFALAR.some((x) => x.id === g) ? g : 'kasam');
   const [sekme, setSekme] = useState(sayfaCoz(gorunum));
@@ -935,7 +935,7 @@ export default function ParaIziModulu({ gorunum, onToast, onSekme, sekmesiz, onV
     const no = ++istekNo.current;
     setHata(null);
     try {
-      const r = await api(`/para-izi/durum?gun=${gun}${hepsi ? '&hepsi=true' : ''}`);
+      const r = await api(`/evvel-yeni/kasa/durum?gun=${gun}${hepsi ? '&hepsi=true' : ''}`);
       if (no !== istekNo.current) return;
       setVeri(r); setSonYukleme(new Date());
     } catch (e) { if (no === istekNo.current) setHata(e?.message || 'okunamadı'); }
@@ -947,18 +947,18 @@ export default function ParaIziModulu({ gorunum, onToast, onSekme, sekmesiz, onV
   // Formu çekmeceden açınca kapanışta aynı çekmeceye geri dönülür (Codex: geldiği yere dönemiyordu).
   const formAc = (tip, ek = {}, donus = null) => { cekmeceNo.current += 1; onCekmece?.(null); setForm({ tip, ...ek, donus }); };
   const teyit = async (id) => {
-    try { await api(`/para-izi/hareket/${id}/onay`, { method: 'POST', body: {} }); onToast?.('Onaylandı'); yukle(); } catch (e) { onToast?.(e.message); }
+    try { await api(`/evvel-yeni/kasa/hareket/${id}/onay`, { method: 'POST', body: {} }); onToast?.('Onaylandı'); yukle(); } catch (e) { onToast?.(e.message); }
   };
   const [topluSor, setTopluSor] = useState(false);
   const topluOnay = async (idler) => {
     try {
-      const r = await api('/para-izi/onay-toplu', { method: 'POST', body: { idler } });
+      const r = await api('/evvel-yeni/kasa/onay-toplu', { method: 'POST', body: { idler } });
       onToast?.(`${r.onaylanan} kapanış onaylandı`); setTopluSor(false); yukle();
     } catch (e) { onToast?.(e.message); }
   };
   const teslimAl = async (id, sayilan) => {
     if (sayilan === '' || sayilan == null || Number.isNaN(Number(sayilan))) { onToast?.('Önce saydığın tutarı yaz'); return; }
-    try { await api(`/para-izi/hareket/${id}/onay`, { method: 'POST', body: { alinan: Number(sayilan) } }); onToast?.('Teslim alındı'); yukle(); } catch (e) { onToast?.(e.message); }
+    try { await api(`/evvel-yeni/kasa/hareket/${id}/onay`, { method: 'POST', body: { alinan: Number(sayilan) } }); onToast?.('Teslim alındı'); yukle(); } catch (e) { onToast?.(e.message); }
   };
 
   // ── ÇEKMECE: satırlar kapı, geri yolu yığından ──
@@ -973,7 +973,7 @@ export default function ParaIziModulu({ gorunum, onToast, onSekme, sekmesiz, onV
     onCekmece?.({ ...temel, tip: g.tip, baslik: g.ad, alt: 'okunuyor…' });
     try {
       if (g.tur === 'cep') {
-        const r = await api(`/para-izi/cep/${encodeURIComponent(g.id)}?gun=${gun}${hepsi ? '&hepsi=true' : ''}`);
+        const r = await api(`/evvel-yeni/kasa/cep/${encodeURIComponent(g.id)}?gun=${gun}${hepsi ? '&hepsi=true' : ''}`);
         if (!guncel()) return;
         const c = r.cep;
         g.ad = c.ad;
@@ -1013,7 +1013,7 @@ export default function ParaIziModulu({ gorunum, onToast, onSekme, sekmesiz, onV
           aksiyonlar: [{ ad: 'Bu cebi say', birincil: true, onTikla: () => formAc('sayim', { cep: c.id }, { tur: 'cep', id: c.id, ad: c.ad }) }],
         });
       } else if (g.tur === 'fark') {
-        const f = await api(`/para-izi/fark/${g.id}`);
+        const f = await api(`/evvel-yeni/kasa/fark/${g.id}`);
         if (!guncel()) return;
         g.ad = f.ad;
         onCekmece?.({
@@ -1032,7 +1032,7 @@ export default function ParaIziModulu({ gorunum, onToast, onSekme, sekmesiz, onV
           aksiyonlar: f.coz ? [] : [{ ad: 'Farkı çöz', birincil: true, onTikla: () => formAc('coz', { id: f.id }, { tur: 'fark', id: f.id, ad: f.ad }) }],
         });
       } else if (g.tur === 'acik') {
-        const a = await api('/para-izi/acik-defter');
+        const a = await api('/evvel-yeni/kasa/acik-defter');
         if (!guncel()) return;
         const acik = a.farklar.filter((x) => !x.coz);
         onCekmece?.({
@@ -1065,8 +1065,8 @@ export default function ParaIziModulu({ gorunum, onToast, onSekme, sekmesiz, onV
 
   // eslint-disable-next-line react-hooks/rules-of-hooks
   useEffect(() => { if (veri) onVeri?.(veri); }, [veri]);   // eslint-disable-line react-hooks/exhaustive-deps
-  if (hata && !veri) return <HataBandi mesaj="Para İzi okunamadı" kod={hata} onTekrar={yukle} />;
-  if (!veri) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Para İzi okunuyor…</div></div>;
+  if (hata && !veri) return <HataBandi mesaj="Kasa bilgisi okunamadı" kod={hata} onTekrar={yukle} />;
+  if (!veri) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Kasa okunuyor…</div></div>;
 
   const o = veri.ozet;
   const evler = veri.cepler.filter((c) => c.tur === 'ev');
@@ -1296,7 +1296,7 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
   const [hata, setHata] = useState(null);
   useEffect(() => {
     let canli = true;
-    api('/para-izi/acik-defter').then((r) => { if (canli) { setV(r); setHata(null); } }).catch((e) => { if (canli) setHata(e?.message || 'okunamadı'); });
+    api('/evvel-yeni/kasa/acik-defter').then((r) => { if (canli) { setV(r); setHata(null); } }).catch((e) => { if (canli) setHata(e?.message || 'okunamadı'); });
     return () => { canli = false; };
   }, [yenile]);
   if (hata && !v) return <div style={{ ...kart, padding: 16, color: R.kirmizi }}>Açık farklar okunamadı: {hata}</div>;

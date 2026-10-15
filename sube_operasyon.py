@@ -1505,10 +1505,10 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 ensure_kasa_teslim_defterlesme(cur)
             except Exception:  # noqa: BLE001 — kapanışı ASLA kilitlemez
                 pass
-            # 🧵 PARA İZİ (2026-10-15): teslim DOĞRUDAN yeni çekirdeğe — köprüsüz.
+            # 💰 EVVEL YENİ KASA (2026-10-15): teslim DOĞRUDAN yeni çekirdeğe — köprüsüz.
             # Kendi savepoint'i var; hata paneli ASLA durdurmaz (köprü yedekte yakalar).
             try:
-                from para_izi_api import panel_teslim_esle
+                from evvel_yeni_kasa_api import panel_teslim_esle
                 panel_teslim_esle(cur)
             except Exception:  # noqa: BLE001
                 pass
