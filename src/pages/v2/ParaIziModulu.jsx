@@ -194,6 +194,10 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit }) {
     ust = `${cepAd(h.cep)} · ${h.kanal === 'online' ? 'Online' : 'POS'} yatışı`;
     alt = `${cepAd(h.sube_cep)} satışı · brüt ${fmt(h.brut)} ₺${h.brut_tahmini ? ' (komisyon oranıyla tahmini)' : ''}${h.not_ ? ` · ${h.not_}` : ''}`;
     renk = R.yesil; tutar = `+${tutar}`; cipTur = 'yesil';
+    if (h.otomatik) {
+      cip = <Cip>otomatik · ertesi gün</Cip>;
+      alt = `${cepAd(h.sube_cep)} POS satışı ${fmt(h.brut)} ₺ − %${fmt(h.oran || 0)} komisyon = beklenen net · gerçek tutar ekstre bakiyesiyle doğrulanır`;
+    }
   }
   return (
     <div style={{ ...kart, padding: '9px 13px', display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: 10, alignItems: 'center' }}>

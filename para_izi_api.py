@@ -75,6 +75,11 @@ PATRON_CEPLERI = [
 # İÇİNDE (ödemede kaynak seçilebilir) ama işletme parasından AYRI görünür; ondan çıkan
 # ödeme "kiradan destek" diye işaretlenir. ([[project_mulk_defteri]] ayrımı korunur.)
 KIRA_CEPLERI = {"banka:fatma_kira"}
+# Sahip: "POS bir gün sonra hesaba geçiyor" → kapanışın POS'u ERTESİ GÜN şube bankasına
+# kendiliğinden yazılır (brüt − komisyon oranı = beklenen net, 'otomatik'). Gerçek kontrol
+# EKSTRE BAKİYESİYLE (banka sayımı): yatmayan/farklı yatan POS orada açık fark olur.
+# Online platformlar düzensiz öder → otomatik DEĞİL, elle girilir.
+POS_YATIS_GUN = 1
 SAYIM_UYARI_GUN = 7   # ev son boşalmasından bu yana bu kadar gün doluysa sarı (kalıntı = olası eksik)
 DIS_TURLERI = {
     "borc": ("Borç alındı", "Borç", True),
@@ -548,7 +553,8 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
         d["online"] = _tl_sayi(int(v["online"])) if "online" in v else None
     elif r["tur"] == "pos_yatis":
         d.update(kanal=v.get("kanal", "pos"), sube_cep=v.get("sube_cep"), brut=_tl_sayi(int(v.get("brut", r["tutar"]))),
-                 brut_tahmini=bool(v.get("brut_tahmini")), not_=v.get("not"))
+                 brut_tahmini=bool(v.get("brut_tahmini")), not_=v.get("not"), otomatik=bool(v.get("otomatik")),
+                 oran=v.get("oran"))
     elif r["tur"] == "teslim":
         al = int(v.get("alinan", r["tutar"]))
         d.update(alinan=_tl_sayi(al), fark=_tl_sayi(r["tutar"] - al) if r["durum"] == "onaylandi" else 0.0,
@@ -1161,8 +1167,10 @@ def _otomatik_senkron() -> dict:
                 _kilit(cur)
                 r = _aktar(cur, False, "otomatik köprü (eski sistem)")
                 r["ozet"]["otomatik_kabul"] = _otomatik_kabul(cur)
+                r["ozet"]["pos_otomatik"] = _pos_otomatik(cur)
             _SON_SENKRON["sonuc"] = {"tamam": True, "kapanis": r["ozet"]["kapanis"], "teslim": r["ozet"]["teslim"],
                                      "otomatik_kabul": r["ozet"].get("otomatik_kabul", 0),
+                                     "pos_otomatik": r["ozet"].get("pos_otomatik", 0),
                                      "eslesmeyen_teslim": r["ozet"]["eslesmeyen_teslim"], "kilitli": r["ozet"]["kilitli"]}
         except Exception as e:  # noqa: BLE001
             log.warning("para-izi otomatik senkron: %s", str(e)[:200])
@@ -1192,6 +1200,51 @@ def _otomatik_kabul(cur) -> int:
                               onaylayan='otomatik kabul (itiraz yok)', veri=%s::jsonb
                         WHERE id=%s AND COALESCE(durum,'') <> 'onaylandi'""", (json.dumps(veri, ensure_ascii=False), h["id"]))
         n += cur.rowcount
+    return n
+
+
+def _pos_otomatik(cur) -> int:
+    """Kapanış günü + POS_YATIS_GUN geçmiş her kapanışın POS'unu şube bankasına 'beklenen net'
+    olarak yazar (kaynak_ref 'pos_oto:<kapanış>' → bir kez). Banka o gün ve sonrası sayıldıysa
+    (sayım kilidi) yazmaz. Kapanış İPTAL edilmişse otomatik yatış da iptal edilir."""
+    cep_list, C, kayit, _ = _yukle(cur)
+    kilit = _sayim_kilidi(_olaylar(kayit))
+    oranlar = _oranlar(cur)
+    bugun = _bugun()
+    var = {h.get("kaynak_ref"): h for h in kayit if (h.get("kaynak_ref") or "").startswith("pos_oto:")}
+    cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'pos_oto:%%'")
+    her_zaman = {dict(x)["kaynak_ref"] for x in cur.fetchall() or []}
+    gecerli_kapanis = {h["id"] for h in kayit if h["tur"] == "kapanis"}
+    n = 0
+    for h in kayit:
+        if h["tur"] != "kapanis":
+            continue
+        v = h["veri"]
+        pos = int(v["pos"]) if "pos" in v else int(v.get("kart", 0))
+        if pos <= 0:
+            continue
+        yatis = date.fromordinal(date.fromisoformat(h["is_gunu"]).toordinal() + POS_YATIS_GUN)
+        if yatis > bugun:
+            continue
+        sube = C.get(h["cep"], {})
+        banka = "banka:" + str(sube.get("sube_id"))
+        ref = "pos_oto:" + h["id"]
+        if banka not in C or ref in her_zaman:
+            continue
+        g = yatis.isoformat()
+        if banka in kilit and g <= kilit[banka]:
+            continue
+        oran = (oranlar.get(str(sube.get("sube_id"))) or (0, 0))[0]
+        net = round(pos * (1 - float(oran) / 100)) if 0 <= oran < 100 else pos
+        _yaz(cur, "pos_yatis", g, "otomatik (POS ertesi gün)", cep=banka, tutar=net,
+             veri={"kanal": "pos", "sube_cep": h["cep"], "brut": pos, "brut_tahmini": False, "otomatik": True,
+                   "kapanis_id": h["id"], "oran": oran}, kaynak_ref=ref)
+        n += 1
+    # Kapanışı iptal edilenin otomatik yatışı da iptal (iz kalır)
+    for ref, h in var.items():
+        if h["veri"].get("kapanis_id") not in gecerli_kapanis:
+            _yaz(cur, "iptal", bugun.isoformat(), "otomatik (POS ertesi gün)",
+                 veri={"hedef_id": h["id"], "sebep": "Kaynak kapanış iptal edildi"})
     return n
 
 
