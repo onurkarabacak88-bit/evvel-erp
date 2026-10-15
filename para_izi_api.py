@@ -53,6 +53,12 @@ BASLANGIC = date(2026, 10, 1)          # ilk dönem — sahip: "bu aydan itibare
 # okunur. Yeni dönem başlayınca önceki kayıtlar SİLİNMEZ (arşiv), hesaplara girmez;
 # her cep yeni başlangıç sabahı sayılıp açılış bakiyesiyle başlar.
 SENKRON_ARALIK_SN = 600                  # eski sistemden otomatik köprü — en sık 10 dk
+# Sahip (2026-10-15): "Annem 65 yaşında, her gün nasıl onaylayacak?" → teslim 'aldım'
+# beklemez: dokunulmayan teslim ERTESİ GÜN kendiliğinden kabul edilir (itiraz yok).
+# Kontrol tek tek teslimde değil, evdeki para ara sıra SAYILARAK yapılır; 7 gün içinde
+# "aslında eksikti" düzeltmesi yapılabilir.
+OTOMATIK_KABUL_GUN = 1
+DUZELTME_SURESI_GUN = 7
 ACIK = "__acik"                          # açık fark kovası (cep değil)
 YOLDA = "__yolda"                        # teslim edildi, "aldım" bekleniyor (cep değil)
 KILIT_ANAHTARI = 7_012_026               # pg_advisory_xact_lock — modülün tek yazma kilidi
@@ -626,6 +632,44 @@ def cep_detay(cep_id: str, gun: Optional[str] = None, hepsi: bool = False):
     }
 
 
+@router.get("/teslimler")
+def teslimler():
+    """📦 TESLİM ONAYLARI sekmesi (sahip: "teslim onayları için ayrı bir sekme yap").
+    Bekleyenler (en eski üstte, patron patron) + bu dönemde alınanlar (sayılan, fark, kim, ne zaman)."""
+    _hazirla()
+    with db() as (conn, cur):
+        cep_list, C, kayit, _ = _yukle(cur)
+    bugun = _bugun().isoformat()
+    ad = lambda cid: C.get(cid, {}).get("ad", cid)  # noqa: E731
+    bek, alin = [], []
+    for h in kayit:
+        if h["tur"] != "teslim":
+            continue
+        satir = {"id": h["id"], "tarih": h["is_gunu"], "kaynak": h["kaynak"], "kaynak_ad": ad(h["kaynak"]),
+                 "hedef": h["hedef"], "hedef_ad": ad(h["hedef"]), "hedef_kisa": C.get(h["hedef"], {}).get("kisa"),
+                 "tutar": _tl_sayi(h["tutar"]), "eski_sistem": bool(h.get("kaynak_ref")), "kaydeden": h.get("kaydeden"),
+                 "yas_gun": _gun_fark(h["is_gunu"], bugun)}
+        if h["durum"] != "onaylandi":
+            bek.append(satir)
+        else:
+            al = int(h["veri"].get("alinan", h["tutar"]))
+            og = h["veri"].get("onay_gunu") or h["is_gunu"]
+            alin.append({**satir, "alinan": _tl_sayi(al), "fark": _tl_sayi(h["tutar"] - al),
+                         "onay_gunu": og, "onaylayan": h.get("onaylayan"), "otomatik": bool(h["veri"].get("otomatik")),
+                         "duzeltilebilir": _gun_fark(og, bugun) <= DUZELTME_SURESI_GUN})
+    bek.sort(key=lambda x: x["tarih"])
+    alin.sort(key=lambda x: (x["onay_gunu"], x["tarih"]), reverse=True)
+    patron = {}
+    for x in bek:
+        p_ = patron.setdefault(x["hedef"], {"hedef": x["hedef"], "ad": x["hedef_ad"], "adet": 0, "tutar": 0.0})
+        p_["adet"] += 1
+        p_["tutar"] = round(p_["tutar"] + x["tutar"], 2)
+    return {"bekleyen": bek, "alinan": alin, "patron_ozet": list(patron.values()),
+            "bekleyen_toplam": round(sum(x["tutar"] for x in bek), 2),
+            "farkli_alinan": sum(1 for x in alin if x["fark"]),
+            "otomatik_kabul_gun": OTOMATIK_KABUL_GUN, "duzeltme_suresi_gun": DUZELTME_SURESI_GUN}
+
+
 @router.get("/acik-defter")
 def acik_defter():
     """Açık farklar defteri — sahip: 'açıkları toplayarak gün gün toplam açık tutmalıyım'."""
@@ -953,7 +997,9 @@ def _otomatik_senkron() -> dict:
             with db() as (conn, cur):
                 _kilit(cur)
                 r = _aktar(cur, False, "otomatik köprü (eski sistem)")
+                r["ozet"]["otomatik_kabul"] = _otomatik_kabul(cur)
             _SON_SENKRON["sonuc"] = {"tamam": True, "kapanis": r["ozet"]["kapanis"], "teslim": r["ozet"]["teslim"],
+                                     "otomatik_kabul": r["ozet"].get("otomatik_kabul", 0),
                                      "eslesmeyen_teslim": r["ozet"]["eslesmeyen_teslim"], "kilitli": r["ozet"]["kilitli"]}
         except Exception as e:  # noqa: BLE001
             log.warning("para-izi otomatik senkron: %s", str(e)[:200])
@@ -962,6 +1008,60 @@ def _otomatik_senkron() -> dict:
     zz = _SON_SENKRON["zaman"]
     return {**(_SON_SENKRON["sonuc"] or {}),
             "zaman": datetime.fromtimestamp(zz, timezone.utc).isoformat() if zz else None}
+
+
+def _otomatik_kabul(cur) -> int:
+    """Teslim gününden en az OTOMATIK_KABUL_GUN geçmiş, hâlâ 'aldım' denmemiş teslimleri
+    teslim edilen tutarla KABUL eder (para teslim günü eve girmiş sayılır). Patronun evi o
+    günden sonra sayıldıysa (sayım kilidi) dokunmaz — orada bekler, ekranda görünür."""
+    cep_list, C, kayit, _ = _yukle(cur)
+    kilit = _sayim_kilidi(_olaylar(kayit))
+    sinir = date.fromordinal(_bugun().toordinal() - OTOMATIK_KABUL_GUN).isoformat()
+    n = 0
+    for h in kayit:
+        if h["tur"] != "teslim" or h["durum"] == "onaylandi" or h["is_gunu"] > sinir:
+            continue
+        if h["hedef"] in kilit and h["is_gunu"] <= kilit[h["hedef"]]:
+            continue
+        veri = dict(h["veri"])
+        veri.update(alinan=h["tutar"], onay_gunu=h["is_gunu"], otomatik=True)
+        cur.execute("""UPDATE para_izi_hareket SET durum='onaylandi', onay_zamani=NOW(),
+                              onaylayan='otomatik kabul (itiraz yok)', veri=%s::jsonb
+                        WHERE id=%s AND COALESCE(durum,'') <> 'onaylandi'""", (json.dumps(veri, ensure_ascii=False), h["id"]))
+        n += cur.rowcount
+    return n
+
+
+class DuzeltBody(BaseModel):
+    alinan: Decimal
+
+
+@router.post("/hareket/{hid}/teslim-duzelt")
+def teslim_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Kabul edilmiş (otomatik ya da tek dokunuşla) teslimde "aslında farklıydı" düzeltmesi —
+    7 gün içinde. Fark açık farka düşer; teslim edilen tutar değişmez."""
+    _hazirla()
+    with db() as (conn, cur):
+        _kilit(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        cep_list, C, kayit, _ = _yukle(cur)
+        h = next((x for x in kayit if x["id"] == hid and x["tur"] == "teslim"), None)
+        if not h or h["durum"] != "onaylandi":
+            raise HTTPException(404, "Kabul edilmiş teslim bulunamadı")
+        og = h["veri"].get("onay_gunu") or h["is_gunu"]
+        if _gun_fark(og, _bugun().isoformat()) > DUZELTME_SURESI_GUN:
+            raise HTTPException(409, f"{DUZELTME_SURESI_GUN} günlük düzeltme süresi geçti — farkı evdeki sayımla yakala")
+        if any(x["tur"] == "cozum" and x["veri"].get("fark_id") == hid for x in kayit):
+            raise HTTPException(409, "Bu teslimin farkı zaten kapatılmış")
+        al = _kurus(body.alinan)
+        if al < 0:
+            raise HTTPException(400, "Sayılan tutar eksi olamaz")
+        _kilit_denetle([(h["hedef"], og)], _sayim_kilidi(_olaylar(kayit)), C)
+        veri = dict(h["veri"])
+        veri.setdefault("duzeltmeler", []).append({"eski": int(veri.get("alinan", h["tutar"])), "yeni": al, "kim": kim})
+        veri["alinan"] = al
+        cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(veri, ensure_ascii=False), hid))
+    return {"ok": True}
 
 
 class TopluOnayBody(BaseModel):
