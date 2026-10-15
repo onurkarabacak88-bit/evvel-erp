@@ -343,6 +343,25 @@ def _gun_fark(a: str, b: str) -> int:
     return (date.fromisoformat(b) - date.fromisoformat(a)).days
 
 
+def _iz_kim(o: dict, C: dict) -> dict:
+    """Excel görünümü için: hareketin ŞUBESİ ve onu yapan KİŞİ."""
+    v, t = o["veri"], o["olay"]
+    kisa = lambda cid: C.get(cid, {}).get("kisa") if cid else None  # noqa: E731
+    kaydeden = (o.get("kaydeden") or "")
+    for on in ("şube paneli · ", "eski sistem aktarımı · ", "otomatik köprü (eski sistem)"):
+        kaydeden = kaydeden.replace(on, "")
+    if t in ("teslim_cikis", "teslim_alim"):
+        return {"sube": kisa(o["kaynak"]), "personel": v.get("teslim_eden") or None,
+                "alan": (o.get("onaylayan") if t == "teslim_alim" else None)}
+    if t == "kapanis":
+        return {"sube": kisa(o["cep"]), "personel": kaydeden or None, "alan": None}
+    if t == "dis":
+        return {"sube": None, "personel": v.get("kimden") or None, "alan": None}
+    if t == "tasima":
+        return {"sube": kisa(o["kaynak"]) if C.get(o["kaynak"], {}).get("tur") == "sube" else None, "personel": kaydeden or None, "alan": None}
+    return {"sube": None, "personel": kaydeden or None, "alan": None}
+
+
 def _cep_iz(cid: str, ol: List[dict], C: dict) -> dict:
     bal, seg, tum, bosaldi = 0, [], [], None
     for o in ol:
@@ -351,7 +370,7 @@ def _cep_iz(cid: str, ol: List[dict], C: dict) -> dict:
                 continue
             bal += e["d"]
             r = {"hareket_id": o["id"], "tur": o["olay"], "tarih": o["gun"], "d": e["d"], "bakiye": bal,
-                 "etiket": e["etiket"], "kaynak": e.get("kaynak")}
+                 "etiket": e["etiket"], "kaynak": e.get("kaynak"), **_iz_kim(o, C)}
             tum.append(r)
             seg.append(r)
             if bal == 0:
@@ -745,6 +764,7 @@ class HareketBody(BaseModel):
     fark_id: Optional[str] = None
     sebep: Optional[str] = None
     sorumlu: Optional[str] = None
+    teslim_eden: Optional[str] = None
 
 
 def _yaz(cur, tur, gun, kaydeden, cep=None, kaynak=None, hedef=None, tutar=0, durum=None, veri=None, kaynak_ref=None):
@@ -830,17 +850,30 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
             cep_var(body.hedef, {"ev"})
             if tut <= 0:
                 raise HTTPException(400, "Tutar gir")
-            yeni = _sahte(t, gun, kaynak=body.kaynak, hedef=body.hedef, tutar=tut, durum="bekliyor")
+            yeni = _sahte(t, gun, kaynak=body.kaynak, hedef=body.hedef, tutar=tut, durum="bekliyor",
+                          veri={"teslim_eden": (body.teslim_eden or "").strip()[:60]})
         elif t == "tasima":
-            cep_var(body.kaynak)
+            # Sahip: "Onur'un ve Fatma'nın evindeki para toplanıp Fethi'nin hesabına gitti" →
+            # BİRDEN ÇOK KAYNAK tek hedefe, tek transaction (ya hepsi ya hiçbiri).
+            kaynaklar = ([{"cep": p.cep, "tutar": _kurus(p.tutar)} for p in body.parcalar if p.tutar and p.tutar > 0]
+                         if body.parcalar else [{"cep": body.kaynak, "tutar": tut}])
             cep_var(body.hedef)
-            if body.kaynak == body.hedef:
-                raise HTTPException(400, "Nereden ve nereye aynı olamaz")
-            if C[body.kaynak]["tur"] == "sube" and C[body.hedef]["tur"] == "ev":
-                raise HTTPException(400, "Şubeden patrona para TESLİM ile geçer (patronun 'aldım' onayı gerekir). '+ Teslim'i kullan.")
-            if tut <= 0:
-                raise HTTPException(400, "Tutar gir")
-            yeni = _sahte(t, gun, kaynak=body.kaynak, hedef=body.hedef, tutar=tut)
+            if not kaynaklar:
+                raise HTTPException(400, "En az bir kaynak ekle")
+            if len({k["cep"] for k in kaynaklar}) != len(kaynaklar):
+                raise HTTPException(400, "Aynı cep iki kez seçilemez")
+            yeniler = []
+            for k in kaynaklar:
+                cep_var(k["cep"])
+                if k["cep"] == body.hedef:
+                    raise HTTPException(400, "Nereden ve nereye aynı olamaz")
+                if C[k["cep"]]["tur"] == "sube" and C[body.hedef]["tur"] == "ev":
+                    raise HTTPException(400, "Şubeden patrona para TESLİM ile geçer. '+ Teslim'i kullan.")
+                if k["tutar"] <= 0:
+                    raise HTTPException(400, "Tutar gir")
+                yeniler.append(_sahte(t, gun, kaynak=k["cep"], hedef=body.hedef, tutar=k["tutar"],
+                                      veri={"toplu": len(kaynaklar) > 1}))
+            yeni = yeniler[0]
         elif t == "odeme":
             ac = (body.aciklama or "").strip()
             if not ac:
@@ -880,16 +913,20 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
                                 "sube_cep": x["sube_cep"], "sorumlu": (body.sorumlu or "")[:40], "not": (body.not_ or "").strip()[:200]})
 
         # ── ortak korumalar: sayım kilidi + eksiye düşme ──
-        yeni_ol = _olaylar([yeni])
+        if t != "tasima":
+            yeniler = [yeni]
+        for i, y in enumerate(yeniler):
+            y["id"] = f"__yeni{i}__"
+        yeni_ol = _olaylar(yeniler)
         etkiler = [(e["cep"], o["gun"]) for o in yeni_ol for e in _etki(o, C)]
         if t != "cozum":   # fark çözümü sayımın kendi kapanış yoludur — kilide takılmaz
             _kilit_denetle(etkiler, kilit, C, sayim_icin=body.cep if t == "sayim" else None)
         cikan = {e["cep"] for o in yeni_ol for e in _etki(o, C) if e["d"] < 0 and e["cep"] in C}
-        _eksi_denetle(_olaylar(kayit + [yeni]), cikan, gun, C)
+        _eksi_denetle(_olaylar(kayit + yeniler), cikan, gun, C)
 
-        hid = _yaz(cur, t, yeni["is_gunu"], kim, cep=yeni["cep"], kaynak=yeni["kaynak"], hedef=yeni["hedef"],
-                   tutar=yeni["tutar"], durum=yeni["durum"], veri=yeni["veri"])
-    return {"ok": True, "id": hid}
+        idler = [_yaz(cur, t, y["is_gunu"], kim, cep=y["cep"], kaynak=y["kaynak"], hedef=y["hedef"],
+                      tutar=y["tutar"], durum=y["durum"], veri=y["veri"]) for y in yeniler]
+    return {"ok": True, "id": idler[0], "idler": idler}
 
 
 class OnayBody(BaseModel):
@@ -1177,11 +1214,11 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
 
         try:
             with savepoint(cur, "sp_pi_teslim"):
-                cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad FROM kasa_teslim
+                cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim
                                 WHERE tarih >= %s AND COALESCE(durum,'aktif')='aktif' ORDER BY tarih, olusturma""", (bas,))
                 teslimler = [dict(r) for r in cur.fetchall() or []]
         except Exception:  # noqa: BLE001 — durum kolonu olmayan kurulum
-            cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad FROM kasa_teslim
+            cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim
                             WHERE tarih >= %s ORDER BY tarih, olusturma""", (bas,))
             teslimler = [dict(r) for r in cur.fetchall() or []]
         for r in teslimler:
@@ -1203,7 +1240,18 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
             rapor["teslim"].append({**satir, "patron": C[hedef]["kisa"]})
             if not kuru:
                 _yaz(cur, "teslim", g, kim, kaynak=kaynak, hedef=hedef, tutar=_kurus(r["tutar"]),
-                     durum="bekliyor", veri={"eski_alan_ad": r.get("teslim_alan_ad")}, kaynak_ref=ref)
+                     durum="bekliyor", veri={"eski_alan_ad": r.get("teslim_alan_ad"), "teslim_eden": r.get("teslim_eden_ad")}, kaynak_ref=ref)
+
+        # 👤 Teslimi yapan personel (sahip: "tıklayınca teslim şubesi ve teslimi yapan personel
+        # görünmeli") — önceden aktarılmış kayıtlarda eksikse eski kaynaktan tamamlanır.
+        if not kuru:
+            ad_harita = {"kasa_teslim:" + str(r["id"]): r.get("teslim_eden_ad") for r in teslimler if r.get("teslim_eden_ad")}
+            for h in kayit:
+                ref_ = h.get("kaynak_ref") or ""
+                if h["tur"] == "teslim" and ref_ in ad_harita and not h["veri"].get("teslim_eden"):
+                    v2 = dict(h["veri"])
+                    v2["teslim_eden"] = ad_harita[ref_]
+                    cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(v2, ensure_ascii=False), h["id"]))
 
         try:
             with savepoint(cur, "sp_pi_dis"):
@@ -1294,11 +1342,11 @@ def panel_teslim_esle(cur) -> None:
             sube_cep = {str(dict(x)["sube_id"]): dict(x)["id"] for x in cur.fetchall() or []}
             try:
                 with savepoint(cur, "sp_pi_panel_t2"):
-                    cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad FROM kasa_teslim
+                    cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim
                                     WHERE tarih >= %s AND COALESCE(durum,'aktif')='aktif'""", (bas,))
                     kaynak = [dict(x) for x in cur.fetchall() or []]
             except Exception:  # noqa: BLE001
-                cur.execute("SELECT id, sube_id, tarih, tutar, teslim_alan_ad FROM kasa_teslim WHERE tarih >= %s", (bas,))
+                cur.execute("SELECT id, sube_id, tarih, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim WHERE tarih >= %s", (bas,))
                 kaynak = [dict(x) for x in cur.fetchall() or []]
             canli = {"kasa_teslim:" + str(x["id"]) for x in kaynak}
             cur.execute("""SELECT id, kaynak_ref, durum FROM para_izi_hareket
@@ -1313,7 +1361,7 @@ def panel_teslim_esle(cur) -> None:
                 if ref in her_zaman or not cep or not hedef:
                     continue
                 _yaz(cur, "teslim", x["tarih"].isoformat(), "şube paneli", kaynak=cep, hedef=hedef, tutar=_kurus(x["tutar"]),
-                     durum="bekliyor", veri={"eski_alan_ad": x.get("teslim_alan_ad")}, kaynak_ref=ref)
+                     durum="bekliyor", veri={"eski_alan_ad": x.get("teslim_alan_ad"), "teslim_eden": x.get("teslim_eden_ad")}, kaynak_ref=ref)
             for ref, h in var.items():
                 if ref not in canli and h["durum"] != "onaylandi":
                     _yaz(cur, "iptal", _bugun().isoformat(), "şube paneli",
