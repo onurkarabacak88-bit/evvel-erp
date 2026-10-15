@@ -23,12 +23,12 @@ const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 export const TABAN = '/evvel-yeni';
 // Sahip: "kasa ve gelir ayrı; sol alanda FARKLI isimlerde olmalı" → her bölüm kendi başlığı.
 const BOLUMLER = [
-  { ad: 'Kasa', mod: 'kasa', sayfalar: SAYFALAR },
-  { ad: 'Gelir', mod: 'gelir', sayfalar: GELIR_SAYFALAR },
-  { ad: 'Gider', mod: 'gider', sayfalar: GIDER_SAYFALAR },
-  { ad: 'Ödeme', mod: 'odeme', sayfalar: ODEME_SAYFALAR },
-  { ad: 'Şube kazancı', mod: 'kazanc', sayfalar: KAZANC_SAYFALAR },
-  { ad: 'Tanımlar', mod: 'tanim', sayfalar: TANIM_SAYFALAR },
+  { ad: 'Kasa', ikon: '💰', mod: 'kasa', sayfalar: SAYFALAR },
+  { ad: 'Gelir', ikon: '📥', mod: 'gelir', sayfalar: GELIR_SAYFALAR },
+  { ad: 'Gider', ikon: '💸', mod: 'gider', sayfalar: GIDER_SAYFALAR },
+  { ad: 'Ödeme', ikon: '🧾', mod: 'odeme', sayfalar: ODEME_SAYFALAR },
+  { ad: 'Şube kazancı', ikon: '📈', mod: 'kazanc', sayfalar: KAZANC_SAYFALAR },
+  { ad: 'Tanımlar', ikon: '⚙️', mod: 'tanim', sayfalar: TANIM_SAYFALAR },
 ];
 const TUM_SAYFALAR = BOLUMLER.flatMap((b) => b.sayfalar.map((x) => ({ ...x, mod: b.mod })));
 
@@ -46,6 +46,15 @@ const KABUK_CSS = `
 .piapp-sol{background:var(--paper);border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;overflow:auto}
 .piapp-logo{font-family:'Fraunces',Georgia,serif;font-weight:600;font-size:22px;padding:0 10px 4px}
 .piapp-alt{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);font-weight:600;padding:12px 10px 4px}
+.piapp-baslik{display:flex;align-items:center;gap:10px;width:100%;border:1px solid var(--line);background:var(--bg);cursor:pointer;font:inherit;text-align:left;
+  font-size:14.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);font-weight:800;padding:12px 12px;border-radius:11px;margin-top:8px;border-left:4px solid var(--line)}
+.piapp-baslik:hover{border-color:var(--accent)}
+.piapp-baslik[data-aktif="1"]{border-left-color:var(--accent);background:var(--paper)}
+.piapp-baslik[aria-expanded="true"]{border-left-color:var(--accent)}
+.piapp-baslik .ikon{font-size:17px;letter-spacing:0}
+.piapp-baslik .ok{display:inline-block;transition:transform .15s;font-size:11px;color:var(--ink3)}
+.piapp-baslik[aria-expanded="true"] .ok{transform:rotate(90deg)}
+.piapp-baslik .nokta{width:8px;height:8px;border-radius:50%;background:var(--accent)}
 .piapp-sol a{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 10px;border-radius:9px;color:var(--ink);text-decoration:none;font-weight:600;font-size:14px}
 .piapp-sol a:hover{background:var(--bg)}
 .piapp-sol a[aria-current="page"]{background:var(--accent);color:var(--on)}
@@ -119,6 +128,13 @@ export default function EvvelYeniApp() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  const [acik, setAcik] = useState(() => { try { return JSON.parse(localStorage.getItem('evvel_yeni_menu_acik') || '[]'); } catch { return []; } });
+  const bolumAc = (ad) => setAcik((a) => {
+    const y = a.includes(ad) ? a.filter((x) => x !== ad) : [...a, ad];
+    try { localStorage.setItem('evvel_yeni_menu_acik', JSON.stringify(y)); } catch { /* yut */ }
+    return y;
+  });
+
   const sekmeDegis = (k) => {
     const yol = k === 'kasam' ? TABAN : `${TABAN}/${k}`;
     if (window.location.pathname !== yol) window.history.pushState(null, '', yol);
@@ -137,13 +153,25 @@ export default function EvvelYeniApp() {
           <nav className="piapp-sol" aria-label="Evvel Yeni bölümleri">
             <div className="piapp-logo">Evvel Yeni</div>
 
-            {BOLUMLER.map((b) => (<React.Fragment key={b.ad}><div className="piapp-alt">{b.ad}</div>{b.sayfalar.map((m) => (
+            {BOLUMLER.map((b) => {
+              // Sahip (2026-10-16): "ana başlıklar açılır kapanır; tıklayınca aşağı doğru açılsın, basmadıkça kapalı dursun"
+              const ac = acik.includes(b.ad);
+              const aktif = b.sayfalar.some((m) => m.id === sekme);
+              const rozetTop = b.sayfalar.reduce((t, m) => t + (Number(rozet[m.id]) || 0), 0);
+              return (<React.Fragment key={b.ad}>
+              <button type="button" className="piapp-baslik" aria-expanded={ac} data-aktif={aktif ? '1' : '0'} onClick={() => bolumAc(b.ad)}>
+                <span className="ikon" aria-hidden="true">{b.ikon}</span><span style={{ flex: 1 }}>{b.ad}</span><span className="ok">▶</span>
+                {aktif && !ac && <span className="nokta" title="Açık sayfa bu bölümde" />}
+                {!ac && rozetTop > 0 && <span style={{ background: 'var(--bad)', color: 'var(--on)', borderRadius: 999, padding: '0 7px', fontSize: 11.5, fontWeight: 700, letterSpacing: 0 }}>{rozetTop}</span>}
+              </button>
+              {ac && b.sayfalar.map((m) => (
               <a key={m.id} href={m.id === 'kasam' ? TABAN : `${TABAN}/${m.id}`} aria-current={sekme === m.id ? 'page' : undefined}
                 onClick={(e) => { e.preventDefault(); sekmeDegis(m.id); }}>
                 <span>{m.ad}<small>{m.alt}</small></span>
                 {rozet[m.id] ? <span style={{ background: 'var(--bad)', color: 'var(--on)', borderRadius: 999, padding: '0 8px', fontSize: 12, fontWeight: 700 }}>{rozet[m.id]}</span> : null}
               </a>
-            ))}</React.Fragment>))}
+            ))}</React.Fragment>);
+            })}
           </nav>
           <main className="piapp-ic">
             {(TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'tanim'
