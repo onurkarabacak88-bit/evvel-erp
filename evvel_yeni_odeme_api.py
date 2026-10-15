@@ -78,8 +78,9 @@ def listeler():
         "konular": [{"kod": k, **v} for k, v in KONULAR.items()],
         "fatura_turleri": FATURA_TURLERI, "personel_kalemleri": PERSONEL_KALEMLERI,
         "subeler": subeler, **L,
-        "nakit_cepler": [{"id": c["id"], "ad": c["ad"], "bakiye": _tl_sayi(B.get(c["id"], 0))} for c in cep_list if c["tur"] == "ev"],
-        # Sahip (2026-10-15): "dükkân nakdinden ödenirse panelden girilir" → dükkân çekmecesi bu formda YOK (çift giriş biter)
+        "nakit_cepler": [{"id": c["id"], "ad": c["ad"], "bakiye": _tl_sayi(B.get(c["id"], 0))} for c in cep_list if c["tur"] in ("ev", "sube")],
+        # Sahip (2026-10-15): dükkânın KÜÇÜK harcamasını panel girer → 'anlık gider' dükkân nakdinden girilmez;
+        # ama "Gazze kirası: Gazze 30.000 + Köyceğiz'den 60.000" gibi büyük ödemeler dükkân nakdinden girilebilir.
         "banka_cepler": [{"id": c["id"], "ad": c["ad"], "bakiye": _tl_sayi(B.get(c["id"], 0))} for c in cep_list if c["tur"] in ("banka", "hesap")],
     }
 
@@ -201,10 +202,10 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
             if t == 0:
                 raise HTTPException(400, "Tutarı boş bir ödeme satırı var — doldur ya da sil")
             if p.yontem in ("nakit", "havale"):
-                tur_izin = ("ev",) if p.yontem == "nakit" else ("banka", "hesap")
-                if p.cep in C and C[p.cep]["tur"] == "sube":
-                    raise HTTPException(400, "Dükkân nakdinden yapılan harcamayı şube PANELDEN girer. Dükkândaki parayı patron aldıysa "
-                                             "önce Kasa'da teslim alın (dükkân → ev), sonra evden ödeyin.")
+                tur_izin = ("ev", "sube") if p.yontem == "nakit" else ("banka", "hesap")
+                if body.konu == "anlik" and p.cep in C and C[p.cep]["tur"] == "sube":
+                    raise HTTPException(400, "Dükkân çekmecesinden yapılan küçük harcamayı şube PANELDEN girer, buraya kendiliğinden gelir. "
+                                             "Bu harcama evdeki nakitten, bankadan ya da kartla ödendiyse onu seç.")
                 if p.cep not in C or C[p.cep]["tur"] not in tur_izin:
                     raise HTTPException(400, f"{'Nakit için cep' if p.yontem == 'nakit' else 'Havale için banka'} seç")
                 nakit_parca.append({"cep": p.cep, "tutar": t, "yontem": p.yontem})
