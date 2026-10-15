@@ -275,13 +275,52 @@ def odeme_listesi(ay: Optional[str] = None):
             "kart_toplam": round(sum(k["tutar"] for x in out for k in x["kart"]), 2)}
 
 
+# ── PERSONEL ÜCRETİ — Evvel Yeni'nin KENDİ tanımı (sahip: "sistem kendi bilsin, yeni sisteme tanınsın") ──
+# Ay ay geçerli: bir ay için geçerli tanım = o aya kadar girilmiş EN SON tanım. Hiç tanım yoksa
+# başlangıç değeri eski personel kartından (maas, yemek_ucreti) okunur ve "eski sistemden" diye işaretlenir.
+_UCRET_HAZIR = False
+
+
+def _ucret_tablosu(cur):
+    global _UCRET_HAZIR
+    if _UCRET_HAZIR:
+        return
+    cur.execute("SET LOCAL lock_timeout = '3s'")
+    cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel_ucret (
+                     personel_id TEXT NOT NULL, gecerli_ay TEXT NOT NULL,
+                     maas BIGINT NOT NULL DEFAULT 0, yemek BIGINT NOT NULL DEFAULT 0,
+                     degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                     PRIMARY KEY (personel_id, gecerli_ay))""")
+    _UCRET_HAZIR = True
+
+
+def _ucret(cur, personel_id: str, ay: str) -> dict:
+    _ucret_tablosu(cur)
+    cur.execute("""SELECT maas, yemek, gecerli_ay, degistiren FROM ey_personel_ucret
+                    WHERE personel_id=%s AND gecerli_ay <= %s ORDER BY gecerli_ay DESC LIMIT 1""", (str(personel_id), ay[:7]))
+    r = cur.fetchone()
+    if r:
+        r = dict(r)
+        return {"maas": int(r["maas"]), "yemek": int(r["yemek"]), "kaynak": "evvel_yeni", "gecerli_ay": r["gecerli_ay"], "degistiren": r["degistiren"]}
+    try:
+        with savepoint(cur, "sp_ey_ucret_eski"):
+            cur.execute("SELECT maas, yemek_ucreti FROM personel WHERE id::text=%s", (str(personel_id),))
+            e = cur.fetchone()
+    except Exception:  # noqa: BLE001
+        e = None
+    e = dict(e) if e else {}
+    return {"maas": _kurus(e.get("maas") or 0), "yemek": _kurus(e.get("yemek_ucreti") or 0), "kaynak": "eski_sistem",
+            "gecerli_ay": None, "degistiren": None}
+
+
 @router.get("/personel-durum")
 def personel_durum(personel_id: str, ay: str):
-    """Seçilen personele o ay (ait olduğu ay) ne ödendi — kalem kalem. Maaş girerken avansı görsün,
-    maaşın KALANINI girsin (avans + tam maaş = çift gider olmasın)."""
+    """Seçilen personelin o ayki HAK EDİŞİ (yeni sistemin tanımı) − o aya ait şimdiye kadar ödenen = ÖNERİLEN tutar.
+    Form tutarı bununla kendiliğinden doldurur; kullanıcı düzeltebilir."""
     _hazirla()
     with db() as (conn, cur):
         _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+        u = _ucret(cur, personel_id, ay)
     kalem = {}
     for h in kayit:
         v = h["veri"]
@@ -289,4 +328,36 @@ def personel_durum(personel_id: str, ay: str):
         if h["tur"] != "odeme" or k.get("tip") != "personel" or str(k.get("personel_id")) != str(personel_id) or v.get("ait_ay") != ay[:7]:
             continue
         kalem[k.get("kalem") or "?"] = kalem.get(k.get("kalem") or "?", 0) + int(v.get("toplam", h["tutar"]))
-    return {"ay": ay[:7], "kalemler": {a: _tl_sayi(t) for a, t in kalem.items()}, "toplam": _tl_sayi(sum(kalem.values()))}
+    # Maaş = hak ediş − avans − bu aya daha önce ödenen maaş; yemek = tanım − ödenen yemek
+    maas_kalan = max(0, u["maas"] - kalem.get("Avans", 0) - kalem.get("Maaş", 0))
+    yemek_kalan = max(0, u["yemek"] - kalem.get("Yemek ücreti", 0))
+    return {"ay": ay[:7], "kalemler": {a: _tl_sayi(t) for a, t in kalem.items()}, "toplam": _tl_sayi(sum(kalem.values())),
+            "ucret": {"maas": _tl_sayi(u["maas"]), "yemek": _tl_sayi(u["yemek"]), "kaynak": u["kaynak"],
+                      "gecerli_ay": u["gecerli_ay"], "degistiren": u["degistiren"]},
+            "onerilen": {"Maaş": _tl_sayi(maas_kalan), "Yemek ücreti": _tl_sayi(yemek_kalan)}}
+
+
+class UcretBody(BaseModel):
+    personel_id: str
+    ay: str                 # YYYY-AA — bu aydan itibaren geçerli
+    maas: Decimal
+    yemek: Decimal
+
+
+@router.post("/personel-ucret")
+def personel_ucret(body: UcretBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Maaş / yemek tanımı — o aydan İTİBAREN geçerli. Eski aylar etkilenmez; silme yok, aynı ay üzerine yazılır."""
+    try:
+        date.fromisoformat(body.ay[:7] + "-01")
+    except ValueError:
+        raise HTTPException(400, "Ay YYYY-AA olmalı")
+    m, y = _kurus(body.maas), _kurus(body.yemek)
+    if m < 0 or y < 0:
+        raise HTTPException(400, "Tutar eksi olamaz")
+    with db() as (conn, cur):
+        _ucret_tablosu(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        cur.execute("""INSERT INTO ey_personel_ucret (personel_id, gecerli_ay, maas, yemek, degistiren) VALUES (%s,%s,%s,%s,%s)
+                       ON CONFLICT (personel_id, gecerli_ay) DO UPDATE SET maas=EXCLUDED.maas, yemek=EXCLUDED.yemek,
+                         degistiren=EXCLUDED.degistiren, zaman=NOW()""", (str(body.personel_id), body.ay[:7], m, y, kim))
+    return {"ok": True, "mesaj": f"Ücret tanımı kaydedildi · {body.ay[:7]} ayından itibaren · maaş {_tl(m)} · yemek {_tl(y)}"}

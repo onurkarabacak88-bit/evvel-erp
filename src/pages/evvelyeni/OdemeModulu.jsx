@@ -5,7 +5,7 @@
 // şubelerin isimlerini seçmeliyiz; toptancıda kayıtlı toptancı; personelde isimler,
 // yemek ücreti mesela." Etkiler sunucuda türetilir (kasa, kart, gider, kimin).
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useState } from 'react';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, odemeFisi, fmt, tl, tKisa } from './KasaModulu';
 
@@ -40,6 +40,8 @@ export default function OdemeModulu({ onToast }) {
   const [benzer, setBenzer] = useState(false);
   const [pd, setPd] = useState(null);   // seçili personele bu ay ne ödendi
   const [ck, setCk] = useState(null);   // ödeme fişi
+  const [ucretDuz, setUcretDuz] = useState(null);   // {maas, yemek} — tanım düzenleniyor
+  const otoTutar = useRef(null);         // son kendiliğinden yazılan tutar (kullanıcı değiştirdiyse üstüne yazılmaz)
   const [hata, setHata] = useState('');
   const [mesgul, setMesgul] = useState(false);
   const [ay, setAy] = useState(ayBugun());
@@ -50,11 +52,32 @@ export default function OdemeModulu({ onToast }) {
   useEffect(() => { listeYukle(); }, [listeYukle]);
 
   const set = (k, v) => { setBenzer(false); setF((x) => ({ ...x, [k]: v })); };
-  useEffect(() => {
-    setPd(null);
+  const pdYukle = useCallback(() => {
+    setPd(null); setUcretDuz(null);
     if (f.konu !== 'personel' || !f.personel_id || !f.ait_ay) return;
     api(`/evvel-yeni/odeme/personel-durum?personel_id=${encodeURIComponent(f.personel_id)}&ay=${f.ait_ay}`).then(setPd).catch(() => {});
   }, [f.konu, f.personel_id, f.ait_ay]);
+  useEffect(() => { pdYukle(); }, [pdYukle]);
+  // Sahip: "tutar alanı kendiliğinden dolsun ama düzeltme serbest olsun" — ilk satır boşsa ya da
+  // en son sistemin yazdığı değerde duruyorsa önerilen tutar yazılır; kullanıcı değiştirdiyse dokunulmaz.
+  useEffect(() => {
+    if (!pd) return;
+    const o = pd.onerilen?.[f.personel_kalemi];   // avans/prim için öneri yok → sistemin yazdığı silinir
+    setF((x) => {
+      const t0 = x.parcalar[0]?.tutar ?? '';
+      if (t0 !== '' && t0 !== otoTutar.current) return x;
+      const yeni = o > 0 ? String(o) : '';
+      if (yeni === t0) return x;
+      otoTutar.current = yeni;
+      return { ...x, parcalar: x.parcalar.map((q, j) => (j === 0 ? { ...q, tutar: yeni } : q)) };
+    });
+  }, [pd, f.personel_kalemi]);
+  const ucretKaydet = async () => {
+    try {
+      const r = await api('/evvel-yeni/odeme/personel-ucret', { method: 'POST', body: { personel_id: f.personel_id, ay: f.ait_ay, maas: sayi(ucretDuz.maas) || 0, yemek: sayi(ucretDuz.yemek) || 0 } });
+      onToast?.(r.mesaj); pdYukle();
+    } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+  };
   const iptalEt = async (x) => {
     const sebep = window.prompt(`"${x.aciklama}" (${fmt(x.toplam)} ₺) iptal edilsin mi?\nKısaca neden yaz:`);
     if (!sebep || !sebep.trim()) return;
@@ -137,11 +160,26 @@ export default function OdemeModulu({ onToast }) {
                 <option value="">Seç…</option>{L.personel_kalemleri.map((k) => <option key={k}>{k}</option>)}
               </select></Etiket>
               {pd && (
-                <div style={{ gridColumn: '1 / -1', padding: '9px 12px', borderRadius: 10, background: 'var(--pi-accent-soft)', fontSize: 13.5 }}>
-                  {pd.toplam > 0
-                    ? <>{ayAdi(pd.ay)} için bu kişiye şimdiye kadar: {Object.entries(pd.kalemler).map(([a, t]) => `${a} ${fmt(t)} ₺`).join(' · ')}.{' '}
-                      {f.personel_kalemi === 'Maaş' && pd.kalemler.Avans > 0 && <b>Maaşın yalnız KALANINI gir (avans zaten verildi).</b>}</>
-                    : <>{ayAdi(pd.ay)} için bu kişiye henüz ödeme girilmemiş.</>}
+                <div style={{ gridColumn: '1 / -1', padding: '10px 12px', borderRadius: 10, background: 'var(--pi-accent-soft)', fontSize: 13.5, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                    <span>{ayAdi(pd.ay)} hak edişi: maaş <b style={num}>{fmt(pd.ucret.maas)}</b> ₺ · yemek <b style={num}>{fmt(pd.ucret.yemek)}</b> ₺</span>
+                    <Cip tur={pd.ucret.kaynak === 'eski_sistem' ? 'sari' : undefined}>{pd.ucret.kaynak === 'eski_sistem' ? 'eski sistemden — kontrol et' : `Evvel Yeni tanımı · ${pd.ucret.gecerli_ay}'dan beri`}</Cip>
+                    {!ucretDuz && <Dugme kucuk onClick={() => setUcretDuz({ maas: String(pd.ucret.maas || ''), yemek: String(pd.ucret.yemek || '') })}>Ücreti değiştir</Dugme>}
+                  </div>
+                  {ucretDuz && (
+                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
+                      <label>Maaş <input inputMode="decimal" style={{ ...alan, width: 120 }} value={ucretDuz.maas} onChange={(e) => setUcretDuz((u) => ({ ...u, maas: e.target.value }))} /></label>
+                      <label>Yemek <input inputMode="decimal" style={{ ...alan, width: 110 }} value={ucretDuz.yemek} onChange={(e) => setUcretDuz((u) => ({ ...u, yemek: e.target.value }))} /></label>
+                      <Dugme onClick={ucretKaydet}>{ayAdi(f.ait_ay)}'dan itibaren kaydet</Dugme>
+                      <Dugme kucuk onClick={() => setUcretDuz(null)}>Vazgeç</Dugme>
+                    </div>
+                  )}
+                  <div>{pd.toplam > 0 ? <>Bu aya şimdiye kadar ödenen: {Object.entries(pd.kalemler).map(([a, t]) => `${a} ${fmt(t)} ₺`).join(' · ')}</> : <>Bu aya henüz ödeme girilmemiş.</>}</div>
+                  {pd.onerilen[f.personel_kalemi] != null && (
+                    <div>👉 Ödenecek <b style={num}>{fmt(pd.onerilen[f.personel_kalemi])}</b> ₺
+                      {f.personel_kalemi === 'Maaş' && <> = maaş {fmt(pd.ucret.maas)}{pd.kalemler.Avans ? ` − avans ${fmt(pd.kalemler.Avans)}` : ''}{pd.kalemler['Maaş'] ? ` − önce ödenen ${fmt(pd.kalemler['Maaş'])}` : ''}</>}
+                      {' '}<span style={{ color: R.not }}>(tutara yazıldı — gerekirse düzelt)</span></div>
+                  )}
                 </div>
               )}
             </>)}
