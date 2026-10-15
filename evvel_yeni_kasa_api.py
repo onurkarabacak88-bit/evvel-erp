@@ -1015,6 +1015,7 @@ def _sahte(tur, gun, **kw) -> dict:
 def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Tek yazma kapısı. Tek transaction + modül kilidi: ya tamamı yazılır ya hiçbiri."""
     t = body.tur
+    evo_yerine = None
     if t not in {"acilis", "kapanis", "dis", "teslim", "tasima", "odeme", "sayim", "cozum", "pos_yatis"}:
         raise HTTPException(400, "Geçersiz tür")
     bugun = _bugun()
@@ -1056,8 +1057,14 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
             onl = _kurus(body.online or 0)
             if tut < 0 or kart < 0 or (tut == 0 and kart == 0):
                 raise HTTPException(400, "Nakit ya da kart tutarı gir")
-            if any(h["tur"] == "kapanis" and h["cep"] == body.cep and h["is_gunu"] == gun for h in kayit):
-                raise HTTPException(409, "Bu şubenin bu güne ait kapanışı zaten var")
+            mevcut = next((h for h in kayit if h["tur"] == "kapanis" and h["cep"] == body.cep and h["is_gunu"] == gun), None)
+            if mevcut:
+                # Sahip (2026-10-16): Evo'nun TAHMİNİ (şube kapanış yapmamış) gerçek kapanışla DEĞİŞTİRİLİR;
+                # eskisi silinmez, iptal kaydıyla devre dışı kalır. Gerçek kapanış varsa 409.
+                if mevcut["veri"].get("eski_kaynak") != "evo_taslak":
+                    raise HTTPException(409, "Bu şubenin bu güne ait kapanışı zaten var")
+                evo_yerine = mevcut
+                kayit = [h for h in kayit if h["id"] != mevcut["id"]]
             yeni = _sahte(t, gun, cep=body.cep, tutar=tut, durum="bekliyor", veri={"kart": kart + onl, "pos": kart, "online": onl})
         elif t == "dis":
             cep_var(body.cep)
@@ -1172,11 +1179,18 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
             y["id"] = f"__yeni{i}__"
         yeni_ol = _olaylar(yeniler)
         etkiler = [(e["cep"], o["gun"]) for o in yeni_ol for e in _etki(o, C)]
+        if evo_yerine:   # Evo tahmininin kalkması da o cebi değiştirir → sayılmış güne dokunamaz
+            etkiler.append((evo_yerine["cep"], evo_yerine["is_gunu"]))
         if t != "cozum":   # fark çözümü sayımın kendi kapanış yoludur — kilide takılmaz
             _kilit_denetle(etkiler, kilit, C, sayim_icin=body.cep if t == "sayim" else None)
         cikan = {e["cep"] for o in yeni_ol for e in _etki(o, C) if e["d"] < 0 and e["cep"] in C}
         _eksi_denetle(_olaylar(kayit + yeniler), cikan, gun, C)
 
+        if evo_yerine:
+            _yaz(cur, "iptal", _bugun().isoformat(), kim,
+                 veri={"hedef_id": evo_yerine["id"], "sebep": "Evo tahmini — şubenin gerçek kapanışı girildi"})
+            for y in yeniler:
+                y["veri"] = {**y["veri"], "evo_yerine": True, "evo_nakit": evo_yerine["tutar"], "evo_kart": int(evo_yerine["veri"].get("kart", 0))}
         idler = [_yaz(cur, t, y["is_gunu"], kim, cep=y["cep"], kaynak=y["kaynak"], hedef=y["hedef"],
                       tutar=y["tutar"], durum=y["durum"], veri=y["veri"]) for y in yeniler]
     return {"ok": True, "id": idler[0], "idler": idler}

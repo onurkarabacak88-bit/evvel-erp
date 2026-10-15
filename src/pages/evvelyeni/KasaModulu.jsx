@@ -382,7 +382,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         </>)}
 
         {tip === 'kapanis' && (<>
-          <div style={{ fontSize: 12, color: R.not }}>Normalde şube panelinden gelir ("Eski sistemden aktar"). Gelmediyse buradan elle girilir.</div>
+          <div style={{ fontSize: 12, color: R.not }}>Normalde şube panelinden gelir. Gelmediyse şubenin X/Z raporundan buradan girilir. O gün Evo tahmini varsa bu kapanış onun yerini alır (Evo rakamı silinmez, devre dışı kalır).</div>
           <div style={izgara}>
             <Alan etiket="Şube"><select value={d.cep} onChange={set('cep')} style={alanStil}>{secenek(['sube'])}</select></Alan>
             {gunAlani}
@@ -1275,7 +1275,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
                 </div>
               );
             })()}
-            {veri.isler.filter((x) => x.tur !== 'teslim').map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} />)}
+            {veri.isler.filter((x) => x.tur !== 'teslim').map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })} />)}
           </div>
       )}
       {sekme === 'hareketler' && (<>
@@ -1386,7 +1386,7 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
   );
 }
 
-function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz }) {
+function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis }) {
   const [say, setSay] = useState('');   // Codex: dolu gelirse saymadan onaylanır — boş başlar
   const g = Math.max(0, Math.round((new Date(`${bugun}T12:00:00`) - new Date(`${x.tarih}T12:00:00`)) / 864e5));
   const yas = g === 0 ? 'bugün' : `${g} gündür`;
@@ -1405,8 +1405,8 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz }) {
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(R.kirmizi, 55)}` }}>
         <Cip tur="kirmizi">Kapanış YOK</Cip>
-        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Şube o günün kapanışını girmedi — gelir eksik. Şubeden panelden girmesini iste · {yas}</div></div>
-        <span />
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Şube o günün kapanışını girmedi — gelir eksik. Şubeden iste; X/Z raporu geldiyse buradan gir · {yas}</div></div>
+        <Dugme ana kucuk onClick={() => onKapanis?.(x)}>Kapanışı gir</Dugme>
       </div>
     );
   }
@@ -1414,8 +1414,8 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz }) {
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(R.amber, 55)}` }}>
         <Cip tur="sari">Kapanış yapılmadı · Evo tahmini</Cip>
-        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Rakam Evo kasasından (nakit {fmt(x.nakit)} · kart {fmt(x.kart)}) — kimse saymadı. Şubeden kapanışı girmesini iste · {yas}</div></div>
-        <span />
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Rakam Evo kasasından (nakit {fmt(x.nakit)} · kart {fmt(x.kart)}) — kimse saymadı. Gerçek kapanış girilince Evo rakamının yerini alır · {yas}</div></div>
+        <Dugme kucuk onClick={() => onKapanis?.(x)}>Gerçeğini gir</Dugme>
       </div>
     );
   }
