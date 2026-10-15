@@ -1,0 +1,139 @@
+// ─────────────────────────────────────────────────────────────────────────────
+// 🧵 PARA İZİ — KENDİ ADRESİNDE, AYRI UYGULAMA (/para-izi)
+//
+// Sahip (2026-10-15): "Bunu kadife tasarımda değil, başka bir alanda ayrı olarak yap;
+// sonra (eskiyi) tamamen kaldırsak."
+// → Evvel'in kadife kabuğuna (v2) hiçbir bağı yok. Yalnız ortak `api` yardımcısını ve
+//   Evvel'in oturum jetonunu kullanır: Evvel'e girmiş tarayıcıda yeniden şifre sormaz.
+// Adresler: /para-izi · /para-izi/teslim · /para-izi/banka
+// ─────────────────────────────────────────────────────────────────────────────
+import React, { useEffect, useState } from 'react';
+import { api } from '../../utils/api';
+import ParaIziModulu from './ParaIziModulu';
+
+const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
+
+const MENU = [
+  { id: 'izi', ad: 'Para nerede', alt: 'Kasalar · evler · bankalar' },
+  { id: 'teslim', ad: 'Teslim onayları', alt: 'Şubeden patrona' },
+  { id: 'banka', ad: 'Banka mutabakatı', alt: 'Aylık ekstre kontrolü' },
+];
+
+const sekmeAdresten = () => {
+  const p = (window.location.pathname || '').replace(/\/+$/, '');
+  if (p.endsWith('/teslim')) return 'teslim';
+  if (p.endsWith('/banka')) return 'banka';
+  return 'izi';
+};
+
+const KABUK_CSS = `
+.piapp{--bg:#F4EEE2;--paper:#FCFAF4;--line:#E0D4BE;--ink:#2A1E14;--ink3:#7F6C57;--accent:#9A5F2E;--on:#FFF8EC;--bad:#C03A2B;
+  min-height:100vh;background:var(--bg);color:var(--ink);font-family:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif}
+@media (prefers-color-scheme: dark){.piapp{--bg:#161009;--paper:#211710;--line:#3A2C1E;--ink:#F1E9DD;--ink3:#A3917B;--accent:#D29A5B;--on:#241A12;--bad:#E2604F}}
+.piapp-duzen{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:100vh}
+.piapp-sol{background:var(--paper);border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;overflow:auto}
+.piapp-logo{font-family:'Fraunces',Georgia,serif;font-weight:600;font-size:22px;padding:0 10px 4px}
+.piapp-alt{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--ink3);font-weight:600;padding:12px 10px 4px}
+.piapp-sol a{display:flex;justify-content:space-between;align-items:center;gap:8px;padding:9px 10px;border-radius:9px;color:var(--ink);text-decoration:none;font-weight:600;font-size:14px}
+.piapp-sol a:hover{background:var(--bg)}
+.piapp-sol a[aria-current="page"]{background:var(--accent);color:var(--on)}
+.piapp-sol small{display:block;font-weight:400;font-size:11.5px;color:var(--ink3)}
+.piapp-sol a[aria-current="page"] small{color:var(--on);opacity:.8}
+.piapp-ic{padding:12px 18px 40px;min-width:0}
+@media (max-width:820px){.piapp-duzen{grid-template-columns:1fr}.piapp-sol{position:static;height:auto;flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line)}.piapp-alt{display:none}}
+.piapp-giris{max-width:360px;margin:12vh auto 0;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:12px}
+.piapp-giris h1{font-family:'Fraunces',Georgia,serif;font-weight:600;margin:0;font-size:28px}
+.piapp-giris input{font:inherit;padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
+.piapp-giris button{font:inherit;font-weight:700;padding:11px;border-radius:9px;border:1px solid var(--accent);background:var(--accent);color:var(--on);cursor:pointer}
+.piapp-toast{position:fixed;left:50%;bottom:20px;transform:translateX(-50%);background:var(--ink);color:var(--bg);padding:10px 16px;border-radius:10px;font-size:14px;z-index:200;max-width:90vw}
+`;
+
+function Giris({ onTamam }) {
+  const [kadi, setKadi] = useState('');
+  const [sifre, setSifre] = useState('');
+  const [hata, setHata] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+  const gir = async (e) => {
+    e.preventDefault();
+    setHata(''); setMesgul(true);
+    try {
+      const r = kadi.trim()
+        ? await api('/kullanici-giris', { method: 'POST', body: { kullanici_adi: kadi.trim(), sifre } })
+        : await api('/admin-giris', { method: 'POST', body: { sifre } });
+      const jeton = r?.jeton || r?.token;
+      if (!jeton) throw new Error('Giriş yapılamadı');
+      try { localStorage.setItem(OTURUM_ANAHTAR, jeton); } catch { /* yut */ }
+      onTamam();
+    } catch (er) { setHata(er?.message || 'Giriş yapılamadı'); } finally { setMesgul(false); }
+  };
+  return (
+    <form className="piapp-giris" onSubmit={gir}>
+      <h1>Para İzi</h1>
+      <div style={{ color: 'var(--ink3)', fontSize: 13 }}>Evvel kullanıcı adın ve şifrenle gir.</div>
+      <input id="pi-kadi" aria-label="Kullanıcı adı" placeholder="Kullanıcı adı (ortak şifreyle girişte boş bırak)" value={kadi} onChange={(e) => setKadi(e.target.value)} autoComplete="username" />
+      <input id="pi-sifre" aria-label="Şifre" type="password" placeholder="Şifre" value={sifre} onChange={(e) => setSifre(e.target.value)} autoComplete="current-password" />
+      {hata && <div style={{ color: 'var(--bad)', fontSize: 13 }}>{hata}</div>}
+      <button type="submit" disabled={mesgul || !sifre}>{mesgul ? '…' : 'Giriş yap'}</button>
+    </form>
+  );
+}
+
+export default function ParaIziApp() {
+  const [durum, setDurum] = useState('soruluyor');   // soruluyor | giris | tamam
+  const [sekme, setSekme] = useState(sekmeAdresten);
+  const [toast, setToast] = useState('');
+
+  useEffect(() => {
+    document.title = 'Para İzi';
+    let jeton = null;
+    try { jeton = localStorage.getItem(OTURUM_ANAHTAR); } catch { /* yut */ }
+    if (!jeton) { setDurum('giris'); return; }
+    api(`/admin-oturum?jeton=${encodeURIComponent(jeton)}`)
+      .then((d) => setDurum(d?.gecerli ? 'tamam' : 'giris'))
+      .catch(() => setDurum('giris'));
+  }, []);
+  useEffect(() => {
+    const f = () => setSekme(sekmeAdresten());
+    window.addEventListener('popstate', f);
+    return () => window.removeEventListener('popstate', f);
+  }, []);
+  useEffect(() => {
+    if (!toast) return undefined;
+    const t = setTimeout(() => setToast(''), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  const sekmeDegis = (k) => {
+    const yol = k === 'izi' ? '/para-izi' : `/para-izi/${k}`;
+    if (window.location.pathname !== yol) window.history.pushState(null, '', yol);
+    setSekme(k);
+  };
+
+  return (
+    <div className="piapp">
+      <style>{KABUK_CSS}</style>
+      {durum === 'soruluyor' && <div style={{ padding: 40, color: 'var(--ink3)' }}>Para İzi açılıyor…</div>}
+      {durum === 'giris' && <Giris onTamam={() => setDurum('tamam')} />}
+      {durum === 'tamam' && (
+        <div className="piapp-duzen">
+          {/* SOL MENÜ — sahip: "solda bulunan alanlarda rahatlıkla kurgu yapabileceğiz".
+              Yeni konu = yeni satır; bir sayfaya sıkıştırılmaz. Yalnız ÇALIŞAN alanlar listelenir. */}
+          <nav className="piapp-sol" aria-label="Para İzi bölümleri">
+            <div className="piapp-logo">Para İzi</div>
+            <div className="piapp-alt">Para</div>
+            {MENU.map((m) => (
+              <a key={m.id} href={m.id === 'izi' ? '/para-izi' : `/para-izi/${m.id}`} aria-current={sekme === m.id ? 'page' : undefined}
+                onClick={(e) => { e.preventDefault(); sekmeDegis(m.id); }}>
+                <span>{m.ad}<small>{m.alt}</small></span>
+              </a>
+            ))}
+          </nav>
+          <main className="piapp-ic">
+            <ParaIziModulu gorunum={sekme} onSekme={sekmeDegis} onToast={setToast} sekmesiz />
+          </main>
+        </div>
+      )}
+      {toast && <div className="piapp-toast" role="status">{toast}</div>}
+    </div>
+  );
+}

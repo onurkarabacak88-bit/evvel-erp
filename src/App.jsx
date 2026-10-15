@@ -50,6 +50,7 @@ import Maliyet from './pages/Maliyet';
 import EvTasarim from './pages/EvTasarim';
 import FireFotoYukle from './pages/FireFotoYukle';
 import CepApp from './pages/cep/CepApp';
+import ParaIziApp from './pages/paraizi/ParaIziApp';
 import DuyuPaneli from './pages/DuyuPaneli';
 import ReceteEslestirme from './pages/ReceteEslestirme';
 import BelgeMerkezi from './pages/BelgeMerkezi';
@@ -307,6 +308,12 @@ function AdminGirisKapisi({ onBasarili }) {
 }
 
 export default function App() {
+  // 🧵 PARA İZİ — sade çekirdek, KENDİ ADRESİNDE ayrı uygulama (sahip 2026-10-15:
+  // "kadife tasarımda değil ayrı bir alanda yap, sonra eskiyi tamamen kaldırsak").
+  if (window.location.pathname === '/para-izi' || window.location.pathname.startsWith('/para-izi/')) {
+    return <ParaIziApp />;
+  }
+
   // EVVEL · CEP — işletme sahibi mobil kabuğu (sidebar yok, ayrı kabuk)
   if (window.location.pathname === '/cep' || window.location.pathname.startsWith('/cep/')) {
     return <CepApp />;

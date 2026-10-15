@@ -22,7 +22,19 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { HataBandi } from './parcalar';
+
+// Kadife (v2) bileşenlerine BAĞIMLILIK YOK — sahip: "kadife tasarımda değil ayrı bir
+// alanda yap, sonra (eskiyi) tamamen kaldırsak". Bu dosya src/pages/paraizi altında,
+// kendi adresinde (/para-izi) çalışır; v2 silinse de etkilenmez.
+function HataBandi({ mesaj, kod, onTekrar }) {
+  return (
+    <div className="pi" style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+      <style>{PI_CSS}</style>
+      <b style={{ color: 'var(--pi-bad)' }}>{mesaj}</b><span style={{ color: 'var(--pi-ink3)' }}>{kod}</span>
+      {onTekrar && <button type="button" onClick={onTekrar} style={{ padding: '6px 12px', borderRadius: 8, border: '1px solid var(--pi-line)', background: 'var(--pi-paper)', color: 'var(--pi-ink)', cursor: 'pointer', font: 'inherit' }}>Tekrar dene</button>}
+    </div>
+  );
+}
 
 // 🎨 YÜZ (sahip 2026-10-15): "Taslak görüntüsü daha iyiydi; Evvel'in kadife yüzü gibi
 // hazırlamayalım, taslağı direkt kur." → Bu modül Evvel'in koyu kadife temasını
@@ -882,7 +894,7 @@ function BankaSekmesi({ onToast, onDegisti }) {
 }
 
 // ─────────────────────────── ANA MODÜL ───────────────────────────
-export default function ParaIziModulu({ gorunum, onToast }) {
+export default function ParaIziModulu({ gorunum, onToast, onSekme, sekmesiz }) {
   const [ck, setCk] = useState(null);
   const [sekme, setSekme] = useState(['teslim', 'banka'].includes(gorunum) ? gorunum : 'izi');
   useEffect(() => { if (gorunum) setSekme(['teslim', 'banka'].includes(gorunum) ? gorunum : 'izi'); }, [gorunum]);
@@ -1069,10 +1081,11 @@ export default function ParaIziModulu({ gorunum, onToast }) {
       </div>
       {(() => {
         const nTes = veri.isler.filter((x) => x.tur === 'teslim').length;
+        if (sekmesiz) return null;   // ayrı uygulamada sekmeler SOL MENÜDE
         return (
           <div role="tablist" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderBottom: `1px solid ${R.cizgi}`, paddingBottom: 8 }}>
             {[['izi', 'Para İzi', null], ['teslim', 'Teslim Onayları', nTes], ['banka', 'Banka Mutabakatı', null]].map(([k, a, n]) => (
-              <button key={k} type="button" role="tab" aria-selected={sekme === k} onClick={() => setSekme(k)} style={{
+              <button key={k} type="button" role="tab" aria-selected={sekme === k} onClick={() => { setSekme(k); onSekme?.(k); }} style={{
                 padding: '7px 14px', borderRadius: 9, font: 'inherit', fontWeight: 600, cursor: 'pointer',
                 border: `1px solid ${sekme === k ? 'var(--pi-accent)' : 'var(--pi-line)'}`,
                 background: sekme === k ? 'var(--pi-accent)' : 'var(--pi-paper)', color: sekme === k ? 'var(--pi-on-accent)' : R.krem,
