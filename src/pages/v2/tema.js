@@ -250,6 +250,7 @@ export const MODULLER = [
   // ekranlarından AYRI modül. Tek ekran: kimde · nerede · nereden geldi.
   { id: 'paraizi', blok: 'Günlük iş', ad: 'Para İzi', kisa: 'İz', alt: 'Kimde · nerede · nereden', ikon: IK.para, gorunumler: [
     { id: 'izi', ad: 'Para İzi' },
+    { id: 'teslim', ad: 'Teslim Onayları' },
   ]},
   { id: 'odeme', blok: 'Günlük iş', ad: 'Ödeme Merkezi', kisa: 'Ödeme', alt: 'Vade · bakiye · geçmiş', ikon: IK.banknot, gorunumler: [
     { id: 'bekleyen', ad: 'Bekleyen Ödemeler', rozet: 'odemeBekleyen', renk: '#D29A5B' },

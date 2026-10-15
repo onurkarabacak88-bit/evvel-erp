@@ -22,8 +22,59 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { R } from './tema';
 import { HataBandi } from './parcalar';
+
+// 🎨 YÜZ (sahip 2026-10-15): "Taslak görüntüsü daha iyiydi; Evvel'in kadife yüzü gibi
+// hazırlamayalım, taslağı direkt kur." → Bu modül Evvel'in koyu kadife temasını
+// KULLANMAZ; taslaktaki krem/espresso/bakır dili, açık-koyu sisteme uyarak.
+// Renkler yalnız CSS değişkeni olarak tanımlı — aşağıdaki R aynı adlarla onlara bakar.
+const R = {
+  krem: 'var(--pi-ink)', metin2: 'var(--pi-ink2)', not: 'var(--pi-ink3)', not2: 'var(--pi-ink3)',
+  cizgi: 'var(--pi-line)', cizgi2: 'var(--pi-line)', cizgi3: 'var(--pi-line)', girinti: 'var(--pi-bg)',
+  yesil: 'var(--pi-good)', kirmizi: 'var(--pi-bad)', amber: 'var(--pi-warn)', bakirAcik: 'var(--pi-accent)',
+};
+const alfa = (renk, yuzde) => `color-mix(in srgb, ${renk} ${yuzde}%, transparent)`;
+const PI_CSS = `
+.pi{--pi-bg:#F4EEE2;--pi-paper:#FCFAF4;--pi-line:#E0D4BE;--pi-ink:#2A1E14;--pi-ink2:#5E4C3A;--pi-ink3:#7F6C57;
+  --pi-accent:#9A5F2E;--pi-on-accent:#FFF8EC;--pi-accent-soft:#F1E3D0;--pi-good:#25794F;--pi-good-soft:#E1EFE4;
+  --pi-bad:#C03A2B;--pi-bad-soft:#F6E1DC;--pi-warn:#8A680E;--pi-warn-soft:#F4EBCF;
+  --pi-f-display:'Fraunces',Georgia,serif;--pi-f-body:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif;--pi-f-num:'JetBrains Mono',ui-monospace,Consolas,monospace;
+  background:var(--pi-bg);color:var(--pi-ink);font-family:var(--pi-f-body);font-size:14px;line-height:1.45;
+  border-radius:16px;padding:18px 20px 28px;color-scheme:light}
+@media (prefers-color-scheme: dark){.pi{--pi-bg:#161009;--pi-paper:#211710;--pi-line:#3A2C1E;--pi-ink:#F1E9DD;--pi-ink2:#C4B5A2;--pi-ink3:#A3917B;
+  --pi-accent:#D29A5B;--pi-on-accent:#241A12;--pi-accent-soft:#3A2817;--pi-good:#5FBE8E;--pi-good-soft:#163020;
+  --pi-bad:#E2604F;--pi-bad-soft:#3A1B16;--pi-warn:#E5B84E;--pi-warn-soft:#33290F;color-scheme:dark}}
+.pi h1,.pi .pi-baslik{font-family:var(--pi-f-display);font-weight:600;letter-spacing:-.01em;margin:0}
+.pi .pi-num,.pi [data-num]{font-family:var(--pi-f-num);font-variant-numeric:tabular-nums}
+.pi .pi-eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--pi-ink3);font-weight:600}
+.pi input,.pi select{color-scheme:inherit}
+.pi button:focus-visible,.pi input:focus-visible,.pi select:focus-visible{outline:2px solid var(--pi-accent);outline-offset:2px}
+.pi-ck-arka{position:fixed;inset:0;z-index:96;background:rgba(22,16,9,.45);display:flex;justify-content:flex-end}
+.pi-ck{width:min(560px,100vw);height:100%;background:var(--pi-paper);color:var(--pi-ink);border-left:1px solid var(--pi-line);
+  border-radius:16px 0 0 16px;display:flex;flex-direction:column;font-family:var(--pi-f-body)}
+@media (prefers-reduced-motion:no-preference){.pi-ck{animation:piKay .32s cubic-bezier(.4,0,.2,1)}}
+@keyframes piKay{from{transform:translateX(40px);opacity:0}to{transform:none;opacity:1}}
+.pi-ck-bas{padding:16px 18px 10px;border-bottom:1px solid var(--pi-line);display:flex;flex-direction:column;gap:3px;position:relative}
+.pi-ck-bas h2{font-family:var(--pi-f-display);font-size:22px;margin:0;font-weight:600;padding-right:70px}
+.pi-ck-sekme{display:flex;gap:4px;padding:8px 18px 0}
+.pi-ck-sekme button{border-radius:8px 8px 0 0;border:1px solid var(--pi-line);border-bottom:0;background:transparent;color:var(--pi-ink2);padding:5px 12px;font:inherit;cursor:pointer}
+.pi-ck-sekme button[aria-selected="true"]{background:var(--pi-accent);color:var(--pi-on-accent);border-color:var(--pi-accent);font-weight:600}
+.pi-ck-govde{flex:1;overflow:auto;padding:14px 18px 24px;display:flex;flex-direction:column;gap:14px;border-top:1px solid var(--pi-line)}
+.pi-kapi{display:grid;grid-template-columns:1fr auto auto;gap:10px;align-items:center;width:100%;text-align:left;padding:9px 12px;
+  border-radius:8px;border:1px solid var(--pi-line);background:var(--pi-bg);color:var(--pi-ink);font:inherit}
+button.pi-kapi{cursor:pointer}
+button.pi-kapi:hover{border-color:var(--pi-accent)}
+.pi-kapi small{display:block;color:var(--pi-ink3);font-size:12px}
+.pi-tablo{border-collapse:collapse;width:100%;font-size:13px}
+.pi-tablo th{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--pi-ink3);font-weight:600;text-align:right;padding:4px 8px;border-bottom:1px solid var(--pi-line)}
+.pi-tablo td{padding:6px 8px;border-bottom:1px solid var(--pi-line);text-align:right}
+.pi-tablo th:first-child,.pi-tablo td:first-child{text-align:left}
+.pi-excel{font-size:12.5px}
+.pi-excel thead th{position:sticky;top:0;background:var(--pi-accent-soft);color:var(--pi-ink2);border-bottom:1px solid var(--pi-line)}
+.pi-excel td,.pi-excel th{border-right:1px solid var(--pi-line);padding:6px 9px}
+.pi-excel tbody tr:nth-child(even) td{background:color-mix(in srgb, var(--pi-bg) 70%, transparent)}
+.pi-excel tbody tr:hover td{background:var(--pi-accent-soft)}
+`;
 
 const AY = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const GUNLER = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
@@ -37,18 +88,15 @@ const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0
 const gunEkle = (s, n) => { const d = new Date(`${s}T12:00:00`); d.setDate(d.getDate() + n); return iso(d); };
 
 const SEVIYE = {
-  kirmizi: { kenar: R.kirmizi, zemin: 'rgba(226,96,79,.10)' },
-  sari: { kenar: R.amber, zemin: 'rgba(229,184,78,.09)' },
+  kirmizi: { kenar: R.kirmizi, zemin: 'var(--pi-bad-soft)' },
+  sari: { kenar: R.amber, zemin: 'var(--pi-warn-soft)' },
   yesil: { kenar: R.yesil, zemin: 'transparent' },
   gri: { kenar: R.cizgi3, zemin: 'transparent' },
 };
 
-const kart = {
-  background: `linear-gradient(160deg, ${R.kart1}, ${R.kart2})`,
-  border: `1px solid ${R.cizgi2}`, borderRadius: 14,
-};
-const etiketStil = { fontSize: 10.5, letterSpacing: '.8px', textTransform: 'uppercase', color: R.not2, fontWeight: 700 };
-const num = { fontVariantNumeric: 'tabular-nums' };
+const kart = { background: 'var(--pi-paper)', border: '1px solid var(--pi-line)', borderRadius: 12 };
+const etiketStil = { fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: R.not2, fontWeight: 600 };
+const num = { fontFamily: 'var(--pi-f-num)', fontVariantNumeric: 'tabular-nums' };
 
 function Dugme({ children, onClick, ana, kucuk, disabled, title, renk }) {
   return (
@@ -56,9 +104,9 @@ function Dugme({ children, onClick, ana, kucuk, disabled, title, renk }) {
       padding: kucuk ? '4px 10px' : '7px 13px', borderRadius: 9, fontFamily: 'inherit',
       fontSize: kucuk ? 12 : 12.5, fontWeight: ana ? 700 : 600, cursor: disabled ? 'not-allowed' : 'pointer',
       opacity: disabled ? 0.45 : 1, whiteSpace: 'nowrap',
-      border: ana ? 'none' : `1px solid ${renk || R.cizgi3}`,
-      background: ana ? (renk || 'linear-gradient(150deg, #E0A559, #AF6C29)') : 'transparent',
-      color: ana ? '#1C1309' : (renk || R.metin2),
+      border: ana ? '1px solid var(--pi-accent)' : `1px solid ${renk || R.cizgi3}`,
+      background: ana ? (renk || 'var(--pi-accent)') : 'var(--pi-paper)',
+      color: ana ? 'var(--pi-on-accent)' : (renk || R.krem),
     }}>{children}</button>
   );
 }
@@ -68,7 +116,7 @@ function Cip({ children, tur }) {
   return (
     <span style={{
       display: 'inline-flex', alignItems: 'center', fontSize: 11, fontWeight: 700, padding: '1px 8px',
-      borderRadius: 999, color: r, border: `1px solid ${r}55`, background: `${r}14`, whiteSpace: 'nowrap',
+      borderRadius: 999, color: r, border: `1px solid ${alfa(r, 35)}`, background: alfa(r, 12), whiteSpace: 'nowrap',
     }}>{children}</span>
   );
 }
@@ -85,9 +133,9 @@ function CepKart({ c, onAc, serit }) {
       borderTop: serit ? kart.border : 'none', borderRight: serit ? kart.border : 'none',
       borderBottom: serit ? kart.border : `1px solid ${R.cizgi}`, borderRadius: serit ? 14 : 0,
       display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0,
-      boxShadow: serit && c.seviye === 'kirmizi' ? `inset 0 0 0 1px ${R.kirmizi}55` : 'none',
+      boxShadow: serit && c.seviye === 'kirmizi' ? `inset 0 0 0 1px ${alfa(R.kirmizi, 35)}` : 'none',
     }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: 8, flexWrap: serit ? 'wrap' : 'nowrap' }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: serit ? 'flex-start' : 'baseline', gap: serit ? 2 : 8, flexDirection: serit ? 'column' : 'row' }}>
         <span style={{ fontWeight: 700, fontSize: 13 }}>{serit && <span style={{ ...etiketStil, display: 'block' }}>Patron evi</span>}{c.ad}</span>
         <span style={{ ...num, fontSize: serit ? 21 : 15, fontWeight: 600, color: bos ? R.not2 : R.krem }}>{tl(c.bakiye)}</span>
       </div>
@@ -228,9 +276,13 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
       } else {
         const body = { tur: tip === 'coz' ? 'cozum' : tip, is_gunu: d.is_gunu };
         if (['acilis', 'kapanis', 'dis', 'sayim'].includes(tip)) body.cep = d.cep;
-        if (['teslim', 'tasima'].includes(tip)) { body.kaynak = d.kaynak; body.hedef = d.hedef; }
+        if (tip === 'teslim') { body.kaynak = d.kaynak; body.hedef = d.hedef; body.teslim_eden = d.teslim_eden; }
+        if (tip === 'tasima') {
+          body.hedef = d.hedef;
+          body.parcalar = d.parcalar.filter((p) => p.cep && Number(p.tutar) > 0).map((p) => ({ cep: p.cep, tutar: Number(p.tutar) }));
+        }
         if (tip === 'sayim') body.sayilan = Number(d.sayilan);
-        else if (tip !== 'coz' && tip !== 'odeme') body.tutar = Number(d.tutar);
+        else if (tip !== 'coz' && tip !== 'odeme' && tip !== 'tasima') body.tutar = Number(d.tutar);
         if (tip === 'kapanis') body.kart = Number(d.kart || 0);
         if (tip === 'dis') { body.alt = d.alt; body.kimden = d.kimden; body.not = d.not; }
         if (tip === 'odeme') {
@@ -255,12 +307,13 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
   );
   const izgara = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(170px,1fr))', gap: 10 };
   const secili = d.parcalar.map((p) => p.cep);
+  const cepAdi = (id) => (cepler.find((c) => c.id === id) || {}).ad || '';
 
   return (
-    <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 95, background: 'rgba(10,6,2,.6)', display: 'grid', placeItems: 'center', padding: 16 }} onClick={onKapat}>
-      <div onClick={(e) => e.stopPropagation()} style={{ ...kart, width: 'min(620px, 100%)', maxHeight: '90vh', overflow: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
+    <div role="dialog" aria-modal="true" style={{ position: 'fixed', inset: 0, zIndex: 95, background: 'rgba(22,16,9,.45)', display: 'grid', placeItems: 'center', padding: 16 }} onClick={onKapat}>
+      <div className="pi" onClick={(e) => e.stopPropagation()} style={{ ...kart, borderRadius: 14, width: 'min(620px, 100%)', maxHeight: '90vh', overflow: 'auto', padding: 20, display: 'flex', flexDirection: 'column', gap: 14 }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-          <div style={{ fontSize: 19, fontWeight: 700, color: R.krem }}>{BASLIK[tip]}</div>
+          <div className="pi-baslik" style={{ fontSize: 21 }}>{BASLIK[tip]}</div>
           <Dugme onClick={onKapat}>Kapat</Dugme>
         </div>
 
@@ -300,19 +353,38 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
           <div style={izgara}>
             <Alan etiket="Teslim eden şube"><select value={d.kaynak} onChange={set('kaynak')} style={alanStil}>{secenek(['sube'], true)}</select></Alan>
             <Alan etiket="Teslim alan patron"><select value={d.hedef} onChange={set('hedef')} style={alanStil}>{secenek(['ev'])}</select></Alan>
+            <Alan etiket="Teslim eden personel"><input value={d.teslim_eden || ''} onChange={set('teslim_eden')} style={alanStil} placeholder="ör. Ayşe" /></Alan>
             {tutarAlani()}{gunAlani}
           </div>
         )}
 
-        {tip === 'tasima' && (
+        {tip === 'tasima' && (<>
+          <div style={{ fontSize: 12.5, color: R.metin2 }}>Birden çok evden toplanıp tek yere (ör. Fethi'nin hesabına) giden parayı tek kayıtta gir.</div>
           <div style={izgara}>
-            <Alan etiket="Nereden"><select value={d.kaynak} onChange={set('kaynak')} style={alanStil}>{secenek(null, true)}</select></Alan>
-            <Alan etiket="Nereye" ipucu={(cepler.find((c) => c.id === d.kaynak) || {}).tur === 'sube' ? 'Şubeden patrona para TESLİM ile geçer' : null}>
-              <select value={d.hedef} onChange={set('hedef')} style={alanStil}>{secenek((cepler.find((c) => c.id === d.kaynak) || {}).tur === 'sube' ? ['hesap'] : null)}</select>
-            </Alan>
-            {tutarAlani()}{gunAlani}
+            <Alan etiket="Nereye"><select value={d.hedef} onChange={set('hedef')} style={alanStil}>{secenek(null)}</select></Alan>
+            {gunAlani}
           </div>
-        )}
+          <div style={etiketStil}>Nereden · ne kadar</div>
+          {d.parcalar.map((p, i) => {
+            const pc = cepler.find((c) => c.id === p.cep) || {};
+            const hc = cepler.find((c) => c.id === d.hedef) || {};
+            return (
+              <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 130px auto', gap: 8 }}>
+                <select value={p.cep} onChange={(e) => setD((x) => ({ ...x, parcalar: x.parcalar.map((q, j) => (j === i ? { ...q, cep: e.target.value } : q)) }))} style={alanStil}>
+                  <option value="">Cep seç</option>
+                  {cepler.map((c) => <option key={c.id} value={c.id} disabled={c.id === d.hedef || (secili.includes(c.id) && p.cep !== c.id) || (c.tur === 'sube' && hc.tur === 'ev')}>{c.ad} · {fmt(bak[c.id])} ₺</option>)}
+                </select>
+                <input type="number" min="0" step="0.01" placeholder="Tutar" value={p.tutar} onChange={(e) => setD((x) => ({ ...x, parcalar: x.parcalar.map((q, j) => (j === i ? { ...q, tutar: e.target.value } : q)) }))} style={alanStil} />
+                <Dugme kucuk onClick={() => setD((x) => ({ ...x, parcalar: x.parcalar.filter((_, j) => j !== i) }))}>Sil</Dugme>
+                {pc.tur === 'sube' && hc.tur === 'ev' && <div style={{ gridColumn: '1/-1', fontSize: 12, color: R.amber }}>Şubeden patrona para TESLİM ile geçer.</div>}
+              </div>
+            );
+          })}
+          <div><Dugme kucuk onClick={() => setD((x) => ({ ...x, parcalar: [...x.parcalar, { cep: '', tutar: '' }] }))}>+ Kaynak ekle</Dugme></div>
+          <div style={{ padding: '8px 12px', borderRadius: 9, fontSize: 12.5, background: R.girinti, color: R.metin2 }}>
+            {cepAdi(d.hedef)} cebine toplam <b style={num}>{fmt(parcaToplam)}</b> ₺ girecek
+          </div>
+        </>)}
 
         {tip === 'sayim' && (<>
           <div style={izgara}>
@@ -358,7 +430,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         </>)}
 
         {tip === 'coz' && fark && (<>
-          <div style={{ padding: '9px 12px', borderRadius: 9, background: 'rgba(226,96,79,.10)', border: `1px solid ${R.kirmizi}55`, fontSize: 13 }}>
+          <div style={{ padding: '9px 12px', borderRadius: 9, background: 'var(--pi-bad-soft)', border: `1px solid ${alfa(R.kirmizi, 35)}`, fontSize: 13 }}>
             <b>{fark.ad}</b> · {tUzun(fark.tarih)} · <b style={num}>{tl(Math.abs(fark.f))}</b> {fark.f > 0 ? 'eksik' : 'fazla'}
           </div>
           <div style={izgara}>
@@ -424,8 +496,256 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
   );
 }
 
+// Excel tablosunda "Hareket" sütunu — şube ayrı sütunda olduğu için kısa ad
+const IZ_AD = { teslim_alim: 'Teslim geldi', teslim_cikis: 'Teslim edildi', kapanis: 'Kapanış nakdi', dis: 'Dış giriş',
+  acilis: 'Açılış', tasima: 'Taşıma', odeme: 'Ödeme', sayim: 'Sayım farkı', cozum: 'Fark çözüldü' };
+
+// ─── Çekmece (taslağın yüzü): Özet · İz, satırlar kapı, geri yolu ───
+function Cekmece({ v, onKapat }) {
+  const [sekme, setSekme] = useState('ozet');
+  useEffect(() => { setSekme(v?.varsayilan || 'ozet'); }, [v?.tip, v?.baslik, v?.varsayilan]);
+  useEffect(() => {
+    if (!v) return undefined;
+    const f = (e) => { if (e.key === 'Escape') onKapat(); };
+    window.addEventListener('keydown', f);
+    return () => window.removeEventListener('keydown', f);
+  }, [v, onKapat]);
+  if (!v) return null;
+  const izVar = !!((v.iz && v.iz.length) || (v.tablo && v.tablo.satirlar.length));
+  return (
+    <div className="pi-ck-arka" onClick={onKapat}>
+      <aside className="pi-ck" role="dialog" aria-modal="true" aria-label={v.baslik} onClick={(e) => e.stopPropagation()}
+        style={v.tablo ? { width: 'min(960px, 100vw)' } : undefined}>
+        <div className="pi-ck-bas">
+          {v.geri && <button type="button" onClick={v.geri.onTikla} style={{ alignSelf: 'flex-start', border: 'none', background: 'transparent', color: 'var(--pi-accent)', cursor: 'pointer', padding: 0, font: 'inherit', fontSize: 12.5 }}>‹ {v.geri.ad}</button>}
+          <div className="pi-eyebrow">{v.tip}</div>
+          <h2>{v.baslik}</h2>
+          {v.alt && <div style={{ color: 'var(--pi-ink3)', fontSize: 12.5 }}>{v.alt}</div>}
+          <div style={{ position: 'absolute', top: 14, right: 16 }}><Dugme kucuk onClick={onKapat}>Kapat</Dugme></div>
+        </div>
+        {izVar && (
+          <div className="pi-ck-sekme" role="tablist">
+            {(v.tablo ? [['iz', v.tablo.ad || 'Hareketler'], ['ozet', 'Özet']] : [['ozet', 'Özet'], ['iz', 'İz']]).map(([k, a]) => <button key={k} type="button" role="tab" aria-selected={sekme === k} onClick={() => setSekme(k)}>{a}</button>)}
+          </div>
+        )}
+        <div className="pi-ck-govde">
+          {sekme === 'ozet' || !izVar ? (<>
+            {!!(v.kpi && v.kpi.length) && (
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8 }}>
+                {v.kpi.map((k) => (
+                  <div key={k.etiket} style={{ ...kart, background: 'var(--pi-bg)', padding: '9px 11px' }}>
+                    <div style={etiketStil}>{k.etiket}</div>
+                    <div style={{ ...num, fontSize: 16, color: k.renk || R.krem }}>{k.deger}</div>
+                  </div>
+                ))}
+              </div>
+            )}
+            {v.not && <div style={{ fontSize: 12.5, color: R.metin2, padding: '9px 12px', borderRadius: 9, background: 'var(--pi-bg)' }}>{v.not}</div>}
+            {!!(v.satirlar && v.satirlar.length) && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                {v.listeBaslik && <div style={etiketStil}>{v.listeBaslik}</div>}
+                {v.satirlar.map((x, i) => {
+                  const ic = (<>
+                    <span style={{ minWidth: 0, opacity: x.solgun ? 0.6 : 1 }}>{x.ad}{x.detay && <small>{x.detay}</small>}</span>
+                    <span style={num}>{x.tutar || ''}</span>
+                    <span style={{ color: 'var(--pi-accent)', fontWeight: 600 }}>{x.onTikla ? '›' : ''}</span>
+                  </>);
+                  return x.onTikla
+                    ? <button key={i} type="button" className="pi-kapi" onClick={x.onTikla}>{ic}</button>
+                    : <div key={i} className="pi-kapi">{ic}</div>;
+                })}
+              </div>
+            )}
+            {!!(v.aksiyonlar && v.aksiyonlar.length) && (
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {v.aksiyonlar.map((a) => <Dugme key={a.ad} ana={a.birincil} onClick={() => { onKapat(); a.onTikla?.(); }}>{a.ad}</Dugme>)}
+              </div>
+            )}
+          </>) : v.tablo ? (
+            <div style={{ overflowX: 'auto', border: '1px solid var(--pi-line)', borderRadius: 10 }}>
+              <table className="pi-tablo pi-excel">
+                <thead><tr>{v.tablo.kolonlar.map((k, i) => <th key={i} style={{ textAlign: k.sag ? 'right' : 'left' }}>{k.ad}</th>)}</tr></thead>
+                <tbody>
+                  {v.tablo.satirlar.map((r, i) => (
+                    <tr key={i}>
+                      {r.map((h, j) => (
+                        <td key={j} style={{
+                          textAlign: v.tablo.kolonlar[j].sag ? 'right' : 'left', whiteSpace: v.tablo.kolonlar[j].sar ? 'normal' : 'nowrap',
+                          ...(v.tablo.kolonlar[j].sag ? num : {}), color: (h && h.renk) || 'inherit', fontWeight: (h && h.kalin) ? 600 : 400,
+                        }}>{h && typeof h === 'object' ? h.t : (h ?? '—')}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <div style={{ overflowX: 'auto' }}>
+              <table className="pi-tablo">
+                <thead><tr><th>Gün</th><th>Hareket</th></tr></thead>
+                <tbody>
+                  {v.iz.map((x, i) => (
+                    <tr key={i}>
+                      <td style={{ ...num, whiteSpace: 'nowrap', verticalAlign: 'top' }}>{x.zaman}</td>
+                      <td style={{ textAlign: 'left', color: x.renk || R.krem }}>{x.ad}{x.detay && <div style={{ fontSize: 12, color: R.not }}>{x.detay}</div>}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+// ─── TESLİM ONAYLARI sekmesi (sahip: "teslim onayları için ayrı bir sekme yap") ───
+function TeslimSekmesi({ onToast, onDegisti }) {
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState(null);
+  const [say, setSay] = useState({});
+  const [acikGiris, setAcikGiris] = useState({});   // "Farklı saydım" açılan satırlar
+  const [duz, setDuz] = useState({});               // düzeltme girişi açık satırlar
+  const no = useRef(0);
+  const yukle = useCallback(async () => {
+    const n = ++no.current;
+    try { const r = await api('/para-izi/teslimler'); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+  // Sahip: "annem 65 yaşında, her gün nasıl onaylayacak?" → TEK DOKUNUŞ: rakam yazmadan
+  // "aldım, tuttu"; yalnız farklıysa tutar yazılır. Dokunulmazsa ertesi gün kendiliğinden kabul.
+  const al = async (x, tutar) => {
+    const t = tutar !== undefined ? tutar : say[x.id];
+    if (t === undefined || t === '') { onToast?.('Önce saydığın tutarı yaz'); return; }
+    try {
+      await api(`/para-izi/hareket/${x.id}/onay`, { method: 'POST', body: { alinan: Number(t) } });
+      const f = x.tutar - Number(t);
+      onToast?.(f ? `Alındı — ${fmt(Math.abs(f))} ₺ ${f > 0 ? 'eksik' : 'fazla'}, açık farka yazıldı` : 'Alındı, tuttu');
+      setSay((s0) => { const k = { ...s0 }; delete k[x.id]; return k; });
+      setAcikGiris((s0) => ({ ...s0, [x.id]: false }));
+      yukle(); onDegisti?.();
+    } catch (e) { onToast?.(e.message); }
+  };
+  const duzelt = async (x) => {
+    const t = duz[x.id];
+    if (t === undefined || t === '') { onToast?.('Saydığın tutarı yaz'); return; }
+    try {
+      await api(`/para-izi/hareket/${x.id}/teslim-duzelt`, { method: 'POST', body: { alinan: Number(t) } });
+      onToast?.('Düzeltildi — fark açık farka yazıldı');
+      setDuz((s0) => { const k = { ...s0 }; delete k[x.id]; return k; });
+      yukle(); onDegisti?.();
+    } catch (e) { onToast?.(e.message); }
+  };
+  if (hata && !v) return <div style={{ ...kart, padding: 16, color: R.kirmizi }}>Teslimler okunamadı: {hata} <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme></div>;
+  if (!v) return <div style={{ color: R.not }}>Teslimler okunuyor…</div>;
+  const gruplar = v.patron_ozet.map((p) => ({ ...p, satirlar: v.bekleyen.filter((x) => x.hedef === p.hedef) }));
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ ...kart, padding: '10px 14px', fontSize: 13, color: R.metin2, background: 'var(--pi-bg)' }}>
+        Teslimi alınca <b>tek dokunuşla</b> "aldım" demek yeterli. Hiç dokunulmazsa teslim <b>ertesi gün kendiliğinden kabul</b> edilir.
+        Eksik çıkarsa {v.duzeltme_suresi_gun} gün içinde "Düzelt" ile yazılır ya da evdeki sayımda ortaya çıkar.
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+        <div style={{ ...kart, padding: '12px 14px', background: 'var(--pi-accent-soft)' }}>
+          <div style={etiketStil}>Yolda · "aldım" bekliyor</div>
+          <div style={{ ...num, fontSize: 26, color: R.bakirAcik, fontWeight: 600 }}>{tl(v.bekleyen_toplam)}</div>
+          <div style={{ fontSize: 12, color: R.not }}>{v.bekleyen.length} teslim</div>
+        </div>
+        {v.patron_ozet.map((p) => (
+          <div key={p.hedef} style={{ ...kart, padding: '12px 14px', borderLeft: `4px solid ${R.amber}` }}>
+            <div style={etiketStil}>{p.ad}</div>
+            <div style={{ ...num, fontSize: 20 }}>{tl(p.tutar)}</div>
+            <div style={{ fontSize: 12, color: R.amber, fontWeight: 600 }}>● {p.adet} teslim bekliyor</div>
+          </div>
+        ))}
+      </div>
+
+      {v.bekleyen.length === 0 ? (
+        <div style={{ ...kart, padding: 18, textAlign: 'center', color: R.yesil, fontWeight: 600 }}>Bekleyen teslim yok — hepsi alındı.</div>
+      ) : gruplar.map((g) => (
+        <div key={g.hedef} style={{ ...kart, overflow: 'hidden' }}>
+          <div style={{ padding: '9px 14px', background: 'var(--pi-accent-soft)', display: 'flex', justifyContent: 'space-between', gap: 8 }}>
+            <b>{g.ad}</b><span style={{ ...num, color: R.not }}>{g.adet} teslim · {tl(g.tutar)}</span>
+          </div>
+          {g.satirlar.map((x) => (
+            <div key={x.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 10, alignItems: 'center', padding: '10px 14px', borderTop: `1px solid ${R.cizgi}` }}>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 600, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
+                  {x.kaynak_ad} → {x.hedef_kisa}
+                  <Cip tur={x.yas_gun >= 3 ? 'kirmizi' : 'sari'}>{x.yas_gun === 0 ? 'bugün' : `${x.yas_gun} gündür`}</Cip>
+                  {x.eski_sistem && <Cip>eski sistemden</Cip>}
+                </div>
+                <div style={{ fontSize: 12, color: R.not }}>{tUzun(x.tarih)} teslim edildi · <span style={num}>{fmt(x.tutar)}</span> ₺{x.kaydeden ? ` · ${x.kaydeden}` : ''}</div>
+              </div>
+              <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
+                {!acikGiris[x.id] ? (<>
+                  <button type="button" onClick={() => al(x, x.tutar)} style={{
+                    padding: '12px 20px', borderRadius: 12, border: '1px solid var(--pi-good)', background: 'var(--pi-good)',
+                    color: 'var(--pi-on-accent)', font: 'inherit', fontSize: 16, fontWeight: 700, cursor: 'pointer', minHeight: 48,
+                  }}>✓ Aldım, tuttu</button>
+                  <button type="button" onClick={() => setAcikGiris((s0) => ({ ...s0, [x.id]: true }))} style={{
+                    border: 'none', background: 'transparent', color: R.not, textDecoration: 'underline', cursor: 'pointer', font: 'inherit', fontSize: 12.5,
+                  }}>Farklı saydım</button>
+                </>) : (<>
+                  <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="saydığın tutar" aria-label="Saydığın tutar" autoFocus
+                    value={say[x.id] ?? ''} onChange={(e) => setSay((s0) => ({ ...s0, [x.id]: e.target.value }))}
+                    style={{ ...alanStil, width: 140, padding: '9px 10px', fontSize: 15 }} />
+                  <Dugme ana disabled={say[x.id] === undefined || say[x.id] === ''} onClick={() => al(x)}>Kaydet</Dugme>
+                  <Dugme kucuk onClick={() => setAcikGiris((s0) => ({ ...s0, [x.id]: false }))}>Vazgeç</Dugme>
+                </>)}
+              </div>
+            </div>
+          ))}
+        </div>
+      ))}
+
+      <div style={{ ...kart, overflow: 'hidden' }}>
+        <div style={{ padding: '9px 14px', display: 'flex', justifyContent: 'space-between', gap: 8, borderBottom: `1px solid ${R.cizgi}` }}>
+          <b>Alınan teslimler · bu dönem</b>
+          {v.farkli_alinan > 0 ? <Cip tur="kirmizi">{v.farkli_alinan} tanesi farklı sayıldı</Cip> : <Cip tur="yesil">hepsi tuttu</Cip>}
+        </div>
+        {v.alinan.length === 0 ? <div style={{ padding: 14, color: R.not }}>Henüz alınan teslim yok.</div> : (
+          <div style={{ overflowX: 'auto' }}>
+            <table className="pi-tablo">
+              <thead><tr><th>Teslim</th><th>Şube → patron</th><th>Teslim edilen</th><th>Sayılan</th><th>Fark</th><th>Alındı</th><th></th></tr></thead>
+              <tbody>
+                {v.alinan.map((x) => (
+                  <tr key={x.id}>
+                    <td style={num}>{tKisa(x.tarih)}</td>
+                    <td style={{ textAlign: 'left' }}>{x.kaynak_ad} → {x.hedef_kisa}</td>
+                    <td style={num}>{fmt(x.tutar)}</td>
+                    <td style={num}>{fmt(x.alinan)}</td>
+                    <td style={{ ...num, color: x.fark ? R.kirmizi : R.yesil, fontWeight: 600 }}>{x.fark ? `${x.fark > 0 ? '−' : '+'}${fmt(Math.abs(x.fark))}` : 'tuttu'}</td>
+                    <td style={{ ...num, whiteSpace: 'nowrap' }}>{tKisa(x.onay_gunu)}{x.otomatik ? <div><Cip>otomatik kabul</Cip></div> : (x.onaylayan ? <div style={{ fontSize: 11, color: R.not }}>{x.onaylayan}</div> : null)}</td>
+                    <td style={{ whiteSpace: 'nowrap' }}>
+                      {x.duzeltilebilir && (duz[x.id] === undefined ? (
+                        <Dugme kucuk onClick={() => setDuz((s0) => ({ ...s0, [x.id]: '' }))}>Düzelt</Dugme>
+                      ) : (
+                        <span style={{ display: 'inline-flex', gap: 4 }}>
+                          <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="sayılan" aria-label="Gerçekte sayılan" value={duz[x.id]}
+                            onChange={(e) => setDuz((s0) => ({ ...s0, [x.id]: e.target.value }))} style={{ ...alanStil, width: 100, padding: '4px 6px' }} />
+                          <Dugme kucuk ana disabled={duz[x.id] === ''} onClick={() => duzelt(x)}>Kaydet</Dugme>
+                        </span>
+                      ))}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────── ANA MODÜL ───────────────────────────
-export default function ParaIziModulu({ onCekmece, onToast }) {
+export default function ParaIziModulu({ gorunum, onToast }) {
+  const [ck, setCk] = useState(null);
+  const [sekme, setSekme] = useState(gorunum === 'teslim' ? 'teslim' : 'izi');
+  useEffect(() => { if (gorunum) setSekme(gorunum === 'teslim' ? 'teslim' : 'izi'); }, [gorunum]);
+  const onCekmece = setCk;   // aşağıdaki çekmece çağrıları aynı kalır, Evvel kabuğuna değil buraya açılır
   const [gun, setGun] = useState(() => {
     try { return localStorage.getItem('paraIziGun') || iso(new Date()); } catch { return iso(new Date()); }
   });
@@ -451,7 +771,6 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
   }, [gun, hepsi]);
   useEffect(() => { yukle(); }, [yukle]);
   useEffect(() => { try { localStorage.setItem('paraIziGun', gun); } catch { /* yut */ } }, [gun]);
-  useEffect(() => () => onCekmece?.(null), []);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const cepAd = (id) => (veri?.cepler.find((c) => c.id === id) || {}).ad || id;
   // Formu çekmeceden açınca kapanışta aynı çekmeceye geri dönülür (Codex: geldiği yere dönemiyordu).
@@ -507,7 +826,19 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
               tutar: tl(Math.abs(x.f)), onTikla: () => cekmeceAc({ tur: 'fark', id: x.id, ad: x.ad }, false),
             })),
           ],
-          iz: r.iz.map((x) => ({ ad: `${x.etiket} · ${x.d < 0 ? '−' : '+'}${fmt(Math.abs(x.d))}`, detay: `bakiye ${tl(x.bakiye)}${x.fark ? ' · fark var' : ''}`, zaman: tUzun(x.tarih), renk: x.d < 0 ? R.kirmizi : R.yesil })),
+          // 📊 Sahip: "kasada nakit geleni Excel tablosu gibi; tıkladığımızda teslim şubesi ve
+          // teslimi yapan personel görünmeli" → cebe tıklayınca İLK bu tablo açılır.
+          varsayilan: 'iz',
+          tablo: {
+            ad: 'Nakit hareketleri',
+            kolonlar: [{ ad: 'Gün' }, { ad: 'Hareket', sar: true }, { ad: 'Şube' }, { ad: 'Teslim eden / yapan' }, { ad: 'Alan' },
+              { ad: 'Giren', sag: true }, { ad: 'Çıkan', sag: true }, { ad: 'Bakiye', sag: true }],
+            satirlar: r.iz.map((x) => [
+              tKisa(x.tarih), IZ_AD[x.tur] || x.etiket, x.sube || '—', x.personel || '—', x.alan || '—',
+              x.d > 0 ? { t: fmt(x.d), renk: R.yesil } : '', x.d < 0 ? { t: fmt(-x.d), renk: R.kirmizi } : '',
+              { t: fmt(x.bakiye), kalin: true, renk: x.bakiye < 0 ? R.kirmizi : undefined },
+            ]),
+          },
           aksiyonlar: [{ ad: 'Bu cebi say', birincil: true, onTikla: () => formAc('sayim', { cep: c.id }, { tur: 'cep', id: c.id, ad: c.ad }) }],
         });
       } else if (g.tur === 'fark') {
@@ -559,10 +890,10 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
       if (!guncel()) return;
       onCekmece?.({ ...temel, tip: 'PARA İZİ', baslik: g.ad || 'Ayrıntı', alt: 'okunamadı', not: `Okunamadı: ${e?.message || ''}. Kayıt yok demek DEĞİL.` });
     }
-  }, [gun, hepsi, onCekmece]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [gun, hepsi]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   if (hata && !veri) return <HataBandi mesaj="Para İzi okunamadı" kod={hata} onTekrar={yukle} />;
-  if (!veri) return <div style={{ color: R.not, padding: 20 }}>Para İzi okunuyor…</div>;
+  if (!veri) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Para İzi okunuyor…</div></div>;
 
   const o = veri.ozet;
   const evler = veri.cepler.filter((c) => c.tur === 'ev');
@@ -573,12 +904,34 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
   const k = veri.kpi;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, color: R.krem }}>
+    <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <style>{PI_CSS}</style>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+        <div>
+          <div className="pi-eyebrow">Dönem {tUzun(veri.baslangic)} · eski sistemle yan yana · banka hariç</div>
+          <h1 style={{ fontSize: 30 }}>Para İzi</h1>
+        </div>
+      </div>
+      {(() => {
+        const nTes = veri.isler.filter((x) => x.tur === 'teslim').length;
+        return (
+          <div role="tablist" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderBottom: `1px solid ${R.cizgi}`, paddingBottom: 8 }}>
+            {[['izi', 'Para İzi', null], ['teslim', 'Teslim Onayları', nTes]].map(([k, a, n]) => (
+              <button key={k} type="button" role="tab" aria-selected={sekme === k} onClick={() => setSekme(k)} style={{
+                padding: '7px 14px', borderRadius: 9, font: 'inherit', fontWeight: 600, cursor: 'pointer',
+                border: `1px solid ${sekme === k ? 'var(--pi-accent)' : 'var(--pi-line)'}`,
+                background: sekme === k ? 'var(--pi-accent)' : 'var(--pi-paper)', color: sekme === k ? 'var(--pi-on-accent)' : R.krem,
+              }}>{a}{n ? <span style={{ marginLeft: 6, padding: '0 7px', borderRadius: 999, background: R.kirmizi, color: 'var(--pi-on-accent)', fontSize: 11.5 }}>{n}</span> : null}</button>
+            ))}
+          </div>
+        );
+      })()}
+      {sekme === 'teslim' ? <TeslimSekmesi onToast={onToast} onDegisti={yukle} /> : (<>
       {/* ÜST ÇUBUK */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         {veri.isler.length > 0 && (
           <button type="button" onClick={() => islerRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })} style={{
-            padding: '6px 12px', borderRadius: 999, border: 'none', background: R.kirmizi, color: '#1C1309', fontWeight: 800, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
+            padding: '6px 12px', borderRadius: 999, border: 'none', background: R.kirmizi, color: 'var(--pi-on-accent)', fontWeight: 800, fontSize: 12, cursor: 'pointer', fontFamily: 'inherit',
           }}>{veri.isler.length} iş bekliyor</button>
         )}
         <Dugme ana onClick={() => formAc('dis')}>+ Dış giriş</Dugme>
@@ -600,7 +953,7 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
       </div>
 
       {hata && veri && (
-        <div style={{ ...kart, padding: '9px 14px', borderColor: `${R.kirmizi}88`, fontSize: 12.5, color: R.kirmizi, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ ...kart, padding: '9px 14px', borderColor: `${alfa(R.kirmizi, 55)}`, fontSize: 12.5, color: R.kirmizi, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           Güncellenemedi: {hata}. Ekrandaki rakamlar {sonYukleme ? sonYukleme.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' }) : 'önceki'} itibarıyla — güncel olmayabilir.
           <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme>
         </div>
@@ -615,7 +968,7 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
         </div>
       ) : null)}
       {acilisEksik.length > 0 && (
-        <div style={{ ...kart, padding: '10px 14px', borderColor: `${R.amber}88`, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5 }}>
+        <div style={{ ...kart, padding: '10px 14px', borderColor: `${alfa(R.amber, 55)}`, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5 }}>
           <Cip tur="sari">Başlangıç</Cip>
           <span style={{ color: R.metin2 }}>{acilisEksik.length} cebin {tUzun(veri.baslangic)} açılış bakiyesi girilmedi ({acilisEksik.map((c) => c.kisa).join(', ')}). Girilmeden rakamlar eksik başlar.</span>
           <Dugme kucuk ana onClick={() => formAc('acilis', { cep: acilisEksik[0].id })}>Açılış bakiyesi gir</Dugme>
@@ -624,7 +977,7 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
 
       {/* ŞERİT: toplam + patron evleri + açık farklar */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10 }}>
-        <div style={{ ...kart, padding: '12px 16px', background: `linear-gradient(160deg, ${R.kartUst1}, ${R.kartUst2})`, gridColumn: 'span 2', minWidth: 0 }}>
+        <div style={{ ...kart, padding: '12px 16px', background: 'var(--pi-accent-soft)', gridColumn: 'span 2', minWidth: 0 }}>
           <div style={etiketStil}>{hepsi ? 'Şu an' : `${tUzun(gun)} akşamı`} · toplam kasa (banka hariç)</div>
           <div style={{ ...num, fontSize: 30, fontWeight: 700, color: R.bakirAcik, lineHeight: 1.15 }}>{tl(o.toplam)}</div>
           {o.acik_fark_sayisi > 0 && <div style={{ fontSize: 12, marginTop: 2, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -694,7 +1047,18 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
                 </div>
               );
             })()}
-            {veri.isler.map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} />)}
+            {(() => {
+              const t = veri.isler.filter((x) => x.tur === 'teslim');
+              if (!t.length) return null;
+              return (
+                <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '8px 10px', borderRadius: 9, background: R.girinti, border: `1px solid ${R.cizgi}` }}>
+                  <Cip tur="sari">Teslim onayı</Cip>
+                  <span style={{ fontSize: 13 }}><b>{t.length} teslim</b> "aldım" bekliyor · <span style={num}>{fmt(veri.ozet.yolda)}</span> ₺ yolda</span>
+                  <span style={{ marginLeft: 'auto' }}><Dugme ana kucuk onClick={() => setSekme('teslim')}>Teslim Onayları ›</Dugme></span>
+                </div>
+              );
+            })()}
+            {veri.isler.filter((x) => x.tur !== 'teslim').map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} />)}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
@@ -728,6 +1092,8 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
         </div>
       </div>
 
+      </>)}
+      <Cekmece v={ck} onKapat={() => setCk(null)} />
       {form && (
         <FormPenceresi form={form} veri={veri} gun={hepsi ? veri.bugun : gun} onToast={onToast}
           onKapat={() => { const dn = form.donus; setForm(null); if (dn) cekmeceAc(dn, true); }}
@@ -741,7 +1107,7 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz }) {
   const [say, setSay] = useState('');   // Codex: dolu gelirse saymadan onaylanır — boş başlar
   const g = Math.max(0, Math.round((new Date(`${bugun}T12:00:00`) - new Date(`${x.tarih}T12:00:00`)) / 864e5));
   const yas = g === 0 ? 'bugün' : `${g} gündür`;
-  const satir = { display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10, alignItems: 'center', padding: '8px 10px', borderRadius: 9, background: R.girinti, border: `1px solid ${x.tur === 'fark' ? `${R.kirmizi}88` : R.cizgi2}` };
+  const satir = { display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10, alignItems: 'center', padding: '8px 10px', borderRadius: 9, background: R.girinti, border: `1px solid ${x.tur === 'fark' ? `${alfa(R.kirmizi, 55)}` : R.cizgi2}` };
   if (x.tur === 'kapanis') {
     return (
       <div style={satir}>

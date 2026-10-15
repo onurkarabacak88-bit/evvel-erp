@@ -351,8 +351,10 @@ def _iz_kim(o: dict, C: dict) -> dict:
     for on in ("şube paneli · ", "eski sistem aktarımı · ", "otomatik köprü (eski sistem)"):
         kaydeden = kaydeden.replace(on, "")
     if t in ("teslim_cikis", "teslim_alim"):
-        return {"sube": kisa(o["kaynak"]), "personel": v.get("teslim_eden") or None,
-                "alan": (o.get("onaylayan") if t == "teslim_alim" else None)}
+        alan = None
+        if t == "teslim_alim":
+            alan = (kisa(o["hedef"]) or "") + (" · otomatik" if v.get("otomatik") else (" · " + o["onaylayan"] if o.get("onaylayan") else ""))
+        return {"sube": kisa(o["kaynak"]), "personel": v.get("teslim_eden") or None, "alan": alan}
     if t == "kapanis":
         return {"sube": kisa(o["cep"]), "personel": kaydeden or None, "alan": None}
     if t == "dis":

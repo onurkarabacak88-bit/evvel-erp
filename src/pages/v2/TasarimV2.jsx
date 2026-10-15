@@ -1168,7 +1168,7 @@ export default function TasarimV2({ onGit }) {
     // 🧵 PARA İZİ — sade çekirdeğin ilk tuğlası (sahip 2026-10-15): eski kasa
     // ekranlarından AYRI; yalnız /api/para-izi/* okur-yazar.
     if (mod === 'paraizi') {
-      return <ParaIziModulu onCekmece={setCekmece} onToast={setToast} />;
+      return <ParaIziModulu gorunum={gorunum} onToast={setToast} />;
     }
     // 👤 KULLANICILAR — kişiye özel giriş + ekran görünürlüğü (sahip 2026-09-08)
     if (mod === 'kullanici') {
