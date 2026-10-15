@@ -36,7 +36,7 @@ import json
 import logging
 import math
 import uuid
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Dict, List, Optional
 
@@ -622,7 +622,36 @@ def _isler(kayitlar: List[dict], C: dict, fl: List[dict]) -> List[dict]:
     for x in fl:
         if not x["coz"]:
             out.append({"tur": "fark", "id": x["id"], "tarih": x["tarih"], "ad": x["ad"], "f": _tl_sayi(x["f"])})
+    out.extend(_eksik_kapanislar(kayitlar, C))
     out.sort(key=lambda x: x["tarih"])
+    return out
+
+
+def _eksik_kapanislar(kayitlar: List[dict], C: dict) -> List[dict]:
+    """Sahip (2026-10-16): "Girilmemiş ciro uyarı versin; o günün girişi şubeden yeniden istensin."
+    Dönem başından DÜNE kadar her aktif şube × gün: kapanış YOKSA → 'eksik_kapanis';
+    kapanış yalnız Evo'nun tahmini taslağıysa (şube kapanış yapmamış) → 'evo_kapanis'."""
+    if not kayitlar:
+        return []
+    bas = min(h["is_gunu"] for h in kayitlar)
+    dun = (_bugun() - timedelta(days=1)).isoformat()
+    var = {}
+    for h in kayitlar:
+        if h["tur"] == "kapanis":
+            var[(h["cep"], h["is_gunu"])] = h
+    out = []
+    subeler = [c for c in C.values() if c["tur"] == "sube" and c.get("aktif", True)]
+    g = date.fromisoformat(bas)
+    while g.isoformat() <= dun:
+        gi = g.isoformat()
+        for c in subeler:
+            h = var.get((c["id"], gi))
+            if not h:
+                out.append({"tur": "eksik_kapanis", "id": f"eksik:{c['id']}:{gi}", "tarih": gi, "cep": c["id"], "ad": c["kisa"]})
+            elif h["veri"].get("eski_kaynak") == "evo_taslak":
+                out.append({"tur": "evo_kapanis", "id": h["id"], "tarih": gi, "cep": c["id"], "ad": c["kisa"],
+                            "nakit": _tl_sayi(h["tutar"]), "kart": _tl_sayi(int(h["veri"].get("kart", 0)))})
+        g += timedelta(days=1)
     return out
 
 
@@ -1477,12 +1506,14 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
         for r in cur.fetchall() or []:
             r = dict(r)
             gunluk[(str(r["sube_id"]), r["tarih"])] = (r["nakit"] or 0, (r["pos"] or 0, r["online"] or 0), "onaylandi", "ciro")
-        cur.execute("""SELECT DISTINCT ON (sube_id, tarih) sube_id, tarih, nakit, pos, online FROM ciro_taslak
+        cur.execute("""SELECT DISTINCT ON (sube_id, tarih) sube_id, tarih, nakit, pos, online, gonderen_ad FROM ciro_taslak
                         WHERE tarih >= %s AND durum = 'bekliyor' ORDER BY sube_id, tarih, olusturma DESC""", (bas,))
         for r in cur.fetchall() or []:
             r = dict(r)
+            # Sahip (2026-10-16): Evo'nun ürettiği taslak = şube KAPANIŞ YAPMAMIŞ; ayrı işaretlenir
+            evo = "evo" in str(r.get("gonderen_ad") or "").lower()
             gunluk.setdefault((str(r["sube_id"]), r["tarih"]),
-                              (r["nakit"] or 0, (r["pos"] or 0, r["online"] or 0), "bekliyor", "taslak"))
+                              (r["nakit"] or 0, (r["pos"] or 0, r["online"] or 0), "bekliyor", "evo_taslak" if evo else "taslak"))
         for (sid, gun_), (n, k, durum_, kaynak_) in sorted(gunluk.items(), key=lambda x: (x[0][1], x[0][0])):
             g = gun_.isoformat()
             ref = f"kapanis:{sid}:{g}"
@@ -1490,9 +1521,13 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
             # Önceden aktarılmış kapanışta POS/online ayrımı yoksa tamamla (Codex: ayrı izlenmeli)
             if not kuru:
                 for h in kayit:
-                    if h["tur"] == "kapanis" and h["cep"] == cid and h["is_gunu"] == g and "pos" not in h["veri"]:
+                    if h["tur"] == "kapanis" and h["cep"] == cid and h["is_gunu"] == g and (
+                            "pos" not in h["veri"] or (kaynak_ == "evo_taslak" and h["veri"].get("eski_kaynak") == "taslak")):
                         v2 = dict(h["veri"])
-                        v2.update(pos=_kurus(k[0]), online=_kurus(k[1]))
+                        v2.setdefault("pos", _kurus(k[0]))
+                        v2.setdefault("online", _kurus(k[1]))
+                        if kaynak_ == "evo_taslak" and h.get("kaynak_ref") == ref:
+                            v2["eski_kaynak"] = "evo_taslak"
                         cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(v2, ensure_ascii=False), h["id"]))
             if ref in var or not cid or any(h["tur"] == "kapanis" and h["cep"] == cid and h["is_gunu"] == g for h in kayit):
                 rapor["atlanan"] += 1

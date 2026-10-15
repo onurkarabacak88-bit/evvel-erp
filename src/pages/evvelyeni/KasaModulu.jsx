@@ -1400,6 +1400,25 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz }) {
       </div>
     );
   }
+  // Sahip (2026-10-16): "Girilmemiş ciro uyarı versin; o günün girişi yeniden istensin."
+  if (x.tur === 'eksik_kapanis') {
+    return (
+      <div style={{ ...satir, border: `1px solid ${alfa(R.kirmizi, 55)}` }}>
+        <Cip tur="kirmizi">Kapanış YOK</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Şube o günün kapanışını girmedi — gelir eksik. Şubeden panelden girmesini iste · {yas}</div></div>
+        <span />
+      </div>
+    );
+  }
+  if (x.tur === 'evo_kapanis') {
+    return (
+      <div style={{ ...satir, border: `1px solid ${alfa(R.amber, 55)}` }}>
+        <Cip tur="sari">Kapanış yapılmadı · Evo tahmini</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Rakam Evo kasasından (nakit {fmt(x.nakit)} · kart {fmt(x.kart)}) — kimse saymadı. Şubeden kapanışı girmesini iste · {yas}</div></div>
+        <span />
+      </div>
+    );
+  }
   if (x.tur === 'teslim') {
     return (
       <div style={satir}>
