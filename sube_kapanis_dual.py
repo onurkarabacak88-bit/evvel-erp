@@ -219,6 +219,12 @@ def _upsert_ciro_taslak(
             tuple(vals),
         )
         audit(cur, "ciro_taslak", ex["id"], audit_etiket)
+        # 🧵 PARA İZİ (2026-10-15): kapanış beyanı DOĞRUDAN yeni çekirdeğe — köprüsüz.
+        try:
+            from para_izi_api import panel_kapanis_yaz
+            panel_kapanis_yaz(cur, sube_id, gun, nakit, (pos or 0) + (online or 0), gonderen_ad)
+        except Exception:  # noqa: BLE001 — panel ASLA durmaz
+            pass
         return
     tid = str(uuid.uuid4())
     cur.execute(
@@ -243,6 +249,12 @@ def _upsert_ciro_taslak(
         ),
     )
     audit(cur, "ciro_taslak", tid, audit_etiket)
+    # 🧵 PARA İZİ (2026-10-15): kapanış beyanı DOĞRUDAN yeni çekirdeğe — köprüsüz.
+    try:
+        from para_izi_api import panel_kapanis_yaz
+        panel_kapanis_yaz(cur, sube_id, gun, nakit, (pos or 0) + (online or 0), gonderen_ad)
+    except Exception:  # noqa: BLE001 — panel ASLA durmaz
+        pass
 
 
 class PanelKullaniciOlustur(BaseModel):

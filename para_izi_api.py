@@ -1121,3 +1121,102 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
                      "kilitli": len(rapor["kilitli"]), "dis_kaynak_elle": len(rapor["dis_kaynak"]),
                      "zaten_aktarilmis": rapor["atlanan"]}
     return rapor
+
+
+# ─────────────────────────── ŞUBE PANELİNDEN DOĞRUDAN YAZIM ───────────────────────────
+# Sahip (2026-10-15): "Köprü mantığı eskiye devamı zorunlu kılar; panelin verisi DİREKT
+# buraya gelsin, sonra orada boşa çıkan her şeyi silmek istiyorum."
+# Şube panelinin kapanış/teslim yazdığı her noktadan, AYNI transaction içinde ve
+# SAVEPOINT altında çağrılır. Hata ASLA paneli durdurmaz (yutulur, loglanır) — kaçan
+# kayıt otomatik köprüde (aynı kaynak_ref) yakalanır. Kaynak kimlikleri köprüyle
+# AYNIDIR → ikisi aynı kaydı iki kez yazamaz.
+def _try_kilit(cur) -> bool:
+    cur.execute("SELECT pg_try_advisory_xact_lock(%s) AS ok", (KILIT_ANAHTARI,))
+    return bool(dict(cur.fetchone() or {}).get("ok"))
+
+
+def _tablo_var(cur) -> bool:
+    cur.execute("SELECT to_regclass('para_izi_hareket') IS NOT NULL AS var")
+    return bool(dict(cur.fetchone() or {}).get("var"))
+
+
+def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None) -> None:
+    """Panel kapanışı (X raporu) → Para İzi kapanış beyanı. Onaylanmamışsa şube
+    düzeltince tutar güncellenir (beyan); onaylanmışsa tutar DEĞİŞMEZ, not düşülür."""
+    try:
+        with savepoint(cur, "sp_pi_panel_kapanis"):
+            if not _tablo_var(cur) or not _try_kilit(cur):
+                return
+            g = gun.isoformat() if hasattr(gun, "isoformat") else str(gun)[:10]
+            if g < _baslangic(cur).isoformat():
+                return
+            cep = "sube:" + str(sube_id)
+            cur.execute("SELECT 1 FROM para_izi_cep WHERE id=%s", (cep,))
+            if not cur.fetchone():
+                return
+            n, k = _kurus(round(float(nakit or 0), 2)), _kurus(round(float(kart or 0), 2))   # panel float gönderir
+            ref = f"kapanis:{sube_id}:{g}"
+            iptal_edilen = "SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal'"
+            cur.execute(f"""SELECT id, durum, tutar, veri, kaynak_ref FROM para_izi_hareket
+                             WHERE tur='kapanis' AND cep=%s AND is_gunu=%s AND id NOT IN ({iptal_edilen})
+                             ORDER BY kayit_zamani LIMIT 1""", (cep, g))
+            r = cur.fetchone()
+            if not r:
+                _yaz(cur, "kapanis", g, "şube paneli" + (f" · {kim}" if kim else ""), cep=cep, tutar=n,
+                     durum="bekliyor", veri={"kart": k, "eski_kaynak": "panel"}, kaynak_ref=ref)
+                return
+            r = dict(r)
+            veri = r["veri"] if isinstance(r["veri"], dict) else json.loads(r["veri"] or "{}")
+            if r["tutar"] == n and int(veri.get("kart", 0)) == k:
+                return
+            if r["durum"] != "onaylandi":
+                veri["kart"] = k
+                cur.execute("UPDATE para_izi_hareket SET tutar=%s, veri=%s::jsonb WHERE id=%s",
+                            (n, json.dumps(veri, ensure_ascii=False), r["id"]))
+            else:
+                veri.setdefault("panel_sonradan", []).append({"nakit": n, "kart": k})
+                cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s",
+                            (json.dumps(veri, ensure_ascii=False), r["id"]))
+                log.warning("para-izi: onaylı kapanış panelde değişti %s %s", cep, g)
+    except Exception as e:  # noqa: BLE001 — panel ASLA durmaz
+        log.warning("para-izi panel kapanış yazılamadı: %s", str(e)[:200])
+
+
+def panel_teslim_esle(cur) -> None:
+    """kasa_teslim (panel/PIN'li teslim) → Para İzi teslimi ('onay bekliyor').
+    Panelde silinen (kapanış geri al) ve henüz 'aldım' denmemiş teslim → otomatik İPTAL."""
+    try:
+        with savepoint(cur, "sp_pi_panel_teslim"):
+            if not _tablo_var(cur) or not _try_kilit(cur):
+                return
+            bas = _baslangic(cur)
+            cur.execute("SELECT id, sube_id FROM para_izi_cep WHERE tur='sube'")
+            sube_cep = {str(dict(x)["sube_id"]): dict(x)["id"] for x in cur.fetchall() or []}
+            try:
+                with savepoint(cur, "sp_pi_panel_t2"):
+                    cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad FROM kasa_teslim
+                                    WHERE tarih >= %s AND COALESCE(durum,'aktif')='aktif'""", (bas,))
+                    kaynak = [dict(x) for x in cur.fetchall() or []]
+            except Exception:  # noqa: BLE001
+                cur.execute("SELECT id, sube_id, tarih, tutar, teslim_alan_ad FROM kasa_teslim WHERE tarih >= %s", (bas,))
+                kaynak = [dict(x) for x in cur.fetchall() or []]
+            canli = {"kasa_teslim:" + str(x["id"]) for x in kaynak}
+            cur.execute("""SELECT id, kaynak_ref, durum FROM para_izi_hareket
+                            WHERE tur='teslim' AND kaynak_ref LIKE 'kasa_teslim:%%' AND is_gunu >= %s
+                              AND id NOT IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal')""", (bas,))
+            var = {dict(x)["kaynak_ref"]: dict(x) for x in cur.fetchall() or []}
+            cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'kasa_teslim:%%'")
+            her_zaman = {dict(x)["kaynak_ref"] for x in cur.fetchall() or []}
+            for x in kaynak:
+                ref = "kasa_teslim:" + str(x["id"])
+                cep, hedef = sube_cep.get(str(x["sube_id"])), _patron_bul(x.get("teslim_alan_ad"))
+                if ref in her_zaman or not cep or not hedef:
+                    continue
+                _yaz(cur, "teslim", x["tarih"].isoformat(), "şube paneli", kaynak=cep, hedef=hedef, tutar=_kurus(x["tutar"]),
+                     durum="bekliyor", veri={"eski_alan_ad": x.get("teslim_alan_ad")}, kaynak_ref=ref)
+            for ref, h in var.items():
+                if ref not in canli and h["durum"] != "onaylandi":
+                    _yaz(cur, "iptal", _bugun().isoformat(), "şube paneli",
+                         veri={"hedef_id": h["id"], "sebep": "Şube panelinde geri alındı (kapanış geri al)"})
+    except Exception as e:  # noqa: BLE001 — panel ASLA durmaz
+        log.warning("para-izi panel teslim eşlenemedi: %s", str(e)[:200])

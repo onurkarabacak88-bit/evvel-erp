@@ -713,6 +713,13 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
             (sube_id, tarih),
         )
         teslim_silindi = cur.rowcount
+        # 🧵 PARA İZİ (2026-10-15): teslim DOĞRUDAN yeni çekirdeğe — köprüsüz.
+        # Kendi savepoint'i var; hata paneli ASLA durdurmaz (köprü yedekte yakalar).
+        try:
+            from para_izi_api import panel_teslim_esle
+            panel_teslim_esle(cur)
+        except Exception:  # noqa: BLE001
+            pass
 
         # 3) KAPANIS operasyon olayını yeniden aç (panel kapanışı tekrar görsün)
         cur.execute(
@@ -2745,6 +2752,13 @@ def sube_ara_kasa_teslim(sube_id: str, body: AraTeslimModel):
             from database import ensure_kasa_teslim_defterlesme
             ensure_kasa_teslim_defterlesme(cur)
         except Exception:  # noqa: BLE001 — teslim kaydını ASLA kilitlemez
+            pass
+        # 🧵 PARA İZİ (2026-10-15): teslim DOĞRUDAN yeni çekirdeğe — köprüsüz.
+        # Kendi savepoint'i var; hata paneli ASLA durdurmaz (köprü yedekte yakalar).
+        try:
+            from para_izi_api import panel_teslim_esle
+            panel_teslim_esle(cur)
+        except Exception:  # noqa: BLE001
             pass
         from operasyon_defter import operasyon_defter_ekle
         from tr_saat import dt_now_tr
