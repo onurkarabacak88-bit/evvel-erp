@@ -581,7 +581,7 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
         i = next(j for j, o in enumerate(ol) if o["id"] == r["id"])
         once, sonra = _bakiye(ol[:i], C), _bakiye(ol[:i + 1], C)
         d.update(aciklama=v.get("aciklama"), kimin=v.get("kimin") or "Ortak",
-                 parcalar=[{"cep": p["cep"], "tutar": _tl_sayi(int(p["tutar"])), "pay": round(int(p["tutar"]) * 100 / max(r["tutar"], 1)),
+                 parcalar=[{"cep": p["cep"], "tutar": _tl_sayi(int(p["tutar"])), "pay": round(int(p["tutar"]) * 100 / max(sum(int(q["tutar"]) for q in v.get("parcalar", [])), 1)),
                             "once": _tl_sayi(once["b"].get(p["cep"], 0)), "sonra": _tl_sayi(sonra["b"].get(p["cep"], 0))}
                            for p in v.get("parcalar", [])],
                  toplam_once=_tl_sayi(once["toplam"]), toplam_sonra=_tl_sayi(sonra["toplam"]),
@@ -708,7 +708,8 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
                                        for p in o["veri"].get("parcalar", []) if p["cep"] in KIRA_CEPLERI)),
         "bankaya_giren": _tl_sayi(sum(e["d"] for o in gunun_ol for e in _etki(o, C) if e["d"] > 0 and C.get(e["cep"], {}).get("tur") == "banka")),
         # Kayıtsız elden harcama da ödemedir (Codex): bir kez sayılır, cebi tekrar düşmez.
-        "odenen": _tl_sayi(sum(o["tutar"] for o in gunun_ol if o["olay"] == "odeme")
+        # Yalnız NAKİT/HAVALE parçaları — kartla ödenen kısım kasadan çıkmadı (kart borcu oldu)
+        "odenen": _tl_sayi(sum(int(p["tutar"]) for o in gunun_ol if o["olay"] == "odeme" for p in o["veri"].get("parcalar", []))
                            + sum(int(o["veri"].get("f", 0)) for o in gunun_ol if o["olay"] == "cozum" and o["veri"].get("sebep") == "harcandi")),
     }
     cep_durumlari = [_cep_durum(c, ol, D, ref, fl, C) for c in cep_list]

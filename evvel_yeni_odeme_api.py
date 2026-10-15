@@ -102,6 +102,8 @@ class OdemeBody(BaseModel):
     kimin: Optional[str] = None           # diğer/anlık: şube id | 'ortak' | 'patron'
     aciklama: Optional[str] = None
     parcalar: List[Parca]
+    istek_id: Optional[str] = None        # formun tek kimliği — bağlantı kopup tekrar gönderilirse İKİNCİ KEZ yazılmaz
+    tekrar_onay: bool = False             # "aynı gün, aynı cep, aynı tutar zaten var" uyarısına rağmen kaydet
 
 
 @router.post("")
@@ -168,9 +170,10 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
             kimin = "patron"
             if body.konu == "kart_borcu":
                 k = next((x for x in L["kartlar"] if str(x["id"]) == str(body.toptanci_id or body.kimin or "")), None)
-                if k:
-                    konu.update(kart_id=k["id"], kart_ad=k["ad"])
-                    etiket = f"Kart borcu · {k['ad']}"
+                if not k:
+                    raise HTTPException(400, "Hangi kartın borcu ödendi? Kartı seç")
+                konu.update(kart_id=k["id"], kart_ad=k["ad"])
+                etiket = f"Kart borcu · {k['ad']}"
         else:   # diğer
             if body.kimin not in list(subeler) + ["ortak", "patron"]:
                 raise HTTPException(400, "Kimin gideri: şube, Ortak ya da Patron şahsi seç")
@@ -178,7 +181,7 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
                 raise HTTPException(400, "Açıklama yaz")
             kimin = body.kimin
             etiket = f"{body.aciklama.strip()[:60]}"
-        ait_ay = (body.ait_ay or gun[:7])[:7]
+        ait_ay = (body.ait_ay or gun[:7])[:7] if body.konu in ("kira", "fatura", "personel") else gun[:7]
         if body.konu in ("kira", "fatura", "personel"):
             try:
                 date.fromisoformat(ait_ay + "-01")
@@ -192,8 +195,10 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
         nakit_parca, kart_parca = [], []
         for p in body.parcalar:
             t = _kurus(p.tutar)
-            if t <= 0:
-                continue
+            if t < 0:
+                raise HTTPException(400, "Tutar eksi olamaz")
+            if t == 0:
+                raise HTTPException(400, "Tutarı boş bir ödeme satırı var — doldur ya da sil")
             if p.yontem in ("nakit", "havale"):
                 tur_izin = ("ev", "sube") if p.yontem == "nakit" else ("banka", "hesap")
                 if p.cep not in C or C[p.cep]["tur"] not in tur_izin:
@@ -208,6 +213,8 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
                 raise HTTPException(400, "Ödeme yöntemi: nakit / havale / kart")
         if not nakit_parca and not kart_parca:
             raise HTTPException(400, "Tutar gir")
+        if body.konu == "kart_borcu" and kart_parca:
+            raise HTTPException(400, "Kart borcu kartla ödenemez — nakit ya da havale seç")
         if len({x["cep"] for x in nakit_parca}) != len(nakit_parca):
             raise HTTPException(400, "Aynı cep iki kez seçilemez")
         toplam = sum(x["tutar"] for x in nakit_parca) + sum(x["tutar"] for x in kart_parca)
@@ -217,12 +224,23 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
                 "yontemler": [x["yontem"] for x in nakit_parca] + ["kart"] * len(kart_parca),
                 "kart_parcalar": kart_parca, "konu": konu, "gider": gider_mi, "ait_ay": ait_ay,
                 "toplam": toplam, "kaynak": "odeme_formu", "not": (body.aciklama or "").strip()[:200]}
+        if not body.tekrar_onay:
+            for h in kayit:
+                if h["tur"] != "odeme" or h["is_gunu"] != gun:
+                    continue
+                eski = {(p["cep"], int(p["tutar"])) for p in h["veri"].get("parcalar", [])}
+                if any((x["cep"], x["tutar"]) in eski for x in nakit_parca):
+                    raise HTTPException(409, f"BENZER KAYIT: aynı gün, aynı yerden, aynı tutarda bir ödeme zaten var — "
+                                             f"\"{h['veri'].get('aciklama') or 'Ödeme'}\". Aynı harcamayı iki kez girmiyorsan yine de kaydedebilirsin.")
         yeni = _sahte("odeme", gun, tutar=toplam, veri=veri)
         yeni_ol = _olaylar([yeni])
         etkiler = [(e["cep"], o["gun"]) for o in yeni_ol for e in _etki(o, C)]
         _kilit_denetle(etkiler, _sayim_kilidi(_olaylar(kayit)), C)
         _eksi_denetle(_olaylar(kayit + [yeni]), {x["cep"] for x in nakit_parca}, gun, C)
-        hid = _yaz(cur, "odeme", gun, kim, tutar=toplam, veri=veri)
+        ref = f"odeme_formu:{body.istek_id[:64]}" if body.istek_id else None
+        hid = _yaz(cur, "odeme", gun, kim, tutar=toplam, veri=veri, kaynak_ref=ref)
+        if ref and not hid:
+            return {"ok": True, "id": None, "tekrar": True, "mesaj": "Bu ödeme zaten kaydedilmişti (ikinci kez yazılmadı)"}
     return {"ok": True, "id": hid, "gider": gider_mi, "kimin": veri["kimin"], "toplam": _tl_sayi(toplam),
             "mesaj": f"{etiket} · {_tl(toplam)}" + (" · gider olarak yazıldı" if gider_mi else " · gider değil")}
 
@@ -247,4 +265,22 @@ def odeme_listesi(ay: Optional[str] = None):
                     "nakit": nakit, "kart": kart, "toplam": _tl_sayi(int(v.get("toplam", h["tutar"]))), "kaydeden": h.get("kaydeden")})
     out.sort(key=lambda x: x["tarih"], reverse=True)
     return {"ay": a_, "odemeler": out, "toplam": round(sum(x["toplam"] for x in out), 2),
-            "gider_toplam": round(sum(x["toplam"] for x in out if x["gider"]), 2)}
+            "nakit_toplam": round(sum(n["tutar"] for x in out for n in x["nakit"]), 2),
+            "kart_toplam": round(sum(k["tutar"] for x in out for k in x["kart"]), 2)}
+
+
+@router.get("/personel-durum")
+def personel_durum(personel_id: str, ay: str):
+    """Seçilen personele o ay (ait olduğu ay) ne ödendi — kalem kalem. Maaş girerken avansı görsün,
+    maaşın KALANINI girsin (avans + tam maaş = çift gider olmasın)."""
+    _hazirla()
+    with db() as (conn, cur):
+        _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+    kalem = {}
+    for h in kayit:
+        v = h["veri"]
+        k = v.get("konu") or {}
+        if h["tur"] != "odeme" or k.get("tip") != "personel" or str(k.get("personel_id")) != str(personel_id) or v.get("ait_ay") != ay[:7]:
+            continue
+        kalem[k.get("kalem") or "?"] = kalem.get(k.get("kalem") or "?", 0) + int(v.get("toplam", h["tutar"]))
+    return {"ay": ay[:7], "kalemler": {a: _tl_sayi(t) for a, t in kalem.items()}, "toplam": _tl_sayi(sum(kalem.values()))}

@@ -28,11 +28,17 @@ function Etiket({ ad, children, ipucu }) {
   );
 }
 
-const BOS = { konu: '', tarih: gunBugun(), ait_ay: ayBugun(), parcalar: [{ yontem: 'nakit', cep: '', kart_id: '', tutar: '' }] };
+const yeniId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+const BOS_PARCA = () => [{ yontem: 'nakit', cep: '', kart_id: '', tutar: '' }];
+const BOS = () => ({ konu: '', tarih: gunBugun(), ait_ay: ayBugun(), parcalar: BOS_PARCA(), istek_id: yeniId() });
+// Türkçe klavye: "12,50" da "12.50" de olur; binlik noktası "1.250,00" da olur
+const sayi = (x) => { const t = String(x ?? '').trim().replace(/\s/g, ''); if (!t) return 0; const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t); return Number.isFinite(n) ? n : NaN; };
 
 export default function OdemeModulu({ onToast }) {
   const [L, setL] = useState(null);
   const [f, setF] = useState(BOS);
+  const [benzer, setBenzer] = useState(false);
+  const [pd, setPd] = useState(null);   // seçili personele bu ay ne ödendi
   const [hata, setHata] = useState('');
   const [mesgul, setMesgul] = useState(false);
   const [ay, setAy] = useState(ayBugun());
@@ -42,24 +48,45 @@ export default function OdemeModulu({ onToast }) {
   useEffect(() => { api('/evvel-yeni/odeme/listeler').then(setL).catch((e) => setHata(e?.message || 'Listeler okunamadı')); }, []);
   useEffect(() => { listeYukle(); }, [listeYukle]);
 
-  const set = (k, v) => setF((x) => ({ ...x, [k]: v }));
+  const set = (k, v) => { setBenzer(false); setF((x) => ({ ...x, [k]: v })); };
+  useEffect(() => {
+    setPd(null);
+    if (f.konu !== 'personel' || !f.personel_id || !f.ait_ay) return;
+    api(`/evvel-yeni/odeme/personel-durum?personel_id=${encodeURIComponent(f.personel_id)}&ay=${f.ait_ay}`).then(setPd).catch(() => {});
+  }, [f.konu, f.personel_id, f.ait_ay]);
+  const iptalEt = async (x) => {
+    const sebep = window.prompt(`"${x.aciklama}" (${fmt(x.toplam)} ₺) iptal edilsin mi?\nKısaca neden yaz:`);
+    if (!sebep || !sebep.trim()) return;
+    try { await api(`/evvel-yeni/kasa/hareket/${x.id}/iptal`, { method: 'POST', body: { sebep: sebep.trim() } }); onToast?.('Ödeme iptal edildi — para cebine geri döndü'); listeYukle(); api('/evvel-yeni/odeme/listeler').then(setL).catch(() => {}); }
+    catch (e) { onToast?.(e?.message || 'İptal edilemedi'); }
+  };
   const parcaSet = (i, k, v) => setF((x) => ({ ...x, parcalar: x.parcalar.map((p, j) => (j === i ? { ...p, [k]: v } : p)) }));
 
-  const gonder = async () => {
+  const gonder = async (tekrar_onay = false) => {
     setHata(''); setMesgul(true);
     try {
-      const body = { ...f, parcalar: f.parcalar.filter((p) => Number(p.tutar) > 0).map((p) => ({ yontem: p.yontem, cep: p.cep || null, kart_id: p.kart_id || null, tutar: Number(p.tutar) })) };
+      // Boş/hatalı satır SESSİZCE atılmaz — sunucu açıkça söyler
+      const body = { ...f, tekrar_onay, parcalar: f.parcalar.map((p) => ({ yontem: p.yontem, cep: p.cep || null, kart_id: p.kart_id || null, tutar: sayi(p.tutar) || 0 })) };
       const r = await api('/evvel-yeni/odeme', { method: 'POST', body });
       onToast?.(r.mesaj);
-      setF({ ...BOS, tarih: f.tarih });
+      setBenzer(false);
+      setF({ ...BOS(), tarih: f.tarih });
       api('/evvel-yeni/odeme/listeler').then(setL).catch(() => {});
       listeYukle();
-    } catch (e) { setHata(e?.message || 'Kaydedilemedi'); } finally { setMesgul(false); }
+    } catch (e) { const m = e?.message || 'Kaydedilemedi'; setBenzer(m.startsWith('BENZER KAYIT')); setHata(m); } finally { setMesgul(false); }
   };
 
   if (!L) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: hata ? R.kirmizi : R.not }}>{hata || 'Form hazırlanıyor…'}</div></div>;
 
-  const toplam = f.parcalar.reduce((a, p) => a + (Number(p.tutar) || 0), 0);   // yalnız giriş geri bildirimi
+  const toplam = f.parcalar.reduce((a, p) => a + (sayi(p.tutar) || 0), 0);   // yalnız giriş geri bildirimi
+  const hataliSatir = f.parcalar.some((p) => !(sayi(p.tutar) > 0));
+  const subeAd = (id) => (L.subeler.find((s) => s.id === id) || {}).ad;
+  const secPer = L.personel.find((p) => String(p.id) === String(f.personel_id));
+  const kiminAd = ['kira', 'fatura', 'anlik'].includes(f.konu) ? subeAd(f.sube_id)
+    : f.konu === 'personel' ? (secPer ? (subeAd(secPer.sube_id) || 'Ortak') : null)
+      : f.konu === 'diger' ? ({ ortak: 'Ortak', patron: 'Patron şahsi' }[f.kimin] || subeAd(f.kimin)) : null;
+  const ayAdi = (a) => { const [y, m] = (a || '').split('-'); return m ? `${['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'][Number(m) - 1]} ${y}` : ''; };
+  const giderAyi = ['kira', 'fatura', 'personel'].includes(f.konu) ? f.ait_ay : (f.tarih || '').slice(0, 7);
   const konuObj = L.konular.find((k) => k.kod === f.konu);
   const izgara = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 };
 
@@ -74,7 +101,7 @@ export default function OdemeModulu({ onToast }) {
           <div style={{ ...etiketStil, marginBottom: 8 }}>1 · Ne için ödendi?</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {L.konular.map((k) => (
-              <button key={k.kod} type="button" onClick={() => setF((x) => ({ ...BOS, tarih: x.tarih, konu: k.kod }))} style={{
+              <button key={k.kod} type="button" onClick={() => { setBenzer(false); setF((x) => ({ konu: k.kod, tarih: x.tarih, ait_ay: x.ait_ay, parcalar: x.parcalar, istek_id: x.istek_id })); }} style={{
                 padding: '10px 16px', borderRadius: 12, font: 'inherit', fontSize: 15, fontWeight: 600, cursor: 'pointer',
                 border: `1px solid ${f.konu === k.kod ? 'var(--pi-accent)' : 'var(--pi-line)'}`,
                 background: f.konu === k.kod ? 'var(--pi-accent)' : 'var(--pi-paper)', color: f.konu === k.kod ? 'var(--pi-on-accent)' : R.krem,
@@ -108,6 +135,14 @@ export default function OdemeModulu({ onToast }) {
               <Etiket ad="Ne ödendi"><select style={alan} value={f.personel_kalemi || ''} onChange={(e) => set('personel_kalemi', e.target.value)}>
                 <option value="">Seç…</option>{L.personel_kalemleri.map((k) => <option key={k}>{k}</option>)}
               </select></Etiket>
+              {pd && (
+                <div style={{ gridColumn: '1 / -1', padding: '9px 12px', borderRadius: 10, background: 'var(--pi-accent-soft)', fontSize: 13.5 }}>
+                  {pd.toplam > 0
+                    ? <>{ayAdi(pd.ay)} için bu kişiye şimdiye kadar: {Object.entries(pd.kalemler).map(([a, t]) => `${a} ${fmt(t)} ₺`).join(' · ')}.{' '}
+                      {f.personel_kalemi === 'Maaş' && pd.kalemler.Avans > 0 && <b>Maaşın yalnız KALANINI gir (avans zaten verildi).</b>}</>
+                    : <>{ayAdi(pd.ay)} için bu kişiye henüz ödeme girilmemiş.</>}
+                </div>
+              )}
             </>)}
             {f.konu === 'kart_borcu' && (
               <Etiket ad="Hangi kartın borcu"><select style={alan} value={f.kimin || ''} onChange={(e) => set('kimin', e.target.value)}>
@@ -133,7 +168,7 @@ export default function OdemeModulu({ onToast }) {
           <div>
             <div style={{ ...etiketStil, marginBottom: 8 }}>2 · Nasıl ödendi?</div>
             {f.parcalar.map((p, i) => (
-              <div key={i} style={{ display: 'grid', gridTemplateColumns: 'auto minmax(180px,1fr) 150px auto', gap: 8, alignItems: 'center', marginBottom: 8 }}>
+              <div key={i} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10, paddingBottom: 10, borderBottom: '1px dashed var(--pi-line)' }}>
                 <div style={{ display: 'flex', gap: 4 }}>
                   {[['nakit', 'Nakit'], ['havale', 'Havale'], ['kart', 'Kart']].map(([k, a]) => (
                     <button key={k} type="button" onClick={() => setF((x) => ({ ...x, parcalar: x.parcalar.map((q, j) => (j === i ? { ...q, yontem: k, cep: '', kart_id: '' } : q)) }))} style={{
@@ -144,16 +179,18 @@ export default function OdemeModulu({ onToast }) {
                   ))}
                 </div>
                 {p.yontem === 'kart' ? (
-                  <select style={alan} value={p.kart_id} onChange={(e) => parcaSet(i, 'kart_id', e.target.value)}>
+                  <select style={{ ...alan, flex: '1 1 200px', width: 'auto' }} value={p.kart_id} onChange={(e) => parcaSet(i, 'kart_id', e.target.value)}>
                     <option value="">Hangi kart…</option>{L.kartlar.map((k) => <option key={k.id} value={k.id}>{k.ad}{k.banka ? ` · ${k.banka}` : ''}</option>)}
                   </select>
                 ) : (
-                  <select style={alan} value={p.cep} onChange={(e) => parcaSet(i, 'cep', e.target.value)}>
+                  <select style={{ ...alan, flex: '1 1 200px', width: 'auto' }} value={p.cep} onChange={(e) => parcaSet(i, 'cep', e.target.value)}>
                     <option value="">{p.yontem === 'nakit' ? 'Hangi nakit…' : 'Hangi banka…'}</option>
-                    {(p.yontem === 'nakit' ? L.nakit_cepler : L.banka_cepler).map((c) => <option key={c.id} value={c.id} disabled={c.bakiye <= 0}>{c.ad} · {fmt(c.bakiye)} ₺</option>)}
+                    {(p.yontem === 'nakit' ? L.nakit_cepler : L.banka_cepler).map((c) => <option key={c.id} value={c.id} disabled={c.bakiye <= 0}>{c.ad} · {c.bakiye <= 0 ? 'boş, seçilemez' : `${fmt(c.bakiye)} ₺ var`}</option>)}
                   </select>
                 )}
-                <input type="number" min="0" step="0.01" inputMode="decimal" placeholder="Tutar" style={alan} value={p.tutar} onChange={(e) => parcaSet(i, 'tutar', e.target.value)} />
+                <label style={{ display: 'flex', alignItems: 'center', gap: 6, flex: '0 1 170px', fontSize: 13, color: R.metin2 }}>Tutar
+                  <input type="text" inputMode="decimal" placeholder="0" aria-label="Tutar" style={{ ...alan, borderColor: p.tutar !== '' && !(sayi(p.tutar) > 0) ? 'var(--pi-bad)' : undefined }} value={p.tutar} onChange={(e) => parcaSet(i, 'tutar', e.target.value)} /> ₺
+                </label>
                 {f.parcalar.length > 1 ? <Dugme kucuk onClick={() => setF((x) => ({ ...x, parcalar: x.parcalar.filter((_, j) => j !== i) }))}>Sil</Dugme> : <span />}
               </div>
             ))}
@@ -167,10 +204,16 @@ export default function OdemeModulu({ onToast }) {
               : <Cip>gider DEĞİL — {f.konu === 'toptanci' ? 'toptancı borcunu kapatır' : f.konu === 'kart_borcu' ? 'kart borcunu kapatır' : f.konu === 'kredi' ? 'patronun borcu' : 'patron çekişi'}</Cip>)}
             {f.parcalar.some((p) => p.yontem === 'kart') && <Cip>kart kısmı kasadan düşmez, kart borcu olur</Cip>}
           </div>
-          {hata && <div style={{ color: R.kirmizi, fontWeight: 600 }}>{hata}</div>}
-          <div><button type="button" onClick={gonder} disabled={mesgul || !toplam} style={{
+          {kiminAd !== null && f.konu && (
+            <div style={{ fontSize: 14, padding: '10px 14px', borderRadius: 10, border: '1px solid var(--pi-line)' }}>
+              ✔ Kontrol: <b>{kiminAd || '— şube/kişi seçilmedi —'}</b> · <b>{ayAdi(giderAyi)}</b> {konuObj?.gider && f.kimin !== 'patron' ? 'gideri olarak yazılacak' : ''}
+            </div>
+          )}
+          {hata && <div style={{ color: R.kirmizi, fontWeight: 600, fontSize: 15, padding: '10px 14px', borderRadius: 10, background: 'var(--pi-bg)' }}>{hata}</div>}
+          {benzer && <div><Dugme onClick={() => gonder(true)}>Evet, bu ayrı bir ödeme — yine de kaydet</Dugme></div>}
+          <div><button type="button" onClick={() => gonder(false)} disabled={mesgul || !toplam || hataliSatir} style={{
             padding: '13px 26px', borderRadius: 12, border: 'none', background: 'var(--pi-accent)', color: 'var(--pi-on-accent)',
-            font: 'inherit', fontSize: 16, fontWeight: 700, cursor: mesgul || !toplam ? 'not-allowed' : 'pointer', opacity: mesgul || !toplam ? 0.5 : 1,
+            font: 'inherit', fontSize: 16, fontWeight: 700, cursor: mesgul || !toplam || hataliSatir ? 'not-allowed' : 'pointer', opacity: mesgul || !toplam || hataliSatir ? 0.5 : 1,
           }}>{mesgul ? 'Kaydediliyor…' : 'Ödemeyi kaydet'}</button></div>
         </>)}
       </div>
@@ -179,12 +222,12 @@ export default function OdemeModulu({ onToast }) {
       <div style={{ ...kart, overflow: 'hidden' }}>
         <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--pi-line)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <b>Ödemeler</b>
-          {liste && <span style={{ color: R.not, fontSize: 13 }}>toplam {fmt(liste.toplam)} ₺ · gider sayılan {fmt(liste.gider_toplam)} ₺</span>}
+          {liste && <span style={{ color: R.not, fontSize: 13 }}>bu ay ödenen {fmt(liste.toplam)} ₺ · kasadan {fmt(liste.nakit_toplam)} · kartla {fmt(liste.kart_toplam)}</span>}
           <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, width: 'auto', padding: '6px 9px', fontSize: 13, marginLeft: 'auto' }} />
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table className="pi-tablo pi-excel">
-            <thead><tr><th>Gün</th><th style={{ textAlign: 'left' }}>Ne için</th><th style={{ textAlign: 'left' }}>Açıklama</th><th style={{ textAlign: 'left' }}>Kimin</th><th style={{ textAlign: 'left' }}>Nasıl</th><th>Tutar</th><th style={{ textAlign: 'left' }}>Gider mi</th></tr></thead>
+            <thead><tr><th>Gün</th><th style={{ textAlign: 'left' }}>Ne için</th><th style={{ textAlign: 'left' }}>Açıklama</th><th style={{ textAlign: 'left' }}>Kimin</th><th style={{ textAlign: 'left' }}>Nasıl</th><th>Tutar</th><th style={{ textAlign: 'left' }}>Gider mi</th><th /></tr></thead>
             <tbody>
               {(liste?.odemeler || []).map((x) => (
                 <tr key={x.id}>
@@ -194,10 +237,11 @@ export default function OdemeModulu({ onToast }) {
                   <td style={{ textAlign: 'left' }}>{x.kimin || '—'}</td>
                   <td style={{ textAlign: 'left', fontSize: 12 }}>{[...x.nakit.map((n) => `${n.ad} ${fmt(n.tutar)}`), ...x.kart.map((k) => `💳 ${k.ad} ${fmt(k.tutar)}`)].join(' + ')}</td>
                   <td style={{ ...num, fontWeight: 700 }}>{fmt(x.toplam)}</td>
-                  <td style={{ textAlign: 'left' }}>{x.gider ? <Cip tur="sari">gider{x.ait_ay ? ` · ${x.ait_ay}` : ''}</Cip> : <span style={{ color: R.not }}>—</span>}</td>
+                  <td style={{ textAlign: 'left' }}>{x.gider ? <Cip tur="sari">gider · {ayAdi(x.ait_ay)}</Cip> : x.konu === 'Dükkân gideri' ? <Cip>dükkân gideri</Cip> : <span style={{ color: R.not }}>gider değil</span>}</td>
+                  <td>{x.kaydeden !== undefined && x.konu !== 'Dükkân gideri' && <Dugme kucuk onClick={() => iptalEt(x)}>İptal</Dugme>}</td>
                 </tr>
               ))}
-              {liste && !liste.odemeler.length && <tr><td colSpan={7} style={{ textAlign: 'center', color: R.not }}>Bu ay ödeme yok.</td></tr>}
+              {liste && !liste.odemeler.length && <tr><td colSpan={8} style={{ textAlign: 'center', color: R.not }}>Bu ay ödeme yok.</td></tr>}
             </tbody>
           </table>
         </div>
