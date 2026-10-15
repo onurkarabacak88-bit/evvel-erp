@@ -9,21 +9,16 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import ParaIziModulu from './ParaIziModulu';
+import ParaIziModulu, { SAYFALAR } from './ParaIziModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
-const MENU = [
-  { id: 'izi', ad: 'Para nerede', alt: 'Kasalar · evler · bankalar' },
-  { id: 'teslim', ad: 'Teslim onayları', alt: 'Şubeden patrona' },
-  { id: 'banka', ad: 'Banka mutabakatı', alt: 'Aylık ekstre kontrolü' },
-];
+const MENU = SAYFALAR;   // tek kaynak: sayfa listesi modülde
 
 const sekmeAdresten = () => {
   const p = (window.location.pathname || '').replace(/\/+$/, '');
-  if (p.endsWith('/teslim')) return 'teslim';
-  if (p.endsWith('/banka')) return 'banka';
-  return 'izi';
+  const son = p.split('/').pop();
+  return SAYFALAR.some((x) => x.id === son) ? son : 'kasam';
 };
 
 const KABUK_CSS = `
@@ -82,6 +77,10 @@ export default function ParaIziApp() {
   const [durum, setDurum] = useState('soruluyor');   // soruluyor | giris | tamam
   const [sekme, setSekme] = useState(sekmeAdresten);
   const [toast, setToast] = useState('');
+  const [rozet, setRozet] = useState({});
+  const veriGeldi = (v) => setRozet({
+    isler: v.isler.length, teslim: v.isler.filter((x) => x.tur === 'teslim').length, farklar: v.ozet.acik_fark_sayisi,
+  });
 
   useEffect(() => {
     document.title = 'Para İzi';
@@ -104,7 +103,7 @@ export default function ParaIziApp() {
   }, [toast]);
 
   const sekmeDegis = (k) => {
-    const yol = k === 'izi' ? '/para-izi' : `/para-izi/${k}`;
+    const yol = k === 'kasam' ? '/para-izi' : `/para-izi/${k}`;
     if (window.location.pathname !== yol) window.history.pushState(null, '', yol);
     setSekme(k);
   };
@@ -120,16 +119,17 @@ export default function ParaIziApp() {
               Yeni konu = yeni satır; bir sayfaya sıkıştırılmaz. Yalnız ÇALIŞAN alanlar listelenir. */}
           <nav className="piapp-sol" aria-label="Para İzi bölümleri">
             <div className="piapp-logo">Para İzi</div>
-            <div className="piapp-alt">Para</div>
+
             {MENU.map((m) => (
-              <a key={m.id} href={m.id === 'izi' ? '/para-izi' : `/para-izi/${m.id}`} aria-current={sekme === m.id ? 'page' : undefined}
+              <a key={m.id} href={m.id === 'kasam' ? '/para-izi' : `/para-izi/${m.id}`} aria-current={sekme === m.id ? 'page' : undefined}
                 onClick={(e) => { e.preventDefault(); sekmeDegis(m.id); }}>
                 <span>{m.ad}<small>{m.alt}</small></span>
+                {rozet[m.id] ? <span style={{ background: 'var(--bad)', color: 'var(--on)', borderRadius: 999, padding: '0 8px', fontSize: 12, fontWeight: 700 }}>{rozet[m.id]}</span> : null}
               </a>
             ))}
           </nav>
           <main className="piapp-ic">
-            <ParaIziModulu gorunum={sekme} onSekme={sekmeDegis} onToast={setToast} sekmesiz />
+            <ParaIziModulu gorunum={sekme} onSekme={sekmeDegis} onToast={setToast} onVeri={veriGeldi} sekmesiz />
           </main>
         </div>
       )}
