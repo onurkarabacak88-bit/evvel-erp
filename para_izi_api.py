@@ -47,7 +47,12 @@ from database import db, savepoint
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/para-izi", tags=["para-izi"])
 
-BASLANGIC = date(2026, 10, 1)          # sahip: "bu aydan itibaren kurgula"
+BASLANGIC = date(2026, 10, 1)          # ilk dönem — sahip: "bu aydan itibaren kurgula"
+# Sahip (2026-10-15): "Şimdi eskiyle birlikte çalışsın; 1 Kasım'da sistemi tamamen
+# sıfırlayıp kuruluşu ona göre devam ettireceğim." → DÖNEM: başlangıç günü ayardan
+# okunur. Yeni dönem başlayınca önceki kayıtlar SİLİNMEZ (arşiv), hesaplara girmez;
+# her cep yeni başlangıç sabahı sayılıp açılış bakiyesiyle başlar.
+SENKRON_ARALIK_SN = 600                  # eski sistemden otomatik köprü — en sık 10 dk
 ACIK = "__acik"                          # açık fark kovası (cep değil)
 YOLDA = "__yolda"                        # teslim edildi, "aldım" bekleniyor (cep değil)
 KILIT_ANAHTARI = 7_012_026               # pg_advisory_xact_lock — modülün tek yazma kilidi
@@ -134,6 +139,14 @@ def _hazirla() -> None:
             )
         """)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_para_izi_hareket_gun ON para_izi_hareket (is_gunu, kayit_zamani)")
+        cur.execute("""
+            CREATE TABLE IF NOT EXISTS para_izi_ayar (
+                anahtar   TEXT PRIMARY KEY,
+                deger     TEXT NOT NULL,
+                degistiren TEXT,
+                zaman     TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+        """)
         for cid, ad, kisa, tur, sira in PATRON_CEPLERI:
             cur.execute("INSERT INTO para_izi_cep (id, ad, kisa, tur, sira) VALUES (%s,%s,%s,%s,%s) "
                         "ON CONFLICT (id) DO NOTHING", (cid, ad, kisa, tur, sira))
@@ -151,6 +164,19 @@ def _hazirla() -> None:
         except Exception as e:  # noqa: BLE001
             log.warning("para-izi: subeler okunamadi: %s", str(e)[:200])
     _HAZIR = sube_tamam   # şube listesi okunamadıysa bir sonraki istekte yeniden dene
+
+
+def _baslangic(cur) -> date:
+    """Geçerli dönemin ilk günü (ayar yoksa ilk dönem: 1 Ekim 2026)."""
+    try:
+        with savepoint(cur, "sp_pi_ayar"):
+            cur.execute("SELECT deger FROM para_izi_ayar WHERE anahtar='baslangic'")
+            r = cur.fetchone()
+            if r:
+                return date.fromisoformat(dict(r)["deger"])
+    except Exception:  # noqa: BLE001
+        pass
+    return BASLANGIC
 
 
 def _kilit(cur) -> None:
@@ -225,7 +251,7 @@ def _etki(o: dict, C: dict) -> List[dict]:
     ad = lambda cid: C.get(cid, {}).get("ad", cid)  # noqa: E731
     kisa = lambda cid: C.get(cid, {}).get("kisa", cid)  # noqa: E731
     if t == "acilis":
-        return [{"cep": o["cep"], "d": o["tutar"], "etiket": "1 Ekim açılış bakiyesi", "kaynak": "Açılış"}]
+        return [{"cep": o["cep"], "d": o["tutar"], "etiket": "Açılış bakiyesi (" + o["gun"] + ")", "kaynak": "Açılış"}]
     if t == "kapanis":
         return [{"cep": o["cep"], "d": o["tutar"],
                  "etiket": "Kapanış nakdi" + ("" if o["durum"] == "onaylandi" else " (onay bekliyor)"), "kaynak": "Satış"}]
@@ -465,10 +491,12 @@ def _isler(kayitlar: List[dict], C: dict, fl: List[dict]) -> List[dict]:
 
 
 def _yukle(cur):
+    """Yalnız GEÇERLİ DÖNEMİN kayıtları. Önceki dönem silinmez, hesaba girmez (arşiv)."""
     cep_list = _cepler(cur)
     C = {c["id"]: c for c in cep_list}
     kayit, iptaller = _ham(cur)
-    return cep_list, C, kayit, iptaller
+    bas = _baslangic(cur).isoformat()
+    return cep_list, C, [h for h in kayit if h["is_gunu"] >= bas], iptaller
 
 
 # ─────────────────────────── KORUMALAR ───────────────────────────
@@ -527,8 +555,10 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
     """Tek ekranın bütün verisi: seçilen gün AKŞAMI para nerede + o günün hareketleri
     + güne bağlı olmayan bekleyen işler. Ekranın bütün rakamları buradan gelir."""
     _hazirla()
+    senkron = _otomatik_senkron()
     with db() as (conn, cur):
         cep_list, C, kayit, iptaller = _yukle(cur)
+        bas = _baslangic(cur)
     bugun = _bugun().isoformat()
     g = _gun_coz(gun)
     ref = bugun if hepsi else g
@@ -553,7 +583,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
     gunun_iptal = iptaller if hepsi else [i for i in iptaller if i["kayit_zamani"].date().isoformat() == g]
     tum_ad = {h["id"]: h for h in kayit}
     return {
-        "gun": g, "hepsi": hepsi, "baslangic": BASLANGIC.isoformat(), "bugun": bugun,
+        "gun": g, "hepsi": hepsi, "baslangic": bas.isoformat(), "bugun": bugun, "senkron": senkron,
         "ozet": _ozet(D, fl),
         "onceki_toplam": None if onceki is None else _tl_sayi(onceki["toplam"]),
         "degisim": None if onceki is None else _tl_sayi(D["toplam"] - onceki["toplam"]),
@@ -569,7 +599,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
         "isler": _isler(kayit, C, _farklar(ol_tum, C)),
         "dis_turleri": [{"kod": k, "ad": v[0], "geri_odenecek": v[2]} for k, v in DIS_TURLERI.items()],
         "anlik_bakiye": {cid: _tl_sayi(v) for cid, v in _bakiye(ol_tum, C)["b"].items() if cid in C},
-        "acilis_girilen": sorted({h["cep"] for h in kayit if h["tur"] == "acilis"}),
+        "acilis_girilen": sorted({h["cep"] for h in kayit if h["tur"] == "acilis" and h["is_gunu"] == bas.isoformat()}),
         "hareket_sayisi": len(kayit),
     }
 
@@ -705,13 +735,14 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
         gd = date.fromisoformat(gun)
     except ValueError:
         raise HTTPException(400, "Gün YYYY-AA-GG olmalı")
-    if gd < BASLANGIC:
-        raise HTTPException(400, f"Para İzi {BASLANGIC.strftime('%d.%m.%Y')} tarihinden başlar")
     if gd > bugun:
         raise HTTPException(400, "Gelecek tarihli kayıt girilemez")
     _hazirla()
     with db() as (conn, cur):
         _kilit(cur)
+        bas = _baslangic(cur)
+        if gd < bas and t != "acilis":
+            raise HTTPException(400, f"Bu dönem {bas.strftime('%d.%m.%Y')} tarihinde başladı; öncesine kayıt girilemez")
         kim = _aktor(cur, x_evvel_oturum)
         cep_list, C, kayit, _ = _yukle(cur)
         ol = _olaylar(kayit)
@@ -727,9 +758,9 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
             cep_var(body.cep)
             if tut < 0:
                 raise HTTPException(400, "Açılış bakiyesi eksi olamaz")
-            if any(h["tur"] == "acilis" and h["cep"] == body.cep for h in kayit):
+            if any(h["tur"] == "acilis" and h["cep"] == body.cep and h["is_gunu"] == bas.isoformat() for h in kayit):
                 raise HTTPException(409, "Bu cebin açılış bakiyesi zaten girilmiş. Düzeltmek için önce eskisini iptal et.")
-            gun = BASLANGIC.isoformat()
+            gun = bas.isoformat()
             yeni = _sahte(t, gun, cep=body.cep, tutar=tut)
         elif t == "kapanis":
             cep_var(body.cep, {"sube"})
@@ -899,6 +930,101 @@ def _patron_bul(ad: str) -> Optional[str]:
 
 @router.post("/aktar")
 def eski_sistemden_aktar(kuru: bool = True, x_evvel_oturum: Optional[str] = Header(default=None)):
+    _hazirla()
+    with db() as (conn, cur):
+        _kilit(cur)
+        kim = "eski sistem aktarımı · " + _aktor(cur, x_evvel_oturum)
+        return _aktar(cur, kuru, kim)
+
+
+_SON_SENKRON = {"zaman": None, "sonuc": None}
+
+
+def _otomatik_senkron() -> dict:
+    """🌉 ESKİYLE YAN YANA (sahip): şube paneli hâlâ eski tablolara yazıyor. Durum her
+    okunduğunda — en sık 10 dakikada bir — yeni kapanış/teslimler kendiliğinden çekilir.
+    Kendi transaction'ı; patlarsa ekran ETKİLENMEZ, hata ekrana yazılır (sessiz değil)."""
+    import time as _t
+    simdi = _t.time()
+    z = _SON_SENKRON["zaman"]
+    if z is None or simdi - z >= SENKRON_ARALIK_SN:
+        _SON_SENKRON["zaman"] = simdi
+        try:
+            with db() as (conn, cur):
+                _kilit(cur)
+                r = _aktar(cur, False, "otomatik köprü (eski sistem)")
+            _SON_SENKRON["sonuc"] = {"tamam": True, "kapanis": r["ozet"]["kapanis"], "teslim": r["ozet"]["teslim"],
+                                     "eslesmeyen_teslim": r["ozet"]["eslesmeyen_teslim"], "kilitli": r["ozet"]["kilitli"]}
+        except Exception as e:  # noqa: BLE001
+            log.warning("para-izi otomatik senkron: %s", str(e)[:200])
+            _SON_SENKRON["sonuc"] = {"tamam": False, "hata": str(e)[:160]}
+    from datetime import datetime, timezone
+    zz = _SON_SENKRON["zaman"]
+    return {**(_SON_SENKRON["sonuc"] or {}),
+            "zaman": datetime.fromtimestamp(zz, timezone.utc).isoformat() if zz else None}
+
+
+class TopluOnayBody(BaseModel):
+    idler: List[str]
+
+
+@router.post("/onay-toplu")
+def toplu_onay(body: TopluOnayBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Yalnız KAPANIŞ onayı toplu yapılır (teslim 'aldım' her zaman tek tek, sayılan tutarla)."""
+    idler = [str(i) for i in (body.idler or [])][:500]
+    if not idler:
+        raise HTTPException(400, "Onaylanacak kayıt yok")
+    _hazirla()
+    with db() as (conn, cur):
+        _kilit(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        cur.execute("""UPDATE para_izi_hareket SET durum='onaylandi', onay_zamani=NOW(), onaylayan=%s
+                        WHERE id = ANY(%s) AND tur='kapanis' AND COALESCE(durum,'') <> 'onaylandi'""", (kim, idler))
+        n = cur.rowcount
+    return {"ok": True, "onaylanan": n}
+
+
+class DonemBody(BaseModel):
+    gun: str
+    kuru: bool = True
+
+
+@router.post("/donem")
+def yeni_donem(body: DonemBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """🔄 YENİ BAŞLANGIÇ (sahip: "1 Kasım'da sıfırlayıp devam"). Hiçbir kayıt SİLİNMEZ:
+    önceki dönem arşivde kalır, hesaplara girmez. Her cep yeni başlangıç sabahı sayılıp
+    açılış bakiyesiyle başlar. Varsayılan KURU: önceki dönemin kapanış bakiyelerini
+    (yalnız bilgi) gösterir, değiştirmez."""
+    try:
+        g = date.fromisoformat(body.gun[:10])
+    except ValueError:
+        raise HTTPException(400, "Gün YYYY-AA-GG olmalı")
+    if g > _bugun():
+        raise HTTPException(400, "Yeni başlangıç ileri bir tarihe kurulamaz — o sabah kurulur")
+    _hazirla()
+    with db() as (conn, cur):
+        _kilit(cur)
+        bas = _baslangic(cur)
+        if g <= bas:
+            raise HTTPException(400, f"Yeni başlangıç geçerli dönemin başından ({bas.isoformat()}) sonra olmalı")
+        cep_list, C, kayit, _ = _yukle(cur)
+        ol = [o for o in _olaylar(kayit) if o["gun"] < g.isoformat()]
+        D = _bakiye(ol, C)
+        devir = [{"cep": c["id"], "ad": c["ad"], "defterde": _tl_sayi(D["b"].get(c["id"], 0))} for c in cep_list]
+        bekleyen = len(_isler(kayit, C, _farklar(_olaylar(kayit), C)))
+        if not body.kuru:
+            kim = _aktor(cur, x_evvel_oturum)
+            cur.execute("""INSERT INTO para_izi_ayar (anahtar, deger, degistiren) VALUES ('baslangic', %s, %s)
+                           ON CONFLICT (anahtar) DO UPDATE SET deger=EXCLUDED.deger, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
+                        (g.isoformat(), kim))
+            cur.execute("""INSERT INTO para_izi_ayar (anahtar, deger, degistiren) VALUES (%s, %s, %s)
+                           ON CONFLICT (anahtar) DO NOTHING""", ("donem_gecmisi:" + g.isoformat(), bas.isoformat(), kim))
+    return {"kuru": body.kuru, "eski_baslangic": bas.isoformat(), "yeni_baslangic": g.isoformat(),
+            "onceki_donem_sonu": devir, "acik_yolda": _tl_sayi(D["yolda"]), "acik_fark": _tl_sayi(D["acik"]),
+            "bekleyen_is": bekleyen}
+
+
+def _aktar(cur, kuru: bool, kim: str) -> dict:
     """1 Ekim'den bu yana şube kapanışlarını ve kasa teslimlerini Para İzi'ne aktarır.
     ESKİ TABLOLARA DOKUNMAZ (yalnız SELECT). kaynak_ref benzersiz → kaç kez çalışırsa
     çalışsın çift kayıt doğmaz. Varsayılan KURU: yazmadan ne olacağını söyler.
@@ -911,10 +1037,8 @@ def eski_sistemden_aktar(kuru: bool = True, x_evvel_oturum: Optional[str] = Head
     · Dış kaynak: eski sistem paranın KİMDE olduğunu tutmadığı için otomatik alınmaz.
     · Sayılmış (kilitli) güne düşen eski kayıt alınmaz, listelenir.
     """
-    _hazirla()
-    with db() as (conn, cur):
-        _kilit(cur)
-        kim = "eski sistem aktarımı · " + _aktor(cur, x_evvel_oturum)
+    if True:   # (gövde eskiden kendi transaction'ındaydı; artık çağıranın transaction'ında)
+        bas = _baslangic(cur)
         cep_list, C, kayit, _ = _yukle(cur)
         kilit = _sayim_kilidi(_olaylar(kayit))
         sube_cep = {c["sube_id"]: c["id"] for c in cep_list if c["tur"] == "sube"}
@@ -924,12 +1048,12 @@ def eski_sistemden_aktar(kuru: bool = True, x_evvel_oturum: Optional[str] = Head
         gunluk = {}
         cur.execute("""SELECT sube_id, tarih, SUM(nakit) AS nakit, SUM(pos) + SUM(online) AS kart
                          FROM ciro WHERE tarih >= %s AND COALESCE(durum,'aktif')='aktif'
-                        GROUP BY sube_id, tarih""", (BASLANGIC,))
+                        GROUP BY sube_id, tarih""", (bas,))
         for r in cur.fetchall() or []:
             r = dict(r)
             gunluk[(str(r["sube_id"]), r["tarih"])] = (r["nakit"] or 0, r["kart"] or 0, "onaylandi", "ciro")
         cur.execute("""SELECT DISTINCT ON (sube_id, tarih) sube_id, tarih, nakit, pos, online FROM ciro_taslak
-                        WHERE tarih >= %s AND durum = 'bekliyor' ORDER BY sube_id, tarih, olusturma DESC""", (BASLANGIC,))
+                        WHERE tarih >= %s AND durum = 'bekliyor' ORDER BY sube_id, tarih, olusturma DESC""", (bas,))
         for r in cur.fetchall() or []:
             r = dict(r)
             gunluk.setdefault((str(r["sube_id"]), r["tarih"]),
@@ -954,11 +1078,11 @@ def eski_sistemden_aktar(kuru: bool = True, x_evvel_oturum: Optional[str] = Head
         try:
             with savepoint(cur, "sp_pi_teslim"):
                 cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad FROM kasa_teslim
-                                WHERE tarih >= %s AND COALESCE(durum,'aktif')='aktif' ORDER BY tarih, olusturma""", (BASLANGIC,))
+                                WHERE tarih >= %s AND COALESCE(durum,'aktif')='aktif' ORDER BY tarih, olusturma""", (bas,))
                 teslimler = [dict(r) for r in cur.fetchall() or []]
         except Exception:  # noqa: BLE001 — durum kolonu olmayan kurulum
             cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad FROM kasa_teslim
-                            WHERE tarih >= %s ORDER BY tarih, olusturma""", (BASLANGIC,))
+                            WHERE tarih >= %s ORDER BY tarih, olusturma""", (bas,))
             teslimler = [dict(r) for r in cur.fetchall() or []]
         for r in teslimler:
             ref = "kasa_teslim:" + str(r["id"])
@@ -985,7 +1109,7 @@ def eski_sistemden_aktar(kuru: bool = True, x_evvel_oturum: Optional[str] = Head
             with savepoint(cur, "sp_pi_dis"):
                 cur.execute("""SELECT tarih, tutar, aciklama FROM kasa_hareketleri
                                 WHERE islem_turu='DIS_KAYNAK' AND COALESCE(durum,'aktif')='aktif' AND tarih >= %s
-                                ORDER BY tarih""", (BASLANGIC,))
+                                ORDER BY tarih""", (bas,))
                 rapor["dis_kaynak"] = [{"gun": str(dict(r)["tarih"])[:10], "tutar": float(dict(r)["tutar"] or 0),
                                         "aciklama": dict(r).get("aciklama")} for r in cur.fetchall() or []]
         except Exception as e:  # noqa: BLE001

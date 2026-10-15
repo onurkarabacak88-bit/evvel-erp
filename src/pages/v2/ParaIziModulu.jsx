@@ -158,7 +158,7 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit }) {
 
 // ─── Form penceresi ───
 const BASLIK = {
-  acilis: '1 Ekim açılış bakiyesi', kapanis: 'Şube kapanışı', dis: 'Dış kaynaktan giriş', teslim: 'Şubeden teslim',
+  acilis: 'Açılış bakiyesi', donem: 'Yeni başlangıç', kapanis: 'Şube kapanışı', dis: 'Dış kaynaktan giriş', teslim: 'Şubeden teslim',
   tasima: 'Para taşı / hesaba yatır', sayim: 'Sayım', odeme: 'Ödeme', coz: 'Farkı çöz', iptal: 'Kaydı iptal et', aktar: 'Eski sistemden aktar',
 };
 const alanStil = {
@@ -189,12 +189,14 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
   const [mesgul, setMesgul] = useState(false);
   const [fark, setFark] = useState(null);
   const [aktar, setAktar] = useState(null);
+  const [donem, setDonem] = useState(null);
   const [sayimDefter, setSayimDefter] = useState(null);
   const set = (k) => (e) => setD((x) => ({ ...x, [k]: e.target.value }));
 
   useEffect(() => {
     if (tip === 'coz') api(`/para-izi/fark/${form.id}`).then((f) => { setFark(f); setD((x) => ({ ...x, sebep: f.sebep_secenekleri[0]?.kod, is_gunu: (form.gun || gun) < f.tarih ? f.tarih : (form.gun || gun) })); }).catch((e) => setHata(e.message));
     if (tip === 'aktar') api('/para-izi/aktar?kuru=true', { method: 'POST' }).then(setAktar).catch((e) => setHata(e.message));
+    if (tip === 'donem') setD((x) => ({ ...x, is_gunu: veri.bugun }));
   }, [tip, form.id]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // Sayımda "defterde ne olmalı" bilgisi sunucudan, seçilen günün akşamı itibarıyla
@@ -207,7 +209,17 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
   const gonder = async () => {
     setHata(''); setMesgul(true);
     try {
-      if (tip === 'aktar') {
+      if (tip === 'donem') {
+        if (!donem) {   // 1. adım: KURU — ne olacağını göster
+          setDonem(await api('/para-izi/donem', { method: 'POST', body: { gun: d.is_gunu, kuru: true } }));
+          setMesgul(false);
+          return;
+        }
+        await api('/para-izi/donem', { method: 'POST', body: { gun: d.is_gunu, kuru: false } });
+        onToast?.(`Yeni dönem ${tUzun(d.is_gunu)} başladı — her cebin açılışını gir`);
+        onBitti(d.is_gunu);
+        return;
+      } else if (tip === 'aktar') {
         const r = await api('/para-izi/aktar?kuru=false', { method: 'POST' });
         onToast?.(`Aktarıldı: ${r.ozet.kapanis} kapanış · ${r.ozet.teslim} teslim`);
       } else if (tip === 'iptal') {
@@ -235,7 +247,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
     } finally { setMesgul(false); }
   };
 
-  const gunAlani = !['acilis', 'iptal', 'aktar'].includes(tip) && (
+  const gunAlani = !['acilis', 'iptal', 'aktar', 'donem'].includes(tip) && (
     <Alan etiket="Gün"><input type="date" value={d.is_gunu} min={veri.baslangic} max={veri.bugun} onChange={set('is_gunu')} style={alanStil} /></Alan>
   );
   const tutarAlani = (etiket = 'Tutar (₺)') => (
@@ -253,10 +265,10 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         </div>
 
         {tip === 'acilis' && (<>
-          <div style={{ fontSize: 12.5, color: R.metin2 }}>Para İzi 1 Ekim sabahından başlar. Her cepte o sabah ne kadar para olduğunu bir kez gir (sayarak). Sonradan değiştirmek için eski kaydı iptal edip yenisini girersin.</div>
+          <div style={{ fontSize: 12.5, color: R.metin2 }}>Bu dönem {tUzun(veri.baslangic)} sabahı başladı. Her cepte o sabah ne kadar para olduğunu bir kez gir (sayarak). Sonradan değiştirmek için eski kaydı iptal edip yenisini girersin.</div>
           <div style={izgara}>
             <Alan etiket="Cep"><select value={d.cep} onChange={set('cep')} style={alanStil}>{cepler.filter((c) => !(veri.acilis_girilen || []).includes(c.id)).map((c) => <option key={c.id} value={c.id}>{c.ad}</option>)}</select></Alan>
-            {tutarAlani('1 Ekim sabahı (₺)')}
+            {tutarAlani(`${tUzun(veri.baslangic)} sabahı (₺)`)}
           </div>
         </>)}
 
@@ -362,6 +374,28 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
           <Alan etiket="İptal sebebi"><input value={d.sebep || ''} onChange={set('sebep')} style={alanStil} placeholder="ör. yanlış şube seçilmiş" /></Alan>
         </>)}
 
+        {tip === 'donem' && (<>
+          <div style={{ fontSize: 12.5, color: R.metin2 }}>
+            Yeni başlangıç gününden önceki kayıtlar <b>silinmez</b>; arşivde kalır ama hesaplara girmez.
+            Her cep o sabah sayılır ve açılış bakiyesi girilir. Eski sistemden köprü yeni günden itibaren çalışmaya devam eder.
+          </div>
+          <Alan etiket="Yeni başlangıç günü"><input type="date" value={d.is_gunu} min={veri.baslangic} max={veri.bugun}
+            onChange={(e) => { setDonem(null); set('is_gunu')(e); }} style={alanStil} /></Alan>
+          {donem && (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5 }}>
+              <div style={etiketStil}>Önceki dönemin sonu (yalnız bilgi — açılışı sayarak gireceksin)</div>
+              {donem.onceki_donem_sonu.map((c) => (
+                <div key={c.cep} style={{ display: 'flex', justifyContent: 'space-between', color: c.defterde < 0 ? R.kirmizi : R.metin2 }}>
+                  <span>{c.ad}</span><span style={num}>{tl(c.defterde)}</span>
+                </div>
+              ))}
+              {(donem.bekleyen_is > 0 || donem.acik_yolda || donem.acik_fark) ? (
+                <div style={{ color: R.amber }}>⚠ Önceki dönemde {donem.bekleyen_is} bekleyen iş, {fmt(donem.acik_yolda)} ₺ yolda, {fmt(donem.acik_fark)} ₺ açık fark kalıyor — arşive geçecek.</div>
+              ) : null}
+            </div>
+          )}
+        </>)}
+
         {tip === 'aktar' && (aktar ? (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: 12.5, color: R.metin2 }}>
             <div>Eski sistemden <b>yalnız okunur</b>; eski tablolara dokunulmaz. Aynı kayıt iki kez aktarılmaz.</div>
@@ -381,7 +415,8 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         {hata && <div style={{ color: R.kirmizi, fontSize: 13, fontWeight: 600 }}>{hata}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
           <Dugme ana onClick={gonder} disabled={mesgul || (tip === 'aktar' && !aktar) || (tip === 'coz' && !fark)}>
-            {mesgul ? 'Kaydediliyor…' : tip === 'aktar' ? 'Aktar' : tip === 'iptal' ? 'İptal et' : tip === 'coz' ? 'Farkı kapat' : 'Kaydet'}
+            {mesgul ? 'Kaydediliyor…' : tip === 'donem' ? (donem ? `${tUzun(d.is_gunu)} itibarıyla yeni dönemi başlat` : 'Önce ne olacağını göster')
+              : tip === 'aktar' ? 'Aktar' : tip === 'iptal' ? 'İptal et' : tip === 'coz' ? 'Farkı kapat' : 'Kaydet'}
           </Dugme>
         </div>
       </div>
@@ -423,6 +458,13 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
   const formAc = (tip, ek = {}, donus = null) => { cekmeceNo.current += 1; onCekmece?.(null); setForm({ tip, ...ek, donus }); };
   const teyit = async (id) => {
     try { await api(`/para-izi/hareket/${id}/onay`, { method: 'POST', body: {} }); onToast?.('Onaylandı'); yukle(); } catch (e) { onToast?.(e.message); }
+  };
+  const [topluSor, setTopluSor] = useState(false);
+  const topluOnay = async (idler) => {
+    try {
+      const r = await api('/para-izi/onay-toplu', { method: 'POST', body: { idler } });
+      onToast?.(`${r.onaylanan} kapanış onaylandı`); setTopluSor(false); yukle();
+    } catch (e) { onToast?.(e.message); }
   };
   const teslimAl = async (id, sayilan) => {
     if (sayilan === '' || sayilan == null || Number.isNaN(Number(sayilan))) { onToast?.('Önce saydığın tutarı yaz'); return; }
@@ -545,7 +587,8 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
         <Dugme ana onClick={() => formAc('sayim')}>+ Sayım</Dugme>
         <Dugme onClick={() => formAc('odeme')}>+ Ödeme</Dugme>
         <Dugme onClick={() => formAc('kapanis')}>+ Kapanış</Dugme>
-        <Dugme onClick={() => formAc('aktar')} title="1 Ekim'den bu yana kapanış ve teslimleri eski sistemden okur">Eski sistemden aktar</Dugme>
+        <Dugme onClick={() => formAc('aktar')} title="Dönem başından bu yana kapanış ve teslimleri eski sistemden okur">Eski sistemden aktar</Dugme>
+        <Dugme onClick={() => formAc('donem')} title="Önceki kayıtlar arşive geçer; her cep sayılıp yeniden başlanır">Yeni başlangıç</Dugme>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
           <Dugme kucuk disabled={hepsi || gun <= veri.baslangic} onClick={() => setGun(gunEkle(gun, -1))}>‹</Dugme>
           <input type="date" value={gun} min={veri.baslangic} max={veri.bugun} disabled={hepsi} onChange={(e) => e.target.value && setGun(e.target.value)}
@@ -562,10 +605,19 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
           <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme>
         </div>
       )}
+      {veri.senkron && (veri.senkron.tamam === false ? (
+        <div style={{ fontSize: 12, color: R.kirmizi }}>Eski sistemden köprü çalışmadı: {veri.senkron.hata}</div>
+      ) : veri.senkron.zaman ? (
+        <div style={{ fontSize: 11.5, color: R.not2 }}>
+          Eski sistemle yan yana · köprü {new Date(veri.senkron.zaman).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+          {(veri.senkron.kapanis || veri.senkron.teslim) ? ` · yeni: ${veri.senkron.kapanis} kapanış, ${veri.senkron.teslim} teslim` : ' · yeni kayıt yok'}
+          {veri.senkron.eslesmeyen_teslim ? <span style={{ color: R.amber }}> · {veri.senkron.eslesmeyen_teslim} teslim alıcısı tanınmadı</span> : null}
+        </div>
+      ) : null)}
       {acilisEksik.length > 0 && (
         <div style={{ ...kart, padding: '10px 14px', borderColor: `${R.amber}88`, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5 }}>
           <Cip tur="sari">Başlangıç</Cip>
-          <span style={{ color: R.metin2 }}>{acilisEksik.length} cebin 1 Ekim açılış bakiyesi girilmedi ({acilisEksik.map((c) => c.kisa).join(', ')}). Girilmeden rakamlar eksik başlar.</span>
+          <span style={{ color: R.metin2 }}>{acilisEksik.length} cebin {tUzun(veri.baslangic)} açılış bakiyesi girilmedi ({acilisEksik.map((c) => c.kisa).join(', ')}). Girilmeden rakamlar eksik başlar.</span>
           <Dugme kucuk ana onClick={() => formAc('acilis', { cep: acilisEksik[0].id })}>Açılış bakiyesi gir</Dugme>
         </div>
       )}
@@ -627,6 +679,21 @@ export default function ParaIziModulu({ onCekmece, onToast }) {
               <span style={{ fontWeight: 700, fontSize: 14 }}>Bekleyen işler</span>
               {veri.isler.length ? <Cip tur="kirmizi">{veri.isler.length}</Cip> : <Cip tur="yesil">Hepsi tamam</Cip>}
             </div>
+            {(() => {
+              const kp = veri.isler.filter((x) => x.tur === 'kapanis');
+              if (kp.length < 2) return null;
+              return (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, padding: '6px 2px' }}>
+                  {!topluSor ? (
+                    <Dugme kucuk onClick={() => setTopluSor(true)}>{kp.length} kapanışı toplu onayla</Dugme>
+                  ) : (<>
+                    <span style={{ color: R.amber }}>{kp.length} kapanış onaylanacak — her birini kontrol ettiysen onayla.</span>
+                    <Dugme kucuk ana onClick={() => topluOnay(kp.map((x) => x.id))}>Evet, hepsini onayla</Dugme>
+                    <Dugme kucuk onClick={() => setTopluSor(false)}>Vazgeç</Dugme>
+                  </>)}
+                </div>
+              );
+            })()}
             {veri.isler.map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} />)}
           </div>
 
