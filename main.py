@@ -276,6 +276,14 @@ except Exception as _ey_gelir_err:
     logging.getLogger(__name__).warning(
         f"evvel_yeni_gelir modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_gelir_err}"
     )
+# 💸 EVVEL YENİ · GİDER (2026-10-15) — şubenin KENDİ işletme yükü (mal = sevk × güncel fiyat).
+try:
+    from evvel_yeni_gider_api import router as evvel_yeni_gider_router
+    app.include_router(evvel_yeni_gider_router)
+except Exception as _ey_gider_err:
+    logging.getLogger(__name__).warning(
+        f"evvel_yeni_gider modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_gider_err}"
+    )
 # OPS ÖLÇÜM — "iş kuyruğu işe yarıyor mu?" (2026-08-27). AYRI modül, AYRI iki
 # tablo. bakis_olcum'a yazılmadı: onun ozet sorguları `gorunum`a göre süzmüyor,
 # OPS oturumları oraya girseydi BAKIŞ'ın M1-M5 medyanları iki farklı ekranın
