@@ -954,8 +954,8 @@ class HareketBody(BaseModel):
 def _yaz(cur, tur, gun, kaydeden, cep=None, kaynak=None, hedef=None, tutar=0, durum=None, veri=None, kaynak_ref=None):
     hid = str(uuid.uuid4())
     cur.execute("""
-        INSERT INTO para_izi_hareket (id, tur, is_gunu, kaydeden, cep, kaynak, hedef, tutar, durum, veri, kaynak_ref)
-        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s)
+        INSERT INTO para_izi_hareket (id, tur, is_gunu, kaydeden, cep, kaynak, hedef, tutar, durum, veri, kaynak_ref, kayit_zamani)
+        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s, clock_timestamp())
         ON CONFLICT (kaynak_ref) DO NOTHING RETURNING id
     """, (hid, tur, gun, (kaydeden or "")[:60] or None, cep, kaynak, hedef, int(tutar), durum,
           json.dumps(veri or {}, ensure_ascii=False), kaynak_ref))
@@ -1538,6 +1538,8 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
                     v2["teslim_eden"] = ad_harita[ref_]
                     cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(v2, ensure_ascii=False), h["id"]))
 
+        rapor["dukkan_gideri"] = _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim)
+
         try:
             with savepoint(cur, "sp_pi_dis"):
                 cur.execute("""SELECT tarih, tutar, aciklama FROM kasa_hareketleri
@@ -1552,8 +1554,106 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
     rapor["ozet"] = {"kapanis": len(rapor["kapanis"]), "kapanis_onayli": sum(1 for k in rapor["kapanis"] if k["durum"] == "onaylandi"),
                      "teslim": len(rapor["teslim"]), "eslesmeyen_teslim": len(rapor["eslesmeyen_teslim"]),
                      "kilitli": len(rapor["kilitli"]), "dis_kaynak_elle": len(rapor["dis_kaynak"]),
+                     "dukkan_gideri": rapor["dukkan_gideri"]["yeni"],
                      "zaten_aktarilmis": rapor["atlanan"]}
     return rapor
+
+
+def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) -> dict:
+    """🧾 Şubenin ÇEKMECEDEN yaptığı nakit harcamalar (eski anlik_giderler, ödeme yöntemi
+    nakit; 'aktif' + 'onay_bekliyor' — para çekmeceden fiilen çıktı) → dükkân nakdinden
+    'ödeme' (kimin: o şube). Bunlar girmezse kapanış kör sayımı her akşam sahte EKSİK verir.
+    Kaynak iptal edilirse karşılığı iptal; sayılmış (kilitli) güne yeni yazılmaz → listelenir."""
+    sonuc = {"yeni": 0, "kilitli": [], "iptal": 0}
+    try:
+        with savepoint(cur, "sp_pi_dukkan_gider"):
+            q = """SELECT id, tarih, tutar, sube, kategori, aciklama, durum FROM anlik_giderler
+                    WHERE tarih >= %s AND sube IS NOT NULL
+                      AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'"""
+            prm = [bas]
+            if sube_id:
+                q += " AND sube = %s"
+                prm.append(sube_id)
+            cur.execute(q, prm)
+            kaynak = [dict(r) for r in cur.fetchall() or []]
+    except Exception as e:  # noqa: BLE001
+        sonuc["hata"] = str(e)[:120]
+        return sonuc
+    cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'anlik_gider:%%'")
+    her_zaman = {dict(x)["kaynak_ref"] for x in cur.fetchall() or []}
+    gecerli = {h.get("kaynak_ref"): h for h in kayit if (h.get("kaynak_ref") or "").startswith("anlik_gider:")}
+    canli = set()
+    for r in kaynak:
+        ref = "anlik_gider:" + str(r["id"])
+        cep = "sube:" + str(r["sube"])
+        if r["durum"] not in ("aktif", "onay_bekliyor") or cep not in C:
+            continue
+        canli.add(ref)
+        if ref in her_zaman:
+            continue
+        g = r["tarih"].isoformat() if hasattr(r["tarih"], "isoformat") else str(r["tarih"])[:10]
+        t = _kurus(r["tutar"] or 0)
+        if t <= 0:
+            continue
+        if cep in kilit and g <= kilit[cep]:
+            sonuc["kilitli"].append({"gun": g, "sube": C[cep]["kisa"], "tutar": _tl_sayi(t), "aciklama": r.get("aciklama")})
+            continue
+        sonuc["yeni"] += 1
+        if not kuru:
+            ac = " · ".join(x for x in [(r.get("kategori") or "").strip(), (r.get("aciklama") or "").strip()] if x) or "Dükkân gideri"
+            _yaz(cur, "odeme", g, kim, tutar=t,
+                 veri={"aciklama": ac[:120], "kimin": C[cep]["kisa"], "parcalar": [{"cep": cep, "tutar": t}],
+                       "kaynak": "dukkan_gideri"}, kaynak_ref=ref)
+    if not kuru:
+        for ref, h in gecerli.items():
+            pc = (h["veri"].get("parcalar") or [{}])[0].get("cep")
+            if ref not in canli and not (pc in kilit and h["is_gunu"] <= kilit[pc]) and (not sube_id or pc == "sube:" + str(sube_id)):
+                _yaz(cur, "iptal", _bugun().isoformat(), kim, veri={"hedef_id": h["id"], "sebep": "Eski sistemde dükkân gideri iptal edildi"})
+                sonuc["iptal"] += 1
+    return sonuc
+
+
+def panel_kapanis_sayim(cur, sube_id, gun, kasa_sayim, gun_sonu_teslim=0) -> None:
+    """🔢 KAPANIŞ KÖR SAYIMI → dükkân nakdinin otomatik SAYIMI (sahip: "bağla").
+    Çekmecede kalan = sayılan − gün sonu teslim. Defterle tutmazsa AÇIK FARK.
+    ⚠️ Dükkânın bu dönemki AÇILIŞ bakiyesi girilmeden çalışmaz: açılışsız sayım her gün
+    sahte fark üretir ve sayım kilidi açılışın girilmesini engeller.
+    Aynı gün yeniden kapanış (geri al → kapat) → önceki otomatik sayım (çözülmemişse) iptal,
+    yenisi yazılır. Panelin transaction'ında, savepoint altında; hata paneli DURDURMAZ."""
+    try:
+        with savepoint(cur, "sp_pi_kor_sayim"):
+            if not _tablo_var(cur) or not _try_kilit(cur):
+                return
+            g = gun.isoformat() if hasattr(gun, "isoformat") else str(gun)[:10]
+            bas = _baslangic(cur)
+            if g < bas.isoformat():
+                return
+            cep = "sube:" + str(sube_id)
+            cep_list, C, kayit, _ = _yukle(cur)
+            if cep not in C or not any(h["tur"] == "acilis" and h["cep"] == cep for h in kayit):
+                return
+            kilit = _sayim_kilidi(_olaylar(kayit))
+            _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, False, "şube paneli (dükkân gideri)", sube_id=sube_id)
+            cep_list, C, kayit, _ = _yukle(cur)
+            onceki = [h for h in kayit if h["tur"] == "sayim" and h["cep"] == cep and h["is_gunu"] == g
+                      and (h.get("kaynak_ref") or "").startswith("sayim_kapanis:")]
+            cozulen = {h["veri"].get("fark_id") for h in kayit if h["tur"] == "cozum"}
+            for h in onceki:
+                if h["id"] in cozulen:
+                    return          # o günün farkı zaten kapatılmış — üzerine yazma
+                _yaz(cur, "iptal", _bugun().isoformat(), "şube paneli (yeniden kapanış)",
+                     veri={"hedef_id": h["id"], "sebep": "Kapanış yeniden yapıldı — yeni kör sayım"})
+            cep_list, C, kayit, _ = _yukle(cur)
+            beklenen = _bakiye([o for o in _olaylar(kayit) if o["gun"] <= g], C)["b"].get(cep, 0)
+            sayilan = _kurus(round(float(kasa_sayim or 0) - float(gun_sonu_teslim or 0), 2))
+            cur.execute("SELECT COUNT(*) AS n FROM para_izi_hareket WHERE kaynak_ref LIKE %s", (f"sayim_kapanis:{sube_id}:{g}:%",))
+            sira = int(dict(cur.fetchone() or {}).get("n") or 0) + 1
+            _yaz(cur, "sayim", g, "kapanış kör sayımı", cep=cep, tutar=max(sayilan, 0),
+                 veri={"beklenen": beklenen, "sayilan": max(sayilan, 0), "kaynak": "kapanis_kor_sayim",
+                       "kasa_sayim": _kurus(round(float(kasa_sayim or 0), 2)), "gun_sonu_teslim": _kurus(round(float(gun_sonu_teslim or 0), 2))},
+                 kaynak_ref=f"sayim_kapanis:{sube_id}:{g}:{sira}")
+    except Exception as e:  # noqa: BLE001 — panel ASLA durmaz
+        log.warning("evvel-yeni kasa kör sayım yazılamadı: %s", str(e)[:200])
 
 
 # ─────────────────────────── ŞUBE PANELİNDEN DOĞRUDAN YAZIM ───────────────────────────
