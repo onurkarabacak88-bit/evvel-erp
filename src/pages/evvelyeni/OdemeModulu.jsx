@@ -185,7 +185,7 @@ export default function OdemeModulu({ onToast }) {
                   </select>
                 ) : (
                   <select style={{ ...alan, flex: '1 1 200px', width: 'auto' }} value={p.cep} onChange={(e) => parcaSet(i, 'cep', e.target.value)}>
-                    <option value="">{p.yontem === 'nakit' ? 'Hangi nakit…' : 'Hangi banka…'}</option>
+                    <option value="">{p.yontem === 'nakit' ? 'Hangi evdeki nakit…' : 'Hangi banka…'}</option>
                     {(p.yontem === 'nakit' ? L.nakit_cepler : L.banka_cepler).map((c) => <option key={c.id} value={c.id} disabled={c.bakiye <= 0}>{c.ad} · {c.bakiye <= 0 ? 'boş, seçilemez' : `${fmt(c.bakiye)} ₺ var`}</option>)}
                   </select>
                 )}
@@ -196,6 +196,7 @@ export default function OdemeModulu({ onToast }) {
               </div>
             ))}
             <Dugme kucuk onClick={() => setF((x) => ({ ...x, parcalar: [...x.parcalar, { yontem: 'havale', cep: '', kart_id: '', tutar: '' }] }))}>+ Başka yolla da ödendi</Dugme>
+            <div style={{ fontSize: 12.5, color: R.not, marginTop: 6 }}>Dükkân çekmecesinden ödenen harcama burada girilmez — şube panelden girer, buraya kendiliğinden gelir.</div>
           </div>
 
           <div style={{ padding: '10px 14px', borderRadius: 10, background: 'var(--pi-bg)', fontSize: 14, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
