@@ -592,7 +592,7 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
                            for p in v.get("parcalar", [])],
                  toplam_once=_tl_sayi(once["toplam"]), toplam_sonra=_tl_sayi(sonra["toplam"]),
                  konu=(v.get("konu") or {}).get("ad") or ("Dükkân gideri" if v.get("kaynak") == "dukkan_gideri" else None),
-                 ait_ay=v.get("ait_ay"), gider=v.get("gider"), not_=v.get("not"),
+                 ait_ay=v.get("ait_ay"), gider=v.get("gider"), not_=v.get("not"), duzeltmeler=v.get("duzeltmeler") or [],
                  kart_parcalar=[{"ad": p.get("kart_ad"), "tutar": _tl_sayi(int(p["tutar"]))} for p in v.get("kart_parcalar", [])],
                  genel_toplam=_tl_sayi(int(v.get("toplam", r["tutar"]))),
                  kiradan_destek=_tl_sayi(sum(int(p["tutar"]) for p in v.get("parcalar", []) if p["cep"] in KIRA_CEPLERI)))

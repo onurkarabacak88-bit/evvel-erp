@@ -19,6 +19,7 @@ TEK FORM, TEK KAYIT, OTOMATİK ETKİ:
          ve kart borcu ödemesi gider DEĞİL (patron katmanı / çift sayım yasağı).
 """
 
+import json
 from datetime import date
 from typing import List, Optional
 
@@ -239,6 +240,59 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
             "mesaj": f"{etiket} · {_tl(toplam)}" + (" · gider olarak yazıldı" if gider_mi else " · gider değil")}
 
 
+class DuzeltBody(BaseModel):
+    kimin: Optional[str] = None       # şube id | 'ortak' | 'patron'
+    ait_ay: Optional[str] = None      # YYYY-AA (kira/fatura/personel)
+    aciklama: Optional[str] = None
+
+
+@router.post("/{hid}/duzelt")
+def odeme_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """GİDER TARAFINI düzelt — kimin gideri, hangi ay, açıklama. PARA OYNAMAZ (cepler, tutar, yöntem aynı kalır;
+    sayılmış cebe dokunmadığı için sayım kilidi gerekmez). Para tarafı yanlışsa: iptal + yeniden gir.
+    İz silinmez: her düzeltme veri.duzeltmeler'e kim/ne zaman/eski→yeni olarak eklenir."""
+    _hazirla()
+    with db() as (conn, cur):
+        _kilit(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
+        h = next((x for x in kayit if x["id"] == hid and x["tur"] == "odeme"), None)
+        if not h:
+            raise HTTPException(404, "Ödeme bulunamadı ya da iptal edilmiş")
+        v = dict(h["veri"])
+        if v.get("kaynak") != "odeme_formu":
+            raise HTTPException(400, "Bu kayıt Ödeme formundan girilmemiş — şube panelden düzeltilir")
+        tip = (v.get("konu") or {}).get("tip")
+        subeler = {c["sube_id"]: c for c in cep_list if c["tur"] == "sube"}
+        eski = {"kimin": v.get("kimin"), "ait_ay": v.get("ait_ay"), "aciklama": v.get("aciklama")}
+        if body.kimin is not None and body.kimin != v.get("kimin_kod"):
+            if not KONULAR.get(tip, {}).get("gider"):
+                raise HTTPException(400, "Bu ödeme gider değil (toptancı / kredi / kart borcu) — kimin sorusu yok")
+            izin = list(subeler) + (["ortak", "patron"] if tip in ("diger", "personel") else [])
+            if body.kimin not in izin:
+                raise HTTPException(400, "Geçerli bir şube seç" + (" ya da Ortak / Patron şahsi" if tip in ("diger", "personel") else ""))
+            v["kimin_kod"] = body.kimin
+            v["kimin"] = subeler[body.kimin]["kisa"] if body.kimin in subeler else {"ortak": "Ortak", "patron": "Patron"}[body.kimin]
+            v["gider"] = body.kimin != "patron"
+        if body.ait_ay is not None and body.ait_ay[:7] != v.get("ait_ay"):
+            if tip not in ("kira", "fatura", "personel"):
+                raise HTTPException(400, "Bu ödemenin ayı ödeme gününden gelir; gün yanlışsa iptal edip yeniden gir")
+            try:
+                date.fromisoformat(body.ait_ay[:7] + "-01")
+            except ValueError:
+                raise HTTPException(400, "Ay YYYY-AA olmalı")
+            v["ait_ay"] = body.ait_ay[:7]
+        if body.aciklama is not None and body.aciklama.strip() and body.aciklama.strip()[:120] != v.get("aciklama"):
+            v["aciklama"] = body.aciklama.strip()[:120]
+        yeni = {"kimin": v.get("kimin"), "ait_ay": v.get("ait_ay"), "aciklama": v.get("aciklama")}
+        if yeni == eski:
+            return {"ok": True, "mesaj": "Değişiklik yok"}
+        degisen = {k: [eski[k], yeni[k]] for k in eski if eski[k] != yeni[k]}
+        v["duzeltmeler"] = list(v.get("duzeltmeler") or []) + [{"kim": kim, "zaman": _bugun().isoformat(), "degisen": degisen}]
+        cur.execute("UPDATE para_izi_hareket SET veri = %s::jsonb WHERE id = %s", (json.dumps(v, ensure_ascii=False), hid))
+    return {"ok": True, "mesaj": "Düzeltildi · " + " · ".join(f"{k}: {a or '—'} → {b or '—'}" for k, (a, b) in degisen.items())}
+
+
 @router.get("/liste")
 def odeme_listesi(ay: Optional[str] = None):
     """Ayın ödemeleri — ne için, kimin, nasıl (nakit/havale/kart), gider mi."""
@@ -258,7 +312,8 @@ def odeme_listesi(ay: Optional[str] = None):
                     or ("Dükkân gideri" if v.get("kaynak") == "dukkan_gideri" else "Ödeme"),
                     "kimin": v.get("kimin"), "gider": v.get("gider"), "ait_ay": v.get("ait_ay"),
                     "nakit": nakit, "kart": kart, "toplam": _tl_sayi(int(v.get("toplam", h["tutar"]))), "kaydeden": h.get("kaydeden"),
-                    "fis": _hareket_dto(h, C, ol)})
+                    "fis": _hareket_dto(h, C, ol), "kimin_kod": v.get("kimin_kod"), "konu_tip": (v.get("konu") or {}).get("tip"),
+                    "duzeltilebilir": v.get("kaynak") == "odeme_formu", "duzeltmeler": v.get("duzeltmeler") or []})
     out.sort(key=lambda x: x["tarih"], reverse=True)
     return {"ay": a_, "odemeler": out, "toplam": round(sum(x["toplam"] for x in out), 2),
             "nakit_toplam": round(sum(n["tutar"] for x in out for n in x["nakit"]), 2),

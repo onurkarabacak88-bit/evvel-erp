@@ -189,7 +189,8 @@ function odemeFisi(h, cepAd) {
     ],
     not: `Toplam kasa: ${fmt(h.toplam_once)} → ${fmt(h.toplam_sonra)} ₺`
       + (h.kiradan_destek ? ` · Fatma kira hesabından destek ${fmt(h.kiradan_destek)} ₺` : '')
-      + (h.not_ ? ` · Not: ${h.not_}` : ''),
+      + (h.not_ ? ` · Not: ${h.not_}` : '')
+      + (h.duzeltmeler || []).map((d) => ` · ✏️ ${d.kim || '?'} ${d.zaman}: ${Object.entries(d.degisen).map(([k, [a, b]]) => `${k} ${a || '—'} → ${b || '—'}`).join(', ')}`).join(''),
     listeBaslik: 'Para nereden çıktı?',
     satirlar: [
       ...h.parcalar.map((p) => ({ ad: p.ad || cepAd(p.cep), tutar: `−${fmt(p.tutar)} ₺`, detay: `payı %${p.pay} · cepte ${fmt(p.once)} → ${fmt(p.sonra)} ₺ kaldı` })),

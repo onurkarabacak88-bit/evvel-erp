@@ -40,6 +40,7 @@ export default function OdemeModulu({ onToast }) {
   const [benzer, setBenzer] = useState(false);
   const [pd, setPd] = useState(null);   // seçili personele bu ay ne ödendi
   const [ck, setCk] = useState(null);   // ödeme fişi
+  const [duz, setDuz] = useState(null);  // {id, konu_tip, kimin, ait_ay, aciklama} — gider tarafı düzeltme
   const [ucretDuz, setUcretDuz] = useState(null);   // {maas, yemek} — tanım düzenleniyor
   const otoTutar = useRef(null);         // son kendiliğinden yazılan tutar (kullanıcı değiştirdiyse üstüne yazılmaz)
   const [hata, setHata] = useState('');
@@ -77,6 +78,12 @@ export default function OdemeModulu({ onToast }) {
       const r = await api('/evvel-yeni/odeme/personel-ucret', { method: 'POST', body: { personel_id: f.personel_id, ay: f.ait_ay, maas: sayi(ucretDuz.maas) || 0, yemek: sayi(ucretDuz.yemek) || 0 } });
       onToast?.(r.mesaj); pdYukle();
     } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+  };
+  const duzKaydet = async () => {
+    try {
+      const r = await api(`/evvel-yeni/odeme/${duz.id}/duzelt`, { method: 'POST', body: { kimin: duz.kimin, ait_ay: duz.ait_ay, aciklama: duz.aciklama } });
+      onToast?.(r.mesaj); setDuz(null); listeYukle();
+    } catch (e) { onToast?.(e?.message || 'Düzeltilemedi'); }
   };
   const iptalEt = async (x) => {
     const sebep = window.prompt(`"${x.aciklama}" (${fmt(x.toplam)} ₺) iptal edilsin mi?\nKısaca neden yaz:`);
@@ -279,7 +286,12 @@ export default function OdemeModulu({ onToast }) {
                   <td style={{ textAlign: 'left', fontSize: 12 }}>{[...x.nakit.map((n) => `${n.ad} ${fmt(n.tutar)}`), ...x.kart.map((k) => `💳 ${k.ad} ${fmt(k.tutar)}`)].join(' + ')}</td>
                   <td style={{ ...num, fontWeight: 700 }}>{fmt(x.toplam)}</td>
                   <td style={{ textAlign: 'left' }}>{x.gider ? <Cip tur="sari">gider · {ayAdi(x.ait_ay)}</Cip> : x.konu === 'Dükkân gideri' ? <Cip>dükkân gideri</Cip> : <span style={{ color: R.not }}>gider değil</span>}</td>
-                  <td>{x.kaydeden !== undefined && x.konu !== 'Dükkân gideri' && <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); iptalEt(x); }}>İptal</Dugme>}</td>
+                  <td style={{ whiteSpace: 'nowrap' }}>
+                    {x.duzeltilebilir && x.gider !== undefined && ['kira', 'fatura', 'anlik', 'personel', 'diger'].includes(x.konu_tip) && (
+                      <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); setDuz({ id: x.id, konu_tip: x.konu_tip, kimin: x.kimin_kod || '', ait_ay: x.ait_ay || '', aciklama: x.aciklama || '', baslik: `${x.aciklama} · ${fmt(x.toplam)} ₺` }); }}>Düzelt</Dugme>)}{' '}
+                    {x.duzeltilebilir && <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); iptalEt(x); }}>İptal</Dugme>}
+                    {x.duzeltmeler?.length > 0 && <span title="Düzeltildi" style={{ marginLeft: 4 }}>✏️</span>}
+                  </td>
                 </tr>
               ))}
               {liste && !liste.odemeler.length && <tr><td colSpan={8} style={{ textAlign: 'center', color: R.not }}>Bu ay ödeme yok.</td></tr>}
@@ -287,6 +299,23 @@ export default function OdemeModulu({ onToast }) {
           </table>
         </div>
       </div>
+      {duz && (
+        <div role="dialog" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'grid', placeItems: 'center', zIndex: 50, padding: 16 }} onClick={() => setDuz(null)}>
+          <div style={{ ...kart, padding: 18, width: 'min(460px, 100%)', display: 'flex', flexDirection: 'column', gap: 12 }} onClick={(e) => e.stopPropagation()}>
+            <b>Gider tarafını düzelt</b>
+            <div style={{ fontSize: 13, color: R.not }}>{duz.baslik}<br />Para oynamaz — cepler ve tutar aynı kalır. Tutar / cep yanlışsa: iptal edip yeniden gir.</div>
+            <Etiket ad="Kimin gideri"><select style={alan} value={duz.kimin} onChange={(e) => setDuz((d) => ({ ...d, kimin: e.target.value }))}>
+              {L.subeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
+              {['diger', 'personel'].includes(duz.konu_tip) && <><option value="ortak">Ortak</option><option value="patron">Patron şahsi (gider değil)</option></>}
+            </select></Etiket>
+            {['kira', 'fatura', 'personel'].includes(duz.konu_tip) && (
+              <Etiket ad="Ait olduğu ay"><input type="month" style={alan} value={duz.ait_ay} onChange={(e) => setDuz((d) => ({ ...d, ait_ay: e.target.value }))} /></Etiket>
+            )}
+            <Etiket ad="Açıklama"><input style={alan} value={duz.aciklama} onChange={(e) => setDuz((d) => ({ ...d, aciklama: e.target.value }))} /></Etiket>
+            <div style={{ display: 'flex', gap: 8 }}><Dugme onClick={duzKaydet}>Kaydet</Dugme><Dugme kucuk onClick={() => setDuz(null)}>Vazgeç</Dugme></div>
+          </div>
+        </div>
+      )}
       <Cekmece v={ck} onKapat={() => setCk(null)} />
     </div>
   );
