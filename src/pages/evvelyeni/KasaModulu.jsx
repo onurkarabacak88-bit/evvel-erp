@@ -1139,7 +1139,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         <Dugme ana onClick={() => formAc('tasima')}>+ Taşı / Yatır</Dugme>
         <Dugme ana onClick={() => formAc('sayim')}>+ Sayım</Dugme>
         <Dugme ana onClick={() => formAc('pos')}>+ Online yattı</Dugme>
-        <Dugme onClick={() => formAc('odeme')}>+ Ödeme</Dugme>
+        <Dugme onClick={() => (onSekme ? onSekme('odemeler') : formAc('odeme'))}>+ Ödeme</Dugme>
         <Dugme onClick={() => formAc('kapanis')}>+ Kapanış</Dugme>
         <Dugme onClick={() => formAc('aktar')} title="Dönem başından bu yana kapanış ve teslimleri eski sistemden okur">Eski sistemden aktar</Dugme>
         <Dugme onClick={() => formAc('donem')} title="Önceki kayıtlar arşive geçer; her cep sayılıp yeniden başlanır">Yeni başlangıç</Dugme>

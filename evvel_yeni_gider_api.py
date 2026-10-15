@@ -4,9 +4,12 @@ Sahip kararları:
   · "Şubeler sanki hiç borcu yokmuş gibi — yalnız malı ve tükettiği giderleri ödemekle
     mükellef. Krediler, ev taksiti vb. şubenin değil" → borç/kredi/patron şahsi buraya
     GİRMEZ (patron katmanı).
-  · "Depo Gazze'de; fatura vergisel sebeple Zafer'e kesiliyor; her şubeye giden malın
-    değeri kadar SEVKİYAT gider olarak girmeli" → fatura şubesi KULLANILMAZ; mal gideri =
-    şubeye SEVK edilen adet × fiyat, SEVK GÜNÜ.
+  · ORTAK KARAR (sahip + Codex + Claude, 2026-10-15): ŞUBE MAL GİDERİ = ÜRÜN AÇ × fiyat
+    (gerçekten açılıp kullanılan). DEPODAN SEVK BEDELİ AYRI hesaplanır, gidere EKLENMEZ —
+    sevk stoktur, tüketim giderdir; aradaki fark "şubenin rafında bekleyen mal".
+  · "Depo Gazze'de; fatura vergisel sebeple Zafer'e kesiliyor" → fatura şubesi KULLANILMAZ.
+  · Ödeme formundan girilen kira / fatura / personel / anlık / diğer → AİT OLDUĞU AYA,
+    seçilen şubeye (ya da Ortak satırına) gider olarak yazılır. Ödeme yolu gideri değiştirmez.
   · "Depoya geliş fiyatından değil GÜNCELLENMİŞ fiyattan" → sevk gününde geçerli EN SON
     onaylı alış fiyatı (urun_alis_fiyat; adet başına, KDV hariç) → KDV eklenir (gelir
     KDV dahil olduğu için iki taraf aynı dilde).
@@ -17,6 +20,7 @@ Sahip kararları:
 Eski tablolardan YALNIZ OKUR. Kendi küçük tablosu: ey_gider_sinif (elle sınıflandırma).
 """
 
+import json
 import logging
 from datetime import date
 from decimal import Decimal
@@ -32,7 +36,9 @@ from evvel_yeni_gelir_api import _ay_sinirlari, _kapanis_kanallari
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/evvel-yeni/gider", tags=["evvel-yeni-gider"])
 
-TURLER = {"mal": "Mal (sevkiyat)", "dukkan": "Dükkân küçük giderleri", "komisyon": "POS / online komisyonu"}
+TURLER = {"mal": "Mal (ürün aç)", "kira": "Kira", "fatura": "Fatura / abonelik", "personel": "Personel",
+          "dukkan": "Dükkân küçük giderleri", "anlik": "Anlık gider", "diger": "Diğer", "komisyon": "POS / online komisyonu"}
+KALEMLER = list(TURLER)
 VARSAYILAN_KDV = Decimal("0.10")
 _SINIF_HAZIR = False
 
@@ -118,6 +124,103 @@ def _mal_satirlari(cur, bas: date, son: date, depo: str):
     return satir
 
 
+def _urun_ac_parcala(aciklama: str):
+    """URUN_AC / URUN_KULLANIMA_AL JSON'undan (urun_id, ad, adet) — bozuk metin sessizce atlanır."""
+    raw = (aciklama or "")
+    for on in ("URUN_AC_JSON:", "URUN_KULLANIMA_AL_JSON:"):
+        if raw.startswith(on):
+            raw = raw[len(on):]
+            break
+    else:
+        return []
+    raw = raw.split(" | ", 1)[0].strip()
+    try:
+        obj = json.loads(raw)
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for it in (obj.get("kalemler") or []) if isinstance(obj, dict) else []:
+        if not isinstance(it, dict):
+            continue
+        uid = str(it.get("urun_id") or "").strip()
+        try:
+            adet = max(0, int(it.get("adet") or 0))
+        except (TypeError, ValueError):
+            adet = 0
+        if uid and adet:
+            out.append((uid, str(it.get("urun_ad") or "").strip(), adet))
+    return out
+
+
+def _tuketim_satirlari(cur, bas: date, son: date):
+    """ŞUBE MAL GİDERİ = ÜRÜN AÇ (gerçekten açılıp kullanılan) × o gün geçerli son alış fiyatı.
+
+    · Kaynak: operasyon_defter URUN_AC + URUN_KULLANIMA_AL; '[BİTTİ]' satırları HARİÇ (aynı ürün iki kez sayılmasın).
+    · Adet AÇILIŞ biriminde; urun_alis_fiyat.birim_maliyet_tl zaten açılış birimi başına (KDV hariç) → çevirme yok.
+    · Fiyat zinciri: ürün kimliği → depo kalem kodu → katalog; hiçbiri yoksa UYDURULMAZ (fiyatı eksik).
+    · Gün kesin mi: o gün tamamlanmış KAPANIS var mı (yoksa gün içi ürün aç sürebilir)."""
+    satir = []
+    try:
+        with savepoint(cur, "sp_ey_tuketim"):
+            cur.execute("""SELECT sube_id, tarih, aciklama FROM operasyon_defter
+                            WHERE etiket IN ('URUN_AC','URUN_KULLANIMA_AL') AND tarih BETWEEN %s AND %s
+                              AND NOT (etiket='URUN_AC' AND aciklama LIKE '%%[BİTTİ]%%')""", (bas, son))
+            ham = cur.fetchall() or []
+            top = {}
+            for r in ham:
+                r = dict(r)
+                for uid, ad, adet in _urun_ac_parcala(r["aciklama"]):
+                    k = (str(r["sube_id"]), r["tarih"], uid)
+                    if k in top:
+                        top[k][1] += adet
+                    else:
+                        top[k] = [ad, adet]
+            if not top:
+                return satir
+            idler = sorted({k[2] for k in top})
+            cur.execute("""SELECT id::text AS id, ad, depo_stok_kalem_kodu, birim_fiyat_tl FROM siparis_urun
+                            WHERE id::text = ANY(%s)""", (idler,))
+            urun = {dict(r)["id"]: dict(r) for r in cur.fetchall() or []}
+            kodlar = set(idler) | {u["depo_stok_kalem_kodu"] for u in urun.values() if u.get("depo_stok_kalem_kodu")}
+            cur.execute("""SELECT kalem_kodu, gecerli_baslangic, birim_maliyet_tl FROM urun_alis_fiyat
+                            WHERE kalem_kodu = ANY(%s) AND birim_maliyet_tl > 0
+                            ORDER BY kalem_kodu, gecerli_baslangic DESC, created_at DESC""", (list(kodlar),))
+            fiyat = {}
+            for r in cur.fetchall() or []:
+                r = dict(r)
+                fiyat.setdefault(r["kalem_kodu"], []).append((r["gecerli_baslangic"], r["birim_maliyet_tl"]))
+            cur.execute("SELECT kalem_kodu, kdv_oran FROM kalem_kdv_oran WHERE kalem_kodu = ANY(%s)", (list(kodlar),))
+            kdv = {dict(r)["kalem_kodu"]: dict(r)["kdv_oran"] for r in cur.fetchall() or []}
+            cur.execute("""SELECT DISTINCT sube_id::text AS s, tarih FROM sube_operasyon_event
+                            WHERE tip='KAPANIS' AND durum='tamamlandi' AND tarih BETWEEN %s AND %s""", (bas, son))
+            kesin = {(dict(r)["s"], dict(r)["tarih"]) for r in cur.fetchall() or []}
+    except Exception as e:  # noqa: BLE001
+        log.warning("evvel-yeni gider: ürün aç okunamadı: %s", str(e)[:200])
+        return satir
+
+    def _bul(kod, gun):
+        for bg, b in fiyat.get(kod) or []:
+            if bg <= gun:
+                return b, bg
+        return None, None
+
+    for (sid, gun, uid), (ad, adet) in top.items():
+        u = urun.get(uid) or {}
+        birim, ft, fk, kod = None, None, None, uid
+        for k in (uid, u.get("depo_stok_kalem_kodu")):
+            if k:
+                birim, ft = _bul(k, gun)
+                if birim is not None:
+                    fk, kod = "alış fiyatı", k
+                    break
+        if birim is None and u.get("birim_fiyat_tl"):
+            birim, fk = u["birim_fiyat_tl"], "katalog"
+        satir.append({"sube_id": sid, "gun": gun, "kalem_kodu": uid, "ad": u.get("ad") or ad or uid, "adet": adet,
+                      "birim": birim, "fk": fk, "fiyat_tarihi": ft, "kdv": kdv.get(kod, kdv.get(uid)),
+                      "kaynak": "ürün aç", "gun_kesin": (sid, gun) in kesin})
+    return satir
+
+
 @router.get("/ozet")
 def gider_ozet(ay: Optional[str] = None):
     """Şube şube kendi işletme gideri: mal (sevk × güncel fiyat, KDV dahil) · dükkân küçük
@@ -130,12 +233,15 @@ def gider_ozet(ay: Optional[str] = None):
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
         oranlar = _oranlar(cur)
         depo = _depo_id(cur)
-        mal = _mal_satirlari(cur, ay_bas, min(ay_son, bugun), depo)
+        mal = _tuketim_satirlari(cur, ay_bas, min(ay_son, bugun))
+        sevk = _mal_satirlari(cur, ay_bas, min(ay_son, bugun), depo)
         cur.execute("SELECT kaynak_ref, tur, kimin FROM ey_gider_sinif")
         sinif = {dict(r)["kaynak_ref"]: dict(r) for r in cur.fetchall() or []}
     subeler = {c["sube_id"]: c for c in cep_list if c["tur"] == "sube"}
     sube_cep = {sid: "sube:" + sid for sid in subeler}
-    S = {sid: {"mal": 0, "dukkan": 0, "komisyon": 0, "satirlar": [], "fiyat_eksik": 0, "katalog": 0} for sid in subeler}
+    S = {sid: {**{k: 0 for k in KALEMLER}, "satirlar": [], "fiyat_eksik": 0, "katalog": 0, "kesin_degil": set(),
+               "sevk": 0, "sevk_eksik": 0, "sevk_satir": []} for sid in subeler}
+    ORTAK = {"toplam": 0, "satirlar": []}
     disarida = 0
     # 1) MAL
     for r in mal:
@@ -144,6 +250,8 @@ def gider_ozet(ay: Optional[str] = None):
             disarida += 1
             continue
         adet = Decimal(str(r["adet"] or 0))
+        if not r.get("gun_kesin", True):
+            S[sid]["kesin_degil"].add(r["gun"].isoformat())
         if r["birim"] is None:
             S[sid]["fiyat_eksik"] += 1
             S[sid]["satirlar"].append({"gun": r["gun"].isoformat(), "tur": "mal", "aciklama": f"{r['ad']} · {r['kaynak']}", "adet": float(adet),
@@ -157,6 +265,40 @@ def gider_ozet(ay: Optional[str] = None):
         S[sid]["satirlar"].append({"gun": r["gun"].isoformat(), "tur": "mal", "aciklama": f"{r['ad']} · {r['kaynak']}",
                                    "adet": float(adet), "birim": float(birim_kdvli.quantize(Decimal('0.01'))), "tutar": _tl_sayi(t),
                                    "not": f"{r['fk']}" + (f" ({r['fiyat_tarihi']})" if r.get("fiyat_tarihi") else "") + f" · KDV %{int(kdv * 100)} dahil"})
+    # 1b) DEPODAN SEVK BEDELİ — AYRI hesap, gidere EKLENMEZ (sevk = stok; tüketim = gider)
+    for r in sevk:
+        sid = str(r["sube_id"])
+        if sid not in S:
+            continue
+        adet = Decimal(str(r["adet"] or 0))
+        if r["birim"] is None:
+            S[sid]["sevk_eksik"] += 1
+            S[sid]["sevk_satir"].append({"gun": r["gun"].isoformat(), "aciklama": f"{r['ad']} · {r['kaynak']}", "adet": float(adet), "birim": None, "tutar": 0})
+            continue
+        birim_kdvli = Decimal(str(r["birim"])) * (1 + Decimal(str(r["kdv"] or VARSAYILAN_KDV)))
+        t = _kurus((adet * birim_kdvli).quantize(Decimal("0.01")))
+        S[sid]["sevk"] += t
+        S[sid]["sevk_satir"].append({"gun": r["gun"].isoformat(), "aciklama": f"{r['ad']} · {r['kaynak']}", "adet": float(adet),
+                                     "birim": float(birim_kdvli.quantize(Decimal('0.01'))), "tutar": _tl_sayi(t)})
+    # 1c) ÖDEME FORMUNDAN GİDERLER — ait olduğu ay; şubeye ya da Ortak'a
+    for h in kayit:
+        v = h["veri"]
+        if h["tur"] != "odeme" or v.get("kaynak") != "odeme_formu" or not v.get("gider"):
+            continue
+        if (v.get("ait_ay") or h["is_gunu"][:7]) != a_:
+            continue
+        tip = (v.get("konu") or {}).get("tip") or "diger"
+        tip = tip if tip in TURLER else "diger"
+        t = int(v.get("toplam", h["tutar"]))
+        satir = {"gun": h["is_gunu"], "tur": tip, "aciklama": v.get("aciklama"), "adet": None, "birim": None, "tutar": _tl_sayi(t),
+                 "not": "ödeme: " + " + ".join(sorted(set(v.get("yontemler") or [])))}
+        sid = v.get("kimin_kod")
+        if sid in S:
+            S[sid][tip] += t
+            S[sid]["satirlar"].append(satir)
+        else:
+            ORTAK["toplam"] += t
+            ORTAK["satirlar"].append(satir)
     # 2) DÜKKÂN KÜÇÜK GİDERLERİ (Kasa'daki 'dukkan_gideri' ödemeleri) + patron şahsi ayrımı
     cekisler = []
     for h in kayit:
@@ -191,18 +333,26 @@ def gider_ozet(ay: Optional[str] = None):
                                        "adet": None, "birim": None, "tutar": _tl_sayi(k)})
     out = []
     for sid, s in S.items():
-        top = s["mal"] + s["dukkan"] + s["komisyon"]
+        top = sum(s[k] for k in KALEMLER)
         out.append({"sube_id": sid, "cep": sube_cep[sid], "ad": subeler[sid]["kisa"], "depo_mu": sid == depo,
-                    "toplam": _tl_sayi(top), "mal": _tl_sayi(s["mal"]), "dukkan": _tl_sayi(s["dukkan"]), "komisyon": _tl_sayi(s["komisyon"]),
-                    "fiyat_eksik": s["fiyat_eksik"], "katalog_fiyatli": s["katalog"],
+                    "toplam": _tl_sayi(top), **{k: _tl_sayi(s[k]) for k in KALEMLER},
+                    "fiyat_eksik": s["fiyat_eksik"], "katalog_fiyatli": s["katalog"], "kesin_olmayan_gun": sorted(s["kesin_degil"]),
+                    "sevk_bedeli": _tl_sayi(s["sevk"]), "sevk_fiyat_eksik": s["sevk_eksik"],
+                    "rafta_fark": _tl_sayi(s["sevk"] - s["mal"]),
+                    "sevk_satirlar": sorted(s["sevk_satir"], key=lambda x: x["gun"]),
                     "satirlar": sorted(s["satirlar"], key=lambda x: (x["gun"], x["tur"]))})
-    T = {k: sum(_kurus(x[k]) for x in out) for k in ("mal", "dukkan", "komisyon")}
+    T = {k: sum(_kurus(x[k]) for x in out) for k in KALEMLER}
+    sube_top = sum(T.values())
     return {"ay": a_, "ay_basi": bas_i, "ay_sonu": son_i, "ay_bitti": ay_son < bugun, "depo_sube_id": depo,
-            "turler": TURLER, "toplam": _tl_sayi(sum(T.values())), **{k: _tl_sayi(v) for k, v in T.items()},
+            "turler": TURLER, "toplam": _tl_sayi(sube_top + ORTAK["toplam"]), "sube_toplam": _tl_sayi(sube_top),
+            **{k: _tl_sayi(v) for k, v in T.items()},
+            "ortak": {"toplam": _tl_sayi(ORTAK["toplam"]), "satirlar": sorted(ORTAK["satirlar"], key=lambda x: x["gun"])},
+            "sevk_bedeli": _tl_sayi(sum(_kurus(x["sevk_bedeli"]) for x in out)),
             "subeler": out, "cekisler": cekisler, "cekis_toplam": _tl_sayi(sum(_kurus(x["tutar"]) for x in cekisler)),
             "fiyat_eksik_toplam": sum(x["fiyat_eksik"] for x in out), "sube_disi_satir": disarida,
-            "kapsam_notu": "Bu sürümde: mal (sevkiyat + doğrudan teslim), dükkân küçük giderleri, POS/online komisyonu. "
-                           "Kira, personel, faturalar sonraki adımda eklenecek."}
+            "kapsam_notu": "Mal gideri = şubede ÜRÜN AÇ ile açılan ürün × o günkü son alış fiyatı (KDV dahil). "
+                           "Depodan sevk bedeli AYRI gösterilir, gidere eklenmez; fark şubenin rafında bekleyen maldır. "
+                           "Kira / fatura / personel / anlık gider: Ödeme formundan, ait olduğu aya."}
 
 
 class SinifBody(BaseModel):

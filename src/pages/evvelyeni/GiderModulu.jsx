@@ -4,6 +4,8 @@
 // Sahip (2026-10-15): "Şubeler sanki hiç borcu yokmuş gibi — yalnız malı ve tükettiği
 // giderleri ödemekle mükellef." · "Her şubeye giden malın değeri kadar sevkiyat gider
 // olarak girmeli; depoya geliş fiyatından değil GÜNCELLENMİŞ fiyattan."
+// ORTAK KARAR (sahip + Codex + Claude): mal gideri = ÜRÜN AÇ × fiyat; depodan sevk bedeli
+// AYRI gösterilir, gidere eklenmez — fark şubenin rafında bekleyen mal.
 // Bütün rakamlar /api/evvel-yeni/gider'den; ekran yalnız dizer.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -11,11 +13,12 @@ import { api } from '../../utils/api';
 import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa } from './KasaModulu';
 
 export const GIDER_SAYFALAR = [
-  { id: 'giderler', ad: 'Giderlerim', alt: 'Şube şube · mal · dükkân · komisyon' },
+  { id: 'giderler', ad: 'Giderlerim', alt: 'Şube şube · mal · kira · personel' },
 ];
 
-const TUR_RENK = { mal: 'var(--pi-accent)', dukkan: 'var(--pi-warn)', komisyon: 'var(--pi-ink3)' };
-const TUR_AD = { mal: 'Mal (sevkiyat)', dukkan: 'Dükkân küçük', komisyon: 'Komisyon' };
+const KALEM = ['mal', 'kira', 'personel', 'fatura', 'dukkan', 'anlik', 'diger', 'komisyon'];
+const TUR_RENK = { mal: 'var(--pi-accent)', kira: '#7a5c3e', personel: '#4f6d7a', fatura: '#8a7a3a', dukkan: 'var(--pi-warn)', anlik: '#b08850', diger: '#999', komisyon: 'var(--pi-ink3)' };
+const TUR_AD = { mal: 'Mal (ürün aç)', kira: 'Kira', personel: 'Personel', fatura: 'Fatura', dukkan: 'Dükkân küçük', anlik: 'Anlık', diger: 'Diğer', komisyon: 'Komisyon', sevk: 'Depodan sevk (gider DEĞİL)' };
 
 export default function GiderModulu({ onToast }) {
   const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
@@ -36,11 +39,13 @@ export default function GiderModulu({ onToast }) {
 
   const subeAc = (s) => setCk({
     tip: 'ŞUBE GİDERİ', baslik: `${s.ad} · ${tUzun(v.ay_basi).split(' ')[1]}`,
-    alt: s.depo_mu ? 'Depo bu şubede — depodan kendi kullanımı sevkiyat kaydı yoksa mal gideri eksik görünebilir' : 'Mal = sevk edilen adet × sevk günündeki güncel fiyat (KDV dahil)',
+    alt: 'Mal = şubede ÜRÜN AÇ ile açılan × o günkü son alış fiyatı (KDV dahil). Depodan sevk ayrı satırda, gidere eklenmez.',
     varsayilan: 'iz',
-    kpi: [{ etiket: 'Toplam', deger: tl(s.toplam), renk: R.kirmizi }, { etiket: 'Mal', deger: tl(s.mal) }, { etiket: 'Dükkân küçük', deger: tl(s.dukkan) }, { etiket: 'Komisyon', deger: tl(s.komisyon) }],
-    not: [s.fiyat_eksik ? `🔴 ${s.fiyat_eksik} sevk satırının fiyatı yok — gider olduğundan düşük` : null,
-      s.katalog_fiyatli ? `${s.katalog_fiyatli} satır katalog fiyatıyla (fatura fiyatı yok)` : null].filter(Boolean).join(' · ') || null,
+    kpi: [{ etiket: 'Toplam gider', deger: tl(s.toplam), renk: R.kirmizi }, ...KALEM.filter((k) => s[k]).map((k) => ({ etiket: TUR_AD[k], deger: tl(s[k]) })),
+      { etiket: 'Depodan gelen mal', deger: tl(s.sevk_bedeli) }, { etiket: 'Rafta bekleyen (sevk − ürün aç)', deger: tl(s.rafta_fark) }],
+    not: [s.fiyat_eksik ? `🔴 ${s.fiyat_eksik} ürün aç satırının fiyatı yok — gider olduğundan düşük` : null,
+      s.katalog_fiyatli ? `${s.katalog_fiyatli} satır katalog fiyatıyla (fatura fiyatı yok)` : null,
+      s.kesin_olmayan_gun?.length ? `${s.kesin_olmayan_gun.length} günün kapanışı yok — o günler kesinleşmedi` : null].filter(Boolean).join(' · ') || null,
     listeBaslik: 'Dükkân giderleri · patron şahsi olanı ayır',
     satirlar: s.satirlar.filter((x) => x.tur === 'dukkan').map((x) => ({
       ad: `${tKisa(x.gun)} · ${x.aciklama}${x.oneri_cekis ? '  ⚠ şahsi olabilir' : ''}`, tutar: tl(x.tutar), detay: 'Tıkla → Patron şahsi (çekiş)',
@@ -49,8 +54,10 @@ export default function GiderModulu({ onToast }) {
     tablo: {
       ad: 'Gider satırları',
       kolonlar: [{ ad: 'Gün' }, { ad: 'Tür' }, { ad: 'Açıklama', sar: true }, { ad: 'Adet', sag: true }, { ad: 'Birim (KDV dahil)', sag: true }, { ad: 'Tutar', sag: true }, { ad: 'Not', sar: true }],
-      satirlar: s.satirlar.map((x) => [tKisa(x.gun), TUR_AD[x.tur], x.aciklama, x.adet == null ? '' : fmt(x.adet), x.birim == null ? '' : fmt(x.birim),
+      satirlar: [...s.satirlar.map((x) => [tKisa(x.gun), TUR_AD[x.tur], x.aciklama, x.adet == null ? '' : fmt(x.adet), x.birim == null ? '' : fmt(x.birim),
         x.not === 'FİYATI EKSİK' ? { t: 'fiyat yok', renk: R.kirmizi } : { t: fmt(x.tutar), kalin: true }, x.not || '']),
+      ...(s.sevk_satirlar || []).map((x) => [tKisa(x.gun), { t: TUR_AD.sevk, renk: R.not }, x.aciklama, fmt(x.adet), x.birim == null ? '' : fmt(x.birim),
+        x.birim == null ? { t: 'fiyat yok', renk: R.kirmizi } : { t: fmt(x.tutar), renk: R.not }, 'stok — gider değil'])],
     },
   });
 
@@ -70,11 +77,11 @@ export default function GiderModulu({ onToast }) {
 
       <div style={{ ...kart, padding: '16px 20px', background: 'var(--pi-accent-soft)', display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <div>
-          <div style={etiketStil}>{tUzun(v.ay_basi).split(' ')[1]} şube giderleri{v.ay_bitti ? '' : ' · bugüne kadar'}</div>
+          <div style={etiketStil}>{tUzun(v.ay_basi).split(' ')[1]} giderleri{v.ay_bitti ? '' : ' · bugüne kadar'} · şubeler {fmt(v.sube_toplam)} + Ortak {fmt(v.ortak.toplam)}</div>
           <div style={{ ...num, fontSize: 40, fontWeight: 700, color: R.kirmizi, lineHeight: 1.05 }}>{tl(v.toplam)}</div>
         </div>
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-          {[['Mal (sevkiyat)', v.mal], ['Dükkân küçük', v.dukkan], ['Komisyon', v.komisyon]].map(([a, t]) => (
+          {KALEM.filter((k) => v[k]).map((k) => [TUR_AD[k], v[k]]).concat([['Depodan gelen mal (ayrı)', v.sevk_bedeli]]).map(([a, t]) => (
             <div key={a}><div style={etiketStil}>{a}</div><div style={{ ...num, fontSize: 17 }}>{fmt(t)}</div></div>
           ))}
         </div>
@@ -86,7 +93,7 @@ export default function GiderModulu({ onToast }) {
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 12 }}>
         {v.subeler.map((s) => {
-          const t = s.mal + s.dukkan + s.komisyon || 1;
+          const t = s.toplam || 1;
           return (
             <button key={s.sube_id} type="button" onClick={() => subeAc(s)} style={{
               ...kart, textAlign: 'left', cursor: 'pointer', font: 'inherit', color: R.krem, padding: '14px 16px',
@@ -96,17 +103,29 @@ export default function GiderModulu({ onToast }) {
               <b style={{ fontSize: 15 }}>{s.ad}</b>
               <span style={{ ...num, fontSize: 24, fontWeight: 700 }}>{tl(s.toplam)}</span>
               <div style={{ display: 'flex', height: 8, borderRadius: 999, overflow: 'hidden', background: 'var(--pi-bg)' }} aria-hidden="true">
-                {['mal', 'dukkan', 'komisyon'].map((k) => s[k] > 0 && <span key={k} style={{ width: `${(s[k] * 100) / t}%`, background: TUR_RENK[k] }} />)}
+                {KALEM.map((k) => s[k] > 0 && <span key={k} style={{ width: `${(s[k] * 100) / t}%`, background: TUR_RENK[k] }} />)}
               </div>
-              <span style={{ fontSize: 12, color: R.metin2 }}>Mal {fmt(s.mal)} · dükkân {fmt(s.dukkan)} · komisyon {fmt(s.komisyon)}</span>
+              <span style={{ fontSize: 12, color: R.metin2 }}>{KALEM.filter((k) => s[k]).map((k) => `${TUR_AD[k]} ${fmt(s[k])}`).join(' · ') || 'gider yok'}</span>
+              <span style={{ fontSize: 12, color: R.not }}>Depodan gelen {fmt(s.sevk_bedeli)} · rafta {fmt(s.rafta_fark)}</span>
               <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {s.fiyat_eksik > 0 && <Cip tur="kirmizi">{s.fiyat_eksik} fiyatsız</Cip>}
                 {s.depo_mu && <Cip tur="sari">depo şubesi</Cip>}
+                {s.kesin_olmayan_gun?.length > 0 && <Cip>{s.kesin_olmayan_gun.length} gün kesin değil</Cip>}
                 <span style={{ marginLeft: 'auto', color: 'var(--pi-accent)', fontWeight: 700 }}>›</span>
               </span>
             </button>
           );
         })}
+      </div>
+
+      <div style={{ ...kart, padding: 14 }}>
+        <b>Ortak giderler</b> <span style={{ color: R.not, fontSize: 12.5 }}>tek şubeye ait değil — şubelere dağıtılmaz</span>
+        {v.ortak.satirlar.length ? v.ortak.satirlar.map((x, i) => (
+          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '7px 0', borderBottom: '1px solid var(--pi-line)', fontSize: 13 }}>
+            <span>{tKisa(x.gun)} · {TUR_AD[x.tur]} · {x.aciklama}</span><b style={num}>{fmt(x.tutar)}</b>
+          </div>
+        )) : <div style={{ color: R.not, fontSize: 13, marginTop: 6 }}>Bu ay ortak gider yok. Ödeme bölümünden "Diğer → Ortak" ile girilir.</div>}
+        {v.ortak.satirlar.length > 0 && <div style={{ textAlign: 'right', marginTop: 6 }}>Toplam <b style={num}>{fmt(v.ortak.toplam)}</b> ₺</div>}
       </div>
 
       <div style={{ ...kart, padding: 14 }}>
