@@ -552,7 +552,7 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
     v = r["veri"]
     d = {"id": r["id"], "tur": r["tur"], "tarih": r["is_gunu"], "kaydeden": r.get("kaydeden"), "durum": r.get("durum"),
          "cep": r.get("cep"), "kaynak": r.get("kaynak"), "hedef": r.get("hedef"), "tutar": _tl_sayi(r["tutar"]),
-         "eski_sistem": bool(r.get("kaynak_ref"))}
+         "eski_sistem": bool(r.get("kaynak_ref")) and not str(r.get("kaynak_ref")).startswith("odeme_formu:")}
     if r["tur"] == "kapanis":
         d["kart"] = _tl_sayi(int(v.get("kart", 0)))
         d["pos"] = _tl_sayi(int(v["pos"])) if "pos" in v else None
@@ -581,10 +581,14 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
         i = next(j for j, o in enumerate(ol) if o["id"] == r["id"])
         once, sonra = _bakiye(ol[:i], C), _bakiye(ol[:i + 1], C)
         d.update(aciklama=v.get("aciklama"), kimin=v.get("kimin") or "Ortak",
-                 parcalar=[{"cep": p["cep"], "tutar": _tl_sayi(int(p["tutar"])), "pay": round(int(p["tutar"]) * 100 / max(sum(int(q["tutar"]) for q in v.get("parcalar", [])), 1)),
+                 parcalar=[{"cep": p["cep"], "ad": (C.get(p["cep"]) or {}).get("ad"), "tutar": _tl_sayi(int(p["tutar"])), "pay": round(int(p["tutar"]) * 100 / max(sum(int(q["tutar"]) for q in v.get("parcalar", [])), 1)),
                             "once": _tl_sayi(once["b"].get(p["cep"], 0)), "sonra": _tl_sayi(sonra["b"].get(p["cep"], 0))}
                            for p in v.get("parcalar", [])],
                  toplam_once=_tl_sayi(once["toplam"]), toplam_sonra=_tl_sayi(sonra["toplam"]),
+                 konu=(v.get("konu") or {}).get("ad") or ("Dükkân gideri" if v.get("kaynak") == "dukkan_gideri" else None),
+                 ait_ay=v.get("ait_ay"), gider=v.get("gider"), not_=v.get("not"),
+                 kart_parcalar=[{"ad": p.get("kart_ad"), "tutar": _tl_sayi(int(p["tutar"]))} for p in v.get("kart_parcalar", [])],
+                 genel_toplam=_tl_sayi(int(v.get("toplam", r["tutar"]))),
                  kiradan_destek=_tl_sayi(sum(int(p["tutar"]) for p in v.get("parcalar", []) if p["cep"] in KIRA_CEPLERI)))
     return d
 

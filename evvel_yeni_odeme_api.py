@@ -27,7 +27,7 @@ from pydantic import BaseModel
 from decimal import Decimal
 
 from database import db, savepoint
-from evvel_yeni_kasa_api import (_aktor, _bakiye, _baslangic, _bugun, _eksi_denetle, _etki, _hazirla, _kilit,
+from evvel_yeni_kasa_api import (_aktor, _hareket_dto, _bakiye, _baslangic, _bugun, _eksi_denetle, _etki, _hazirla, _kilit,
                                  _kilit_denetle, _kurus, _olaylar, _sahte, _sayim_kilidi, _tl, _tl_sayi, _yaz, _yukle)
 
 router = APIRouter(prefix="/api/evvel-yeni/odeme", tags=["evvel-yeni-odeme"])
@@ -252,6 +252,7 @@ def odeme_listesi(ay: Optional[str] = None):
     a_ = (ay or _bugun().strftime("%Y-%m"))[:7]
     with db() as (conn, cur):
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
+    ol = _olaylar(kayit)
     out = []
     for h in kayit:
         if h["tur"] != "odeme" or h["is_gunu"][:7] != a_:
@@ -262,7 +263,8 @@ def odeme_listesi(ay: Optional[str] = None):
         out.append({"id": h["id"], "tarih": h["is_gunu"], "aciklama": v.get("aciklama"), "konu": (v.get("konu") or {}).get("ad")
                     or ("Dükkân gideri" if v.get("kaynak") == "dukkan_gideri" else "Ödeme"),
                     "kimin": v.get("kimin"), "gider": v.get("gider"), "ait_ay": v.get("ait_ay"),
-                    "nakit": nakit, "kart": kart, "toplam": _tl_sayi(int(v.get("toplam", h["tutar"]))), "kaydeden": h.get("kaydeden")})
+                    "nakit": nakit, "kart": kart, "toplam": _tl_sayi(int(v.get("toplam", h["tutar"]))), "kaydeden": h.get("kaydeden"),
+                    "fis": _hareket_dto(h, C, ol)})
     out.sort(key=lambda x: x["tarih"], reverse=True)
     return {"ay": a_, "odemeler": out, "toplam": round(sum(x["toplam"] for x in out), 2),
             "nakit_toplam": round(sum(n["tutar"] for x in out for n in x["nakit"]), 2),

@@ -171,7 +171,34 @@ function CepKart({ c, onAc, serit }) {
 
 // ─── Hareket satırı (sağ akış) ───
 const TUR_AD = { acilis: 'Açılış', kapanis: 'Kapanış', dis: 'Dış giriş', teslim: 'Teslim', tasima: 'Taşıma', odeme: 'Ödeme', sayim: 'Sayım', cozum: 'Fark çözüldü', pos_yatis: 'POS yatışı' };
-function HareketSatir({ h, cepAd, onIptal, onTeyit }) {
+// 🧾 ÖDEME FİŞİ — "parayı kim verdi" (Kasa) ile "gider kimin" (Gider) aynı kâğıtta
+const AY_AD = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+function odemeFisi(h, cepAd) {
+  const kasadan = h.parcalar.reduce((a, p) => a + p.tutar, 0);
+  const karttan = (h.kart_parcalar || []).reduce((a, p) => a + p.tutar, 0);
+  const [y, m] = (h.ait_ay || '').split('-');
+  return {
+    tip: 'ÖDEME FİŞİ', baslik: h.aciklama || 'Ödeme',
+    alt: `${tUzun(h.tarih)}${h.konu ? ` · ${h.konu}` : ''}${h.kaydeden ? ` · giren: ${h.kaydeden}` : ''}`,
+    kpi: [
+      { etiket: 'Toplam', deger: tl(h.genel_toplam ?? kasadan + karttan) },
+      { etiket: 'Kasadan', deger: tl(kasadan), renk: R.kirmizi },
+      ...(karttan ? [{ etiket: 'Kartla (borç oldu)', deger: tl(karttan) }] : []),
+      { etiket: 'Gider kimin', deger: h.gider === false ? 'gider değil' : (h.kimin || 'Ortak') },
+      ...(h.gider && m ? [{ etiket: 'Hangi ayın gideri', deger: `${AY_AD[Number(m) - 1]} ${y}` }] : []),
+    ],
+    not: `Toplam kasa: ${fmt(h.toplam_once)} → ${fmt(h.toplam_sonra)} ₺`
+      + (h.kiradan_destek ? ` · Fatma kira hesabından destek ${fmt(h.kiradan_destek)} ₺` : '')
+      + (h.not_ ? ` · Not: ${h.not_}` : ''),
+    listeBaslik: 'Para nereden çıktı?',
+    satirlar: [
+      ...h.parcalar.map((p) => ({ ad: p.ad || cepAd(p.cep), tutar: `−${fmt(p.tutar)} ₺`, detay: `payı %${p.pay} · cepte ${fmt(p.once)} → ${fmt(p.sonra)} ₺ kaldı` })),
+      ...(h.kart_parcalar || []).map((p) => ({ ad: `💳 ${p.ad}`, tutar: `${fmt(p.tutar)} ₺`, detay: 'kasadan çıkmadı · kart borcu oldu' })),
+    ],
+  };
+}
+
+function HareketSatir({ h, cepAd, onIptal, onTeyit, onFis }) {
   let ust = '', alt = '', tutar = fmt(h.tutar), renk = R.krem, cip = null, cipTur = 'bakir';
   if (h.tur === 'acilis') { ust = cepAd(h.cep); alt = '1 Ekim açılış bakiyesi'; renk = R.yesil; tutar = `+${tutar}`; }
   if (h.tur === 'kapanis') {
@@ -214,7 +241,8 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit }) {
   return (
     <div style={{ ...kart, padding: '9px 13px', display: 'grid', gridTemplateColumns: 'auto 1fr auto auto', gap: 10, alignItems: 'center' }}>
       <Cip tur={h.tur === 'odeme' ? 'kirmizi' : cipTur}>{TUR_AD[h.tur]}</Cip>
-      <div style={{ minWidth: 0 }}>
+      <div style={{ minWidth: 0, cursor: h.tur === 'odeme' && onFis ? 'pointer' : 'default' }} onClick={h.tur === 'odeme' && onFis ? () => onFis(h) : undefined}
+        title={h.tur === 'odeme' ? 'Ödeme fişini aç' : undefined}>
         <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>{ust} {cip}{h.eski_sistem && <Cip>eski sistemden</Cip>}{h.kaydeden && <span style={{ fontSize: 11, color: R.not2, fontWeight: 400 }}>· {h.kaydeden}</span>}</div>
         {alt && <div style={{ fontSize: 11.5, color: R.not }}>{alt}</div>}
       </div>
@@ -1275,7 +1303,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
             : (hepsi ? veri.hareketler.slice().reverse() : veri.hareketler).map((h, i, arr) => (
               <React.Fragment key={h.id}>
                 {hepsi && (i === 0 || arr[i - 1].tarih !== h.tarih) && <div style={{ ...etiketStil, paddingTop: 6 }}>{tUzun(h.tarih)} · {gunAdi(h.tarih)}</div>}
-                <HareketSatir h={h} cepAd={cepAd} onTeyit={teyit} onIptal={(x) => formAc('iptal', { id: x.id })} />
+                <HareketSatir h={h} cepAd={cepAd} onTeyit={teyit} onIptal={(x) => formAc('iptal', { id: x.id })} onFis={(x) => setCk(odemeFisi(x, cepAd))} />
               </React.Fragment>
             ))}
       </>)}
@@ -1393,4 +1421,4 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz }) {
 }
 
 // Diğer Evvel Yeni bölümleri (Gelir, Gider…) aynı görsel dili kullanır
-export { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
+export { odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };

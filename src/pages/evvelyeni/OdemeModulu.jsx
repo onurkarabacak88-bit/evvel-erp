@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, fmt, tl, tKisa } from './KasaModulu';
+import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, odemeFisi, fmt, tl, tKisa } from './KasaModulu';
 
 export const ODEME_SAYFALAR = [
   { id: 'odemeler', ad: 'Ödeme / gider gir', alt: 'Nakit · havale · kart' },
@@ -39,6 +39,7 @@ export default function OdemeModulu({ onToast }) {
   const [f, setF] = useState(BOS);
   const [benzer, setBenzer] = useState(false);
   const [pd, setPd] = useState(null);   // seçili personele bu ay ne ödendi
+  const [ck, setCk] = useState(null);   // ödeme fişi
   const [hata, setHata] = useState('');
   const [mesgul, setMesgul] = useState(false);
   const [ay, setAy] = useState(ayBugun());
@@ -230,7 +231,8 @@ export default function OdemeModulu({ onToast }) {
             <thead><tr><th>Gün</th><th style={{ textAlign: 'left' }}>Ne için</th><th style={{ textAlign: 'left' }}>Açıklama</th><th style={{ textAlign: 'left' }}>Kimin</th><th style={{ textAlign: 'left' }}>Nasıl</th><th>Tutar</th><th style={{ textAlign: 'left' }}>Gider mi</th><th /></tr></thead>
             <tbody>
               {(liste?.odemeler || []).map((x) => (
-                <tr key={x.id}>
+                <tr key={x.id} onClick={() => x.fis && setCk(odemeFisi(x.fis, (id) => (L.nakit_cepler.concat(L.banka_cepler).find((c) => c.id === id) || {}).ad || id))}
+                  style={{ cursor: 'pointer' }} title="Ödeme fişini aç">
                   <td style={{ ...num, whiteSpace: 'nowrap' }}>{tKisa(x.tarih)}</td>
                   <td style={{ textAlign: 'left' }}>{x.konu}</td>
                   <td style={{ textAlign: 'left' }}>{x.aciklama}</td>
@@ -238,7 +240,7 @@ export default function OdemeModulu({ onToast }) {
                   <td style={{ textAlign: 'left', fontSize: 12 }}>{[...x.nakit.map((n) => `${n.ad} ${fmt(n.tutar)}`), ...x.kart.map((k) => `💳 ${k.ad} ${fmt(k.tutar)}`)].join(' + ')}</td>
                   <td style={{ ...num, fontWeight: 700 }}>{fmt(x.toplam)}</td>
                   <td style={{ textAlign: 'left' }}>{x.gider ? <Cip tur="sari">gider · {ayAdi(x.ait_ay)}</Cip> : x.konu === 'Dükkân gideri' ? <Cip>dükkân gideri</Cip> : <span style={{ color: R.not }}>gider değil</span>}</td>
-                  <td>{x.kaydeden !== undefined && x.konu !== 'Dükkân gideri' && <Dugme kucuk onClick={() => iptalEt(x)}>İptal</Dugme>}</td>
+                  <td>{x.kaydeden !== undefined && x.konu !== 'Dükkân gideri' && <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); iptalEt(x); }}>İptal</Dugme>}</td>
                 </tr>
               ))}
               {liste && !liste.odemeler.length && <tr><td colSpan={8} style={{ textAlign: 'center', color: R.not }}>Bu ay ödeme yok.</td></tr>}
@@ -246,6 +248,7 @@ export default function OdemeModulu({ onToast }) {
           </table>
         </div>
       </div>
+      <Cekmece v={ck} onKapat={() => setCk(null)} />
     </div>
   );
 }
