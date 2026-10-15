@@ -267,6 +267,15 @@ except Exception as _ey_kasa_err:
     logging.getLogger(__name__).warning(
         f"evvel_yeni_kasa modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_kasa_err}"
     )
+# 📈 EVVEL YENİ · GELİR (2026-10-15) — sahip: "önce gelir mekanizmasını, sonra gider".
+# Yalnız okur (Kasa'nın kapanış kayıtlarından); şube şube / gün gün gelir.
+try:
+    from evvel_yeni_gelir_api import router as evvel_yeni_gelir_router
+    app.include_router(evvel_yeni_gelir_router)
+except Exception as _ey_gelir_err:
+    logging.getLogger(__name__).warning(
+        f"evvel_yeni_gelir modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_gelir_err}"
+    )
 # OPS ÖLÇÜM — "iş kuyruğu işe yarıyor mu?" (2026-08-27). AYRI modül, AYRI iki
 # tablo. bakis_olcum'a yazılmadı: onun ozet sorguları `gorunum`a göre süzmüyor,
 # OPS oturumları oraya girseydi BAKIŞ'ın M1-M5 medyanları iki farklı ekranın

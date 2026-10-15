@@ -1391,3 +1391,6 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz }) {
     </div>
   );
 }
+
+// Diğer Evvel Yeni bölümleri (Gelir, Gider…) aynı görsel dili kullanır
+export { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };

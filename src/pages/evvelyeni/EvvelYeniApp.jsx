@@ -10,20 +10,24 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import KasaModulu, { SAYFALAR } from './KasaModulu';
+import GelirModulu, { GELIR_SAYFALAR } from './GelirModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
 // Sahip: "evvel yeni yapalım" → uygulamanın adı EVVEL YENİ, adresi /evvel-yeni.
 // Eski /para-izi adresi buraya yönlenir. Sol menü BÖLÜM BÖLÜM büyüyecek (Para · Tedarik · İşletme).
 export const TABAN = '/evvel-yeni';
+// Sahip: "kasa ve gelir ayrı; sol alanda FARKLI isimlerde olmalı" → her bölüm kendi başlığı.
 const BOLUMLER = [
-  { ad: 'Para', sayfalar: SAYFALAR },
+  { ad: 'Kasa', mod: 'kasa', sayfalar: SAYFALAR },
+  { ad: 'Gelir', mod: 'gelir', sayfalar: GELIR_SAYFALAR },
 ];
+const TUM_SAYFALAR = BOLUMLER.flatMap((b) => b.sayfalar.map((x) => ({ ...x, mod: b.mod })));
 
 const sekmeAdresten = () => {
   const p = (window.location.pathname || '').replace(/\/+$/, '');
   const son = p.replace(/^\/evvel-yeni/, '').split('/').filter(Boolean).pop() || '';
-  return SAYFALAR.some((x) => x.id === son) ? son : 'kasam';
+  return TUM_SAYFALAR.some((x) => x.id === son) ? son : 'kasam';
 };
 
 const KABUK_CSS = `
@@ -134,7 +138,9 @@ export default function EvvelYeniApp() {
             ))}</React.Fragment>))}
           </nav>
           <main className="piapp-ic">
-            <KasaModulu gorunum={sekme} onSekme={sekmeDegis} onToast={setToast} onVeri={veriGeldi} sekmesiz />
+            {(TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'gelir'
+              ? <GelirModulu />
+              : <KasaModulu gorunum={sekme} onSekme={sekmeDegis} onToast={setToast} onVeri={veriGeldi} sekmesiz />}
           </main>
         </div>
       )}
