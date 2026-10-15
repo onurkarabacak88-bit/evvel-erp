@@ -229,7 +229,7 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit }) {
 // ─── Form penceresi ───
 const BASLIK = {
   acilis: 'Açılış bakiyesi', donem: 'Yeni başlangıç', kapanis: 'Şube kapanışı', dis: 'Dış kaynaktan giriş', teslim: 'Şubeden teslim',
-  tasima: 'Para taşı / hesaba yatır', sayim: 'Sayım / ekstre bakiyesi', pos: 'POS / online parası bankaya yattı', odeme: 'Ödeme', coz: 'Farkı çöz', iptal: 'Kaydı iptal et', aktar: 'Eski sistemden aktar',
+  tasima: 'Para taşı / hesaba yatır', sayim: 'Sayım / ekstre bakiyesi', pos: 'Online platform parası bankaya yattı', odeme: 'Ödeme', coz: 'Farkı çöz', iptal: 'Kaydı iptal et', aktar: 'Eski sistemden aktar',
 };
 const alanStil = {
   width: '100%', padding: '8px 10px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, background: R.girinti,
@@ -251,7 +251,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
     .map((c) => <option key={c.id} value={c.id}>{c.ad}{bakiyeli ? ` · ${fmt(bak[c.id])} ₺` : ''}</option>);
   const ilk = (turler) => (cepler.find((c) => !turler || turler.includes(c.tur)) || {}).id || '';
   const [d, setD] = useState(() => ({
-    is_gunu: form.gun || gun, cep: form.cep || ilk(tip === 'kapanis' ? ['sube'] : tip === 'pos' ? ['banka'] : null),
+    is_gunu: form.gun || gun, cep: form.cep || (tip === 'pos' ? ((cepler.find((c) => c.tur === 'banka' && !c.kira) || {}).id || '') : ilk(tip === 'kapanis' ? ['sube'] : null)),
     kaynak: ilk(tip === 'teslim' ? ['sube'] : null), hedef: ilk(tip === 'teslim' ? ['ev'] : ['ev', 'hesap']),
     alt: 'borc', kimin: 'Ortak', parcalar: [{ cep: '', tutar: '' }], sorumlu: '', sebep: '',
   }));
@@ -302,7 +302,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
       } else {
         const body = { tur: tip === 'coz' ? 'cozum' : tip, is_gunu: d.is_gunu };
         if (['acilis', 'kapanis', 'dis', 'sayim', 'pos'].includes(tip)) body.cep = d.cep;
-        if (tip === 'pos') { body.tur = 'pos_yatis'; body.alt = d.kanal || 'pos'; body.kart = d.kart ? Number(d.kart) : null; }
+        if (tip === 'pos') { body.tur = 'pos_yatis'; body.alt = 'online'; body.kart = d.kart ? Number(d.kart) : null; }
         if (tip === 'teslim') { body.kaynak = d.kaynak; body.hedef = d.hedef; body.teslim_eden = d.teslim_eden; }
         if (tip === 'tasima') {
           body.hedef = d.hedef;
@@ -310,7 +310,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         }
         if (tip === 'sayim') body.sayilan = Number(d.sayilan);
         else if (tip !== 'coz' && tip !== 'odeme' && tip !== 'tasima') body.tutar = Number(d.tutar);
-        if (tip === 'kapanis') body.kart = Number(d.kart || 0);
+        if (tip === 'kapanis') { body.kart = Number(d.kart || 0); body.online = Number(d.online || 0); }
         if (tip === 'dis') { body.alt = d.alt; body.kimden = d.kimden; body.not = d.not; }
         if (tip === 'odeme') {
           body.tutar = Number(d.tutar); body.aciklama = d.aciklama; body.kimin = d.kimin;
@@ -358,7 +358,8 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
             <Alan etiket="Şube"><select value={d.cep} onChange={set('cep')} style={alanStil}>{secenek(['sube'])}</select></Alan>
             {gunAlani}
             {tutarAlani('Nakit (₺)')}
-            <Alan etiket="Kart / online (₺)" ipucu="Bankaya geçer, nakde girmez"><input type="number" min="0" step="0.01" value={d.kart || ''} onChange={set('kart')} style={alanStil} /></Alan>
+            <Alan etiket="POS / kart (₺)" ipucu="Ertesi gün bankaya kendiliğinden geçer"><input type="number" min="0" step="0.01" value={d.kart || ''} onChange={set('kart')} style={alanStil} /></Alan>
+            <Alan etiket="Online (₺)" ipucu="Platform öder, elle girilir"><input type="number" min="0" step="0.01" value={d.online || ''} onChange={set('online')} style={alanStil} /></Alan>
           </div>
         </>)}
 
@@ -366,10 +367,9 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
           const bc = cepler.find((c) => c.id === d.cep) || {};
           const bek = (veri.pos || []).filter((x) => x.banka_cep === d.cep);
           return (<>
-            <div style={{ fontSize: 12.5, color: R.metin2 }}>Bankaya yatan <b>net</b> tutarı gir. Brüt satışı bilmiyorsan boş bırak — şubenin komisyon oranıyla tahmin edilir ve "tahmini" diye işaretlenir.</div>
+            <div style={{ fontSize: 12.5, color: R.metin2 }}><b>POS (kart) ertesi gün kendiliğinden yatar — buraya girilmez.</b> Burası yalnız online platform (Yemeksepeti, Getir vb.) yatışları için. Yatan <b>net</b> tutarı gir; brüt satışı bilmiyorsan boş bırak.</div>
             <div style={izgara}>
-              <Alan etiket="Hangi bankaya"><select value={d.cep} onChange={set('cep')} style={alanStil}>{secenek(['banka'])}</select></Alan>
-              <Alan etiket="Kanal"><select value={d.kanal || 'pos'} onChange={set('kanal')} style={alanStil}><option value="pos">POS (kart)</option><option value="online">Online (platform)</option></select></Alan>
+              <Alan etiket="Hangi şubenin bankasına"><select value={d.cep} onChange={set('cep')} style={alanStil}>{cepler.filter((c) => c.tur === 'banka' && !c.kira).map((c) => <option key={c.id} value={c.id}>{c.ad}</option>)}</select></Alan>
               {tutarAlani('Yatan net (₺)')}
               <Alan etiket="Brüt satış (₺)" ipucu="Bilmiyorsan boş bırak"><input type="number" min="0" step="0.01" value={d.kart || ''} onChange={set('kart')} style={alanStil} /></Alan>
               {gunAlani}
@@ -470,7 +470,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
             <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 130px auto', gap: 8 }}>
               <select value={p.cep} onChange={(e) => setD((x) => ({ ...x, parcalar: x.parcalar.map((q, j) => (j === i ? { ...q, cep: e.target.value } : q)) }))} style={alanStil}>
                 <option value="">Cep seç</option>
-                {cepler.map((c) => <option key={c.id} value={c.id} disabled={(secili.includes(c.id) && p.cep !== c.id) || (bak[c.id] || 0) < 0.5}>{c.ad} · {(bak[c.id] || 0) < 0.5 ? 'boş' : `${fmt(bak[c.id])} ₺`}</option>)}
+                {cepler.map((c) => <option key={c.id} value={c.id} disabled={(secili.includes(c.id) && p.cep !== c.id) || (bak[c.id] || 0) <= 0}>{c.ad} · {(bak[c.id] || 0) <= 0 ? 'boş' : `${fmt(bak[c.id])} ₺`}</option>)}
               </select>
               <input type="number" min="0" step="0.01" placeholder="Tutar" value={p.tutar} onChange={(e) => setD((x) => ({ ...x, parcalar: x.parcalar.map((q, j) => (j === i ? { ...q, tutar: e.target.value } : q)) }))} style={alanStil} />
               <Dugme kucuk onClick={() => setD((x) => ({ ...x, parcalar: x.parcalar.filter((_, j) => j !== i) }))}>Sil</Dugme>
@@ -808,12 +808,13 @@ function BankaSekmesi({ onToast, onDegisti }) {
   }, [ay]);
   useEffect(() => { yukle(); }, [yukle]);
   const karsilastir = async (b) => {
-    const t = ekstre[b.cep];
+    const anahtar = `${v.ay}|${b.cep}`;
+    const t = ekstre[anahtar];
     if (t === undefined || t === '') { onToast?.('Ekstredeki bakiyeyi yaz'); return; }
     try {
       await api('/para-izi/hareket', { method: 'POST', body: { tur: 'sayim', cep: b.cep, is_gunu: v.kesit, sayilan: Number(t) } });
       onToast?.('Ekstre bakiyesi kaydedildi');
-      setEkstre((x) => { const k = { ...x }; delete k[b.cep]; return k; });
+      setEkstre((x) => { const k = { ...x }; delete k[anahtar]; return k; });
       yukle(); onDegisti?.();
     } catch (e) { onToast?.(e.message); }
   };
@@ -831,7 +832,8 @@ function BankaSekmesi({ onToast, onDegisti }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
         {v.bankalar.map((b) => {
           const e = b.ekstre;
-          const renk = !e ? R.cizgi : e.fark ? R.kirmizi : R.yesil;
+          const an = `${v.ay}|${b.cep}`;
+          const renk = b.acik_farklar.length ? R.kirmizi : !e ? R.cizgi : R.yesil;
           return (
             <div key={b.cep} style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 8, borderLeft: `4px solid ${renk}` }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
@@ -846,18 +848,17 @@ function BankaSekmesi({ onToast, onDegisti }) {
                   <tr><td><b>Programa göre ay sonu</b></td><td style={{ ...num, fontWeight: 700 }}>{fmt(b.program_ay_sonu)}</td></tr>
                 </tbody>
               </table>
-              {e ? (
-                <div style={{ padding: '9px 12px', borderRadius: 9, fontSize: 13, background: e.fark ? 'var(--pi-bad-soft)' : 'var(--pi-good-soft)', color: e.fark ? R.kirmizi : R.yesil, fontWeight: 600 }}>
-                  Ekstre {tUzun(e.gun)}: <span style={num}>{fmt(e.bakiye)}</span> ₺ · program <span style={num}>{fmt(e.program)}</span> ₺ ·{' '}
-                  {e.fark ? `${fmt(Math.abs(e.fark))} ₺ ${e.fark > 0 ? 'eksik' : 'fazla'} → açık farka düştü` : 'TUTTU ✓'}
+              {(b.ekstreler || []).map((x) => (
+                <div key={x.gun} style={{ padding: '8px 12px', borderRadius: 9, fontSize: 13, background: x.fark ? 'var(--pi-bad-soft)' : 'var(--pi-good-soft)', color: x.fark ? R.kirmizi : R.yesil, fontWeight: 600 }}>
+                  Ekstre {tUzun(x.gun)}: <span style={num}>{fmt(x.bakiye)}</span> ₺ · {x.fark ? `${fmt(Math.abs(x.fark))} ₺ ${x.fark > 0 ? 'eksik' : 'fazla'} → açık farka düştü` : 'TUTTU ✓'}
                 </div>
-              ) : (
-                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <input type="number" step="0.01" inputMode="decimal" placeholder="ekstredeki ay sonu bakiyesi" aria-label={`${b.ad} ekstre bakiyesi`}
-                    value={ekstre[b.cep] ?? ''} onChange={(ev) => setEkstre((x) => ({ ...x, [b.cep]: ev.target.value }))} style={{ ...alanStil, flex: 1, minWidth: 160 }} />
-                  <Dugme ana disabled={ekstre[b.cep] === undefined || ekstre[b.cep] === ''} onClick={() => karsilastir(b)}>Karşılaştır</Dugme>
-                </div>
-              )}
+              ))}
+              {b.duzeltme_sonrasi !== b.program_ay_sonu && <div style={{ fontSize: 12, color: R.not }}>Ekstre düzeltmesi sonrası bakiye: <b style={num}>{fmt(b.duzeltme_sonrasi)}</b> ₺</div>}
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <input type="number" step="0.01" inputMode="decimal" placeholder={`ekstredeki ${tUzun(v.kesit)} bakiyesi`} aria-label={`${b.ad} ekstre bakiyesi`}
+                  value={ekstre[an] ?? ''} onChange={(ev) => setEkstre((x) => ({ ...x, [an]: ev.target.value }))} style={{ ...alanStil, flex: 1, minWidth: 160 }} />
+                <Dugme ana disabled={ekstre[an] === undefined || ekstre[an] === ''} onClick={() => karsilastir(b)}>{e ? 'Yeni ekstre' : 'Karşılaştır'}</Dugme>
+              </div>
               {b.acik_farklar.length > 0 && <div style={{ fontSize: 12, color: R.kirmizi }}>● {b.acik_farklar.length} açık fark çözülmeyi bekliyor (Para İzi → Bekleyen işler)</div>}
               {b.satir_sayisi > 0 && (
                 <div>
@@ -1137,7 +1138,7 @@ export default function ParaIziModulu({ gorunum, onToast, onSekme, sekmesiz, onV
         <Dugme ana onClick={() => formAc('teslim')}>+ Teslim</Dugme>
         <Dugme ana onClick={() => formAc('tasima')}>+ Taşı / Yatır</Dugme>
         <Dugme ana onClick={() => formAc('sayim')}>+ Sayım</Dugme>
-        <Dugme ana onClick={() => formAc('pos')}>+ POS yattı</Dugme>
+        <Dugme ana onClick={() => formAc('pos')}>+ Online yattı</Dugme>
         <Dugme onClick={() => formAc('odeme')}>+ Ödeme</Dugme>
         <Dugme onClick={() => formAc('kapanis')}>+ Kapanış</Dugme>
         <Dugme onClick={() => formAc('aktar')} title="Dönem başından bu yana kapanış ve teslimleri eski sistemden okur">Eski sistemden aktar</Dugme>

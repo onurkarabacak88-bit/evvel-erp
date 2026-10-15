@@ -326,10 +326,14 @@ def _etki(o: dict, C: dict) -> List[dict]:
 def _bakiye(ol: List[dict], C: dict) -> dict:
     b = {cid: 0 for cid in C}
     b[ACIK] = b[YOLDA] = 0
-    kayip = harcanan = 0
+    kayip = harcanan = acik_kira = 0
     for o in ol:
         for e in _etki(o, C):
             b[e["cep"]] = b.get(e["cep"], 0) + e["d"]
+            if e["cep"] == ACIK:
+                ilgili = o.get("cep") or (o["veri"].get("cep") if o["olay"] == "cozum" else None) or o.get("hedef")
+                if ilgili in KIRA_CEPLERI:
+                    acik_kira += e["d"]
         if o["olay"] == "cozum":
             if o["veri"].get("sebep") == "kayip":
                 kayip += int(o["veri"].get("f", 0))
@@ -342,7 +346,8 @@ def _bakiye(ol: List[dict], C: dict) -> dict:
     return {"b": b, "ev": ev, "sube": sube, "gecis": gecis, "banka": banka, "nakit": ev + sube,
             "kira": kira, "hepsi": toplam + kira,
             "yolda": b[YOLDA], "gecis_yolda": gecis + b[YOLDA],
-            "toplam": toplam, "acik": b[ACIK], "defter": toplam + b[ACIK], "kayip": kayip, "harcanan": harcanan}
+            "toplam": toplam, "acik": b[ACIK], "defter": toplam + b[ACIK] - acik_kira, "acik_kira": acik_kira,
+            "kayip": kayip, "harcanan": harcanan}
 
 
 def _farklar(ol: List[dict], C: dict) -> List[dict]:
@@ -610,11 +615,14 @@ def _isler(kayitlar: List[dict], C: dict, fl: List[dict]) -> List[dict]:
     return out
 
 
-def _yukle(cur):
-    """Yalnız GEÇERLİ DÖNEMİN kayıtları. Önceki dönem silinmez, hesaba girmez (arşiv)."""
+def _yukle(cur, tum_donemler: bool = False):
+    """Varsayılan: yalnız GEÇERLİ DÖNEMİN kayıtları (önceki dönem silinmez, hesaba girmez).
+    tum_donemler=True: arşiv dahil (POS devri, eski ay mutabakatı)."""
     cep_list = _cepler(cur)
     C = {c["id"]: c for c in cep_list}
     kayit, iptaller = _ham(cur)
+    if tum_donemler:
+        return cep_list, C, kayit, iptaller
     bas = _baslangic(cur).isoformat()
     return cep_list, C, [h for h in kayit if h["is_gunu"] >= bas], iptaller
 
@@ -818,12 +826,16 @@ def banka_mutabakat(ay: Optional[str] = None):
     ay_son = date.fromordinal(sonraki.toordinal() - 1)
     kesit = min(ay_son, bugun).isoformat()       # ay bitmediyse bugüne kadar
     with db() as (conn, cur):
-        cep_list, C, kayit, _ = _yukle(cur)
+        _kilit(cur)
+        _pos_otomatik(cur)                     # vadesi gelen POS mutabakattan önce yazılır
+        cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
     ol = _olaylar(kayit)
     once = [o for o in ol if o["gun"] < ay_bas.isoformat()]
     icinde = [o for o in ol if ay_bas.isoformat() <= o["gun"] <= kesit]
     Bo = _bakiye(once, C)["b"]
     Bs = _bakiye(once + icinde, C)["b"]
+    # Codex: "programa göre ay sonu" ekstre düzeltmesinden ÖNCE olmalı (sayım/çözüm hariç)
+    Bp = _bakiye(once + [o for o in icinde if o["olay"] not in ("sayim", "cozum")], C)["b"]
     TUR_ADI = {"pos_yatis": "POS / online", "tasima": "Yatırma / transfer", "dis": "Dış giriş (EFT, kira…)",
                "odeme": "Ödemeler", "acilis": "Açılış", "sayim": "Ekstre farkı", "cozum": "Fark çözümü"}
     out = []
@@ -832,7 +844,7 @@ def banka_mutabakat(ay: Optional[str] = None):
             continue
         cid = c["id"]
         satirlar, giris, cikis = [], {}, {}
-        for o in icinde:
+        for o in [x for x in icinde if x["olay"] not in ("sayim", "cozum")]:
             for e in _etki(o, C):
                 if e["cep"] != cid:
                     continue
@@ -844,16 +856,19 @@ def banka_mutabakat(ay: Optional[str] = None):
         son = sayimlar[-1] if sayimlar else None
         fl = [x for x in _farklar(ol, C) if x["cep"] == cid and ay_bas.isoformat() <= x["tarih"] <= kesit]
         out.append({"cep": cid, "ad": c["ad"], "tur": c["tur"], "kira": cid in KIRA_CEPLERI,
-                    "ay_basi": _tl_sayi(Bo.get(cid, 0)), "program_ay_sonu": _tl_sayi(Bs.get(cid, 0)),
+                    "ay_basi": _tl_sayi(Bo.get(cid, 0)), "program_ay_sonu": _tl_sayi(Bp.get(cid, 0)),
+                    "duzeltme_sonrasi": _tl_sayi(Bs.get(cid, 0)),
                     "giris": [{"ad": k, "tutar": _tl_sayi(v)} for k, v in giris.items()],
                     "cikis": [{"ad": k, "tutar": _tl_sayi(v)} for k, v in cikis.items()],
                     "satir_sayisi": len(satirlar), "satirlar": satirlar,
+                    "ekstreler": [{"gun": x["gun"], "bakiye": _tl_sayi(int(x["veri"].get("sayilan", 0))),
+                                   "fark": _tl_sayi(int(x["veri"].get("beklenen", 0)) - int(x["veri"].get("sayilan", 0)))} for x in sayimlar],
                     "ekstre": None if not son else {"gun": son["gun"], "bakiye": _tl_sayi(int(son["veri"].get("sayilan", 0))),
                                                      "program": _tl_sayi(int(son["veri"].get("beklenen", 0))),
                                                      "fark": _tl_sayi(int(son["veri"].get("beklenen", 0)) - int(son["veri"].get("sayilan", 0)))},
                     "acik_farklar": [{**x, "f": _tl_sayi(x["f"])} for x in fl if not x["coz"]]})
     return {"ay": a_, "ay_basi": ay_bas.isoformat(), "ay_sonu": ay_son.isoformat(), "kesit": kesit,
-            "ay_bitti": ay_son <= bugun, "bankalar": out}
+            "ay_bitti": ay_son < bugun, "bankalar": out}
 
 
 @router.get("/acik-defter")
@@ -932,6 +947,7 @@ class HareketBody(BaseModel):
     sebep: Optional[str] = None
     sorumlu: Optional[str] = None
     teslim_eden: Optional[str] = None
+    online: Optional[Decimal] = None
 
 
 def _yaz(cur, tur, gun, kaydeden, cep=None, kaynak=None, hedef=None, tutar=0, durum=None, veri=None, kaynak_ref=None):
@@ -995,12 +1011,13 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
             yeni = _sahte(t, gun, cep=body.cep, tutar=tut)
         elif t == "kapanis":
             cep_var(body.cep, {"sube"})
-            kart = _kurus(body.kart or 0)
+            kart = _kurus(body.kart or 0)          # elle kapanışta 'kart' = POS
+            onl = _kurus(body.online or 0)
             if tut < 0 or kart < 0 or (tut == 0 and kart == 0):
                 raise HTTPException(400, "Nakit ya da kart tutarı gir")
             if any(h["tur"] == "kapanis" and h["cep"] == body.cep and h["is_gunu"] == gun for h in kayit):
                 raise HTTPException(409, "Bu şubenin bu güne ait kapanışı zaten var")
-            yeni = _sahte(t, gun, cep=body.cep, tutar=tut, durum="bekliyor", veri={"kart": kart})
+            yeni = _sahte(t, gun, cep=body.cep, tutar=tut, durum="bekliyor", veri={"kart": kart + onl, "pos": kart, "online": onl})
         elif t == "dis":
             cep_var(body.cep)
             alt = body.alt if body.alt in DIS_TURLERI else None
@@ -1068,7 +1085,9 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
                 raise HTTPException(400, "POS yatışı hangi şubenin satışı? Şube seç.")
             if tut <= 0:
                 raise HTTPException(400, "Yatan tutarı gir")
-            kanal = body.alt if body.alt in ("pos", "online") else "pos"
+            kanal = body.alt if body.alt in ("pos", "online") else "online"
+            if kanal == "pos":
+                raise HTTPException(400, "POS ertesi gün kendiliğinden yatar — elle girilmez. Fark varsa ekstre bakiyesiyle yakalanır.")
             if body.kart is not None and body.kart > 0:
                 brut, tahmini = _kurus(body.kart), False
             else:
@@ -1079,6 +1098,11 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
                                 "not": (body.not_ or "").strip()[:200]})
         elif t == "sayim":
             cep_var(body.cep)
+            if C[body.cep]["tur"] == "banka":
+                _pos_otomatik(cur)
+                cep_list, C, kayit, _ = _yukle(cur)
+                ol = _olaylar(kayit)
+                kilit = _sayim_kilidi(ol)
             if body.sayilan is None or body.sayilan < 0:
                 raise HTTPException(400, "Sayılan tutarı gir")
             beklenen = _bakiye([o for o in ol if o["gun"] <= gun], C)["b"].get(body.cep, 0)
@@ -1263,9 +1287,14 @@ def _pos_otomatik(cur) -> int:
     """Kapanış günü + POS_YATIS_GUN geçmiş her kapanışın POS'unu şube bankasına 'beklenen net'
     olarak yazar (kaynak_ref 'pos_oto:<kapanış>' → bir kez). Banka o gün ve sonrası sayıldıysa
     (sayım kilidi) yazmaz. Kapanış İPTAL edilmişse otomatik yatış da iptal edilir."""
-    cep_list, C, kayit, _ = _yukle(cur)
-    kilit = _sayim_kilidi(_olaylar(kayit))
+    # Codex: 31 Ekim POS'u 1 Kasım'da yatar → kaynak kapanış ÖNCEKİ dönemde olabilir.
+    cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
+    bas = _baslangic(cur).isoformat()
+    kilit = _sayim_kilidi(_olaylar([h for h in kayit if h["is_gunu"] >= bas]))
     oranlar = _oranlar(cur)
+    if not oranlar:
+        log.warning("para-izi POS otomatik: şube komisyon oranları okunamadı — yatış yazılmadı")
+        return 0
     bugun = _bugun()
     var = {h.get("kaynak_ref"): h for h in kayit if (h.get("kaynak_ref") or "").startswith("pos_oto:")}
     cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'pos_oto:%%'")
@@ -1276,29 +1305,41 @@ def _pos_otomatik(cur) -> int:
         if h["tur"] != "kapanis":
             continue
         v = h["veri"]
-        pos = int(v["pos"]) if "pos" in v else int(v.get("kart", 0))
-        if pos <= 0:
+        if "pos" not in v:          # Codex: POS/online ayrılmamış kart toplamı otomatiğe ALINMAZ
             continue
+        pos = int(v["pos"])
         yatis = date.fromordinal(date.fromisoformat(h["is_gunu"]).toordinal() + POS_YATIS_GUN)
-        if yatis > bugun:
+        g = yatis.isoformat()
+        if yatis > bugun or g < bas:
             continue
         sube = C.get(h["cep"], {})
-        banka = "banka:" + str(sube.get("sube_id"))
+        sid = str(sube.get("sube_id"))
+        banka = "banka:" + sid
         ref = "pos_oto:" + h["id"]
-        if banka not in C or ref in her_zaman:
+        if banka not in C or sid not in oranlar:
             continue
-        g = yatis.isoformat()
-        if banka in kilit and g <= kilit[banka]:
+        oran = oranlar[sid][0]
+        net = int((Decimal(pos) * (Decimal(100) - Decimal(str(oran))) / Decimal(100)).quantize(Decimal("1"))) if 0 <= oran < 100 else pos
+        kilitli = banka in kilit and g <= kilit[banka]
+        if ref in var:
+            # Kapanış sonradan düzeltildiyse otomatik yatış da düzelir (kilitli değilse)
+            mevcut = var[ref]
+            if int(mevcut["veri"].get("brut", 0)) != pos and not kilitli:
+                v2 = dict(mevcut["veri"])
+                v2.setdefault("duzeltmeler", []).append({"eski_brut": int(v2.get("brut", 0)), "eski_net": mevcut["tutar"]})
+                v2.update(brut=pos, oran=oran)
+                cur.execute("UPDATE para_izi_hareket SET tutar=%s, veri=%s::jsonb WHERE id=%s",
+                            (net if pos > 0 else 0, json.dumps(v2, ensure_ascii=False), mevcut["id"]))
             continue
-        oran = (oranlar.get(str(sube.get("sube_id"))) or (0, 0))[0]
-        net = round(pos * (1 - float(oran) / 100)) if 0 <= oran < 100 else pos
+        if pos <= 0 or ref in her_zaman or kilitli:
+            continue
         _yaz(cur, "pos_yatis", g, "otomatik (POS ertesi gün)", cep=banka, tutar=net,
              veri={"kanal": "pos", "sube_cep": h["cep"], "brut": pos, "brut_tahmini": False, "otomatik": True,
                    "kapanis_id": h["id"], "oran": oran}, kaynak_ref=ref)
         n += 1
-    # Kapanışı iptal edilenin otomatik yatışı da iptal (iz kalır)
+    # Kapanışı iptal edilenin otomatik yatışı da iptal (iz kalır) — banka sayılmışsa DOKUNMA
     for ref, h in var.items():
-        if h["veri"].get("kapanis_id") not in gecerli_kapanis:
+        if h["veri"].get("kapanis_id") not in gecerli_kapanis and not (h["cep"] in kilit and h["is_gunu"] <= kilit[h["cep"]]):
             _yaz(cur, "iptal", bugun.isoformat(), "otomatik (POS ertesi gün)",
                  veri={"hedef_id": h["id"], "sebep": "Kaynak kapanış iptal edildi"})
     return n
