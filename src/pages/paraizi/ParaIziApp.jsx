@@ -13,11 +13,16 @@ import ParaIziModulu, { SAYFALAR } from './ParaIziModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
-const MENU = SAYFALAR;   // tek kaynak: sayfa listesi modülde
+// Sahip: "evvel yeni yapalım" → uygulamanın adı EVVEL YENİ, adresi /evvel-yeni.
+// Eski /para-izi adresi buraya yönlenir. Sol menü BÖLÜM BÖLÜM büyüyecek (Para · Tedarik · İşletme).
+export const TABAN = '/evvel-yeni';
+const BOLUMLER = [
+  { ad: 'Para', sayfalar: SAYFALAR },
+];
 
 const sekmeAdresten = () => {
   const p = (window.location.pathname || '').replace(/\/+$/, '');
-  const son = p.split('/').pop();
+  const son = p.replace(/^\/(evvel-yeni|para-izi)/, '').split('/').filter(Boolean).pop() || '';
   return SAYFALAR.some((x) => x.id === son) ? son : 'kasam';
 };
 
@@ -63,7 +68,7 @@ function Giris({ onTamam }) {
   };
   return (
     <form className="piapp-giris" onSubmit={gir}>
-      <h1>Para İzi</h1>
+      <h1>Evvel Yeni</h1>
       <div style={{ color: 'var(--ink3)', fontSize: 13 }}>Evvel kullanıcı adın ve şifrenle gir.</div>
       <input id="pi-kadi" aria-label="Kullanıcı adı" placeholder="Kullanıcı adı (ortak şifreyle girişte boş bırak)" value={kadi} onChange={(e) => setKadi(e.target.value)} autoComplete="username" />
       <input id="pi-sifre" aria-label="Şifre" type="password" placeholder="Şifre" value={sifre} onChange={(e) => setSifre(e.target.value)} autoComplete="current-password" />
@@ -83,7 +88,11 @@ export default function ParaIziApp() {
   });
 
   useEffect(() => {
-    document.title = 'Para İzi';
+    document.title = 'Evvel Yeni';
+    // eski adres → yeni adres (geçmişi kirletmeden)
+    if (window.location.pathname.startsWith('/para-izi')) {
+      window.history.replaceState(null, '', window.location.pathname.replace(/^\/para-izi/, TABAN));
+    }
     let jeton = null;
     try { jeton = localStorage.getItem(OTURUM_ANAHTAR); } catch { /* yut */ }
     if (!jeton) { setDurum('giris'); return; }
@@ -103,7 +112,7 @@ export default function ParaIziApp() {
   }, [toast]);
 
   const sekmeDegis = (k) => {
-    const yol = k === 'kasam' ? '/para-izi' : `/para-izi/${k}`;
+    const yol = k === 'kasam' ? TABAN : `${TABAN}/${k}`;
     if (window.location.pathname !== yol) window.history.pushState(null, '', yol);
     setSekme(k);
   };
@@ -111,22 +120,22 @@ export default function ParaIziApp() {
   return (
     <div className="piapp">
       <style>{KABUK_CSS}</style>
-      {durum === 'soruluyor' && <div style={{ padding: 40, color: 'var(--ink3)' }}>Para İzi açılıyor…</div>}
+      {durum === 'soruluyor' && <div style={{ padding: 40, color: 'var(--ink3)' }}>Evvel Yeni açılıyor…</div>}
       {durum === 'giris' && <Giris onTamam={() => setDurum('tamam')} />}
       {durum === 'tamam' && (
         <div className="piapp-duzen">
           {/* SOL MENÜ — sahip: "solda bulunan alanlarda rahatlıkla kurgu yapabileceğiz".
               Yeni konu = yeni satır; bir sayfaya sıkıştırılmaz. Yalnız ÇALIŞAN alanlar listelenir. */}
-          <nav className="piapp-sol" aria-label="Para İzi bölümleri">
-            <div className="piapp-logo">Para İzi</div>
+          <nav className="piapp-sol" aria-label="Evvel Yeni bölümleri">
+            <div className="piapp-logo">Evvel Yeni</div>
 
-            {MENU.map((m) => (
-              <a key={m.id} href={m.id === 'kasam' ? '/para-izi' : `/para-izi/${m.id}`} aria-current={sekme === m.id ? 'page' : undefined}
+            {BOLUMLER.map((b) => (<React.Fragment key={b.ad}><div className="piapp-alt">{b.ad}</div>{b.sayfalar.map((m) => (
+              <a key={m.id} href={m.id === 'kasam' ? TABAN : `${TABAN}/${m.id}`} aria-current={sekme === m.id ? 'page' : undefined}
                 onClick={(e) => { e.preventDefault(); sekmeDegis(m.id); }}>
                 <span>{m.ad}<small>{m.alt}</small></span>
                 {rozet[m.id] ? <span style={{ background: 'var(--bad)', color: 'var(--on)', borderRadius: 999, padding: '0 8px', fontSize: 12, fontWeight: 700 }}>{rozet[m.id]}</span> : null}
               </a>
-            ))}
+            ))}</React.Fragment>))}
           </nav>
           <main className="piapp-ic">
             <ParaIziModulu gorunum={sekme} onSekme={sekmeDegis} onToast={setToast} onVeri={veriGeldi} sekmesiz />

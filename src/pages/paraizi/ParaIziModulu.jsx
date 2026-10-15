@@ -1117,7 +1117,7 @@ export default function ParaIziModulu({ gorunum, onToast, onSekme, sekmesiz, onV
       {/* BAŞLIK + TOPLAM KASA (her sayfada küçük) */}
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
         <div>
-          <div className="pi-eyebrow">Para İzi · dönem {tUzun(veri.baslangic)}</div>
+          <div className="pi-eyebrow">Evvel Yeni · Para · dönem {tUzun(veri.baslangic)}</div>
           <h1 style={{ fontSize: 30 }}>{sayfaAd}</h1>
         </div>
         {sekme !== 'kasam' && (

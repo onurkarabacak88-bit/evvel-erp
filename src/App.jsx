@@ -310,7 +310,8 @@ function AdminGirisKapisi({ onBasarili }) {
 export default function App() {
   // 🧵 PARA İZİ — sade çekirdek, KENDİ ADRESİNDE ayrı uygulama (sahip 2026-10-15:
   // "kadife tasarımda değil ayrı bir alanda yap, sonra eskiyi tamamen kaldırsak").
-  if (window.location.pathname === '/para-izi' || window.location.pathname.startsWith('/para-izi/')) {
+  // Sahip: "evvel yeni yapalım" → /evvel-yeni; eski /para-izi aynı uygulamaya düşer (içeride yönlenir).
+  if (/^\/(evvel-yeni|para-izi)(\/|$)/.test(window.location.pathname)) {
     return <ParaIziApp />;
   }
 
