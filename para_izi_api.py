@@ -800,6 +800,62 @@ def teslimler():
             "otomatik_kabul_gun": OTOMATIK_KABUL_GUN, "duzeltme_suresi_gun": DUZELTME_SURESI_GUN}
 
 
+@router.get("/banka-mutabakat")
+def banka_mutabakat(ay: Optional[str] = None):
+    """🧾 AYLIK BANKA MUTABAKATI (sahip: "her ay ekstreyi senin mantığınla kontrol eder,
+    programdan karşılaştırmasını yaparız"). Her banka için: ay başı bakiye + girişler
+    (türüne göre) − çıkışlar = programa göre ay sonu; ekstrenin ay sonu bakiyesi 'sayım'
+    olarak girilir → fark açık farka düşer (mevcut kural). Ayın satırları ekstreyle tek
+    tek karşılaştırılabilsin diye Excel düzeninde döner."""
+    _hazirla()
+    bugun = _bugun()
+    a_ = (ay or bugun.strftime("%Y-%m"))[:7]
+    try:
+        ay_bas = date.fromisoformat(a_ + "-01")
+    except ValueError:
+        raise HTTPException(400, "ay YYYY-AA olmalı")
+    sonraki = date(ay_bas.year + (ay_bas.month == 12), 1 if ay_bas.month == 12 else ay_bas.month + 1, 1)
+    ay_son = date.fromordinal(sonraki.toordinal() - 1)
+    kesit = min(ay_son, bugun).isoformat()       # ay bitmediyse bugüne kadar
+    with db() as (conn, cur):
+        cep_list, C, kayit, _ = _yukle(cur)
+    ol = _olaylar(kayit)
+    once = [o for o in ol if o["gun"] < ay_bas.isoformat()]
+    icinde = [o for o in ol if ay_bas.isoformat() <= o["gun"] <= kesit]
+    Bo = _bakiye(once, C)["b"]
+    Bs = _bakiye(once + icinde, C)["b"]
+    TUR_ADI = {"pos_yatis": "POS / online", "tasima": "Yatırma / transfer", "dis": "Dış giriş (EFT, kira…)",
+               "odeme": "Ödemeler", "acilis": "Açılış", "sayim": "Ekstre farkı", "cozum": "Fark çözümü"}
+    out = []
+    for c in cep_list:
+        if c["tur"] not in ("banka", "hesap"):
+            continue
+        cid = c["id"]
+        satirlar, giris, cikis = [], {}, {}
+        for o in icinde:
+            for e in _etki(o, C):
+                if e["cep"] != cid:
+                    continue
+                ad = TUR_ADI.get(o["olay"], o["olay"])
+                (giris if e["d"] > 0 else cikis)[ad] = (giris if e["d"] > 0 else cikis).get(ad, 0) + abs(e["d"])
+                satirlar.append({"gun": o["gun"], "tur": o["olay"], "etiket": e["etiket"], "d": _tl_sayi(e["d"]),
+                                 "otomatik": bool(o["veri"].get("otomatik")), **_iz_kim(o, C)})
+        sayimlar = [o for o in icinde if o["olay"] == "sayim" and o["cep"] == cid]
+        son = sayimlar[-1] if sayimlar else None
+        fl = [x for x in _farklar(ol, C) if x["cep"] == cid and ay_bas.isoformat() <= x["tarih"] <= kesit]
+        out.append({"cep": cid, "ad": c["ad"], "tur": c["tur"], "kira": cid in KIRA_CEPLERI,
+                    "ay_basi": _tl_sayi(Bo.get(cid, 0)), "program_ay_sonu": _tl_sayi(Bs.get(cid, 0)),
+                    "giris": [{"ad": k, "tutar": _tl_sayi(v)} for k, v in giris.items()],
+                    "cikis": [{"ad": k, "tutar": _tl_sayi(v)} for k, v in cikis.items()],
+                    "satir_sayisi": len(satirlar), "satirlar": satirlar,
+                    "ekstre": None if not son else {"gun": son["gun"], "bakiye": _tl_sayi(int(son["veri"].get("sayilan", 0))),
+                                                     "program": _tl_sayi(int(son["veri"].get("beklenen", 0))),
+                                                     "fark": _tl_sayi(int(son["veri"].get("beklenen", 0)) - int(son["veri"].get("sayilan", 0)))},
+                    "acik_farklar": [{**x, "f": _tl_sayi(x["f"])} for x in fl if not x["coz"]]})
+    return {"ay": a_, "ay_basi": ay_bas.isoformat(), "ay_sonu": ay_son.isoformat(), "kesit": kesit,
+            "ay_bitti": ay_son <= bugun, "bankalar": out}
+
+
 @router.get("/acik-defter")
 def acik_defter():
     """Açık farklar defteri — sahip: 'açıkları toplayarak gün gün toplam açık tutmalıyım'."""

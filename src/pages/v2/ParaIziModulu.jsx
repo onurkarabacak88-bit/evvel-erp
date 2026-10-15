@@ -781,11 +781,111 @@ function TeslimSekmesi({ onToast, onDegisti }) {
   );
 }
 
+// ─── BANKA MUTABAKATI sekmesi (sahip: "her ay ekstreyi senin mantığınla kontrol eder,
+// programdan karşılaştırmasını yaparız") — rakamların hepsi sunucudan; ekran yalnız dizer.
+function BankaSekmesi({ onToast, onDegisti }) {
+  const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState(null);
+  const [ekstre, setEkstre] = useState({});
+  const [acik, setAcik] = useState({});
+  const no = useRef(0);
+  const yukle = useCallback(async () => {
+    const n = ++no.current;
+    try { const r = await api(`/para-izi/banka-mutabakat?ay=${ay}`); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
+  }, [ay]);
+  useEffect(() => { yukle(); }, [yukle]);
+  const karsilastir = async (b) => {
+    const t = ekstre[b.cep];
+    if (t === undefined || t === '') { onToast?.('Ekstredeki bakiyeyi yaz'); return; }
+    try {
+      await api('/para-izi/hareket', { method: 'POST', body: { tur: 'sayim', cep: b.cep, is_gunu: v.kesit, sayilan: Number(t) } });
+      onToast?.('Ekstre bakiyesi kaydedildi');
+      setEkstre((x) => { const k = { ...x }; delete k[b.cep]; return k; });
+      yukle(); onDegisti?.();
+    } catch (e) { onToast?.(e.message); }
+  };
+  if (hata && !v) return <div style={{ ...kart, padding: 16, color: R.kirmizi }}>Mutabakat okunamadı: {hata} <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme></div>;
+  if (!v) return <div style={{ color: R.not }}>Mutabakat okunuyor…</div>;
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <div style={{ ...kart, padding: '10px 14px', fontSize: 13, color: R.metin2, background: 'var(--pi-bg)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
+        <span>Ay sonunda bankanın ekstresini aç: programın hesapladığı <b>ay sonu bakiyesi</b> ekstredekiyle aynı mı? Ekstre bakiyesini yaz, fark varsa açık farka düşer.</span>
+        <label style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5 }}>Ay
+          <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alanStil, width: 'auto', padding: '5px 8px' }} />
+        </label>
+      </div>
+      {!v.ay_bitti && <div style={{ fontSize: 12.5, color: R.amber }}>Bu ay henüz bitmedi — rakamlar {tUzun(v.kesit)} itibarıyla.</div>}
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(320px, 1fr))', gap: 12 }}>
+        {v.bankalar.map((b) => {
+          const e = b.ekstre;
+          const renk = !e ? R.cizgi : e.fark ? R.kirmizi : R.yesil;
+          return (
+            <div key={b.cep} style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 8, borderLeft: `4px solid ${renk}` }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'baseline' }}>
+                <b style={{ fontSize: 15 }}>{b.ad}</b>
+                {b.kira ? <Cip tur="bakir">kira · işletmeden ayrı</Cip> : b.tur === 'hesap' ? <Cip>geçiş hesabı</Cip> : null}
+              </div>
+              <table className="pi-tablo">
+                <tbody>
+                  <tr><td>Ay başı bakiye</td><td style={num}>{fmt(b.ay_basi)}</td></tr>
+                  {b.giris.map((g) => <tr key={`g${g.ad}`}><td style={{ color: R.metin2 }}>+ {g.ad}</td><td style={{ ...num, color: R.yesil }}>{fmt(g.tutar)}</td></tr>)}
+                  {b.cikis.map((g) => <tr key={`c${g.ad}`}><td style={{ color: R.metin2 }}>− {g.ad}</td><td style={{ ...num, color: R.kirmizi }}>{fmt(g.tutar)}</td></tr>)}
+                  <tr><td><b>Programa göre ay sonu</b></td><td style={{ ...num, fontWeight: 700 }}>{fmt(b.program_ay_sonu)}</td></tr>
+                </tbody>
+              </table>
+              {e ? (
+                <div style={{ padding: '9px 12px', borderRadius: 9, fontSize: 13, background: e.fark ? 'var(--pi-bad-soft)' : 'var(--pi-good-soft)', color: e.fark ? R.kirmizi : R.yesil, fontWeight: 600 }}>
+                  Ekstre {tUzun(e.gun)}: <span style={num}>{fmt(e.bakiye)}</span> ₺ · program <span style={num}>{fmt(e.program)}</span> ₺ ·{' '}
+                  {e.fark ? `${fmt(Math.abs(e.fark))} ₺ ${e.fark > 0 ? 'eksik' : 'fazla'} → açık farka düştü` : 'TUTTU ✓'}
+                </div>
+              ) : (
+                <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                  <input type="number" step="0.01" inputMode="decimal" placeholder="ekstredeki ay sonu bakiyesi" aria-label={`${b.ad} ekstre bakiyesi`}
+                    value={ekstre[b.cep] ?? ''} onChange={(ev) => setEkstre((x) => ({ ...x, [b.cep]: ev.target.value }))} style={{ ...alanStil, flex: 1, minWidth: 160 }} />
+                  <Dugme ana disabled={ekstre[b.cep] === undefined || ekstre[b.cep] === ''} onClick={() => karsilastir(b)}>Karşılaştır</Dugme>
+                </div>
+              )}
+              {b.acik_farklar.length > 0 && <div style={{ fontSize: 12, color: R.kirmizi }}>● {b.acik_farklar.length} açık fark çözülmeyi bekliyor (Para İzi → Bekleyen işler)</div>}
+              {b.satir_sayisi > 0 && (
+                <div>
+                  <button type="button" onClick={() => setAcik((x) => ({ ...x, [b.cep]: !x[b.cep] }))} style={{ border: 'none', background: 'transparent', color: 'var(--pi-accent)', cursor: 'pointer', font: 'inherit', fontSize: 12.5, padding: 0 }}>
+                    {acik[b.cep] ? '▾' : '▸'} Ayın {b.satir_sayisi} hareketi — ekstreyle satır satır karşılaştır
+                  </button>
+                  {acik[b.cep] && (
+                    <div style={{ overflowX: 'auto', marginTop: 6, border: '1px solid var(--pi-line)', borderRadius: 10 }}>
+                      <table className="pi-tablo pi-excel">
+                        <thead><tr><th>Gün</th><th style={{ textAlign: 'left' }}>Hareket</th><th style={{ textAlign: 'left' }}>Şube</th><th style={{ textAlign: 'left' }}>Kim</th><th>Giren</th><th>Çıkan</th></tr></thead>
+                        <tbody>
+                          {b.satirlar.map((x, i) => (
+                            <tr key={i}>
+                              <td style={{ ...num, whiteSpace: 'nowrap' }}>{tKisa(x.gun)}</td>
+                              <td style={{ textAlign: 'left' }}>{IZ_AD[x.tur] || x.etiket}{x.otomatik ? <span style={{ color: R.not }}> · otomatik</span> : null}</td>
+                              <td style={{ textAlign: 'left' }}>{x.sube || '—'}</td>
+                              <td style={{ textAlign: 'left' }}>{x.personel || '—'}</td>
+                              <td style={{ ...num, color: R.yesil }}>{x.d > 0 ? fmt(x.d) : ''}</td>
+                              <td style={{ ...num, color: R.kirmizi }}>{x.d < 0 ? fmt(-x.d) : ''}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
 // ─────────────────────────── ANA MODÜL ───────────────────────────
 export default function ParaIziModulu({ gorunum, onToast }) {
   const [ck, setCk] = useState(null);
-  const [sekme, setSekme] = useState(gorunum === 'teslim' ? 'teslim' : 'izi');
-  useEffect(() => { if (gorunum) setSekme(gorunum === 'teslim' ? 'teslim' : 'izi'); }, [gorunum]);
+  const [sekme, setSekme] = useState(['teslim', 'banka'].includes(gorunum) ? gorunum : 'izi');
+  useEffect(() => { if (gorunum) setSekme(['teslim', 'banka'].includes(gorunum) ? gorunum : 'izi'); }, [gorunum]);
   const onCekmece = setCk;   // aşağıdaki çekmece çağrıları aynı kalır, Evvel kabuğuna değil buraya açılır
   const [gun, setGun] = useState(() => {
     try { return localStorage.getItem('paraIziGun') || iso(new Date()); } catch { return iso(new Date()); }
@@ -959,7 +1059,7 @@ export default function ParaIziModulu({ gorunum, onToast }) {
         const nTes = veri.isler.filter((x) => x.tur === 'teslim').length;
         return (
           <div role="tablist" style={{ display: 'flex', gap: 6, flexWrap: 'wrap', borderBottom: `1px solid ${R.cizgi}`, paddingBottom: 8 }}>
-            {[['izi', 'Para İzi', null], ['teslim', 'Teslim Onayları', nTes]].map(([k, a, n]) => (
+            {[['izi', 'Para İzi', null], ['teslim', 'Teslim Onayları', nTes], ['banka', 'Banka Mutabakatı', null]].map(([k, a, n]) => (
               <button key={k} type="button" role="tab" aria-selected={sekme === k} onClick={() => setSekme(k)} style={{
                 padding: '7px 14px', borderRadius: 9, font: 'inherit', fontWeight: 600, cursor: 'pointer',
                 border: `1px solid ${sekme === k ? 'var(--pi-accent)' : 'var(--pi-line)'}`,
@@ -969,7 +1069,7 @@ export default function ParaIziModulu({ gorunum, onToast }) {
           </div>
         );
       })()}
-      {sekme === 'teslim' ? <TeslimSekmesi onToast={onToast} onDegisti={yukle} /> : (<>
+      {sekme === 'banka' ? <BankaSekmesi onToast={onToast} onDegisti={yukle} /> : sekme === 'teslim' ? <TeslimSekmesi onToast={onToast} onDegisti={yukle} /> : (<>
       {/* ÜST ÇUBUK */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         {veri.isler.length > 0 && (
