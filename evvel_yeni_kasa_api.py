@@ -1679,6 +1679,112 @@ def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) 
     return sonuc
 
 
+# ─────────────────────── PANEL SAYIMLARI → KASA (sahip 2026-10-16) ───────────────────────
+# "Kasa teslim ve sabahta kasa açılış giriliyor ya" → panelde ZATEN sayım var:
+#   · SABAH AÇILIŞ: kasiyer çekmeceyi sayar (sube_operasyon_event ACILIS.kasa_sayim)
+#     = bir önceki günün SONU → sayım, tarihi (gün − 1)
+#   · AKŞAM KAPANIŞ kör sayımı: sayılan − gün sonu teslim = çekmecede kalan → sayım, tarihi gün
+# Dönem açılışı hiç girilmediyse: dönemin İLK günü sabahki panel sayımı = dükkânın AÇILIŞ bakiyesi.
+# Tutmayan her sayım → AÇIK FARK (sebep sorulur). İdempotent: kaynak_ref ile bir kez.
+def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dict:
+    bas = _baslangic(cur)
+    cep_list, C, kayit, _ = _yukle(cur)
+    try:
+        with savepoint(cur, "sp_pi_panel_sayim"):
+            cur.execute("""SELECT sube_id::text AS sube_id, tarih, tip, kasa_sayim, COALESCE(teslim,0) AS teslim, cevap_ts
+                             FROM sube_operasyon_event
+                            WHERE tarih >= %s AND tarih <= %s AND durum = 'tamamlandi' AND tip IN ('ACILIS','KAPANIS')
+                              AND kasa_sayim IS NOT NULL
+                            ORDER BY tarih, cevap_ts NULLS LAST""", (bas, _bugun()))
+            olaylar = [dict(r) for r in cur.fetchall() or []]
+    except Exception as e:  # noqa: BLE001
+        return {"hata": str(e)[:200], "acilis": [], "sayim": [], "atlanan": []}
+    refler = {h.get("kaynak_ref") or "" for h in kayit}
+    cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'sayim_%%' OR kaynak_ref LIKE 'acilis_panel:%%'")
+    refler |= {dict(x)["kaynak_ref"] for x in cur.fetchall() or []}
+    sim = list(kayit)                 # yazılacakları da hesaba katan sanal defter (beklenen doğru çıksın)
+    rapor = {"acilis": [], "sayim": [], "atlanan": []}
+    bas_i = bas.isoformat()
+    # 1) AÇILIŞ — açılışı olmayan dükkân için dönemin ilk sabahki sayımı
+    for c in [c for c in cep_list if c["tur"] == "sube"]:
+        if any(h["tur"] == "acilis" and h["cep"] == c["id"] for h in kayit):
+            continue
+        ilk = next((e for e in olaylar if e["sube_id"] == c["sube_id"] and e["tip"] == "ACILIS" and e["tarih"].isoformat() == bas_i), None)
+        if not ilk:
+            rapor["atlanan"].append({"sube": c["kisa"], "neden": f"{bas_i} sabahı panel açılış sayımı yok — açılışı elle gir"})
+            continue
+        tut = _kurus(ilk["kasa_sayim"])
+        ref = f"acilis_panel:{c['sube_id']}:{bas_i}"
+        rapor["acilis"].append({"sube": c["kisa"], "gun": bas_i, "tutar": _tl_sayi(tut)})
+        y = _sahte("acilis", bas_i, cep=c["id"], tutar=tut, kaynak_ref=ref, veri={"kaynak": "panel_acilis_sayimi"})
+        y["id"] = "__ac_" + c["id"]
+        y["_sira"] = "0000"
+        sim.insert(0, y)
+        if not kuru and ref not in refler:
+            _yaz(cur, "acilis", bas_i, kim, cep=c["id"], tutar=tut, veri={"kaynak": "panel_acilis_sayimi"}, kaynak_ref=ref)
+    acilisli = {h["cep"] for h in sim if h["tur"] == "acilis"}
+    sube_cep = {c["sube_id"]: c["id"] for c in cep_list if c["tur"] == "sube"}
+    # 2) SAYIMLAR — akşam kör sayım (gün) önce, ertesi sabahki açılış sayımı (gün−1 sonu) sonra
+    sirali = []
+    for e in olaylar:
+        g = e["tarih"]
+        if e["tip"] == "KAPANIS":
+            sirali.append(((g.isoformat(), 0, str(e["cevap_ts"])), e, g.isoformat(), "akşam kapanış sayımı"))
+        else:
+            onceki = (g - timedelta(days=1)).isoformat()
+            if onceki >= bas_i:
+                sirali.append(((onceki, 1, str(e["cevap_ts"])), e, onceki, "sabah açılış sayımı"))
+    sirali.sort(key=lambda x: x[0])
+    kilit = _sayim_kilidi(_olaylar([h for h in kayit if not (h.get("kaynak_ref") or "").startswith(("sayim_kapanis:", "sayim_acilis:"))]))
+    for _, e, gun, ad in sirali:
+        cep = sube_cep.get(e["sube_id"])
+        if not cep or cep not in acilisli:
+            continue
+        if e["tip"] == "KAPANIS":
+            on = f"sayim_kapanis:{e['sube_id']}:{gun}:"
+            ref = on + "1"
+            if any(r.startswith(on) for r in refler):
+                continue
+            sayilan = max(0, _kurus(float(e["kasa_sayim"] or 0) - float(e["teslim"] or 0)))
+        else:
+            ref = f"sayim_acilis:{e['sube_id']}:{e['tarih'].isoformat()}"
+            if ref in refler:
+                continue
+            sayilan = max(0, _kurus(e["kasa_sayim"]))
+        if cep in kilit and gun < kilit[cep]:
+            rapor["atlanan"].append({"sube": C[cep]["kisa"], "neden": f"{gun} {ad}: sonrasında elle sayım var"})
+            continue
+        beklenen = _bakiye([o for o in _olaylar(sim) if o["gun"] <= gun], C)["b"].get(cep, 0)
+        veri = {"beklenen": beklenen, "sayilan": sayilan, "kaynak": "kapanis_kor_sayim" if e["tip"] == "KAPANIS" else "acilis_sayimi"}
+        if e["tip"] == "KAPANIS":
+            veri.update(kasa_sayim=_kurus(e["kasa_sayim"]), gun_sonu_teslim=_kurus(e["teslim"] or 0))
+        rapor["sayim"].append({"sube": C[cep]["kisa"], "gun": gun, "ne": ad, "beklenen": _tl_sayi(beklenen),
+                               "sayilan": _tl_sayi(sayilan), "fark": _tl_sayi(beklenen - sayilan)})
+        y = _sahte("sayim", gun, cep=cep, tutar=sayilan, veri=veri, kaynak_ref=ref)
+        y["id"] = "__s_" + ref
+        y["_sira"] = "9" + str(len(sim)).zfill(6)
+        sim.append(y)
+        refler.add(ref)
+        if not kuru:
+            _yaz(cur, "sayim", gun, "kapanış kör sayımı" if e["tip"] == "KAPANIS" else "sabah açılış sayımı",
+                 cep=cep, tutar=sayilan, veri=veri, kaynak_ref=ref)
+    rapor["ozet"] = {"acilis": len(rapor["acilis"]), "sayim": len(rapor["sayim"]),
+                     "farkli": sum(1 for x in rapor["sayim"] if x["fark"]), "atlanan": len(rapor["atlanan"])}
+    return rapor
+
+
+@router.post("/panel-sayim")
+def panel_sayim_aktar(kuru: bool = True, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Paneldeki sabah açılış + akşam kör sayımlarını Kasa'ya SAYIM olarak alır. kuru=true: yalnız göster."""
+    _hazirla()
+    with db() as (conn, cur):
+        _kilit(cur)
+        r = _panel_sayimlari(cur, kuru, (_aktor(cur, x_evvel_oturum) or "") + " · panel sayımı" if not kuru else "")
+        if kuru:
+            conn.rollback()
+    return {"kuru": kuru, **r}
+
+
 def panel_kapanis_sayim(cur, sube_id, gun, kasa_sayim, gun_sonu_teslim=0) -> None:
     """🔢 KAPANIŞ KÖR SAYIMI → dükkân nakdinin otomatik SAYIMI (sahip: "bağla").
     Çekmecede kalan = sayılan − gün sonu teslim. Defterle tutmazsa AÇIK FARK.
