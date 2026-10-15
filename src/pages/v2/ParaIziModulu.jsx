@@ -1054,6 +1054,18 @@ export default function ParaIziModulu({ gorunum, onToast }) {
           <div className="pi-eyebrow">Dönem {tUzun(veri.baslangic)} · eski sistemle yan yana</div>
           <h1 style={{ fontSize: 30 }}>Para İzi</h1>
         </div>
+        {/* 💰 TOPLAM KASA — sahip: "toplam kasa da bir yerde görünüyor olmalı". Her sekmede
+            sabit; eski sistemdeki gibi TOPLAM KASA = işletme + kira (mülk). Rakamlar sunucudan. */}
+        <div style={{ marginLeft: 'auto', display: 'flex', gap: 18, alignItems: 'flex-end', flexWrap: 'wrap', padding: '10px 16px', borderRadius: 12, background: 'var(--pi-accent-soft)', border: '1px solid var(--pi-line)' }}>
+          <div>
+            <div className="pi-eyebrow">Toplam kasa · {hepsi ? 'şu an' : `${tUzun(gun)} akşamı`}</div>
+            <div style={{ ...num, fontSize: 28, fontWeight: 700, color: R.bakirAcik, lineHeight: 1.1 }}>{tl(veri.ozet.hepsi)}</div>
+          </div>
+          {[['Nakit', veri.ozet.nakit], ['Banka', veri.ozet.banka], ['Geçiş + yolda', veri.ozet.gecis_yolda], ['Kira hesabı', veri.ozet.kira]].map(([a, v]) => (
+            <div key={a}><div className="pi-eyebrow">{a}</div><div style={{ ...num, fontSize: 15 }}>{fmt(v)}</div></div>
+          ))}
+          {veri.pos_bekleyen_brut > 0 && <div style={{ color: R.amber }}><div className="pi-eyebrow" style={{ color: R.amber }}>+ bankaya gelecek</div><div style={{ ...num, fontSize: 15 }}>{fmt(veri.pos_bekleyen_brut)}</div></div>}
+        </div>
       </div>
       {(() => {
         const nTes = veri.isler.filter((x) => x.tur === 'teslim').length;
@@ -1122,7 +1134,7 @@ export default function ParaIziModulu({ gorunum, onToast }) {
       {/* ŞERİT: toplam + patron evleri + açık farklar */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10 }}>
         <div style={{ ...kart, padding: '12px 16px', background: 'var(--pi-accent-soft)', gridColumn: 'span 2', minWidth: 0 }}>
-          <div style={etiketStil}>{hepsi ? 'Şu an' : `${tUzun(gun)} akşamı`} · işletme parası (kira hesabı hariç)</div>
+          <div style={etiketStil}>{hepsi ? 'Şu an' : `${tUzun(gun)} akşamı`} · işletme parası (toplam kasa − kira hesabı)</div>
           <div style={{ ...num, fontSize: 30, fontWeight: 700, color: R.bakirAcik, lineHeight: 1.15 }}>{tl(o.toplam)}</div>
           {o.acik_fark_sayisi > 0 && <div style={{ fontSize: 12, marginTop: 2, display: 'flex', gap: 6, flexWrap: 'wrap', alignItems: 'center' }}>
             {o.acik_eksik > 0 && <Cip tur="kirmizi">Açık eksik {fmt(o.acik_eksik)}</Cip>}
