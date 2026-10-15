@@ -11,7 +11,7 @@ kaynak kimliğiyle (kaynak_ref) aktarım yapar.
 
 MODEL (sahip kararları, [[project_sade_cekirdek_yeniden_kurgu]]):
   · Para TEK HAVUZ. Şubenin "hakkı / emaneti / destek bakiyesi" YOKTUR.
-  · Para yalnız CEPLERDE durur: şube kasaları · patron evleri (Onur, Fethi,
+  · Para yalnız CEPLERDE durur: dükkân nakitleri (şube çekmeceleri) · patron evleri (Onur, Fethi,
     Fatma) · geçiş hesabı (Fethi'nin hesabı — "giren çıkmalı").
     İsimsiz "merkez kovası" YOKTUR.
   · Eksik para SİLİNMEZ ve gider SAYILMAZ: "açık fark" olarak sebebi bulunana
@@ -26,7 +26,7 @@ Codex denetimi (2026-10-15) sonrası kurallar:
     iki kez harcayamaz, aynı fark iki kez çözülemez.
   · SAYIM KİLİDİ: bir cep X günü sayıldıysa, o cebi X ve öncesinde etkileyen
     yeni kayıt/iptal/onay reddedilir → sayımın "beklenen"i bayatlayamaz.
-  · TESLİM İKİ OLAYDIR: çıkış (teslim günü, şube kasası → yolda) ve alım
+  · TESLİM İKİ OLAYDIR: çıkış (teslim günü, dükkân nakdi → yolda) ve alım
     ("aldım" dendiği gün, yolda → patron evi). Para eve geriye dönük girmez.
   · Çıkış yapan her kayıt, kaydın gününden itibaren HİÇBİR gün sonunda cebi
     eksiye düşüremez (geçmişe girilen ödeme bugünkü parayla finanse edilemez).
@@ -182,7 +182,7 @@ def _hazirla() -> None:
                     cur.execute(
                         "INSERT INTO para_izi_cep (id, ad, kisa, tur, sube_id, sira) VALUES (%s,%s,%s,'sube',%s,%s) "
                         "ON CONFLICT (id) DO UPDATE SET ad=EXCLUDED.ad, kisa=EXCLUDED.kisa",
-                        ("sube:" + str(r["id"]), ad + " kasası", ad, str(r["id"]), 20 + i))
+                        ("sube:" + str(r["id"]), ad + " dükkân nakdi", ad, str(r["id"]), 20 + i))   # sahip: "şube kasası ismini daha ayrıştırıcı kullan"
                     # Her şubenin TEK banka hesabı (sahip) — "Zafer bankası"
                     cur.execute(
                         "INSERT INTO para_izi_cep (id, ad, kisa, tur, sube_id, sira) VALUES (%s,%s,%s,'banka',%s,%s) "

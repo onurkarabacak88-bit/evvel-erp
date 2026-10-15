@@ -148,7 +148,7 @@ function CepKart({ c, onAc, serit }) {
       boxShadow: serit && c.seviye === 'kirmizi' ? `inset 0 0 0 1px ${alfa(R.kirmizi, 35)}` : 'none',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: serit ? 'flex-start' : 'baseline', gap: serit ? 2 : 8, flexDirection: serit ? 'column' : 'row' }}>
-        <span style={{ fontWeight: 700, fontSize: 13 }}>{serit && <span style={{ ...etiketStil, display: 'block' }}>{c.kira ? 'Kira hesabı' : ({ ev: 'Patron evi', sube: 'Şube kasası', banka: 'Banka', hesap: 'Geçiş hesabı' }[c.tur])}</span>}{c.ad}</span>
+        <span style={{ fontWeight: 700, fontSize: 13 }}>{serit && <span style={{ ...etiketStil, display: 'block' }}>{c.kira ? 'Kira hesabı' : ({ ev: 'Patron evi', sube: 'Dükkân nakdi', banka: 'Banka', hesap: 'Geçiş hesabı' }[c.tur])}</span>}{c.ad}</span>
         <span style={{ ...num, fontSize: serit ? 21 : 15, fontWeight: 600, color: bos ? R.not2 : R.krem }}>{tl(c.bakiye)}</span>
       </div>
       {c.kirmizi.map((t, i) => <span key={`k${i}`} style={{ fontSize: 11.5, fontWeight: 700, color: R.kirmizi }}>● {t}</span>)}
@@ -182,7 +182,7 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit }) {
   if (h.tur === 'dis') { ust = h.alt_ad + (h.kimden ? ` · ${h.kimden}` : ''); alt = `${cepAd(h.cep)} cebine girdi${h.not_ ? ` · ${h.not_}` : ''}`; renk = R.yesil; tutar = `+${tutar}`; cip = h.geri_odenecek ? <Cip tur="sari">geri ödenecek</Cip> : null; cipTur = 'yesil'; }
   if (h.tur === 'teslim') {
     ust = `${cepAd(h.kaynak)} → ${cepAd(h.hedef)}`;
-    alt = 'Şube kasasından çıktı · patron "aldım" deyince evine girer';
+    alt = 'Dükkân nakdinden çıktı · patron "aldım" deyince evine girer';
     cip = h.durum !== 'onaylandi' ? <Cip tur="sari">onay bekliyor</Cip>
       : (h.fark ? <Cip tur="kirmizi">sayılan {fmt(h.alinan)} · {h.fark > 0 ? 'eksik' : 'fazla'} {fmt(Math.abs(h.fark))}</Cip> : <Cip tur="yesil">alındı</Cip>);
     if (h.durum === 'onaylandi' && h.onay_gunu && h.onay_gunu !== h.tarih) alt = `${tUzun(h.onay_gunu)} günü alındı — o güne kadar "yolda"`;
@@ -899,7 +899,7 @@ function BankaSekmesi({ onToast, onDegisti }) {
 // paralar vs. kart hâlinde görünür — gibi düşün." → her konu kendi SAYFASI (sol menü).
 export const SAYFALAR = [
   { id: 'kasam', ad: 'Kasam', alt: 'Toplam kasa · gruplar' },
-  { id: 'subeler', ad: 'Şube kasaları', alt: 'Her şube bir kart' },
+  { id: 'subeler', ad: 'Dükkân nakitleri', alt: 'Çekmecedeki nakit · şube şube' },
   { id: 'evler', ad: 'Evler', alt: 'Onur · Fethi · Fatma' },
   { id: 'bankalar', ad: 'Bankalar', alt: 'Şube bankaları · kira · geçiş' },
   { id: 'hareketler', ad: 'Günlük hareketler', alt: 'Gün seç, ne oldu' },
@@ -1190,7 +1190,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
           {veri.pos_bekleyen_brut > 0 && <div style={{ marginLeft: 'auto', fontSize: 12.5, color: R.amber }}>Toplama dahil değil · POS/online bankaya gelecek (brüt) <b style={num}>{fmt(veri.pos_bekleyen_brut)}</b> ₺</div>}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
-          <GrupKart ad="Şube kasaları" tutar={o.sube} liste={subeler} hedef="subeler" alt={`${subeler.length} kasa · nakit`} />
+          <GrupKart ad="Dükkân nakitleri" tutar={o.sube} liste={subeler} hedef="subeler" alt={`${subeler.length} dükkân · çekmecedeki nakit`} />
           <GrupKart ad="Evler" tutar={o.ev} liste={evler} hedef="evler" alt={evler.map((c) => c.kisa).join(' · ')} />
           <GrupKart ad="Bankalar" tutar={o.banka} liste={bankalar} hedef="bankalar" alt={veri.pos_bekleyen_brut > 0 ? `+ ${fmt(veri.pos_bekleyen_brut)} ₺ POS/online gelecek` : `${bankalar.length} şube bankası`} />
           <GrupKart ad="Geçiş + yolda" tutar={o.gecis_yolda} liste={hesaplar} hedef="bankalar" alt={o.yolda >= 0.005 ? `${fmt(o.yolda)} ₺ teslim yolda` : "Fethi'nin hesabı · giren çıkmalı"} />
