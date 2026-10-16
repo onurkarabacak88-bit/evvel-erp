@@ -648,10 +648,22 @@ def _eksik_kapanislar(kayitlar: List[dict], C: dict) -> List[dict]:
             h = var.get((c["id"], gi))
             if not h:
                 out.append({"tur": "eksik_kapanis", "id": f"eksik:{c['id']}:{gi}", "tarih": gi, "cep": c["id"], "ad": c["kisa"]})
-            elif h["veri"].get("eski_kaynak") == "evo_taslak":
+            elif h["veri"].get("eski_kaynak") == "evo_taslak" and not h["veri"].get("evo_kabul"):
                 out.append({"tur": "evo_kapanis", "id": h["id"], "tarih": gi, "cep": c["id"], "ad": c["kisa"],
                             "nakit": _tl_sayi(h["tutar"]), "kart": _tl_sayi(int(h["veri"].get("kart", 0)))})
         g += timedelta(days=1)
+    # Sahip/Fable (2026-10-16): "POS 0 girilmiş ama satış var" — kart satışı kapanışa yazılmamış olabilir
+    pos_alan = {}
+    for h in kayitlar:
+        if h["tur"] == "kapanis" and int(h["veri"].get("pos", 0) or 0) > 0:
+            pos_alan[h["cep"]] = pos_alan.get(h["cep"], 0) + 1
+    for h in kayitlar:
+        v = h["veri"]
+        if (h["tur"] == "kapanis" and "pos" in v and int(v.get("pos") or 0) == 0 and h["tutar"] > 0
+                and pos_alan.get(h["cep"], 0) >= 3 and not v.get("pos_sifir_kabul")):
+            c = C.get(h["cep"]) or {}
+            out.append({"tur": "pos_sifir", "id": h["id"], "tarih": h["is_gunu"], "cep": h["cep"], "ad": c.get("kisa"),
+                        "nakit": _tl_sayi(h["tutar"])})
     return out
 
 
@@ -1443,6 +1455,49 @@ def teslim_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = He
 
 class TopluOnayBody(BaseModel):
     idler: List[str]
+
+
+class EvoKabulBody(BaseModel):
+    cep: str
+
+
+@router.post("/evo-kabul")
+def evo_kabul(b: EvoKabulBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Sahip/Fable (2026-10-16): "30 Evo tahmini tek tek çözülemez" → şubenin Evo tahmini günlerini TOPLU kabul.
+    Rakam değişmez, kayıt silinmez; yalnız 'kabul edildi' işareti + iz (kim/ne zaman). Bekleyen işlerden düşer."""
+    with db() as (conn, cur):
+        _kilit(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        _, C, kayit, _ = _yukle(cur)
+        n = 0
+        for h in kayit:
+            v = h["veri"]
+            if h["tur"] == "kapanis" and h["cep"] == b.cep and v.get("eski_kaynak") == "evo_taslak" and not v.get("evo_kabul"):
+                v2 = {**v, "evo_kabul": True, "duzeltmeler": list(v.get("duzeltmeler") or []) +
+                      [{"kim": kim, "zaman": _bugun().isoformat(), "degisen": {"evo": ["tahmin", "kabul edildi"]}}]}
+                cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(v2, ensure_ascii=False), h["id"]))
+                n += 1
+    return {"ok": True, "adet": n, "mesaj": f"{n} günün Evo rakamı kabul edildi"}
+
+
+class PosSifirBody(BaseModel):
+    id: str
+
+
+@router.post("/pos-sifir-kabul")
+def pos_sifir_kabul(b: PosSifirBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """'O gün gerçekten POS yoktu' — uyarıyı kapat (iz kalır)."""
+    with db() as (conn, cur):
+        _kilit(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        _, C, kayit, _ = _yukle(cur)
+        h = next((x for x in kayit if x["id"] == b.id and x["tur"] == "kapanis"), None)
+        if not h:
+            raise HTTPException(404, "Kapanış bulunamadı")
+        v2 = {**h["veri"], "pos_sifir_kabul": True, "duzeltmeler": list(h["veri"].get("duzeltmeler") or []) +
+              [{"kim": kim, "zaman": _bugun().isoformat(), "degisen": {"pos": ["0 uyarısı", "gerçekten POS yok"]}}]}
+        cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(v2, ensure_ascii=False), h["id"]))
+    return {"ok": True, "mesaj": "Uyarı kapandı"}
 
 
 @router.post("/onay-toplu")

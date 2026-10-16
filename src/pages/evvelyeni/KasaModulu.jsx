@@ -1170,8 +1170,14 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         <Dugme ana onClick={() => formAc('pos')}>+ Online yattı</Dugme>
         <Dugme onClick={() => (onSekme ? onSekme('odemeler') : formAc('odeme'))}>+ Ödeme</Dugme>
         <Dugme onClick={() => formAc('kapanis')}>+ Kapanış</Dugme>
-        <Dugme onClick={() => formAc('aktar')} title="Dönem başından bu yana kapanış ve teslimleri eski sistemden okur">Eski sistemden aktar</Dugme>
-        <Dugme onClick={() => formAc('donem')} title="Önceki kayıtlar arşive geçer; her cep sayılıp yeniden başlanır">Yeni başlangıç</Dugme>
+        {/* Fable P3: büyük ve tehlikeli iki düğme gözden uzak "Ayarlar" içinde */}
+        <details style={{ fontSize: 13 }}>
+          <summary style={{ cursor: 'pointer', color: R.not, padding: '6px 4px' }}>⚙️ Ayarlar</summary>
+          <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
+            <Dugme kucuk onClick={() => formAc('aktar')} title="Dönem başından bu yana kapanış ve teslimleri eski sistemden okur">Eski sistemden aktar</Dugme>
+            <Dugme kucuk onClick={() => formAc('donem')} title="Önceki kayıtlar arşive geçer; her cep sayılıp yeniden başlanır">Yeni başlangıç</Dugme>
+          </div>
+        </details>
         {guneBagli && <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
           <Dugme kucuk disabled={hepsi || gun <= veri.baslangic} onClick={() => setGun(gunEkle(gun, -1))}>‹</Dugme>
           <input type="date" value={gun} min={veri.baslangic} max={veri.bugun} disabled={hepsi} onChange={(e) => e.target.value && setGun(e.target.value)}
@@ -1275,7 +1281,23 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
                 </div>
               );
             })()}
-            {veri.isler.filter((x) => x.tur !== 'teslim').map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })} />)}
+            {/* Sahip/Fable: "30 Evo tahmini tek tek çözülemez" → şube başına TEK satır + toplu kabul */}
+            {Object.entries(veri.isler.filter((x) => x.tur === 'evo_kapanis').reduce((a, x) => { (a[x.cep] = a[x.cep] || []).push(x); return a; }, {})).map(([cep, xs]) => (
+              <div key={`evo${cep}`} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10, alignItems: 'center', padding: '8px 10px', borderRadius: 9, background: R.girinti, border: `1px solid ${alfa(R.amber, 55)}` }}>
+                <Cip tur="sari">Evo tahmini · {xs.length} gün</Cip>
+                <div style={{ fontSize: 13 }}><b>{xs[0].ad}</b> · {xs.map((x) => tKisa(x.tarih)).join(', ')}
+                  <div style={{ fontSize: 11.5, color: R.not }}>Şube bu günlerde kapanış yapmadı; rakam Evo kasasından (nakit {fmt(xs.reduce((a, x) => a + x.nakit, 0))} · kart {fmt(xs.reduce((a, x) => a + x.kart, 0))}). Gerçeğini biliyorsan tek tek gir, bilmiyorsan kabul et.</div></div>
+                <span style={{ display: 'flex', gap: 6 }}>
+                  <Dugme kucuk onClick={() => formAc('kapanis', { gun: xs[0].tarih, cep })}>Gerçeğini gir</Dugme>
+                  <Dugme ana kucuk onClick={async () => {
+                    if (!window.confirm(`${xs[0].ad}: ${xs.length} günün Evo rakamı kabul edilsin mi? Rakam değişmez, yalnız uyarı kapanır.`)) return;
+                    try { const r = await api('/evvel-yeni/kasa/evo-kabul', { method: 'POST', body: { cep } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); }
+                  }}>Hepsini kabul et</Dugme>
+                </span>
+              </div>
+            ))}
+            {veri.isler.filter((x) => x.tur !== 'teslim' && x.tur !== 'evo_kapanis').map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })}
+              onPosKabul={async (id) => { try { const r = await api('/evvel-yeni/kasa/pos-sifir-kabul', { method: 'POST', body: { id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); } }} />)}
           </div>
       )}
       {sekme === 'hareketler' && (<>
@@ -1386,7 +1408,7 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
   );
 }
 
-function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis }) {
+function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul }) {
   const [say, setSay] = useState('');   // Codex: dolu gelirse saymadan onaylanır — boş başlar
   const g = Math.max(0, Math.round((new Date(`${bugun}T12:00:00`) - new Date(`${x.tarih}T12:00:00`)) / 864e5));
   const yas = g === 0 ? 'bugün' : `${g} gündür`;
@@ -1407,6 +1429,15 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis }) {
         <Cip tur="kirmizi">Kapanış YOK</Cip>
         <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Şube o günün kapanışını girmedi — gelir eksik. Şubeden iste; X/Z raporu geldiyse buradan gir · {yas}</div></div>
         <Dugme ana kucuk onClick={() => onKapanis?.(x)}>Kapanışı gir</Dugme>
+      </div>
+    );
+  }
+  if (x.tur === 'pos_sifir') {
+    return (
+      <div style={{ ...satir, border: `1px solid ${alfa(R.amber, 55)}` }}>
+        <Cip tur="sari">POS 0 girilmiş</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Kapanışta yalnız nakit ({fmt(x.nakit)} ₺) var, kart satışı 0 — bu şube başka günlerde POS alıyor. Kart satışı kapanışa yazılmamış olabilir · {yas}</div></div>
+        <Dugme kucuk onClick={() => onPosKabul?.(x.id)}>Gerçekten POS yoktu</Dugme>
       </div>
     );
   }

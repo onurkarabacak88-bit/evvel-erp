@@ -224,7 +224,7 @@ export function PersonelTakvim({ onToast }) {
             <tbody>{v.personel.map((p) => (
               <tr key={p.personel_id} style={{ borderTop: '1px solid var(--pi-line)', opacity: p.aktif ? 1 : 0.6 }}>
                 <td style={{ padding: '6px 10px', position: 'sticky', left: 0, background: 'var(--pi-paper)' }}>
-                  <b>{p.ad}</b>{p.mudur && <span style={{ color: R.not }}> · müdür (QR aranmaz)</span>}{!p.aktif && <span style={{ color: R.not }}> · ayrıldı</span>}{p.yillik_izinde && <span style={{ color: R.amber }}> · yıllık izinde{p.izin_bitis ? ` (${p.izin_bitis.slice(8, 10)}.${p.izin_bitis.slice(5, 7)}'e kadar)` : ''}</span>}
+                  <b>{p.ad}</b>{p.mudur && <span style={{ color: R.not }}> · müdür (QR aranmaz)</span>}{p.sube_qr_yok && !p.mudur && <span style={{ color: R.not }}> · şubede QR kullanılmıyor</span>}{!p.aktif && <span style={{ color: R.not }}> · ayrıldı</span>}{p.yillik_izinde && <span style={{ color: R.amber }}> · yıllık izinde{p.izin_bitis ? ` (${p.izin_bitis.slice(8, 10)}.${p.izin_bitis.slice(5, 7)}'e kadar)` : ''}</span>}
                   <div style={{ fontSize: 11, color: p.uyusmaz ? R.kirmizi : R.not }}>kayıtlı: {p.kayitli_sube}{p.uyusmaz ? ` · en çok ${p.en_cok_sube}'da!` : ''}</div>
                 </td>
                 {p.gunler.map((g) => (

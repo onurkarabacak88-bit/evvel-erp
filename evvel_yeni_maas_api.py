@@ -445,6 +445,8 @@ def personel_takvim(ay: Optional[str] = None):
                     yok.setdefault((r["pid"], r["tarih"].isoformat()), []).append(r)
         except Exception as e:  # noqa: BLE001
             log.warning("personel takvim: yoklama okunamadı: %s", str(e)[:150])
+    # Sahip: Alsancak QR kullanmıyor → o ay HİÇ QR girişi olmayan şubenin personeline soru sorulmaz
+    qr_sube = {r["sid"] for rows in yok.values() for r in rows}
     gunler = []
     g = ay_bas
     while g <= ay_son:
@@ -496,7 +498,8 @@ def personel_takvim(ay: Optional[str] = None):
         bugun_qr = any(x["gun"] == bugun.isoformat() and x["durum"] == "calisti" for x in satir)
         seri = [d for d in seri if d <= dun]
         soru = None
-        if p.get("aktif", True) and not mudur and not bugun_qr and len(seri) >= 2 and seri[-1] == dun:
+        qr_yok_sube = bool(p.get("sube_id")) and p["sube_id"] not in qr_sube
+        if p.get("aktif", True) and not mudur and not qr_yok_sube and not bugun_qr and len(seri) >= 2 and seri[-1] == dun:
             cevapli = any(k["tarih"].isoformat() >= seri[0] and (k["karar"] in ("devam", "ayrildi") or
                           (k["karar"] == "izin" and (not k.get("izin_bitis") or k["izin_bitis"] >= bugun)))
                           for k in kararlar.get(pid, []))
@@ -509,7 +512,7 @@ def personel_takvim(ay: Optional[str] = None):
                     "gunler": satir, "sube_gun": {k: round(v, 1) for k, v in sorted(say.items(), key=lambda x: -x[1])},
                     "calisti_gun": sum(1 for x in satir if x["durum"] == "calisti"), "izinli_gun": sum(1 for x in satir if x["durum"] == "izinli"),
                     "en_cok_sube": en_cok, "uyusmaz": bool(en_cok and kayitli != "Ortak" and en_cok != kayitli),
-                    "soru": soru, "yillik_izinde": bool(izinde), "mudur": mudur,
+                    "soru": soru, "yillik_izinde": bool(izinde), "mudur": mudur, "sube_qr_yok": qr_yok_sube,
                     "izin_bitis": izinde["izin_bitis"].isoformat() if izinde and izinde.get("izin_bitis") else None})
     out.sort(key=lambda x: (not x["aktif"], x["kayitli_sube"] or "", x["ad"]))
     return {"ay": a_, "gunler": gunler, "personel": out, "subeler": sorted(set(sube_ad.values())),

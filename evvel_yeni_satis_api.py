@@ -22,7 +22,7 @@ from typing import Optional
 
 from fastapi import APIRouter
 
-from database import db
+from database import db, savepoint
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/evvel-yeni/satis", tags=["evvel-yeni-satis"])
@@ -89,11 +89,14 @@ def _gunluk(ay: str) -> dict:
         d["nakit"] = nakit / 100
         d["evo"] = v.get("eski_kaynak") == "evo_taslak"
         d["onayli"] = h.get("durum") == "onaylandi"
+        d["pos_sifir"] = ("pos" in v and int(v.get("pos") or 0) == 0 and nakit > 0)
     for d in out.values():
         if d.get("ciro") is None and not d["neden"]:
             d["neden"] = "kapanış cirosu yok"
         elif d.get("evo") and not d["neden"]:
             d["neden"] = "kapanış Evo tahmini (şube kapanış yapmadı)"
+        elif not d["neden"] and d.get("pos_sifir"):
+            d["neden"] = "POS 0 girilmiş — kart satışı kapanışa yazılmamış olabilir"
         elif not d["neden"] and not d.get("onayli"):
             d["neden"] = "kapanış henüz onaylanmadı"
         elif not d["neden"] and d["bardak"] < MIN_BARDAK:
@@ -224,7 +227,6 @@ def _kasa_mutabakat(cur, gun: str) -> dict:
         r = dict(r)
         sube(r["sid"])["giderler"].append({"tutar": float(r["tutar"] or 0), "ad": " · ".join(x for x in [r.get("kategori"), r.get("aciklama")] if x) or "Gider",
                                            "bekliyor": r["durum"] == "onay_bekliyor"})
-    from database import savepoint
     ara_rows = []
     try:
         with savepoint(cur, "sp_ey_mut_ara"):
@@ -266,6 +268,25 @@ def _kasa_mutabakat(cur, gun: str) -> dict:
     return out
 
 
+_URUN_AD = {}
+
+
+def _urun_ad(cur, kod):
+    """Fire kaleminde ad yoksa ürün kataloğundan (Fable P3: ekranda UUID görünüyordu)."""
+    k = str(kod or "")
+    if not k:
+        return "?"
+    if k not in _URUN_AD:
+        try:
+            with savepoint(cur, "sp_ey_urun_ad"):
+                cur.execute("SELECT ad FROM siparis_urun WHERE id::text=%s", (k,))
+                r = cur.fetchone()
+                _URUN_AD[k] = (dict(r)["ad"] if r else None) or k
+        except Exception:  # noqa: BLE001
+            _URUN_AD[k] = k
+    return _URUN_AD[k]
+
+
 @router.get("/gun")
 def satis_gun(gun: Optional[str] = None):
     """GÜNLÜK DÖKÜM (sahip: "bugün 14 adet 8oz vs. görmek istiyorum; kasada açık var mı, satıştan gelen açık var mı;
@@ -294,7 +315,7 @@ def satis_gun(gun: Optional[str] = None):
                         adet = 0
                     if adet <= 0:
                         continue
-                    fire.setdefault(r["sube_id"], []).append({"kod": kod, "ad": k.get("label") or k.get("kalem_kodu"), "adet": adet,
+                    fire.setdefault(r["sube_id"], []).append({"kod": kod, "ad": k.get("label") or _urun_ad(cur, k.get("kalem_kodu")), "adet": adet,
                                                               "sebep": r["sebep_label"], "aciklama": r.get("aciklama"),
                                                               "kim": r.get("personel_ad"), "saat": r["olusturma"].strftime("%H:%M") if r.get("olusturma") else None})
         except Exception as e:  # noqa: BLE001

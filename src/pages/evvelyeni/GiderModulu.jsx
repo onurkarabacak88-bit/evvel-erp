@@ -42,7 +42,8 @@ export default function GiderModulu({ onToast }) {
     alt: 'Mal = şubede ÜRÜN AÇ ile açılan × o günkü son alış fiyatı (KDV dahil). Depodan sevk ayrı satırda, gidere eklenmez.',
     varsayilan: 'iz',
     kpi: [{ etiket: 'Toplam gider', deger: tl(s.toplam), renk: R.kirmizi }, ...KALEM.filter((k) => s[k]).map((k) => ({ etiket: TUR_AD[k], deger: tl(s[k]) })),
-      { etiket: 'Depodan gelen mal', deger: tl(s.sevk_bedeli) }, { etiket: 'Rafta bekleyen (sevk − ürün aç)', deger: tl(s.rafta_fark) }],
+      ...(s.depo_mu ? [] : [{ etiket: 'Depodan gelen mal', deger: tl(s.sevk_bedeli) },
+        { etiket: 'Rafta bekleyen (sevk − ürün aç)', deger: s.rafta_fark < 0 ? 'sevk kaydı eksik olabilir' : tl(s.rafta_fark) }])],
     not: [s.fiyat_eksik ? `🔴 ${s.fiyat_eksik} ürün aç satırının fiyatı yok — gider olduğundan düşük` : null,
       s.katalog_fiyatli ? `${s.katalog_fiyatli} satır katalog fiyatıyla (fatura fiyatı yok)` : null,
       s.kesin_olmayan_gun?.length ? `${s.kesin_olmayan_gun.length} günün kapanışı yok — o günler kesinleşmedi` : null].filter(Boolean).join(' · ') || null,
@@ -106,7 +107,7 @@ export default function GiderModulu({ onToast }) {
                 {KALEM.map((k) => s[k] > 0 && <span key={k} style={{ width: `${(s[k] * 100) / t}%`, background: TUR_RENK[k] }} />)}
               </div>
               <span style={{ fontSize: 12, color: R.metin2 }}>{KALEM.filter((k) => s[k]).map((k) => `${TUR_AD[k]} ${fmt(s[k])}`).join(' · ') || 'gider yok'}</span>
-              <span style={{ fontSize: 12, color: R.not }}>Depodan gelen {fmt(s.sevk_bedeli)} · rafta {fmt(s.rafta_fark)}</span>
+              {!s.depo_mu && <span style={{ fontSize: 12, color: R.not }}>Depodan gelen {fmt(s.sevk_bedeli)} · {s.rafta_fark < 0 ? 'açılan > gelen (sevk kaydı eksik ya da doğrudan alım)' : `rafta ${fmt(s.rafta_fark)}`}</span>}
               <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                 {s.fiyat_eksik > 0 && <Cip tur="kirmizi">{s.fiyat_eksik} fiyatsız</Cip>}
                 {s.depo_mu && <Cip tur="sari">depo şubesi</Cip>}
@@ -117,6 +118,22 @@ export default function GiderModulu({ onToast }) {
           );
         })}
       </div>
+
+      {/* Fable P2-5: "Onur bey sigara" gibi patron şahsi olabilecek dükkân giderleri — tek tuşla ayır */}
+      {(() => {
+        const aday = v.subeler.flatMap((s) => s.satirlar.filter((x) => x.tur === 'dukkan' && x.oneri_cekis).map((x) => ({ ...x, sube: s.ad })));
+        if (!aday.length) return null;
+        return (
+          <div style={{ ...kart, padding: 14, borderLeft: '5px solid var(--pi-warn)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>🚬 <b>{aday.length} dükkân gideri patron şahsi olabilir</b> ({aday.map((x) => `${x.sube} ${tKisa(x.gun)} ${fmt(x.tutar)}`).join(', ')})</span>
+            <Dugme ana kucuk onClick={async () => {
+              if (!window.confirm(`${aday.length} kayıt "patron şahsi (çekiş)" olarak ayrılsın mı? Şube giderinden çıkar.`)) return;
+              for (const x of aday) { try { await api('/evvel-yeni/gider/siniflandir', { method: 'POST', body: { kaynak_ref: x.kaynak_ref, tur: 'cekis', kimin: 'Onur' } }); } catch { /* devam */ } }
+              onToast?.(`${aday.length} kayıt patron şahsi olarak ayrıldı`); yukle();
+            }}>Hepsini patron şahsi yap</Dugme>
+          </div>
+        );
+      })()}
 
       <div style={{ ...kart, padding: 14 }}>
         <b>Ortak giderler</b> <span style={{ color: R.not, fontSize: 12.5 }}>tek şubeye ait değil — şubelere dağıtılmaz</span>
