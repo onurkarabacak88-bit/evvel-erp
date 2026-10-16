@@ -111,6 +111,8 @@ def _odemeler(cur) -> dict:
             continue
         anah = (str(k["personel_id"]), (v.get("ait_ay") or h["is_gunu"])[:7])
         kal = k.get("kalem") or "Maaş"
+        if kal == "Avans" and v.get("kaynak") == "sube_avansi":
+            kal = "Avans (şube)"   # eski sistem Ekim netinde ZATEN düşülü → Ekim'de ayrıca düşülmez
         out.setdefault(anah, {})
         out[anah][kal] = out[anah].get(kal, 0) + int(v.get("toplam", h["tutar"]))
     return out
@@ -185,7 +187,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         if p.get("cikis") and p["cikis"] < ay_bas:
             continue
         od = odemeler.get((pid, ay), {})
-        avans = od.get("Avans", 0)
+        avans = od.get("Avans", 0) + (0 if eski_mod else od.get("Avans (şube)", 0))
         odenen = sum(od.get(k, 0) for k in ODENEN_KALEMLER)
         e = elle.get(pid) or {}
         if eski_mod:
