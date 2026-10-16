@@ -324,6 +324,14 @@ except Exception as _ey_maas_err:
     logging.getLogger(__name__).warning(
         f"evvel_yeni_maas modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_maas_err}"
     )
+# 🔍 EVVEL YENİ · SATIŞ KONTROLÜ (2026-10-16) — bardak × bardak başına ciro = beklenen ciro ↔ gerçek ciro.
+try:
+    from evvel_yeni_satis_api import router as evvel_yeni_satis_router
+    app.include_router(evvel_yeni_satis_router)
+except Exception as _ey_satis_err:
+    logging.getLogger(__name__).warning(
+        f"evvel_yeni_satis modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_satis_err}"
+    )
 # OPS ÖLÇÜM — "iş kuyruğu işe yarıyor mu?" (2026-08-27). AYRI modül, AYRI iki
 # tablo. bakis_olcum'a yazılmadı: onun ozet sorguları `gorunum`a göre süzmüyor,
 # OPS oturumları oraya girseydi BAKIŞ'ın M1-M5 medyanları iki farklı ekranın
