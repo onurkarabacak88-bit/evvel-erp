@@ -870,7 +870,11 @@ def banka_mutabakat(ay: Optional[str] = None):
         _kilit(cur)
         _pos_otomatik(cur)                     # vadesi gelen POS mutabakattan önce yazılır
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
+        donem_bas = _baslangic(cur).isoformat()
     ol = _olaylar(kayit)
+    # Codex C4: yeni dönem açılışı (ör. 1 Kasım "Yeni başlangıç") önceki dönemin bakiyesini ZATEN taşır →
+    # ay hangi dönemdeyse YALNIZ o dönemin olayları (yoksa Ekim hareketleri + Kasım açılışı üst üste biner)
+    ol = [o for o in ol if o["gun"] >= donem_bas] if ay_bas.isoformat() >= donem_bas else [o for o in ol if o["gun"] < donem_bas]
     once = [o for o in ol if o["gun"] < ay_bas.isoformat()]
     icinde = [o for o in ol if ay_bas.isoformat() <= o["gun"] <= kesit]
     Bo = _bakiye(once, C)["b"]
@@ -1725,6 +1729,7 @@ def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) 
 # "başlangıç farkı" diye kapanır (iz kalır). Sonraki her tutmayan sayım → AÇIK FARK.
 # İdempotent: kaynak_ref ile bir kez. Her 10 dakikada otomatik senkronla çalışır.
 PANEL_SAYIM_BASLANGIC = date(2026, 10, 17)
+
 SEBEPLER.setdefault("baslangic", "Başlangıç sayımı — eski defter farkı")
 
 
@@ -1749,7 +1754,7 @@ def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dic
     cep_list, C, kayit, _ = _yukle(cur)
     try:
         with savepoint(cur, "sp_pi_panel_sayim"):
-            cur.execute("""SELECT sube_id::text AS sube_id, tarih, tip, kasa_sayim, COALESCE(teslim,0) AS teslim, cevap_ts
+            cur.execute("""SELECT sube_id::text AS sube_id, tarih, tip, kasa_sayim, COALESCE(teslim,0) AS teslim, devir, cevap_ts
                              FROM sube_operasyon_event
                             WHERE tarih >= %s AND tarih <= %s AND durum = 'tamamlandi' AND tip IN ('ACILIS','KAPANIS')
                               AND kasa_sayim IS NOT NULL
@@ -1767,7 +1772,9 @@ def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dic
     for e in olaylar:
         g = e["tarih"]
         if e["tip"] == "KAPANIS":
-            sirali.append(((g.isoformat(), 0, str(e["cevap_ts"])), e, g.isoformat(), "akşam kapanış sayımı"))
+            # Fable+Codex (2026-10-16): akşam kör sayımı teslimden önce mi sonra mı belirsiz → Kasa'ya SAYIM yazılmaz;
+            # Satış kontrolünde SAĞLAMA olarak görünür. Kasa'yı sabah sayımı denetler (dün bırakılan = bu sabah sayılan).
+            continue
         else:
             sirali.append((((g - timedelta(days=1)).isoformat(), 1, str(e["cevap_ts"])), e, (g - timedelta(days=1)).isoformat(), "sabah açılış sayımı"))
     sirali.sort(key=lambda x: x[0])
@@ -1776,25 +1783,20 @@ def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dic
         cep = sube_cep.get(e["sube_id"])
         if not cep:
             continue
-        if e["tip"] == "KAPANIS":
-            on = f"sayim_kapanis:{e['sube_id']}:{gun}:"
-            ref = on + "1"
-            if any(r.startswith(on) for r in refler):
-                continue
-            sayilan = max(0, _kurus(float(e["kasa_sayim"] or 0) - float(e["teslim"] or 0)))
-        else:
-            ref = f"sayim_acilis:{e['sube_id']}:{e['tarih'].isoformat()}"
-            if ref in refler:
-                continue
-            sayilan = max(0, _kurus(e["kasa_sayim"]))
+        if e["tarih"] >= _bugun():
+            # Fable (d): sabah sayımı gün−1'e yazılır ve o günü KİLİTLER → aynı günün geç kayıtları (ertesi sabah gönderilen
+            # kapanış, dükkân gideri, ara teslim) kilide takılmasın diye BİR GÜN beklenir; yarın yazılır.
+            continue
+        ref = f"sayim_acilis:{e['sube_id']}:{e['tarih'].isoformat()}"
+        if ref in refler:
+            continue
+        sayilan = max(0, _kurus(e["kasa_sayim"]))
         if cep in elle_kilit and gun < elle_kilit[cep]:
             rapor["atlanan"].append({"sube": C[cep]["kisa"], "neden": f"{gun} {ad}: sonrasında elle sayım var"})
             continue
         ilk = cep not in baslamis
         beklenen = _bakiye([o for o in _olaylar(sim) if o["gun"] <= gun], C)["b"].get(cep, 0)
-        veri = {"beklenen": beklenen, "sayilan": sayilan, "kaynak": "kapanis_kor_sayim" if e["tip"] == "KAPANIS" else "acilis_sayimi"}
-        if e["tip"] == "KAPANIS":
-            veri.update(kasa_sayim=_kurus(e["kasa_sayim"]), gun_sonu_teslim=_kurus(e["teslim"] or 0))
+        veri = {"beklenen": beklenen, "sayilan": sayilan, "kaynak": "acilis_sayimi"}
         if ilk:
             veri["baslangic"] = True
         rapor["sayim"].append({"sube": C[cep]["kisa"], "gun": gun, "ne": ("BAŞLANGIÇ · " if ilk else "") + ad,
@@ -1806,7 +1808,7 @@ def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dic
         refler.add(ref)
         baslamis.add(cep)
         if not kuru:
-            sid = _yaz(cur, "sayim", gun, "kapanış kör sayımı" if e["tip"] == "KAPANIS" else "sabah açılış sayımı",
+            sid = _yaz(cur, "sayim", gun, "sabah açılış sayımı",
                        cep=cep, tutar=sayilan, veri=veri, kaynak_ref=ref)
             f = beklenen - sayilan
             if ilk and sid and f:
@@ -1831,46 +1833,10 @@ def panel_sayim_aktar(kuru: bool = True, x_evvel_oturum: Optional[str] = Header(
 
 
 def panel_kapanis_sayim(cur, sube_id, gun, kasa_sayim, gun_sonu_teslim=0) -> None:
-    """🔢 KAPANIŞ KÖR SAYIMI → dükkân nakdinin otomatik SAYIMI (sahip: "bağla").
-    Çekmecede kalan = sayılan − gün sonu teslim. Defterle tutmazsa AÇIK FARK.
-    ⚠️ Dükkânın bu dönemki AÇILIŞ bakiyesi girilmeden çalışmaz: açılışsız sayım her gün
-    sahte fark üretir ve sayım kilidi açılışın girilmesini engeller.
-    Aynı gün yeniden kapanış (geri al → kapat) → önceki otomatik sayım (çözülmemişse) iptal,
-    yenisi yazılır. Panelin transaction'ında, savepoint altında; hata paneli DURDURMAZ."""
-    try:
-        with savepoint(cur, "sp_pi_kor_sayim"):
-            if not _tablo_var(cur) or not _try_kilit(cur):
-                return
-            g = gun.isoformat() if hasattr(gun, "isoformat") else str(gun)[:10]
-            bas = _baslangic(cur)
-            if g < max(bas, _panel_sayim_baslangic(cur)).isoformat():
-                return
-            cep = "sube:" + str(sube_id)
-            cep_list, C, kayit, _ = _yukle(cur)
-            if cep not in C or not any(h["tur"] == "acilis" and h["cep"] == cep for h in kayit):
-                return
-            kilit = _sayim_kilidi(_olaylar(kayit))
-            _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, False, "şube paneli (dükkân gideri)", sube_id=sube_id)
-            cep_list, C, kayit, _ = _yukle(cur)
-            onceki = [h for h in kayit if h["tur"] == "sayim" and h["cep"] == cep and h["is_gunu"] == g
-                      and (h.get("kaynak_ref") or "").startswith("sayim_kapanis:")]
-            cozulen = {h["veri"].get("fark_id") for h in kayit if h["tur"] == "cozum"}
-            for h in onceki:
-                if h["id"] in cozulen:
-                    return          # o günün farkı zaten kapatılmış — üzerine yazma
-                _yaz(cur, "iptal", _bugun().isoformat(), "şube paneli (yeniden kapanış)",
-                     veri={"hedef_id": h["id"], "sebep": "Kapanış yeniden yapıldı — yeni kör sayım"})
-            cep_list, C, kayit, _ = _yukle(cur)
-            beklenen = _bakiye([o for o in _olaylar(kayit) if o["gun"] <= g], C)["b"].get(cep, 0)
-            sayilan = _kurus(round(float(kasa_sayim or 0) - float(gun_sonu_teslim or 0), 2))
-            cur.execute("SELECT COUNT(*) AS n FROM para_izi_hareket WHERE kaynak_ref LIKE %s", (f"sayim_kapanis:{sube_id}:{g}:%",))
-            sira = int(dict(cur.fetchone() or {}).get("n") or 0) + 1
-            _yaz(cur, "sayim", g, "kapanış kör sayımı", cep=cep, tutar=max(sayilan, 0),
-                 veri={"beklenen": beklenen, "sayilan": max(sayilan, 0), "kaynak": "kapanis_kor_sayim",
-                       "kasa_sayim": _kurus(round(float(kasa_sayim or 0), 2)), "gun_sonu_teslim": _kurus(round(float(gun_sonu_teslim or 0), 2))},
-                 kaynak_ref=f"sayim_kapanis:{sube_id}:{g}:{sira}")
-    except Exception as e:  # noqa: BLE001 — panel ASLA durmaz
-        log.warning("evvel-yeni kasa kör sayım yazılamadı: %s", str(e)[:200])
+    """DEVRE DIŞI (2026-10-16, Fable+Codex+sahip): akşam kör sayımı Kasa'ya SAYIM olarak yazılmaz — sağlama olarak
+    Satış kontrolünde görünür; Kasa'yı SABAH sayımı denetler (_panel_sayimlari). Panel çağrısı zararsız no-op."""
+    return None
+
 
 
 # ─────────────────────────── ŞUBE PANELİNDEN DOĞRUDAN YAZIM ───────────────────────────

@@ -152,7 +152,8 @@ router = APIRouter(prefix="/api/evvel-yeni/olay", tags=["evvel-yeni-olay"])
 @router.get("/kontrol")
 def olay_kontrol(gun: str, baslangic_ts: Optional[str] = None):
     """Seçilen günün panel işlemleri eski tablolarda kaç tane/kaç ₺ — yeni defterde kaç tane/kaç ₺.
-    baslangic_ts: çift yazımın açıldığı an (öncesi karşılaştırılmaz)."""
+    baslangic_ts: çift yazımın açıldığı an, TÜRKİYE duvar saati (eski tablolar TR saatiyle tutuluyor — Fable).
+    Çift yazım: 1. kısım 2026-10-16T11:47, 2. kısım (ürün aç/fire/açılış) 2026-10-16T12:30 (TR)."""
     from database import db
     olay_tablosu_kur()
     bas = baslangic_ts or "1970-01-01"
@@ -162,7 +163,8 @@ def olay_kontrol(gun: str, baslangic_ts: Optional[str] = None):
                         WHERE tarih=%s AND tip='KAPANIS' AND durum='tamamlandi' AND cevap_ts >= %s::timestamp""", (gun, bas))
         eski["kapanis"] = dict(cur.fetchone())
         cur.execute("""SELECT COUNT(*) n, COALESCE(SUM(tutar),0) t FROM kasa_teslim
-                        WHERE tarih=%s AND teslim_turu='ara' AND olusturma >= %s::timestamp""", (gun, bas))
+                        WHERE tarih=%s AND olusturma >= %s::timestamp
+                          AND NOT (teslim_turu='gun_sonu' AND COALESCE(aciklama,'') LIKE 'Kapanış otomatik%%')""", (gun, bas))
         eski["teslim"] = dict(cur.fetchone())
         cur.execute("""SELECT COUNT(*) n, COALESCE(SUM(tutar),0) t FROM anlik_giderler
                         WHERE tarih=%s AND odeme_yontemi='nakit' AND COALESCE(kaynak_tablo,'') <> 'personel_avans'

@@ -1527,13 +1527,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 panel_teslim_esle(cur)
             except Exception:  # noqa: BLE001
                 pass
-            # 🔢 EVVEL YENİ KASA (2026-10-15, sahip: "bağla"): kapanış KÖR SAYIMI →
-            # dükkân nakdinin otomatik sayımı (sayılan − gün sonu teslim = çekmecede kalan).
-            try:
-                from evvel_yeni_kasa_api import panel_kapanis_sayim
-                panel_kapanis_sayim(cur, sube_id, tarih_ev_ciro, ks, teslim_f)
-            except Exception:  # noqa: BLE001
-                pass
+            # (2026-10-16) Akşam kör sayımı Kasa'ya SAYIM olarak yazılmaz — Kasa'yı sabah sayımı denetler (Fable+Codex+sahip).
 
             from operasyon_defter import operasyon_defter_ekle
 

@@ -546,7 +546,8 @@ def avans_teslim_et(aid: str, body: AvansTeslimModel = AvansTeslimModel()):
         )
         # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE"):
         from evvel_yeni_olay import olay_yaz
-        olay_yaz(cur, sube_id=r["sube_id"], tur="avans", is_gunu=bugun, kok=f"avans:personel_avans:{aid}",
+        from tr_saat import is_gunu_tr as _is_gunu_tr
+        olay_yaz(cur, sube_id=r["sube_id"], tur="avans", is_gunu=_is_gunu_tr(), kok=f"avans:personel_avans:{aid}",
                  kaynak_tablo="personel_avans", kaynak_id=aid, tutar=tutar, personel_id=body.teslim_eden_personel_id,
                  veri={"personel_id": str(r["personel_id"]), "personel_ad": ad, "donem": f"{r['donem_yil']}-{int(r['donem_ay']):02d}",
                        "odeme": "elden", "anlik_gider_id": gid})

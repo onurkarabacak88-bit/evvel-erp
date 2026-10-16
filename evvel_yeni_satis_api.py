@@ -235,6 +235,16 @@ def _kasa_mutabakat(cur, gun: str) -> dict:
         cur.execute("""SELECT sube_id::text AS sid, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim
                         WHERE tarih = %s AND teslim_turu = 'ara'""", (gun,))
         ara_rows = cur.fetchall() or []
+    # Panelin teslim tablosu (her tür) — Kasa'ya henüz aktarılmamış / alıcısı eşleşmemiş teslimi ayırt etmek için (Fable c)
+    try:
+        with savepoint(cur, "sp_ey_mut_kt"):
+            cur.execute("""SELECT sube_id::text AS sid, tutar, teslim_alan_ad, teslim_turu FROM kasa_teslim WHERE tarih = %s""", (gun,))
+            for r in cur.fetchall() or []:
+                r = dict(r)
+                sube(r["sid"]).setdefault("panel_teslimleri", []).append(
+                    {"tutar": float(r["tutar"] or 0), "alan": r.get("teslim_alan_ad"), "tur": r.get("teslim_turu")})
+    except Exception:  # noqa: BLE001
+        pass
     for r in ara_rows:
         r = dict(r)
         sube(r["sid"])["ara_teslimler"].append({"tutar": float(r["tutar"] or 0), "alan": r.get("teslim_alan_ad"), "eden": r.get("teslim_eden_ad")})
@@ -247,8 +257,12 @@ def _kasa_mutabakat(cur, gun: str) -> dict:
         x["eksik"] = None if tam else ("sabah kasa sayımı yok" if x["acilis"] is None else
                                        "kapanış (nakit satış / devir) yok" if x["z_nakit"] is None or x["devir"] is None else None)
         x["sabah_fark"] = round(x["acilis"] - x["dun_devir"], 2) if (x["acilis"] is not None and x["dun_devir"] is not None) else None
-        x["kor_kalan"] = round(x["kor_sayim"] - (x["teslim"] or 0) - ara, 2) if x["kor_sayim"] is not None else None
+        tes = (x["teslim"] or 0) + ara
+        x["kor_kalan"] = round(x["kor_sayim"] - tes, 2) if x["kor_sayim"] is not None else None
         x["kor_fark"] = round(x["kor_kalan"] - x["devir"], 2) if (x["kor_kalan"] is not None and x["devir"] is not None) else None
+        # Sayılan, bırakılan tutara eşit ve teslim varsa: sayım teslimden SONRA yapılmış — sağlama yapılamaz (sahte açık gösterme)
+        x["kor_belirsiz"] = bool(x["kor_sayim"] is not None and tes > 0 and (
+            (x["devir"] is not None and abs(x["kor_sayim"] - x["devir"]) < 1) or x["kor_sayim"] < tes))
     return out
 
 
@@ -294,8 +308,20 @@ def satis_gun(gun: Optional[str] = None):
     _hazirla()
     with db() as (conn, cur):
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
-    kap, say = {}, {}
+    kap, say, tes = {}, {}, {}
     for h in kayit:
+        if h["tur"] == "teslim" and h["is_gunu"] == g_:
+            ksid = (C.get(h.get("kaynak")) or {}).get("sube_id")
+            if ksid:
+                v = h["veri"]
+                onayli = h.get("durum") == "onaylandi"
+                tes.setdefault(str(ksid), []).append({
+                    "tutar": h["tutar"] / 100, "alan": (C.get(h.get("hedef")) or {}).get("kisa") or h.get("hedef"),
+                    "durum": "alindi" if onayli else "bekliyor",
+                    "otomatik": bool(onayli and "otomatik" in str(h.get("onaylayan") or "")),
+                    "alinan": int(v.get("alinan", h["tutar"])) / 100 if onayli else None,
+                    "fark": (h["tutar"] - int(v.get("alinan", h["tutar"]))) / 100 if onayli else None,
+                    "onaylayan": h.get("onaylayan")})
         if h["is_gunu"] != g_:
             continue
         sid = (C.get(h["cep"]) or {}).get("sube_id")
@@ -333,6 +359,7 @@ def satis_gun(gun: Optional[str] = None):
             "satis_durum": kr.get("durum"), "satis_neden": kr.get("neden"), "guven": kr.get("guven"),
             "kasa": say.get(sid),
             "kasa_mutabakat": mut.get(sid),
+            "teslimler": tes.get(sid, []),
         })
     return {"gun": g_, "subeler": out,
             "not": "Kullanılan = sabah + gün içi giren − akşam. Satılan = kullanılan − fire (ikram, dökülme, yanlış ürün…). "

@@ -5805,20 +5805,22 @@
             ◈ Kasa Sayımı
             <span class="tip-q" data-tip="Teslim ve devir ciro satırına yazılmaz — sadece kasa teslim defterine işlenir. Sayılan toplam kör sayımdır, beklenen rakam gösterilmez.">?</span>
           </div>
+          <!-- Sahip (2026-10-16): "kasiyer asla ne sayacağını bilmemeli" + "birbirini denetlesin" →
+               ÖNCE çekmecedeki TÜM para (teslim ayrılmadan, kör), SONRA teslim ve devir. Beklenen rakam gösterilmez. -->
           <div class="kap-para-grid">
             <div>
-              <div class="kap-lbl">Teslim (₺)</div>
+              <div class="kap-lbl">1 · Çekmecedeki TÜM para <span style="color:var(--danger)">*</span>
+                <span class="tip-q" data-tip="Kör sayım — teslim için para ayırmadan ÖNCE çekmecedeki tüm nakiti sayın. Beklenen rakam gösterilmez.">?</span>
+              </div>
+              <input id="kapToplam" class="kap-inp-para kap-inp-teal" inputmode="decimal" placeholder="Önce say" />
+            </div>
+            <div>
+              <div class="kap-lbl">2 · Teslim (₺)</div>
               <input id="kapTeslim" class="kap-inp-para kap-inp-teal" inputmode="decimal" placeholder="0.00" />
             </div>
             <div>
-              <div class="kap-lbl">Devir (₺) <span style="color:var(--danger)">*</span></div>
+              <div class="kap-lbl">3 · Kasada bırakılan (devir) <span style="color:var(--danger)">*</span></div>
               <input id="kapDevir" class="kap-inp-para kap-inp-teal" inputmode="decimal" placeholder="Zorunlu" />
-            </div>
-            <div>
-              <div class="kap-lbl">Sayılan Toplam <span style="color:var(--danger)">*</span>
-                <span class="tip-q" data-tip="Kör sayım — kasanızdaki tüm nakiti BĞIMSİZ sayın, beklenen rakama bakmadan girin.">?</span>
-              </div>
-              <input id="kapToplam" class="kap-inp-para kap-inp-teal" inputmode="decimal" placeholder="Kör say →" />
             </div>
           </div>
         </div>
@@ -6708,7 +6710,7 @@ async function kapanisGonderSubmit(otomatik) {
     var devirExplicit = (devirStr === '' || devirParsed == null) ? null : Math.max(0, devirParsed);
     var toplamEl = inpVal('kapToplam').trim();
     var toplamSay = toplamEl === '' ? null : parseNum(toplamEl);
-    if (toplamSay == null || toplamSay < 0) throw new Error('Kasada sayılan toplam girilmedi — Adım 1\'e dön');
+    if (toplamSay == null || toplamSay < 0) throw new Error('Çekmecedeki TÜM para girilmedi — Adım 1\'e dön');
     var kasaToplam = toplamSay;
     var n = parseNum(inpVal('kapN'))||0, p2 = parseNum(inpVal('kapP'))||0, o = parseNum(inpVal('kapO'))||0;
     if (o > 0 && n > 0 && p2 > 0 && Math.abs(o - (n + p2)) < 0.5)
@@ -6875,7 +6877,7 @@ function wireKapanisStepFlow() {
   n1.onclick = function(){
     try {
       // KÖR SAYIM: önce fiziksel sayım zorunlu — beklenen değer burada gösterilmez
-      reqNum('kapToplam', 'Kasada sayılan toplam zorunludur — kasanızı sayıp girin (kör sayım)');
+      reqNum('kapToplam', 'Çekmecedeki TÜM parayı sayıp girin (teslim etmeden önce, kör sayım)');
       reqNum('kapTeslim', 'Teslim tutarı zorunludur');
       reqNum('kapDevir', 'Devir tutarı zorunludur (kasada bıraktığınız miktar)');
       var n = parseNum(inpVal('kapN')) || 0;

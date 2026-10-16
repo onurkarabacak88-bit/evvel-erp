@@ -23,7 +23,7 @@ const DURUM = {
 };
 
 // ── 💵 KASA AÇIĞI — eski Evvel'in kapanış mutabakatı (sahip: "parasal açığı görmemiz lazım, Evvel bunu hesaplıyordu") ──
-function KasaAcigi({ m, ciro }) {
+function KasaAcigi({ m, ciro, teslimler = [] }) {
   const satir = (ad, t, isaret, alt) => (
     <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '3px 0' }}>
       <span>{isaret} {ad}{alt && <span style={{ color: R.not, fontSize: 11.5 }}> · {alt}</span>}</span><b style={num}>{t == null ? '—' : fmt(t)}</b>
@@ -46,7 +46,25 @@ function KasaAcigi({ m, ciro }) {
       {satir('Kasada bırakılan (devir)', m.devir, '−')}
       <div style={{ borderTop: '1px solid var(--pi-line)', marginTop: 4, paddingTop: 4, color: R.metin2, fontSize: 12 }}>
         <div>Sağlama · sabah: {m.sabah_fark == null ? 'dünkü devir yok' : Math.abs(m.sabah_fark) < 1 ? `dün bırakılan ${fmt(m.dun_devir)} = bu sabah sayılan ✓` : <span style={{ color: R.kirmizi }}>dün bırakılan {fmt(m.dun_devir)} · bu sabah {fmt(m.acilis)} → {m.sabah_fark > 0 ? '+' : ''}{fmt(m.sabah_fark)}</span>}</div>
-        <div>Sağlama · akşam kör sayım: {m.kor_fark == null ? '—' : Math.abs(m.kor_fark) < 1 ? `sayılandan kalan ${fmt(m.kor_kalan)} = beyan edilen devir ✓` : <span style={{ color: R.kirmizi }}>sayılandan kalan {fmt(m.kor_kalan)} · beyan {fmt(m.devir)} → {m.kor_fark > 0 ? '+' : ''}{fmt(m.kor_fark)}</span>}</div>
+        <div>Sağlama · akşam: {m.kor_belirsiz ? <span style={{ color: R.amber }}>sayım teslimden SONRA yapılmış ({fmt(m.kor_sayim)} = bırakılan) — sağlama yapılamadı</span>
+          : m.kor_fark == null ? '—' : Math.abs(m.kor_fark) < 1 ? `sayılan ${fmt(m.kor_sayim)} − teslim = bırakılan ${fmt(m.devir)} ✓`
+          : <span style={{ color: R.kirmizi }}>sayılan {fmt(m.kor_sayim)} − teslim {fmt((m.teslim || 0) + (m.ara_toplam || 0))} = {fmt(m.kor_kalan)} · bırakılan {fmt(m.devir)} → {m.kor_fark > 0 ? '+' : ''}{fmt(m.kor_fark)}</span>}</div>
+        {/* Sahip: "teslim ihtimali varsa para teslimi yapılmış mı ona da baksın" */}
+        {((m.teslim || 0) + (m.ara_toplam || 0) > 0 || teslimler.length > 0) && (
+          <div>Sağlama · teslim: {teslimler.length === 0
+            ? ((m.panel_teslimleri || []).length > 0
+              ? <span style={{ color: R.amber }}>panelde {m.panel_teslimleri.map((t) => `${fmt(t.tutar)} → ${t.alan || '?'}`).join(', ')} var — Kasa'ya henüz aktarılmadı (≤10 dk) ya da alıcı Onur/Fethi/Fatma ile eşleşmedi</span>
+              : <span style={{ color: R.kirmizi }}>kasiyer {fmt((m.teslim || 0) + (m.ara_toplam || 0))} ₺ teslim yazdı ama hiçbir teslim kaydı YOK</span>)
+            : teslimler.map((t, i) => (
+              <span key={i} style={{ marginRight: 8 }}>{fmt(t.tutar)} ₺ → {t.alan}: {t.durum === 'bekliyor'
+                ? <span style={{ color: R.amber }}>henüz alınmadı</span>
+                : t.otomatik ? <span style={{ color: R.amber }}>otomatik kabul (kimse saymadı)</span>
+                  : Math.abs(t.fark || 0) < 1 ? <span style={{ color: R.yesil }}>aldı, saydı ✓</span>
+                    : <span style={{ color: R.kirmizi }}>aldı, {fmt(t.alinan)} saydı → {fmt(t.fark)} eksik</span>}</span>))}
+            {teslimler.length > 0 && Math.abs(teslimler.reduce((a, t) => a + t.tutar, 0) - ((m.teslim || 0) + (m.ara_toplam || 0))) >= 1 &&
+              <span style={{ color: R.kirmizi }}> · kasiyerin yazdığı {fmt((m.teslim || 0) + (m.ara_toplam || 0))} ≠ Kasa'daki {fmt(teslimler.reduce((a, t) => a + t.tutar, 0))}</span>}
+          </div>
+        )}
         {m.vardiya.length > 0 && <div>Vardiya devri: {m.vardiya.map((v) => `${v.saat || ''} ${v.sayilan == null ? '' : `${fmt(v.sayilan)} ₺ sayıldı`}`).join(' · ')}</div>}
       </div>
     </div>
@@ -118,7 +136,7 @@ function GunlukDokum() {
                 {s.fire.map((f, i) => <div key={i}>{f.saat} · {f.adet} × {f.ad} — <b>{f.sebep}</b>{f.kim ? ` · ${f.kim}` : ''}{f.aciklama ? ` · ${f.aciklama}` : ''}</div>)}
               </div>
             )}
-            <KasaAcigi m={s.kasa_mutabakat} ciro={s.ciro} />
+            <KasaAcigi m={s.kasa_mutabakat} ciro={s.ciro} teslimler={s.teslimler} />
           </div>
         ))}
       </div>}

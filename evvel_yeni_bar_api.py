@@ -208,10 +208,19 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
     for e in olaylar:
         ev.setdefault(e["sube_id"], {}).setdefault(e["tarih"], {})[e["tip"]] = e   # aynı gün ikinci kayıt sonuncuyu tutar
 
+    def _tr(ts):
+        """Saat dilimli zamanı TR duvar saatine (dilimsiz) çevir — panel saatleri dilimsiz TR tutuluyor (Codex C3)."""
+        if ts is None or getattr(ts, "tzinfo", None) is None:
+            return ts
+        from zoneinfo import ZoneInfo
+        return ts.astimezone(ZoneInfo("Europe/Istanbul")).replace(tzinfo=None)
+
     def ac_topla(sid, t0, t1, gun_yedek=None):
         """(t0, t1] aralığında açılan; saat yoksa iş gününe göre."""
         out = _bos()
+        t0, t1 = _tr(t0), _tr(t1)
         for ts, tarih, k, adet in ac.get(sid, []):
+            ts = _tr(ts)
             if ts is not None and t0 is not None and t1 is not None:
                 if t0 < ts <= t1:
                     out[k] += adet

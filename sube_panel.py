@@ -733,7 +733,7 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
 
         # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE"):
         from evvel_yeni_olay import olay_yaz
-        olay_yaz(cur, sube_id=sube_id, tur="iptal", is_gunu=tarih, kok=f"kapanis_geri_al:{sube_id}:{tarih}:{body.sebep or ''}",
+        olay_yaz(cur, sube_id=sube_id, tur="iptal", is_gunu=tarih, kok=f"kapanis_geri_al:{sube_id}:{tarih}:{uuid.uuid4().hex[:12]}",
                  hedef_kok=f"kapanis:{sube_id}:{tarih}", neden=(body.sebep or "Kapanış geri alındı"),
                  personel_ad=onayci.get("ad_soyad"),
                  veri={"teslim_silindi": teslim_silindi, "event_acildi": event_acildi, "taslak_korundu": taslak_korunan})
@@ -1603,7 +1603,8 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                 "acilis_saati": saat_str,
                 "idempotent": False,
                 "sayimli": True,
-                "kasa_fark": _kasa_fark_sonuc,  # Kör sayım sonucu: sayım bittikten SONRA göster
+                # Sahip (2026-10-16): "kasiyer asla ne sayacağını bilmemeli" → beklenen/fark kasiyere DÖNMEZ (merkez görür)
+                "kasa_fark": None,
             }
 
         if not _bugun_kasa_acildi_mi(cur, sube_id):
