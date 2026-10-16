@@ -174,6 +174,84 @@ def satis_kontrol(ay: Optional[str] = None):
                    "toplanmaz. Sebep fire, ikram, kayıt dışı satış ya da sayım hatası olabilir — kimseye suç yazılmaz."}
 
 
+def _kasa_mutabakat(cur, gun: str) -> dict:
+    """💵 KASA AÇIĞI — eski Evvel'in kapanış mutabakatı (sube_operasyon.py:1255), Evvel Yeni'de PARÇALARINDAN yeniden:
+         sabah kasada sayılan + girilen nakit satış − nakit giderler − ara teslim − gün sonu teslim − kasada bırakılan (devir) = 0
+       Sıfır değilse PARASAL AÇIK (+) ya da FAZLA (−). Ek sağlamalar (sahip: "personeller kasaları devrederek sağlama yapıyor"):
+         · SABAH FARKI   = bu sabah sayılan − dün akşam bırakılan (devir)
+         · KÖR SAYIM     = akşam kör sayımına göre kasada kalan (sayılan − teslim − ara) ↔ beyan edilen devir
+         · VARDİYA DEVRİ = gün içi devir sayımları (sabahçı → akşamcı), saatiyle
+    """
+    import json as _json
+    from datetime import date as _date
+    g = _date.fromisoformat(gun)
+    dun = (g - timedelta(days=1)).isoformat()
+    out = {}
+
+    def sube(sid):
+        return out.setdefault(str(sid), {"acilis": None, "z_nakit": None, "giderler": [], "ara_teslimler": [], "teslim": None,
+                                         "devir": None, "kor_sayim": None, "dun_devir": None, "vardiya": [], "eski_fark": None})
+    cur.execute("""SELECT sube_id::text AS sid, tarih::text AS t, tip, kasa_sayim, teslim, devir, cevap_ts, meta, personel_saat
+                     FROM sube_operasyon_event
+                    WHERE tarih IN (%s, %s) AND durum='tamamlandi' AND tip IN ('ACILIS','KAPANIS','CIKIS')
+                    ORDER BY cevap_ts NULLS LAST""", (gun, dun))
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        m = r["meta"] if isinstance(r["meta"], dict) else (_json.loads(r["meta"]) if r["meta"] else {})
+        x = sube(r["sid"])
+        f = lambda v: float(v) if v is not None else None  # noqa: E731
+        if r["t"] == dun:
+            if r["tip"] == "KAPANIS":
+                x["dun_devir"] = f(r["devir"]) if r["devir"] is not None else (
+                    (f(r["kasa_sayim"]) or 0) - (f(r["teslim"]) or 0) if r["kasa_sayim"] is not None else None)
+            continue
+        if r["tip"] == "ACILIS":
+            x["acilis"] = f(r["kasa_sayim"])
+        elif r["tip"] == "KAPANIS":
+            x["kor_sayim"] = f(r["kasa_sayim"])
+            x["teslim"] = f(r["teslim"]) or 0.0
+            x["devir"] = f(r["devir"]) if r["devir"] is not None else f(m.get("kasiyer_devir_beyan"))
+            xr = m.get("x_rapor") or {}
+            x["z_nakit"] = f(xr.get("nakit")) if xr.get("nakit") is not None else f((m.get("mutabakat") or {}).get("z_nakit"))
+            x["eski_fark"] = f((m.get("mutabakat") or {}).get("fark"))
+        elif r["tip"] == "CIKIS":
+            x["vardiya"].append({"saat": r["cevap_ts"].strftime("%H:%M") if r.get("cevap_ts") else None,
+                                 "sayilan": f(r["kasa_sayim"]), "kim": r.get("personel_saat")})
+    cur.execute("""SELECT sube::text AS sid, tutar, kategori, aciklama, durum FROM anlik_giderler
+                    WHERE tarih = %s AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'
+                      AND durum IN ('aktif', 'onay_bekliyor')""", (gun,))
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        sube(r["sid"])["giderler"].append({"tutar": float(r["tutar"] or 0), "ad": " · ".join(x for x in [r.get("kategori"), r.get("aciklama")] if x) or "Gider",
+                                           "bekliyor": r["durum"] == "onay_bekliyor"})
+    from database import savepoint
+    ara_rows = []
+    try:
+        with savepoint(cur, "sp_ey_mut_ara"):
+            cur.execute("""SELECT sube_id::text AS sid, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim
+                            WHERE tarih = %s AND teslim_turu = 'ara' AND COALESCE(durum,'aktif') = 'aktif'""", (gun,))
+            ara_rows = cur.fetchall() or []
+    except Exception:  # noqa: BLE001 — durum kolonu olmayan kurulum
+        cur.execute("""SELECT sube_id::text AS sid, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim
+                        WHERE tarih = %s AND teslim_turu = 'ara'""", (gun,))
+        ara_rows = cur.fetchall() or []
+    for r in ara_rows:
+        r = dict(r)
+        sube(r["sid"])["ara_teslimler"].append({"tutar": float(r["tutar"] or 0), "alan": r.get("teslim_alan_ad"), "eden": r.get("teslim_eden_ad")})
+    for x in out.values():
+        gid = round(sum(y["tutar"] for y in x["giderler"]), 2)
+        ara = round(sum(y["tutar"] for y in x["ara_teslimler"]), 2)
+        x["gider_toplam"], x["ara_toplam"] = gid, ara
+        tam = x["acilis"] is not None and x["z_nakit"] is not None and x["devir"] is not None
+        x["fark"] = round(x["acilis"] + x["z_nakit"] - gid - ara - (x["teslim"] or 0) - x["devir"], 2) if tam else None
+        x["eksik"] = None if tam else ("sabah kasa sayımı yok" if x["acilis"] is None else
+                                       "kapanış (nakit satış / devir) yok" if x["z_nakit"] is None or x["devir"] is None else None)
+        x["sabah_fark"] = round(x["acilis"] - x["dun_devir"], 2) if (x["acilis"] is not None and x["dun_devir"] is not None) else None
+        x["kor_kalan"] = round(x["kor_sayim"] - (x["teslim"] or 0) - ara, 2) if x["kor_sayim"] is not None else None
+        x["kor_fark"] = round(x["kor_kalan"] - x["devir"], 2) if (x["kor_kalan"] is not None and x["devir"] is not None) else None
+    return out
+
+
 @router.get("/gun")
 def satis_gun(gun: Optional[str] = None):
     """GÜNLÜK DÖKÜM (sahip: "bugün 14 adet 8oz vs. görmek istiyorum; kasada açık var mı, satıştan gelen açık var mı;
@@ -207,6 +285,12 @@ def satis_gun(gun: Optional[str] = None):
                                                               "kim": r.get("personel_ad"), "saat": r["olusturma"].strftime("%H:%M") if r.get("olusturma") else None})
         except Exception as e:  # noqa: BLE001
             log.warning("satış günlük: fire okunamadı: %s", str(e)[:150])
+    try:
+        with db() as (conn, cur):
+            mut = _kasa_mutabakat(cur, g_)
+    except Exception as e:  # noqa: BLE001
+        log.warning("satış günlük: kasa mutabakatı okunamadı: %s", str(e)[:150])
+        mut = {}
     _hazirla()
     with db() as (conn, cur):
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
@@ -248,8 +332,9 @@ def satis_gun(gun: Optional[str] = None):
             "satis_acik": round(bek - ciro, 2) if (bek is not None and ciro is not None) else None,
             "satis_durum": kr.get("durum"), "satis_neden": kr.get("neden"), "guven": kr.get("guven"),
             "kasa": say.get(sid),
+            "kasa_mutabakat": mut.get(sid),
         })
     return {"gun": g_, "subeler": out,
             "not": "Kullanılan = sabah + gün içi giren − akşam. Satılan = kullanılan − fire (ikram, dökülme, yanlış ürün…). "
-                   "Satıştan açık = bardaktan beklenen ciro − girilen ciro (referans oluşana kadar yalnız bilgi). "
-                   "Kasa açığı = akşam kör sayımı (17 Ekim'den itibaren)."}
+                   "Kasa açığı (Evvel hesabı) = sabah kasada sayılan + girilen nakit satış − nakit giderler − ara teslim − gün sonu "
+                   "teslim − kasada bırakılan; sıfır olmalı. Bardaktan beklenen ciro 'Beklenen satış' sekmesinde."}

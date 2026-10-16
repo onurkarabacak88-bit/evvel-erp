@@ -197,7 +197,7 @@ export default function EvvelYeniApp() {
           </nav>
           <main className="piapp-ic">
             {(TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'satis'
-              ? <SatisModulu />
+              ? <SatisModulu gorunum={sekme} />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'maas'
               ? <MaasModulu onToast={setToast} onSekme={sekmeDegis} />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'bar'

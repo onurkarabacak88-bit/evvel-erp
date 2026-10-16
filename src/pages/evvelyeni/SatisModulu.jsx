@@ -9,8 +9,10 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, num, Dugme, Cip, fmt, tKisa } from './KasaModulu';
 
+// Sahip: "Beklenen satışı AYRI sekme yap; ilk alanda KESİN veriler (satılan, fire, kasa açığı) olsun."
 export const SATIS_SAYFALAR = [
-  { id: 'satis_kontrol', ad: 'Satış kontrolü', alt: 'Bardak ↔ ciro · kör kasa' },
+  { id: 'satis_kontrol', ad: 'Satış kontrolü', alt: 'Satılan · fire · kasa açığı' },
+  { id: 'satis_beklenen', ad: 'Beklenen satış', alt: 'Bardaktan tahmini ciro' },
 ];
 
 const DURUM = {
@@ -19,6 +21,37 @@ const DURUM = {
   birikiyor: { tur: undefined, ad: 'Referans oluşuyor' },
   hesaplanmadi: { tur: undefined, ad: 'Veri eksik' },
 };
+
+// ── 💵 KASA AÇIĞI — eski Evvel'in kapanış mutabakatı (sahip: "parasal açığı görmemiz lazım, Evvel bunu hesaplıyordu") ──
+function KasaAcigi({ m, ciro }) {
+  const satir = (ad, t, isaret, alt) => (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '3px 0' }}>
+      <span>{isaret} {ad}{alt && <span style={{ color: R.not, fontSize: 11.5 }}> · {alt}</span>}</span><b style={num}>{t == null ? '—' : fmt(t)}</b>
+    </div>
+  );
+  if (!m) return <div style={{ background: 'var(--pi-bg)', borderRadius: 9, padding: '9px 11px', color: R.not, fontSize: 13 }}>💵 Kasa açığı: bu gün panelde açılış/kapanış kaydı yok.</div>;
+  const f = m.fark;
+  const renk = f == null ? R.not : Math.abs(f) < 1 ? R.yesil : f > 0 ? R.kirmizi : R.amber;
+  return (
+    <div style={{ background: 'var(--pi-bg)', borderRadius: 9, padding: '9px 11px', fontSize: 13, borderLeft: `4px solid ${renk}` }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 4 }}>
+        <b style={{ fontSize: 13.5 }}>💵 KASA AÇIĞI</b>
+        <b style={{ ...num, fontSize: 17, color: renk }}>{f == null ? (m.eksik || 'hesaplanamadı') : Math.abs(f) < 1 ? 'TUTTU ✓' : f > 0 ? `${fmt(f)} ₺ AÇIK` : `${fmt(-f)} ₺ FAZLA`}</b>
+      </div>
+      {satir('Sabah kasada sayılan', m.acilis, '')}
+      {satir('Girilen nakit satış', m.z_nakit, '+', ciro ? `toplam ciro ${fmt(ciro.toplam)} (POS ${fmt(ciro.pos)})` : null)}
+      {satir('Nakit giderler', m.gider_toplam, '−', m.giderler.length ? m.giderler.map((g) => `${g.ad} ${fmt(g.tutar)}${g.bekliyor ? ' (onay bekliyor)' : ''}`).join(', ') : null)}
+      {m.ara_toplam > 0 && satir('Ara teslim', m.ara_toplam, '−', m.ara_teslimler.map((t) => `${t.alan || '?'} ${fmt(t.tutar)}`).join(', '))}
+      {satir('Gün sonu teslim', m.teslim, '−')}
+      {satir('Kasada bırakılan (devir)', m.devir, '−')}
+      <div style={{ borderTop: '1px solid var(--pi-line)', marginTop: 4, paddingTop: 4, color: R.metin2, fontSize: 12 }}>
+        <div>Sağlama · sabah: {m.sabah_fark == null ? 'dünkü devir yok' : Math.abs(m.sabah_fark) < 1 ? `dün bırakılan ${fmt(m.dun_devir)} = bu sabah sayılan ✓` : <span style={{ color: R.kirmizi }}>dün bırakılan {fmt(m.dun_devir)} · bu sabah {fmt(m.acilis)} → {m.sabah_fark > 0 ? '+' : ''}{fmt(m.sabah_fark)}</span>}</div>
+        <div>Sağlama · akşam kör sayım: {m.kor_fark == null ? '—' : Math.abs(m.kor_fark) < 1 ? `sayılandan kalan ${fmt(m.kor_kalan)} = beyan edilen devir ✓` : <span style={{ color: R.kirmizi }}>sayılandan kalan {fmt(m.kor_kalan)} · beyan {fmt(m.devir)} → {m.kor_fark > 0 ? '+' : ''}{fmt(m.kor_fark)}</span>}</div>
+        {m.vardiya.length > 0 && <div>Vardiya devri: {m.vardiya.map((v) => `${v.saat || ''} ${v.sayilan == null ? '' : `${fmt(v.sayilan)} ₺ sayıldı`}`).join(' · ')}</div>}
+      </div>
+    </div>
+  );
+}
 
 // ── GÜNLÜK DÖKÜM — sahip: "bugün 14 adet 8oz vs. görmek istiyorum; kasada açık var mı, satıştan açık var mı; fire" ──
 function GunlukDokum() {
@@ -74,24 +107,7 @@ function GunlukDokum() {
                 {s.fire.map((f, i) => <div key={i}>{f.saat} · {f.adet} × {f.ad} — <b>{f.sebep}</b>{f.kim ? ` · ${f.kim}` : ''}{f.aciklama ? ` · ${f.aciklama}` : ''}</div>)}
               </div>
             )}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, fontSize: 13 }}>
-              <div style={{ background: 'var(--pi-bg)', borderRadius: 9, padding: '8px 10px' }}>
-                <div style={{ color: R.not, fontSize: 11.5 }}>SATIŞTAN AÇIK</div>
-                {s.ciro ? <>
-                  <div>Girilen <b style={num}>{fmt(s.ciro.toplam)}</b> ₺ <span style={{ color: R.not }}>(nakit {fmt(s.ciro.nakit)} · POS {fmt(s.ciro.pos)}{s.ciro.online ? ` · online ${fmt(s.ciro.online)}` : ''})</span></div>
-                  {s.beklenen_ciro != null
-                    ? <div>Bardaktan beklenen ≈<b style={num}>{fmt(Math.round(s.beklenen_ciro))}</b> ₺ → <b style={{ color: s.satis_acik > 0 && s.satis_durum === 'bak' ? R.kirmizi : s.satis_acik > 0 ? R.amber : R.yesil }}>{acikYaz(s.satis_acik)}</b>
-                      {s.guven === 'birikiyor' && <div style={{ color: R.not, fontSize: 11.5 }}>referans oluşuyor — yalnız bilgi</div>}</div>
-                    : <div style={{ color: R.not }}>{s.satis_neden || 'hesaplanamadı'}</div>}
-                </> : <div style={{ color: R.kirmizi }}>Kapanış cirosu yok</div>}
-              </div>
-              <div style={{ background: 'var(--pi-bg)', borderRadius: 9, padding: '8px 10px' }}>
-                <div style={{ color: R.not, fontSize: 11.5 }}>KASA AÇIĞI (kör sayım)</div>
-                {s.kasa ? (s.kasa.baslangic ? <div>Başlangıç sayımı · {fmt(s.kasa.sayilan)} ₺ sayıldı</div>
-                  : <div>Defter {fmt(s.kasa.beklenen)} · sayılan {fmt(s.kasa.sayilan)} → <b style={{ color: Math.abs(s.kasa.fark) < 1 ? R.yesil : R.kirmizi }}>{acikYaz(s.kasa.fark)}</b></div>)
-                  : <div style={{ color: R.not }}>Bu gün kör sayım yok (17 Ekim'den itibaren)</div>}
-              </div>
-            </div>
+            <KasaAcigi m={s.kasa_mutabakat} ciro={s.ciro} />
           </div>
         ))}
       </div>}
@@ -99,7 +115,20 @@ function GunlukDokum() {
   );
 }
 
-export default function SatisModulu() {
+export default function SatisModulu({ gorunum }) {
+  if (gorunum !== 'satis_beklenen') {
+    return (
+      <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+        <style>{PI_CSS}</style>
+        <div><div className="pi-eyebrow">Evvel Yeni · Kontrol</div><h1 style={{ fontSize: 30 }}>Satış kontrolü</h1></div>
+        <GunlukDokum />
+      </div>
+    );
+  }
+  return <BeklenenSatis />;
+}
+
+function BeklenenSatis() {
   const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
@@ -118,15 +147,14 @@ export default function SatisModulu() {
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
-        <div><div className="pi-eyebrow">Evvel Yeni · Kontrol</div><h1 style={{ fontSize: 30 }}>Satış kontrolü</h1></div>
+        <div><div className="pi-eyebrow">Evvel Yeni · Tahmin</div><h1 style={{ fontSize: 30 }}>Beklenen satış</h1></div>
         <label style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
           <input type="checkbox" checked={hepsi} onChange={(e) => setHepsi(e.target.checked)} />veri eksik günleri de göster
         </label>
         <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)}
           style={{ font: 'inherit', padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-paper)', color: 'var(--pi-ink)' }} />
       </div>
-      <GunlukDokum />
-      <b style={{ fontSize: 18, marginTop: 6 }}>Ay boyunca — bardak ↔ ciro uyumu</b>
+      <div style={{ fontSize: 13.5 }}>Bardaktan <b>tahmini</b> ciro ile girilen ciro — kesin değil, uyum izleme. Kesin rakamlar <b>Satış kontrolü</b> sekmesinde.</div>
       <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
 
       {v.subeler.map((s) => {
