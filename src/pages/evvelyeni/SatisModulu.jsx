@@ -13,6 +13,7 @@ import { PI_CSS, R, kart, num, Dugme, Cip, fmt, tKisa } from './KasaModulu';
 export const SATIS_SAYFALAR = [
   { id: 'satis_kontrol', ad: 'Satış kontrolü', alt: 'Satılan · fire · kasa açığı' },
   { id: 'satis_beklenen', ad: 'Beklenen satış', alt: 'Bardaktan tahmini ciro' },
+  { id: 'devir_defteri', ad: 'Kasa devir defteri', alt: 'Kim saydı · kime devretti' },
 ];
 
 const DURUM = {
@@ -145,6 +146,7 @@ function GunlukDokum() {
 }
 
 export default function SatisModulu({ gorunum }) {
+  if (gorunum === 'devir_defteri') return <DevirDefteri />;
   if (gorunum !== 'satis_beklenen') {
     return (
       <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
@@ -222,6 +224,73 @@ function BeklenenSatis() {
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// ── 🔁 KASA DEVİR DEFTERİ — sahip: "açılış ve kapanış sayımlarını, devrin kimden kime yapıldığını takip etmek" ──
+export function DevirDefteri() {
+  const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState(null);
+  const [sube, setSube] = useState(null);
+  const no = useRef(0);
+  useEffect(() => {
+    const n = ++no.current;
+    setV(null);
+    api(`/evvel-yeni/satis/devir-defteri?ay=${ay}`).then((r) => { if (n === no.current) { setV(r); setHata(null); setSube((x) => x || r.subeler.find((s) => s.ozet.tutan + s.ozet.kopuk > 0)?.sube_id || r.subeler[0]?.sube_id); } })
+      .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
+  }, [ay]);
+  const s = v && v.subeler.find((x) => x.sube_id === sube);
+  const tut = (x) => (x == null ? '—' : fmt(x));
+  const fark = (x) => (x == null ? null : Math.abs(x) < 1 ? <span style={{ color: R.yesil }}> ✓</span> : <span style={{ color: R.kirmizi, fontWeight: 700 }}> {x > 0 ? '+' : ''}{fmt(x)}</span>);
+  const hucre = { padding: '7px 9px', verticalAlign: 'top', borderTop: '1px solid var(--pi-line)', fontSize: 12.5 };
+  return (
+    <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <style>{PI_CSS}</style>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+        <div><div className="pi-eyebrow">Evvel Yeni · Kontrol</div><h1 style={{ fontSize: 30 }}>Kasa devir defteri</h1></div>
+        <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)}
+          style={{ marginLeft: 'auto', font: 'inherit', padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-paper)', color: 'var(--pi-ink)' }} />
+      </div>
+      {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
+      {!v && !hata && <div style={{ color: R.not }}>Defter hazırlanıyor…</div>}
+      {v && <>
+        <div style={{ fontSize: 12.5, color: R.not }}>{v.not} Kasiyer bu ekranı görmez.</div>
+        <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+          {v.subeler.map((x) => (
+            <button key={x.sube_id} type="button" onClick={() => setSube(x.sube_id)} style={{
+              font: 'inherit', fontWeight: 700, padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
+              border: `1px solid ${sube === x.sube_id ? 'var(--pi-accent)' : 'var(--pi-line)'}`, background: sube === x.sube_id ? 'var(--pi-accent)' : 'var(--pi-paper)', color: sube === x.sube_id ? 'var(--pi-on-accent)' : R.krem,
+            }}>{x.ad} <span style={{ fontWeight: 400, fontSize: 12 }}>✓{x.ozet.tutan}{x.ozet.kopuk ? ` · ✗${x.ozet.kopuk}` : ''}</span></button>
+          ))}
+        </div>
+        {s && (
+          <div style={{ ...kart, overflowX: 'auto' }}>
+            <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900 }}>
+              <thead><tr style={{ textAlign: 'left', fontSize: 12, color: R.metin2 }}>
+                <th style={hucre}>Gün</th><th style={hucre}>🌅 Sabah sayımı</th><th style={hucre}>🔁 Vardiya devri</th><th style={hucre}>🌙 Akşam kapanış</th><th style={hucre}>➡️ Ertesi sabah</th><th style={hucre}>Zincir</th>
+              </tr></thead>
+              <tbody>{s.gunler.map((g) => (
+                <tr key={g.gun} style={{ background: g.zincir_fark != null && !g.zincir_tutuyor ? 'rgba(192,58,43,.06)' : undefined }}>
+                  <td style={{ ...hucre, ...num, whiteSpace: 'nowrap' }}><b>{tKisa(g.gun)}</b></td>
+                  <td style={hucre}>{g.sabah ? <><b>{g.sabah.kim || '?'}</b> · {g.sabah.saat}<br />sayılan <b style={num}>{tut(g.sabah.sayilan)}</b>
+                    {g.sabah.dun_birakilan != null && <span style={{ color: R.not }}> · dün bırakılan {tut(g.sabah.dun_birakilan)}</span>}{fark(g.sabah.fark)}</> : <span style={{ color: R.not }}>açılış yok</span>}</td>
+                  <td style={hucre}>{g.vardiya ? <><b>{g.vardiya.devreden}</b> → <b>{g.vardiya.devralan}</b> · {g.vardiya.saat}<br />
+                    nakit {tut(g.vardiya.nakit)}{g.vardiya.teslim ? ` · teslim ${tut(g.vardiya.teslim)}` : ''} · bıraktı <b style={num}>{tut(g.vardiya.birakilan)}</b>
+                    {g.vardiya.durum === 'acilis_bekliyor' && <div style={{ color: R.amber }}>devralan henüz onaylamadı</div>}</> : <span style={{ color: R.not }}>—</span>}</td>
+                  <td style={hucre}>{g.aksam ? <><b>{g.aksam.kim || '?'}</b> · {g.aksam.saat}<br />kör toplam <b style={num}>{tut(g.aksam.kor_toplam)}</b>
+                    {g.aksam.teslim ? <> · teslim <b style={num}>{tut(g.aksam.teslim)}</b> → {g.aksam.kime || <span style={{ color: R.kirmizi }}>kime? kayıt yok</span>}</> : ' · teslim yok'}
+                    {g.aksam.ara_teslim && <div style={{ color: R.not }}>ara teslim: {g.aksam.ara_teslim}</div>}
+                    <div>bıraktı <b style={num}>{tut(g.aksam.birakilan)}</b></div></> : <span style={{ color: R.not }}>kapanış yok</span>}</td>
+                  <td style={hucre}>{g.ertesi_sabah ? <><b>{g.ertesi_sabah.kim || '?'}</b> · {g.ertesi_sabah.saat}<br />saydı <b style={num}>{tut(g.ertesi_sabah.sayilan)}</b></> : <span style={{ color: R.not }}>—</span>}</td>
+                  <td style={{ ...hucre, fontWeight: 700 }}>{g.zincir_fark == null ? <span style={{ color: R.not }}>—</span> : g.zincir_tutuyor ? <span style={{ color: R.yesil }}>tuttu ✓</span> : <span style={{ color: R.kirmizi }}>{g.zincir_fark > 0 ? '+' : ''}{fmt(g.zincir_fark)}</span>}</td>
+                </tr>
+              ))}</tbody>
+            </table>
+          </div>
+        )}
+      </>}
     </div>
   );
 }

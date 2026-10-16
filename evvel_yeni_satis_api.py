@@ -386,3 +386,115 @@ def satis_gun(gun: Optional[str] = None):
             "not": "Kullanılan = sabah + gün içi giren − akşam. Satılan = kullanılan − fire (ikram, dökülme, yanlış ürün…). "
                    "Kasa açığı (Evvel hesabı) = sabah kasada sayılan + girilen nakit satış − nakit giderler − ara teslim − gün sonu "
                    "teslim − kasada bırakılan; sıfır olmalı. Bardaktan beklenen ciro 'Beklenen satış' sekmesinde."}
+
+
+@router.get("/devir-defteri")
+def devir_defteri(ay: Optional[str] = None):
+    """🔁 KASA DEVİR DEFTERİ (sahip 2026-10-16): "açılış kasası sayımlarını, kapanış sayımlarını ve devrin kimden kime
+    yapıldığını takip etmek." Şube × gün zinciri:
+      SABAH: kim saydı, saat, sayılan ↔ dün akşam bırakılan
+      VARDİYA DEVRİ: sabahçı → akşamcı, devredilen nakit / teslim / bırakılan
+      AKŞAM: kim kapattı, kör toplam, kime ne teslim, ne bıraktı → ERTESİ SABAH kim devraldı, ne saydı
+    Kopukluk (bırakılan ≠ ertesi sabah sayılan) kırmızı. YALNIZ OKUR (panel tabloları)."""
+    import json as _json
+    from evvel_yeni_kasa_api import _bugun
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    bugun = _bugun()
+    a_ = (ay or bugun.strftime("%Y-%m"))[:7]
+    ay_bas = date.fromisoformat(a_ + "-01")
+    ay_son = (ay_bas.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    with db() as (conn, cur):
+        subeler = _ey_subeler(cur)
+        cur.execute("SELECT id, ad FROM ey_personel")
+        pad = {dict(r)["id"]: dict(r)["ad"] for r in cur.fetchall() or []}
+        ev = {}
+        cur.execute("""SELECT sube_id::text AS sid, tarih, tip, kasa_sayim, teslim, devir, cevap_ts, personel_id, personel_ad, meta
+                         FROM sube_operasyon_event
+                        WHERE tarih BETWEEN %s AND %s AND durum='tamamlandi' AND tip IN ('ACILIS','KAPANIS')
+                        ORDER BY cevap_ts NULLS LAST""", (ay_bas - timedelta(days=1), ay_son + timedelta(days=1)))
+        for r in cur.fetchall() or []:
+            r = dict(r)
+            ev[(r["sid"], r["tarih"].isoformat(), r["tip"])] = r
+        devir = {}
+        try:
+            with savepoint(cur, "sp_ey_devir_kk"):
+                cur.execute("""SELECT sube_id::text AS sid, tarih, nakit, teslim, devir, durum, kapanisci_onay_ts, acilisci_onay_ts,
+                                      sabahci_personel_id::text AS sabahci, aksamci_personel_id::text AS aksamci
+                                 FROM kapanis_kayit WHERE olay='vardiya_sabah_aksam_devri' AND tarih BETWEEN %s AND %s""", (ay_bas, ay_son))
+                for r in cur.fetchall() or []:
+                    r = dict(r)
+                    devir[(r["sid"], r["tarih"].isoformat())] = r
+        except Exception as e:  # noqa: BLE001
+            log.warning("devir defteri: vardiya devri okunamadı: %s", str(e)[:150])
+        kapanan = {}
+        try:
+            with savepoint(cur, "sp_ey_devir_ct"):
+                cur.execute("""SELECT DISTINCT ON (sube_id, tarih) sube_id::text AS sid, tarih, gonderen_ad FROM ciro_taslak
+                                WHERE tarih BETWEEN %s AND %s AND COALESCE(gonderen_ad,'') NOT ILIKE '%%evo%%'
+                                ORDER BY sube_id, tarih, olusturma DESC""", (ay_bas, ay_son))
+                for r in cur.fetchall() or []:
+                    r = dict(r)
+                    kapanan[(r["sid"], r["tarih"].isoformat())] = r["gonderen_ad"]
+        except Exception:  # noqa: BLE001
+            pass
+        teslim_alan = {}
+        try:
+            with savepoint(cur, "sp_ey_devir_kt"):
+                cur.execute("""SELECT sube_id::text AS sid, tarih, teslim_turu, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim
+                                WHERE tarih BETWEEN %s AND %s ORDER BY olusturma""", (ay_bas, ay_son))
+                for r in cur.fetchall() or []:
+                    r = dict(r)
+                    teslim_alan.setdefault((r["sid"], r["tarih"].isoformat()), []).append(
+                        {"tur": r["teslim_turu"], "tutar": float(r["tutar"] or 0), "alan": r.get("teslim_alan_ad"), "eden": r.get("teslim_eden_ad")})
+        except Exception:  # noqa: BLE001
+            pass
+    f = lambda v: float(v) if v is not None else None  # noqa: E731
+    saat = lambda ts: _tr_saat(ts)  # noqa: E731
+    out = []
+    for s in subeler:
+        sid = s["id"]
+        gunler = []
+        g = ay_bas
+        while g <= min(ay_son, bugun):
+            gi, ert = g.isoformat(), (g + timedelta(days=1)).isoformat()
+            a, k, ka = ev.get((sid, gi, "ACILIS")), ev.get((sid, gi, "KAPANIS")), ev.get((sid, ert, "ACILIS"))
+            dun_k = ev.get((sid, (g - timedelta(days=1)).isoformat(), "KAPANIS"))
+            vd = devir.get((sid, gi))
+            km = (k["meta"] if isinstance(k["meta"], dict) else _json.loads(k["meta"] or "{}")) if k else {}
+            dun_birak = f(dun_k["devir"]) if dun_k else None
+            sabah = {"kim": a.get("personel_ad") if a else None, "saat": saat(a["cevap_ts"]) if a else None,
+                     "sayilan": f(a["kasa_sayim"]) if a else None, "dun_birakilan": dun_birak,
+                     "fark": round(f(a["kasa_sayim"]) - dun_birak, 2) if (a and dun_birak is not None and a["kasa_sayim"] is not None) else None}
+            vardiya = None
+            if vd:
+                vardiya = {"devreden": pad.get(vd.get("sabahci")) or "?", "devralan": pad.get(vd.get("aksamci")) or ("bekliyor" if vd["durum"] == "acilis_bekliyor" else "?"),
+                           "saat": saat(vd.get("kapanisci_onay_ts")), "nakit": f(vd["nakit"]), "teslim": f(vd["teslim"]), "birakilan": f(vd["devir"]),
+                           "durum": vd["durum"]}
+            tes = teslim_alan.get((sid, gi), [])
+            aksam = None
+            if k:
+                aksam = {"kim": kapanan.get((sid, gi)) or k.get("personel_ad"), "saat": saat(k["cevap_ts"]), "kor_toplam": f(k["kasa_sayim"]),
+                         "teslim": f(k["teslim"]) or 0.0, "kime": ", ".join(f"{t['alan']} {t['tutar']:.0f}" for t in tes if t["tur"] == "gun_sonu") or None,
+                         "ara_teslim": ", ".join(f"{t['alan']} {t['tutar']:.0f}" for t in tes if t["tur"] != "gun_sonu") or None,
+                         "birakilan": f(k["devir"]) if k["devir"] is not None else f(km.get("kasiyer_devir_beyan"))}
+            ertesi = {"kim": ka.get("personel_ad"), "saat": saat(ka["cevap_ts"]), "sayilan": f(ka["kasa_sayim"])} if ka else None
+            kopuk = None
+            if aksam and ertesi and aksam["birakilan"] is not None and ertesi["sayilan"] is not None:
+                kopuk = round(ertesi["sayilan"] - aksam["birakilan"], 2)
+            gunler.append({"gun": gi, "sabah": sabah if a else None, "vardiya": vardiya, "aksam": aksam, "ertesi_sabah": ertesi,
+                           "zincir_fark": kopuk, "zincir_tutuyor": (kopuk is not None and abs(kopuk) < 1)})
+            g += timedelta(days=1)
+        out.append({"sube_id": sid, "ad": s["ad"], "gunler": gunler,
+                    "ozet": {"tutan": sum(1 for x in gunler if x["zincir_tutuyor"]),
+                             "kopuk": sum(1 for x in gunler if x["zincir_fark"] is not None and not x["zincir_tutuyor"])}})
+    return {"ay": a_, "subeler": out, "not": "Zincir: akşam bırakılan (devir) = ertesi sabah sayılan olmalı. Kopukluk kırmızı."}
+
+
+def _tr_saat(ts):
+    if not ts:
+        return None
+    from zoneinfo import ZoneInfo
+    try:
+        return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%H:%M")
+    except Exception:  # noqa: BLE001
+        return None
