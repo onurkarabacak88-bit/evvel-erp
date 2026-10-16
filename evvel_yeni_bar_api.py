@@ -154,6 +154,16 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
                         WHERE tarih BETWEEN %s AND %s AND durum='tamamlandi' AND tip IN ('ACILIS','KAPANIS')
                           AND sube_id::text = ANY(%s) ORDER BY tarih, cevap_ts NULLS LAST""", (bas, son + timedelta(days=1), sids))
         olaylar = [dict(r) for r in cur.fetchall() or []]
+        # Kapanış olayında personel_ad boş gelir → kapanışı gönderen kişi panelin ciro taslağından (devir defteriyle aynı kaynak)
+        kapanan = {}
+        try:
+            with savepoint(cur, "sp_ey_bar_kapanan"):
+                cur.execute("""SELECT DISTINCT ON (sube_id, tarih) sube_id::text AS sid, tarih, gonderen_ad FROM ciro_taslak
+                                WHERE tarih BETWEEN %s AND %s AND COALESCE(gonderen_ad,'') NOT ILIKE '%%evo%%'
+                                ORDER BY sube_id, tarih, olusturma DESC""", (bas - timedelta(days=1), son))
+                kapanan = {(dict(r)["sid"], dict(r)["tarih"]): dict(r)["gonderen_ad"] for r in cur.fetchall() or []}
+        except Exception:  # noqa: BLE001
+            pass
         cur.execute("""SELECT sube_id::text AS sube_id, tarih, olay_ts, aciklama FROM operasyon_defter
                         WHERE etiket IN ('URUN_AC','URUN_KULLANIMA_AL') AND tarih BETWEEN %s AND %s
                           AND NOT (etiket='URUN_AC' AND aciklama LIKE '%%[BİTTİ]%%') AND sube_id::text = ANY(%s)
@@ -242,9 +252,9 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
             DK = _sayim(dkap["meta"], "kapanis_stok_sayim") if dkap else None
             gun = {"gun": g.isoformat(), "acilis_var": bool(A), "kapanis_var": bool(K), "kalemler": [], "devir_fark": 0, "ac_eksik": 0,
                    # sahip: "bar sayımında tıklandığında akşam kapanışçı olan personellerin isimlerini yazsın"
-                   "kapanisci": (kap or {}).get("personel_ad"), "kapanis_saat": _saat(kap["cevap_ts"]) if kap else None,
+                   "kapanisci": (kap or {}).get("personel_ad") or (kapanan.get((sid, g)) if kap else None), "kapanis_saat": _saat(kap["cevap_ts"]) if kap else None,
                    "acilisci": (acil or {}).get("personel_ad"), "acilis_saat": _saat(acil["cevap_ts"]) if acil else None,
-                   "dun_kapanisci": (dkap or {}).get("personel_ad")}
+                   "dun_kapanisci": (dkap or {}).get("personel_ad") or (kapanan.get((sid, g - timedelta(days=1))) if dkap else None)}
             gun_ici = ac_topla(sid, acil["cevap_ts"] if acil else None, kap["cevap_ts"] if kap else None) if (acil and kap) else _bos()
             gece = ac_topla(sid, dkap["cevap_ts"] if dkap else None, acil["cevap_ts"] if acil else None) if (dkap and acil) else _bos()
             for k, ad in KALEMLER:
