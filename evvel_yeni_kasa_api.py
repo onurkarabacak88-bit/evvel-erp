@@ -747,6 +747,11 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
                 kart_isleri = _kart_isleri(cur, kayit)
         except Exception as e:  # noqa: BLE001
             log.warning("kart işleri okunamadı: %s", str(e)[:150])
+        try:   # 🛟 reddedilen / uyarılı panel kapanışları (Zafer 16 Ekim dersi)
+            with savepoint(cur, "sp_ey_kap_deneme"):
+                kart_isleri = kart_isleri + _kapanis_deneme_isleri(cur, C)
+        except Exception as e:  # noqa: BLE001
+            log.warning("kapanış denemeleri okunamadı: %s", str(e)[:150])
         try:   # 🚚 vadesi geçen toptancı borcu · tutarı bilinmeyen teslim
             with savepoint(cur, "sp_ey_top_isler"):
                 from evvel_yeni_toptanci_api import toptanci_isleri as _top_isleri
@@ -2012,3 +2017,84 @@ def panel_teslim_esle(cur) -> None:
                          veri={"hedef_id": h["id"], "sebep": "Şube panelinde geri alındı (kapanış geri al)"})
     except Exception as e:  # noqa: BLE001 — panel ASLA durmaz
         log.warning("evvel-yeni kasa panel teslim eşlenemedi: %s", str(e)[:200])
+
+
+
+# ─────────────── 🛟 KAPANIŞ KAYBOLMASIN — reddedilen / uyarılı panel kapanışları ───────────────
+def _kapanis_deneme_isleri(cur, C: dict) -> List[dict]:
+    """sube_operasyon.operasyon_deneme: son 7 gün
+      · RED: kapanış gönderilmiş ama reddedilmiş ve olay hâlâ tamamlanmamış → sebep + "geç kapanış olarak işle"
+      · UYARILI: kapanış kaydedildi ama mühürsüz / X raporu yok / devir eksik → merkez "gördüm" diyene kadar."""
+    cur.execute("SELECT to_regclass('operasyon_deneme') IS NOT NULL AS var")
+    if not dict(cur.fetchone() or {}).get("var"):
+        return []
+    cur.execute("ALTER TABLE operasyon_deneme ADD COLUMN IF NOT EXISTS goruldu BOOLEAN NOT NULL DEFAULT FALSE")
+    cur.execute("""SELECT d.id, d.sube_id, d.event_id, d.tip, d.is_gunu, d.sonuc, d.sebep, d.uyarilar, d.zaman, d.goruldu,
+                          e.durum AS ev_durum
+                     FROM operasyon_deneme d LEFT JOIN sube_operasyon_event e ON e.id = d.event_id
+                    WHERE d.zaman >= NOW() - INTERVAL '7 days' AND d.tip = 'KAPANIS'
+                    ORDER BY d.zaman DESC""")
+    sube_ad = {c["sube_id"]: c["kisa"] for c in C.values() if c.get("tur") == "sube"}
+    out, goruldu_ev = [], set()
+    for r in [dict(x) for x in cur.fetchall() or []]:
+        if r["event_id"] in goruldu_ev:
+            continue   # olay başına yalnız EN SON deneme
+        goruldu_ev.add(r["event_id"])
+        gun = r["is_gunu"].isoformat() if r.get("is_gunu") else r["zaman"].date().isoformat()
+        ad = sube_ad.get(r["sube_id"], r["sube_id"])
+        if r["sonuc"] in ("red", "hata", "gonderildi") and r.get("ev_durum") != "tamamlandi":
+            out.append({"tur": "kapanis_red", "id": r["id"], "tarih": gun, "ad": ad, "sebep": r.get("sebep") or "sonuç alınamadı",
+                        "saat": _tr_zaman(r["zaman"])})
+        elif r["sonuc"] == "ok_uyarili" and not r.get("goruldu"):
+            out.append({"tur": "kapanis_uyarili", "id": r["id"], "tarih": gun, "ad": ad, "uyarilar": r.get("uyarilar") or [],
+                        "saat": _tr_zaman(r["zaman"])})
+    return out
+
+
+def _tr_zaman(ts):
+    from zoneinfo import ZoneInfo
+    try:
+        return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%d.%m %H:%M")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+class DenemeBody(BaseModel):
+    deneme_id: str
+
+
+@router.post("/gec-kapanis")
+def gec_kapanis(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez: reddedilmiş panel kapanışını (kaydedilen ham veriyle) GEÇ KAPANIŞ olarak işler — önceki iş gününe bağlanır,
+    "geç kapanış" + varsa "mühürsüz" uyarısıyla. Yalnız Evvel Yeni oturumuyla (merkez) çağrılır."""
+    import sube_operasyon as so
+    with db() as (conn, cur):
+        kim = _aktor(cur, x_evvel_oturum)
+        cur.execute("SELECT sube_id, event_id, govde, tip FROM operasyon_deneme WHERE id=%s", (body.deneme_id,))
+        r = cur.fetchone()
+    if not r:
+        raise HTTPException(404, "Deneme bulunamadı")
+    r = dict(r)
+    if r["tip"] != "KAPANIS":
+        raise HTTPException(400, "Yalnız kapanış denemesi işlenebilir")
+    govde = r["govde"] if isinstance(r["govde"], dict) else json.loads(r["govde"] or "{}")
+    try:
+        tb = so.OperasyonTamamla(**{k: v for k, v in govde.items() if k in so.OperasyonTamamla.model_fields})
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Kayıtlı kapanış verisi okunamadı: {str(e)[:150]}")
+    jeton = so._GEC_YONETICI.set(kim or "merkez")
+    try:
+        sonuc = so.operasyon_tamamla_rota(r["sube_id"], r["event_id"], tb)
+    finally:
+        so._GEC_YONETICI.reset(jeton)
+    return {"ok": True, "mesaj": "Geç kapanış işlendi" + (" — uyarılar: " + " · ".join(sonuc.get("uyarilar") or []) if (sonuc or {}).get("uyarilar") else ""),
+            "sonuc": sonuc}
+
+
+@router.post("/kapanis-uyari-gordum")
+def kapanis_uyari_gordum(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    with db() as (conn, cur):
+        cur.execute("UPDATE operasyon_deneme SET goruldu=TRUE WHERE id=%s RETURNING id", (body.deneme_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Bulunamadı")
+    return {"ok": True}

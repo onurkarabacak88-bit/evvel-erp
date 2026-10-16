@@ -1926,6 +1926,19 @@ Sadece geçerli bir JSON nesnesi döndür. Başka metin, markdown veya açıklam
         raise HTTPException(400, f"OCR işlenemedi: {e!s}") from e
 
 
+def _dun_kapanis_eksik(cur, sube_id: str) -> bool:
+    """🛟 (2026-10-17, Zafer 16 Ekim dersi) Önceki iş gününün KAPANIŞ olayı var ama tamamlanmamış mı?
+    Sabah açılışında kasiyere "dünkü kapanış yapılmadı" uyarısı + merkez takibi için. Açılışı ENGELLEMEZ."""
+    try:
+        with savepoint(cur, "sp_dun_kapanis"):
+            cur.execute("""SELECT 1 FROM sube_operasyon_event
+                            WHERE sube_id=%s AND tip='KAPANIS' AND tarih = %s::date - 1 AND durum <> 'tamamlandi' LIMIT 1""",
+                        (sube_id, is_gunu_tr()))
+            return bool(cur.fetchone())
+    except Exception:  # noqa: BLE001
+        return False
+
+
 def _build_sube_panel_payload(cur, sube_id: str) -> dict:
     """Şube panel tam JSON (CFO / tam yetki).
 
@@ -2450,6 +2463,7 @@ def _build_sube_panel_payload(cur, sube_id: str) -> dict:
         "anlik_gider_adet": anlik_adet,
         "bekleyen_gider_sayisi": bekleyen_gider_sayisi,
         "operasyon": operasyon,
+        "dun_kapanis_eksik": _dun_kapanis_eksik(cur, sube_id),
         "vardiya_devir": vardiya_devir,
         "personel_operasyon_secim": personel_operasyon_secim,
         "merkez_mesajlar": merkez_mesajlar,

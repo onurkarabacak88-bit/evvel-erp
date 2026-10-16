@@ -1298,7 +1298,13 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
               </div>
             ))}
             {veri.isler.filter((x) => x.tur !== 'teslim' && x.tur !== 'evo_kapanis').map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })}
-              onPosKabul={async (id) => { try { const r = await api('/evvel-yeni/kasa/pos-sifir-kabul', { method: 'POST', body: { id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); } }} />)}
+              onPosKabul={async (id) => { try { const r = await api('/evvel-yeni/kasa/pos-sifir-kabul', { method: 'POST', body: { id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); } }}
+              onGecKapanis={async (x) => {
+                if (!window.confirm(`${x.ad} ${x.tarih} kapanışı, personelin girdiği verilerle GEÇ KAPANIŞ olarak işlensin mi?
+(Reddin sebebi: ${x.sebep})`)) return;
+                try { const r = await api('/evvel-yeni/kasa/gec-kapanis', { method: 'POST', body: { deneme_id: x.id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); }
+              }}
+              onKapanisGordum={async (x) => { try { await api('/evvel-yeni/kasa/kapanis-uyari-gordum', { method: 'POST', body: { deneme_id: x.id } }); yukle(); } catch (e) { onToast?.(e.message); } }} />)}
           </div>
       )}
       {sekme === 'hareketler' && (<>
@@ -1409,7 +1415,7 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
   );
 }
 
-function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul }) {
+function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, onGecKapanis, onKapanisGordum }) {
   const [say, setSay] = useState('');   // Codex: dolu gelirse saymadan onaylanır — boş başlar
   const g = Math.max(0, Math.round((new Date(`${bugun}T12:00:00`) - new Date(`${x.tarih}T12:00:00`)) / 864e5));
   const yas = g === 0 ? 'bugün' : `${g} gündür`;
@@ -1448,6 +1454,28 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul }) 
         <Cip tur="sari">Kapanış yapılmadı · Evo tahmini</Cip>
         <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Rakam Evo kasasından (nakit {fmt(x.nakit)} · kart {fmt(x.kart)}) — kimse saymadı. Gerçek kapanış girilince Evo rakamının yerini alır · {yas}</div></div>
         <Dugme kucuk onClick={() => onKapanis?.(x)}>Gerçeğini gir</Dugme>
+      </div>
+    );
+  }
+  // 🛟 Zafer 16 Ekim dersi: reddedilen kapanış kaybolmasın; uyarılı (mühürsüz) kapanış merkezin gözünden kaçmasın
+  if (x.tur === 'kapanis_red') {
+    return (
+      <div style={{ ...satir, border: `2px solid ${R.kirmizi}` }}>
+        <Cip tur="kirmizi">❌ Kapanış REDDEDİLDİ</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)} · {x.saat}
+          <div style={{ fontSize: 11.5, color: R.kirmizi }}>Sebep: {x.sebep}</div>
+          <div style={{ fontSize: 11.5, color: R.not }}>Personelin girdiği veri kayıtlı — geç kapanış olarak işlenebilir</div></div>
+        <Dugme ana kucuk onClick={() => onGecKapanis?.(x)}>Geç kapanış olarak işle</Dugme>
+      </div>
+    );
+  }
+  if (x.tur === 'kapanis_uyarili') {
+    return (
+      <div style={{ ...satir, border: `1px solid ${alfa(R.amber, 70)}` }}>
+        <Cip tur="sari">⚠ Kapanış uyarılı</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)} · {x.saat}
+          <div style={{ fontSize: 11.5, color: R.not }}>{(x.uyarilar || []).join(' · ')}</div></div>
+        <Dugme kucuk onClick={() => onKapanisGordum?.(x)}>Gördüm</Dugme>
       </div>
     );
   }

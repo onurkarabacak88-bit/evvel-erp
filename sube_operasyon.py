@@ -13,7 +13,11 @@ from typing import Any, Dict, List, Optional
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
-from database import db
+from database import db, savepoint
+import contextvars
+import logging
+
+logger = logging.getLogger(__name__)
 from kasa_service import audit, onay_ekle
 from vardiya_v2 import sube_gun_acilis_vardiya_plan, sube_gun_kapanis_vardiya_plan
 from tr_saat import (
@@ -670,8 +674,77 @@ def _insert_acilis_if_needed(cur, sube_id: str, personel_id: Optional[str], acik
     audit(cur, "sube_acilis", aid, "ACILIS_OPERASYON")
 
 
+# 🛟 KAPANIŞ KAYBOLMASIN (2026-10-17, sahip + Codex + Fable): Zafer 16 Ekim kapanışı mühür yok diye 3× reddedildi,
+# girilen HER ŞEY kayboldu ve sebep loga bile yazılmadı. Artık:
+#   · Her ACILIS/KAPANIS gönderimi, işlemden AYRI bağlantıyla önce operasyon_deneme'ye yazılır (ham gövde, PIN hariç);
+#     sonuç (ok / red + SEBEP) da oraya işlenir → ret olsa da veri ve sebep kalır, merkez görür.
+#   · Mühür yok / X raporu kutusu / vardiya devri / "kime" boş → ENGEL DEĞİL, UYARI: kapanış kaydedilir, "mühürsüz" işaretlenir,
+#     merkeze alarm düşer. Engel yalnız: yetki/PIN, boş-eksi-saçma rakam, bayat/yanlış olay.
+#   · Merkez (Evvel Yeni) reddedilen denemeyi 02:00 sonrası "geç kapanış" olarak işleyebilir (_GEC_YONETICI bayrağı yalnız iç çağrıda).
+_GEC_YONETICI: contextvars.ContextVar = contextvars.ContextVar("gec_yonetici", default=None)
+
+
+def _deneme_tablosu(cur) -> None:
+    cur.execute("""CREATE TABLE IF NOT EXISTS operasyon_deneme (
+        id TEXT PRIMARY KEY, sube_id TEXT NOT NULL, event_id TEXT NOT NULL, tip TEXT, is_gunu DATE,
+        govde JSONB NOT NULL DEFAULT '{}'::jsonb, sonuc TEXT NOT NULL DEFAULT 'gonderildi', sebep TEXT, http INT,
+        uyarilar JSONB, kaynak TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), sonuc_zaman TIMESTAMPTZ)""")
+
+
+def _deneme_yaz(sube_id: str, event_id: str, body, kaynak: str) -> Optional[str]:
+    """Ayrı bağlantı + commit: ana işlem geri sarılsa da deneme kalır."""
+    try:
+        govde = body.model_dump() if hasattr(body, "model_dump") else dict(body)
+        govde.pop("pin", None)
+        did = "od-" + uuid.uuid4().hex[:16]
+        with db() as (conn, cur):
+            _deneme_tablosu(cur)
+            cur.execute("SELECT tip, tarih FROM sube_operasyon_event WHERE id=%s", (event_id,))
+            e = cur.fetchone()
+            e = dict(e) if e else {}
+            if e.get("tip") not in ("ACILIS", "KAPANIS"):
+                return None
+            cur.execute("""INSERT INTO operasyon_deneme (id, sube_id, event_id, tip, is_gunu, govde, kaynak)
+                           VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s)""",
+                        (did, sube_id, event_id, e.get("tip"), e.get("tarih"), json.dumps(govde, ensure_ascii=False, default=str), kaynak))
+        return did
+    except Exception as ex:  # noqa: BLE001 — deneme kaydı işlemi asla bozmasın
+        logger.warning("operasyon_deneme yazılamadı sube=%s event=%s: %s", sube_id, event_id, str(ex)[:200])
+        return None
+
+
+def _deneme_sonuc(did: Optional[str], sonuc: str, sebep: Optional[str] = None, http: Optional[int] = None, uyarilar=None) -> None:
+    if not did:
+        return
+    try:
+        with db() as (conn, cur):
+            cur.execute("""UPDATE operasyon_deneme SET sonuc=%s, sebep=%s, http=%s, uyarilar=%s::jsonb, sonuc_zaman=NOW() WHERE id=%s""",
+                        (sonuc, (sebep or "")[:500] or None, http, json.dumps(uyarilar or [], ensure_ascii=False), did))
+    except Exception as ex:  # noqa: BLE001
+        logger.warning("operasyon_deneme sonucu yazılamadı %s: %s", did, str(ex)[:200])
+
+
 @router.post("/{sube_id}/operasyon/event/{event_id}/tamamla")
+def operasyon_tamamla_rota(sube_id: str, event_id: str, body: OperasyonTamamla):
+    did = _deneme_yaz(sube_id, event_id, body, "merkez_gec" if _GEC_YONETICI.get() else "panel")
+    try:
+        sonuc = operasyon_tamamla(sube_id, event_id, body)
+    except HTTPException as e:
+        logger.warning("OPERASYON RET sube=%s event=%s http=%s sebep=%s", sube_id, event_id, e.status_code, str(e.detail)[:300])
+        _deneme_sonuc(did, "red", str(e.detail), e.status_code)
+        raise
+    except Exception as e:
+        logger.warning("OPERASYON HATA sube=%s event=%s: %s", sube_id, event_id, str(e)[:300])
+        _deneme_sonuc(did, "hata", str(e)[:300], 500)
+        raise
+    uy = (sonuc or {}).get("uyarilar") or []
+    _deneme_sonuc(did, "ok_uyarili" if uy else "ok", None, 200, uy)
+    return sonuc
+
+
 def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
+    gec = bool(_GEC_YONETICI.get())
+    _kapanis_uyarilar: List[str] = []
     simdi = dt_now_tr_naive()
     simdi_tr = _display_now_tr()
     with db() as (conn, cur):
@@ -689,7 +762,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
         ev = dict(ev)
         if ev["durum"] == "tamamlandi":
             return {"success": True, "idempotent": True}
-        if ev["durum"] not in ("bekliyor", "gecikti"):
+        if ev["durum"] not in ("bekliyor", "gecikti") and not gec:
             raise HTTPException(400, "Bu olay tamamlanamaz")
 
         tip = ev["tip"]
@@ -701,7 +774,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
         # 00:00-02:00'de dünü döndürdüğü için meşru gece kapanışı ENGELLENMEZ.
         if tip in ("ACILIS", "KAPANIS"):
             _ev_tarih = str(ev.get("tarih") or "")[:10]
-            if _ev_tarih and _ev_tarih != str(is_gunu_tr()):
+            if _ev_tarih and _ev_tarih != str(is_gunu_tr()) and not gec:
                 raise HTTPException(
                     410,
                     f"Bu {tip.lower()} olayı geçmiş güne ait ({_ev_tarih}) — bayat olay "
@@ -1076,7 +1149,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             from sube_kapanis_dual import _upsert_ciro_taslak, vardiya_devri_tamamlandi_mi
 
             # SAAT KİLİDİ: kapanış 22:30'dan önce başlatılamaz (erken/hatalı kapanışı önler).
-            if not _kapanis_saat_uygun_mu(simdi):
+            if not gec and not _kapanis_saat_uygun_mu(simdi):
                 raise HTTPException(
                     400,
                     "Kapanış işlemi yalnızca saat 22:30'dan sonra başlatılabilir "
@@ -1085,16 +1158,15 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             if vardiya_devri_bugun_baslamis_mi(
                 cur, sube_id
             ) and not vardiya_devri_tamamlandi_mi(cur, sube_id):
-                raise HTTPException(
-                    403,
-                    "Kapanış için önce vardiya (sabah–akşam) devrinin tamamlanması gerekir.",
-                )
+                _kapanis_uyarilar.append("vardiya (sabah–akşam) devri tamamlanmamış")
             if body.teslim is None or body.teslim < 0:
                 raise HTTPException(400, "Kapanış için teslim kasa tutarı girilmeli")
             if not (body.kasa_kime_teslim or "").strip():
-                raise HTTPException(400, "Kapanış için kasa kime teslim bilgisi zorunlu")
+                if (body.teslim or 0) > 0:
+                    _kapanis_uyarilar.append("teslim var ama kime teslim edildiği yazılmamış")
+                body.kasa_kime_teslim = "BELİRTİLMEDİ" if (body.teslim or 0) > 0 else "teslim yok"
             if not body.x_raporu_gonderildi:
-                raise HTTPException(400, "Kapanış: X raporu gönderildi onayı gerekli.")
+                _kapanis_uyarilar.append("X raporu gönderildi kutusu işaretlenmemiş")
             pid_in = (body.personel_id or "").strip()
             if body.qr_onaylandi:
                 # QR ile onaylandı — PIN atla, kapanis-muhurle ile mühürlenmiş
@@ -1134,20 +1206,28 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                             _sorumlu_ad = (_sr.get("ad_soyad") or "").strip() or None
                     except Exception:
                         pass
-                    if _sorumlu_ad:
-                        raise HTTPException(400, f"Bugünkü kapatma sorumlusu: {_sorumlu_ad}. Onun telefonda kapanış mührünü atması gerekiyor — ya da Cep'ten '🔒 Kapanış Mührü (Yönetici)' ile mühürle.")
-                    raise HTTPException(400, "Kapanış için QR onaylayan kapanış personeli bulunamadı. Kapanışçı telefonda QR'ı okutup onaylamalı — ya da Cep'ten yönetici override ile mühürle.")
-                onay_ad = (yoklama_row["ad_soyad"]).strip() or "—"
-                pid_panel = str(yoklama_row["personel_id"])
+                    _kapanis_uyarilar.append("KAPANIŞ MÜHRÜ YOK" + (f" — bugünkü kapatma sorumlusu: {_sorumlu_ad}" if _sorumlu_ad else "")
+                                             + " (veri kaydedildi; kim kapattı merkez teyit etmeli)")
+                    onay_ad = f"MÜHÜRSÜZ{f' (sorumlu: {_sorumlu_ad})' if _sorumlu_ad else ''}"
+                    pid_panel = None
+                else:
+                    onay_ad = (yoklama_row["ad_soyad"]).strip() or "—"
+                    pid_panel = str(yoklama_row["personel_id"])
             else:
                 pin = (body.pin or "").replace(" ", "")
                 if not pid_in:
                     raise HTTPException(400, "Kapanış: onaylayan personel seçilmeli.")
                 if len(pin) != 4 or not pin.isdigit():
                     raise HTTPException(400, "Kapanış: 4 haneli PIN gerekli.")
-                ku = dogrula_personel_panel_pin(cur, pid_in, pin)
+                if gec:
+                    cur.execute("SELECT id, ad_soyad FROM personel WHERE id::text=%s", (pid_in,))
+                    ku = dict(cur.fetchone() or {"id": None, "ad_soyad": "merkez (geç kapanış)"})
+                else:
+                    ku = dogrula_personel_panel_pin(cur, pid_in, pin)
                 onay_ad = (ku.get("ad_soyad") or "").strip() or "—"
                 pid_panel = str(ku.get("id") or "").strip() or None
+            if gec:
+                _kapanis_uyarilar.append(f"GEÇ KAPANIŞ — merkez tarafından {simdi_tr.strftime('%d.%m %H:%M')} işlendi ({_GEC_YONETICI.get()})")
             bildirim_saat = (body.personel_saat or "").strip() or simdi_tr.strftime("%H:%M:%S")
 
             for ad, deger in (
@@ -1310,6 +1390,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
             kasa_acigi = mutabakat_fark  # yeni formül
 
             _meta_kapanis = {
+                "uyarilar": _kapanis_uyarilar, "muhursuz": any("MÜHRÜ YOK" in u for u in _kapanis_uyarilar), "gec": gec,
                 "kapanis_stok_sayim": k_stok,
                 "x_rapor": {"nakit": cn, "pos": cp, "online": co},
                 "kasa_kime_teslim": kasa_kime_teslim,
@@ -1471,7 +1552,15 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                      personel_id=pid_panel, personel_ad=onay_ad,
                      veri={"nakit": cn, "pos": cp, "online": co, "kasa_sayim": ks, "teslim": teslim_f, "devir": devir_kayit,
                            "teslim_alan": kasa_kime_teslim, "stok_sayim": k_stok, "mutabakat": _meta_kapanis.get("mutabakat"),
-                           "personel_saat": body.personel_saat})
+                           "personel_saat": body.personel_saat, "uyarilar": _kapanis_uyarilar})
+            if _kapanis_uyarilar:
+                try:
+                    with savepoint(cur, "sp_kap_uyari"):   # uyarı yazılamazsa kapanış BOZULMASIN
+                        cur.execute("""INSERT INTO sube_operasyon_uyari (id, sube_id, tarih, tip, seviye, mesaj)
+                                       VALUES (%s, %s, %s, 'KAPANIS_UYARILI', 'kritik', %s)""",
+                                    (str(uuid.uuid4()), sube_id, tarih_ev_ciro, "Kapanış uyarılı kaydedildi: " + " · ".join(_kapanis_uyarilar)[:900]))
+                except Exception:  # noqa: BLE001
+                    logger.warning("kapanış uyarısı yazılamadı", exc_info=True)
 
             # ── RAPOR CACHE HOOK ── (defensive)
             try:
@@ -1625,7 +1714,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
         else:
             raise HTTPException(400, "Bilinmeyen olay tipi")
 
-    return {"success": True, "event_id": event_id}
+    return {"success": True, "event_id": event_id, "uyarilar": _kapanis_uyarilar}
 
 
 @router.post("/{sube_id}/operasyon/event/{event_id}/alarm-arttir")

@@ -6696,6 +6696,50 @@ function kapanisKasaFormHazirMi() {
   } catch (e) { return false; }
 }
 
+// 🛟 KAPANIŞ KAYBOLMASIN (2026-10-17, Zafer 16 Ekim dersi): ret küçük kırmızı yazıyla kaçırılmasın; uyarılı kayıt görünsün;
+// form telefonda saklansın (sayfa kapansa/yenilense de girilenler gitmesin).
+function kapKartGoster(tur, baslik, mesaj) {
+  var eski = document.getElementById('kapSonucKart'); if (eski) eski.remove();
+  var d = document.createElement('div');
+  d.id = 'kapSonucKart';
+  var renk = tur === 'hata' ? '#B42318' : '#B26B00', zemin = tur === 'hata' ? '#FEECEB' : '#FFF4DB';
+  d.style.cssText = 'position:fixed;inset:0;z-index:99999;background:rgba(0,0,0,.55);display:flex;align-items:center;justify-content:center;padding:16px';
+  d.innerHTML = '<div style="max-width:520px;width:100%;background:' + zemin + ';border:4px solid ' + renk + ';border-radius:16px;padding:20px;display:flex;flex-direction:column;gap:12px">'
+    + '<div style="font-size:22px;font-weight:900;color:' + renk + '">' + escHtml(baslik) + '</div>'
+    + '<div style="font-size:16px;color:#2a1e14;white-space:pre-line">' + escHtml(mesaj) + '</div>'
+    + '<button type="button" style="min-height:56px;font-size:18px;font-weight:800;border-radius:12px;border:none;background:' + renk + ';color:#fff;cursor:pointer">ANLADIM</button></div>';
+  d.querySelector('button').onclick = function () { d.remove(); };
+  document.body.appendChild(d);
+}
+var KAP_TASLAK_ANAHTAR = function () { return 'kapTaslak:' + SUBE_ID; };
+function kapTaslakKaydet() {
+  try {
+    var m = document.getElementById('kapanisModal'); if (!m) return;
+    var o = {};
+    m.querySelectorAll('input[id^="kap"], select[id^="kap"], textarea[id^="kap"]').forEach(function (el) {
+      if (el.type === 'password') return;
+      o[el.id] = (el.type === 'checkbox') ? !!el.checked : el.value;
+    });
+    o._zaman = Date.now();
+    localStorage.setItem(KAP_TASLAK_ANAHTAR(), JSON.stringify(o));
+  } catch (e) { /* depolama yoksa sessiz */ }
+}
+function kapTaslakGeriYukle() {
+  try {
+    var o = JSON.parse(localStorage.getItem(KAP_TASLAK_ANAHTAR()) || 'null');
+    if (!o || !o._zaman || (Date.now() - o._zaman) > 18 * 3600 * 1000) return;   // 18 saatten eski taslak alınmaz
+    Object.keys(o).forEach(function (k) {
+      if (k === '_zaman') return;
+      var el = document.getElementById(k); if (!el) return;
+      if (el.type === 'checkbox') { el.checked = !!o[k]; return; }
+      if (!el.value) el.value = o[k];
+    });
+  } catch (e) { /* bozuk taslak — yok say */ }
+}
+function kapTaslakSil() { try { localStorage.removeItem(KAP_TASLAK_ANAHTAR()); } catch (e) {} }
+document.addEventListener('input', function (e) { if (e.target && e.target.closest && e.target.closest('#kapanisModal')) kapTaslakKaydet(); });
+document.addEventListener('change', function (e) { if (e.target && e.target.closest && e.target.closest('#kapanisModal')) kapTaslakKaydet(); });
+
 async function kapanisGonderSubmit(otomatik) {
   var btn = document.getElementById('kapGonder');
   setMsg('kapMsg', '', '');
@@ -6733,10 +6777,15 @@ async function kapanisGonderSubmit(otomatik) {
       qr_onaylandi: true,
     };
     if (devirExplicit != null) body.devir = devirExplicit;
-    await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/operasyon/event/'+encodeURIComponent(eid)+'/tamamla', {
+    var kapSonuc = await api('/sube-panel/'+encodeURIComponent(SUBE_ID)+'/operasyon/event/'+encodeURIComponent(eid)+'/tamamla', {
       method: 'POST', body: body,
       islemBasariliMesaji: 'Kapanış gönderildi — ciro merkez onayına düştü.',
     });
+    kapTaslakSil();
+    if (kapSonuc && kapSonuc.uyarilar && kapSonuc.uyarilar.length) {
+      kapKartGoster('uyari', '⚠️ KAPANIŞ KAYDEDİLDİ — AMA EKSİK VAR',
+        'Girdiğin bütün veriler kaydedildi. Şunlar eksik:\n• ' + kapSonuc.uyarilar.join('\n• ') + '\n\nYöneticine haber ver — merkez de gördü.');
+    }
     // Değirmen sayacı — İZOLE uç, hata yutar (kapanışı asla bloklamaz)
     try {
       var _dt = parseInt(inpVal('kapDegTek') || '', 10);
@@ -6759,7 +6808,12 @@ async function kapanisGonderSubmit(otomatik) {
     return true;
   } catch(e) {
     if (e.status===429) { handle429(document.getElementById('kapMsg'),e); }
-    else setMsg('kapMsg', '❌ ' + (e.message||'Hata') + ' — Adımları kontrol et.', 'msg-err');
+    else {
+      setMsg('kapMsg', '❌ ' + (e.message||'Hata') + ' — Adımları kontrol et.', 'msg-err');
+      kapKartGoster('hata', '❌ KAPANIŞ KAYDEDİLMEDİ',
+        'Sebep: ' + (e.message || 'bilinmiyor') + '\n\nGirdiğin rakamlar SİLİNMEDİ (telefonda duruyor ve merkeze iletildi). '
+        + 'Eksiği tamamlayıp "Kapanışı Tamamla"ya tekrar bas. Olmazsa yöneticini ara.');
+    }
     if (otomatik && btn) {
       // Otomatik gönderim başarısız — kullanıcı eksikleri düzeltip elle göndersin
       btn.style.display = 'flex';
@@ -9519,6 +9573,7 @@ window.kapanisModalAc = function() {
   var mk = document.getElementById('kapanisModal');
   if (mk) {
     mk.classList.add('acik');
+    kapTaslakGeriYukle();
     if (typeof wireKapanisStepFlow === 'function') wireKapanisStepFlow();
     if (typeof setKapanisStep === 'function') setKapanisStep(1);
     document.querySelectorAll('.sag-tab').forEach(function(b){ b.classList.remove('active'); });
@@ -13257,6 +13312,17 @@ function escHtml(s) {
 // ─── RENDER MAIN ─────────────────────────────────────────────
 function renderMain(data) {
   lastData = data;
+  // 🛟 Dünkü kapanış yapılmadıysa sabah bir kez büyük uyarı (açılışı engellemez; merkez takipte)
+  try {
+    if (data && data.dun_kapanis_eksik) {
+      var _dk = 'dunKapUyari:' + SUBE_ID + ':' + (data.tarih || '');
+      if (!localStorage.getItem(_dk)) {
+        localStorage.setItem(_dk, '1');
+        kapKartGoster('uyari', '⚠️ DÜNKÜ KAPANIŞ YAPILMADI',
+          'Dün akşamın kapanışı sisteme girmedi — merkeze bildirildi.\n\nAçılışta kasayı ve bar ürünlerini YİNE KÖR SAY: dünün eksiği senin sayımınla kapanacak. Dün kapanışı yapan arkadaşına da haber ver.');
+      }
+    }
+  } catch (e) { /* uyarı ekranı panel akışını bozmaz */ }
   pk = data.panel_pin_kullanicilar || [];
   kontrolYeniUyari(data);
 
