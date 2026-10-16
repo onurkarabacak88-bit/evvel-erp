@@ -35,6 +35,11 @@ SAPMA_ORAN = 0.30
 BILINMEYEN_UYARI_GUN = 7
 
 
+def _kr(x) -> int:
+    """Kuruşa YUVARLAYARAK çevir (KDV çarpımı / oran çarpımı çok ondalık üretir; _kurus 2 ondalıktan fazlasını reddeder)."""
+    return _kurus(Decimal(str(x)).quantize(Decimal("0.01")))
+
+
 def toptanci_hazirla(cur) -> None:
     global _HAZIR
     if _HAZIR:
@@ -112,9 +117,9 @@ def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
             birim, fk = elle[uid], "elle girilen fiyat"
         elif uid in genel:
             oran = (kdv.get(uid) if kdv.get(uid) is not None else Decimal(0))
-            birim, fk = _kurus(genel[uid] * (1 + oran / 100)), "son alış fiyatı" + ("" if kdv.get(uid) is not None else " (KDV oranı yok)")
+            birim, fk = _kr(genel[uid] * (1 + oran / 100)), "son alış fiyatı" + ("" if kdv.get(uid) is not None else " (KDV oranı yok)")
         elif uid in katalog:
-            birim, fk = _kurus(katalog[uid]), "katalog"
+            birim, fk = _kr(katalog[uid]), "katalog"
         t = birim * adet if birim is not None else None
         if t is None:
             eksik += 1
@@ -135,7 +140,7 @@ def _fiyat_ogren(cur, t: dict, gun: date) -> None:
         birimler = {kal[0]["anahtar"]: int(round(kesin / int(kal[0]["adet"])))}
     elif t.get("tahmini") and all(x.get("tutar") is not None for x in kal):
         oran = kesin / int(t["tahmini"])
-        birimler = {x["anahtar"]: int(round(_kurus(x["birim"]) * oran)) for x in kal if x.get("adet")}
+        birimler = {x["anahtar"]: int(round(_kr(x["birim"]) * oran)) for x in kal if x.get("adet")}
     else:
         return
     for an, b in birimler.items():
@@ -171,7 +176,7 @@ def panel_teslim_yaz(cur, *, defter_id, sube_id, toptanci_id, toptanci_ad, kalem
             from evvel_yeni_kasa_api import _bugun as _b
             teslim_yaz(cur, kaynak_ref=f"urun_sevk:{defter_id}", toptanci_id=str(toptanci_id), toptanci_ad=toptanci_ad,
                        sube_id=str(sube_id), gun=_b(), kalemler=kalemler or [], fatura_geldi=fatura_geldi,
-                       kesin_tutar=_kurus(fatura_tutar) if fatura_tutar else None, fatura_no=fatura_no, teslim_alan=teslim_alan)
+                       kesin_tutar=_kr(fatura_tutar) if fatura_tutar else None, fatura_no=fatura_no, teslim_alan=teslim_alan)
     except Exception as e:  # noqa: BLE001
         log.warning("Evvel Yeni toptancı teslimi yazılamadı (stok etkilenmedi) defter=%s: %s", defter_id, str(e)[:200])
 
@@ -442,7 +447,7 @@ def urun_fiyatlari():
             for kod in (u["id"], u.get("depo_stok_kalem_kodu")):
                 if kod and kod in af:
                     oran = ko.get(kod, ko.get(u["id"]))
-                    son = {"birim": _tl_sayi(_kurus(Decimal(af[kod]["birim_maliyet_tl"]) * (1 + (oran or 0) / 100))),
+                    son = {"birim": _tl_sayi(_kr(Decimal(af[kod]["birim_maliyet_tl"]) * (1 + (oran or 0) / 100))),
                            "kdv_yok": oran is None, "tarih": af[kod]["gecerli_baslangic"].isoformat() if af[kod].get("gecerli_baslangic") else None}
                     break
             e = elle.get(u["id"])
