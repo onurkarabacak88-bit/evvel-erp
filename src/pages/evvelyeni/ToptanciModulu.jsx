@@ -11,6 +11,7 @@ import { PI_CSS, R, kart, num, Dugme, Cip, fmt, tKisa } from './KasaModulu';
 
 export const TOPTANCI_SAYFALAR = [
   { id: 'toptancilar', ad: 'Toptancılar', alt: 'Borcumuz · vade · teslimler' },
+  { id: 'urun_fiyatlari', ad: 'Ürün fiyatları', alt: 'Panel kategorileri · eksik fiyat' },
 ];
 
 const alan = {
@@ -19,6 +20,11 @@ const alan = {
 };
 const sayi = (x) => { const t = String(x ?? '').trim().replace(/\s/g, ''); if (!t) return null; const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t); return Number.isFinite(n) ? n : NaN; };
 const gunStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+// Sahip: "fiyat yok tıklayınca direkt o alana gitsin — köprü olsun"
+const fiyataGit = (urunId) => {
+  window.history.pushState({}, '', `/evvel-yeni/urun_fiyatlari${urunId ? `?urun=${encodeURIComponent(urunId)}` : '?eksik=1'}`);
+  window.dispatchEvent(new window.PopStateEvent('popstate'));
+};
 const DURUM = {
   kesin: { ad: 'kesin', renk: R.yesil },
   tahmini: { ad: 'tahmini', renk: R.amber },
@@ -109,7 +115,9 @@ export default function ToptanciModulu({ onToast }) {
                           <td style={{ padding: '6px 8px' }}>
                             {h.tur === 'teslim' ? <>
                               🚚 teslim · {h.sube}{h.teslim_alan ? ` · ${h.teslim_alan}` : ''} {h.fatura_geldi === true ? <Cip tur="yesil">faturalı{h.fatura_no ? ` ${h.fatura_no}` : ''}</Cip> : h.fatura_geldi === false ? <Cip>faturasız</Cip> : null}
-                              {(h.kalemler || []).length > 0 && <div style={{ fontSize: 11.5, color: R.not }}>{h.kalemler.map((k) => `${k.ad} ×${k.adet}${k.birim != null ? ` @${fmt(k.birim)}` : ' (fiyat eksik)'}`).join(' · ')}</div>}
+                              {(h.kalemler || []).length > 0 && <div style={{ fontSize: 11.5, color: R.not }}>{h.kalemler.map((k, i) => (
+                                <span key={i}>{i > 0 ? ' · ' : ''}{k.ad} ×{k.adet}{k.birim != null ? ` @${fmt(k.birim)}`
+                                  : <button type="button" onClick={() => fiyataGit(k.urun_id)} style={{ border: 'none', background: 'none', padding: 0, font: 'inherit', color: R.kirmizi, textDecoration: 'underline', cursor: 'pointer' }}> (fiyat yok → gir)</button>}</span>))}</div>}
                               {h.tahmini != null && h.kesin != null && <div style={{ fontSize: 11.5, color: h.sapma_uyari ? R.kirmizi : R.not }}>tahmin {fmt(h.tahmini)} → kesin {fmt(h.kesin)}{h.sapma != null ? ` (%${h.sapma})` : ''}{h.sapma_uyari ? ' ⚠ birim (koli/adet) karışmış olabilir' : ''}</div>}
                               {h.vade && <div style={{ fontSize: 11.5, color: R.not }}>vade {tKisa(h.vade)}</div>}
                               {h.aciklama && <div style={{ fontSize: 11.5, color: R.not }}>{h.aciklama}</div>}
@@ -119,7 +127,7 @@ export default function ToptanciModulu({ onToast }) {
                           </td>
                           <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                             {h.tur === 'teslim'
-                              ? <><b style={{ ...num, color: d.renk }}>{h.borc != null ? `+${fmt(h.borc)}` : '?'}</b><div style={{ fontSize: 11, color: d.renk }}>{d.ad}{h.durum === 'tahmini' && h.fiyat_eksik ? ` · ${h.fiyat_eksik} kalem fiyatsız` : ''}</div></>
+                              ? <><b style={{ ...num, color: d.renk }}>{h.borc != null ? `+${fmt(h.borc)}` : '?'}</b><div style={{ fontSize: 11, color: d.renk }}>{d.ad}{h.fiyat_eksik ? <button type="button" onClick={() => fiyataGit(null)} style={{ border: 'none', background: 'none', padding: 0, font: 'inherit', color: R.kirmizi, textDecoration: 'underline', cursor: 'pointer' }}> · {h.fiyat_eksik} kalem fiyatsız →</button> : ''}</div></>
                               : <b style={{ ...num, color: R.yesil }}>−{fmt(h.tutar)}</b>}
                           </td>
                           <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -189,6 +197,107 @@ function Butonlar({ mesgul, onVazgec, onKaydet }) {
     <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
       <Dugme kucuk onClick={onVazgec} disabled={mesgul}>Vazgeç</Dugme>
       <Dugme ana onClick={onKaydet} disabled={mesgul}>{mesgul ? 'Kaydediliyor…' : 'Kaydet'}</Dugme>
+    </div>
+  );
+}
+
+// ── 🏷️ ÜRÜN FİYATLARI — sahip (2026-10-16): "paneldeki kategori şekliyle ürün fiyatlarını kur, benzer olsun;
+//    fiyatı olmayan ürünleri manuel girebilelim" ──
+const KAYNAK_RENK = { elle: 'var(--pi-accent)', 'son alış': R.yesil, katalog: R.amber };
+export function UrunFiyatlari({ onToast }) {
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState(null);
+  const [kat, setKat] = useState(null);
+  const [sadeceEksik, setSadeceEksik] = useState(false);
+  const [duz, setDuz] = useState(null);   // {u, deger}
+  const [mesgul, setMesgul] = useState(false);
+  const yukle = useCallback(async () => {
+    try {
+      const r = await api('/evvel-yeni/toptanci/fiyatlar'); setV(r); setHata(null);
+      const q = new window.URLSearchParams(window.location.search);
+      const hedef = q.get('urun');
+      const hk = hedef && r.kategoriler.find((k) => k.urunler.some((u) => u.id === hedef));
+      if (hk) {
+        const u = hk.urunler.find((x) => x.id === hedef);
+        setKat(hk.id); setDuz({ u, deger: u.elle != null ? String(u.elle) : '' });
+      } else {
+        if (q.get('eksik')) { setSadeceEksik(true); setKat((k) => k || (r.kategoriler.find((x) => x.eksik) || r.kategoriler[0])?.id); }
+        else setKat((k) => k || r.kategoriler[0]?.id);
+      }
+      if (hedef || q.get('eksik')) window.history.replaceState({}, '', window.location.pathname);
+    }
+    catch (e) { setHata(e?.message || 'okunamadı'); }
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+  const kaydet = async (birim) => {
+    setMesgul(true);
+    try { const r = await api('/evvel-yeni/toptanci/fiyat', { method: 'POST', body: { urun_id: duz.u.id, birim } }); onToast?.(r.mesaj); setDuz(null); yukle(); }
+    catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); } finally { setMesgul(false); }
+  };
+  if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>Fiyatlar okunamadı: {hata} <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme></div></div>;
+  if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Fiyatlar hazırlanıyor…</div></div>;
+  const secili = v.kategoriler.find((k) => k.id === kat) || v.kategoriler[0];
+  const urunler = (secili?.urunler || []).filter((u) => !sadeceEksik || u.gecerli == null);
+  return (
+    <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <style>{PI_CSS}</style>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+        <div><div className="pi-eyebrow">Evvel Yeni · Tedarik</div><h1 style={{ fontSize: 30 }}>Ürün fiyatları</h1></div>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          {v.eksik > 0 && <Cip tur="kirmizi">{v.eksik} / {v.toplam} ürünün fiyatı yok</Cip>}
+          <label style={{ fontSize: 13, display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={sadeceEksik} onChange={(e) => setSadeceEksik(e.target.checked)} />yalnız fiyatı olmayanlar</label>
+        </span>
+      </div>
+      <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
+      <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+        {v.kategoriler.map((k) => (
+          <button key={k.id} type="button" onClick={() => setKat(k.id)} style={{
+            font: 'inherit', fontWeight: 700, fontSize: 14, padding: '9px 14px', borderRadius: 12, cursor: 'pointer',
+            border: `1px solid ${secili?.id === k.id ? 'var(--pi-accent)' : 'var(--pi-line)'}`,
+            background: secili?.id === k.id ? 'var(--pi-accent)' : 'var(--pi-paper)', color: secili?.id === k.id ? 'var(--pi-on-accent)' : 'var(--pi-ink)',
+          }}>{k.emoji ? `${k.emoji} ` : ''}{k.ad}{k.eksik ? <span style={{ marginLeft: 6, background: R.kirmizi, color: '#fff', borderRadius: 99, padding: '0 7px', fontSize: 11.5 }}>{k.eksik}</span> : null}</button>
+        ))}
+      </div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(170px, 1fr))', gap: 10 }}>
+        {urunler.map((u) => (
+          <button key={u.id} type="button" onClick={() => setDuz({ u, deger: u.elle != null ? String(u.elle) : '' })} style={{
+            ...kart, textAlign: 'left', cursor: 'pointer', font: 'inherit', color: 'var(--pi-ink)', padding: 12, minHeight: 92,
+            display: 'flex', flexDirection: 'column', gap: 4, border: u.gecerli == null ? `2px solid ${R.kirmizi}` : kart.border,
+          }}>
+            <b style={{ fontSize: 14, lineHeight: 1.2 }}>{u.ad}</b>
+            {u.gecerli != null
+              ? <span style={{ ...num, fontSize: 20, fontWeight: 800 }}>{fmt(u.gecerli)} ₺</span>
+              : <span style={{ color: R.kirmizi, fontWeight: 700 }}>fiyat yok — gir</span>}
+            {u.kaynak && <span style={{ fontSize: 11.5, color: KAYNAK_RENK[u.kaynak] }}>{u.kaynak}{u.kaynak === 'son alış' && u.son_alis?.kdv_yok ? ' (KDV oranı yok)' : ''}</span>}
+            {u.toptanci.length > 0 && <span style={{ fontSize: 11, color: R.not }}>{u.toptanci.map((t) => `${t.toptanci}: ${fmt(t.birim)}`).join(' · ')}</span>}
+          </button>
+        ))}
+        {urunler.length === 0 && <div style={{ color: R.not, fontSize: 13 }}>{sadeceEksik ? 'Bu kategoride fiyatı olmayan ürün yok ✓' : 'Ürün yok.'}</div>}
+      </div>
+      {duz && (
+        <div onClick={() => !mesgul && setDuz(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
+          <div style={{ ...kart, padding: 18, width: 'min(420px, 100%)', display: 'flex', flexDirection: 'column', gap: 10 }} onClick={(e) => e.stopPropagation()}>
+            <b style={{ fontSize: 17 }}>🏷️ {duz.u.ad}</b>
+            <div style={{ fontSize: 13, color: R.not, display: 'flex', flexDirection: 'column', gap: 2 }}>
+              <span>Son alış: {duz.u.son_alis ? `${fmt(duz.u.son_alis.birim)} ₺${duz.u.son_alis.tarih ? ` (${tKisa(duz.u.son_alis.tarih)})` : ''}` : 'yok'}</span>
+              <span>Katalog: {duz.u.katalog != null ? `${fmt(duz.u.katalog)} ₺` : 'yok'}</span>
+              {duz.u.elle != null && <span>Elle girilen: {fmt(duz.u.elle)} ₺{duz.u.elle_kim ? ` · ${duz.u.elle_kim}` : ''}</span>}
+            </div>
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13, fontWeight: 600 }}>Birim fiyat ₺ (KDV dahil, panelde sayılan birim başına)
+              <input autoFocus inputMode="decimal" value={duz.deger} onChange={(e) => setDuz({ ...duz, deger: e.target.value })}
+                style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 18 }} /></label>
+            <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
+              {duz.u.elle != null && <Dugme kucuk disabled={mesgul} onClick={() => kaydet(null)}>Elle fiyatı kaldır</Dugme>}
+              <Dugme kucuk disabled={mesgul} onClick={() => setDuz(null)}>Vazgeç</Dugme>
+              <Dugme ana disabled={mesgul} onClick={() => {
+                const t = String(duz.deger).trim().replace(/\s/g, ''); const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);
+                if (!(n > 0)) { onToast?.('Fiyat yaz'); return; }
+                kaydet(n);
+              }}>{mesgul ? 'Kaydediliyor…' : 'Kaydet'}</Dugme>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

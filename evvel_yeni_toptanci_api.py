@@ -49,6 +49,9 @@ def toptanci_hazirla(cur) -> None:
         fatura_geldi BOOLEAN, kesin_tutar BIGINT, fatura_no TEXT, kesin_kaynak TEXT,
         teslim_alan TEXT, aciklama TEXT, iptal BOOLEAN NOT NULL DEFAULT FALSE, iptal_sebep TEXT,
         iz JSONB NOT NULL DEFAULT '[]'::jsonb, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    # Sahip (2026-10-16): "ürün fiyatlarını paneldeki kategori şekliyle kur; fiyatı olmayanı elle girebilelim" (KDV dahil, kuruş)
+    cur.execute("""CREATE TABLE IF NOT EXISTS ey_urun_fiyat (
+        urun_id TEXT PRIMARY KEY, birim BIGINT NOT NULL, girilen TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_toptanci_fiyat (
         toptanci_id TEXT NOT NULL, urun_anahtar TEXT NOT NULL, birim BIGINT NOT NULL, tarih DATE NOT NULL,
         kaynak TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (toptanci_id, urun_anahtar))""")
@@ -71,8 +74,11 @@ def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
                 (toptanci_id, anahtarlar))
     for r in cur.fetchall() or []:
         tf[dict(r)["urun_anahtar"]] = int(dict(r)["birim"])
-    genel, kdv, katalog = {}, {}, {}
+    genel, kdv, katalog, elle = {}, {}, {}, {}
     idler = [str(k.get("urun_id")) for k in kalemler if k.get("urun_id")]
+    if idler:
+        cur.execute("SELECT urun_id, birim FROM ey_urun_fiyat WHERE urun_id = ANY(%s)", (idler,))
+        elle = {dict(r)["urun_id"]: int(dict(r)["birim"]) for r in cur.fetchall() or []}
     if idler:
         try:
             with savepoint(cur, "sp_ey_top_fiyat"):
@@ -102,6 +108,8 @@ def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
         birim, fk = None, None
         if an in tf:
             birim, fk = tf[an], "bu toptancının önceki faturası"
+        elif uid in elle:
+            birim, fk = elle[uid], "elle girilen fiyat"
         elif uid in genel:
             oran = (kdv.get(uid) if kdv.get(uid) is not None else Decimal(0))
             birim, fk = _kurus(genel[uid] * (1 + oran / 100)), "son alış fiyatı" + ("" if kdv.get(uid) is not None else " (KDV oranı yok)")
@@ -385,3 +393,94 @@ def teslim_iptal(tid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Head
         if not cur.fetchone():
             raise HTTPException(404, "Teslim bulunamadı ya da zaten iptal")
     return {"ok": True, "mesaj": "Teslim iptal edildi — borçtan düştü"}
+
+
+
+# ─────────────── ÜRÜN FİYATLARI (panel kataloğu şeklinde) ───────────────
+@router.get("/fiyatlar")
+def urun_fiyatlari():
+    """Panel kataloğu (siparis_kategori → siparis_urun) + her ürünün GEÇERLİ fiyatı (KDV dahil) ve kaynağı.
+    Sıra: elle girilen → son alış (KDV dahil) → katalog. Toptancıya özel öğrenilen fiyatlar ayrıca listelenir."""
+    _hazirla()
+    with db() as (conn, cur):
+        toptanci_hazirla(cur)
+        cur.execute("SELECT id::text AS id, kod, ad, emoji, sira FROM siparis_kategori WHERE aktif ORDER BY sira, ad")
+        kats = [dict(r) for r in cur.fetchall() or []]
+        cur.execute("""SELECT id::text AS id, kategori_id::text AS kategori_id, ad, sira, birim_fiyat_tl, depo_stok_kalem_kodu
+                         FROM siparis_urun WHERE aktif ORDER BY sira, ad""")
+        urunler = [dict(r) for r in cur.fetchall() or []]
+        idler = [u["id"] for u in urunler]
+        kodlar = list(set(idler) | {u["depo_stok_kalem_kodu"] for u in urunler if u.get("depo_stok_kalem_kodu")})
+        af, ko = {}, {}
+        try:
+            with savepoint(cur, "sp_ey_fiyat_af"):
+                cur.execute("""SELECT DISTINCT ON (kalem_kodu) kalem_kodu, birim_maliyet_tl, gecerli_baslangic FROM urun_alis_fiyat
+                                WHERE kalem_kodu = ANY(%s) AND birim_maliyet_tl > 0
+                                ORDER BY kalem_kodu, gecerli_baslangic DESC, created_at DESC""", (kodlar,))
+                af = {dict(r)["kalem_kodu"]: dict(r) for r in cur.fetchall() or []}
+                cur.execute("SELECT kalem_kodu, kdv_oran FROM kalem_kdv_oran WHERE kalem_kodu = ANY(%s)", (kodlar,))
+                ko = {dict(r)["kalem_kodu"]: Decimal(dict(r)["kdv_oran"] or 0) for r in cur.fetchall() or []}
+        except Exception as e:  # noqa: BLE001
+            log.warning("ürün fiyatları: alış fiyatı okunamadı: %s", str(e)[:150])
+        cur.execute("SELECT urun_id, birim, girilen, zaman FROM ey_urun_fiyat")
+        elle = {dict(r)["urun_id"]: dict(r) for r in cur.fetchall() or []}
+        cur.execute("""SELECT f.urun_anahtar, f.birim, f.tarih, t.ad FROM ey_toptanci_fiyat f LEFT JOIN ey_toptanci t ON t.id = f.toptanci_id""")
+        top_f = {}
+        for r in cur.fetchall() or []:
+            r = dict(r)
+            top_f.setdefault(r["urun_anahtar"], []).append({"toptanci": r["ad"], "birim": _tl_sayi(int(r["birim"])), "tarih": r["tarih"].isoformat()})
+    out = []
+    for k in kats:
+        satir = []
+        for u in [x for x in urunler if x["kategori_id"] == k["id"]]:
+            son = None
+            for kod in (u["id"], u.get("depo_stok_kalem_kodu")):
+                if kod and kod in af:
+                    oran = ko.get(kod, ko.get(u["id"]))
+                    son = {"birim": _tl_sayi(_kurus(Decimal(af[kod]["birim_maliyet_tl"]) * (1 + (oran or 0) / 100))),
+                           "kdv_yok": oran is None, "tarih": af[kod]["gecerli_baslangic"].isoformat() if af[kod].get("gecerli_baslangic") else None}
+                    break
+            e = elle.get(u["id"])
+            kat = float(u["birim_fiyat_tl"]) if u.get("birim_fiyat_tl") else None
+            if e:
+                gecerli, kaynak = _tl_sayi(int(e["birim"])), "elle"
+            elif son:
+                gecerli, kaynak = son["birim"], "son alış"
+            elif kat:
+                gecerli, kaynak = kat, "katalog"
+            else:
+                gecerli, kaynak = None, None
+            satir.append({"id": u["id"], "ad": u["ad"], "gecerli": gecerli, "kaynak": kaynak,
+                          "elle": _tl_sayi(int(e["birim"])) if e else None, "elle_kim": e.get("girilen") if e else None,
+                          "son_alis": son, "katalog": kat, "toptanci": top_f.get(u["id"], [])})
+        out.append({"id": k["id"], "ad": k["ad"], "emoji": k.get("emoji"), "urunler": satir,
+                    "eksik": sum(1 for x in satir if x["gecerli"] is None)})
+    return {"kategoriler": out, "eksik": sum(k["eksik"] for k in out), "toplam": sum(len(k["urunler"]) for k in out),
+            "not": "Fiyatlar KDV DAHİL, panelde sayılan birim başına. Sıra: elle girilen → son alış → katalog. "
+                   "Toptancı tahmini önce o toptancının kendi faturasından öğrenilen fiyatı kullanır."}
+
+
+class FiyatBody(BaseModel):
+    urun_id: str
+    birim: Optional[Decimal] = None     # boş → elle fiyat silinir
+
+
+@router.post("/fiyat")
+def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    _hazirla()
+    with db() as (conn, cur):
+        toptanci_hazirla(cur)
+        cur.execute("SELECT ad FROM siparis_urun WHERE id::text=%s", (body.urun_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Ürün bulunamadı")
+        if body.birim is None:
+            cur.execute("DELETE FROM ey_urun_fiyat WHERE urun_id=%s", (body.urun_id,))
+            return {"ok": True, "mesaj": f"{dict(r)['ad']}: elle fiyat kaldırıldı"}
+        b = _kurus(body.birim)
+        if b <= 0:
+            raise HTTPException(400, "Fiyat sıfırdan büyük olmalı")
+        cur.execute("""INSERT INTO ey_urun_fiyat (urun_id, birim, girilen) VALUES (%s,%s,%s)
+                       ON CONFLICT (urun_id) DO UPDATE SET birim=EXCLUDED.birim, girilen=EXCLUDED.girilen, zaman=NOW()""",
+                    (body.urun_id, b, _aktor(cur, x_evvel_oturum)))
+    return {"ok": True, "mesaj": f"{dict(r)['ad']}: {_tl_sayi(b):,.2f} ₺ (KDV dahil) kaydedildi"}

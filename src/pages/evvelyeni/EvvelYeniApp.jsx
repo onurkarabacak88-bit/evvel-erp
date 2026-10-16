@@ -20,7 +20,7 @@ import MaasModulu, { MAAS_SAYFALAR, PersonelTakvim, GunlukYoklama } from './Maas
 import SatisModulu, { SATIS_SAYFALAR } from './SatisModulu';
 import KartModulu, { KART_SAYFALAR } from './KartModulu';
 import { KiraTakvim } from './KiraModulu';
-import ToptanciModulu, { TOPTANCI_SAYFALAR } from './ToptanciModulu';
+import ToptanciModulu, { TOPTANCI_SAYFALAR, UrunFiyatlari } from './ToptanciModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
@@ -218,7 +218,7 @@ export default function EvvelYeniApp() {
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'tanim'
               ? <TanimModulu gorunum={sekme} onToast={setToast} />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'toptanci'
-              ? <ToptanciModulu onToast={setToast} />
+              ? (sekme === 'urun_fiyatlari' ? <UrunFiyatlari onToast={setToast} /> : <ToptanciModulu onToast={setToast} />)
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'kart'
               ? <KartModulu onToast={setToast} />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'kazanc'
