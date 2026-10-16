@@ -419,6 +419,13 @@ def urun_fiyatlari():
         cur.execute("""SELECT id::text AS id, kategori_id::text AS kategori_id, ad, sira, birim_fiyat_tl, depo_stok_kalem_kodu
                          FROM siparis_urun WHERE aktif ORDER BY sira, ad""")
         urunler = [dict(r) for r in cur.fetchall() or []]
+        birimler = {}
+        try:   # birim / koli bilgisi (eski kurulumda kolon olmayabilir)
+            with savepoint(cur, "sp_ey_fiyat_birim"):
+                cur.execute("""SELECT id::text AS id, birim, COALESCE(koli_ic_adet, koli_adet) AS koli FROM siparis_urun WHERE aktif""")
+                birimler = {dict(r)["id"]: dict(r) for r in cur.fetchall() or []}
+        except Exception:  # noqa: BLE001
+            pass
         idler = [u["id"] for u in urunler]
         kodlar = list(set(idler) | {u["depo_stok_kalem_kodu"] for u in urunler if u.get("depo_stok_kalem_kodu")})
         af, ko = {}, {}
@@ -460,13 +467,16 @@ def urun_fiyatlari():
                 gecerli, kaynak = kat, "katalog"
             else:
                 gecerli, kaynak = None, None
+            bk = birimler.get(u["id"]) or {}
             satir.append({"id": u["id"], "ad": u["ad"], "gecerli": gecerli, "kaynak": kaynak,
+                          "birim": (bk.get("birim") or "").strip() or None, "koli": int(bk["koli"]) if bk.get("koli") else None,
                           "elle": _tl_sayi(int(e["birim"])) if e else None, "elle_kim": e.get("girilen") if e else None,
                           "son_alis": son, "katalog": kat, "toptanci": top_f.get(u["id"], [])})
         out.append({"id": k["id"], "ad": k["ad"], "emoji": k.get("emoji"), "urunler": satir,
                     "eksik": sum(1 for x in satir if x["gecerli"] is None)})
     return {"kategoriler": out, "eksik": sum(k["eksik"] for k in out), "toplam": sum(len(k["urunler"]) for k in out),
-            "not": "Fiyatlar KDV DAHİL, panelde sayılan birim başına. Sıra: elle girilen → son alış → katalog. "
+            "not": "Her şey ADET başına (sahip: 'her şeyi sayılabilir, adet mantığında fiyatlayalım'), KDV DAHİL — şube teslimde adet sayar. "
+                   "Sıra: elle girilen → son alış → katalog. "
                    "Toptancı tahmini önce o toptancının kendi faturasından öğrenilen fiyatı kullanır."}
 
 
