@@ -86,8 +86,19 @@ function GunlukDokum() {
               {s.durum === 'kapanis_yok' && <Cip>akşam sayımı yok</Cip>}{s.durum === 'acilis_yok' && <Cip>sabah sayımı yok</Cip>}</div>
             {s.durum !== 'kapanis_yok' && s.durum !== 'acilis_yok' ? (
               <>
-                <div style={{ fontSize: 15, display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}><span style={{ color: R.not }}>Satılan:</span>{s.kalemler.filter((k) => k.satilan > 0).map((k) => <span key={k.kod} style={{ whiteSpace: 'nowrap' }}><b style={num}>{k.satilan}</b> {k.ad.replace(' bardak', '').replace(' (toplam)', '')}</span>)}
-                  {!s.kalemler.some((k) => k.satilan > 0) && <span style={{ color: R.not }}>—</span>}</div>
+                {/* Sahip: "satılan yazısı daha belirgin olsun" — büyük rakamlı kutucuklar */}
+                <div style={{ background: 'var(--pi-accent-soft)', borderRadius: 11, padding: '10px 12px' }}>
+                  <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '.06em', color: R.metin2, marginBottom: 6 }}>BUGÜN SATILAN</div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    {s.kalemler.filter((k) => k.satilan > 0).map((k) => (
+                      <div key={k.kod} style={{ background: 'var(--pi-paper)', border: '1px solid var(--pi-line)', borderRadius: 10, padding: '6px 10px', textAlign: 'center', minWidth: 62 }}>
+                        <div style={{ ...num, fontSize: 24, fontWeight: 800, lineHeight: 1.1, color: 'var(--pi-accent)' }}>{k.satilan}</div>
+                        <div style={{ fontSize: 12, fontWeight: 600 }}>{k.ad.replace(' bardak', '').replace(' (toplam)', '')}</div>
+                      </div>
+                    ))}
+                    {!s.kalemler.some((k) => k.satilan > 0) && <span style={{ color: R.not }}>—</span>}
+                  </div>
+                </div>
                 <div style={{ overflowX: 'auto' }}><table className="pi-tablo pi-excel" style={{ fontSize: 12.5, minWidth: 420 }}>
                   <thead><tr><th style={{ textAlign: 'left' }}>Kalem</th><th>Sabah</th><th>Giren</th><th>Akşam</th><th>Kullanılan</th><th>Fire</th><th>Satılan</th></tr></thead>
                   <tbody>{s.kalemler.map((k) => (
