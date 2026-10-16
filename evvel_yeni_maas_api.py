@@ -77,6 +77,10 @@ def _hazirla(cur):
         duzeltme BIGINT NOT NULL DEFAULT 0, aciklama TEXT,
         onay BOOLEAN NOT NULL DEFAULT FALSE, onaylayan TEXT, onay_zaman TIMESTAMPTZ, kalemler JSONB,
         degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (personel_id, ay))""")
+    # Sahip: "arka arkaya iki gün QR yoksa sistem SORSUN: ayrıldı mı, yıllık izinde mi, devam mı" — cevap izi
+    cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel_yoklama_karar (
+        id TEXT PRIMARY KEY, personel_id TEXT NOT NULL, tarih DATE NOT NULL, karar TEXT NOT NULL,
+        izin_bitis DATE, aciklama TEXT, degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     _HAZIR = True
 
 
@@ -401,3 +405,148 @@ def maas_onay(pid: str, ay: str, kaldir: bool = False, x_evvel_oturum: Optional[
         cur.execute("""UPDATE ey_maas_ay SET onay=TRUE, kalemler=%s::jsonb, onaylayan=%s, onay_zaman=NOW()
                         WHERE personel_id=%s AND ay=%s""", (json.dumps(r["kalemler"], ensure_ascii=False), kim, pid, ay[:7]))
     return {"ok": True, "mesaj": f"{r['ad']} · {ay[:7]} onaylandı · hak ediş {r['hak_edis']:,.2f} ₺"}
+
+
+def _tr_saat(ts):
+    if not ts:
+        return None
+    from zoneinfo import ZoneInfo
+    return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%H:%M")
+
+
+@router.get("/takvim")
+def personel_takvim(ay: Optional[str] = None):
+    """👥 PERSONEL TAKVİMİ (sahip 2026-10-16): "personellerin panel verilerinden bulundukları şubeler gün gün;
+    panelde QR girişi olmadıysa izinlidir." Kaynak: panelin QR yoklaması (gorev_yoklama) — YALNIZ OKUR.
+    Gün: QR girişi varsa şube(ler) + giriş saati; yoksa 'izinli'; işe girişinden önce / ayrılışından sonra '—'."""
+    from evvel_yeni_kasa_api import _bugun
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    bugun = _bugun()
+    a_ = (ay or bugun.strftime("%Y-%m"))[:7]
+    ay_bas, ay_son = _ay_sinir(a_)
+    with db() as (conn, cur):
+        _hazirla(cur)
+        sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
+        cur.execute("SELECT id, ad, sube_id, giris, cikis, aktif, calisma_turu FROM ey_personel")
+        kisiler = [dict(r) for r in cur.fetchall() or []]
+        cur.execute("SELECT personel_id, tarih, karar, izin_bitis FROM ey_personel_yoklama_karar ORDER BY zaman")
+        kararlar = {}
+        for r in cur.fetchall() or []:
+            r = dict(r)
+            kararlar.setdefault(r["personel_id"], []).append(r)
+        yok = {}
+        try:
+            with savepoint(cur, "sp_ey_takvim"):
+                cur.execute("""SELECT personel_id::text AS pid, tarih, sube_id::text AS sid, vardiya_tip, giris_ts, vardiya_disi
+                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s ORDER BY giris_ts""", (ay_bas, ay_son))
+                for r in cur.fetchall() or []:
+                    r = dict(r)
+                    yok.setdefault((r["pid"], r["tarih"].isoformat()), []).append(r)
+        except Exception as e:  # noqa: BLE001
+            log.warning("personel takvim: yoklama okunamadı: %s", str(e)[:150])
+    gunler = []
+    g = ay_bas
+    while g <= ay_son:
+        gunler.append(g.isoformat())
+        g += timedelta(days=1)
+    out = []
+    for p in kisiler:
+        pid = p["id"]
+        calisti = any((pid, d) in yok for d in gunler)
+        if not calisti and ((p.get("giris") and p["giris"] > ay_son) or (p.get("cikis") and p["cikis"] < ay_bas) or not p.get("aktif", True)):
+            continue
+        satir, say = [], {}
+        for d in gunler:
+            dd = date.fromisoformat(d)
+            rows = yok.get((pid, d)) or []
+            if rows:
+                subeler_g = []
+                for r in rows:
+                    ad = sube_ad.get(r["sid"], r["sid"])
+                    if ad not in subeler_g:
+                        subeler_g.append(ad)
+                for ad in subeler_g:
+                    say[ad] = say.get(ad, 0) + 1 / len(subeler_g)
+                ilk = rows[0]["giris_ts"]
+                girisler = []
+                for r in rows:
+                    girisler.append({"sube": sube_ad.get(r["sid"], r["sid"]), "saat": _tr_saat(r["giris_ts"]), "vardiya": r["vardiya_tip"]})
+                satir.append({"gun": d, "durum": "calisti", "subeler": subeler_g, "girisler": girisler,
+                              "saat": _tr_saat(ilk),
+                              "vardiya": sorted({r["vardiya_tip"] for r in rows}), "disi": any(r.get("vardiya_disi") for r in rows)})
+            elif dd > bugun:
+                satir.append({"gun": d, "durum": "gelecek"})
+            elif (p.get("giris") and dd < p["giris"]) or (p.get("cikis") and dd > p["cikis"]):
+                satir.append({"gun": d, "durum": "yok"})
+            else:
+                satir.append({"gun": d, "durum": "izinli"})
+        en_cok = max(say.items(), key=lambda x: x[1])[0] if say else None
+        # İKİ GÜN KURALI: dünden geriye aralıksız ≥2 gün QR yok (ve kişi aktif) → SOR; verilen cevap o dönemi kapatır
+        seri, son_qr = [], None
+        for x in satir:
+            if x["durum"] == "calisti":
+                seri, son_qr = [], x["gun"]
+            elif x["durum"] == "izinli":
+                seri.append(x["gun"])
+        dun = (bugun - timedelta(days=1)).isoformat()
+        bugun_qr = any(x["gun"] == bugun.isoformat() and x["durum"] == "calisti" for x in satir)
+        seri = [d for d in seri if d <= dun]
+        soru = None
+        if p.get("aktif", True) and not bugun_qr and len(seri) >= 2 and seri[-1] == dun:
+            cevapli = any(k["tarih"].isoformat() >= seri[0] and (k["karar"] in ("devam", "ayrildi") or
+                          (k["karar"] == "izin" and (not k.get("izin_bitis") or k["izin_bitis"] >= bugun)))
+                          for k in kararlar.get(pid, []))
+            if not cevapli:
+                soru = {"gun_sayisi": len(seri), "ilk_gun": seri[0], "son_qr": son_qr}
+        izinde = next((k for k in reversed(kararlar.get(pid, [])) if k["karar"] == "izin" and (not k.get("izin_bitis") or k["izin_bitis"] >= bugun)), None)
+        kayitli = sube_ad.get(p.get("sube_id")) if p.get("sube_id") else "Ortak"
+        out.append({"personel_id": pid, "ad": p["ad"], "kayitli_sube": kayitli, "aktif": bool(p.get("aktif", True)),
+                    "cikis": p["cikis"].isoformat() if p.get("cikis") else None, "calisma_turu": p.get("calisma_turu") or "tam",
+                    "gunler": satir, "sube_gun": {k: round(v, 1) for k, v in sorted(say.items(), key=lambda x: -x[1])},
+                    "calisti_gun": sum(1 for x in satir if x["durum"] == "calisti"), "izinli_gun": sum(1 for x in satir if x["durum"] == "izinli"),
+                    "en_cok_sube": en_cok, "uyusmaz": bool(en_cok and kayitli != "Ortak" and en_cok != kayitli),
+                    "soru": soru, "yillik_izinde": bool(izinde),
+                    "izin_bitis": izinde["izin_bitis"].isoformat() if izinde and izinde.get("izin_bitis") else None})
+    out.sort(key=lambda x: (not x["aktif"], x["kayitli_sube"] or "", x["ad"]))
+    return {"ay": a_, "gunler": gunler, "personel": out, "subeler": sorted(set(sube_ad.values())),
+            "sorulacak": [{"personel_id": x["personel_id"], "ad": x["ad"], **x["soru"]} for x in out if x.get("soru")],
+            "not": "Kaynak: şube panelindeki QR girişi. O gün QR girişi yoksa 'izinli' sayılır. Bir günde iki şubeye girdiyse ikisi de yazılır."}
+
+
+
+class YoklamaKararBody(BaseModel):
+    personel_id: str
+    karar: str                       # ayrildi | izin | devam
+    tarih: Optional[str] = None      # sorunun başladığı gün
+    izin_bitis: Optional[str] = None
+    aciklama: Optional[str] = None
+
+
+@router.post("/takvim/karar")
+def takvim_karar(b: YoklamaKararBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """İki gün QR yok sorusunun cevabı. 'ayrildi' → personel pasif, ayrılış = son QR günü (yoksa sorunun ilk günü − 1)."""
+    import uuid as _uuid
+    from evvel_yeni_kasa_api import _aktor, _bugun
+    if b.karar not in ("ayrildi", "izin", "devam"):
+        raise HTTPException(400, "karar: ayrildi | izin | devam")
+    with db() as (conn, cur):
+        _hazirla(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        t = (b.tarih or _bugun().isoformat())[:10]
+        cur.execute(""" + Q + """INSERT INTO ey_personel_yoklama_karar (id, personel_id, tarih, karar, izin_bitis, aciklama, degistiren)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)""" + Q + """,
+                    (str(_uuid.uuid4()), b.personel_id, t, b.karar, (b.izin_bitis or None), (b.aciklama or None), kim))
+        mesaj = {"izin": "Yıllık izin olarak işaretlendi", "devam": "Devam ediyor — soru kapandı"}.get(b.karar)
+        if b.karar == "ayrildi":
+            son = None
+            try:
+                with savepoint(cur, "sp_ey_son_qr"):
+                    cur.execute("SELECT MAX(tarih) AS t FROM gorev_yoklama WHERE personel_id::text=%s", (b.personel_id,))
+                    son = (dict(cur.fetchone() or {}) or {}).get("t")
+            except Exception:  # noqa: BLE001
+                son = None
+            cikis = son or (date.fromisoformat(t) - timedelta(days=1))
+            cur.execute("UPDATE ey_personel SET aktif=FALSE, cikis=COALESCE(cikis, %s), degistiren=%s, zaman=NOW() WHERE id=%s",
+                        (cikis, kim, b.personel_id))
+            mesaj = f"Ayrıldı olarak işaretlendi — ayrılış {cikis}"
+    return {"ok": True, "mesaj": mesaj}

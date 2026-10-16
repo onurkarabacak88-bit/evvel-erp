@@ -11,6 +11,7 @@ import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, fmt, tl } from './KasaMod
 
 export const MAAS_SAYFALAR = [
   { id: 'maaslar', ad: 'Maaşlar', alt: 'Hak ediş · avans · kalan' },
+  { id: 'personel_takvim', ad: 'Personel takvimi', alt: 'Gün gün hangi şubede · izinli' },
 ];
 
 const alan = { padding: '8px 10px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, width: 110 };
@@ -155,6 +156,100 @@ export default function MaasModulu({ onToast, onSekme }) {
           </div>
         </div>
       )}
+    </div>
+  );
+}
+
+// ── 👥 PERSONEL TAKVİMİ — sahip: "panel verilerinden bulundukları şubeler gün gün; QR girişi yoksa izinli" ──
+const SUBE_RENK = ['#9A5F2E', '#2E7D6B', '#5B5FB5', '#B5465B', '#7A7A2E', '#2E6E9A'];
+export function PersonelTakvim({ onToast }) {
+  const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState(null);
+  const [yenile, setYenile] = useState(0);
+  const no = useRef(0);
+  const cevapla = async (s, karar) => {
+    let izin_bitis = null;
+    if (karar === 'izin') { izin_bitis = window.prompt(`${s.ad} yıllık izinde — izin hangi gün bitiyor? (YYYY-AA-GG, boş bırakabilirsin)`) || null; }
+    if (karar === 'ayrildi' && !window.confirm(`${s.ad} ayrıldı olarak işaretlensin mi?\nPasife alınır; ayrılış = son QR girişi (${s.son_qr || '?'}).`)) return;
+    try { const r = await api('/evvel-yeni/maas/takvim/karar', { method: 'POST', body: { personel_id: s.personel_id, karar, tarih: s.ilk_gun, izin_bitis } }); onToast?.(r.mesaj); setYenile((x) => x + 1); }
+    catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+  };
+  useEffect(() => {
+    const n = ++no.current;
+    setV(null);
+    api(`/evvel-yeni/maas/takvim?ay=${ay}`).then((r) => { if (n === no.current) { setV(r); setHata(null); } })
+      .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
+  }, [ay, yenile]);
+  const renk = (ad) => (v ? SUBE_RENK[Math.max(0, v.subeler.indexOf(ad)) % SUBE_RENK.length] : '#999');
+  const kisa = (ad) => (ad || '').slice(0, 3).toLocaleUpperCase('tr');
+  const gunNo = (d) => Number(d.slice(8, 10));
+  const gunHarf = (d) => ['Pz', 'Pt', 'Sa', 'Ça', 'Pe', 'Cu', 'Ct'][new Date(`${d}T12:00:00`).getDay()];
+  return (
+    <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <style>{PI_CSS}</style>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+        <div><div className="pi-eyebrow">Evvel Yeni · Personel</div><h1 style={{ fontSize: 30 }}>Personel takvimi</h1></div>
+        <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, width: 'auto', marginLeft: 'auto' }} />
+      </div>
+      {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
+      {!v && !hata && <div style={{ color: R.not }}>Takvim hazırlanıyor…</div>}
+      {v && <>
+        {/* Sahip: "arka arkaya iki gün QR girişi yoksa sistem SORSUN — ayrıldı mı, yıllık izinde mi, devam mı" */}
+        {(v.sorulacak || []).length > 0 && (
+          <div style={{ ...kart, padding: 14, borderLeft: '5px solid var(--pi-warn)', display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <b>🔔 {v.sorulacak.length} kişi {v.sorulacak.length > 1 ? 'günlerdir' : 'günlerdir'} QR ile giriş yapmadı</b>
+            {v.sorulacak.map((s) => (
+              <div key={s.personel_id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 14 }}>
+                <span style={{ minWidth: 220 }}><b>{s.ad}</b> · {s.gun_sayisi} gündür QR yok{s.son_qr ? ` (son giriş ${s.son_qr.slice(8, 10)}.${s.son_qr.slice(5, 7)})` : ''}</span>
+                <Dugme kucuk onClick={() => cevapla(s, 'ayrildi')}>Ayrıldı</Dugme>
+                <Dugme kucuk onClick={() => cevapla(s, 'izin')}>Yıllık izinde</Dugme>
+                <Dugme kucuk onClick={() => cevapla(s, 'devam')}>Devam ediyor</Dugme>
+              </div>
+            ))}
+          </div>
+        )}
+        <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 12.5 }}>
+          {v.subeler.map((s) => <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 14, height: 14, borderRadius: 4, background: renk(s) }} />{s}</span>)}
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 14, height: 14, borderRadius: 4, border: '1px dashed var(--pi-line)' }} />izinli (QR yok)</span>
+        </div>
+        <div style={{ ...kart, overflowX: 'auto' }}>
+          <table style={{ borderCollapse: 'collapse', fontSize: 11.5 }}>
+            <thead><tr>
+              <th style={{ textAlign: 'left', padding: '6px 10px', position: 'sticky', left: 0, background: 'var(--pi-paper)', minWidth: 170 }}>Personel</th>
+              {v.gunler.map((d) => <th key={d} style={{ padding: '4px 1px', minWidth: 44, color: ['Ct', 'Pz'].includes(gunHarf(d)) ? R.amber : R.metin2 }}><div style={num}>{gunNo(d)}</div><div style={{ fontWeight: 400 }}>{gunHarf(d)}</div></th>)}
+              <th style={{ textAlign: 'left', padding: '6px 10px', minWidth: 190 }}>Ay özeti</th>
+            </tr></thead>
+            <tbody>{v.personel.map((p) => (
+              <tr key={p.personel_id} style={{ borderTop: '1px solid var(--pi-line)', opacity: p.aktif ? 1 : 0.6 }}>
+                <td style={{ padding: '6px 10px', position: 'sticky', left: 0, background: 'var(--pi-paper)' }}>
+                  <b>{p.ad}</b>{!p.aktif && <span style={{ color: R.not }}> · ayrıldı</span>}{p.yillik_izinde && <span style={{ color: R.amber }}> · yıllık izinde{p.izin_bitis ? ` (${p.izin_bitis.slice(8, 10)}.${p.izin_bitis.slice(5, 7)}'e kadar)` : ''}</span>}
+                  <div style={{ fontSize: 11, color: p.uyusmaz ? R.kirmizi : R.not }}>kayıtlı: {p.kayitli_sube}{p.uyusmaz ? ` · en çok ${p.en_cok_sube}'da!` : ''}</div>
+                </td>
+                {p.gunler.map((g) => (
+                  <td key={g.gun} style={{ padding: 1 }} title={g.durum === 'calisti' ? `${g.subeler.join(' + ')} · giriş ${g.saat || '?'}${g.disi ? ' · vardiya dışı' : ''}` : g.durum === 'izinli' ? 'QR girişi yok — izinli' : ''}>
+                    {g.durum === 'calisti' ? (
+                      <div style={{ minHeight: 34, borderRadius: 5, display: 'flex', flexDirection: 'column', overflow: 'hidden', border: g.disi ? '2px solid var(--pi-warn)' : 'none' }}>
+                        {(g.girisler || g.subeler.map((s) => ({ sube: s, saat: g.saat }))).map((x, i) => (
+                          <div key={i} style={{ flex: 1, background: renk(x.sube), color: '#fff', fontSize: 9, fontWeight: 700, lineHeight: 1.15, padding: '2px 1px', textAlign: 'center' }}>
+                            {kisa(x.sube)}<br /><span style={{ fontWeight: 500 }}>{x.saat || ''}</span>
+                          </div>
+                        ))}
+                      </div>
+                    ) : g.durum === 'izinli' ? <div style={{ height: 30, borderRadius: 5, border: '1px dashed var(--pi-line)', display: 'grid', placeItems: 'center', color: R.not, fontSize: 9.5 }}>izin</div>
+                      : <div style={{ height: 30 }} />}
+                  </td>
+                ))}
+                <td style={{ padding: '6px 10px', fontSize: 12 }}>
+                  {Object.entries(p.sube_gun).map(([s, n]) => <span key={s} style={{ marginRight: 8, whiteSpace: 'nowrap' }}><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 3, background: renk(s), marginRight: 3 }} />{s} {n}</span>)}
+                  <div style={{ color: R.not }}>{p.calisti_gun} gün çalıştı · {p.izinli_gun} gün izinli</div>
+                </td>
+              </tr>
+            ))}</tbody>
+          </table>
+        </div>
+      </>}
     </div>
   );
 }
