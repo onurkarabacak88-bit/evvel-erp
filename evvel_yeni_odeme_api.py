@@ -137,6 +137,11 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
                 raise HTTPException(400, "Kayıtlı toptancı seç")
             konu.update(toptanci_id=t["id"], toptanci_ad=t["ad"])
             etiket = f"Toptancı · {t['ad']}"
+        elif body.konu == "anlik" and body.kimin == "patron":
+            if not (body.aciklama or "").strip():
+                raise HTTPException(400, "Anlık gider için ne alındığını yaz")
+            kimin = "patron"
+            etiket = f"Anlık · şahsi{(' · ' + body.patron) if body.patron in PATRONLAR else ''} · {body.aciklama.strip()[:60]}"
         elif body.konu in ("kira", "fatura", "anlik"):
             if body.sube_id not in subeler:
                 raise HTTPException(400, "Şube seç")

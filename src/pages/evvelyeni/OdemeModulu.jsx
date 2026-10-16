@@ -146,7 +146,8 @@ export default function OdemeModulu({ onToast }) {
   const hataliSatir = f.parcalar.some((p) => !(sayi(p.tutar) > 0));
   const subeAd = (id) => (L.subeler.find((s) => s.id === id) || {}).ad;
   const secPer = L.personel.find((p) => String(p.id) === String(f.personel_id));
-  const kiminAd = ['kira', 'fatura', 'anlik'].includes(f.konu) ? subeAd(f.sube_id)
+  const kiminAd = f.konu === 'anlik' && f.kimin === 'patron' ? `Patron şahsi${f.patron ? ` · ${f.patron}` : ''}`
+    : ['kira', 'fatura', 'anlik'].includes(f.konu) ? subeAd(f.sube_id)
     : f.konu === 'personel' ? (secPer ? (subeAd(secPer.sube_id) || 'Ortak') : null)
       : f.konu === 'diger' ? ({ ortak: 'Ortak', patron: 'Patron şahsi' }[f.kimin] || subeAd(f.kimin)) : null;
   const ayAdi = (a) => { const [y, m] = (a || '').split('-'); return m ? `${['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'][Number(m) - 1]} ${y}` : ''; };
@@ -182,7 +183,12 @@ export default function OdemeModulu({ onToast }) {
                 <option value="">Seç…</option>{L.toptancilar.map((t) => <option key={t.id} value={t.id}>{t.ad}{t.kategori ? ` · ${t.kategori}` : ''}</option>)}
               </select></Etiket>
             )}
-            {['kira', 'fatura', 'anlik'].includes(f.konu) && (
+            {f.konu === 'anlik' && (
+              <Etiket ad="Şube gideri mi, şahsi mi?"><select style={alan} value={f.kimin === 'patron' ? 'patron' : 'sube'} onChange={(e) => set('kimin', e.target.value === 'patron' ? 'patron' : '')}>
+                <option value="sube">Şube gideri</option><option value="patron">Patron şahsi (gider değil)</option>
+              </select></Etiket>
+            )}
+            {(['kira', 'fatura'].includes(f.konu) || (f.konu === 'anlik' && f.kimin !== 'patron')) && (
               <Etiket ad="Hangi şube"><select style={alan} value={f.sube_id || ''} onChange={(e) => set('sube_id', e.target.value)}>
                 <option value="">Seç…</option>{L.subeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
               </select></Etiket>
@@ -239,7 +245,7 @@ export default function OdemeModulu({ onToast }) {
                 <option value="ortak">Ortak (şubelere dağıtılmaz)</option><option value="patron">Patron şahsi (gider değil)</option>
               </select></Etiket>
             )}
-            {f.konu === 'diger' && f.kimin === 'patron' && (
+            {(f.konu === 'diger' || f.konu === 'anlik') && f.kimin === 'patron' && (
               <Etiket ad="Hangi patron"><select style={alan} value={f.patron || ''} onChange={(e) => set('patron', e.target.value)}>
                 <option value="">Seç… (sonra da seçilebilir)</option>{['Onur', 'Fethi', 'Fatma'].map((p) => <option key={p}>{p}</option>)}
               </select></Etiket>
