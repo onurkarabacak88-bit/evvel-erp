@@ -199,7 +199,7 @@ def _hesap(cur, bugun: date):
     teslimler = [dict(r) for r in cur.fetchall() or []]
     from evvel_yeni_tanim_api import subeler as _ey_subeler
     sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
-    _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+    _, C, kayit, _ = _yukle(cur, tum_donemler=True)
     odemeler = {}
     for h in kayit:
         if h["tur"] != "odeme":
@@ -209,7 +209,12 @@ def _hesap(cur, bugun: date):
             odemeler.setdefault(str(k["toptanci_id"]), []).append(
                 {"id": h["id"], "tarih": h["is_gunu"], "tur": "odeme", "tutar": int(h["veri"].get("toplam", h["tutar"])),
                  "aciklama": h["veri"].get("aciklama"), "kim": h.get("kaydeden"),
-                 "kartla": bool(h["veri"].get("kart_parcalar"))})
+                 "kartla": bool(h["veri"].get("kart_parcalar")),
+                 # NEREDEN ödendi: hangi kasa/banka cebi, hangi kart (sahip: "neyin nerede olduğunu bulabilelim")
+                 "nereden": [{"ad": (C.get(p["cep"]) or {}).get("ad") or p["cep"], "tur": "kasa", "tutar": _tl_sayi(int(p["tutar"]))}
+                             for p in (h["veri"].get("parcalar") or [])]
+                            + [{"ad": p.get("kart_ad") or "kart", "tur": "kart", "tutar": _tl_sayi(int(p["tutar"]))}
+                               for p in (h["veri"].get("kart_parcalar") or [])]})
     out = []
     for t in tlar:
         ts = [x for x in teslimler if x["toptanci_id"] == t["id"]]
@@ -266,13 +271,25 @@ def _hesap(cur, bugun: date):
                 if (b["vade"] - bugun).days <= 3:
                     uc_gun += k_
         bakiye = acilis + kesin + tahmini - od_top
+        sube_dag, odeme_dag = {}, {}
+        for x in har:
+            if x["tur"] == "teslim" and not x["iptal"] and x.get("borc") is not None:
+                d = sube_dag.setdefault(x["sube"], {"tutar": 0.0, "sayi": 0})
+                d["tutar"] = round(d["tutar"] + x["borc"], 2)
+                d["sayi"] += 1
+            elif x["tur"] == "odeme":
+                for n in x.get("nereden") or []:
+                    k_ = ("💳 " if n["tur"] == "kart" else "💵 ") + n["ad"]
+                    odeme_dag[k_] = round(odeme_dag.get(k_, 0) + n["tutar"], 2)
         out.append({"id": t["id"], "ad": t["ad"], "kategori": t.get("kategori"), "aktif": t["aktif"], "vade_gun": vg,
                     "acilis": _tl_sayi(acilis), "kesin": _tl_sayi(kesin), "tahmini": _tl_sayi(tahmini), "odenen": _tl_sayi(od_top),
                     "bakiye": _tl_sayi(bakiye), "bilinmeyen_sayi": len(bilinmeyen),
                     "bilinmeyen_eski": [{"id": b["id"], "tarih": b["tarih"].isoformat()} for b in bilinmeyen if (bugun - b["tarih"]).days >= BILINMEYEN_UYARI_GUN],
                     "vadesi_gecen": _tl_sayi(gecen), "bu_hafta": _tl_sayi(hafta), "uc_gun": _tl_sayi(uc_gun), "vadesi_belirsiz": _tl_sayi(belirsiz),
                     "sapma_sayi": sum(1 for h in har if h.get("sapma_uyari") and not h.get("iptal")),
-                    "hareketler": har[:100], "son_hareket": har[0]["tarih"] if har else None})
+                    "sube_dagilim": [{"sube": k, **v} for k, v in sorted(sube_dag.items(), key=lambda z: -z[1]["tutar"])],
+                    "odeme_dagilim": [{"nereden": k, "tutar": v} for k, v in sorted(odeme_dag.items(), key=lambda z: -z[1])],
+                    "hareketler": har[:200], "son_hareket": har[0]["tarih"] if har else None})
     out.sort(key=lambda x: (-(x["vadesi_gecen"] or 0), -x["bakiye"], x["ad"]))
     return out
 
