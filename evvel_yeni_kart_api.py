@@ -60,7 +60,7 @@ def kart_hazirla(cur) -> None:
                 r = dict(r)
                 borc = _kurus(r["donem_borcu"] or 0)
                 if r["kullanilabilir_limit"] is not None:
-                    kul, not_ = _kurus(r["kullanilabilir_limit"]), "eski sistem · son ekstredeki kullanılabilir limit"
+                    kul, not_ = _kurus(r["kullanilabilir_limit"]), "tahmini başlangıç (eski sistemin son ekstresi) — bankadaki rakamı gir"
                 elif r["limit_tutar"]:
                     kul, not_ = int(r["limit_tutar"]) - borc, "eski sistem · TAHMİNİ (limit − ekstre borcu) — bankadan teyit et"
                 else:
@@ -92,37 +92,6 @@ def _hareketler(kayit) -> dict:
     return out
 
 
-def _eski_kopru(cur, H: dict, teyitler: dict) -> None:
-    """KÖPRÜ (sahip teyit edene kadar): çıpası ESKİ SİSTEMDEN gelen kartta, eski sistemin kart hareketleri
-    (harcama / borç ödemesi) de sayılır — Ekim boyunca iki sistem birlikte kullanılıyor. Aynı tutar ±2 gün
-    içinde Evvel Yeni'de de girilmişse BİR KEZ sayılır. Kart bankayla teyit edilince köprü o kart için kapanır."""
-    eski = {kid: ty[0]["tarih"] for kid, ty in teyitler.items() if ty and ty[0]["kaynak"] == "eski_sistem"}
-    if not eski:
-        return
-    try:
-        with savepoint(cur, "sp_ey_kart_kopru"):
-            cur.execute("""SELECT id, kart_id, tarih, islem_turu, tutar, aciklama FROM kart_hareketleri
-                            WHERE kart_id = ANY(%s) AND islem_turu IN ('HARCAMA','ODEME')
-                              AND COALESCE(durum,'aktif') NOT IN ('iptal','silindi') ORDER BY tarih""", (list(eski),))
-            satirlar = [dict(x) for x in cur.fetchall() or []]
-    except Exception:  # noqa: BLE001
-        return
-    for x in satirlar:
-        kid = str(x["kart_id"])
-        if x["tarih"] <= eski[kid]:
-            continue
-        tur = "harcama" if x["islem_turu"] == "HARCAMA" else "borc_odeme"
-        t = _kurus(x["tutar"] or 0)
-        if t <= 0:
-            continue
-        mevcut = H.setdefault(kid, [])
-        if any(m["tur"] == tur and abs(abs(m["tutar"]) - t) < 100 and not m.get("eski")
-               and abs((date.fromisoformat(m["gun"]) - x["tarih"]).days) <= 2 for m in mevcut):
-            continue
-        mevcut.append({"gun": x["tarih"].isoformat(), "tutar": -t if tur == "harcama" else t, "tur": tur, "eski": True,
-                       "aciklama": f"eski sistem · {(x.get('aciklama') or '').strip()[:60]}", "id": "eski:" + str(x["id"])})
-
-
 def _sonraki_son_odeme(kesim_gunu, son_odeme_gunu, bugun: date) -> Optional[date]:
     if not son_odeme_gunu:
         return None
@@ -149,7 +118,6 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
     if kayit is None:
         _, _, kayit, _ = _yukle(cur, tum_donemler=True)
     H = _hareketler(kayit)
-    _eski_kopru(cur, H, teyitler)
     out = []
     for k in kartlar:
         ty = teyitler.get(k["id"], [])
@@ -170,7 +138,7 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
             kalan = max(0, int(ekstre_cipa["ekstre_borc"]) - odenen)
             so = {"tarih": son_tarih.isoformat() if son_tarih else None, "gun_kaldi": (son_tarih - bugun).days if son_tarih else None,
                   "ekstre": _tl_sayi(int(ekstre_cipa["ekstre_borc"])), "odenen": _tl_sayi(odenen), "kalan": _tl_sayi(kalan),
-                  "ekstre_tarihi": ekstre_cipa["tarih"].isoformat()}
+                  "ekstre_tarihi": ekstre_cipa["tarih"].isoformat(), "eski": ekstre_cipa["kaynak"] == "eski_sistem"}
         else:
             st = _sonraki_son_odeme(k.get("kesim_gunu"), k.get("son_odeme_gunu"), bugun)
             if st:
@@ -219,7 +187,7 @@ def kart_isleri(cur, kayit) -> list:
     out = []
     for k in kart_durumu(cur, kayit=kayit):
         so = k["son_odeme"]
-        if so and so["gun_kaldi"] is not None and 0 <= so["gun_kaldi"] <= 7 and (so["kalan"] is None or so["kalan"] > 0):
+        if so and not so.get("eski") and so["gun_kaldi"] is not None and 0 <= so["gun_kaldi"] <= 7 and (so["kalan"] is None or so["kalan"] > 0):
             out.append({"tur": "kart_son_odeme", "id": f"kso:{k['id']}:{so['tarih']}", "tarih": so["tarih"], "ad": k["ad"],
                         "gun_kaldi": so["gun_kaldi"], "kalan": so["kalan"], "ekstre": so["ekstre"]})
     return out
@@ -240,7 +208,7 @@ def kart_ozet():
         if anahtar not in goruldu:
             goruldu.add(anahtar)
             tekil.append(k)
-    yaklasan = [k for k in kartlar if k["son_odeme"] and k["son_odeme"]["gun_kaldi"] is not None and 0 <= k["son_odeme"]["gun_kaldi"] <= 7
+    yaklasan = [k for k in kartlar if k["son_odeme"] and not k["son_odeme"].get("eski") and k["son_odeme"]["gun_kaldi"] is not None and 0 <= k["son_odeme"]["gun_kaldi"] <= 7
                 and (k["son_odeme"]["kalan"] is None or k["son_odeme"]["kalan"] > 0)]
     return {"bugun": bugun.isoformat(), "kartlar": kartlar,
             "toplam": {"limit": round(sum(k["limit"] or 0 for k in tekil), 2),

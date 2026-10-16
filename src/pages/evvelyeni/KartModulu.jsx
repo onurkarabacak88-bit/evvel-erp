@@ -111,7 +111,8 @@ export default function KartModulu({ onToast }) {
                   </span>
                 </div>
                 {k.son_odeme && <div style={{ fontSize: 13 }}>Son ödeme <b>{tUzun(k.son_odeme.tarih)}</b> ({k.son_odeme.gun_kaldi === 0 ? 'BUGÜN' : `${k.son_odeme.gun_kaldi} gün`})
-                  {k.son_odeme.kalan != null ? <> · ekstre {fmt(k.son_odeme.ekstre)} − ödenen {fmt(k.son_odeme.odenen)} = kalan <b style={{ ...num, color: k.son_odeme.kalan > 0 ? R.kirmizi : R.yesil }}>{fmt(k.son_odeme.kalan)}</b> ₺</> : <span style={{ color: R.not }}> · ekstre tutarı girilmedi</span>}</div>}
+                  {k.son_odeme.eski ? <span style={{ color: R.not }}> · eski sistemden ekstre {fmt(k.son_odeme.ekstre)} — yeni ekstreyi girince takip başlar</span>
+                    : k.son_odeme.kalan != null ? <> · ekstre {fmt(k.son_odeme.ekstre)} − ödenen {fmt(k.son_odeme.odenen)} = kalan <b style={{ ...num, color: k.son_odeme.kalan > 0 ? R.kirmizi : R.yesil }}>{fmt(k.son_odeme.kalan)}</b> ₺</> : <span style={{ color: R.not }}> · ekstre tutarı girilmedi</span>}</div>}
                 {acik === k.id && (
                   <table style={{ borderCollapse: 'collapse', fontSize: 12.5, width: '100%' }}><tbody>
                     {k.hareketler.map((h, i) => (
