@@ -100,8 +100,9 @@ export default function TanimModulu({ gorunum, onToast }) {
     } catch (e) { setHata(e?.message || 'Kaydedilemedi'); } finally { setMesgul(false); }
   };
   const aktiflik = async (x) => {
-    if (x.aktif && !window.confirm(`"${x.ad}" pasif yapılsın mı?\nSilinmez; listelerde çıkmaz, geçmiş kayıtlarda adı kalır.`)) return;
-    try { const r = await api(`/evvel-yeni/tanim/${y.tur}/${encodeURIComponent(x.id)}`, { method: 'POST', body: { aktif: !x.aktif } }); onToast?.(x.aktif ? 'Pasif yapıldı' : 'Yeniden aktif'); yukle(); void r; }
+    const soru = y.tur === 'kart' ? `"${x.ad}" kartı silinsin mi?\nListelerden ve Kartlar ekranından kalkar; geçmiş ödemelerde adı kalır.` : `"${x.ad}" pasif yapılsın mı?\nSilinmez; listelerde çıkmaz, geçmiş kayıtlarda adı kalır.`;
+    if (x.aktif && !window.confirm(soru)) return;
+    try { const r = await api(`/evvel-yeni/tanim/${y.tur}/${encodeURIComponent(x.id)}`, { method: 'POST', body: { aktif: !x.aktif } }); onToast?.(x.aktif ? (y.tur === 'kart' ? 'Kart silindi' : 'Pasif yapıldı') : 'Yeniden aktif'); yukle(); void r; }
     catch (e) { onToast?.(e?.message || 'Olmadı'); }
   };
   const duzeltAc = (x) => {
@@ -156,7 +157,7 @@ export default function TanimModulu({ gorunum, onToast }) {
             {x.aktif === false && <Cip>pasif</Cip>}
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
               {x.aktif !== false && <Dugme kucuk onClick={() => duzeltAc(x)}>Düzelt</Dugme>}
-              <Dugme kucuk onClick={() => aktiflik(x)}>{x.aktif === false ? 'Aktif yap' : 'Pasif yap'}</Dugme>
+              <Dugme kucuk onClick={() => aktiflik(x)}>{x.aktif === false ? (y.tur === 'kart' ? 'Geri getir' : 'Aktif yap') : (y.tur === 'kart' ? '🗑 Sil' : 'Pasif yap')}</Dugme>
             </span>
           </div>
         ))}

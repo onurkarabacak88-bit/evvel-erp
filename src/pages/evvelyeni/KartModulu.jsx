@@ -45,6 +45,15 @@ export default function KartModulu({ onToast }) {
     } catch (x) { onToast?.(x?.message || 'Kaydedilemedi'); } finally { setMesgul(false); }
   };
 
+  // Sahip: "kartları silmek de olsun" — her yerden kalkar (liste, ödeme formu, toplam); geçmiş ödemelerde adı kalır
+  const sil = async (k) => {
+    if (!window.confirm(`"${k.ad.trim()}" kartı silinsin mi?
+
+Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır. Tanımlar → Kartlar'dan geri açılabilir.`)) return;
+    try { await api(`/evvel-yeni/tanim/kart/${encodeURIComponent(k.id)}`, { method: 'POST', body: { aktif: false } }); onToast?.('Kart silindi'); yukle(); }
+    catch (x) { onToast?.(x?.message || 'Silinemedi'); }
+  };
+
   if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>Kartlar okunamadı: {hata} <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme></div></div>;
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Kartlar hazırlanıyor…</div></div>;
 
@@ -108,6 +117,7 @@ export default function KartModulu({ onToast }) {
                   <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                     {k.hareketler.length > 0 && <Dugme kucuk onClick={() => setAcik(acik === k.id ? null : k.id)}>{acik === k.id ? 'Gizle' : `${k.hareketler.length} hareket`}</Dugme>}
                     <Dugme ana kucuk onClick={() => setTeyit({ kart: k, kullanilabilir: '', ekstre_borc: '', son_odeme: '', tarih: gunBugun() })}>Bankadaki rakamı gir</Dugme>
+                    <Dugme kucuk onClick={() => sil(k)}>🗑 Sil</Dugme>
                   </span>
                 </div>
                 {k.son_odeme && <div style={{ fontSize: 13 }}>Son ödeme <b>{tUzun(k.son_odeme.tarih)}</b> ({k.son_odeme.gun_kaldi === 0 ? 'BUGÜN' : `${k.son_odeme.gun_kaldi} gün`})
