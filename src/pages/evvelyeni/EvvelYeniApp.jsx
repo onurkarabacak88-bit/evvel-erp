@@ -17,6 +17,7 @@ import KazancModulu, { KAZANC_SAYFALAR } from './KazancModulu';
 import TanimModulu, { TANIM_SAYFALAR } from './TanimModulu';
 import BarModulu, { BAR_SAYFALAR } from './BarModulu';
 import MaasModulu, { MAAS_SAYFALAR } from './MaasModulu';
+import SatisModulu, { SATIS_SAYFALAR } from './SatisModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
@@ -31,6 +32,7 @@ const BOLUMLER = [
   { ad: 'Ödeme', ikon: '🧾', mod: 'odeme', sayfalar: ODEME_SAYFALAR },
   { ad: 'Şube kazancı', ikon: '📈', mod: 'kazanc', sayfalar: KAZANC_SAYFALAR },
   { ad: 'Bar', ikon: '🥤', mod: 'bar', sayfalar: BAR_SAYFALAR },
+  { ad: 'Satış kontrolü', ikon: '🔍', mod: 'satis', sayfalar: SATIS_SAYFALAR },
   { ad: 'Personel', ikon: '👥', mod: 'maas', sayfalar: MAAS_SAYFALAR },
   { ad: 'Tanımlar', ikon: '⚙️', mod: 'tanim', sayfalar: TANIM_SAYFALAR },
 ];
@@ -178,7 +180,9 @@ export default function EvvelYeniApp() {
             })}
           </nav>
           <main className="piapp-ic">
-            {(TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'maas'
+            {(TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'satis'
+              ? <SatisModulu />
+              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'maas'
               ? <MaasModulu onToast={setToast} onSekme={sekmeDegis} />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'bar'
               ? <BarModulu />

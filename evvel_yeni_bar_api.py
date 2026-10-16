@@ -82,8 +82,10 @@ def _sayim(meta, alan: str) -> Optional[dict]:
     for k in KODLAR[:-1]:
         v = blok.get(k)
         out[k] = int(v) if isinstance(v, (int, float)) or (isinstance(v, str) and v.strip().lstrip("-").isdigit()) else None
-    pasta = [int(v) for kk, v in blok.items() if (kk == "pasta_adet" or kk.startswith("pasta_")) and isinstance(v, (int, float))]
-    out["pasta"] = sum(pasta) if pasta else None
+    # Pasta: çeşitler varsa ONLARIN toplamı; yoksa pasta_adet (ikisi birden toplanmaz — çift sayım, Codex)
+    cesit = [int(v) for kk, v in blok.items() if kk.startswith("pasta_") and kk != "pasta_adet" and isinstance(v, (int, float))]
+    tek = blok.get("pasta_adet")
+    out["pasta"] = sum(cesit) if cesit and sum(cesit) > 0 else (int(tek) if isinstance(tek, (int, float)) else (sum(cesit) if cesit else None))
     return out
 
 

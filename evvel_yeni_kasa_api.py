@@ -1843,7 +1843,7 @@ def panel_kapanis_sayim(cur, sube_id, gun, kasa_sayim, gun_sonu_teslim=0) -> Non
                 return
             g = gun.isoformat() if hasattr(gun, "isoformat") else str(gun)[:10]
             bas = _baslangic(cur)
-            if g < bas.isoformat():
+            if g < max(bas, _panel_sayim_baslangic(cur)).isoformat():
                 return
             cep = "sube:" + str(sube_id)
             cep_list, C, kayit, _ = _yukle(cur)
