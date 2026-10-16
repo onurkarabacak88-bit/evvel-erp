@@ -859,6 +859,12 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 ),
             )
             audit(cur, "sube_operasyon_event", event_id, "ACILIS_TAMAMLANDI")
+            # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE")
+            from evvel_yeni_olay import olay_yaz
+            olay_yaz(cur, sube_id=sube_id, tur="acilis", is_gunu=tarih_ev, kok=f"acilis:{sube_id}:{tarih_ev}",
+                     kaynak_tablo="sube_operasyon_event", kaynak_id=event_id, tutar=body.kasa_sayim,
+                     personel_id=pid_panel, personel_ad=onay_ad,
+                     veri={"kasa_sayim": float(body.kasa_sayim or 0), "stok_sayim": stok})
 
             # ── RAPOR CACHE HOOK ── (defensive)
             try:

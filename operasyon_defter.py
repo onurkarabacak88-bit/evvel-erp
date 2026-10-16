@@ -261,4 +261,29 @@ def operasyon_defter_ekle(
             zincir_hmac,
         ),
     )
+    # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE")
+    # Bütün panel yolları (ürün aç, kullanıma al, bitti, stok ekle, fire) buradan geçer. Kimlik = defter satırı (rid);
+    # JSON KESİLMEMİŞ açıklamadan okunur (eski defter 2000 karakterde kesiyordu — Codex).
+    _ey_tur = {"URUN_AC": "urun_ac", "URUN_KULLANIMA_AL": "urun_kullanima_al",
+               "URUN_STOK_EKLE": "stok_ekle", "SUBE_FIRE": "fire"}.get(etik)
+    if _ey_tur:
+        _ham = aciklama or ""
+        if _ey_tur == "urun_ac" and "[BİTTİ]" in _ham:
+            _ey_tur = "urun_bitti"
+        _veri = {"etiket": etik}
+        for _on in ("URUN_AC_JSON:", "URUN_KULLANIMA_AL_JSON:", "URUN_STOK_JSON:", "SUBE_FIRE_JSON:"):
+            if _ham.startswith(_on):
+                _govde, _, _not = _ham[len(_on):].partition(" | ")
+                try:
+                    _veri.update(json.loads(_govde))
+                except Exception:  # noqa: BLE001 — bozuk JSON gizlenmez, ham saklanır
+                    _veri["ham"] = _ham[:4000]
+                if _not:
+                    _veri["not"] = _not[:500]
+                break
+        else:
+            _veri["ham"] = _ham[:4000]
+        from evvel_yeni_olay import olay_yaz
+        olay_yaz(cur, sube_id=sube_id, tur=_ey_tur, is_gunu=tarih_val, kok=f"defter:{rid}",
+                 kaynak_tablo="operasyon_defter", kaynak_id=rid, personel_id=personel_id, personel_ad=personel_ad, veri=_veri)
     return rid

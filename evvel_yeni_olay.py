@@ -168,8 +168,18 @@ def olay_kontrol(gun: str, baslangic_ts: Optional[str] = None):
                         WHERE tarih=%s AND odeme_yontemi='nakit' AND COALESCE(kaynak_tablo,'') <> 'personel_avans'
                           AND id NOT LIKE 'avans_%%' AND olusturma >= %s::timestamp""", (gun, bas))
         eski["gider"] = dict(cur.fetchone())
+        for et, t in (("URUN_AC", "urun_ac_hepsi"), ("URUN_KULLANIMA_AL", "urun_kullanima_al"),
+                      ("URUN_STOK_EKLE", "stok_ekle"), ("SUBE_FIRE", "fire")):
+            cur.execute("""SELECT COUNT(*) n, 0 t FROM operasyon_defter WHERE tarih=%s AND etiket=%s AND olay_ts >= %s::timestamp""",
+                        (gun, et, bas))
+            eski[t] = dict(cur.fetchone())
+        cur.execute("""SELECT COUNT(*) n, COALESCE(SUM(kasa_sayim),0) t FROM sube_operasyon_event
+                        WHERE tarih=%s AND tip='ACILIS' AND durum='tamamlandi' AND cevap_ts >= %s::timestamp""", (gun, bas))
+        eski["acilis"] = dict(cur.fetchone())
         yeni = {}
-        for t in ("kapanis", "teslim", "gider", "avans", "iptal"):
+        cur.execute("""SELECT COUNT(DISTINCT kok) n, 0 t FROM ey_sube_olay WHERE is_gunu=%s AND tur IN ('urun_ac','urun_bitti')""", (gun,))
+        yeni["urun_ac_hepsi"] = dict(cur.fetchone())
+        for t in ("kapanis", "teslim", "gider", "avans", "iptal", "urun_kullanima_al", "stok_ekle", "fire", "acilis"):
             cur.execute("""SELECT COUNT(DISTINCT kok) n, COALESCE(SUM(tutar_kurus) FILTER (WHERE surum=1),0)/100.0 t
                              FROM ey_sube_olay WHERE is_gunu=%s AND tur=%s""", (gun, t))
             yeni[t] = dict(cur.fetchone())

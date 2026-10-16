@@ -1407,6 +1407,11 @@ def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
                     ks, meta_json, pid, onay_ad,
                 ),
             )
+            # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE")
+            from evvel_yeni_olay import olay_yaz
+            olay_yaz(cur, sube_id=sube_id, tur="acilis", is_gunu=is_gunu_tr(), kok=f"acilis:{sube_id}:{is_gunu_tr()}",
+                     kaynak_tablo="sube_acilis", kaynak_id=aid, tutar=ks, personel_id=pid, personel_ad=onay_ad,
+                     veri={"kasa_sayim": float(ks or 0), "stok_sayim": stok})
 
             from operasyon_defter import operasyon_defter_ekle
             from operasyon_kurallar import (
