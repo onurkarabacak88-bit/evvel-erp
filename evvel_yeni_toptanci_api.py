@@ -246,7 +246,7 @@ def _hesap(cur, bugun: date):
         har.sort(key=lambda z: z["tarih"], reverse=True)
         # vadesi geçen: ödemeyi en eski borçtan düş (yalnız ekranda)
         kalan_od = od_top
-        gecen = hafta = belirsiz = 0
+        gecen = hafta = uc_gun = belirsiz = 0
         for b in borclar:
             k_ = max(0, b["tutar"] - kalan_od)
             kalan_od = max(0, kalan_od - b["tutar"])
@@ -258,12 +258,14 @@ def _hesap(cur, bugun: date):
                 gecen += k_
             elif (b["vade"] - bugun).days <= 7:
                 hafta += k_
+                if (b["vade"] - bugun).days <= 3:
+                    uc_gun += k_
         bakiye = acilis + kesin + tahmini - od_top
         out.append({"id": t["id"], "ad": t["ad"], "kategori": t.get("kategori"), "aktif": t["aktif"], "vade_gun": vg,
                     "acilis": _tl_sayi(acilis), "kesin": _tl_sayi(kesin), "tahmini": _tl_sayi(tahmini), "odenen": _tl_sayi(od_top),
                     "bakiye": _tl_sayi(bakiye), "bilinmeyen_sayi": len(bilinmeyen),
                     "bilinmeyen_eski": [{"id": b["id"], "tarih": b["tarih"].isoformat()} for b in bilinmeyen if (bugun - b["tarih"]).days >= BILINMEYEN_UYARI_GUN],
-                    "vadesi_gecen": _tl_sayi(gecen), "bu_hafta": _tl_sayi(hafta), "vadesi_belirsiz": _tl_sayi(belirsiz),
+                    "vadesi_gecen": _tl_sayi(gecen), "bu_hafta": _tl_sayi(hafta), "uc_gun": _tl_sayi(uc_gun), "vadesi_belirsiz": _tl_sayi(belirsiz),
                     "sapma_sayi": sum(1 for h in har if h.get("sapma_uyari") and not h.get("iptal")),
                     "hareketler": har[:100], "son_hareket": har[0]["tarih"] if har else None})
     out.sort(key=lambda x: (-(x["vadesi_gecen"] or 0), -x["bakiye"], x["ad"]))
@@ -291,6 +293,9 @@ def toptanci_isleri(cur) -> list:
         if t["vadesi_gecen"] > 0:
             out.append({"tur": "toptanci_vade", "id": f"tv:{t['id']}", "tarih": bugun.isoformat(), "ad": t["ad"],
                         "tutar": t["vadesi_gecen"], "gecti": True})
+        if t["uc_gun"] > 0:
+            out.append({"tur": "toptanci_vade", "id": f"t3:{t['id']}", "tarih": bugun.isoformat(), "ad": t["ad"],
+                        "tutar": t["uc_gun"], "gecti": False})
         if t["bilinmeyen_eski"]:
             out.append({"tur": "toptanci_tutar", "id": f"tb:{t['id']}", "tarih": t["bilinmeyen_eski"][0]["tarih"], "ad": t["ad"],
                         "sayi": len(t["bilinmeyen_eski"])})
