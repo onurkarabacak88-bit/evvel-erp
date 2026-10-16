@@ -68,13 +68,13 @@ export default function SatisModulu() {
                     <tr key={g.gun}>
                       <td style={{ ...num, whiteSpace: 'nowrap' }}>{tKisa(g.gun)}</td>
                       <td style={num} title={Object.entries(g.bardak_kalem || {}).map(([k, x]) => `${k}: ${x ?? '—'}`).join(' · ')}>{g.bardak || '—'}</td>
-                      <td style={num}>{g.oran ? fmt(g.oran) : '—'}</td>
-                      <td style={num} title={g.aralik_alt ? `alt sınır ${fmt(g.aralik_alt)} ₺` : ''}>{g.beklenen ? `≈${fmt(g.beklenen)}` : '—'}</td>
+                      <td style={num}>{g.oran ? fmt(Math.round(g.oran)) : '—'}</td>
+                      <td style={num} title={g.aralik_alt ? `alt sınır ${fmt(g.aralik_alt)} ₺` : ''}>{g.beklenen ? `≈${fmt(Math.round(g.beklenen))}` : '—'}</td>
                       <td style={num}>{g.ciro != null ? fmt(g.ciro) : '—'}</td>
                       <td style={{ ...num, fontWeight: 700, color: g.sapma == null ? R.not : g.sapma < 0 ? (g.durum === 'bak' ? R.kirmizi : R.amber) : R.yesil }}>{g.sapma == null ? '—' : `${g.sapma > 0 ? '+' : ''}${fmt(g.sapma)}%`}</td>
                       <td style={num}>{g.kasa_fark == null ? '—' : g.kasa_baslangic ? 'başlangıç' : g.kasa_fark === 0 ? 'tuttu' : `${g.kasa_fark > 0 ? 'eksik ' : 'fazla '}${fmt(Math.abs(g.kasa_fark))}`}</td>
                       <td style={{ textAlign: 'left', fontSize: 12.5 }}><Cip tur={DURUM[g.durum].tur}>{DURUM[g.durum].ad}</Cip>{g.neden && <span style={{ color: R.not }}> {g.neden}</span>}
-                        {g.durum === 'bak' && <span> · {g.bardak} bardak; ≈{fmt(g.beklenen)} ₺ beklenirdi, {fmt(g.ciro)} ₺ girildi</span>}</td>
+                        {g.durum === 'bak' && <span> · {g.bardak} bardak; ≈{fmt(Math.round(g.beklenen))} ₺ beklenirdi, {fmt(g.ciro)} ₺ girildi</span>}</td>
                     </tr>
                   ))}
                   {!gun.length && <tr><td colSpan={8} style={{ textAlign: 'center', color: R.not }}>Hesaplanabilen gün yok — "veri eksik günleri de göster" ile sebeplerini gör.</td></tr>}

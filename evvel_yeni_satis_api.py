@@ -151,7 +151,7 @@ def satis_kontrol(ay: Optional[str] = None):
                              eksik_tl=round(eksik, 2), esik_tl=round(esik_tl, 2), guven=guven)
                 if guven == "birikiyor":
                     satir["durum"] = "birikiyor"
-                    satir["neden"] = f"referans oluşuyor ({len(gecmis)}/{GECICI_GUN} temiz gün) — uyarı verilmez"
+                    satir["neden"] = f"({len(gecmis)}/{GECICI_GUN} temiz gün) — uyarı verilmez"
                 else:
                     satir["durum"] = "bak" if eksik >= esik_tl else "normal"
             elif not d["neden"]:
