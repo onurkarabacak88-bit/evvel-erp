@@ -111,6 +111,27 @@ def _urun_ac_parcala(aciklama: str):
     return out
 
 
+def _stok_ekle_parcala(aciklama: str):
+    """URUN_STOK_EKLE: 'URUN_STOK_JSON:{"delta":{stok_key:adet}}' → [(kalem, adet)] — bara doğrudan giriş."""
+    raw = aciklama or ""
+    if not raw.startswith("URUN_STOK_JSON:"):
+        return []
+    try:
+        obj = json.loads(raw[len("URUN_STOK_JSON:"):].split(" | ", 1)[0].strip())
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for k, v in ((obj or {}).get("delta") or {}).items():
+        kk = _kod_anahtar(k)
+        try:
+            n = int(v or 0)
+        except (TypeError, ValueError):
+            n = 0
+        if kk and n > 0:
+            out.append((kk, n))
+    return out
+
+
 def _bos():
     return {k: 0 for k in KODLAR}
 
@@ -136,6 +157,23 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
                           AND NOT (etiket='URUN_AC' AND aciklama LIKE '%%[BİTTİ]%%') AND sube_id::text = ANY(%s)
                         ORDER BY olay_ts""", (bas, son + timedelta(days=1), sids))
         defter = [dict(r) for r in cur.fetchall() or []]
+        # Bara doğrudan giriş (sahip: pasta vitrine sevkle gelir, ürün aç ile değil)
+        cur.execute("""SELECT sube_id::text AS sube_id, tarih, olay_ts, aciklama FROM operasyon_defter
+                        WHERE etiket = 'URUN_STOK_EKLE' AND tarih BETWEEN %s AND %s AND sube_id::text = ANY(%s)""",
+                    (bas, son + timedelta(days=1), sids))
+        stok_ekle = [dict(r) for r in cur.fetchall() or []]
+        pasta_kabul = []
+        try:
+            with savepoint(cur, "sp_ey_bar_kabul"):
+                cur.execute("""SELECT y.sube_id::text AS sube_id, y.kabul_ts, y.kalem_kodu, COALESCE(y.kalem_adi, su.ad) AS ad,
+                                      COALESCE(y.kabul_adet, 0) AS adet, su.depo_stok_kalem_kodu
+                                 FROM stok_yolda y LEFT JOIN siparis_urun su ON su.id::text = y.kalem_kodu
+                                WHERE y.kabul_ts IS NOT NULL AND y.kabul_adet > 0 AND y.sube_id::text = ANY(%s)
+                                  AND (y.kabul_ts AT TIME ZONE 'Europe/Istanbul')::date BETWEEN %s AND %s""",
+                            (sids, bas, son + timedelta(days=1)))
+                pasta_kabul = [dict(r) for r in cur.fetchall() or []]
+        except Exception:  # noqa: BLE001
+            pasta_kabul = []
         idler = sorted({u for d in defter for u, _, _ in _urun_ac_parcala(d["aciklama"]) if u})
         urun = {}
         if idler:
@@ -157,6 +195,13 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
             k = anahtar(uid, ad)
             if k:
                 ac.setdefault(d["sube_id"], []).append((d["olay_ts"], d["tarih"], k, adet))
+    for d in stok_ekle:
+        for k, adet in _stok_ekle_parcala(d["aciklama"]):
+            ac.setdefault(d["sube_id"], []).append((d["olay_ts"], d["tarih"], k, adet))
+    for r in pasta_kabul:
+        k = _kod_anahtar(r.get("depo_stok_kalem_kodu")) or _kod_anahtar(r.get("kalem_kodu")) or _anahtar_ad(r.get("ad"))
+        if k == "pasta":   # yalnız pasta: diğer kalemler depoya girer, bara ürün aç ile geçer
+            ac.setdefault(r["sube_id"], []).append((r["kabul_ts"], None, k, int(r["adet"])))
     ev = {}
     for e in olaylar:
         ev.setdefault(e["sube_id"], {}).setdefault(e["tarih"], {})[e["tip"]] = e   # aynı gün ikinci kayıt sonuncuyu tutar
@@ -210,6 +255,6 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
                                "kapanis_yok": sum(1 for x in gunler if x["durum"] == "kapanis_yok"),
                                "tamam": sum(1 for x in gunler if x["durum"] == "tamam")}})
     return {"ay": a_, "kalemler": [{"kod": k, "ad": a} for k, a in KALEMLER], "subeler": sonuc,
-            "not": "Devir farkı = bugün açılış − (dün kapanış + gece açılan). Net eksilme = açılış + gün içi açılan − kapanış "
+            "not": "Bara giriş = ürün aç + panelden stok ekle + pasta sevk kabulü. Devir farkı = bugün açılış − (dün kapanış + gece giren). Net eksilme = açılış + gün içi açılan − kapanış "
                    "(satış + fire + ikram birlikte; kayıp değildir). Net eksilme eksiye düşerse ürün aç girilmemiş olabilir. "
                    "Sayım gideri ve kasayı değiştirmez."}
