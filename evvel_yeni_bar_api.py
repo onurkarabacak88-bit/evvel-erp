@@ -150,7 +150,7 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
     with db() as (conn, cur):
         subeler = [s for s in _ey_subeler(cur) if not sube_id or s["id"] == sube_id]
         sids = [s["id"] for s in subeler]
-        cur.execute("""SELECT sube_id::text AS sube_id, tarih, tip, cevap_ts, meta FROM sube_operasyon_event
+        cur.execute("""SELECT sube_id::text AS sube_id, tarih, tip, cevap_ts, meta, personel_ad FROM sube_operasyon_event
                         WHERE tarih BETWEEN %s AND %s AND durum='tamamlandi' AND tip IN ('ACILIS','KAPANIS')
                           AND sube_id::text = ANY(%s) ORDER BY tarih, cevap_ts NULLS LAST""", (bas, son + timedelta(days=1), sids))
         olaylar = [dict(r) for r in cur.fetchall() or []]
@@ -240,7 +240,11 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
             A = _sayim(acil["meta"], "acilis_stok_sayim") if acil else None
             K = _sayim(kap["meta"], "kapanis_stok_sayim") if kap else None
             DK = _sayim(dkap["meta"], "kapanis_stok_sayim") if dkap else None
-            gun = {"gun": g.isoformat(), "acilis_var": bool(A), "kapanis_var": bool(K), "kalemler": [], "devir_fark": 0, "ac_eksik": 0}
+            gun = {"gun": g.isoformat(), "acilis_var": bool(A), "kapanis_var": bool(K), "kalemler": [], "devir_fark": 0, "ac_eksik": 0,
+                   # sahip: "bar sayımında tıklandığında akşam kapanışçı olan personellerin isimlerini yazsın"
+                   "kapanisci": (kap or {}).get("personel_ad"), "kapanis_saat": _saat(kap["cevap_ts"]) if kap else None,
+                   "acilisci": (acil or {}).get("personel_ad"), "acilis_saat": _saat(acil["cevap_ts"]) if acil else None,
+                   "dun_kapanisci": (dkap or {}).get("personel_ad")}
             gun_ici = ac_topla(sid, acil["cevap_ts"] if acil else None, kap["cevap_ts"] if kap else None) if (acil and kap) else _bos()
             gece = ac_topla(sid, dkap["cevap_ts"] if dkap else None, acil["cevap_ts"] if acil else None) if (dkap and acil) else _bos()
             for k, ad in KALEMLER:
@@ -271,3 +275,14 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
             "not": "Bara giriş = ürün aç + panelden stok ekle + pasta sevk kabulü. Devir farkı = bugün açılış − (dün kapanış + gece giren). Net eksilme = açılış + gün içi açılan − kapanış "
                    "(satış + fire + ikram birlikte; kayıp değildir). Net eksilme eksiye düşerse ürün aç girilmemiş olabilir. "
                    "Sayım gideri ve kasayı değiştirmez."}
+
+
+
+def _saat(ts):
+    if not ts:
+        return None
+    from zoneinfo import ZoneInfo
+    try:
+        return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%d.%m %H:%M")
+    except Exception:  # noqa: BLE001
+        return None

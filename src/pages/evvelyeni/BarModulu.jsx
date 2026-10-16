@@ -39,7 +39,10 @@ export default function BarModulu() {
   const gunAc = (s, g) => setCk({
     tip: 'BAR SAYIMI', baslik: `${s.ad} · ${tUzun(g.gun)}`,
     alt: 'Devir: dün akşam sayılan + gece açılan = bu sabah olmalı. Net eksilme: sabah + gün içi açılan − akşam (satış + fire + ikram).',
-    kpi: [{ etiket: 'Durum', deger: DURUM[g.durum].ad }, { etiket: 'Devir tutmayan kalem', deger: String(g.devir_fark) }, { etiket: 'Ürün aç eksik kalem', deger: String(g.ac_eksik) }],
+    kpi: [{ etiket: '🌙 Akşam kapanışı yapan', deger: g.kapanisci ? `${g.kapanisci}${g.kapanis_saat ? ` · ${g.kapanis_saat}` : ''}` : '— kapanış yok', renk: g.kapanisci ? undefined : R.kirmizi },
+      { etiket: '🌅 Sabah açılışı yapan', deger: g.acilisci ? `${g.acilisci}${g.acilis_saat ? ` · ${g.acilis_saat}` : ''}` : '— açılış yok' },
+      ...(g.dun_kapanisci ? [{ etiket: 'Dün akşam sayan', deger: g.dun_kapanisci }] : []),
+      { etiket: 'Durum', deger: DURUM[g.durum].ad }, { etiket: 'Devir tutmayan kalem', deger: String(g.devir_fark) }, { etiket: 'Ürün aç eksik kalem', deger: String(g.ac_eksik) }],
     not: g.durum === 'kapanis_yok' ? 'Akşam kapanış sayımı yok — net eksilme hesaplanamaz.' : g.durum === 'acilis_yok' ? 'Sabah açılış sayımı yok.' : null,
     varsayilan: 'iz',
     tablo: {
