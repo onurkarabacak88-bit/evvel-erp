@@ -46,16 +46,16 @@ function GunlukDokum() {
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Döküm hazırlanıyor…</div>}
       {v && <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>}
-      {v && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))', gap: 12 }}>
+      {v && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 460px), 1fr))', gap: 12 }}>
         {v.subeler.map((s) => (
           <div key={s.sube_id} style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 9 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><b style={{ fontSize: 16 }}>{s.ad}</b>
               {s.durum === 'kapanis_yok' && <Cip>akşam sayımı yok</Cip>}{s.durum === 'acilis_yok' && <Cip>sabah sayımı yok</Cip>}</div>
             {s.durum !== 'kapanis_yok' && s.durum !== 'acilis_yok' ? (
               <>
-                <div style={{ fontSize: 15 }}>Satılan: {s.kalemler.filter((k) => k.satilan).map((k) => <span key={k.kod} style={{ marginRight: 10, whiteSpace: 'nowrap' }}><b style={num}>{k.satilan}</b> {k.ad.replace(' bardak', '').replace(' (toplam)', '')}</span>)}
-                  {!s.kalemler.some((k) => k.satilan) && <span style={{ color: R.not }}>—</span>}</div>
-                <table className="pi-tablo pi-excel" style={{ fontSize: 12.5 }}>
+                <div style={{ fontSize: 15, display: 'flex', flexWrap: 'wrap', gap: '4px 12px' }}><span style={{ color: R.not }}>Satılan:</span>{s.kalemler.filter((k) => k.satilan > 0).map((k) => <span key={k.kod} style={{ whiteSpace: 'nowrap' }}><b style={num}>{k.satilan}</b> {k.ad.replace(' bardak', '').replace(' (toplam)', '')}</span>)}
+                  {!s.kalemler.some((k) => k.satilan > 0) && <span style={{ color: R.not }}>—</span>}</div>
+                <div style={{ overflowX: 'auto' }}><table className="pi-tablo pi-excel" style={{ fontSize: 12.5, minWidth: 420 }}>
                   <thead><tr><th style={{ textAlign: 'left' }}>Kalem</th><th>Sabah</th><th>Giren</th><th>Akşam</th><th>Kullanılan</th><th>Fire</th><th>Satılan</th></tr></thead>
                   <tbody>{s.kalemler.map((k) => (
                     <tr key={k.kod}>
@@ -65,7 +65,7 @@ function GunlukDokum() {
                       <td style={{ ...num, color: k.fire ? R.amber : undefined }}>{k.fire || ''}</td>
                       <td style={{ ...num, fontWeight: 700 }}>{k.satilan ?? '—'}</td>
                     </tr>))}</tbody>
-                </table>
+                </table></div>
               </>
             ) : <div style={{ color: R.not, fontSize: 13 }}>Sabah ve akşam bar sayımı olmadan kalem dökümü çıkmaz.</div>}
             {s.fire.length > 0 && (
