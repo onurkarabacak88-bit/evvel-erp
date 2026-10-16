@@ -47,6 +47,7 @@ KONULAR = {
 }
 FATURA_TURLERI = ["Elektrik", "Su", "Doğalgaz", "İnternet / telefon", "Diğer abonelik"]
 PERSONEL_KALEMLERI = ["Maaş", "Avans", "Yemek ücreti", "Prim", "SGK / vergi"]
+PATRONLAR = ["Onur", "Fethi", "Fatma"]   # sahip: "hangi patronun harcaması olduğuna karar verelim"
 
 
 def _listeler(cur) -> dict:
@@ -94,6 +95,7 @@ class OdemeBody(BaseModel):
     personel_id: Optional[str] = None
     personel_kalemi: Optional[str] = None
     kimin: Optional[str] = None           # diğer/anlık: şube id | 'ortak' | 'patron'
+    patron: Optional[str] = None          # kimin='patron' ise: Onur | Fethi | Fatma
     aciklama: Optional[str] = None
     parcalar: List[Parca]
     istek_id: Optional[str] = None        # formun tek kimliği — bağlantı kopup tekrar gönderilirse İKİNCİ KEZ yazılmaz
@@ -221,6 +223,8 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
                 "yontemler": [x["yontem"] for x in nakit_parca] + ["kart"] * len(kart_parca),
                 "kart_parcalar": kart_parca, "konu": konu, "gider": gider_mi, "ait_ay": ait_ay,
                 "toplam": toplam, "kaynak": "odeme_formu", "not": (body.aciklama or "").strip()[:200]}
+        if kimin == "patron" and body.patron in PATRONLAR:
+            veri["patron"] = body.patron
         if not body.tekrar_onay:
             for h in kayit:
                 if h["tur"] != "odeme" or h["is_gunu"] != gun:
@@ -326,7 +330,8 @@ def odeme_listesi(ay: Optional[str] = None):
                     "kimin": v.get("kimin"), "gider": v.get("gider"), "ait_ay": v.get("ait_ay"),
                     "nakit": nakit, "kart": kart, "toplam": _tl_sayi(int(v.get("toplam", h["tutar"]))), "kaydeden": h.get("kaydeden"),
                     "fis": _hareket_dto(h, C, ol), "kimin_kod": v.get("kimin_kod"), "konu_tip": (v.get("konu") or {}).get("tip"),
-                    "duzeltilebilir": v.get("kaynak") == "odeme_formu", "duzeltmeler": v.get("duzeltmeler") or []})
+                    "duzeltilebilir": v.get("kaynak") == "odeme_formu", "duzeltmeler": v.get("duzeltmeler") or [],
+                    "patron": v.get("patron")})
     out.sort(key=lambda x: x["tarih"], reverse=True)
     return {"ay": a_, "odemeler": out, "toplam": round(sum(x["toplam"] for x in out), 2),
             "nakit_toplam": round(sum(n["tutar"] for x in out for n in x["nakit"]), 2),
@@ -428,14 +433,16 @@ def patron_harcamalari(ay: Optional[str] = None):
             g = "sahsi"
         else:
             continue
-        gruplar[g].append({"id": x["id"], "tarih": x["tarih"], "aciklama": x["aciklama"], "tutar": x["toplam"],
+        gruplar[g].append({"id": x["id"], "kaynak": "odeme", "patron": x.get("patron"), "tarih": x["tarih"], "aciklama": x["aciklama"], "tutar": x["toplam"],
                            "nasil": " + ".join([f"{n['ad']} {n['tutar']:,.0f}" for n in x["nakit"]] + [f"💳 {k['ad']} {k['tutar']:,.0f}" for k in x["kart"]]),
                            "kaydeden": x.get("kaydeden"), "fis": x.get("fis")})
     try:
         from evvel_yeni_gider_api import gider_ozet
         for c in gider_ozet(a_).get("cekisler") or []:
-            gruplar["cekis"].append({"id": c.get("kaynak_ref") or c.get("id"), "tarih": c.get("gun"), "aciklama": c.get("aciklama"),
-                                     "tutar": c.get("tutar"), "nasil": f"{c.get('sube') or ''} dükkân nakdi", "kaydeden": c.get("kim"), "fis": None})
+            kim = c.get("kim") if c.get("kim") in PATRONLAR else None
+            gruplar["cekis"].append({"id": c.get("kaynak_ref") or c.get("id"), "kaynak": "cekis", "patron": kim, "tarih": c.get("gun"),
+                                     "aciklama": c.get("aciklama"), "tutar": c.get("tutar"), "nasil": f"{c.get('sube') or ''} dükkân nakdi",
+                                     "kaydeden": None, "fis": None})
     except Exception as e:  # noqa: BLE001
         log.warning("patron harcamaları: çekişler okunamadı: %s", str(e)[:150])
     AD = {"sahsi": "Şahsi harcama", "cekis": "Dükkândan şahsi (çekiş)", "kredi": "Kredi / borç taksiti", "kart_borcu": "Kart borcu ödemesi"}
@@ -443,5 +450,43 @@ def patron_harcamalari(ay: Optional[str] = None):
     for k, xs in gruplar.items():
         xs.sort(key=lambda z: z["tarih"] or "", reverse=True)
         out.append({"kod": k, "ad": AD[k], "kalemler": xs, "toplam": round(sum(z["tutar"] or 0 for z in xs), 2)})
-    return {"ay": a_, "gruplar": out, "toplam": round(sum(g["toplam"] for g in out), 2),
+    kisi = {}
+    for g_ in out:
+        if g_["kod"] in ("sahsi", "cekis"):
+            for z in g_["kalemler"]:
+                k_ = z.get("patron") or "seçilmedi"
+                kisi[k_] = round(kisi.get(k_, 0) + (z["tutar"] or 0), 2)
+    return {"ay": a_, "gruplar": out, "toplam": round(sum(g["toplam"] for g in out), 2), "patronlar": PATRONLAR,
+            "patron_toplam": [{"ad": k, "toplam": v} for k, v in sorted(kisi.items(), key=lambda z: (z[0] == "seçilmedi", z[0]))],
             "not": "Şubenin gideri değil — Şube kazancına girmez. Kart borcu ödemesi kartla yapılan harcamanın borcunu kapatır."}
+
+
+class PatronAtaBody(BaseModel):
+    id: str
+    kaynak: str                   # 'odeme' (ödeme formu kaydı) | 'cekis' (dükkân giderinden ayrılan)
+    patron: Optional[str] = None  # Onur | Fethi | Fatma
+    geri_al: bool = False         # yalnız 'cekis': şube giderine geri al
+
+
+@router.post("/patron-ata")
+def patron_ata(body: PatronAtaBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Patron harcamasının KİMİN olduğu (Onur / Fethi / Fatma) — ya da dükkândan ayrılanı şube giderine geri alma."""
+    if not body.geri_al and body.patron not in PATRONLAR:
+        raise HTTPException(400, "Patron seç: " + " / ".join(PATRONLAR))
+    _hazirla()
+    with db() as (conn, cur):
+        kim = _aktor(cur, x_evvel_oturum)
+        if body.kaynak == "cekis":
+            from evvel_yeni_gider_api import _sinif_tablosu
+            _sinif_tablosu(cur)
+            cur.execute("""INSERT INTO ey_gider_sinif (kaynak_ref, tur, kimin, degistiren) VALUES (%s,%s,%s,%s)
+                           ON CONFLICT (kaynak_ref) DO UPDATE SET tur=EXCLUDED.tur, kimin=EXCLUDED.kimin, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
+                        (body.id, "gider" if body.geri_al else "cekis", None if body.geri_al else body.patron, kim))
+        elif body.kaynak == "odeme":
+            cur.execute("""UPDATE para_izi_hareket SET veri = COALESCE(veri,'{}'::jsonb) || jsonb_build_object('patron', %s::text)
+                            WHERE id=%s AND tur='odeme' RETURNING id""", (body.patron, body.id))
+            if not cur.fetchone():
+                raise HTTPException(404, "Kayıt bulunamadı")
+        else:
+            raise HTTPException(400, "kaynak: odeme | cekis")
+    return {"ok": True, "mesaj": "Şube giderine geri alındı" if body.geri_al else f"{body.patron}'un harcaması olarak işaretlendi"}

@@ -61,7 +61,7 @@ export default function OdemeModulu({ onToast }) {
     if (!on) return;
     const t = on.tutar > 0 ? String(on.tutar) : '';
     otoTutar.current = t;
-    setF({ ...BOS(), konu: on.konu, personel_id: on.personel_id, personel_kalemi: on.personel_kalemi, ait_ay: on.ait_ay || ayBugun(), kimin: on.kimin,
+    setF({ ...BOS(), konu: on.konu, personel_id: on.personel_id, personel_kalemi: on.personel_kalemi, ait_ay: on.ait_ay || ayBugun(), kimin: on.kimin, patron: on.patron,
       parcalar: [{ yontem: 'havale', cep: '', kart_id: '', tutar: t }] });
   }, [L]);
 
@@ -239,6 +239,11 @@ export default function OdemeModulu({ onToast }) {
                 <option value="ortak">Ortak (şubelere dağıtılmaz)</option><option value="patron">Patron şahsi (gider değil)</option>
               </select></Etiket>
             )}
+            {f.konu === 'diger' && f.kimin === 'patron' && (
+              <Etiket ad="Hangi patron"><select style={alan} value={f.patron || ''} onChange={(e) => set('patron', e.target.value)}>
+                <option value="">Seç… (sonra da seçilebilir)</option>{['Onur', 'Fethi', 'Fatma'].map((p) => <option key={p}>{p}</option>)}
+              </select></Etiket>
+            )}
             {['kira', 'fatura', 'personel'].includes(f.konu) && (
               <Etiket ad="Ait olduğu ay" ipucu="Gider bu aya yazılır (ödendiği güne değil)"><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
             )}
@@ -380,6 +385,12 @@ export function PatronHarcama() {
     window.dispatchEvent(new window.PopStateEvent('popstate'));
   };
   const IKON = { sahsi: '🛍️', cekis: '🚬', kredi: '🏦', kart_borcu: '💳' };
+  const ata = async (x, patron, geri_al = false) => {
+    try {
+      await api('/evvel-yeni/odeme/patron-ata', { method: 'POST', body: { id: x.id, kaynak: x.kaynak, patron: patron || null, geri_al } });
+      const r = await api(`/evvel-yeni/odeme/patron?ay=${ay}`); setV(r);
+    } catch (e) { setHata(e?.message || 'kaydedilemedi'); }
+  };
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
@@ -406,6 +417,12 @@ export function PatronHarcama() {
             <div style={{ ...num, fontSize: 22, fontWeight: 800 }}>{fmt(v.toplam)} ₺</div>
           </div>
         </div>
+        {(v.patron_toplam || []).length > 0 && (
+          <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', fontSize: 14 }}>
+            <b>Şahsi + çekiş, patron patron:</b>
+            {v.patron_toplam.map((p) => <span key={p.ad} style={{ color: p.ad === 'seçilmedi' ? R.amber : undefined }}>{p.ad === 'seçilmedi' ? '❓ patronu seçilmedi' : `👤 ${p.ad}`} <b style={num}>{fmt(p.toplam)}</b> ₺</span>)}
+          </div>
+        )}
         <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
         {v.gruplar.filter((g) => g.kod === acik).map((g) => (
           <div key={g.kod} style={{ ...kart, overflow: 'hidden' }}>
@@ -417,6 +434,14 @@ export function PatronHarcama() {
                     <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{tKisa(x.tarih)}</td>
                     <td style={{ padding: '7px 10px' }}>{x.aciklama}<div style={{ fontSize: 11.5, color: R.not }}>{x.nasil}{x.kaydeden ? ` · ${x.kaydeden}` : ''}</div></td>
                     <td style={{ padding: '7px 10px', textAlign: 'right', ...num, fontWeight: 700 }}>{fmt(x.tutar)}</td>
+                    {(g.kod === 'sahsi' || g.kod === 'cekis') && (
+                      <td style={{ padding: '7px 10px', whiteSpace: 'nowrap', textAlign: 'right' }}>
+                        <select value={x.patron || ''} onChange={(e) => e.target.value && ata(x, e.target.value)} style={{ ...alan, width: 'auto', padding: '4px 7px', fontSize: 13, borderColor: x.patron ? 'var(--pi-line)' : R.amber }}>
+                          <option value="">hangi patron?</option>{(v.patronlar || []).map((p) => <option key={p}>{p}</option>)}
+                        </select>
+                        {g.kod === 'cekis' && <Dugme kucuk onClick={() => window.confirm('Bu kayıt patron harcaması değil — şube giderine geri alınsın mı?') && ata(x, null, true)}>Şube gideri</Dugme>}
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody></table>

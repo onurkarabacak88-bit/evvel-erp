@@ -33,7 +33,7 @@ export default function GiderModulu({ onToast }) {
   useEffect(() => { yukle(); }, [yukle]);
 
   const sinifla = async (ref, tur, kimin) => {
-    try { await api('/evvel-yeni/gider/siniflandir', { method: 'POST', body: { kaynak_ref: ref, tur, kimin } }); onToast?.(tur === 'cekis' ? 'Patron şahsi olarak ayrıldı' : 'Şube giderine geri alındı'); setCk(null); yukle(); }
+    try { await api('/evvel-yeni/gider/siniflandir', { method: 'POST', body: { kaynak_ref: ref, tur, kimin } }); onToast?.(tur === 'cekis' ? "Patron harcaması olarak ayrıldı — hangi patron olduğunu Patron harcamaları'nda seç" : 'Şube giderine geri alındı'); setCk(null); yukle(); }
     catch (e) { onToast?.(e.message); }
   };
 
@@ -47,10 +47,10 @@ export default function GiderModulu({ onToast }) {
     not: [s.fiyat_eksik ? `🔴 ${s.fiyat_eksik} ürün aç satırının fiyatı yok — gider olduğundan düşük` : null,
       s.katalog_fiyatli ? `${s.katalog_fiyatli} satır katalog fiyatıyla (fatura fiyatı yok)` : null,
       s.kesin_olmayan_gun?.length ? `${s.kesin_olmayan_gun.length} günün kapanışı yok — o günler kesinleşmedi` : null].filter(Boolean).join(' · ') || null,
-    listeBaslik: 'Dükkân giderleri · patron şahsi olanı ayır',
+    listeBaslik: 'Dükkân giderleri · patron harcaması mı?',
     satirlar: s.satirlar.filter((x) => x.tur === 'dukkan').map((x) => ({
-      ad: `${tKisa(x.gun)} · ${x.aciklama}${x.oneri_cekis ? '  ⚠ şahsi olabilir' : ''}`, tutar: tl(x.tutar), detay: 'Tıkla → Patron şahsi (çekiş)',
-      onTikla: () => sinifla(x.kaynak_ref, 'cekis', 'Onur'),
+      ad: `${tKisa(x.gun)} · ${x.aciklama}${x.oneri_cekis ? '  ⚠ patron harcaması olabilir' : ''}`, tutar: tl(x.tutar), detay: 'Patron harcamasıysa tıkla',
+      onTikla: () => window.confirm(`"${x.aciklama}" (${fmt(x.tutar)} ₺) patron harcaması mı? Şube giderinden çıkar.`) && sinifla(x.kaynak_ref, 'cekis', null),
     })),
     tablo: {
       ad: 'Gider satırları',
@@ -125,12 +125,12 @@ export default function GiderModulu({ onToast }) {
         if (!aday.length) return null;
         return (
           <div style={{ ...kart, padding: 14, borderLeft: '5px solid var(--pi-warn)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span>🚬 <b>{aday.length} dükkân gideri patron şahsi olabilir</b> ({aday.map((x) => `${x.sube} ${tKisa(x.gun)} ${fmt(x.tutar)}`).join(', ')})</span>
+            <span>🚬 <b>{aday.length} dükkân gideri patron harcaması mı?</b> ({aday.map((x) => `${x.sube} ${tKisa(x.gun)} ${fmt(x.tutar)}`).join(', ')})</span>
             <Dugme ana kucuk onClick={async () => {
-              if (!window.confirm(`${aday.length} kayıt "patron şahsi (çekiş)" olarak ayrılsın mı? Şube giderinden çıkar.`)) return;
-              for (const x of aday) { try { await api('/evvel-yeni/gider/siniflandir', { method: 'POST', body: { kaynak_ref: x.kaynak_ref, tur: 'cekis', kimin: 'Onur' } }); } catch { /* devam */ } }
-              onToast?.(`${aday.length} kayıt patron şahsi olarak ayrıldı`); yukle();
-            }}>Hepsini patron şahsi yap</Dugme>
+              if (!window.confirm(`${aday.length} kayıt patron harcaması olarak ayrılsın mı? Şube giderinden çıkar; hangi patron olduğu Patron harcamaları'nda seçilir.`)) return;
+              for (const x of aday) { try { await api('/evvel-yeni/gider/siniflandir', { method: 'POST', body: { kaynak_ref: x.kaynak_ref, tur: 'cekis', kimin: null } }); } catch { /* devam */ } }
+              onToast?.(`${aday.length} kayıt patron harcaması olarak ayrıldı`); yukle();
+            }}>Evet, patron harcaması</Dugme>
           </div>
         );
       })()}
@@ -145,16 +145,11 @@ export default function GiderModulu({ onToast }) {
         {v.ortak.satirlar.length > 0 && <div style={{ textAlign: 'right', marginTop: 6 }}>Toplam <b style={num}>{fmt(v.ortak.toplam)}</b> ₺</div>}
       </div>
 
-      <div style={{ ...kart, padding: 14 }}>
-        <b>Patron çekişleri</b> <span style={{ color: R.not, fontSize: 12.5 }}>çekmeceden çıktı ama şube gideri DEĞİL</span>
-        {v.cekisler.length ? v.cekisler.map((x) => (
-          <div key={x.kaynak_ref} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, alignItems: 'center', padding: '7px 0', borderBottom: '1px solid var(--pi-line)', fontSize: 13 }}>
-            <span>{tKisa(x.gun)} · {x.sube} · {x.aciklama} <span style={{ color: R.not }}>({x.kim})</span></span>
-            <span style={{ display: 'flex', gap: 8, alignItems: 'center' }}><b style={num}>{fmt(x.tutar)}</b><Dugme kucuk onClick={() => sinifla(x.kaynak_ref, 'gider')}>Şube giderine al</Dugme></span>
-          </div>
-        )) : <div style={{ color: R.not, fontSize: 13, marginTop: 6 }}>Ayrılmış çekiş yok. Bir şube kartını açıp dükkân giderinin üstüne tıklayarak "patron şahsi" diye ayırabilirsin.</div>}
-        {v.cekisler.length > 0 && <div style={{ textAlign: 'right', marginTop: 6 }}>Toplam <b style={num}>{fmt(v.cekis_toplam)}</b> ₺</div>}
-      </div>
+      {/* Sahip (2026-10-16): "patron çekişlerini ilk yerinden kaldır; şube giderinde sadece patron harcaması sorusu sorsun"
+          → ayrılanlar Ödeme → Patron harcamaları'nda (hangi patron + geri alma orada) */}
+      {v.cekisler.length > 0 && (
+        <div style={{ fontSize: 13, color: R.not }}>Bu ay {v.cekisler.length} dükkân gideri patron harcaması olarak ayrıldı ({fmt(v.cekis_toplam)} ₺) — Ödeme → Patron harcamaları'nda.</div>
+      )}
       <Cekmece v={ck} onKapat={() => setCk(null)} />
     </div>
   );
