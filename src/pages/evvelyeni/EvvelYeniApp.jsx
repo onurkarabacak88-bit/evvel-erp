@@ -16,7 +16,7 @@ import OdemeModulu, { ODEME_SAYFALAR } from './OdemeModulu';
 import KazancModulu, { KAZANC_SAYFALAR } from './KazancModulu';
 import TanimModulu, { TANIM_SAYFALAR } from './TanimModulu';
 import BarModulu, { BAR_SAYFALAR } from './BarModulu';
-import MaasModulu, { MAAS_SAYFALAR, PersonelTakvim } from './MaasModulu';
+import MaasModulu, { MAAS_SAYFALAR, PersonelTakvim, GunlukYoklama } from './MaasModulu';
 import SatisModulu, { SATIS_SAYFALAR } from './SatisModulu';
 import KartModulu, { KART_SAYFALAR } from './KartModulu';
 import { KiraTakvim } from './KiraModulu';
@@ -210,7 +210,7 @@ export default function EvvelYeniApp() {
             {(TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'satis'
               ? <SatisModulu gorunum={sekme} />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'maas'
-              ? (sekme === 'personel_takvim' ? <PersonelTakvim onToast={setToast} /> : <MaasModulu onToast={setToast} onSekme={sekmeDegis} />)
+              ? (sekme === 'personel_yoklama' ? <GunlukYoklama /> : sekme === 'personel_takvim' ? <PersonelTakvim onToast={setToast} /> : <MaasModulu onToast={setToast} onSekme={sekmeDegis} />)
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'bar'
               ? <BarModulu />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'tanim'

@@ -11,6 +11,7 @@ import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, fmt, tl } from './KasaMod
 
 export const MAAS_SAYFALAR = [
   { id: 'maaslar', ad: 'Maaşlar', alt: 'Hak ediş · avans · kalan' },
+  { id: 'personel_yoklama', ad: 'Günlük yoklama', alt: 'Kim okuttu · kim okutmadı · geç kalan' },
   { id: 'personel_takvim', ad: 'Personel takvimi', alt: 'Gün gün hangi şubede · izinli' },
 ];
 
@@ -253,6 +254,81 @@ export function PersonelTakvim({ onToast }) {
           </table>
         </div>
       </>}
+    </div>
+  );
+}
+
+// ── 📋 GÜNLÜK YOKLAMA — sahip: "hangi gün hangi şubede QR okutmuş, kim okutmamış, okutan geç mi kalmış — bunu görmek dert" ──
+const YOK_DURUM = {
+  zamaninda: { ad: 'zamanında', ikon: '✅', renk: R.yesil },
+  gec: { ad: 'geç', ikon: '⏰', renk: R.amber },
+  okutmadi: { ad: 'QR okutmadı', ikon: '❌', renk: R.kirmizi },
+  plansiz: { ad: 'planda yok, geldi', ikon: '➕', renk: 'var(--pi-accent)' },
+  bekleniyor: { ad: 'saati gelmedi', ikon: '⌛', renk: R.not },
+};
+const gunStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+export function GunlukYoklama() {
+  const [gun, setGun] = useState(() => gunStr(new Date()));
+  const [kac, setKac] = useState(1);
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState(null);
+  const no = useRef(0);
+  useEffect(() => {
+    const n = ++no.current;
+    setV(null);
+    api(`/evvel-yeni/maas/yoklama?gun=${gun}&gun_sayisi=${kac}`).then((r) => { if (n === no.current) { setV(r); setHata(null); } })
+      .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
+  }, [gun, kac]);
+  const kaydir = (d) => { const t = new Date(`${gun}T12:00:00`); t.setDate(t.getDate() + d); setGun(gunStr(t)); };
+  const gunAd = (g) => new Date(`${g}T12:00:00`).toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' });
+  const secStil = { font: 'inherit', padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-paper)', color: 'var(--pi-ink)' };
+  return (
+    <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <style>{PI_CSS}</style>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+        <div><div className="pi-eyebrow">Evvel Yeni · Personel</div><h1 style={{ fontSize: 30 }}>Günlük yoklama</h1></div>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Dugme kucuk onClick={() => kaydir(-1)}>‹ önceki</Dugme>
+          <input type="date" value={gun} onChange={(e) => e.target.value && setGun(e.target.value)} style={secStil} />
+          <Dugme kucuk onClick={() => kaydir(1)}>sonraki ›</Dugme>
+          <Dugme kucuk onClick={() => setGun(gunStr(new Date()))}>Bugün</Dugme>
+          <select value={kac} onChange={(e) => setKac(Number(e.target.value))} style={secStil}>
+            <option value={1}>yalnız bu gün</option><option value={7}>son 7 gün</option><option value={14}>son 14 gün</option>
+          </select>
+        </span>
+      </div>
+      <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12.5 }}>{Object.values(YOK_DURUM).map((d) => <span key={d.ad}>{d.ikon} {d.ad}</span>)}</div>
+      {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
+      {!v && !hata && <div style={{ color: R.not }}>Yoklama hazırlanıyor…</div>}
+      {v && <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>}
+      {v && v.gunler.map((g) => (
+        <div key={g.gun} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+          <div style={{ fontWeight: 800, fontSize: 16 }}>{gunAd(g.gun)}{!g.plan_var && <span style={{ color: R.amber, fontWeight: 500, fontSize: 13 }}> · bu gün için vardiya planı girilmemiş — yalnız QR girişleri</span>}</div>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(240px, 1fr))', gap: 10 }}>
+            {g.subeler.map((s) => (
+              <div key={s.sube_id} style={{ ...kart, padding: 12, display: 'flex', flexDirection: 'column', gap: 6, borderTop: `4px solid ${s.ozet.okutmadi ? R.kirmizi : s.ozet.gec ? R.amber : s.kisiler.length ? R.yesil : 'var(--pi-line)'}` }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline' }}>
+                  <b style={{ fontSize: 15 }}>{s.ad}</b>
+                  <span style={{ fontSize: 12, color: R.not }}>{s.ozet.gec ? `⏰${s.ozet.gec} ` : ''}{s.ozet.okutmadi ? `❌${s.ozet.okutmadi}` : ''}</span>
+                </div>
+                {s.kisiler.length === 0 && <div style={{ fontSize: 12.5, color: R.not }}>Plan da QR da yok</div>}
+                {s.kisiler.map((k, i) => {
+                  const d = YOK_DURUM[k.durum];
+                  const vurgu = k.durum === 'okutmadi' || k.durum === 'gec';
+                  return (
+                    <div key={`${k.personel_id}${i}`} style={{ display: 'grid', gridTemplateColumns: '20px 1fr auto', gap: 6, alignItems: 'center', fontSize: 13, padding: '4px 6px', borderRadius: 7, background: vurgu ? `color-mix(in srgb, ${d.renk} 10%, transparent)` : 'transparent' }}>
+                      <span>{d.ikon}</span>
+                      <span style={{ minWidth: 0 }}><b>{k.ad}</b>
+                        <div style={{ fontSize: 11.5, color: R.not }}>{k.plan ? `plan ${k.plan}` : 'planda yok'}{k.qr_sube && k.qr_sube !== s.ad ? ` · QR: ${k.qr_sube}` : ''}{k.cikis ? ` · çıkış ${k.cikis}` : ''}</div></span>
+                      <span style={{ textAlign: 'right', ...num, fontWeight: 700, color: d.renk }}>{k.qr ? `QR ${k.qr}` : '—'}{k.durum === 'gec' && <div style={{ fontSize: 11.5 }}>{k.gec_dk} dk geç</div>}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            ))}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }

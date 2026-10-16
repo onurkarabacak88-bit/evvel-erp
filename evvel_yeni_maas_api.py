@@ -612,3 +612,100 @@ def takvim_karar(b: YoklamaKararBody, x_evvel_oturum: Optional[str] = Header(def
                         (cikis, kim, b.personel_id))
             mesaj = f"Ayrıldı olarak işaretlendi — ayrılış {cikis}"
     return {"ok": True, "mesaj": mesaj}
+
+
+GEC_TOLERANS_DK = 5   # planlanan başlangıçtan bu kadar sonrasına kadar "zamanında"
+
+
+@router.get("/yoklama")
+def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
+    """📋 GÜNLÜK YOKLAMA (sahip 2026-10-16): "personel hangi gün hangi şubede QR okutmuş, kim okutmamış,
+    okutan geç mi kalmış — bunu görmek dert." Panelin VARDİYA PLANI (vardiya_atama) × QR girişi (gorev_yoklama).
+    Durum: zamaninda · gec (dk) · okutmadi (planlı, QR yok) · plansiz (planda yok, QR var). YALNIZ OKUR."""
+    from evvel_yeni_kasa_api import _bugun
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    from zoneinfo import ZoneInfo
+    TR = ZoneInfo("Europe/Istanbul")
+    son = date.fromisoformat(gun[:10]) if gun else _bugun()
+    gun_sayisi = max(1, min(int(gun_sayisi or 1), 31))
+    bas = son - timedelta(days=gun_sayisi - 1)
+    with db() as (conn, cur):
+        _hazirla(cur)
+        sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
+        cur.execute("SELECT id, ad, gorev FROM ey_personel")
+        pad = {dict(r)["id"]: dict(r) for r in cur.fetchall() or []}
+        plan, qr = [], []
+        try:
+            with savepoint(cur, "sp_ey_yok_plan"):
+                cur.execute("""SELECT a.tarih, a.personel_id::text AS pid, s.sube_id::text AS sid, a.baslangic_saat, a.bitis_saat, s.ad AS slot
+                                 FROM vardiya_atama a JOIN vardiya_slot s ON s.id = a.slot_id
+                                WHERE a.tarih BETWEEN %s AND %s AND a.durum <> 'iptal'""", (bas, son))
+                plan = [dict(r) for r in cur.fetchall() or []]
+        except Exception as e:  # noqa: BLE001
+            log.warning("yoklama: plan okunamadı: %s", str(e)[:150])
+        try:
+            with savepoint(cur, "sp_ey_yok_qr"):
+                cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, cikis_ts, vardiya_tip
+                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s ORDER BY giris_ts""", (bas, son))
+                qr = [dict(r) for r in cur.fetchall() or []]
+        except Exception:  # noqa: BLE001
+            with savepoint(cur, "sp_ey_yok_qr2"):
+                cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, NULL AS cikis_ts, vardiya_tip
+                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s ORDER BY giris_ts""", (bas, son))
+                qr = [dict(r) for r in cur.fetchall() or []]
+
+    def tr(ts):
+        if not ts:
+            return None
+        return ts.astimezone(TR).replace(tzinfo=None) if getattr(ts, "tzinfo", None) else ts
+
+    def ad(pid):
+        return (pad.get(pid) or {}).get("ad") or pid
+    gunler = []
+    g = son
+    while g >= bas:
+        gi = g
+        satirlar = {}
+        qr_g = [q for q in qr if q["tarih"] == gi]
+        kullanildi = set()
+        for p in sorted([p for p in plan if p["tarih"] == gi], key=lambda x: str(x["baslangic_saat"])):
+            q = next((i for i, x in enumerate(qr_g) if i not in kullanildi and x["pid"] == p["pid"] and x["sid"] == p["sid"]), None)
+            if q is None:   # başka şubede okuttuysa onu da göster
+                q = next((i for i, x in enumerate(qr_g) if i not in kullanildi and x["pid"] == p["pid"]), None)
+            plan_bas = p["baslangic_saat"].strftime("%H:%M") if p.get("baslangic_saat") else None
+            s = {"personel_id": p["pid"], "ad": ad(p["pid"]), "plan": f"{plan_bas}–{p['bitis_saat'].strftime('%H:%M') if p.get('bitis_saat') else ''}",
+                 "slot": p.get("slot"), "qr": None, "qr_sube": None, "durum": "okutmadi", "gec_dk": None}
+            if q is not None:
+                kullanildi.add(q)
+                x = qr_g[q]
+                t = tr(x["giris_ts"])
+                s.update(qr=t.strftime("%H:%M") if t else None, qr_sube=sube_ad.get(x["sid"], x["sid"]), cikis=(tr(x.get("cikis_ts")) or None) and tr(x["cikis_ts"]).strftime("%H:%M"))
+                if t and p.get("baslangic_saat"):
+                    from datetime import datetime as _dt
+                    dk = (t - _dt.combine(gi, p["baslangic_saat"])).total_seconds() / 60
+                    s["gec_dk"] = int(round(dk)) if dk > GEC_TOLERANS_DK else 0
+                    s["durum"] = "gec" if dk > GEC_TOLERANS_DK else "zamaninda"
+                else:
+                    s["durum"] = "zamaninda"
+            elif gi == _bugun() and p.get("baslangic_saat"):
+                from datetime import datetime as _dt
+                if _dt.now(TR).replace(tzinfo=None) < _dt.combine(gi, p["baslangic_saat"]):
+                    s["durum"] = "bekleniyor"
+            satirlar.setdefault(p["sid"], []).append(s)
+        for i, x in enumerate(qr_g):
+            if i in kullanildi:
+                continue
+            t = tr(x["giris_ts"])
+            satirlar.setdefault(x["sid"], []).append({"personel_id": x["pid"], "ad": ad(x["pid"]), "plan": None, "slot": None,
+                                                      "qr": t.strftime("%H:%M") if t else None, "qr_sube": sube_ad.get(x["sid"], x["sid"]),
+                                                      "durum": "plansiz", "gec_dk": None,
+                                                      "cikis": tr(x.get("cikis_ts")).strftime("%H:%M") if x.get("cikis_ts") else None})
+        subeler_out = []
+        for sid, ad_ in sorted(sube_ad.items(), key=lambda z: z[1]):
+            ss = satirlar.get(sid, [])
+            subeler_out.append({"sube_id": sid, "ad": ad_, "kisiler": ss,
+                                "ozet": {k: sum(1 for x in ss if x["durum"] == k) for k in ("zamaninda", "gec", "okutmadi", "plansiz", "bekleniyor")}})
+        gunler.append({"gun": gi.isoformat(), "subeler": subeler_out, "plan_var": any(p["tarih"] == gi for p in plan)})
+        g -= timedelta(days=1)
+    return {"son": son.isoformat(), "gunler": gunler, "tolerans_dk": GEC_TOLERANS_DK,
+            "not": f"Plan: şube panelinin vardiya planı · QR: panelde okutulan giriş. Başlangıçtan {GEC_TOLERANS_DK} dk sonrasına kadar zamanında sayılır."}
