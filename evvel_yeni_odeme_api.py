@@ -20,6 +20,7 @@ TEK FORM, TEK KAYIT, OTOMATİK ETKİ:
 """
 
 import json
+import logging
 from datetime import date
 from typing import List, Optional
 
@@ -32,6 +33,7 @@ from evvel_yeni_kasa_api import (_aktor, _hareket_dto, _bakiye, _baslangic, _bug
                                  _kilit_denetle, _kurus, _olaylar, _sahte, _sayim_kilidi, _tl, _tl_sayi, _yaz, _yukle)
 
 router = APIRouter(prefix="/api/evvel-yeni/odeme", tags=["evvel-yeni-odeme"])
+log = logging.getLogger(__name__)
 
 KONULAR = {
     "toptanci": {"ad": "Toptancı", "gider": False},
@@ -406,3 +408,40 @@ def personel_ucret(body: UcretBody, x_evvel_oturum: Optional[str] = Header(defau
                        ON CONFLICT (personel_id, gecerli_ay) DO UPDATE SET maas=EXCLUDED.maas, yemek=EXCLUDED.yemek,
                          degistiren=EXCLUDED.degistiren, zaman=NOW()""", (str(body.personel_id), body.ay[:7], m, y, kim))
     return {"ok": True, "mesaj": f"Ücret tanımı kaydedildi · {body.ay[:7]} ayından itibaren · maaş {_tl(m)} · yemek {_tl(y)}"}
+
+
+@router.get("/patron")
+def patron_harcamalari(ay: Optional[str] = None):
+    """👤 PATRON HARCAMALARI (sahip 2026-10-16: "patron harcamaları için ayrı sekme"). Şubenin gideri DEĞİL;
+    hepsi tek yerde: şahsi harcama (ödeme formu, kimin=Patron) · dükkândan şahsi (Gider'de çekiş diye ayrılan
+    dükkân giderleri) · kredi / borç taksiti · kart borcu ödemesi. YALNIZ OKUR."""
+    a_ = (ay or _bugun().strftime("%Y-%m"))[:7]
+    liste = odeme_listesi(a_)["odemeler"]
+    gruplar = {"sahsi": [], "cekis": [], "kredi": [], "kart_borcu": []}
+    for x in liste:
+        tip = x.get("konu_tip")
+        if tip == "kredi":
+            g = "kredi"
+        elif tip == "kart_borcu":
+            g = "kart_borcu"
+        elif x.get("kimin_kod") == "patron":
+            g = "sahsi"
+        else:
+            continue
+        gruplar[g].append({"id": x["id"], "tarih": x["tarih"], "aciklama": x["aciklama"], "tutar": x["toplam"],
+                           "nasil": " + ".join([f"{n['ad']} {n['tutar']:,.0f}" for n in x["nakit"]] + [f"💳 {k['ad']} {k['tutar']:,.0f}" for k in x["kart"]]),
+                           "kaydeden": x.get("kaydeden"), "fis": x.get("fis")})
+    try:
+        from evvel_yeni_gider_api import gider_ozet
+        for c in gider_ozet(a_).get("cekisler") or []:
+            gruplar["cekis"].append({"id": c.get("kaynak_ref") or c.get("id"), "tarih": c.get("gun"), "aciklama": c.get("aciklama"),
+                                     "tutar": c.get("tutar"), "nasil": f"{c.get('sube') or ''} dükkân nakdi", "kaydeden": c.get("kim"), "fis": None})
+    except Exception as e:  # noqa: BLE001
+        log.warning("patron harcamaları: çekişler okunamadı: %s", str(e)[:150])
+    AD = {"sahsi": "Şahsi harcama", "cekis": "Dükkândan şahsi (çekiş)", "kredi": "Kredi / borç taksiti", "kart_borcu": "Kart borcu ödemesi"}
+    out = []
+    for k, xs in gruplar.items():
+        xs.sort(key=lambda z: z["tarih"] or "", reverse=True)
+        out.append({"kod": k, "ad": AD[k], "kalemler": xs, "toplam": round(sum(z["tutar"] or 0 for z in xs), 2)})
+    return {"ay": a_, "gruplar": out, "toplam": round(sum(g["toplam"] for g in out), 2),
+            "not": "Şubenin gideri değil — Şube kazancına girmez. Kart borcu ödemesi kartla yapılan harcamanın borcunu kapatır."}

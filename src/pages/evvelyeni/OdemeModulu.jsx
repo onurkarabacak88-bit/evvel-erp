@@ -11,6 +11,7 @@ import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, odemeFisi, fmt, 
 
 export const ODEME_SAYFALAR = [
   { id: 'odemeler', ad: 'Ödeme / gider gir', alt: 'Nakit · havale · kart' },
+  { id: 'patron_harcama', ad: 'Patron harcamaları', alt: 'Şahsi · çekiş · kredi · kart borcu' },
   { id: 'kira_takvimi', ad: 'Kira takvimi', alt: 'Şube × ay · artış ayları' },
 ];
 
@@ -60,7 +61,7 @@ export default function OdemeModulu({ onToast }) {
     if (!on) return;
     const t = on.tutar > 0 ? String(on.tutar) : '';
     otoTutar.current = t;
-    setF({ ...BOS(), konu: on.konu, personel_id: on.personel_id, personel_kalemi: on.personel_kalemi, ait_ay: on.ait_ay,
+    setF({ ...BOS(), konu: on.konu, personel_id: on.personel_id, personel_kalemi: on.personel_kalemi, ait_ay: on.ait_ay || ayBugun(), kimin: on.kimin,
       parcalar: [{ yontem: 'havale', cep: '', kart_id: '', tutar: t }] });
   }, [L]);
 
@@ -359,3 +360,70 @@ export default function OdemeModulu({ onToast }) {
 }
 
 export { tl };
+
+// ── 👤 PATRON HARCAMALARI — sahip (2026-10-16): "patron harcamaları için ayrı sekme" ──
+export function PatronHarcama() {
+  const [ay, setAy] = useState(ayBugun());
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState(null);
+  const [acik, setAcik] = useState('sahsi');
+  const no = useRef(0);
+  useEffect(() => {
+    const n = ++no.current;
+    setV(null);
+    api(`/evvel-yeni/odeme/patron?ay=${ay}`).then((r) => { if (n === no.current) { setV(r); setHata(null); } })
+      .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
+  }, [ay]);
+  const gir = () => {
+    try { window.sessionStorage.setItem('ey_odeme_on', JSON.stringify({ konu: 'diger', kimin: 'patron' })); } catch { /* yut */ }
+    window.history.pushState({}, '', '/evvel-yeni/odemeler');
+    window.dispatchEvent(new window.PopStateEvent('popstate'));
+  };
+  const IKON = { sahsi: '🛍️', cekis: '🚬', kredi: '🏦', kart_borcu: '💳' };
+  return (
+    <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <style>{PI_CSS}</style>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+        <div><div className="pi-eyebrow">Evvel Yeni · Ödeme</div><h1 style={{ fontSize: 30 }}>Patron harcamaları</h1></div>
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
+          <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, width: 'auto', padding: '6px 9px' }} />
+          <Dugme ana onClick={gir}>+ Patron harcaması gir</Dugme>
+        </span>
+      </div>
+      {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
+      {!v && !hata && <div style={{ color: R.not }}>Hazırlanıyor…</div>}
+      {v && (<>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
+          {v.gruplar.map((g) => (
+            <button key={g.kod} type="button" onClick={() => setAcik(g.kod)} style={{ ...kart, padding: 12, textAlign: 'left', cursor: 'pointer', font: 'inherit', color: 'var(--pi-ink)', borderLeft: `5px solid ${acik === g.kod ? 'var(--pi-accent)' : 'var(--pi-line)'}` }}>
+              <div style={{ fontSize: 12.5, color: R.not }}>{IKON[g.kod]} {g.ad}</div>
+              <div style={{ ...num, fontSize: 22, fontWeight: 800 }}>{fmt(g.toplam)} ₺</div>
+              <div style={{ fontSize: 12, color: R.not }}>{g.kalemler.length} kayıt</div>
+            </button>
+          ))}
+          <div style={{ ...kart, padding: 12, background: 'var(--pi-accent-soft)' }}>
+            <div style={{ fontSize: 12.5, color: R.not }}>Bu ay toplam</div>
+            <div style={{ ...num, fontSize: 22, fontWeight: 800 }}>{fmt(v.toplam)} ₺</div>
+          </div>
+        </div>
+        <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
+        {v.gruplar.filter((g) => g.kod === acik).map((g) => (
+          <div key={g.kod} style={{ ...kart, overflow: 'hidden' }}>
+            <div style={{ padding: '10px 14px', fontWeight: 700 }}>{IKON[g.kod]} {g.ad}</div>
+            {g.kalemler.length === 0 ? <div style={{ padding: '0 14px 14px', color: R.not, fontSize: 13 }}>Bu ay kayıt yok.</div> : (
+              <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}><tbody>
+                {g.kalemler.map((x) => (
+                  <tr key={x.id} style={{ borderTop: '1px solid var(--pi-line)' }}>
+                    <td style={{ padding: '7px 10px', whiteSpace: 'nowrap' }}>{tKisa(x.tarih)}</td>
+                    <td style={{ padding: '7px 10px' }}>{x.aciklama}<div style={{ fontSize: 11.5, color: R.not }}>{x.nasil}{x.kaydeden ? ` · ${x.kaydeden}` : ''}</div></td>
+                    <td style={{ padding: '7px 10px', textAlign: 'right', ...num, fontWeight: 700 }}>{fmt(x.tutar)}</td>
+                  </tr>
+                ))}
+              </tbody></table>
+            )}
+          </div>
+        ))}
+      </>)}
+    </div>
+  );
+}

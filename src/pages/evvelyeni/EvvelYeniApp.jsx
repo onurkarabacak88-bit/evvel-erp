@@ -12,7 +12,7 @@ import { api } from '../../utils/api';
 import KasaModulu, { SAYFALAR } from './KasaModulu';
 import GelirModulu, { GELIR_SAYFALAR } from './GelirModulu';
 import GiderModulu, { GIDER_SAYFALAR } from './GiderModulu';
-import OdemeModulu, { ODEME_SAYFALAR } from './OdemeModulu';
+import OdemeModulu, { ODEME_SAYFALAR, PatronHarcama } from './OdemeModulu';
 import KazancModulu, { KAZANC_SAYFALAR } from './KazancModulu';
 import TanimModulu, { TANIM_SAYFALAR } from './TanimModulu';
 import BarModulu, { BAR_SAYFALAR } from './BarModulu';
@@ -220,7 +220,7 @@ export default function EvvelYeniApp() {
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'kazanc'
               ? <KazancModulu />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'odeme'
-              ? (sekme === 'kira_takvimi' ? <KiraTakvim /> : <OdemeModulu onToast={setToast} />)
+              ? (sekme === 'kira_takvimi' ? <KiraTakvim /> : sekme === 'patron_harcama' ? <PatronHarcama /> : <OdemeModulu onToast={setToast} />)
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'gider'
               ? <GiderModulu onToast={setToast} />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'gelir'
