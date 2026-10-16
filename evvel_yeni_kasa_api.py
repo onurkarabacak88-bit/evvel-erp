@@ -747,6 +747,12 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
                 kart_isleri = _kart_isleri(cur, kayit)
         except Exception as e:  # noqa: BLE001
             log.warning("kart işleri okunamadı: %s", str(e)[:150])
+        try:   # 🚚 vadesi geçen toptancı borcu · tutarı bilinmeyen teslim
+            with savepoint(cur, "sp_ey_top_isler"):
+                from evvel_yeni_toptanci_api import toptanci_isleri as _top_isleri
+                kart_isleri = kart_isleri + _top_isleri(cur)
+        except Exception as e:  # noqa: BLE001
+            log.warning("toptancı işleri okunamadı: %s", str(e)[:150])
     bugun = _bugun().isoformat()
     g = _gun_coz(gun)
     ref = bugun if hepsi else g

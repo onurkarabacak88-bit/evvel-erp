@@ -10767,6 +10767,20 @@ var UrunTeslimAl = (function () {
     h += '<span style="color:var(--muted);font-size:14px">Henüz ürün seçilmedi</span>';
     h += '</div>';
 
+    // 🧾 FATURA GELDİ Mİ? — ZORUNLU, BELİRGİN (sahip 2026-10-16: "zorunlu olsun · belirgin yap gözden kaçmasın")
+    h += '<div id="svFaturaKutu" style="border:3px solid #E0A100;background:#FFF6D6;border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:10px">';
+    h += '<p style="margin:0;font-size:17px;font-weight:800;color:#5A3E00">🧾 FATURA GELDİ Mİ? <span style="color:#C0392B">*</span></p>';
+    h += '<div style="display:flex;gap:10px">';
+    h += '<button type="button" id="svFatEvet" data-fat="1" style="flex:1;min-height:56px;font-size:18px;font-weight:800;border-radius:12px;border:2px solid #5A3E00;background:#fff;color:#5A3E00;cursor:pointer">✅ EVET</button>';
+    h += '<button type="button" id="svFatHayir" data-fat="0" style="flex:1;min-height:56px;font-size:18px;font-weight:800;border-radius:12px;border:2px solid #5A3E00;background:#fff;color:#5A3E00;cursor:pointer">❌ HAYIR</button>';
+    h += '</div>';
+    h += '<div id="svFatDetay" style="display:none;flex-direction:column;gap:8px">';
+    h += '<label id="svFatTutarEtiket" style="font-size:14px;font-weight:700;color:#5A3E00">Faturadaki TOPLAM tutar ₺</label>';
+    h += '<input id="svFatTutar" inputmode="decimal" placeholder="0,00" style="min-height:52px;font-size:22px;font-weight:800;border-radius:10px;border:2px solid #E0A100;padding:6px 12px" />';
+    h += '<input id="svFatNo" placeholder="Fatura no (varsa)" style="min-height:44px;font-size:15px;border-radius:10px;border:1px solid #E0A100;padding:6px 12px" />';
+    h += '</div>';
+    h += '</div>';
+
     // Not
     h += '<div>';
     h += '<p class="sv-pos-label">Not <span style="font-size:10px;font-weight:500;text-transform:none;letter-spacing:0">(isteğe bağlı)</span></p>';
@@ -11179,6 +11193,25 @@ var UrunTeslimAl = (function () {
     };
   }
 
+  // 🧾 Fatura geldi mi? seçimi (null = seçilmedi → teslim kaydedilmez)
+  var _svFatura = null;
+  function svFaturaSecim(v) {
+    _svFatura = v;
+    var ev = document.getElementById('svFatEvet'), ha = document.getElementById('svFatHayir');
+    var det = document.getElementById('svFatDetay'), et = document.getElementById('svFatTutarEtiket');
+    var no = document.getElementById('svFatNo'), kutu = document.getElementById('svFaturaKutu');
+    if (ev) { ev.style.background = v === true ? '#1E7B4A' : '#fff'; ev.style.color = v === true ? '#fff' : '#5A3E00'; }
+    if (ha) { ha.style.background = v === false ? '#9A2B1F' : '#fff'; ha.style.color = v === false ? '#fff' : '#5A3E00'; }
+    if (det) det.style.display = v === null ? 'none' : 'flex';
+    if (et) et.textContent = v === true ? 'Faturadaki TOPLAM tutar ₺ (zorunlu)' : 'Kâğıtta (irsaliye/fiş) tutar yazıyorsa ₺ — yazmıyorsa BOŞ bırakın';
+    if (no) no.style.display = v === true ? '' : 'none';
+    if (kutu) kutu.style.borderColor = v === null ? '#E0A100' : '#8a8a8a';
+  }
+  document.addEventListener('click', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('#svFatEvet, #svFatHayir') : null;
+    if (b) svFaturaSecim(b.getAttribute('data-fat') === '1');
+  });
+
   function resetAfterSuccess() {
     stokKalemDeger[PREFIX] = {};
     document.querySelectorAll('[data-stok-input^="' + PREFIX + '::"]').forEach(function (inp) {
@@ -11191,6 +11224,9 @@ var UrunTeslimAl = (function () {
     if (tdEl) tdEl.value = '';
     var notEl = document.getElementById('svNot');
     if (notEl) notEl.value = '';
+    svFaturaSecim(null);
+    var ftEl = document.getElementById('svFatTutar'); if (ftEl) ftEl.value = '';
+    var fnEl = document.getElementById('svFatNo'); if (fnEl) fnEl.value = '';
     // Sipariş modundan çık + bekleyen listeyi tazele
     _svBeklenenSiparis = null;
     svBeklenenYukle();
@@ -11215,6 +11251,19 @@ var UrunTeslimAl = (function () {
       var td = selVal('svTedarikci');
       if (!td) throw new Error('Tedarikçi seçin');
       body.tedarikci_id = td;
+
+      if (_svFatura === null) {
+        var fk = document.getElementById('svFaturaKutu');
+        if (fk) { fk.style.borderColor = '#C0392B'; fk.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+        throw new Error('🧾 Fatura geldi mi? — EVET ya da HAYIR seçin');
+      }
+      var ftRaw = (inpVal('svFatTutar') || '').trim().replace(/\s/g, '');
+      var ftNum = ftRaw ? Number(ftRaw.indexOf(',') >= 0 ? ftRaw.replace(/\./g, '').replace(',', '.') : ftRaw) : null;
+      if (ftRaw && !(ftNum > 0)) throw new Error('Tutarı sayı olarak yazın (ör. 1250,50)');
+      if (_svFatura === true && !(ftNum > 0)) throw new Error('Fatura geldiyse faturadaki TOPLAM tutarı yazın');
+      body.fatura_geldi = _svFatura;
+      body.fatura_tutar = ftNum;
+      body.fatura_no = _svFatura ? ((inpVal('svFatNo') || '').trim() || null) : null;
 
       var not = inpVal('svNot').trim();
       if (orderMode) {

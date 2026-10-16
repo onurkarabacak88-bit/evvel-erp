@@ -292,6 +292,14 @@ except Exception as _ey_odeme_err:
     logging.getLogger(__name__).warning(
         f"evvel_yeni_odeme modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_odeme_err}"
     )
+# 🚚 EVVEL YENİ · TOPTANCILAR (2026-10-16) — borcumuz = açılış + alım − ödeme.
+try:
+    from evvel_yeni_toptanci_api import router as evvel_yeni_toptanci_router
+    app.include_router(evvel_yeni_toptanci_router)
+except Exception as _ey_top_err:
+    logging.getLogger(__name__).warning(
+        f"evvel_yeni_toptanci modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_top_err}"
+    )
 # 🏠 EVVEL YENİ · KİRALAR (2026-10-16) — şube kirası tanımı + yıllık kira takvimi.
 try:
     from evvel_yeni_kira_api import router as evvel_yeni_kira_router

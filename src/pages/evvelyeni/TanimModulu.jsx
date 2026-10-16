@@ -58,8 +58,9 @@ const YAPI = {
   tanim_toptanci: {
     tur: 'toptanci', liste: 'toptancilar', baslik: 'Toptancılar', tekil: 'toptancı',
     not: 'Açılış bakiyesi: yeni dönem başında bu toptancıya olan borç. Toptancı bakiyesi bundan başlar.',
-    alanlar: [{ k: 'ad', ad: 'Toptancı adı', zorunlu: true }, { k: 'kategori', ad: 'Ne satıyor' }, { k: 'telefon', ad: 'Telefon' }, { k: 'acilis_bakiye', ad: 'Açılış borcumuz ₺', sayi: true }],
-    kolon: (x) => [x.ad, x.kategori || '—', `açılış ${fmt(x.acilis_bakiye)}`],
+    alanlar: [{ k: 'ad', ad: 'Toptancı adı', zorunlu: true }, { k: 'kategori', ad: 'Ne satıyor' }, { k: 'telefon', ad: 'Telefon' }, { k: 'acilis_bakiye', ad: 'Açılış borcumuz ₺', sayi: true },
+      { k: 'vade_gun', ad: 'Vade (teslimden kaç gün sonra ödenir)', sayi: true }],
+    kolon: (x) => [x.ad, x.kategori || '—', `açılış ${fmt(x.acilis_bakiye)} · vade ${x.vade_gun != null ? `${x.vade_gun} gün` : 'tanımsız'}`],
   },
 };
 

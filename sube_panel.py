@@ -3125,6 +3125,11 @@ class SubeSevkBody(BaseModel):
     teslim_aciklama: Optional[str] = None
     eksik_aciklama: Optional[str] = None
     not_aciklama: Optional[str] = None
+    # Evvel Yeni · Toptancılar (2026-10-16, sahip): "Fatura geldi mi?" ZORUNLU; evetse faturadaki tutar zorunlu,
+    # hayırsa kâğıtta fiyat yazıyorsa tutar (yoksa boş → merkez sonra girer, sistem adet × fiyattan tahmin eder).
+    fatura_geldi: Optional[bool] = None
+    fatura_tutar: Optional[float] = None
+    fatura_no: Optional[str] = None
 
 
 def _stok_kalemleri_temizle(kalemler: Optional[List[Dict[str, Any]]]) -> List[Dict[str, Any]]:
@@ -3247,6 +3252,13 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
     else:
         eksik_kat = None
         eksik_acik = None
+
+    if body.fatura_geldi is None:
+        raise HTTPException(400, "🧾 Fatura geldi mi? — EVET ya da HAYIR seçin. (Bu soruyu görmüyorsanız sayfayı yenileyin — F5 / aşağı çekin)")
+    if body.fatura_geldi and not (body.fatura_tutar and body.fatura_tutar > 0):
+        raise HTTPException(400, "Fatura geldiyse faturadaki TOPLAM tutarı yazın")
+    if body.fatura_tutar is not None and body.fatura_tutar < 0:
+        raise HTTPException(400, "Tutar eksi olamaz")
 
     delta_raw = body.model_dump()
     kalemler = _stok_kalemleri_temizle(delta_raw.get("kalemler"))
@@ -3838,6 +3850,14 @@ def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
             from istek_izi import istek_izi_yaz
             istek_izi_yaz(cur, _sevk_parmak, "urun_sevk_adhoc",
                           {"defter_id": rid, "delta": delta, "sube_id": sube_id})
+        # 🚚 EVVEL YENİ · TOPTANCILAR — borç teslimde doğar (kendi savepoint'inde; hata stoğu bozmaz)
+        try:
+            from evvel_yeni_toptanci_api import panel_teslim_yaz
+            panel_teslim_yaz(cur, defter_id=rid, sube_id=sube_id, toptanci_id=tedarikci_id, toptanci_ad=tedarikci_ad,
+                             kalemler=kalemler, fatura_geldi=body.fatura_geldi, fatura_tutar=body.fatura_tutar,
+                             fatura_no=body.fatura_no, teslim_alan=onay_ad)
+        except Exception:  # noqa: BLE001
+            logger.warning("evvel yeni toptanci kancasi calismadi", exc_info=True)
     return {"success": True, "defter_id": rid, "delta": delta, "kalemler": kalemler, "tip": "SEVK"}
 
 
@@ -4065,6 +4085,11 @@ def sube_urun_sevk_geri_al(sube_id: str, body: SubeSevkGeriAlBody):
         )
         audit(cur, "operasyon_defter", rid, "URUN_SEVK_IPTAL")
 
+        try:
+            from evvel_yeni_toptanci_api import panel_teslim_iptal
+            panel_teslim_iptal(cur, did, sebep)
+        except Exception:  # noqa: BLE001
+            logger.warning("evvel yeni toptanci iptal kancasi calismadi", exc_info=True)
     return {"success": True, "defter_id": rid, "geri_alinan": geri_ozet}
 
 

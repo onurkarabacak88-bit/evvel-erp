@@ -1451,6 +1451,17 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul }) 
       </div>
     );
   }
+  if (x.tur === 'toptanci_vade' || x.tur === 'toptanci_tutar') {
+    const git = () => { window.history.pushState({}, '', '/evvel-yeni/toptancilar'); window.dispatchEvent(new window.PopStateEvent('popstate')); };
+    return (
+      <div style={{ ...satir, border: `1px solid ${alfa(x.tur === 'toptanci_vade' ? R.kirmizi : R.amber, 55)}` }}>
+        <Cip tur={x.tur === 'toptanci_vade' ? 'kirmizi' : 'sari'}>{x.tur === 'toptanci_vade' ? '🚚 Vadesi geçti' : '🚚 Tutar bilinmiyor'}</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b>
+          <div style={{ fontSize: 11.5, color: R.not }}>{x.tur === 'toptanci_vade' ? <>Vadesi geçmiş borç <b style={num}>{fmt(x.tutar)}</b> ₺ — Ödeme'den "Toptancı" olarak öde</> : `${x.sayi} teslimin tutarı 7+ gündür girilmedi — fatura/ekstre geldiyse tutarı gir`}</div></div>
+        <Dugme kucuk onClick={git}>Toptancılar</Dugme>
+      </div>
+    );
+  }
   if (x.tur === 'kart_son_odeme') {
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(x.gun_kaldi <= 2 ? R.kirmizi : R.amber, 55)}` }}>

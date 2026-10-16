@@ -209,6 +209,7 @@ class TanimBody(BaseModel):
     kimin: Optional[str] = None
     acilis_borc: Optional[Decimal] = None
     limit_tutar: Optional[Decimal] = None
+    vade_gun: Optional[int] = None           # toptancı: teslimden kaç gün sonra ödenir
     kira: Optional[Decimal] = None           # şube aylık kirası
     kira_ay: Optional[str] = None            # kira hangi aydan geçerli (YYYY-AA)
     kira_artis_ayi: Optional[int] = None     # her yıl hangi ay artar (1–12)
@@ -367,4 +368,10 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                              acilis_bakiye=COALESCE(%s,acilis_bakiye), aktif=COALESCE(%s,aktif), degistiren=%s, zaman=NOW() WHERE id=%s""",
                         (ad, (b.kategori or "").strip()[:40] or None, (b.telefon or "").strip()[:20] or None,
                          _kurus(b.acilis_bakiye) if b.acilis_bakiye is not None else None, b.aktif, kim, tid))
+        if b.vade_gun is not None:
+            if not 0 <= int(b.vade_gun) <= 365:
+                raise HTTPException(400, "Vade günü 0–365 olmalı")
+            from evvel_yeni_toptanci_api import toptanci_hazirla
+            toptanci_hazirla(cur)
+            cur.execute("UPDATE ey_toptanci SET vade_gun=%s WHERE id=%s", (int(b.vade_gun), tid))
         return {"ok": True, "id": tid, "mesaj": f"Toptancı {'eklendi' if yeni else 'güncellendi'}"}

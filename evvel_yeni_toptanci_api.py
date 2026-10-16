@@ -1,0 +1,387 @@
+"""🚚 EVVEL YENİ · TOPTANCILAR (2026-10-16) — genel hatlar. Sahip + Codex + Fable kurgusu.
+
+Sahip: mal hem depoya hem şubeye gelir · borç TESLİMDE doğar · fatura bazen gelir bazen gelmez · ödeme çoğu vadeli,
+genelde kartla (Ödeme formundan) · sipariş AYRI alan · teslimi ŞUBE PANELİ girer; fatura geldiyse tutarı yazar,
+gelmediyse kâğıtta fiyat yoksa tutarı göremez.
+
+TEK KAYIT = TESLİM (ey_toptanci_teslim). İçinde hem TAHMİNİ hem KESİN tutar:
+  · kesin_tutar: şubenin yazdığı fatura/fiş tutarı ya da merkezin sonradan girdiği → borç bu.
+  · tahmini: adet × birim fiyat (önce bu toptancının önceki kesinleşmiş teslimlerinden çıkan birim fiyat,
+    yoksa ürünün son alış fiyatı KDV dahil, yoksa katalog) — fiyatı olmayan kalem UYDURULMAZ ("fiyat eksik").
+  · Fatura gelince AYNI kaydın kesin_tutarı dolar → yeni borç açılmaz → çift sayım yapısal olarak imkânsız
+    (eski Evvel'in GRNI + fatura çift sayımı burada olamaz).
+BORÇ = açılış + Σ(kesin ya da tahmini) − Σ ödeme (Ödeme formu, konu=Toptancı). Ekranda kesin · tahmini · tutarı
+bilinmeyen ayrı. Vadesi geçen = ödemeler en eski borçtan düşülerek EKRANDA hesaplanır (hiçbir yere yazılmaz; FIFO sonra).
+Sapma: kesin tutar tahminden %30+ farklıysa uyarı (koli/adet karışmış olabilir).
+"""
+
+import json
+import logging
+import uuid
+from datetime import date, timedelta
+from decimal import Decimal
+from typing import List, Optional
+
+from fastapi import APIRouter, Header, HTTPException
+from pydantic import BaseModel
+
+from database import db, savepoint
+from evvel_yeni_kasa_api import _aktor, _bugun, _hazirla, _kurus, _tl_sayi, _yukle
+
+router = APIRouter(prefix="/api/evvel-yeni/toptanci", tags=["evvel-yeni-toptanci"])
+log = logging.getLogger(__name__)
+_HAZIR = False
+SAPMA_ORAN = 0.30
+BILINMEYEN_UYARI_GUN = 7
+
+
+def toptanci_hazirla(cur) -> None:
+    global _HAZIR
+    if _HAZIR:
+        return
+    from evvel_yeni_tanim_api import tanim_hazirla
+    tanim_hazirla(cur)
+    cur.execute("ALTER TABLE ey_toptanci ADD COLUMN IF NOT EXISTS vade_gun INT")
+    cur.execute("""CREATE TABLE IF NOT EXISTS ey_toptanci_teslim (
+        id TEXT PRIMARY KEY, kaynak_ref TEXT UNIQUE, toptanci_id TEXT NOT NULL, toptanci_ad TEXT,
+        sube_id TEXT, tarih DATE NOT NULL, kalemler JSONB NOT NULL DEFAULT '[]'::jsonb,
+        tahmini BIGINT, fiyat_eksik INT NOT NULL DEFAULT 0,
+        fatura_geldi BOOLEAN, kesin_tutar BIGINT, fatura_no TEXT, kesin_kaynak TEXT,
+        teslim_alan TEXT, aciklama TEXT, iptal BOOLEAN NOT NULL DEFAULT FALSE, iptal_sebep TEXT,
+        iz JSONB NOT NULL DEFAULT '[]'::jsonb, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    cur.execute("""CREATE TABLE IF NOT EXISTS ey_toptanci_fiyat (
+        toptanci_id TEXT NOT NULL, urun_anahtar TEXT NOT NULL, birim BIGINT NOT NULL, tarih DATE NOT NULL,
+        kaynak TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (toptanci_id, urun_anahtar))""")
+    _HAZIR = True
+
+
+def _anahtar(k: dict) -> str:
+    uid = str(k.get("urun_id") or "").strip()
+    if uid:
+        return uid
+    return "ad:" + " ".join(str(k.get("urun_ad") or k.get("ad") or "").replace("İ", "i").replace("I", "ı").lower().split())
+
+
+def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
+    """Kalem kalem adet × birim (kuruş, KDV dahil). Dönüş: (kalem satırları, tahmini toplam | None, fiyat_eksik sayısı)."""
+    satir, eksik, top = [], 0, 0
+    anahtarlar = [_anahtar(k) for k in kalemler]
+    tf = {}
+    cur.execute("SELECT urun_anahtar, birim FROM ey_toptanci_fiyat WHERE toptanci_id=%s AND urun_anahtar = ANY(%s)",
+                (toptanci_id, anahtarlar))
+    for r in cur.fetchall() or []:
+        tf[dict(r)["urun_anahtar"]] = int(dict(r)["birim"])
+    genel, kdv, katalog = {}, {}, {}
+    idler = [str(k.get("urun_id")) for k in kalemler if k.get("urun_id")]
+    if idler:
+        try:
+            with savepoint(cur, "sp_ey_top_fiyat"):
+                cur.execute("SELECT id::text AS id, depo_stok_kalem_kodu, birim_fiyat_tl FROM siparis_urun WHERE id::text = ANY(%s)", (idler,))
+                urun = {dict(r)["id"]: dict(r) for r in cur.fetchall() or []}
+                kodlar = set(idler) | {u["depo_stok_kalem_kodu"] for u in urun.values() if u.get("depo_stok_kalem_kodu")}
+                cur.execute("""SELECT DISTINCT ON (kalem_kodu) kalem_kodu, birim_maliyet_tl FROM urun_alis_fiyat
+                                WHERE kalem_kodu = ANY(%s) AND birim_maliyet_tl > 0 AND gecerli_baslangic <= %s
+                                ORDER BY kalem_kodu, gecerli_baslangic DESC, created_at DESC""", (list(kodlar), gun))
+                af = {dict(r)["kalem_kodu"]: Decimal(dict(r)["birim_maliyet_tl"]) for r in cur.fetchall() or []}
+                cur.execute("SELECT kalem_kodu, kdv_oran FROM kalem_kdv_oran WHERE kalem_kodu = ANY(%s)", (list(kodlar),))
+                ko = {dict(r)["kalem_kodu"]: Decimal(dict(r)["kdv_oran"] or 0) for r in cur.fetchall() or []}
+                for uid in idler:
+                    u = urun.get(uid) or {}
+                    for kod in (uid, u.get("depo_stok_kalem_kodu")):
+                        if kod and kod in af:
+                            genel[uid] = af[kod]
+                            kdv[uid] = ko.get(kod, ko.get(uid))
+                            break
+                    if u.get("birim_fiyat_tl"):
+                        katalog[uid] = Decimal(u["birim_fiyat_tl"])
+        except Exception as e:  # noqa: BLE001
+            log.warning("toptancı tahmin: fiyat okunamadı: %s", str(e)[:150])
+    for k, an in zip(kalemler, anahtarlar):
+        adet = int(k.get("adet") or 0)
+        uid = str(k.get("urun_id") or "")
+        birim, fk = None, None
+        if an in tf:
+            birim, fk = tf[an], "bu toptancının önceki faturası"
+        elif uid in genel:
+            oran = (kdv.get(uid) if kdv.get(uid) is not None else Decimal(0))
+            birim, fk = _kurus(genel[uid] * (1 + oran / 100)), "son alış fiyatı" + ("" if kdv.get(uid) is not None else " (KDV oranı yok)")
+        elif uid in katalog:
+            birim, fk = _kurus(katalog[uid]), "katalog"
+        t = birim * adet if birim is not None else None
+        if t is None:
+            eksik += 1
+        else:
+            top += t
+        satir.append({"urun_id": uid or None, "anahtar": an, "ad": k.get("urun_ad") or k.get("ad"), "adet": adet,
+                      "birim": _tl_sayi(birim) if birim is not None else None, "tutar": _tl_sayi(t) if t is not None else None, "fk": fk})
+    return satir, (top if satir and eksik < len(satir) else None), eksik
+
+
+def _fiyat_ogren(cur, t: dict, gun: date) -> None:
+    """Kesin tutar gelince bu toptancı için birim fiyatları öğren (tahmin oranına göre dağıt; tek ürünse tutar ÷ adet)."""
+    kal = t["kalemler"] if isinstance(t["kalemler"], list) else json.loads(t["kalemler"] or "[]")
+    kesin = t.get("kesin_tutar")
+    if not kal or not kesin:
+        return
+    if len(kal) == 1 and kal[0].get("adet"):
+        birimler = {kal[0]["anahtar"]: int(round(kesin / int(kal[0]["adet"])))}
+    elif t.get("tahmini") and all(x.get("tutar") is not None for x in kal):
+        oran = kesin / int(t["tahmini"])
+        birimler = {x["anahtar"]: int(round(_kurus(x["birim"]) * oran)) for x in kal if x.get("adet")}
+    else:
+        return
+    for an, b in birimler.items():
+        if b > 0:
+            cur.execute("""INSERT INTO ey_toptanci_fiyat (toptanci_id, urun_anahtar, birim, tarih, kaynak) VALUES (%s,%s,%s,%s,'kesin tutar')
+                           ON CONFLICT (toptanci_id, urun_anahtar) DO UPDATE SET birim=EXCLUDED.birim, tarih=EXCLUDED.tarih, zaman=NOW()
+                           WHERE ey_toptanci_fiyat.tarih <= EXCLUDED.tarih""", (t["toptanci_id"], an, b, gun))
+
+
+def teslim_yaz(cur, *, kaynak_ref: str, toptanci_id: str, toptanci_ad: str, sube_id: Optional[str], gun: date,
+               kalemler: List[dict], fatura_geldi: Optional[bool], kesin_tutar: Optional[int], fatura_no: Optional[str],
+               teslim_alan: Optional[str], aciklama: Optional[str] = None, kesin_kaynak: str = "şube") -> Optional[str]:
+    """Panel ya da merkez teslimi → tek kayıt (kaynak_ref ile bir kez)."""
+    toptanci_hazirla(cur)
+    satir, tahmini, eksik = _tahmin(cur, toptanci_id, kalemler, gun)
+    tid = "tt-" + uuid.uuid4().hex[:12]
+    cur.execute("""INSERT INTO ey_toptanci_teslim (id, kaynak_ref, toptanci_id, toptanci_ad, sube_id, tarih, kalemler, tahmini, fiyat_eksik,
+                        fatura_geldi, kesin_tutar, fatura_no, kesin_kaynak, teslim_alan, aciklama)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (kaynak_ref) DO NOTHING RETURNING id""",
+                (tid, kaynak_ref, toptanci_id, toptanci_ad, sube_id, gun, json.dumps(satir, ensure_ascii=False), tahmini, eksik,
+                 fatura_geldi, kesin_tutar, (fatura_no or "").strip()[:40] or None, kesin_kaynak if kesin_tutar else None,
+                 teslim_alan, (aciklama or "").strip()[:300] or None))
+    r = cur.fetchone()
+    if r and kesin_tutar:
+        _fiyat_ogren(cur, {"toptanci_id": toptanci_id, "kalemler": satir, "kesin_tutar": kesin_tutar, "tahmini": tahmini}, gun)
+    return dict(r)["id"] if r else None
+
+
+def panel_teslim_yaz(cur, *, defter_id, sube_id, toptanci_id, toptanci_ad, kalemler, fatura_geldi, fatura_tutar, fatura_no, teslim_alan) -> None:
+    """sube_panel /urun-sevk kancası — kendi SAVEPOINT'inde; hata teslimi (stok) BOZMAZ, iz bırakır."""
+    try:
+        with savepoint(cur, "sp_ey_top_panel"):
+            from evvel_yeni_kasa_api import _bugun as _b
+            teslim_yaz(cur, kaynak_ref=f"urun_sevk:{defter_id}", toptanci_id=str(toptanci_id), toptanci_ad=toptanci_ad,
+                       sube_id=str(sube_id), gun=_b(), kalemler=kalemler or [], fatura_geldi=fatura_geldi,
+                       kesin_tutar=_kurus(fatura_tutar) if fatura_tutar else None, fatura_no=fatura_no, teslim_alan=teslim_alan)
+    except Exception as e:  # noqa: BLE001
+        log.warning("Evvel Yeni toptancı teslimi yazılamadı (stok etkilenmedi) defter=%s: %s", defter_id, str(e)[:200])
+
+
+def panel_teslim_iptal(cur, defter_id, sebep: str) -> None:
+    try:
+        with savepoint(cur, "sp_ey_top_panel_iptal"):
+            toptanci_hazirla(cur)
+            cur.execute("UPDATE ey_toptanci_teslim SET iptal=TRUE, iptal_sebep=%s WHERE kaynak_ref=%s AND NOT iptal",
+                        (("panelde geri alındı · " + (sebep or ""))[:200], f"urun_sevk:{defter_id}"))
+    except Exception as e:  # noqa: BLE001
+        log.warning("Evvel Yeni toptancı teslimi iptal edilemedi defter=%s: %s", defter_id, str(e)[:200])
+
+
+def _hesap(cur, bugun: date):
+    toptanci_hazirla(cur)
+    cur.execute("SELECT id, ad, kategori, telefon, acilis_bakiye, aktif, vade_gun FROM ey_toptanci ORDER BY ad")
+    tlar = [dict(r) for r in cur.fetchall() or []]
+    cur.execute("SELECT * FROM ey_toptanci_teslim ORDER BY tarih, zaman")
+    teslimler = [dict(r) for r in cur.fetchall() or []]
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
+    _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+    odemeler = {}
+    for h in kayit:
+        if h["tur"] != "odeme":
+            continue
+        k = (h["veri"].get("konu") or {})
+        if k.get("tip") == "toptanci" and k.get("toptanci_id"):
+            odemeler.setdefault(str(k["toptanci_id"]), []).append(
+                {"id": h["id"], "tarih": h["is_gunu"], "tur": "odeme", "tutar": int(h["veri"].get("toplam", h["tutar"])),
+                 "aciklama": h["veri"].get("aciklama"), "kim": h.get("kaydeden"),
+                 "kartla": bool(h["veri"].get("kart_parcalar"))})
+    out = []
+    for t in tlar:
+        ts = [x for x in teslimler if x["toptanci_id"] == t["id"]]
+        od = sorted(odemeler.get(t["id"], []), key=lambda x: x["tarih"])
+        if not t["aktif"] and not ts and not od:
+            continue
+        vg = t.get("vade_gun")
+        acilis = int(t["acilis_bakiye"] or 0)
+        kesin = tahmini = 0
+        bilinmeyen = []
+        borclar = ([{"tarih": None, "vade": None, "tutar": acilis, "ad": "açılış"}] if acilis > 0 else [])
+        har = []
+        for x in ts:
+            kal = x["kalemler"] if isinstance(x["kalemler"], list) else json.loads(x["kalemler"] or "[]")
+            borc = int(x["kesin_tutar"]) if x.get("kesin_tutar") is not None else (int(x["tahmini"]) if x.get("tahmini") is not None else None)
+            sapma = None
+            if x.get("kesin_tutar") and x.get("tahmini"):
+                sapma = (int(x["kesin_tutar"]) - int(x["tahmini"])) / int(x["tahmini"])
+            vade = (x["tarih"] + timedelta(days=vg)) if vg is not None else None
+            if not x["iptal"]:
+                if x.get("kesin_tutar") is not None:
+                    kesin += int(x["kesin_tutar"])
+                elif borc is not None:
+                    tahmini += borc
+                else:
+                    bilinmeyen.append(x)
+                if borc:
+                    borclar.append({"tarih": x["tarih"], "vade": vade, "tutar": borc})
+            har.append({"id": x["id"], "tur": "teslim", "tarih": x["tarih"].isoformat(), "sube": sube_ad.get(x.get("sube_id"), x.get("sube_id") or "—"),
+                        "kalemler": kal, "tahmini": _tl_sayi(int(x["tahmini"])) if x.get("tahmini") is not None else None,
+                        "fiyat_eksik": x.get("fiyat_eksik") or 0, "kesin": _tl_sayi(int(x["kesin_tutar"])) if x.get("kesin_tutar") is not None else None,
+                        "fatura_geldi": x.get("fatura_geldi"), "fatura_no": x.get("fatura_no"), "kesin_kaynak": x.get("kesin_kaynak"),
+                        "borc": _tl_sayi(borc) if borc is not None else None, "durum": ("kesin" if x.get("kesin_tutar") is not None else "tahmini" if borc is not None else "bilinmiyor"),
+                        "sapma": round(sapma * 100) if sapma is not None else None, "sapma_uyari": bool(sapma is not None and abs(sapma) > SAPMA_ORAN),
+                        "vade": vade.isoformat() if vade else None, "teslim_alan": x.get("teslim_alan"), "aciklama": x.get("aciklama"),
+                        "iptal": x["iptal"], "iptal_sebep": x.get("iptal_sebep"), "iz": x.get("iz") or []})
+        od_top = sum(o["tutar"] for o in od)
+        har += [{**o, "tutar": _tl_sayi(o["tutar"])} for o in od]
+        har.sort(key=lambda z: z["tarih"], reverse=True)
+        # vadesi geçen: ödemeyi en eski borçtan düş (yalnız ekranda)
+        kalan_od = od_top
+        gecen = hafta = belirsiz = 0
+        for b in borclar:
+            k_ = max(0, b["tutar"] - kalan_od)
+            kalan_od = max(0, kalan_od - b["tutar"])
+            if not k_:
+                continue
+            if b["vade"] is None:
+                belirsiz += k_
+            elif b["vade"] < bugun:
+                gecen += k_
+            elif (b["vade"] - bugun).days <= 7:
+                hafta += k_
+        bakiye = acilis + kesin + tahmini - od_top
+        out.append({"id": t["id"], "ad": t["ad"], "kategori": t.get("kategori"), "aktif": t["aktif"], "vade_gun": vg,
+                    "acilis": _tl_sayi(acilis), "kesin": _tl_sayi(kesin), "tahmini": _tl_sayi(tahmini), "odenen": _tl_sayi(od_top),
+                    "bakiye": _tl_sayi(bakiye), "bilinmeyen_sayi": len(bilinmeyen),
+                    "bilinmeyen_eski": [{"id": b["id"], "tarih": b["tarih"].isoformat()} for b in bilinmeyen if (bugun - b["tarih"]).days >= BILINMEYEN_UYARI_GUN],
+                    "vadesi_gecen": _tl_sayi(gecen), "bu_hafta": _tl_sayi(hafta), "vadesi_belirsiz": _tl_sayi(belirsiz),
+                    "sapma_sayi": sum(1 for h in har if h.get("sapma_uyari") and not h.get("iptal")),
+                    "hareketler": har[:100], "son_hareket": har[0]["tarih"] if har else None})
+    out.sort(key=lambda x: (-(x["vadesi_gecen"] or 0), -x["bakiye"], x["ad"]))
+    return out
+
+
+@router.get("/ozet")
+def toptanci_ozet():
+    _hazirla()
+    with db() as (conn, cur):
+        tl = _hesap(cur, _bugun())
+    T = lambda k: round(sum(x[k] for x in tl if x["bakiye"] > 0 or k != "bakiye"), 2)  # noqa: E731
+    return {"toptancilar": tl,
+            "toplam": {"bakiye": round(sum(x["bakiye"] for x in tl if x["bakiye"] > 0), 2), "kesin": T("kesin"), "tahmini": T("tahmini"),
+                       "vadesi_gecen": T("vadesi_gecen"), "bu_hafta": T("bu_hafta"), "bilinmeyen_sayi": sum(x["bilinmeyen_sayi"] for x in tl)},
+            "not": "Borç = açılış + teslimler (kesin tutar, yoksa adet × fiyat tahmini) − ödemeler. Fatura gelince aynı teslimin tutarı "
+                   "kesinleşir, yeni borç açılmaz. Vadesi geçen: ödemeler en eski borçtan düşülerek hesaplanır."}
+
+
+def toptanci_isleri(cur) -> list:
+    """Bekleyen işler: vadesi geçen / 3 gün içinde dolan borç · 7+ gündür tutarı bilinmeyen teslim."""
+    bugun = _bugun()
+    out = []
+    for t in _hesap(cur, bugun):
+        if t["vadesi_gecen"] > 0:
+            out.append({"tur": "toptanci_vade", "id": f"tv:{t['id']}", "tarih": bugun.isoformat(), "ad": t["ad"],
+                        "tutar": t["vadesi_gecen"], "gecti": True})
+        if t["bilinmeyen_eski"]:
+            out.append({"tur": "toptanci_tutar", "id": f"tb:{t['id']}", "tarih": t["bilinmeyen_eski"][0]["tarih"], "ad": t["ad"],
+                        "sayi": len(t["bilinmeyen_eski"])})
+    return out
+
+
+class TeslimBody(BaseModel):
+    toptanci_id: str
+    sube_id: Optional[str] = None
+    tarih: Optional[str] = None
+    tutar: Optional[Decimal] = None
+    fatura_geldi: Optional[bool] = None
+    fatura_no: Optional[str] = None
+    aciklama: Optional[str] = None
+
+
+@router.post("/teslim")
+def merkez_teslim(body: TeslimBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkezin elle girdiği teslim (panel dışı gelen mal, açılış sonrası unutulan teslim)."""
+    try:
+        gun = date.fromisoformat((body.tarih or _bugun().isoformat())[:10])
+    except ValueError:
+        raise HTTPException(400, "Tarih YYYY-AA-GG olmalı")
+    if gun > _bugun():
+        raise HTTPException(400, "Gelecek tarihli teslim girilemez")
+    t = _kurus(body.tutar) if body.tutar is not None else None
+    if t is not None and t <= 0:
+        raise HTTPException(400, "Tutar sıfırdan büyük olmalı")
+    _hazirla()
+    with db() as (conn, cur):
+        toptanci_hazirla(cur)
+        cur.execute("SELECT ad FROM ey_toptanci WHERE id=%s", (body.toptanci_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Toptancı bulunamadı")
+        if t:
+            cur.execute("""SELECT 1 FROM ey_toptanci_teslim WHERE toptanci_id=%s AND tarih=%s AND kesin_tutar=%s AND NOT iptal""",
+                        (body.toptanci_id, gun, t))
+            if cur.fetchone() and not (body.aciklama or "").startswith("!"):
+                raise HTTPException(409, "BENZER KAYIT: aynı toptancı, aynı gün, aynı tutarda teslim zaten var. Gerçekten ikinci teslimse açıklamanın başına ! koy.")
+        kim = _aktor(cur, x_evvel_oturum)
+        teslim_yaz(cur, kaynak_ref="merkez:" + uuid.uuid4().hex[:12], toptanci_id=body.toptanci_id, toptanci_ad=dict(r)["ad"],
+                   sube_id=body.sube_id, gun=gun, kalemler=[], fatura_geldi=body.fatura_geldi, kesin_tutar=t,
+                   fatura_no=body.fatura_no, teslim_alan=kim, aciklama=(body.aciklama or "").lstrip("!"), kesin_kaynak="merkez")
+    return {"ok": True, "mesaj": f"{dict(r)['ad']} teslimi girildi" + ("" if t else " — tutar sonra girilecek")}
+
+
+class TutarBody(BaseModel):
+    tutar: Decimal
+    fatura_geldi: Optional[bool] = True
+    fatura_no: Optional[str] = None
+    sebep: Optional[str] = None
+
+
+@router.post("/teslim/{tid}/tutar")
+def teslim_tutar(tid: str, body: TutarBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Fatura sonradan geldi / tutar düzeltmesi — AYNI teslimin kesin tutarı (eski değer izde kalır)."""
+    t = _kurus(body.tutar)
+    if t <= 0:
+        raise HTTPException(400, "Tutar sıfırdan büyük olmalı")
+    _hazirla()
+    with db() as (conn, cur):
+        toptanci_hazirla(cur)
+        cur.execute("SELECT * FROM ey_toptanci_teslim WHERE id=%s AND NOT iptal FOR UPDATE", (tid,))
+        x = cur.fetchone()
+        if not x:
+            raise HTTPException(404, "Teslim bulunamadı ya da iptal")
+        x = dict(x)
+        if x.get("kesin_tutar") is not None and len((body.sebep or "").strip()) < 3:
+            raise HTTPException(400, "Tutar zaten kesin — değiştirmek için sebep yaz")
+        kim = _aktor(cur, x_evvel_oturum)
+        iz = (x.get("iz") or []) + [{"zaman": _bugun().isoformat(), "kim": kim, "eski": _tl_sayi(int(x["kesin_tutar"])) if x.get("kesin_tutar") else None,
+                                     "yeni": _tl_sayi(t), "sebep": (body.sebep or "fatura geldi").strip()[:150]}]
+        cur.execute("""UPDATE ey_toptanci_teslim SET kesin_tutar=%s, fatura_geldi=%s, fatura_no=COALESCE(%s, fatura_no), kesin_kaynak='merkez',
+                              iz=%s::jsonb WHERE id=%s""",
+                    (t, body.fatura_geldi, (body.fatura_no or "").strip()[:40] or None, json.dumps(iz, ensure_ascii=False), tid))
+        x["kesin_tutar"] = t
+        _fiyat_ogren(cur, x, x["tarih"])
+    sap = ""
+    if x.get("tahmini"):
+        s = (t - int(x["tahmini"])) / int(x["tahmini"])
+        if abs(s) > SAPMA_ORAN:
+            sap = f" ⚠ tahminden %{round(s * 100)} farklı — birim (koli/adet) karışmış olabilir"
+    return {"ok": True, "mesaj": f"Tutar kesinleşti: {_tl_sayi(t):,.2f} ₺{sap}"}
+
+
+class IptalBody(BaseModel):
+    sebep: str
+
+
+@router.post("/teslim/{tid}/iptal")
+def teslim_iptal(tid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    if len((body.sebep or "").strip()) < 3:
+        raise HTTPException(400, "İptal sebebini yaz")
+    _hazirla()
+    with db() as (conn, cur):
+        toptanci_hazirla(cur)
+        cur.execute("UPDATE ey_toptanci_teslim SET iptal=TRUE, iptal_sebep=%s WHERE id=%s AND NOT iptal RETURNING id",
+                    (f"{body.sebep.strip()[:150]} · {_aktor(cur, x_evvel_oturum)}", tid))
+        if not cur.fetchone():
+            raise HTTPException(404, "Teslim bulunamadı ya da zaten iptal")
+    return {"ok": True, "mesaj": "Teslim iptal edildi — borçtan düştü"}
