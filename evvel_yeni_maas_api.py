@@ -34,6 +34,8 @@ AY_GUN = 30
 GUNLUK_SAAT = Decimal("9.5")
 BAYRAM_KAT = 2
 YENI_HESAP_BASLANGIC = "2026-11"     # Ekim ve öncesi eski sistemin hesabıyla
+KAPALI_SON_AY = "2026-09"            # Sahip (2026-10-16): "Eylül'ü Eylül sonu/Ekim başı ödüyoruz" → Evvel Yeni
+                                     # (1 Ekim) öncesi çalışma ayları ÖDENMİŞ ve KAPANMIŞ sayılır
 ODENEN_KALEMLER = ("Maaş", "Yemek ücreti", "Prim")   # SGK/vergi kişinin bakiyesini kapatmaz
 _HAZIR = False
 
@@ -215,7 +217,11 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
             kalemler = [{"kod": "eski", "ad": "Eski sistem hak edişi (Ekim kapanışı)", "tutar": _tl(hak)}]
             mahsup = (x["mahsup"] if x else 0) + avans
             eo = eski_od.get(pid, 0)
-            if eo:
+            if ay <= KAPALI_SON_AY:
+                # Evvel Yeni öncesi: maaş ödenmiş kabul — kalan sıfırlanır (iz: "ödendi sayıldı")
+                eo = max(eo, hak - mahsup - odenen)
+                od = {**od, "Ödendi sayıldı (Evvel Yeni öncesi)": eo}
+            elif eo:
                 od = {**od, "Eski sistemde ödenen": eo}
             odenen += eo
             satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, 0, odenen, od, e, ucret.get(pid), "eski_sistem",
@@ -314,7 +320,9 @@ def maas_liste(ay: Optional[str] = None):
     T = lambda k: round(sum(r[k] for r in rows), 2)  # noqa: E731
     return {"ay": a_, "eski_mod": a_ < YENI_HESAP_BASLANGIC, "personel": rows,
             "toplam": {"hak_edis": T("hak_edis"), "avans_mahsup": T("avans_mahsup"), "odenen": T("odenen"), "kalan": T("kalan")},
-            "not": ("Ekim ve öncesi eski sistemin hesabıyla (avans düşülmüş net + mahsup). " if a_ < YENI_HESAP_BASLANGIC else "")
+            "kapali": a_ <= KAPALI_SON_AY,
+            "not": ("Evvel Yeni (1 Ekim) öncesi ay: maaşlar ödenmiş ve kapanmış sayılır. " if a_ <= KAPALI_SON_AY else "")
+            + ("Ekim ve öncesi eski sistemin hesabıyla (avans düşülmüş net + mahsup). " if a_ < YENI_HESAP_BASLANGIC else "")
             + "Kalan = hak ediş − avans mahsubu − ödenen (maaş, yemek, prim). SGK/vergi kişinin bakiyesini kapatmaz."}
 
 

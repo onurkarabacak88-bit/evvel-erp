@@ -14,7 +14,8 @@ export const MAAS_SAYFALAR = [
 ];
 
 const alan = { padding: '8px 10px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, width: 110 };
-const gecenAy = () => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
+// Varsayılan: ödenecek ay = geçen ay; ama Evvel Yeni öncesi (kapanmış) aylar varsayılan olmaz → en erken Ekim 2026
+const gecenAy = () => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); const a = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; return a < '2026-10' ? '2026-10' : a; };
 const sayi = (x) => { const t = String(x ?? '').trim().replace(/\s/g, ''); if (!t) return null; const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t); return Number.isFinite(n) ? n : NaN; };
 
 export default function MaasModulu({ onToast, onSekme }) {
@@ -77,7 +78,7 @@ export default function MaasModulu({ onToast, onSekme }) {
         {[['Hak ediş', v.toplam.hak_edis], ['Avans mahsubu', v.toplam.avans_mahsup], ['Ödenen', v.toplam.odenen], ['Kalan', v.toplam.kalan]].map(([a, t], i) => (
           <div key={a}><div style={etiketStil}>{a}</div><div style={{ ...num, fontSize: i === 3 ? 28 : 18, fontWeight: 700, color: i === 3 ? R.kirmizi : R.krem }}>{fmt(t)}</div></div>
         ))}
-        {v.eski_mod && <Cip tur="sari">Ekim: eski sistemin hesabı</Cip>}
+        {v.kapali ? <Cip tur="yesil">Kapanmış ay — ödendi sayıldı</Cip> : v.eski_mod && <Cip tur="sari">eski sistemin hesabı</Cip>}
       </div>
       <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
 
