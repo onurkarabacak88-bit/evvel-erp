@@ -40,12 +40,19 @@ export default function ToptanciModulu({ onToast }) {
   const [mesgul, setMesgul] = useState(false);
   const [ara, setAra] = useState('');
   const [ck, setCk] = useState(null);   // 🔍 "nerede" çekmecesi
+  const donus = useRef(null);           // tutar girildikten sonra hangi toptancının izine dönülecek
   const no = useRef(0);
   const yukle = useCallback(async () => {
     const n = ++no.current;
     try { const r = await api('/evvel-yeni/toptanci/ozet'); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
   }, []);
   useEffect(() => { yukle(); }, [yukle]);
+  useEffect(() => {   // tutar kaydedildi → aynı toptancının izine geri dön (bağlam kaybolmasın)
+    if (!v || !donus.current || tutarForm) return;
+    const t = v.toptancilar.find((x) => x.id === donus.current);
+    donus.current = null;
+    if (t) setCk(toptanciCk(t));
+  }, [v, tutarForm]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const gonder = async (yol, body, kapat) => {
     setMesgul(true);
@@ -71,15 +78,20 @@ export default function ToptanciModulu({ onToast }) {
   );
 
   // ── 🔍 NEREDE? (Evvel'in ilk kurgusu: "neyin nerede olduğunu bulabilelim") — her rakam tıklanır, iz açılır ──
-  const tutarAc = (h) => { setCk(null); setTutarForm({ h, tutar: h.kesin != null ? String(h.kesin) : '', fatura_no: h.fatura_no || '', sebep: '' }); };
-  const toptanciCk = (t, geri) => {
+  const tutarAc = (h, t) => { donus.current = t ? t.id : null; setCk(null); setTutarForm({ h, tutar: h.kesin != null ? String(h.kesin) : '', fatura_no: h.fatura_no || '', sebep: '', kaynak: 'fatura' }); };
+  const toptanciCk = (t, geri, filtre) => {
     const sirali = [...t.hareketler].sort((a, b) => (a.tarih < b.tarih ? -1 : a.tarih > b.tarih ? 1 : 0));
+    const gorunur = (h) => !filtre || (filtre.sube ? (h.tur === 'teslim' && h.sube === filtre.sube) : filtre.odeme ? h.tur === 'odeme' : true);
+    const kendi = () => setCk(toptanciCk(t, geri, filtre));
+    const tum = () => setCk(toptanciCk(t, geri));
     let kalan = t.acilis;
     const izSatir = [];
     if (t.acilis) izSatir.push(['—', 'Açılış borcu', '', '', { t: fmt(t.acilis), kalin: true }, '', { t: fmt(kalan), kalin: true }, 'açılış']);
     sirali.forEach((h) => {
+      const goster = gorunur(h);
       if (h.tur === 'teslim') {
         if (!h.iptal && h.borc != null) kalan += h.borc;
+        if (!goster) return;
         const kalemler = (h.kalemler || []).map((k) => `${k.ad} ×${k.adet}`).join(', ');
         izSatir.push([tKisa(h.tarih), `🚚 teslim${kalemler ? ` · ${kalemler}` : ''}${h.fatura_no ? ` · fatura ${h.fatura_no}` : ''}`,
           `→ ${h.sube}`, h.teslim_alan || '',
@@ -87,25 +99,30 @@ export default function ToptanciModulu({ onToast }) {
           { t: fmt(kalan), kalin: true }, h.iptal ? { t: `İPTAL · ${h.iptal_sebep || ''}`, renk: R.not } : { t: DURUM[h.durum].ad, renk: DURUM[h.durum].renk }]);
       } else {
         kalan -= h.tutar;
+        if (!goster) return;
         izSatir.push([tKisa(h.tarih), `💸 ödeme · ${h.aciklama || ''}`, `← ${(h.nereden || []).map((n) => `${n.tur === 'kart' ? '💳' : '💵'} ${n.ad} ${fmt(n.tutar)}`).join(' + ') || '—'}`,
           h.kim || '', '', { t: `−${fmt(h.tutar)}`, renk: R.yesil }, { t: fmt(kalan), kalin: true }, 'ödendi']);
       }
     });
-    const bilinmeyen = t.hareketler.filter((h) => h.tur === 'teslim' && !h.iptal && h.durum === 'bilinmiyor');
+    const bilinmeyen = t.hareketler.filter((h) => h.tur === 'teslim' && !h.iptal && (h.durum === 'bilinmiyor' || (h.durum === 'tahmini' && h.fiyat_eksik)));
     return {
-      tip: 'TOPTANCI · NEREDE?', baslik: t.ad, geri,
+      tip: filtre ? `TOPTANCI · ${filtre.sube ? `${filtre.sube}'E GELEN` : 'ÖDEMELER'}` : 'TOPTANCI · NEREDE?', baslik: t.ad,
+      geri: filtre ? { ad: `${t.ad} · tümü`, onTikla: tum } : geri,
       alt: `${t.kategori ? `${t.kategori} · ` : ''}${t.vade_gun != null ? `vade ${t.vade_gun} gün` : 'vade tanımsız (Tanımlar → Toptancılar)'}`,
       kpi: [{ etiket: 'Borcumuz', deger: `${fmt(t.bakiye)} ₺`, renk: t.bakiye > 0 ? R.kirmizi : R.yesil },
         { etiket: 'Kesin', deger: fmt(t.kesin) }, { etiket: 'Tahmini', deger: fmt(t.tahmini) }, { etiket: 'Ödenen', deger: fmt(t.odenen) },
         ...(t.acilis ? [{ etiket: 'Açılış', deger: fmt(t.acilis) }] : []),
         ...(t.vadesi_gecen ? [{ etiket: 'Vadesi geçen', deger: fmt(t.vadesi_gecen), renk: R.kirmizi }] : [])],
-      not: [bilinmeyen.length ? `${bilinmeyen.length} teslimin tutarı bilinmiyor — aşağıdan tıklayıp gir` : null,
+      not: [bilinmeyen.length ? `${bilinmeyen.length} teslimin tutarı bilinmiyor ya da eksik tahminli — aşağıdan tıklayıp gir` : null,
+        t.vadesi_belirsiz ? `${fmt(t.vadesi_belirsiz)} ₺ borcun vadesi tanımsız (açılış ya da vade günü girilmemiş) — Tanımlar → Toptancılar` : null,
         t.sapma_sayi ? `⚠ ${t.sapma_sayi} teslimde kesin tutar tahminden %30+ farklı` : null].filter(Boolean).join(' · ') || null,
       listeBaslik: 'Mal nereye gitti · ödeme nereden çıktı',
       satirlar: [
-        ...(t.sube_dagilim || []).map((d) => ({ ad: `📍 ${d.sube}'e gelen mal (${d.sayi} teslim)`, tutar: `${fmt(d.tutar)} ₺` })),
-        ...(t.odeme_dagilim || []).map((d) => ({ ad: `Ödeme · ${d.nereden}`, tutar: `−${fmt(d.tutar)} ₺` })),
-        ...bilinmeyen.map((h) => ({ ad: `❓ ${tKisa(h.tarih)} ${h.sube} teslimi — tutar yok`, tutar: 'tutar gir', detay: 'Tıkla → fatura/ekstredeki tutarı gir', onTikla: () => tutarAc(h) })),
+        ...(t.sube_dagilim || []).map((d) => ({ ad: `📍 ${d.sube}'e gelen mal (${d.sayi} teslim)`, tutar: `${fmt(d.tutar)} ₺`, detay: 'Tıkla → yalnız bu şubenin teslimleri',
+          onTikla: () => setCk(toptanciCk(t, { ad: t.ad, onTikla: kendi }, { sube: d.sube })) })),
+        ...(t.odeme_dagilim || []).map((d) => ({ ad: `Ödeme · ${d.nereden}`, tutar: `−${fmt(d.tutar)} ₺`, detay: 'Tıkla → yalnız ödemeler',
+          onTikla: () => setCk(toptanciCk(t, { ad: t.ad, onTikla: kendi }, { odeme: true })) })),
+        ...bilinmeyen.map((h) => ({ ad: `❓ ${tKisa(h.tarih)} ${h.sube} teslimi — ${h.durum === 'bilinmiyor' ? 'tutar yok' : `${h.fiyat_eksik} kalem fiyatsız, tahmin eksik`}`, tutar: 'tutar gir', detay: 'Tıkla → fatura/ekstredeki tutarı gir', onTikla: () => tutarAc(h, t) })),
       ],
       aksiyonlar: [{ ad: 'Öde', birincil: true, onTikla: () => ode(t) },
         { ad: '+ Teslim (merkezden)', onTikla: () => setTeslimForm({ t, tutar: '', tarih: gunStr(new Date()), fatura_geldi: true, fatura_no: '', aciklama: '' }) }],
@@ -125,11 +142,11 @@ export default function ToptanciModulu({ onToast }) {
     };
   };
   const bilinmeyenCk = () => {
-    const xs = v.toptancilar.flatMap((t) => t.hareketler.filter((h) => h.tur === 'teslim' && !h.iptal && h.durum === 'bilinmiyor').map((h) => ({ t, h })));
+    const xs = v.toptancilar.flatMap((t) => t.hareketler.filter((h) => h.tur === 'teslim' && !h.iptal && (h.durum === 'bilinmiyor' || (h.durum === 'tahmini' && h.fiyat_eksik))).map((h) => ({ t, h })));
     return {
       tip: 'TOPTANCILAR', baslik: 'Tutarı bilinmeyen teslimler', alt: 'Fatura gelmemiş, kâğıtta fiyat yok, sistemde de fiyat yok — fatura ya da ekstre gelince tutarı gir',
       kpi: [{ etiket: 'Teslim', deger: xs.length }],
-      satirlar: xs.map(({ t, h }) => ({ ad: `${tKisa(h.tarih)} · ${t.ad} → ${h.sube}`, tutar: 'tutar gir', detay: (h.kalemler || []).map((k) => `${k.ad} ×${k.adet}`).join(', '), onTikla: () => tutarAc(h) })),
+      satirlar: xs.map(({ t, h }) => ({ ad: `${tKisa(h.tarih)} · ${t.ad} → ${h.sube}${h.durum === 'tahmini' ? ` (${h.fiyat_eksik} kalem fiyatsız)` : ''}`, tutar: 'tutar gir', detay: (h.kalemler || []).map((k) => `${k.ad} ×${k.adet}`).join(', '), onTikla: () => tutarAc(h, t) })),
     };
   };
   // 📍 ŞUBE GÖZÜYLE — hangi şubeye hangi toptancıdan ne geldi
@@ -143,7 +160,7 @@ export default function ToptanciModulu({ onToast }) {
     kpi: [{ etiket: 'Toplam', deger: `${fmt(x.tutar)} ₺` }, { etiket: 'Teslim', deger: x.sayi }],
     listeBaslik: 'Hangi toptancıdan?',
     satirlar: x.toptancilar.sort((a, b) => b.tutar - a.tutar).map((y) => ({ ad: `${y.t.ad} (${y.sayi} teslim)`, tutar: `${fmt(y.tutar)} ₺`,
-      onTikla: () => setCk(toptanciCk(y.t, { ad: `${x.sube}'e gelen mal`, onTikla: () => setCk(subeCk(x)) })) })),
+      onTikla: () => setCk(toptanciCk(y.t, { ad: `${x.sube}'e gelen mal`, onTikla: () => setCk(subeCk(x)) }, { sube: x.sube })) })),
   });
 
   return (
@@ -151,14 +168,17 @@ export default function ToptanciModulu({ onToast }) {
       <style>{PI_CSS}</style>
       <div><div className="pi-eyebrow">Evvel Yeni · Tedarik</div><h1 style={{ fontSize: 30 }}>Toptancılar</h1></div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: 10 }}>
-        <Kutu ad="Öngörülen borcumuz" deger={`${fmt(T.bakiye)} ₺`} renk={R.kirmizi} alt={`kesin ${fmt(T.kesin)} · tahmini ${fmt(T.tahmini)}`}
+        <Kutu ad="Öngörülen borcumuz" deger={`${fmt(T.bakiye)} ₺`} renk={R.kirmizi} alt={`${T.borclu_sayi || 0} toptancıya · tahmine dayalı teslimler ${fmt(T.tahmini)}${T.alacak ? ` · ${fmt(T.alacak)} ₺ alacaklıyız` : ''}`}
           onTikla={() => setCk(listeCk('Öngörülen borcumuz', 'Kime ne kadar borcumuz var (kesin + tahmini − ödenen)', (t) => t.bakiye > 0, (t) => t.bakiye))} />
         <Kutu ad="Vadesi geçen" deger={`${fmt(T.vadesi_gecen)} ₺`} renk={T.vadesi_gecen > 0 ? R.kirmizi : R.yesil}
           onTikla={() => setCk(listeCk('Vadesi geçen', 'Ödemeler en eski borçtan düşüldükten sonra vadesi geçmiş kalan', (t) => t.vadesi_gecen > 0, (t) => t.vadesi_gecen))} />
         <Kutu ad="Bu hafta dolan" deger={`${fmt(T.bu_hafta)} ₺`} renk={T.bu_hafta > 0 ? R.amber : undefined}
           onTikla={() => setCk(listeCk('Bu hafta dolan', '7 gün içinde vadesi dolacak borç', (t) => t.bu_hafta > 0, (t) => t.bu_hafta))} />
-        <Kutu ad="Tutarı bilinmeyen teslim" deger={T.bilinmeyen_sayi} renk={T.bilinmeyen_sayi ? R.kirmizi : R.yesil} alt="fatura/ekstre gelince tutarı gir"
+        <Kutu ad="Tutarı bilinmeyen teslim" deger={T.bilinmeyen_sayi + (T.eksik_tahmin_sayi || 0)} renk={T.bilinmeyen_sayi || T.eksik_tahmin_sayi ? R.kirmizi : R.yesil}
+          alt={T.eksik_tahmin_sayi ? `${T.bilinmeyen_sayi} tutarsız · ${T.eksik_tahmin_sayi} eksik tahminli` : 'fatura/ekstre gelince tutarı gir'}
           onTikla={() => setCk(bilinmeyenCk())} />
+        {T.vadesi_belirsiz > 0 && <Kutu ad="Vadesi tanımsız" deger={`${fmt(T.vadesi_belirsiz)} ₺`} renk={R.amber} alt="açılış borcu / vade günü girilmemiş"
+          onTikla={() => setCk(listeCk('Vadesi tanımsız', 'Vadesi bilinmediği için vadesi geçen/bu hafta hesabına girmeyen borç — Tanımlar → Toptancılar\'dan vade günü gir', (t) => t.vadesi_belirsiz > 0, (t) => t.vadesi_belirsiz))} />}
       </div>
       {Object.keys(subeler).length > 0 && (
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
@@ -181,6 +201,8 @@ export default function ToptanciModulu({ onToast }) {
                   {t.vadesi_gecen > 0 && <Cip tur="kirmizi">vadesi geçen {fmt(t.vadesi_gecen)}</Cip>}
                   {t.bu_hafta > 0 && <Cip tur="sari">bu hafta {fmt(t.bu_hafta)}</Cip>}
                   {t.bilinmeyen_sayi > 0 && <Cip tur="kirmizi">{t.bilinmeyen_sayi} teslimin tutarı yok</Cip>}
+                  {t.eksik_tahmin_sayi > 0 && <Cip tur="sari">{t.eksik_tahmin_sayi} teslimde fiyatsız kalem</Cip>}
+                  {t.vadesi_belirsiz > 0 && <Cip>vadesi tanımsız {fmt(t.vadesi_belirsiz)}</Cip>}
                   {t.sapma_sayi > 0 && <Cip tur="sari">⚠ {t.sapma_sayi} tutar tahminden %30+ farklı</Cip>}
                 </div>
               </div>
@@ -243,12 +265,14 @@ export default function ToptanciModulu({ onToast }) {
         <Pencere baslik={`🧾 Tutar — ${tKisa(tutarForm.h.tarih)} ${tutarForm.h.sube}`} onKapat={() => !mesgul && setTutarForm(null)}>
           {tutarForm.h.tahmini != null && <div style={{ fontSize: 13, color: R.not }}>Sistemin tahmini: {fmt(tutarForm.h.tahmini)} ₺</div>}
           <Etiket ad="Fatura / ekstredeki tutar ₺ *"><input style={alan} inputMode="decimal" autoFocus value={tutarForm.tutar} onChange={(e) => setTutarForm({ ...tutarForm, tutar: e.target.value })} /></Etiket>
-          <Etiket ad="Fatura no"><input style={alan} value={tutarForm.fatura_no} onChange={(e) => setTutarForm({ ...tutarForm, fatura_no: e.target.value })} /></Etiket>
+          <Etiket ad="Bu tutar nereden?"><select style={alan} value={tutarForm.kaynak} onChange={(e) => setTutarForm({ ...tutarForm, kaynak: e.target.value })}>
+            <option value="fatura">Fatura geldi</option><option value="ekstre">Fatura yok — ekstre / fiş / toptancıdan öğrenildi</option></select></Etiket>
+          {tutarForm.kaynak === 'fatura' && <Etiket ad="Fatura no"><input style={alan} value={tutarForm.fatura_no} onChange={(e) => setTutarForm({ ...tutarForm, fatura_no: e.target.value })} /></Etiket>}
           {tutarForm.h.kesin != null && <Etiket ad="Neden değişiyor? *"><input style={alan} value={tutarForm.sebep} onChange={(e) => setTutarForm({ ...tutarForm, sebep: e.target.value })} /></Etiket>}
           <Butonlar mesgul={mesgul} onVazgec={() => setTutarForm(null)} onKaydet={() => {
             const t = sayi(tutarForm.tutar);
             if (!(t > 0)) { onToast?.('Tutar gir'); return; }
-            gonder(`/evvel-yeni/toptanci/teslim/${tutarForm.h.id}/tutar`, { tutar: t, fatura_geldi: true, fatura_no: tutarForm.fatura_no || null, sebep: tutarForm.sebep || null }, () => setTutarForm(null));
+            gonder(`/evvel-yeni/toptanci/teslim/${tutarForm.h.id}/tutar`, { tutar: t, fatura_geldi: tutarForm.kaynak === 'fatura', fatura_no: tutarForm.kaynak === 'fatura' ? (tutarForm.fatura_no || null) : null, sebep: tutarForm.sebep || (tutarForm.kaynak === 'fatura' ? null : 'ekstre/fiş') }, () => setTutarForm(null));
           }} />
         </Pencere>
       )}

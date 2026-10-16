@@ -73,6 +73,19 @@ def _anahtar(k: dict) -> str:
 def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
     """Kalem kalem adet × birim (kuruş, KDV dahil). Dönüş: (kalem satırları, tahmini toplam | None, fiyat_eksik sayısı)."""
     satir, eksik, top = [], 0, 0
+    kalemler = [dict(k) for k in kalemler]
+    adsiz = [k for k in kalemler if not k.get("urun_id") and (k.get("urun_ad") or k.get("ad"))]
+    if adsiz:   # Fable: panel kalemi urun_id taşımazsa ADIYLA katalogdan bul (yoksa gereksiz "fiyat yok")
+        try:
+            with savepoint(cur, "sp_ey_top_ad"):
+                cur.execute("SELECT id::text AS id, ad FROM siparis_urun WHERE aktif")
+                ad_id = {" ".join(str(dict(x)["ad"]).replace("İ", "i").replace("I", "ı").lower().split()): dict(x)["id"] for x in cur.fetchall() or []}
+                for k in adsiz:
+                    n = " ".join(str(k.get("urun_ad") or k.get("ad")).replace("İ", "i").replace("I", "ı").lower().split())
+                    if n in ad_id:
+                        k["urun_id"] = ad_id[n]
+        except Exception:  # noqa: BLE001
+            pass
     anahtarlar = [_anahtar(k) for k in kalemler]
     tf = {}
     cur.execute("SELECT urun_anahtar, birim FROM ey_toptanci_fiyat WHERE toptanci_id=%s AND urun_anahtar = ANY(%s)",
@@ -136,6 +149,8 @@ def _fiyat_ogren(cur, t: dict, gun: date) -> None:
     kesin = t.get("kesin_tutar")
     if not kal or not kesin:
         return
+    if t.get("tahmini") and abs(kesin - int(t["tahmini"])) / int(t["tahmini"]) > SAPMA_ORAN:
+        return   # Fable: %30+ sapma = birim karışmış olabilir → bu tutardan fiyat ÖĞRENME (sonraki tahminler bozulmasın)
     if len(kal) == 1 and kal[0].get("adet"):
         birimler = {kal[0]["anahtar"]: int(round(kesin / int(kal[0]["adet"])))}
     elif t.get("tahmini") and all(x.get("tutar") is not None for x in kal):
@@ -155,6 +170,9 @@ def teslim_yaz(cur, *, kaynak_ref: str, toptanci_id: str, toptanci_ad: str, sube
                teslim_alan: Optional[str], aciklama: Optional[str] = None, kesin_kaynak: str = "şube") -> Optional[str]:
     """Panel ya da merkez teslimi → tek kayıt (kaynak_ref ile bir kez)."""
     toptanci_hazirla(cur)
+    # Fable: eski sistemde sonradan açılan toptancı Evvel Yeni'de yoksa teslim görünmezdi → tanımı kendiliğinden aç
+    cur.execute("""INSERT INTO ey_toptanci (id, ad, kaynak, degistiren) VALUES (%s,%s,'panel teslimi','panel teslimiyle açıldı')
+                   ON CONFLICT (id) DO NOTHING""", (str(toptanci_id), toptanci_ad or str(toptanci_id)))
     satir, tahmini, eksik = _tahmin(cur, toptanci_id, kalemler, gun)
     tid = "tt-" + uuid.uuid4().hex[:12]
     cur.execute("""INSERT INTO ey_toptanci_teslim (id, kaynak_ref, toptanci_id, toptanci_ad, sube_id, tarih, kalemler, tahmini, fiyat_eksik,
@@ -197,6 +215,12 @@ def _hesap(cur, bugun: date):
     tlar = [dict(r) for r in cur.fetchall() or []]
     cur.execute("SELECT * FROM ey_toptanci_teslim ORDER BY tarih, zaman")
     teslimler = [dict(r) for r in cur.fetchall() or []]
+    bilinen = {t["id"] for t in tlar}
+    for x in teslimler:
+        if x["toptanci_id"] not in bilinen:
+            bilinen.add(x["toptanci_id"])
+            tlar.append({"id": x["toptanci_id"], "ad": f"{x.get('toptanci_ad') or x['toptanci_id']} (Tanımlarda yok)", "kategori": None,
+                         "telefon": None, "acilis_bakiye": 0, "aktif": True, "vade_gun": None})
     from evvel_yeni_tanim_api import subeler as _ey_subeler
     sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
     _, C, kayit, _ = _yukle(cur, tum_donemler=True)
@@ -255,7 +279,7 @@ def _hesap(cur, bugun: date):
         har += [{**o, "tutar": _tl_sayi(o["tutar"])} for o in od]
         har.sort(key=lambda z: z["tarih"], reverse=True)
         # vadesi geçen: ödemeyi en eski borçtan düş (yalnız ekranda)
-        kalan_od = od_top
+        kalan_od = od_top + (-acilis if acilis < 0 else 0)   # Codex: eksi açılış (alacak) vadeli borçtan düşer
         gecen = hafta = uc_gun = belirsiz = 0
         for b in borclar:
             k_ = max(0, b["tutar"] - kalan_od)
@@ -281,7 +305,9 @@ def _hesap(cur, bugun: date):
                 for n in x.get("nereden") or []:
                     k_ = ("💳 " if n["tur"] == "kart" else "💵 ") + n["ad"]
                     odeme_dag[k_] = round(odeme_dag.get(k_, 0) + n["tutar"], 2)
+        eksik_tahmin = [x for x in ts if not x["iptal"] and x.get("kesin_tutar") is None and x.get("tahmini") is not None and (x.get("fiyat_eksik") or 0) > 0]
         out.append({"id": t["id"], "ad": t["ad"], "kategori": t.get("kategori"), "aktif": t["aktif"], "vade_gun": vg,
+                    "eksik_tahmin_sayi": len(eksik_tahmin),
                     "acilis": _tl_sayi(acilis), "kesin": _tl_sayi(kesin), "tahmini": _tl_sayi(tahmini), "odenen": _tl_sayi(od_top),
                     "bakiye": _tl_sayi(bakiye), "bilinmeyen_sayi": len(bilinmeyen),
                     "bilinmeyen_eski": [{"id": b["id"], "tarih": b["tarih"].isoformat()} for b in bilinmeyen if (bugun - b["tarih"]).days >= BILINMEYEN_UYARI_GUN],
@@ -289,7 +315,7 @@ def _hesap(cur, bugun: date):
                     "sapma_sayi": sum(1 for h in har if h.get("sapma_uyari") and not h.get("iptal")),
                     "sube_dagilim": [{"sube": k, **v} for k, v in sorted(sube_dag.items(), key=lambda z: -z[1]["tutar"])],
                     "odeme_dagilim": [{"nereden": k, "tutar": v} for k, v in sorted(odeme_dag.items(), key=lambda z: -z[1])],
-                    "hareketler": har[:200], "son_hareket": har[0]["tarih"] if har else None})
+                    "hareketler": har, "son_hareket": har[0]["tarih"] if har else None})
     out.sort(key=lambda x: (-(x["vadesi_gecen"] or 0), -x["bakiye"], x["ad"]))
     return out
 
@@ -301,8 +327,11 @@ def toptanci_ozet():
         tl = _hesap(cur, _bugun())
     T = lambda k: round(sum(x[k] for x in tl if x["bakiye"] > 0 or k != "bakiye"), 2)  # noqa: E731
     return {"toptancilar": tl,
-            "toplam": {"bakiye": round(sum(x["bakiye"] for x in tl if x["bakiye"] > 0), 2), "kesin": T("kesin"), "tahmini": T("tahmini"),
-                       "vadesi_gecen": T("vadesi_gecen"), "bu_hafta": T("bu_hafta"), "bilinmeyen_sayi": sum(x["bilinmeyen_sayi"] for x in tl)},
+            "toplam": {"bakiye": round(sum(x["bakiye"] for x in tl if x["bakiye"] > 0), 2),
+                       "alacak": round(-sum(x["bakiye"] for x in tl if x["bakiye"] < 0), 2),
+                       "borclu_sayi": sum(1 for x in tl if x["bakiye"] > 0), "kesin": T("kesin"), "tahmini": T("tahmini"),
+                       "vadesi_gecen": T("vadesi_gecen"), "bu_hafta": T("bu_hafta"), "vadesi_belirsiz": T("vadesi_belirsiz"),
+                       "bilinmeyen_sayi": sum(x["bilinmeyen_sayi"] for x in tl), "eksik_tahmin_sayi": sum(x["eksik_tahmin_sayi"] for x in tl)},
             "not": "Borç = açılış + teslimler (kesin tutar, yoksa adet × fiyat tahmini) − ödemeler. Fatura gelince aynı teslimin tutarı "
                    "kesinleşir, yeni borç açılmaz. Vadesi geçen: ödemeler en eski borçtan düşülerek hesaplanır."}
 
@@ -502,6 +531,21 @@ class FiyatBody(BaseModel):
     birim: Optional[Decimal] = None     # boş → elle fiyat silinir
 
 
+def tahminleri_tazele(cur) -> int:
+    """Kesinleşmemiş (ve iptal olmayan) teslimlerin tahminini güncel fiyatlarla yeniden hesapla (Codex: fiyat girilince eski tahmin kalıyordu)."""
+    cur.execute("SELECT id, toptanci_id, tarih, kalemler FROM ey_toptanci_teslim WHERE kesin_tutar IS NULL AND NOT iptal")
+    n = 0
+    for x in [dict(r) for r in cur.fetchall() or []]:
+        kal = x["kalemler"] if isinstance(x["kalemler"], list) else json.loads(x["kalemler"] or "[]")
+        if not kal:
+            continue
+        satir, tahmini, eksik = _tahmin(cur, x["toptanci_id"], [{"urun_id": k.get("urun_id"), "urun_ad": k.get("ad"), "adet": k.get("adet")} for k in kal], x["tarih"])
+        cur.execute("UPDATE ey_toptanci_teslim SET kalemler=%s::jsonb, tahmini=%s, fiyat_eksik=%s WHERE id=%s",
+                    (json.dumps(satir, ensure_ascii=False), tahmini, eksik, x["id"]))
+        n += 1
+    return n
+
+
 @router.post("/fiyat")
 def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     _hazirla()
@@ -513,6 +557,7 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
             raise HTTPException(404, "Ürün bulunamadı")
         if body.birim is None:
             cur.execute("DELETE FROM ey_urun_fiyat WHERE urun_id=%s", (body.urun_id,))
+            tahminleri_tazele(cur)
             return {"ok": True, "mesaj": f"{dict(r)['ad']}: elle fiyat kaldırıldı"}
         b = _kurus(body.birim)
         if b <= 0:
@@ -520,4 +565,5 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
         cur.execute("""INSERT INTO ey_urun_fiyat (urun_id, birim, girilen) VALUES (%s,%s,%s)
                        ON CONFLICT (urun_id) DO UPDATE SET birim=EXCLUDED.birim, girilen=EXCLUDED.girilen, zaman=NOW()""",
                     (body.urun_id, b, _aktor(cur, x_evvel_oturum)))
+        tahminleri_tazele(cur)
     return {"ok": True, "mesaj": f"{dict(r)['ad']}: {_tl_sayi(b):,.2f} ₺ (KDV dahil) kaydedildi"}
