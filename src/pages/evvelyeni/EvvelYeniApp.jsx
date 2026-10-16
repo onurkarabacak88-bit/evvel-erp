@@ -67,7 +67,17 @@ const KABUK_CSS = `
 .piapp-sol small{display:block;font-weight:400;font-size:11.5px;color:var(--ink3)}
 .piapp-sol a[aria-current="page"] small{color:var(--on);opacity:.8}
 .piapp-ic{padding:12px 18px 40px;min-width:0}
-@media (max-width:820px){.piapp-duzen{grid-template-columns:1fr}.piapp-sol{position:static;height:auto;flex-direction:row;flex-wrap:wrap;border-right:0;border-bottom:1px solid var(--line)}.piapp-alt{display:none}}
+/* Dar ekran (sahip: "menü bütün sayfayı kaplıyor"): üstte ☰ Menü çubuğu; menü üstte açılan katman, sayfa seçince kapanır */
+.piapp-ust{display:none}
+@media (max-width:820px){
+  .piapp-duzen{grid-template-columns:1fr}
+  .piapp-ust{display:flex;align-items:center;gap:10px;position:sticky;top:0;z-index:30;background:var(--paper);border-bottom:1px solid var(--line);padding:10px 14px}
+  .piapp-ust button{font:inherit;font-weight:700;font-size:15px;padding:8px 14px;border-radius:10px;border:1px solid var(--line);background:var(--bg);color:var(--ink);cursor:pointer}
+  .piapp-sol{display:none;position:fixed;inset:56px 0 0 0;z-index:40;height:auto;border-right:0;box-shadow:0 10px 30px rgba(0,0,0,.25)}
+  .piapp-sol[data-acik="1"]{display:flex}
+  .piapp-sol .piapp-logo{display:none}
+  .piapp-ic{padding:16px !important}
+}
 .piapp-giris{max-width:360px;margin:12vh auto 0;background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:24px;display:flex;flex-direction:column;gap:12px}
 .piapp-giris h1{font-family:'Fraunces',Georgia,serif;font-weight:600;margin:0;font-size:28px}
 .piapp-giris input{font:inherit;padding:10px 12px;border-radius:9px;border:1px solid var(--line);background:var(--bg);color:var(--ink)}
@@ -134,6 +144,7 @@ export default function EvvelYeniApp() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  const [menuAcik, setMenuAcik] = useState(false);   // dar ekranda menü katmanı
   const [acik, setAcik] = useState(() => { try { return JSON.parse(localStorage.getItem('evvel_yeni_menu_acik') || '[]'); } catch { return []; } });
   const bolumAc = (ad) => setAcik((a) => {
     const y = a.includes(ad) ? a.filter((x) => x !== ad) : [...a, ad];
@@ -154,9 +165,14 @@ export default function EvvelYeniApp() {
       {durum === 'giris' && <Giris onTamam={() => setDurum('tamam')} />}
       {durum === 'tamam' && (
         <div className="piapp-duzen">
+          <div className="piapp-ust">
+            <button type="button" onClick={() => setMenuAcik((x) => !x)} aria-expanded={menuAcik}>{menuAcik ? '✕ Kapat' : '☰ Menü'}</button>
+            <b style={{ fontFamily: "'Fraunces',Georgia,serif", fontSize: 18 }}>Evvel Yeni</b>
+            <span style={{ marginLeft: 'auto', fontSize: 13, color: 'var(--ink3)' }}>{(TUM_SAYFALAR.find((x) => x.id === sekme) || {}).ad}</span>
+          </div>
           {/* SOL MENÜ — sahip: "solda bulunan alanlarda rahatlıkla kurgu yapabileceğiz".
               Yeni konu = yeni satır; bir sayfaya sıkıştırılmaz. Yalnız ÇALIŞAN alanlar listelenir. */}
-          <nav className="piapp-sol" aria-label="Evvel Yeni bölümleri">
+          <nav className="piapp-sol" data-acik={menuAcik ? '1' : '0'} aria-label="Evvel Yeni bölümleri">
             <div className="piapp-logo">Evvel Yeni</div>
 
             {BOLUMLER.map((b) => {
@@ -172,7 +188,7 @@ export default function EvvelYeniApp() {
               </button>
               {ac && b.sayfalar.map((m) => (
               <a key={m.id} href={m.id === 'kasam' ? TABAN : `${TABAN}/${m.id}`} aria-current={sekme === m.id ? 'page' : undefined}
-                onClick={(e) => { e.preventDefault(); sekmeDegis(m.id); }}>
+                onClick={(e) => { e.preventDefault(); sekmeDegis(m.id); setMenuAcik(false); }}>
                 <span>{m.ad}<small>{m.alt}</small></span>
                 {rozet[m.id] ? <span style={{ background: 'var(--bad)', color: 'var(--on)', borderRadius: 999, padding: '0 8px', fontSize: 12, fontWeight: 700 }}>{rozet[m.id]}</span> : null}
               </a>
