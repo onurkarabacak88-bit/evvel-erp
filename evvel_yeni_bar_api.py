@@ -261,6 +261,8 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
             gunler.append(gun)
             g += timedelta(days=1)
         sonuc.append({"sube_id": sid, "ad": s["ad"], "gunler": gunler,
+                      # Fable: Alsancak panelde sayım yapmıyor — ekranlar bunu "sorun" gibi göstermesin
+                      "panel_yok": not any(x["acilis_var"] or x["kapanis_var"] for x in gunler),
                       "ozet": {"devir_sorunlu_gun": sum(1 for x in gunler if x["devir_fark"]),
                                "ac_eksik_gun": sum(1 for x in gunler if x["ac_eksik"]),
                                "kapanis_yok": sum(1 for x in gunler if x["durum"] == "kapanis_yok"),

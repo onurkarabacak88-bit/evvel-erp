@@ -65,7 +65,9 @@ export default function BarModulu() {
       </div>
       <div style={{ fontSize: 12.5, color: R.not }}>{v.not} Kalemler: {v.kalemler.map((k) => k.ad).join(' · ')}.</div>
 
-      {v.subeler.map((s) => (
+      {v.subeler.map((s) => (s.panel_yok ? (
+        <div key={s.sube_id} style={{ ...kart, padding: '10px 14px', color: R.not, fontSize: 13 }}><b style={{ color: 'var(--pi-ink)' }}>{s.ad}</b> · panelde sayım / kapanış yapılmıyor — bu ekranın kapsamı dışında (ciro Gelir'de)</div>
+      ) : (
         <div key={s.sube_id} style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <b style={{ fontSize: 16 }}>{s.ad}</b>
@@ -86,7 +88,7 @@ export default function BarModulu() {
             ))}
           </div>
         </div>
-      ))}
+      )))}
       <div style={{ fontSize: 12, color: R.not }}>Kutunun çerçevesi: yeşil = tuttu · sarı = fark var · gri = sayım yok. Güne tıkla → kalem kalem.</div>
       <Cekmece v={ck} onKapat={() => setCk(null)} />
     </div>

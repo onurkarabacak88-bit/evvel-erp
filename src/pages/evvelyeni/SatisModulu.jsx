@@ -189,6 +189,7 @@ function BeklenenSatis() {
       <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
 
       {v.subeler.map((s) => {
+        if (s.panel_yok) return <div key={s.sube_id} style={{ ...kart, padding: '10px 14px', color: R.not, fontSize: 13 }}><b style={{ color: 'var(--pi-ink)' }}>{s.ad}</b> · panelde sayım / kapanış yapılmıyor — bu ekranın kapsamı dışında (ciro Gelir'de)</div>;
         const gun = s.gunler.filter((g) => hepsi || g.durum !== 'hesaplanmadi');
         return (
           <div key={s.sube_id} style={{ ...kart, overflow: 'hidden' }}>
@@ -265,7 +266,8 @@ export function DevirDefteri() {
             }}>{x.ad} <span style={{ fontWeight: 400, fontSize: 12 }}>✓{x.ozet.tutan}{x.ozet.kopuk ? ` · ✗${x.ozet.kopuk}` : ''}</span></button>
           ))}
         </div>
-        {s && (
+        {s && s.panel_yok && <div style={{ ...kart, padding: '10px 14px', color: R.not, fontSize: 13 }}><b style={{ color: 'var(--pi-ink)' }}>{s.ad}</b> · panelde sayım / kapanış yapılmıyor — bu ekranın kapsamı dışında (ciro Gelir'de)</div>}
+        {s && !s.panel_yok && (
           <div style={{ ...kart, overflowX: 'auto' }}>
             <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900 }}>
               <thead><tr style={{ textAlign: 'left', fontSize: 12, color: R.metin2 }}>

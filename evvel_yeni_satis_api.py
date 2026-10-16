@@ -70,6 +70,7 @@ def _gunluk(ay: str) -> dict:
                 elif any(abs(k[c]["devir_fark"] or 0) > DEVIR_SINIR for c in BARDAKLAR):
                     neden = "bardak devir farkı büyük (dün akşam ≠ bu sabah)"
                 out[(s["sube_id"], g["gun"])] = {"bardak": sum(n for n in nets if n is not None and n > 0), "neden": neden,
+                                                 "sayim_var": bool(g.get("acilis_var") or g.get("kapanis_var")),
                                                  "bardak_kalem": {c: k[c]["net_eksilme"] for c in BARDAKLAR}}
     _hazirla()
     with db() as (conn, cur):
@@ -163,6 +164,7 @@ def satis_kontrol(ay: Optional[str] = None):
             gunler.append(satir)
             g += timedelta(days=1)
         sonuc.append({"sube_id": sid, "ad": s["ad"], "gunler": gunler,
+                      "panel_yok": not any(d.get("sayim_var") for (ss, gg), d in G.items() if ss == sid and gg[:7] == a_),
                       "temiz_gun": len(temiz),
                       "ozet": {"bak": sum(1 for x in gunler if x["durum"] == "bak"), "normal": sum(1 for x in gunler if x["durum"] == "normal"),
                                "birikiyor": sum(1 for x in gunler if x["durum"] == "birikiyor"),
@@ -379,7 +381,7 @@ def satis_gun(gun: Optional[str] = None):
             "satis_acik": round(bek - ciro, 2) if (bek is not None and ciro is not None) else None,
             "satis_durum": kr.get("durum"), "satis_neden": kr.get("neden"), "guven": kr.get("guven"),
             "kasa": say.get(sid),
-            "kasa_mutabakat": mut.get(sid),
+            "kasa_mutabakat": _mut_aciklama(mut.get(sid), kap.get(sid)),
             "teslimler": tes.get(sid, []),
         })
     return {"gun": g_, "subeler": out,
@@ -485,6 +487,7 @@ def devir_defteri(ay: Optional[str] = None):
                            "zincir_fark": kopuk, "zincir_tutuyor": (kopuk is not None and abs(kopuk) < 1)})
             g += timedelta(days=1)
         out.append({"sube_id": sid, "ad": s["ad"], "gunler": gunler,
+                    "panel_yok": not any(x["sabah"] or x["aksam"] for x in gunler),
                     "ozet": {"tutan": sum(1 for x in gunler if x["zincir_tutuyor"]),
                              "kopuk": sum(1 for x in gunler if x["zincir_fark"] is not None and not x["zincir_tutuyor"])}})
     return {"ay": a_, "subeler": out, "not": "Zincir: akşam bırakılan (devir) = ertesi sabah sayılan olmalı. Kopukluk kırmızı."}
@@ -502,3 +505,16 @@ def _tr_saat(ts, gun=None):
         return t.strftime("%H:%M")
     except Exception:  # noqa: BLE001
         return None
+
+
+
+def _mut_aciklama(m, kap):
+    """Fable: Gelir o günü ciro sayarken kasa mutabakatı "kapanış yok" diyordu (biri Kasa defterine, biri panel kapanışına bakıyor).
+    Ciro defterde varsa eksik olanın PANEL KAPANIŞI (kasa sayımı) olduğu açıkça yazılır."""
+    if not m:
+        return m
+    m = dict(m)
+    if kap and m.get("eksik") and "kapanış" in m["eksik"]:
+        m["eksik"] = ("panel kapanışı yok — ciro " + ("Evo'dan" if kap.get("evo") else "Kasa'dan") +
+                      " geldi ama çekmece sayılmadı / devir yazılmadı; kasa açığı hesaplanamaz")
+    return m

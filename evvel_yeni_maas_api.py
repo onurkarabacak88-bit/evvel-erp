@@ -505,7 +505,9 @@ def personel_takvim(ay: Optional[str] = None):
     for p in kisiler:
         pid = p["id"]
         calisti = any((pid, d) in yok for d in gunler)
-        if not calisti and ((p.get("giris") and p["giris"] > ay_son) or (p.get("cikis") and p["cikis"] < ay_bas) or not p.get("aktif", True)):
+        # Fable: ay içinde ayrılan (pasif ama çıkışı bu ay) kişi maaş listesinde vardı, takvimde yoktu → yalnız çıkışı AYDAN ÖNCE olan / çıkışsız pasif elenir
+        if not calisti and ((p.get("giris") and p["giris"] > ay_son) or (p.get("cikis") and p["cikis"] < ay_bas)
+                            or (not p.get("aktif", True) and not p.get("cikis"))):
             continue
         satir, say = [], {}
         mudur = "MÜDÜR" in (p.get("gorev") or "").upper() or "MUDUR" in (p.get("gorev") or "").upper()
@@ -568,7 +570,7 @@ def personel_takvim(ay: Optional[str] = None):
                     "soru": soru, "yillik_izinde": bool(izinde), "mudur": mudur, "sube_qr_yok": qr_yok_sube,
                     "izin_bitis": izinde["izin_bitis"].isoformat() if izinde and izinde.get("izin_bitis") else None})
     out.sort(key=lambda x: (not x["aktif"], x["kayitli_sube"] or "", x["ad"]))
-    return {"ay": a_, "gunler": gunler, "personel": out, "subeler": sorted(set(sube_ad.values())),
+    return {"ay": a_, "gunler": gunler, "personel": out, "subeler": sorted({s["ad"] for s in _ey_subeler_aktif()}),
             "sorulacak": [{"personel_id": x["personel_id"], "ad": x["ad"], **x["soru"]} for x in out if x.get("soru")],
             "eslesmeyen": eslesmeyen,
             "not": "Kaynak: şube panelindeki QR girişi (bütün şubeler) + panel izi (QR okutmadan açılış/kapanış/teslim yaptıysa, çizgili kutu). "
@@ -632,6 +634,7 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
     with db() as (conn, cur):
         _hazirla(cur)
         sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
+        aktif_sube = {s["id"] for s in _ey_subeler(cur)}
         cur.execute("SELECT id, ad, gorev FROM ey_personel")
         pad = {dict(r)["id"]: dict(r) for r in cur.fetchall() or []}
         plan, qr = [], []
@@ -703,9 +706,18 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
         subeler_out = []
         for sid, ad_ in sorted(sube_ad.items(), key=lambda z: z[1]):
             ss = satirlar.get(sid, [])
+            if sid not in aktif_sube and not ss:
+                continue   # Fable: pasif şube (MERKEZ) boşken listelenmesin
             subeler_out.append({"sube_id": sid, "ad": ad_, "kisiler": ss,
                                 "ozet": {k: sum(1 for x in ss if x["durum"] == k) for k in ("zamaninda", "gec", "okutmadi", "plansiz", "bekleniyor")}})
         gunler.append({"gun": gi.isoformat(), "subeler": subeler_out, "plan_var": any(p["tarih"] == gi for p in plan)})
         g -= timedelta(days=1)
     return {"son": son.isoformat(), "gunler": gunler, "tolerans_dk": GEC_TOLERANS_DK,
             "not": f"Plan: şube panelinin vardiya planı · QR: panelde okutulan giriş. Başlangıçtan {GEC_TOLERANS_DK} dk sonrasına kadar zamanında sayılır."}
+
+
+
+def _ey_subeler_aktif():
+    from evvel_yeni_tanim_api import subeler as _s
+    with db() as (conn, cur):
+        return _s(cur)

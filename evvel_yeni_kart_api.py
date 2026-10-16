@@ -132,13 +132,19 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
         if ekstre_cipa:
             odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and x["gun"] > ekstre_cipa["tarih"].isoformat())
             son_tarih = ekstre_cipa.get("son_odeme")
+            kaydi = False
             if son_tarih and son_tarih < bugun:
                 son_tarih = None   # o ekstrenin son günü geçti — sıradaki son ödeme günü
+                kaydi = True
             son_tarih = son_tarih or _sonraki_son_odeme(k.get("kesim_gunu"), k.get("son_odeme_gunu"), bugun)
             kalan = max(0, int(ekstre_cipa["ekstre_borc"]) - odenen)
             so = {"tarih": son_tarih.isoformat() if son_tarih else None, "gun_kaldi": (son_tarih - bugun).days if son_tarih else None,
                   "ekstre": _tl_sayi(int(ekstre_cipa["ekstre_borc"])), "odenen": _tl_sayi(odenen), "kalan": _tl_sayi(kalan),
-                  "ekstre_tarihi": ekstre_cipa["tarih"].isoformat(), "eski": ekstre_cipa["kaynak"] == "eski_sistem"}
+                  "ekstre_tarihi": ekstre_cipa["tarih"].isoformat(), "eski": ekstre_cipa["kaynak"] == "eski_sistem",
+                  # Fable: son günü geçen ekstrenin kalanı sıradaki aya taşınıyordu → yeni ekstre girilene kadar "teyit gerekli"
+                  "teyit_gerekli": kaydi}
+            if kaydi:
+                so["kalan"] = None
         else:
             st = _sonraki_son_odeme(k.get("kesim_gunu"), k.get("son_odeme_gunu"), bugun)
             if st:
