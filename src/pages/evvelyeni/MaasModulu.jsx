@@ -172,7 +172,7 @@ export function PersonelTakvim({ onToast }) {
     let izin_bitis = null;
     if (karar === 'izin') { izin_bitis = window.prompt(`${s.ad} yıllık izinde — izin hangi gün bitiyor? (YYYY-AA-GG, boş bırakabilirsin)`) || null; }
     if (karar === 'ayrildi' && !window.confirm(`${s.ad} ayrıldı olarak işaretlensin mi?\nPasife alınır; ayrılış = son QR girişi (${s.son_qr || '?'}).`)) return;
-    try { const r = await api('/evvel-yeni/maas/takvim/karar', { method: 'POST', body: { personel_id: s.personel_id, karar, tarih: s.ilk_gun, izin_bitis } }); onToast?.(r.mesaj); setYenile((x) => x + 1); }
+    try { const r = await api('/evvel-yeni/maas/takvim-karar', { method: 'POST', body: { personel_id: s.personel_id, karar, tarih: s.ilk_gun, izin_bitis } }); onToast?.(r.mesaj); setYenile((x) => x + 1); }
     catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
   };
   useEffect(() => {
@@ -224,7 +224,7 @@ export function PersonelTakvim({ onToast }) {
             <tbody>{v.personel.map((p) => (
               <tr key={p.personel_id} style={{ borderTop: '1px solid var(--pi-line)', opacity: p.aktif ? 1 : 0.6 }}>
                 <td style={{ padding: '6px 10px', position: 'sticky', left: 0, background: 'var(--pi-paper)' }}>
-                  <b>{p.ad}</b>{!p.aktif && <span style={{ color: R.not }}> · ayrıldı</span>}{p.yillik_izinde && <span style={{ color: R.amber }}> · yıllık izinde{p.izin_bitis ? ` (${p.izin_bitis.slice(8, 10)}.${p.izin_bitis.slice(5, 7)}'e kadar)` : ''}</span>}
+                  <b>{p.ad}</b>{p.mudur && <span style={{ color: R.not }}> · müdür (QR aranmaz)</span>}{!p.aktif && <span style={{ color: R.not }}> · ayrıldı</span>}{p.yillik_izinde && <span style={{ color: R.amber }}> · yıllık izinde{p.izin_bitis ? ` (${p.izin_bitis.slice(8, 10)}.${p.izin_bitis.slice(5, 7)}'e kadar)` : ''}</span>}
                   <div style={{ fontSize: 11, color: p.uyusmaz ? R.kirmizi : R.not }}>kayıtlı: {p.kayitli_sube}{p.uyusmaz ? ` · en çok ${p.en_cok_sube}'da!` : ''}</div>
                 </td>
                 {p.gunler.map((g) => (
@@ -237,7 +237,8 @@ export function PersonelTakvim({ onToast }) {
                           </div>
                         ))}
                       </div>
-                    ) : g.durum === 'izinli' ? <div style={{ height: 30, borderRadius: 5, border: '1px dashed var(--pi-line)', display: 'grid', placeItems: 'center', color: R.not, fontSize: 9.5 }}>izin</div>
+                    ) : g.durum === 'mudur' ? <div style={{ height: 30 }} title="Müdür — QR aranmaz" />
+                      : g.durum === 'izinli' ? <div style={{ height: 30, borderRadius: 5, border: '1px dashed var(--pi-line)', display: 'grid', placeItems: 'center', color: R.not, fontSize: 9.5 }}>izin</div>
                       : <div style={{ height: 30 }} />}
                   </td>
                 ))}

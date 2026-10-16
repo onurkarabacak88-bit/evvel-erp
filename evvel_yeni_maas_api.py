@@ -81,6 +81,7 @@ def _hazirla(cur):
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel_yoklama_karar (
         id TEXT PRIMARY KEY, personel_id TEXT NOT NULL, tarih DATE NOT NULL, karar TEXT NOT NULL,
         izin_bitis DATE, aciklama TEXT, degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    cur.execute("DELETE FROM ey_maas_ay WHERE personel_id='takvim' AND ay='karar'")   # gölgelenme artığı (2026-10-16)
     _HAZIR = True
 
 
@@ -427,7 +428,7 @@ def personel_takvim(ay: Optional[str] = None):
     with db() as (conn, cur):
         _hazirla(cur)
         sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
-        cur.execute("SELECT id, ad, sube_id, giris, cikis, aktif, calisma_turu FROM ey_personel")
+        cur.execute("SELECT id, ad, sube_id, giris, cikis, aktif, calisma_turu, gorev FROM ey_personel")
         kisiler = [dict(r) for r in cur.fetchall() or []]
         cur.execute("SELECT personel_id, tarih, karar, izin_bitis FROM ey_personel_yoklama_karar ORDER BY zaman")
         kararlar = {}
@@ -456,6 +457,7 @@ def personel_takvim(ay: Optional[str] = None):
         if not calisti and ((p.get("giris") and p["giris"] > ay_son) or (p.get("cikis") and p["cikis"] < ay_bas) or not p.get("aktif", True)):
             continue
         satir, say = [], {}
+        mudur = "MÜDÜR" in (p.get("gorev") or "").upper() or "MUDUR" in (p.get("gorev") or "").upper()
         for d in gunler:
             dd = date.fromisoformat(d)
             rows = yok.get((pid, d)) or []
@@ -478,6 +480,8 @@ def personel_takvim(ay: Optional[str] = None):
                 satir.append({"gun": d, "durum": "gelecek"})
             elif (p.get("giris") and dd < p["giris"]) or (p.get("cikis") and dd > p["cikis"]):
                 satir.append({"gun": d, "durum": "yok"})
+            elif mudur:
+                satir.append({"gun": d, "durum": "mudur"})   # sahip: "müdürlerde QR aranmasın"
             else:
                 satir.append({"gun": d, "durum": "izinli"})
         en_cok = max(say.items(), key=lambda x: x[1])[0] if say else None
@@ -492,7 +496,7 @@ def personel_takvim(ay: Optional[str] = None):
         bugun_qr = any(x["gun"] == bugun.isoformat() and x["durum"] == "calisti" for x in satir)
         seri = [d for d in seri if d <= dun]
         soru = None
-        if p.get("aktif", True) and not bugun_qr and len(seri) >= 2 and seri[-1] == dun:
+        if p.get("aktif", True) and not mudur and not bugun_qr and len(seri) >= 2 and seri[-1] == dun:
             cevapli = any(k["tarih"].isoformat() >= seri[0] and (k["karar"] in ("devam", "ayrildi") or
                           (k["karar"] == "izin" and (not k.get("izin_bitis") or k["izin_bitis"] >= bugun)))
                           for k in kararlar.get(pid, []))
@@ -505,7 +509,7 @@ def personel_takvim(ay: Optional[str] = None):
                     "gunler": satir, "sube_gun": {k: round(v, 1) for k, v in sorted(say.items(), key=lambda x: -x[1])},
                     "calisti_gun": sum(1 for x in satir if x["durum"] == "calisti"), "izinli_gun": sum(1 for x in satir if x["durum"] == "izinli"),
                     "en_cok_sube": en_cok, "uyusmaz": bool(en_cok and kayitli != "Ortak" and en_cok != kayitli),
-                    "soru": soru, "yillik_izinde": bool(izinde),
+                    "soru": soru, "yillik_izinde": bool(izinde), "mudur": mudur,
                     "izin_bitis": izinde["izin_bitis"].isoformat() if izinde and izinde.get("izin_bitis") else None})
     out.sort(key=lambda x: (not x["aktif"], x["kayitli_sube"] or "", x["ad"]))
     return {"ay": a_, "gunler": gunler, "personel": out, "subeler": sorted(set(sube_ad.values())),
@@ -522,7 +526,7 @@ class YoklamaKararBody(BaseModel):
     aciklama: Optional[str] = None
 
 
-@router.post("/takvim/karar")
+@router.post("/takvim-karar")   # ⚠ "/takvim/karar" → "/{pid}/{ay}" kalıbına takılıyordu (rota gölgelenmesi)
 def takvim_karar(b: YoklamaKararBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """İki gün QR yok sorusunun cevabı. 'ayrildi' → personel pasif, ayrılış = son QR günü (yoksa sorunun ilk günü − 1)."""
     import uuid as _uuid
