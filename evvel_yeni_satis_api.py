@@ -449,7 +449,7 @@ def devir_defteri(ay: Optional[str] = None):
         except Exception:  # noqa: BLE001
             pass
     f = lambda v: float(v) if v is not None else None  # noqa: E731
-    saat = lambda ts: _tr_saat(ts)  # noqa: E731
+    saat = lambda ts, gun=None: _tr_saat(ts, gun)  # noqa: E731
     out = []
     for s in subeler:
         sid = s["id"]
@@ -462,22 +462,22 @@ def devir_defteri(ay: Optional[str] = None):
             vd = devir.get((sid, gi))
             km = (k["meta"] if isinstance(k["meta"], dict) else _json.loads(k["meta"] or "{}")) if k else {}
             dun_birak = f(dun_k["devir"]) if dun_k else None
-            sabah = {"kim": a.get("personel_ad") if a else None, "saat": saat(a["cevap_ts"]) if a else None,
+            sabah = {"kim": a.get("personel_ad") if a else None, "saat": saat(a["cevap_ts"], g) if a else None,
                      "sayilan": f(a["kasa_sayim"]) if a else None, "dun_birakilan": dun_birak,
                      "fark": round(f(a["kasa_sayim"]) - dun_birak, 2) if (a and dun_birak is not None and a["kasa_sayim"] is not None) else None}
             vardiya = None
             if vd:
                 vardiya = {"devreden": pad.get(vd.get("sabahci")) or "?", "devralan": pad.get(vd.get("aksamci")) or ("bekliyor" if vd["durum"] == "acilis_bekliyor" else "?"),
-                           "saat": saat(vd.get("kapanisci_onay_ts")), "nakit": f(vd["nakit"]), "teslim": f(vd["teslim"]), "birakilan": f(vd["devir"]),
+                           "saat": saat(vd.get("kapanisci_onay_ts"), g), "nakit": f(vd["nakit"]), "teslim": f(vd["teslim"]), "birakilan": f(vd["devir"]),
                            "durum": vd["durum"]}
             tes = teslim_alan.get((sid, gi), [])
             aksam = None
             if k:
-                aksam = {"kim": kapanan.get((sid, gi)) or k.get("personel_ad"), "saat": saat(k["cevap_ts"]), "kor_toplam": f(k["kasa_sayim"]),
+                aksam = {"kim": kapanan.get((sid, gi)) or k.get("personel_ad"), "saat": saat(k["cevap_ts"], g), "kor_toplam": f(k["kasa_sayim"]),
                          "teslim": f(k["teslim"]) or 0.0, "kime": ", ".join(f"{t['alan']} {t['tutar']:.0f}" for t in tes if t["tur"] == "gun_sonu") or None,
                          "ara_teslim": ", ".join(f"{t['alan']} {t['tutar']:.0f}" for t in tes if t["tur"] != "gun_sonu") or None,
                          "birakilan": f(k["devir"]) if k["devir"] is not None else f(km.get("kasiyer_devir_beyan"))}
-            ertesi = {"kim": ka.get("personel_ad"), "saat": saat(ka["cevap_ts"]), "sayilan": f(ka["kasa_sayim"])} if ka else None
+            ertesi = {"kim": ka.get("personel_ad"), "saat": saat(ka["cevap_ts"], g + timedelta(days=1)), "sayilan": f(ka["kasa_sayim"])} if ka else None
             kopuk = None
             if aksam and ertesi and aksam["birakilan"] is not None and ertesi["sayilan"] is not None:
                 kopuk = round(ertesi["sayilan"] - aksam["birakilan"], 2)
@@ -490,11 +490,15 @@ def devir_defteri(ay: Optional[str] = None):
     return {"ay": a_, "subeler": out, "not": "Zincir: akşam bırakılan (devir) = ertesi sabah sayılan olmalı. Kopukluk kırmızı."}
 
 
-def _tr_saat(ts):
+def _tr_saat(ts, gun=None):
+    """TR saati; kayıt iş gününden FARKLI bir günde girildiyse tarihiyle ("15.10 14:24") — geç giriş görünür olsun."""
     if not ts:
         return None
     from zoneinfo import ZoneInfo
     try:
-        return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%H:%M")
+        t = ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts
+        if gun is not None and t.date() != gun and not (t.date() == gun + timedelta(days=1) and t.hour < 6):
+            return t.strftime("%d.%m %H:%M")
+        return t.strftime("%H:%M")
     except Exception:  # noqa: BLE001
         return None
