@@ -135,6 +135,21 @@ def _eski_ekim(cur, ay: str) -> dict:
     return out
 
 
+def _eski_odenen(cur, ay: str) -> dict:
+    """Eski sistemden ÖDENMİŞ maaş: odeme_plani kaynak_tablo='personel', referans_ay = ÖDEME ayı (çalışma ayı + 1)."""
+    out = {}
+    try:
+        with savepoint(cur, "sp_ey_maas_eski_od"):
+            cur.execute("""SELECT kaynak_id::text AS pid, SUM(COALESCE(odenen_tutar, odenecek_tutar)) AS t FROM odeme_plani
+                            WHERE kaynak_tablo='personel' AND durum='odendi' AND referans_ay = %s::date GROUP BY 1""",
+                        (_ay_kaydir(ay, 1) + "-01",))
+            for r in cur.fetchall() or []:
+                out[dict(r)["pid"]] = _kurus(dict(r)["t"] or 0)
+    except Exception as e:  # noqa: BLE001
+        log.info("evvel-yeni maaş: eski ödeme planı okunamadı: %s", str(e)[:120])
+    return out
+
+
 def _ucretler(cur, ay: str) -> dict:
     cur.execute("""SELECT DISTINCT ON (personel_id) personel_id, maas, yemek, saatlik, yol, degistiren FROM ey_personel_ucret
                     WHERE gecerli_ay <= %s ORDER BY personel_id, gecerli_ay DESC""", (ay,))
@@ -169,6 +184,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
     elle = {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
     eski_mod = ay < YENI_HESAP_BASLANGIC
     eski = _eski_ekim(cur, ay) if eski_mod else {}
+    eski_od = _eski_odenen(cur, ay) if eski_mod else {}
     ucret = _ucretler(cur, ay)
     oneri = _vardiya_onerisi(ay) if not eski_mod else {}
     # önceki aydan avans devri (yeni hesap başlangıcından itibaren zincir)
@@ -198,6 +214,10 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
             # Eski net avansı zaten düşmüş; Evvel Yeni formundan girilen Ekim avansı eskide YOK → ayrıca düş
             kalemler = [{"kod": "eski", "ad": "Eski sistem hak edişi (Ekim kapanışı)", "tutar": _tl(hak)}]
             mahsup = (x["mahsup"] if x else 0) + avans
+            eo = eski_od.get(pid, 0)
+            if eo:
+                od = {**od, "Eski sistemde ödenen": eo}
+            odenen += eo
             satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, 0, odenen, od, e, ucret.get(pid), "eski_sistem",
                                 {"eski_durum": (x or {}).get("durum"), "eski_avans_mahsup": _tl((x or {}).get("mahsup", 0))}, False))
             continue
