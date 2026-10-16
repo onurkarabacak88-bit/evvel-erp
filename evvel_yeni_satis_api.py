@@ -172,3 +172,84 @@ def satis_kontrol(ay: Optional[str] = None):
                    "cironun MEDYANI. 'İncele' için eksik; beklenenin %25'inden, şubenin günlük dalgalanmasının 3 katından ve 500 ₺'den "
                    "büyük olmalı. 14 temiz gün birikmeden uyarı verilmez (28 günde tam güven). Kör kasa farkı yan yana gösterilir, ciroyla "
                    "toplanmaz. Sebep fire, ikram, kayıt dışı satış ya da sayım hatası olabilir — kimseye suç yazılmaz."}
+
+
+@router.get("/gun")
+def satis_gun(gun: Optional[str] = None):
+    """GÜNLÜK DÖKÜM (sahip: "bugün 14 adet 8oz vs. görmek istiyorum; kasada açık var mı, satıştan gelen açık var mı;
+    satıştan kaynaklı fireyi de görmeli"). Şube şube: kalem kalem sabah · giren · akşam · KULLANILAN · FİRE · SATILAN,
+    fire listesi (sebep), ciro, bardaktan BEKLENEN ciro → SATIŞTAN AÇIK, kör kasa sayımı → KASA AÇIĞI."""
+    import json as _json
+    from evvel_yeni_bar_api import bar_ozet, _kod_anahtar, _anahtar_ad, KALEMLER
+    from evvel_yeni_kasa_api import _bugun, _hazirla, _yukle
+    g_ = (gun or (_bugun() - timedelta(days=1)).isoformat())[:10]
+    ay = g_[:7]
+    bar = {s["sube_id"]: s for s in bar_ozet(ay)["subeler"]}
+    kontrol = {s["sube_id"]: s for s in satis_kontrol(ay)["subeler"]}
+    fire = {}
+    with db() as (conn, cur):
+        try:
+            cur.execute("""SELECT sube_id::text AS sube_id, sebep_label, aciklama, kalemler, personel_ad, olusturma
+                             FROM sube_fire_bildirim WHERE tarih = %s ORDER BY olusturma""", (g_,))
+            for r in cur.fetchall() or []:
+                r = dict(r)
+                kal = r["kalemler"] if isinstance(r["kalemler"], list) else _json.loads(r["kalemler"] or "[]")
+                for k in kal:
+                    kod = _kod_anahtar(k.get("kalem_kodu")) or _anahtar_ad(k.get("label"))
+                    try:
+                        adet = int(float(k.get("miktar") or 0))
+                    except (TypeError, ValueError):
+                        adet = 0
+                    if adet <= 0:
+                        continue
+                    fire.setdefault(r["sube_id"], []).append({"kod": kod, "ad": k.get("label") or k.get("kalem_kodu"), "adet": adet,
+                                                              "sebep": r["sebep_label"], "aciklama": r.get("aciklama"),
+                                                              "kim": r.get("personel_ad"), "saat": r["olusturma"].strftime("%H:%M") if r.get("olusturma") else None})
+        except Exception as e:  # noqa: BLE001
+            log.warning("satış günlük: fire okunamadı: %s", str(e)[:150])
+    _hazirla()
+    with db() as (conn, cur):
+        cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
+    kap, say = {}, {}
+    for h in kayit:
+        if h["is_gunu"] != g_:
+            continue
+        sid = (C.get(h["cep"]) or {}).get("sube_id")
+        if h["tur"] == "kapanis" and sid:
+            v = h["veri"]
+            kap[str(sid)] = {"nakit": h["tutar"] / 100, "pos": int(v.get("pos", v.get("kart", 0))) / 100,
+                             "online": int(v.get("online", 0)) / 100, "evo": v.get("eski_kaynak") == "evo_taslak",
+                             "onayli": h.get("durum") == "onaylandi"}
+        if h["tur"] == "sayim" and sid and (h.get("kaynak_ref") or "").startswith("sayim_kapanis:"):
+            v = h["veri"]
+            say[str(sid)] = {"beklenen": int(v.get("beklenen", 0)) / 100, "sayilan": int(v.get("sayilan", 0)) / 100,
+                             "fark": (int(v.get("beklenen", 0)) - int(v.get("sayilan", 0))) / 100, "baslangic": bool(v.get("baslangic"))}
+    out = []
+    for sid, b in bar.items():
+        gr = next((x for x in b["gunler"] if x["gun"] == g_), None)
+        fr = fire.get(sid, [])
+        kalemler = []
+        for k in (gr["kalemler"] if gr else [{"kod": c, "ad": a} for c, a in KALEMLER]):
+            f_ = sum(x["adet"] for x in fr if x["kod"] == k["kod"])
+            net = k.get("net_eksilme")
+            kalemler.append({"kod": k["kod"], "ad": k["ad"], "sabah": k.get("acilis"), "giren": (k.get("gun_ici_ac") or 0),
+                             "aksam": k.get("kapanis"), "kullanilan": net, "fire": f_,
+                             "satilan": (net - f_) if net is not None else None, "devir_fark": k.get("devir_fark")})
+        kr = next((x for x in kontrol.get(sid, {}).get("gunler", []) if x["gun"] == g_), {})
+        c = kap.get(sid)
+        ciro = round(c["nakit"] + c["pos"] + c["online"], 2) if c else None
+        bek = kr.get("beklenen")
+        out.append({
+            "sube_id": sid, "ad": b["ad"], "durum": gr["durum"] if gr else "kapanis_yok",
+            "kalemler": kalemler, "fire": fr, "fire_toplam": sum(x["adet"] for x in fr),
+            "bardak_satilan": sum((x["satilan"] or 0) for x in kalemler if x["kod"] in BARDAKLAR and x["satilan"] is not None),
+            "ciro": ({**c, "toplam": ciro} if c else None),
+            "beklenen_ciro": bek, "oran": kr.get("oran"),
+            "satis_acik": round(bek - ciro, 2) if (bek is not None and ciro is not None) else None,
+            "satis_durum": kr.get("durum"), "satis_neden": kr.get("neden"), "guven": kr.get("guven"),
+            "kasa": say.get(sid),
+        })
+    return {"gun": g_, "subeler": out,
+            "not": "Kullanılan = sabah + gün içi giren − akşam. Satılan = kullanılan − fire (ikram, dökülme, yanlış ürün…). "
+                   "Satıştan açık = bardaktan beklenen ciro − girilen ciro (referans oluşana kadar yalnız bilgi). "
+                   "Kasa açığı = akşam kör sayımı (17 Ekim'den itibaren)."}
