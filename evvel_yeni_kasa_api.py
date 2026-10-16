@@ -740,6 +740,13 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
         cep_list, C, kayit, iptaller = _yukle(cur)
         bas = _baslangic(cur)
         oranlar = _oranlar(cur)
+        kart_isleri = []
+        try:   # 💳 son ödemesi yaklaşan kartlar (Kartlar bölümü) — okunamazsa ekran yine açılır
+            with savepoint(cur, "sp_ey_kart_isler"):
+                from evvel_yeni_kart_api import kart_isleri as _kart_isleri
+                kart_isleri = _kart_isleri(cur, kayit)
+        except Exception as e:  # noqa: BLE001
+            log.warning("kart işleri okunamadı: %s", str(e)[:150])
     bugun = _bugun().isoformat()
     g = _gun_coz(gun)
     ref = bugun if hepsi else g
@@ -793,7 +800,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
                          "alinan": _tl_sayi(int(o["veri"].get("alinan", o["tutar"])))} for o in alimlar],
         "iptaller": [{"id": i["id"], "hedef_id": i["veri"].get("hedef_id"), "sebep": i["veri"].get("sebep"), "kaydeden": i.get("kaydeden"),
                       "hedef_tur": (tum_ad.get(i["veri"].get("hedef_id")) or {}).get("tur")} for i in gunun_iptal],
-        "isler": _isler(kayit, C, _farklar(ol_tum, C)),
+        "isler": _isler(kayit, C, _farklar(ol_tum, C)) + kart_isleri,
         "dis_turleri": [{"kod": k, "ad": v[0], "geri_odenecek": v[2]} for k, v in DIS_TURLERI.items()],
         "anlik_bakiye": {cid: _tl_sayi(v) for cid, v in _bakiye(ol_tum, C)["b"].items() if cid in C},
         "acilis_girilen": sorted({h["cep"] for h in kayit if h["tur"] == "acilis" and h["is_gunu"] == bas.isoformat()}),

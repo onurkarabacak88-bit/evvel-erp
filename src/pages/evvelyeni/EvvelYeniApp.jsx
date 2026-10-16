@@ -18,6 +18,7 @@ import TanimModulu, { TANIM_SAYFALAR } from './TanimModulu';
 import BarModulu, { BAR_SAYFALAR } from './BarModulu';
 import MaasModulu, { MAAS_SAYFALAR, PersonelTakvim } from './MaasModulu';
 import SatisModulu, { SATIS_SAYFALAR } from './SatisModulu';
+import KartModulu, { KART_SAYFALAR } from './KartModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
@@ -30,6 +31,7 @@ const BOLUMLER = [
   { ad: 'Gelir', ikon: '📥', mod: 'gelir', sayfalar: GELIR_SAYFALAR },
   { ad: 'Gider', ikon: '💸', mod: 'gider', sayfalar: GIDER_SAYFALAR },
   { ad: 'Ödeme', ikon: '🧾', mod: 'odeme', sayfalar: ODEME_SAYFALAR },
+  { ad: 'Kartlar', ikon: '💳', mod: 'kart', sayfalar: KART_SAYFALAR },
   { ad: 'Şube kazancı', ikon: '📈', mod: 'kazanc', sayfalar: KAZANC_SAYFALAR },
   { ad: 'Bar', ikon: '🥤', mod: 'bar', sayfalar: BAR_SAYFALAR },
   { ad: 'Satış kontrolü', ikon: '🔍', mod: 'satis', sayfalar: SATIS_SAYFALAR },
@@ -212,6 +214,8 @@ export default function EvvelYeniApp() {
               ? <BarModulu />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'tanim'
               ? <TanimModulu gorunum={sekme} onToast={setToast} />
+              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'kart'
+              ? <KartModulu onToast={setToast} />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'kazanc'
               ? <KazancModulu />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'odeme'

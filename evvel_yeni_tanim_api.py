@@ -166,7 +166,8 @@ def liste():
                              "cikis": r["cikis"].isoformat() if r.get("cikis") else None, "calisma_turu": r.get("calisma_turu") or "tam",
                              "ucret_eski": (r["ucret_kim"] == "eski sistem kopyası"), "kaynak": r["kaynak"]})
         cur.execute("SELECT * FROM ey_kart ORDER BY aktif DESC, ad")
-        kart = [{**{k: v for k, v in dict(r).items() if k not in ("zaman", "acilis_borc")}, "acilis_borc": _tl(dict(r)["acilis_borc"])} for r in cur.fetchall() or []]
+        kart = [{**{k: v for k, v in dict(r).items() if k not in ("zaman", "acilis_borc", "limit_tutar")}, "acilis_borc": _tl(dict(r)["acilis_borc"]),
+                 "limit_tutar": _tl(dict(r)["limit_tutar"]) if dict(r).get("limit_tutar") is not None else None} for r in cur.fetchall() or []]
         cur.execute("SELECT * FROM ey_toptanci ORDER BY aktif DESC, ad")
         top = [{**{k: v for k, v in dict(r).items() if k not in ("zaman", "acilis_bakiye")}, "acilis_bakiye": _tl(dict(r)["acilis_bakiye"])} for r in cur.fetchall() or []]
         cur.execute("SELECT id, ad, kisa, tur, sube_id, aktif FROM para_izi_cep WHERE tur IN ('banka','hesap') ORDER BY aktif DESC, sira, ad")
@@ -198,6 +199,10 @@ class TanimBody(BaseModel):
     banka: Optional[str] = None
     kimin: Optional[str] = None
     acilis_borc: Optional[Decimal] = None
+    limit_tutar: Optional[Decimal] = None
+    kesim_gunu: Optional[int] = None
+    son_odeme_gunu: Optional[int] = None
+    limit_grup: Optional[str] = None
     tur: Optional[str] = None            # banka cebi: 'banka' | 'hesap'
     # toptancı
     kategori: Optional[str] = None
@@ -313,6 +318,11 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
             return {"ok": True, "id": tid, "mesaj": f"Personel {'eklendi' if yeni else 'güncellendi'}"}
 
         if tur == "kart":
+            from evvel_yeni_kart_api import kart_hazirla
+            kart_hazirla(cur)
+            for g_ in (b.kesim_gunu, b.son_odeme_gunu):
+                if g_ is not None and not 1 <= g_ <= 31:
+                    raise HTTPException(400, "Kesim / son ödeme günü 1–31 olmalı")
             if yeni:
                 tid = "ey-" + uuid.uuid4().hex[:12]
                 cur.execute("""INSERT INTO ey_kart (id, ad, banka, kimin, acilis_borc, degistiren) VALUES (%s,%s,%s,%s,%s,%s)""",
@@ -322,6 +332,10 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                                  acilis_borc=COALESCE(%s,acilis_borc), aktif=COALESCE(%s,aktif), degistiren=%s, zaman=NOW() WHERE id=%s""",
                             (ad, (b.banka or "").strip()[:40] or None, (b.kimin or "").strip()[:40] or None,
                              _kurus(b.acilis_borc) if b.acilis_borc is not None else None, b.aktif, kim, tid))
+            cur.execute("""UPDATE ey_kart SET limit_tutar=COALESCE(%s,limit_tutar), kesim_gunu=COALESCE(%s,kesim_gunu),
+                             son_odeme_gunu=COALESCE(%s,son_odeme_gunu), limit_grup=COALESCE(%s,limit_grup) WHERE id=%s""",
+                        (_kurus(b.limit_tutar) if b.limit_tutar is not None else None, b.kesim_gunu, b.son_odeme_gunu,
+                         (b.limit_grup or "").strip()[:40] or None, tid))
             return {"ok": True, "id": tid, "mesaj": f"Kart {'eklendi' if yeni else 'güncellendi'}"}
 
         # toptancı

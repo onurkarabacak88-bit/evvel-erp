@@ -1450,6 +1450,16 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul }) 
       </div>
     );
   }
+  if (x.tur === 'kart_son_odeme') {
+    return (
+      <div style={{ ...satir, border: `1px solid ${alfa(x.gun_kaldi <= 2 ? R.kirmizi : R.amber, 55)}` }}>
+        <Cip tur={x.gun_kaldi <= 2 ? 'kirmizi' : 'sari'}>💳 Kart son ödeme</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · son gün {tUzun(x.tarih)} ({x.gun_kaldi === 0 ? 'BUGÜN' : `${x.gun_kaldi} gün kaldı`})
+          <div style={{ fontSize: 11.5, color: R.not }}>{x.kalan != null ? <>Ekstre {fmt(x.ekstre)} · kalan <b style={num}>{fmt(x.kalan)}</b> ₺ — Ödeme'den "Kart borcu" olarak gir</> : 'Ekstre tutarı girilmedi — Kartlar bölümünden teyit et'}</div></div>
+        <Dugme kucuk onClick={() => { window.history.pushState({}, '', '/evvel-yeni/kartlar'); window.dispatchEvent(new window.PopStateEvent('popstate')); }}>Kartlar</Dugme>
+      </div>
+    );
+  }
   if (x.tur === 'teslim') {
     return (
       <div style={satir}>

@@ -46,9 +46,11 @@ const YAPI = {
   },
   tanim_kart: {
     tur: 'kart', liste: 'kartlar', baslik: 'Kartlar', tekil: 'kart',
-    not: 'Açılış borcu: yeni dönem başında kartın borcu. Kart borcu takibi Kartlar bölümünde bundan başlar.',
-    alanlar: [{ k: 'ad', ad: 'Kart adı (ör. Garanti Onur 3018)', zorunlu: true }, { k: 'banka', ad: 'Banka' }, { k: 'kimin', ad: 'Kimin kartı' }, { k: 'acilis_borc', ad: 'Açılış borcu ₺', sayi: true }],
-    kolon: (x) => [x.ad, [x.banka, x.kimin].filter(Boolean).join(' · ') || '—', `açılış borcu ${fmt(x.acilis_borc)}`],
+    not: 'Kartın bankadaki kullanılabilir limiti Kartlar bölümünden teyit edilir. Aynı limiti paylaşan kartlara aynı "ortak limit" adını yaz.',
+    alanlar: [{ k: 'ad', ad: 'Kart adı (ör. Garanti Onur 3018)', zorunlu: true }, { k: 'banka', ad: 'Banka' }, { k: 'kimin', ad: 'Kimin kartı' },
+      { k: 'limit_tutar', ad: 'Kart limiti ₺', sayi: true }, { k: 'kesim_gunu', ad: 'Hesap kesim günü (1–31)', sayi: true }, { k: 'son_odeme_gunu', ad: 'Son ödeme günü (1–31)', sayi: true },
+      { k: 'limit_grup', ad: 'Ortak limit adı (varsa)' }],
+    kolon: (x) => [x.ad, [x.banka, x.kimin].filter(Boolean).join(' · ') || '—', `limit ${x.limit_tutar != null ? fmt(x.limit_tutar) : '—'} · kesim ${x.kesim_gunu || '—'} · son ödeme ${x.son_odeme_gunu || '—'}${x.limit_grup ? ` · ortak: ${x.limit_grup}` : ''}`],
   },
   tanim_toptanci: {
     tur: 'toptanci', liste: 'toptancilar', baslik: 'Toptancılar', tekil: 'toptancı',

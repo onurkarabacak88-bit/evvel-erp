@@ -292,6 +292,14 @@ except Exception as _ey_odeme_err:
     logging.getLogger(__name__).warning(
         f"evvel_yeni_odeme modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_odeme_err}"
     )
+# 💳 EVVEL YENİ · KARTLAR (2026-10-16) — sade: kullanılabilir limit = son teyit ± ödeme formundaki kart hareketleri.
+try:
+    from evvel_yeni_kart_api import router as evvel_yeni_kart_router
+    app.include_router(evvel_yeni_kart_router)
+except Exception as _ey_kart_err:
+    logging.getLogger(__name__).warning(
+        f"evvel_yeni_kart modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_kart_err}"
+    )
 # 📈 EVVEL YENİ · ŞUBE KAZANCI (2026-10-15) — gelir − şubenin kendi gideri; kim kimi taşıyor.
 try:
     from evvel_yeni_kazanc_api import router as evvel_yeni_kazanc_router
