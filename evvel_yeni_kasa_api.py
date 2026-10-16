@@ -773,7 +773,9 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
     cep_durumlari = [_cep_durum(c, ol, D, ref, fl, C) for c in cep_list]
     for cd in cep_durumlari:
         # Fethi'nin evi kaldırıldı (para geçiş hesabına gider) — boşsa ekranda görünmez; geçmiş kayıtları durur
-        cd["gizli"] = bool(cd["id"] == "ev:fethi" and abs(D["b"].get("ev:fethi", 0)) < 1)
+        # sahip: "patronun evinden düşmüş görünmüyor" → bu dönem hareketi olduysa görünür (çıkış izi okunsun)
+        cd["gizli"] = bool(cd["id"] == "ev:fethi" and abs(D["b"].get("ev:fethi", 0)) < 1
+                           and not any("ev:fethi" in (o.get("cep"), o.get("kaynak"), o.get("hedef")) for o in ol))
     pos_list = _pos_durumu(ol, C, oranlar, ref)
     for cd in cep_durumlari:
         if cd["tur"] != "banka":

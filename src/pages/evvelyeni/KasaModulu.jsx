@@ -1218,7 +1218,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
             {deg != null && <div style={{ fontSize: 12.5, color: R.metin2, marginTop: 4 }}>Önceki akşama göre <b style={{ ...num, color: deg < 0 ? R.kirmizi : deg > 0 ? R.yesil : R.metin2 }}>{deg > 0 ? '+' : ''}{fmt(deg)}</b></div>}
           </div>
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-            {[['İşletme parası', o.toplam], ['Nakit', o.nakit], ['Banka', o.banka], ['Kira hesabı', o.kira]].map(([a, v]) => (
+            {[['İşletme parası', o.toplam], ['Nakit', o.nakit], ['Banka', o.banka + o.gecis], ['Kira hesabı', o.kira]].map(([a, v]) => (
               <div key={a}><div style={etiketStil}>{a}</div><div style={{ ...num, fontSize: 17 }}>{fmt(v)}</div></div>
             ))}
           </div>
@@ -1227,8 +1227,9 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
           <GrupKart ad="Dükkân nakitleri" tutar={o.sube} liste={subeler} hedef="subeler" alt={`${subeler.length} dükkân · çekmecedeki nakit`} />
           <GrupKart ad="Evler" tutar={o.ev} liste={evler} hedef="evler" alt={evler.map((c) => c.kisa).join(' · ')} />
-          <GrupKart ad="Bankalar" tutar={o.banka} liste={bankalar} hedef="bankalar" alt={veri.pos_bekleyen_brut > 0 ? `+ ${fmt(veri.pos_bekleyen_brut)} ₺ POS/online gelecek` : `${bankalar.length} şube bankası`} />
-          <GrupKart ad="Geçiş + yolda" tutar={o.gecis_yolda} liste={hesaplar} hedef="bankalar" alt={o.yolda >= 0.005 ? `${fmt(o.yolda)} ₺ teslim yolda` : "Fethi'nin hesabı · giren çıkmalı"} />
+          {/* Sahip: "Kasam bankalar alanında (Fethi'nin hesabı) görünmüyor" → geçiş hesabı Bankalar'ın içinde */}
+          <GrupKart ad="Bankalar" tutar={o.banka + o.gecis} liste={[...bankalar, ...hesaplar]} hedef="bankalar" alt={`${bankalar.length} şube bankası + Fethi hesabı${veri.pos_bekleyen_brut > 0 ? ` · + ${fmt(veri.pos_bekleyen_brut)} ₺ POS/online gelecek` : ''}`} />
+          {o.yolda >= 0.005 && <GrupKart ad="Teslim yolda" tutar={o.yolda} liste={[]} hedef="isler" alt="teslim edildi, 'aldı' onayı bekliyor" />}
           <GrupKart ad="Kira hesabı" tutar={o.kira} liste={kiraHesap} hedef="bankalar" alt="İşletmeden ayrı · destek için" />
           <GrupKart ad="Açık farklar" tutar={o.acik_eksik} hedef="farklar" renk={o.acik_fark_sayisi ? 'kirmizi' : 'yesil'}
             alt={o.acik_fark_sayisi ? `${o.acik_fark_sayisi} fark çözülmedi${o.acik_fazla > 0 ? ` · +${fmt(o.acik_fazla)} fazla` : ''}` : 'Çözülmemiş fark yok'} />
@@ -1241,12 +1242,12 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
       {sekme === 'evler' && <KartIzgara liste={evler} />}
       {sekme === 'bankalar' && (<>
         <div style={etiketStil}>Şube bankaları</div><KartIzgara liste={bankalar} />
+        {hesaplar.length > 0 && (<><div style={etiketStil}>Fethi'nin hesabı · geçiş hesabı (giren çıkmalı)</div><KartIzgara liste={hesaplar} /></>)}
         {veri.pos.length > 0 && (
           <div style={{ ...kart, padding: '10px 14px', fontSize: 12.5, color: R.metin2 }}>
             POS ertesi gün kendiliğinden yatar; online elle girilir. Bankaya gelecek: {veri.pos.filter((x) => x.bekleyen_brut > 0.004).map((x) => `${x.sube} ${x.kanal === 'pos' ? 'POS' : 'online'} ${fmt(x.bekleyen_brut)} ₺`).join(' · ') || 'yok'}
           </div>
         )}
-        {hesaplar.length > 0 && (<><div style={etiketStil}>Geçiş hesabı · giren çıkmalı</div><KartIzgara liste={hesaplar} /></>)}
         {kiraHesap.length > 0 && (<><div style={etiketStil}>Kira hesabı · işletmeden ayrı</div><KartIzgara liste={kiraHesap} /></>)}
       </>)}
       {sekme === 'isler' && (
