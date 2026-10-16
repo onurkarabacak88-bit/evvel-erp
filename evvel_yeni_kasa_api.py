@@ -771,6 +771,9 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
                            + sum(int(o["veri"].get("f", 0)) for o in gunun_ol if o["olay"] == "cozum" and o["veri"].get("sebep") == "harcandi")),
     }
     cep_durumlari = [_cep_durum(c, ol, D, ref, fl, C) for c in cep_list]
+    for cd in cep_durumlari:
+        # Fethi'nin evi kaldırıldı (para geçiş hesabına gider) — boşsa ekranda görünmez; geçmiş kayıtları durur
+        cd["gizli"] = bool(cd["id"] == "ev:fethi" and abs(D["b"].get("ev:fethi", 0)) < 1)
     pos_list = _pos_durumu(ol, C, oranlar, ref)
     for cd in cep_durumlari:
         if cd["tur"] != "banka":
@@ -1102,7 +1105,7 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
                           veri={"alt": alt, "kimden": (body.kimden or "").strip()[:80], "not": (body.not_ or "").strip()[:200]})
         elif t == "teslim":
             cep_var(body.kaynak, {"sube"})
-            cep_var(body.hedef, {"ev"})
+            cep_var(body.hedef, {"ev", "hesap"})
             if tut <= 0:
                 raise HTTPException(400, "Tutar gir")
             yeni = _sahte(t, gun, kaynak=body.kaynak, hedef=body.hedef, tutar=tut, durum="bekliyor",
@@ -1293,7 +1296,8 @@ def iptal(hid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Header(defa
 def _patron_bul(ad: str) -> Optional[str]:
     """kasa_teslim.teslim_alan_ad serbest metin — Onur/Fethi/Fatma adını içeriyorsa eşle."""
     a = (ad or "").replace("İ", "i").replace("I", "ı").lower()
-    for anahtar, cid in (("onur", "ev:onur"), ("fethi", "ev:fethi"), ("fatma", "ev:fatma")):
+    # Sahip (2026-10-16): "Fethi evden Fethi hesaba taşı — bankalara geçiş hesabı" → Fethi'ye teslim GEÇİŞ HESABINA düşer
+    for anahtar, cid in (("onur", "ev:onur"), ("fethi", "hesap:fethi"), ("fatma", "ev:fatma")):
         if anahtar in a:
             return cid
     return None

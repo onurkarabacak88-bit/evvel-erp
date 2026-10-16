@@ -276,9 +276,9 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
   const tip = form.tip;
   const cepler = veri.cepler;
   const bak = veri.anlik_bakiye || {};
-  const secenek = (turler, bakiyeli) => cepler.filter((c) => !turler || turler.includes(c.tur))
+  const secenek = (turler, bakiyeli) => cepler.filter((c) => (!turler || turler.includes(c.tur)) && !c.gizli)
     .map((c) => <option key={c.id} value={c.id}>{c.ad}{bakiyeli ? ` · ${fmt(bak[c.id])} ₺` : ''}</option>);
-  const ilk = (turler) => (cepler.find((c) => !turler || turler.includes(c.tur)) || {}).id || '';
+  const ilk = (turler) => (cepler.find((c) => (!turler || turler.includes(c.tur)) && !c.gizli) || {}).id || '';
   const [d, setD] = useState(() => ({
     is_gunu: form.gun || gun, cep: form.cep || (tip === 'pos' ? ((cepler.find((c) => c.tur === 'banka' && !c.kira) || {}).id || '') : ilk(tip === 'kapanis' ? ['sube'] : null)),
     kaynak: ilk(tip === 'teslim' ? ['sube'] : null), hedef: ilk(tip === 'teslim' ? ['ev'] : ['ev', 'hesap']),
@@ -432,7 +432,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         {tip === 'teslim' && (
           <div style={izgara}>
             <Alan etiket="Teslim eden şube"><select value={d.kaynak} onChange={set('kaynak')} style={alanStil}>{secenek(['sube'], true)}</select></Alan>
-            <Alan etiket="Teslim alan patron"><select value={d.hedef} onChange={set('hedef')} style={alanStil}>{secenek(['ev'])}</select></Alan>
+            <Alan etiket="Teslim alan patron"><select value={d.hedef} onChange={set('hedef')} style={alanStil}>{secenek(['ev', 'hesap'])}</select></Alan>
             <Alan etiket="Teslim eden personel"><input value={d.teslim_eden || ''} onChange={set('teslim_eden')} style={alanStil} placeholder="ör. Ayşe" /></Alan>
             {tutarAlani()}{gunAlani}
           </div>
@@ -929,7 +929,7 @@ function BankaSekmesi({ onToast, onDegisti }) {
 export const SAYFALAR = [
   { id: 'kasam', ad: 'Kasam', alt: 'Toplam kasa · gruplar' },
   { id: 'subeler', ad: 'Dükkân nakitleri', alt: 'Çekmecedeki nakit · şube şube' },
-  { id: 'evler', ad: 'Evler', alt: 'Onur · Fethi · Fatma' },
+  { id: 'evler', ad: 'Evler', alt: 'Onur · Fatma' },
   { id: 'bankalar', ad: 'Bankalar', alt: 'Şube bankaları · kira · geçiş' },
   { id: 'hareketler', ad: 'Günlük hareketler', alt: 'Gün seç, ne oldu' },
   { id: 'isler', ad: 'Bekleyen işler', alt: 'Onaylar · farklar' },
@@ -1098,7 +1098,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
   if (!veri) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Kasa okunuyor…</div></div>;
 
   const o = veri.ozet;
-  const evler = veri.cepler.filter((c) => c.tur === 'ev');
+  const evler = veri.cepler.filter((c) => c.tur === 'ev' && !c.gizli);
   const subeler = veri.cepler.filter((c) => c.tur === 'sube');
   const hesaplar = veri.cepler.filter((c) => c.tur === 'hesap');
   const bankalar = veri.cepler.filter((c) => c.tur === 'banka' && !c.kira);
