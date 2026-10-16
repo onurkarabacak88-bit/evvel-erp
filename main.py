@@ -332,6 +332,13 @@ except Exception as _ey_satis_err:
     logging.getLogger(__name__).warning(
         f"evvel_yeni_satis modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_satis_err}"
     )
+# 📒 EVVEL YENİ · ŞUBE OLAY DEFTERİ (2026-10-16) — panel çift yazımı; tablo AÇILIŞTA kurulur (panel işleminde DDL yok).
+try:
+    from evvel_yeni_olay import olay_tablosu_kur, router as evvel_yeni_olay_router
+    olay_tablosu_kur()
+    app.include_router(evvel_yeni_olay_router)
+except Exception as _ey_olay_err:
+    logging.getLogger(__name__).warning(f"evvel_yeni olay defteri kurulamadi: {_ey_olay_err}")
 # OPS ÖLÇÜM — "iş kuyruğu işe yarıyor mu?" (2026-08-27). AYRI modül, AYRI iki
 # tablo. bakis_olcum'a yazılmadı: onun ozet sorguları `gorunum`a göre süzmüyor,
 # OPS oturumları oraya girseydi BAKIŞ'ın M1-M5 medyanları iki farklı ekranın

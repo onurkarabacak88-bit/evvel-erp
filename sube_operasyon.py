@@ -1457,6 +1457,15 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
                 ),
             )
             audit(cur, "sube_operasyon_event", event_id, "KAPANIS_TAMAMLANDI")
+            # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE"):
+            #    yazılamazsa 503 → panel "tekrar deneyin" der, kapanışın TAMAMI geri alınır (yarım kayıt yok).
+            from evvel_yeni_olay import olay_yaz
+            olay_yaz(cur, sube_id=sube_id, tur="kapanis", is_gunu=tarih_ev_ciro, kok=f"kapanis:{sube_id}:{tarih_ev_ciro}",
+                     kaynak_tablo="sube_operasyon_event", kaynak_id=event_id, tutar=cn,
+                     personel_id=pid_panel, personel_ad=onay_ad,
+                     veri={"nakit": cn, "pos": cp, "online": co, "kasa_sayim": ks, "teslim": teslim_f, "devir": devir_kayit,
+                           "teslim_alan": kasa_kime_teslim, "stok_sayim": k_stok, "mutabakat": _meta_kapanis.get("mutabakat"),
+                           "personel_saat": body.personel_saat})
 
             # ── RAPOR CACHE HOOK ── (defensive)
             try:

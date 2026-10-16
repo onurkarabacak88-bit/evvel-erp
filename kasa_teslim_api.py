@@ -172,6 +172,13 @@ def kasa_teslim_ekle(body: KasaTeslimBody):
             ),
         )
         audit(cur, "kasa_teslim", tid, "KASA_TESLIM")
+        # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE"):
+        from evvel_yeni_olay import olay_yaz
+        olay_yaz(cur, sube_id=body.sube_id, tur="teslim", is_gunu=is_gunu_tr(), kok=f"teslim:kasa_teslim:{tid}",
+                 kaynak_tablo="kasa_teslim", kaynak_id=tid, tutar=body.tutar, personel_id=pid, personel_ad=onay_ad,
+                 veri={"teslim_turu": body.teslim_turu, "alan_id": body.teslim_alan_id,
+                       "alan_ad": alici["ad"] + (" — " + alici["unvan"] if alici.get("unvan") else ""),
+                       "aciklama": (body.aciklama or "").strip() or None})
 
         # 💵 TESLİMİ HEMEN DEFTERE İŞLE (2026-08-18)
         # Defterleşme (KASA_TESLIM_CIKIS/GIRIS çift kaydı) başlangıçta da

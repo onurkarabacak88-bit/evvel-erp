@@ -731,6 +731,12 @@ def sube_kapanis_geri_al(sube_id: str, body: KapanisGeriAlBody):
         )
         event_acildi = cur.rowcount
 
+        # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE"):
+        from evvel_yeni_olay import olay_yaz
+        olay_yaz(cur, sube_id=sube_id, tur="iptal", is_gunu=tarih, kok=f"kapanis_geri_al:{sube_id}:{tarih}:{body.sebep or ''}",
+                 hedef_kok=f"kapanis:{sube_id}:{tarih}", neden=(body.sebep or "Kapanış geri alındı"),
+                 personel_ad=onayci.get("ad_soyad"),
+                 veri={"teslim_silindi": teslim_silindi, "event_acildi": event_acildi, "taslak_korundu": taslak_korunan})
         audit(cur, "sube_operasyon_event", f"{sube_id}|{tarih}|KAPANIS", "KAPANIS_GERI_AL",
               yeni={"onayci": onayci.get("ad_soyad"), "sebep": body.sebep,
                     "taslak_iptal": taslak_iptal, "kapanis_iptal": kapanis_iptal,
@@ -2746,6 +2752,11 @@ def sube_ara_kasa_teslim(sube_id: str, body: AraTeslimModel):
                 (body.aciklama or "").strip() or None,
             ),
         )
+        # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE"):
+        from evvel_yeni_olay import olay_yaz
+        olay_yaz(cur, sube_id=sube_id, tur="teslim", is_gunu=is_gunu_tr(), kok=f"teslim:kasa_teslim:{kt_id}",
+                 kaynak_tablo="kasa_teslim", kaynak_id=kt_id, tutar=float(body.tutar), personel_id=pid_panel, personel_ad=onay_ad,
+                 veri={"teslim_turu": "ara", "alan_id": alici_d["id"], "alan_ad": alici_ad, "aciklama": (body.aciklama or "").strip() or None})
         # 💵 Teslimi HEMEN deftere işle — bkz. kasa_teslim_api.py'deki not
         # (başlangıç göçü tek başına yetmez; deploy olmadan yeni teslim izsiz kalır).
         try:
@@ -2821,6 +2832,11 @@ def sube_anlik_gider_gir(sube_id: str, body: SubeAnlikGiderModel):
             # farkını iki uçtan bozuyordu (dosyadaki tüm diğer yazımlar zaten is_gunu_tr kullanıyor).
             (gid, is_gunu_tr(), body.kategori, body.tutar, acik, sube_id, pid_panel, bool(body.fis_gonderildi)),
         )
+        # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE"):
+        from evvel_yeni_olay import olay_yaz
+        olay_yaz(cur, sube_id=sube_id, tur="gider", is_gunu=is_gunu_tr(), kok=f"gider:anlik_giderler:{gid}",
+                 kaynak_tablo="anlik_giderler", kaynak_id=gid, tutar=body.tutar, personel_id=pid_panel, personel_ad=onay_ad,
+                 veri={"kategori": body.kategori, "aciklama": acik, "odeme": "nakit", "fis": bool(body.fis_gonderildi)})
         onay_ekle(
             cur,
             "ANLIK_GIDER",

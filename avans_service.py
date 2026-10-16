@@ -544,6 +544,12 @@ def avans_teslim_et(aid: str, body: AvansTeslimModel = AvansTeslimModel()):
             "UPDATE personel_avans SET durum='teslim_edildi', teslim_ts=NOW(), anlik_gider_id=%s WHERE id=%s",
             (gid, aid),
         )
+        # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE"):
+        from evvel_yeni_olay import olay_yaz
+        olay_yaz(cur, sube_id=r["sube_id"], tur="avans", is_gunu=bugun, kok=f"avans:personel_avans:{aid}",
+                 kaynak_tablo="personel_avans", kaynak_id=aid, tutar=tutar, personel_id=body.teslim_eden_personel_id,
+                 veri={"personel_id": str(r["personel_id"]), "personel_ad": ad, "donem": f"{r['donem_yil']}-{int(r['donem_ay']):02d}",
+                       "odeme": "elden", "anlik_gider_id": gid})
         _event(cur, aid, "TESLIM_EDILDI", {"teslim_eden": body.teslim_eden_personel_id, "sube": r["sube_id"]})
         audit(cur, "personel_avans", aid, "TESLIM", yeni={"tutar": tutar})
         # 3) Kapanış zaten yapıldıysa fark uyarısını tazele (hata-yutar; ana akışı bozmaz)
@@ -671,6 +677,11 @@ def avans_ters_kayit(aid: str, body: AvansTersModel):
             "UPDATE personel_avans SET durum='ters_kayit', ters_ref=%s, not_aciklama=%s WHERE id=%s",
             (ters_id, body.neden, aid),
         )
+        if r.get("anlik_gider_id"):
+            # 📒 EVVEL YENİ ÇİFT YAZIM (2026-10-16, sahip: "panel yeni alana da yazsın; hata olursa TEKRAR DENE"):
+            from evvel_yeni_olay import olay_yaz
+            olay_yaz(cur, sube_id=r.get("sube_id") or "", tur="iptal", is_gunu=bugun, kok=f"avans_ters:{aid}:{ters_id}",
+                     hedef_kok=f"avans:personel_avans:{aid}", neden=body.neden, veri={"ters_ref": ters_id})
         _event(cur, aid, "TERS_KAYIT", {"neden": body.neden, "onaylayan": body.onaylayan, "ters_ref": ters_id})
         audit(cur, "personel_avans", aid, "TERS_KAYIT", yeni={"neden": body.neden})
         # FIX AV1 (2026-07-06): ters kayıt avansı mahsup havuzundan düşürür ama dönemin BEKLEYEN
