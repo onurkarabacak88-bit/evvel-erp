@@ -210,6 +210,7 @@ export function PersonelTakvim({ onToast }) {
           </div>
         )}
         <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
+        {(v.eslesmeyen || []).length > 0 && <div style={{ fontSize: 12.5, color: R.amber }}>Personel listesinde bulunamayan QR girişleri: {v.eslesmeyen.map((x) => `${x.ad} (${x.gun.slice(8, 10)}.${x.gun.slice(5, 7)} ${x.sube})`).join(', ')} — Tanımlar → Personel'den ekle ya da adı düzelt.</div>}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', fontSize: 12.5 }}>
           {v.subeler.map((s) => <span key={s} style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 14, height: 14, borderRadius: 4, background: renk(s) }} />{s}</span>)}
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5 }}><span style={{ width: 14, height: 14, borderRadius: 4, border: '1px dashed var(--pi-line)' }} />izinli (QR yok)</span>
@@ -232,7 +233,7 @@ export function PersonelTakvim({ onToast }) {
                     {g.durum === 'calisti' ? (
                       <div style={{ minHeight: 34, borderRadius: 5, display: 'flex', flexDirection: 'column', overflow: 'hidden', border: g.disi ? '2px solid var(--pi-warn)' : 'none' }}>
                         {(g.girisler || g.subeler.map((s) => ({ sube: s, saat: g.saat }))).map((x, i) => (
-                          <div key={i} style={{ flex: 1, background: renk(x.sube), color: '#fff', fontSize: 9, fontWeight: 700, lineHeight: 1.15, padding: '2px 1px', textAlign: 'center' }}>
+                          <div key={i} title={x.panel ? `${x.sube} · QR yok — ${x.vardiya}` : `${x.sube} · QR ${x.saat || ''}`} style={{ flex: 1, background: x.panel ? `repeating-linear-gradient(135deg, ${renk(x.sube)} 0 4px, ${renk(x.sube)}99 4px 8px)` : renk(x.sube), color: '#fff', fontSize: 9, fontWeight: 700, lineHeight: 1.15, padding: '2px 1px', textAlign: 'center', outline: x.panel ? '1px dashed #fff' : 'none', outlineOffset: -2 }}>
                             {kisa(x.sube)}<br /><span style={{ fontWeight: 500 }}>{x.saat || ''}</span>
                           </div>
                         ))}
@@ -244,7 +245,7 @@ export function PersonelTakvim({ onToast }) {
                 ))}
                 <td style={{ padding: '6px 10px', fontSize: 12 }}>
                   {Object.entries(p.sube_gun).map(([s, n]) => <span key={s} style={{ marginRight: 8, whiteSpace: 'nowrap' }}><span style={{ display: 'inline-block', width: 9, height: 9, borderRadius: 3, background: renk(s), marginRight: 3 }} />{s} {n}</span>)}
-                  <div style={{ color: R.not }}>{p.calisti_gun} gün çalıştı · {p.izinli_gun} gün izinli</div>
+                  <div style={{ color: R.not }}>{p.calisti_gun} gün çalıştı{p.qrsiz_gun ? <span style={{ color: R.amber }}> ({p.qrsiz_gun} gün QR'sız)</span> : ''} · {p.izinli_gun} gün izinli</div>
                 </td>
               </tr>
             ))}</tbody>

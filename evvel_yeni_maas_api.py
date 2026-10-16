@@ -445,8 +445,57 @@ def personel_takvim(ay: Optional[str] = None):
                     yok.setdefault((r["pid"], r["tarih"].isoformat()), []).append(r)
         except Exception as e:  # noqa: BLE001
             log.warning("personel takvim: yoklama okunamadı: %s", str(e)[:150])
+        # Sahip (2026-10-16): "QR okutarak giriş yaptığı BÜTÜN şubeleri tara" —
+        # (1) başka kimlikle (aynı kişinin ikinci kaydı) yazılmış QR'lar ADA göre kişiye bağlanır;
+        # (2) QR okutmadan panelde açılış/kapanış/teslim yaptıysa o gün o şubede ÇALIŞTI sayılır (panel izi).
+        def _n(x):
+            return " ".join((x or "").replace("İ", "i").replace("I", "ı").lower().split())
+        ey_ids = {p["id"] for p in kisiler}
+        ad_kimlik = {}
+        for p in kisiler:
+            ad_kimlik.setdefault(_n(p["ad"]), p["id"])
+        yabanci = {k[0] for k in yok if k[0] not in ey_ids}
+        eslesmeyen = []
+        if yabanci:
+            try:
+                with savepoint(cur, "sp_ey_takvim_ad"):
+                    cur.execute("SELECT id::text AS id, ad_soyad FROM personel WHERE id::text = ANY(%s)", (list(yabanci),))
+                    eski_ad = {dict(r)["id"]: dict(r)["ad_soyad"] for r in cur.fetchall() or []}
+            except Exception:  # noqa: BLE001
+                eski_ad = {}
+            for k in list(yok):
+                if k[0] not in yabanci:
+                    continue
+                hedef = ad_kimlik.get(_n(eski_ad.get(k[0])))
+                rows = yok.pop(k)
+                if hedef:
+                    yok.setdefault((hedef, k[1]), []).extend(rows)
+                else:
+                    eslesmeyen.append({"ad": eski_ad.get(k[0]) or k[0], "gun": k[1], "sube": sube_ad.get(rows[0]["sid"], rows[0]["sid"])})
+        panel = []
+        try:
+            with savepoint(cur, "sp_ey_takvim_panel"):
+                cur.execute("""SELECT personel_id::text AS pid, personel_ad AS ad, tarih, sube_id::text AS sid, cevap_ts AS ts, tip
+                                 FROM sube_operasyon_event WHERE tarih BETWEEN %s AND %s AND durum='tamamlandi'
+                                  AND tip IN ('ACILIS','KAPANIS')""", (ay_bas, ay_son))
+                panel += [dict(r) for r in cur.fetchall() or []]
+                cur.execute("""SELECT teslim_eden_personel_id::text AS pid, teslim_eden_ad AS ad, tarih, sube_id::text AS sid, olusturma AS ts, 'TESLIM' AS tip
+                                 FROM kasa_teslim WHERE tarih BETWEEN %s AND %s""", (ay_bas, ay_son))
+                panel += [dict(r) for r in cur.fetchall() or []]
+        except Exception as e:  # noqa: BLE001
+            log.warning("personel takvim: panel izi okunamadı: %s", str(e)[:150])
+        for r in panel:
+            pid = r["pid"] if r["pid"] in ey_ids else ad_kimlik.get(_n(r.get("ad")))
+            if not pid or not r.get("tarih"):
+                continue
+            key = (pid, r["tarih"].isoformat())
+            if any(x["sid"] == r["sid"] for x in yok.get(key, [])):
+                continue
+            yok.setdefault(key, []).append({"pid": pid, "tarih": r["tarih"], "sid": r["sid"], "giris_ts": r["ts"], "vardiya_disi": False,
+                                            "vardiya_tip": {"ACILIS": "panel: açılış", "KAPANIS": "panel: kapanış", "TESLIM": "panel: teslim"}[r["tip"]],
+                                            "panel": True})
     # Sahip: Alsancak QR kullanmıyor → o ay HİÇ QR girişi olmayan şubenin personeline soru sorulmaz
-    qr_sube = {r["sid"] for rows in yok.values() for r in rows}
+    qr_sube = {r["sid"] for rows in yok.values() for r in rows if not r.get("panel")}
     gunler = []
     g = ay_bas
     while g <= ay_son:
@@ -471,13 +520,16 @@ def personel_takvim(ay: Optional[str] = None):
                         subeler_g.append(ad)
                 for ad in subeler_g:
                     say[ad] = say.get(ad, 0) + 1 / len(subeler_g)
+                rows = sorted(rows, key=lambda r: (r.get("panel", False), str(r["giris_ts"] or "")))
                 ilk = rows[0]["giris_ts"]
                 girisler = []
                 for r in rows:
-                    girisler.append({"sube": sube_ad.get(r["sid"], r["sid"]), "saat": _tr_saat(r["giris_ts"]), "vardiya": r["vardiya_tip"]})
+                    girisler.append({"sube": sube_ad.get(r["sid"], r["sid"]), "saat": _tr_saat(r["giris_ts"]), "vardiya": r["vardiya_tip"],
+                                     "panel": bool(r.get("panel"))})
                 satir.append({"gun": d, "durum": "calisti", "subeler": subeler_g, "girisler": girisler,
                               "saat": _tr_saat(ilk),
-                              "vardiya": sorted({r["vardiya_tip"] for r in rows}), "disi": any(r.get("vardiya_disi") for r in rows)})
+                              "vardiya": sorted({r["vardiya_tip"] for r in rows}), "disi": any(r.get("vardiya_disi") for r in rows),
+                              "qrsiz": all(r.get("panel") for r in rows)})
             elif dd > bugun:
                 satir.append({"gun": d, "durum": "gelecek"})
             elif (p.get("giris") and dd < p["giris"]) or (p.get("cikis") and dd > p["cikis"]):
@@ -510,14 +562,17 @@ def personel_takvim(ay: Optional[str] = None):
         out.append({"personel_id": pid, "ad": p["ad"], "kayitli_sube": kayitli, "aktif": bool(p.get("aktif", True)),
                     "cikis": p["cikis"].isoformat() if p.get("cikis") else None, "calisma_turu": p.get("calisma_turu") or "tam",
                     "gunler": satir, "sube_gun": {k: round(v, 1) for k, v in sorted(say.items(), key=lambda x: -x[1])},
-                    "calisti_gun": sum(1 for x in satir if x["durum"] == "calisti"), "izinli_gun": sum(1 for x in satir if x["durum"] == "izinli"),
+                    "calisti_gun": sum(1 for x in satir if x["durum"] == "calisti"),
+                    "qrsiz_gun": sum(1 for x in satir if x["durum"] == "calisti" and x.get("qrsiz")), "izinli_gun": sum(1 for x in satir if x["durum"] == "izinli"),
                     "en_cok_sube": en_cok, "uyusmaz": bool(en_cok and kayitli != "Ortak" and en_cok != kayitli),
                     "soru": soru, "yillik_izinde": bool(izinde), "mudur": mudur, "sube_qr_yok": qr_yok_sube,
                     "izin_bitis": izinde["izin_bitis"].isoformat() if izinde and izinde.get("izin_bitis") else None})
     out.sort(key=lambda x: (not x["aktif"], x["kayitli_sube"] or "", x["ad"]))
     return {"ay": a_, "gunler": gunler, "personel": out, "subeler": sorted(set(sube_ad.values())),
             "sorulacak": [{"personel_id": x["personel_id"], "ad": x["ad"], **x["soru"]} for x in out if x.get("soru")],
-            "not": "Kaynak: şube panelindeki QR girişi. O gün QR girişi yoksa 'izinli' sayılır. Bir günde iki şubeye girdiyse ikisi de yazılır."}
+            "eslesmeyen": eslesmeyen,
+            "not": "Kaynak: şube panelindeki QR girişi (bütün şubeler) + panel izi (QR okutmadan açılış/kapanış/teslim yaptıysa, çizgili kutu). "
+                   "Hiçbiri yoksa 'izinli'. Bir günde iki şubeye girdiyse ikisi de yazılır."}
 
 
 
