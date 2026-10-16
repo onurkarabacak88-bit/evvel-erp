@@ -165,6 +165,12 @@ def liste():
                              "maas": _tl(r["maas"]), "yemek": _tl(r["yemek"]), "saatlik": _tl(r["saatlik"]), "yol": _tl(r["yol"]),
                              "cikis": r["cikis"].isoformat() if r.get("cikis") else None, "calisma_turu": r.get("calisma_turu") or "tam",
                              "ucret_eski": (r["ucret_kim"] == "eski sistem kopyası"), "kaynak": r["kaynak"]})
+        try:
+            from evvel_yeni_kira_api import kira_tanimlari
+            with savepoint(cur, "sp_ey_t_kira"):
+                kira_t = kira_tanimlari(cur)
+        except Exception:  # noqa: BLE001
+            kira_t = {}
         cur.execute("SELECT * FROM ey_kart ORDER BY aktif DESC, ad")
         kart = [{**{k: v for k, v in dict(r).items() if k not in ("zaman", "acilis_borc", "limit_tutar")}, "acilis_borc": _tl(dict(r)["acilis_borc"]),
                  "limit_tutar": _tl(dict(r)["limit_tutar"]) if dict(r).get("limit_tutar") is not None else None} for r in cur.fetchall() or []]
@@ -173,7 +179,10 @@ def liste():
         cur.execute("SELECT id, ad, kisa, tur, sube_id, aktif FROM para_izi_cep WHERE tur IN ('banka','hesap') ORDER BY aktif DESC, sira, ad")
         banka = [{**dict(r), "sube_ad": sube_ad.get(dict(r)["sube_id"])} for r in cur.fetchall() or []]
     return {
-        "subeler": [{"id": s["id"], "ad": s["ad"], "pos_oran": float(s["pos_oran"]), "online_oran": float(s["online_oran"]), "aktif": s["aktif"]} for s in sube],
+        "subeler": [{"id": s["id"], "ad": s["ad"], "pos_oran": float(s["pos_oran"]), "online_oran": float(s["online_oran"]), "aktif": s["aktif"],
+                     "kira": (kira_t.get(s["id"]) or {}).get("kira"), "kira_artis_ayi": (kira_t.get(s["id"]) or {}).get("artis_ayi"),
+                     "kira_odeme_gunu": (kira_t.get(s["id"]) or {}).get("odeme_gunu"), "kira_gecmis": (kira_t.get(s["id"]) or {}).get("gecmis", [])}
+                    for s in sube],
         "personel": personel, "kartlar": kart, "toptancilar": top, "bankalar": banka, "ay": ay,
     }
 
@@ -200,6 +209,10 @@ class TanimBody(BaseModel):
     kimin: Optional[str] = None
     acilis_borc: Optional[Decimal] = None
     limit_tutar: Optional[Decimal] = None
+    kira: Optional[Decimal] = None           # şube aylık kirası
+    kira_ay: Optional[str] = None            # kira hangi aydan geçerli (YYYY-AA)
+    kira_artis_ayi: Optional[int] = None     # her yıl hangi ay artar (1–12)
+    kira_odeme_gunu: Optional[int] = None
     kesim_gunu: Optional[int] = None
     son_odeme_gunu: Optional[int] = None
     limit_grup: Optional[str] = None
@@ -268,6 +281,9 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                                  aktif=COALESCE(%s,aktif), degistiren=%s, zaman=NOW() WHERE id=%s""",
                             (ad, b.pos_oran, b.online_oran, b.aktif, kim, tid))
             sube_cepleri_yaz(cur)   # dükkân nakdi + şube bankası cepleri hemen açılır / adı güncellenir
+            if any(x is not None for x in (b.kira, b.kira_artis_ayi, b.kira_odeme_gunu)):
+                from evvel_yeni_kira_api import kira_yaz
+                kira_yaz(cur, tid, kim, b.kira, b.kira_ay, b.kira_artis_ayi, b.kira_odeme_gunu)
             return {"ok": True, "id": tid, "mesaj": f"Şube {'eklendi — dükkân nakdi ve banka cebi açıldı' if yeni else 'güncellendi'}"}
 
         if tur == "personel":

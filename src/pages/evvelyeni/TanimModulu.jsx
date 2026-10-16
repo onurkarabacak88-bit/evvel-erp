@@ -24,8 +24,11 @@ const YAPI = {
   tanim_sube: {
     tur: 'sube', liste: 'subeler', baslik: 'Şubeler', tekil: 'şube',
     not: 'Şube eklenince Kasa\'da "dükkân nakdi" ve "bankası" cepleri kendiliğinden açılır.',
-    alanlar: [{ k: 'ad', ad: 'Şube adı', zorunlu: true }, { k: 'pos_oran', ad: 'POS komisyonu %', sayi: true }, { k: 'online_oran', ad: 'Online komisyonu %', sayi: true }],
-    kolon: (x) => [x.ad, `POS %${fmt(x.pos_oran)} · online %${fmt(x.online_oran)}`],
+    alanlar: [{ k: 'ad', ad: 'Şube adı', zorunlu: true }, { k: 'pos_oran', ad: 'POS komisyonu %', sayi: true }, { k: 'online_oran', ad: 'Online komisyonu %', sayi: true },
+      { k: 'kira', ad: 'Aylık kira ₺', sayi: true }, { k: 'kira_ay', ad: 'Kira hangi aydan geçerli', tip: 'month' },
+      { k: 'kira_odeme_gunu', ad: 'Kira ödeme günü (1–31)', sayi: true }, { k: 'kira_artis_ayi', ad: 'Kira artış ayı (1–12, ör. 6 = Haziran)', sayi: true }],
+    kolon: (x) => [x.ad, `POS %${fmt(x.pos_oran)} · online %${fmt(x.online_oran)}`,
+      x.kira != null ? `kira ${fmt(x.kira)} ₺${x.kira_odeme_gunu ? ` · her ayın ${x.kira_odeme_gunu}'i` : ''}${x.kira_artis_ayi ? ` · artış ${['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'][x.kira_artis_ayi - 1]}` : ''}` : 'kira tanımsız'],
   },
   tanim_personel: {
     tur: 'personel', liste: 'personel', baslik: 'Personel', tekil: 'personel',

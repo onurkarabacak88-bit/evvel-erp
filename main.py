@@ -292,6 +292,14 @@ except Exception as _ey_odeme_err:
     logging.getLogger(__name__).warning(
         f"evvel_yeni_odeme modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_odeme_err}"
     )
+# 🏠 EVVEL YENİ · KİRALAR (2026-10-16) — şube kirası tanımı + yıllık kira takvimi.
+try:
+    from evvel_yeni_kira_api import router as evvel_yeni_kira_router
+    app.include_router(evvel_yeni_kira_router)
+except Exception as _ey_kira_err:
+    logging.getLogger(__name__).warning(
+        f"evvel_yeni_kira modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_kira_err}"
+    )
 # 💳 EVVEL YENİ · KARTLAR (2026-10-16) — sade: kullanılabilir limit = son teyit ± ödeme formundaki kart hareketleri.
 try:
     from evvel_yeni_kart_api import router as evvel_yeni_kart_router

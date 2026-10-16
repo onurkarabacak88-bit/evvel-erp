@@ -11,6 +11,7 @@ import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, odemeFisi, fmt, 
 
 export const ODEME_SAYFALAR = [
   { id: 'odemeler', ad: 'Ödeme / gider gir', alt: 'Nakit · havale · kart' },
+  { id: 'kira_takvimi', ad: 'Kira takvimi', alt: 'Şube × ay · artış ayları' },
 ];
 
 const alan = {
@@ -84,6 +85,26 @@ export default function OdemeModulu({ onToast }) {
       return { ...x, parcalar: x.parcalar.map((q, j) => (j === 0 ? { ...q, tutar: yeni } : q)) };
     });
   }, [pd, f.personel_kalemi]);
+  // Sahip (2026-10-16): "ödemelerde sadece kira seçilince otomatik gelsin" → şube + ay seçilince o ayın kirası (kalanı) tutara yazılır
+  const [kd, setKd] = useState(null);
+  useEffect(() => {
+    setKd(null);
+    if (f.konu !== 'kira' || !f.sube_id || !f.ait_ay) return;
+    let on = true;
+    api(`/evvel-yeni/kira/tutar?sube_id=${encodeURIComponent(f.sube_id)}&ay=${f.ait_ay}`).then((r) => { if (on) setKd(r); }).catch(() => {});
+    return () => { on = false; };
+  }, [f.konu, f.sube_id, f.ait_ay]);
+  useEffect(() => {
+    if (!kd || kd.kalan == null) return;
+    setF((x) => {
+      const t0 = x.parcalar[0]?.tutar ?? '';
+      if (t0 !== '' && t0 !== otoTutar.current) return x;
+      const yeni = kd.kalan > 0 ? String(kd.kalan) : '';
+      if (yeni === t0) return x;
+      otoTutar.current = yeni;
+      return { ...x, parcalar: x.parcalar.map((q, j) => (j === 0 ? { ...q, tutar: yeni } : q)) };
+    });
+  }, [kd]);
   const ucretKaydet = async () => {
     try {
       const r = await api('/evvel-yeni/odeme/personel-ucret', { method: 'POST', body: { personel_id: f.personel_id, ay: f.ait_ay, maas: sayi(ucretDuz.maas) || 0, yemek: sayi(ucretDuz.yemek) || 0 } });
@@ -164,6 +185,13 @@ export default function OdemeModulu({ onToast }) {
               <Etiket ad="Hangi şube"><select style={alan} value={f.sube_id || ''} onChange={(e) => set('sube_id', e.target.value)}>
                 <option value="">Seç…</option>{L.subeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
               </select></Etiket>
+            )}
+            {f.konu === 'kira' && kd && (
+              <div style={{ gridColumn: '1 / -1', padding: '10px 12px', borderRadius: 10, background: 'var(--pi-accent-soft)', fontSize: 13.5 }}>
+                {kd.tanimli ? <>🏠 {ayAdi(kd.ay)} kirası <b style={num}>{fmt(kd.kira)}</b> ₺ · ödenen {fmt(kd.odenen)} · <b>kalan {fmt(kd.kalan)} ₺</b>
+                  {kd.kalan > 0 ? <span style={{ color: R.not }}> (tutara yazıldı — gerekirse düzelt)</span> : <span style={{ color: R.yesil }}> · bu ayın kirası ödenmiş ✓</span>}</>
+                  : <>Bu şubenin kirası tanımlı değil — Tanımlar → Şubeler'den kira gir, sonra burada kendiliğinden gelir.</>}
+              </div>
             )}
             {f.konu === 'fatura' && (
               <Etiket ad="Fatura türü"><select style={alan} value={f.fatura_turu || ''} onChange={(e) => set('fatura_turu', e.target.value)}>

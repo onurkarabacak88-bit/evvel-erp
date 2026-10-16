@@ -19,6 +19,7 @@ import BarModulu, { BAR_SAYFALAR } from './BarModulu';
 import MaasModulu, { MAAS_SAYFALAR, PersonelTakvim } from './MaasModulu';
 import SatisModulu, { SATIS_SAYFALAR } from './SatisModulu';
 import KartModulu, { KART_SAYFALAR } from './KartModulu';
+import { KiraTakvim } from './KiraModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
@@ -219,7 +220,7 @@ export default function EvvelYeniApp() {
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'kazanc'
               ? <KazancModulu />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'odeme'
-              ? <OdemeModulu onToast={setToast} />
+              ? (sekme === 'kira_takvimi' ? <KiraTakvim /> : <OdemeModulu onToast={setToast} />)
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'gider'
               ? <GiderModulu onToast={setToast} />
               : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'gelir'
