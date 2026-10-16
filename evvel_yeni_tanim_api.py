@@ -50,6 +50,12 @@ def tanim_hazirla(cur) -> None:
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel_ucret (
         personel_id TEXT NOT NULL, gecerli_ay TEXT NOT NULL, maas BIGINT NOT NULL DEFAULT 0, yemek BIGINT NOT NULL DEFAULT 0,
         degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (personel_id, gecerli_ay))""")
+    # Maaş için personel kartı (2026-10-16, Codex): çıkış, çalışma türü, kişi kimliği; ücrette saatlik + yol
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS cikis DATE")
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS calisma_turu TEXT NOT NULL DEFAULT 'tam'")
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS kisi_id TEXT")
+    cur.execute("ALTER TABLE ey_personel_ucret ADD COLUMN IF NOT EXISTS saatlik BIGINT NOT NULL DEFAULT 0")
+    cur.execute("ALTER TABLE ey_personel_ucret ADD COLUMN IF NOT EXISTS yol BIGINT NOT NULL DEFAULT 0")
     # ── Eski sistemden kopya (yalnız EKSİK kimlikler) ──
     kopyalar = [
         ("sp_ey_k_sube", """INSERT INTO ey_sube (id, ad, pos_oran, online_oran, aktif, kaynak, degistiren)
@@ -68,6 +74,21 @@ def tanim_hazirla(cur) -> None:
         ("sp_ey_k_top", """INSERT INTO ey_toptanci (id, ad, kategori, telefon, aktif, kaynak, degistiren)
              SELECT id::text, ad, kategori, telefon, COALESCE(aktif,TRUE), 'eski_sistem', 'eski sistem kopyası'
                FROM tedarikciler ON CONFLICT (id) DO NOTHING"""),
+    ]
+    kopyalar += [
+        # Yalnız BOŞ alanları doldur — burada düzeltilen ezilmez
+        ("sp_ey_k_per2", """UPDATE ey_personel e SET giris = COALESCE(e.giris, p.baslangic_tarihi::date),
+                                   cikis = COALESCE(e.cikis, p.cikis_tarihi::date),
+                                   calisma_turu = CASE WHEN e.kaynak = 'eski_sistem' AND e.degistiren = 'eski sistem kopyası'
+                                                       THEN (CASE WHEN COALESCE(p.calisma_turu,'surekli') = 'surekli' THEN 'tam' ELSE 'yari' END)
+                                                       ELSE e.calisma_turu END
+                              FROM personel p WHERE p.id::text = e.id"""),
+        ("sp_ey_k_kisi", """UPDATE ey_personel e SET kisi_id = p.kisi_id::text FROM personel p
+                              WHERE p.id::text = e.id AND e.kisi_id IS NULL AND p.kisi_id IS NOT NULL"""),
+        ("sp_ey_k_ucret2", """UPDATE ey_personel_ucret u SET saatlik = ROUND(COALESCE(p.saatlik_ucret,0)*100)::bigint,
+                                     yol = ROUND(COALESCE(p.yol_ucreti,0)*100)::bigint
+                                FROM personel p WHERE p.id::text = u.personel_id AND u.degistiren = 'eski sistem kopyası'
+                                 AND u.saatlik = 0 AND u.yol = 0"""),
     ]
     for sp, sql in kopyalar:
         try:
@@ -91,7 +112,7 @@ def secim_listeleri(cur) -> dict:
     out = {}
     for ad, sql in (
         ("toptancilar", "SELECT id, ad, kategori FROM ey_toptanci WHERE aktif ORDER BY ad"),
-        ("personel", "SELECT id, ad, sube_id, gorev FROM ey_personel WHERE aktif ORDER BY ad"),
+        ("personel", "SELECT id, ad, sube_id, gorev, aktif, cikis::text AS cikis FROM ey_personel ORDER BY aktif DESC, ad"),
         ("kartlar", "SELECT id, ad, banka, kimin FROM ey_kart WHERE aktif ORDER BY ad"),
     ):
         cur.execute(sql)
@@ -131,9 +152,9 @@ def liste():
         tanim_hazirla(cur)
         sube = subeler(cur, hepsi=True)
         sube_ad = {s["id"]: s["ad"] for s in sube}
-        cur.execute("""SELECT p.*, u.maas, u.yemek, u.gecerli_ay, u.degistiren AS ucret_kim
+        cur.execute("""SELECT p.*, u.maas, u.yemek, u.saatlik, u.yol, u.gecerli_ay, u.degistiren AS ucret_kim
                          FROM ey_personel p LEFT JOIN LATERAL (
-                           SELECT maas, yemek, gecerli_ay, degistiren FROM ey_personel_ucret
+                           SELECT maas, yemek, saatlik, yol, gecerli_ay, degistiren FROM ey_personel_ucret
                             WHERE personel_id = p.id AND gecerli_ay <= %s ORDER BY gecerli_ay DESC LIMIT 1) u ON TRUE
                         ORDER BY p.aktif DESC, p.ad""", (ay,))
         personel = []
@@ -141,7 +162,8 @@ def liste():
             r = dict(r)
             personel.append({"id": r["id"], "ad": r["ad"], "sube_id": r["sube_id"], "sube_ad": sube_ad.get(r["sube_id"]) or "Ortak",
                              "gorev": r["gorev"], "giris": r["giris"].isoformat() if r["giris"] else None, "aktif": r["aktif"],
-                             "maas": _tl(r["maas"]), "yemek": _tl(r["yemek"]),
+                             "maas": _tl(r["maas"]), "yemek": _tl(r["yemek"]), "saatlik": _tl(r["saatlik"]), "yol": _tl(r["yol"]),
+                             "cikis": r["cikis"].isoformat() if r.get("cikis") else None, "calisma_turu": r.get("calisma_turu") or "tam",
                              "ucret_eski": (r["ucret_kim"] == "eski sistem kopyası"), "kaynak": r["kaynak"]})
         cur.execute("SELECT * FROM ey_kart ORDER BY aktif DESC, ad")
         kart = [{**{k: v for k, v in dict(r).items() if k not in ("zaman", "acilis_borc")}, "acilis_borc": _tl(dict(r)["acilis_borc"])} for r in cur.fetchall() or []]
@@ -168,6 +190,10 @@ class TanimBody(BaseModel):
     maas: Optional[Decimal] = None
     yemek: Optional[Decimal] = None
     ucret_ay: Optional[str] = None       # maaş/yemek değişikliği hangi aydan itibaren
+    cikis: Optional[str] = None          # işten ayrılış (YYYY-AA-GG) — son maaş için
+    calisma_turu: Optional[str] = None   # 'tam' | 'yari'
+    saatlik: Optional[Decimal] = None    # yarı zamanlı saatlik ücret
+    yol: Optional[Decimal] = None        # aylık yol
     # kart / banka
     banka: Optional[str] = None
     kimin: Optional[str] = None
@@ -244,6 +270,14 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                 cur.execute("SELECT 1 FROM ey_sube WHERE id=%s", (b.sube_id,))
                 if not cur.fetchone():
                     raise HTTPException(400, "Şube bulunamadı")
+            if b.calisma_turu is not None and b.calisma_turu not in ("tam", "yari"):
+                raise HTTPException(400, "Çalışma türü: tam | yari")
+            cikis = None
+            if b.cikis:
+                try:
+                    cikis = date.fromisoformat(b.cikis[:10])
+                except ValueError:
+                    raise HTTPException(400, "Ayrılış tarihi YYYY-AA-GG olmalı")
             giris = None
             if b.giris:
                 try:
@@ -254,24 +288,28 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                 if b.maas is None:
                     raise HTTPException(400, "Maaşı yaz (0 olabilir)")
                 tid = "ey-" + uuid.uuid4().hex[:12]
-                cur.execute("""INSERT INTO ey_personel (id, ad, sube_id, gorev, giris, degistiren) VALUES (%s,%s,%s,%s,%s,%s)""",
-                            (tid, ad, None if b.sube_id in (None, "", "ortak") else b.sube_id, (b.gorev or "").strip()[:40] or None, giris, kim))
+                cur.execute("""INSERT INTO ey_personel (id, ad, sube_id, gorev, giris, cikis, calisma_turu, degistiren)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                            (tid, ad, None if b.sube_id in (None, "", "ortak") else b.sube_id, (b.gorev or "").strip()[:40] or None, giris,
+                             cikis, b.calisma_turu or "tam", kim))
             else:
                 cur.execute("""UPDATE ey_personel SET ad=COALESCE(%s,ad),
                                  sube_id=CASE WHEN %s THEN NULL ELSE COALESCE(%s,sube_id) END, gorev=COALESCE(%s,gorev),
-                                 giris=COALESCE(%s,giris), aktif=COALESCE(%s,aktif), degistiren=%s, zaman=NOW() WHERE id=%s""",
+                                 giris=COALESCE(%s,giris), cikis=COALESCE(%s,cikis), calisma_turu=COALESCE(%s,calisma_turu),
+                                 aktif=COALESCE(%s,aktif), degistiren=%s, zaman=NOW() WHERE id=%s""",
                             (ad, b.sube_id == "ortak", None if b.sube_id == "ortak" else b.sube_id,
-                             (b.gorev or "").strip()[:40] or None, giris, b.aktif, kim, tid))
-            if b.maas is not None or b.yemek is not None:
+                             (b.gorev or "").strip()[:40] or None, giris, cikis, b.calisma_turu, b.aktif, kim, tid))
+            if any(x is not None for x in (b.maas, b.yemek, b.saatlik, b.yol)):
                 ay = (b.ucret_ay or (giris.isoformat() if giris else _bugun().isoformat()))[:7]
-                cur.execute("""SELECT maas, yemek FROM ey_personel_ucret WHERE personel_id=%s AND gecerli_ay <= %s
+                cur.execute("""SELECT maas, yemek, saatlik, yol FROM ey_personel_ucret WHERE personel_id=%s AND gecerli_ay <= %s
                                 ORDER BY gecerli_ay DESC LIMIT 1""", (tid, ay))
-                o = dict(cur.fetchone() or {"maas": 0, "yemek": 0})
-                cur.execute("""INSERT INTO ey_personel_ucret (personel_id, gecerli_ay, maas, yemek, degistiren) VALUES (%s,%s,%s,%s,%s)
+                o = dict(cur.fetchone() or {"maas": 0, "yemek": 0, "saatlik": 0, "yol": 0})
+                yu = {k: (_kurus(getattr(b, k)) if getattr(b, k) is not None else o[k]) for k in ("maas", "yemek", "saatlik", "yol")}
+                cur.execute("""INSERT INTO ey_personel_ucret (personel_id, gecerli_ay, maas, yemek, saatlik, yol, degistiren)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s)
                                ON CONFLICT (personel_id, gecerli_ay) DO UPDATE SET maas=EXCLUDED.maas, yemek=EXCLUDED.yemek,
-                                 degistiren=EXCLUDED.degistiren, zaman=NOW()""",
-                            (tid, ay, _kurus(b.maas) if b.maas is not None else o["maas"],
-                             _kurus(b.yemek) if b.yemek is not None else o["yemek"], kim))
+                                 saatlik=EXCLUDED.saatlik, yol=EXCLUDED.yol, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
+                            (tid, ay, yu["maas"], yu["yemek"], yu["saatlik"], yu["yol"], kim))
             return {"ok": True, "id": tid, "mesaj": f"Personel {'eklendi' if yeni else 'güncellendi'}"}
 
         if tur == "kart":

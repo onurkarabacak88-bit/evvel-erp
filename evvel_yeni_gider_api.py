@@ -288,6 +288,8 @@ def gider_ozet(ay: Optional[str] = None):
         if (v.get("ait_ay") or h["is_gunu"][:7]) != a_:
             continue
         tip = (v.get("konu") or {}).get("tip") or "diger"
+        if tip == "personel":
+            continue   # personel gideri hak edişten yazılır (aşağıda) — ödeme yalnız kasayı etkiler
         tip = tip if tip in TURLER else "diger"
         t = int(v.get("toplam", h["tutar"]))
         satir = {"gun": h["is_gunu"], "tur": tip, "aciklama": v.get("aciklama"), "adet": None, "birim": None, "tutar": _tl_sayi(t),
@@ -298,6 +300,24 @@ def gider_ozet(ay: Optional[str] = None):
             S[sid]["satirlar"].append(satir)
         else:
             ORTAK["toplam"] += t
+            ORTAK["satirlar"].append(satir)
+    # 1d) PERSONEL — Maaşlar'ın HAK EDİŞİ (sahip + Codex: gider bir kez, çalışma ayına; avans/ödeme gider değil)
+    try:
+        with db() as (_c2, cur2):
+            from evvel_yeni_maas_api import personel_giderleri
+            pg = personel_giderleri(cur2, a_)
+    except Exception as e:  # noqa: BLE001
+        log.warning("evvel-yeni gider: maaş hak edişi okunamadı: %s", str(e)[:200])
+        pg = []
+    for x in pg:
+        satir = {"gun": a_ + "-01", "tur": "personel", "aciklama": x["ad"] + (" · tahmini (ay onaylanmadı)" if x["tahmini"] else ""),
+                 "adet": None, "birim": None, "tutar": _tl_sayi(x["tutar"]), "not": "hak ediş" + (" · eski sistem" if x["kaynak"] == "eski_sistem" else "")}
+        sid = x["sube_id"]
+        if sid in S:
+            S[sid]["personel"] += x["tutar"]
+            S[sid]["satirlar"].append(satir)
+        else:
+            ORTAK["toplam"] += x["tutar"]
             ORTAK["satirlar"].append(satir)
     # 2) DÜKKÂN KÜÇÜK GİDERLERİ (Kasa'daki 'dukkan_gideri' ödemeleri) + patron şahsi ayrımı
     cekisler = []

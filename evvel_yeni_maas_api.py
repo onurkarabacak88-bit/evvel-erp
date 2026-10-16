@@ -1,0 +1,373 @@
+"""👥 EVVEL YENİ · MAAŞLAR (2026-10-16) — kişi × ÇALIŞMA AYI: hak ediş − avans − ödenen = kalan.
+
+Ortak karar (sahip + Codex + Claude):
+  · TEK hesap, TEK ekran. Satır = kişi × çalışma ayı (ödeme ayı DEĞİL: Ekim maaşı Kasım'da ödenir, ait_ay=Ekim).
+  · Tam zamanlı: taban = maaş/30 × geçen gün (tam ay 30; ay ortası giriş/çıkışta takvim günü, en çok 30)
+                 mesai = mesai saati × maaş/(30 × 9,5) · bayram = saat × maaş/285 × 2 · yol = yol/30 × gün
+                 − (eksik gün [+ raporlu gün, kesinti seçiliyse]) × maaş/30 · ± gerekçeli düzeltme
+  · Yarı zamanlı: saat × saatlik ücret (+ bayram ×2). Eksik gün kesintisi YOK. Saatlik ücret yoksa "ücret tanımsız" —
+    99 ₺ varsayımı YOK (Codex).
+  · Yemek (sahip: Kasım'dan): aylık sabit yemek × geçen gün/30 — mola kontrolü ücretten ayrı.
+  · Gün/mesai/saat ÖNERİSİ şube panelinin vardiya planından (eski gorev_api.vardiya_takip; panel taşınana kadar);
+    elle girilen değer öneriyi ezer.
+  · Avans: o ayın avansı + önceki aydan devreden → hak ediş kadar MAHSUP; karşılanamayan ertesi aya DEVİR.
+    Şubenin elden verdiği avans da (anlik_giderler → Kasa) kişinin avansı sayılır.
+  · GİDER hak edişten (çalışma ayına) BİR KEZ yazılır; maaş/avans ödemeleri yalnız kasadan düşer.
+  · EKİM (geçiş): eski sistemin hesabıyla kapanır (personel_aylik: hesaplanan_net avans düşülmüş + avans_mahsup).
+"""
+
+import json
+import logging
+from datetime import date, timedelta
+from decimal import Decimal
+from typing import Optional
+
+from fastapi import APIRouter, Header, HTTPException
+from pydantic import BaseModel
+
+from database import db, savepoint
+
+log = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/evvel-yeni/maas", tags=["evvel-yeni-maas"])
+
+AY_GUN = 30
+GUNLUK_SAAT = Decimal("9.5")
+BAYRAM_KAT = 2
+YENI_HESAP_BASLANGIC = "2026-11"     # Ekim ve öncesi eski sistemin hesabıyla
+ODENEN_KALEMLER = ("Maaş", "Yemek ücreti", "Prim")   # SGK/vergi kişinin bakiyesini kapatmaz
+_HAZIR = False
+
+
+def _kurus(x) -> int:
+    return int((Decimal(str(x or 0)) * 100).quantize(Decimal("1")))
+
+
+def _tl(k) -> float:
+    return round(int(k or 0) / 100, 2)
+
+
+def _ay_sinir(ay: str):
+    b = date.fromisoformat(ay[:7] + "-01")
+    s = (b.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    return b, s
+
+
+def _ay_kaydir(ay: str, n: int) -> str:
+    y, m = int(ay[:4]), int(ay[5:7]) + n
+    while m < 1:
+        y, m = y - 1, m + 12
+    while m > 12:
+        y, m = y + 1, m - 12
+    return f"{y:04d}-{m:02d}"
+
+
+def _hazirla(cur):
+    global _HAZIR
+    if _HAZIR:
+        return
+    from evvel_yeni_tanim_api import tanim_hazirla
+    tanim_hazirla(cur)
+    cur.execute("SET LOCAL lock_timeout = '3s'")
+    cur.execute("""CREATE TABLE IF NOT EXISTS ey_maas_ay (
+        personel_id TEXT NOT NULL, ay TEXT NOT NULL,
+        eksik_gun NUMERIC(5,2) NOT NULL DEFAULT 0, rapor_gun NUMERIC(5,2) NOT NULL DEFAULT 0, rapor_kesinti BOOLEAN NOT NULL DEFAULT FALSE,
+        bayram_saat NUMERIC(6,2) NOT NULL DEFAULT 0, mesai_saat NUMERIC(6,2), calisma_saat NUMERIC(7,2),
+        duzeltme BIGINT NOT NULL DEFAULT 0, aciklama TEXT,
+        onay BOOLEAN NOT NULL DEFAULT FALSE, onaylayan TEXT, onay_zaman TIMESTAMPTZ, kalemler JSONB,
+        degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (personel_id, ay))""")
+    _HAZIR = True
+
+
+def _vardiya_onerisi(ay: str) -> dict:
+    """Panel vardiya planından öneri: {pid: {mesai_saat, calisma_saat, planli_gun}} — eski uç, okuma."""
+    try:
+        from gorev_api import vardiya_takip
+        r = vardiya_takip(int(ay[:4]), int(ay[5:7]))
+        out = {}
+        for p in (r or {}).get("personeller") or []:
+            u = p.get("ucret_detay") or {}
+            out[str(p.get("personel_id"))] = {
+                "mesai_saat": float(p.get("toplam_fazla_mesai_saat") or 0),
+                "calisma_saat": float(u.get("calisma_saati") or p.get("toplam_planlanan_saat") or 0),
+                "planli_gun": int(p.get("planli_gun") or 0),
+            }
+        return out
+    except Exception as e:  # noqa: BLE001 — vardiya okunamazsa öneri yok; elle girilir
+        log.info("evvel-yeni maaş: vardiya önerisi alınamadı: %s", str(e)[:160])
+        return {}
+
+
+def _odemeler(cur) -> dict:
+    """(personel_id, ait_ay) → {kalem: kuruş} — Evvel Yeni ödeme formu + şubenin elden avansı (iptaller hariç)."""
+    from evvel_yeni_kasa_api import _yukle
+    _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+    out = {}
+    for h in kayit:
+        if h["tur"] != "odeme":
+            continue
+        v = h["veri"]
+        k = v.get("konu") or {}
+        if k.get("tip") != "personel" or not k.get("personel_id"):
+            continue
+        anah = (str(k["personel_id"]), (v.get("ait_ay") or h["is_gunu"])[:7])
+        kal = k.get("kalem") or "Maaş"
+        out.setdefault(anah, {})
+        out[anah][kal] = out[anah].get(kal, 0) + int(v.get("toplam", h["tutar"]))
+    return out
+
+
+def _eski_ekim(cur, ay: str) -> dict:
+    """Eski sistemin ay kaydı: hesaplanan_net (avans DÜŞÜLMÜŞ) + avans_mahsup → hak ediş."""
+    out = {}
+    try:
+        with savepoint(cur, "sp_ey_maas_eski"):
+            cur.execute("""SELECT personel_id::text AS pid, hesaplanan_net, avans_mahsup, durum FROM personel_aylik
+                            WHERE yil=%s AND ay=%s""", (int(ay[:4]), int(ay[5:7])))
+            for r in cur.fetchall() or []:
+                r = dict(r)
+                net = _kurus(r.get("hesaplanan_net") or 0)
+                mah = _kurus(r.get("avans_mahsup") or 0)
+                out[r["pid"]] = {"net": net, "mahsup": mah, "hak": net + mah, "durum": r.get("durum")}
+    except Exception as e:  # noqa: BLE001
+        log.info("evvel-yeni maaş: eski personel_aylik okunamadı: %s", str(e)[:120])
+    return out
+
+
+def _ucretler(cur, ay: str) -> dict:
+    cur.execute("""SELECT DISTINCT ON (personel_id) personel_id, maas, yemek, saatlik, yol, degistiren FROM ey_personel_ucret
+                    WHERE gecerli_ay <= %s ORDER BY personel_id, gecerli_ay DESC""", (ay,))
+    return {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
+
+
+def _gecen_gun(giris, cikis, ay_bas, ay_son, bugun):
+    if ay_bas > bugun:
+        return 0, True
+    bas = max(ay_bas, giris) if giris else ay_bas
+    son = min(ay_son, cikis) if cikis else ay_son
+    acik = son >= bugun and ay_bas <= bugun <= ay_son
+    if acik:
+        son = min(son, bugun)
+    if son < bas:
+        return 0, acik
+    if bas == ay_bas and son == ay_son:
+        return AY_GUN, acik
+    return min(AY_GUN, (son - bas).days + 1), acik
+
+
+def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict] = None, _devir_cache=None) -> list:
+    """Ayın bütün personel satırları. Avans devri için önceki ayları yeni hesap başlangıcından zincirler."""
+    from evvel_yeni_kasa_api import _bugun
+    _hazirla(cur)
+    bugun = _bugun()
+    ay_bas, ay_son = _ay_sinir(ay)
+    odemeler = odemeler if odemeler is not None else _odemeler(cur)
+    cur.execute("""SELECT id, ad, sube_id, gorev, giris, cikis, calisma_turu, aktif FROM ey_personel""")
+    kisiler = [dict(r) for r in cur.fetchall() or []]
+    cur.execute("SELECT * FROM ey_maas_ay WHERE ay=%s", (ay,))
+    elle = {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
+    eski_mod = ay < YENI_HESAP_BASLANGIC
+    eski = _eski_ekim(cur, ay) if eski_mod else {}
+    ucret = _ucretler(cur, ay)
+    oneri = _vardiya_onerisi(ay) if not eski_mod else {}
+    # önceki aydan avans devri (yeni hesap başlangıcından itibaren zincir)
+    devir_in = {}
+    if not eski_mod and ay > YENI_HESAP_BASLANGIC:
+        onceki = _ay_kaydir(ay, -1)
+        for r in hesapla(cur, onceki, sadece, odemeler):
+            devir_in[r["personel_id"]] = _kurus(r["avans_devir_sonraki"])
+    satir = []
+    for p in kisiler:
+        pid = p["id"]
+        if sadece and pid != sadece:
+            continue
+        if p.get("giris") and p["giris"] > ay_son:
+            continue
+        if p.get("cikis") and p["cikis"] < ay_bas:
+            continue
+        od = odemeler.get((pid, ay), {})
+        avans = od.get("Avans", 0)
+        odenen = sum(od.get(k, 0) for k in ODENEN_KALEMLER)
+        e = elle.get(pid) or {}
+        if eski_mod:
+            x = eski.get(pid)
+            if not x and not od:
+                continue
+            hak = x["hak"] if x else 0
+            # Eski net avansı zaten düşmüş; Evvel Yeni formundan girilen Ekim avansı eskide YOK → ayrıca düş
+            kalemler = [{"kod": "eski", "ad": "Eski sistem hak edişi (Ekim kapanışı)", "tutar": _tl(hak)}]
+            mahsup = (x["mahsup"] if x else 0) + avans
+            satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, 0, odenen, od, e, ucret.get(pid), "eski_sistem",
+                                {"eski_durum": (x or {}).get("durum"), "eski_avans_mahsup": _tl((x or {}).get("mahsup", 0))}, False))
+            continue
+        u = ucret.get(pid) or {"maas": 0, "yemek": 0, "saatlik": 0, "yol": 0}
+        gun, acik = _gecen_gun(p.get("giris"), p.get("cikis"), ay_bas, ay_son, bugun)
+        o = oneri.get(pid) or {}
+        uyari = []
+        yari = (p.get("calisma_turu") or "tam") == "yari"
+        maas = int(u["maas"] or 0)
+        kalemler = []
+        if yari:
+            saat = float(e["calisma_saat"]) if e.get("calisma_saat") is not None else o.get("calisma_saat", 0)
+            sat = int(u.get("saatlik") or 0)
+            if not sat:
+                uyari.append("Saatlik ücret tanımsız — Tanımlar → Personel")
+            kalemler.append({"kod": "saat", "ad": f"Çalışma {saat:g} saat × {_tl(sat):g} ₺" + (" (elle)" if e.get("calisma_saat") is not None else " (vardiya planı)"),
+                             "tutar": _tl(int(Decimal(str(saat)) * sat))})
+            if e.get("bayram_saat"):
+                kalemler.append({"kod": "bayram", "ad": f"Bayram {float(e['bayram_saat']):g} saat × 2",
+                                 "tutar": _tl(int(Decimal(str(e["bayram_saat"])) * sat * BAYRAM_KAT))})
+        else:
+            if not maas:
+                uyari.append("Maaş tanımsız (0) — Tanımlar → Personel")
+            kalemler.append({"kod": "taban", "ad": f"Taban: maaş/30 × {gun} gün", "tutar": _tl(maas * gun // AY_GUN)})
+            mesai = float(e["mesai_saat"]) if e.get("mesai_saat") is not None else o.get("mesai_saat", 0)
+            if mesai:
+                kalemler.append({"kod": "mesai", "ad": f"Fazla mesai {mesai:g} saat" + (" (elle)" if e.get("mesai_saat") is not None else " (vardiya planı)"),
+                                 "tutar": _tl(int(Decimal(str(mesai)) * maas / (AY_GUN * GUNLUK_SAAT)))})
+            if e.get("bayram_saat"):
+                kalemler.append({"kod": "bayram", "ad": f"Bayram {float(e['bayram_saat']):g} saat × 2",
+                                 "tutar": _tl(int(Decimal(str(e["bayram_saat"])) * maas / (AY_GUN * GUNLUK_SAAT) * BAYRAM_KAT))})
+            kes_gun = Decimal(str(e.get("eksik_gun") or 0)) + (Decimal(str(e.get("rapor_gun") or 0)) if e.get("rapor_kesinti") else 0)
+            if kes_gun:
+                kalemler.append({"kod": "eksik", "ad": f"Eksik gün {kes_gun:g} × maaş/30", "tutar": -_tl(int(kes_gun * maas / AY_GUN))})
+        if u.get("yemek"):
+            kalemler.append({"kod": "yemek", "ad": f"Yemek: aylık × {gun}/30", "tutar": _tl(int(u["yemek"]) * gun // AY_GUN)})
+        if u.get("yol"):
+            kalemler.append({"kod": "yol", "ad": f"Yol: aylık × {gun}/30", "tutar": _tl(int(u["yol"]) * gun // AY_GUN)})
+        if e.get("duzeltme"):
+            kalemler.append({"kod": "duzeltme", "ad": "Düzeltme" + (f" — {e.get('aciklama')}" if e.get("aciklama") else ""), "tutar": _tl(e["duzeltme"])})
+        # Onaylı ay: kalemler dondurulur (sonradan değişen ücret/vardiya geçmişi bozmaz)
+        if e.get("onay") and e.get("kalemler"):
+            kalemler = e["kalemler"] if isinstance(e["kalemler"], list) else json.loads(e["kalemler"])
+        hak = sum(_kurus(k["tutar"]) for k in kalemler)
+        din = devir_in.get(pid, 0)
+        mahsup = min(avans + din, max(hak, 0))
+        ek = {"gun": gun, "ay_acik": acik, "uyari": uyari, "avans_devir_onceki": _tl(din),
+              "yemek_hak": next((k["tutar"] for k in kalemler if k["kod"] == "yemek"), 0)}
+        satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, din, odenen, od, e, u, "evvel_yeni", ek, yari))
+    satir.sort(key=lambda x: (not x["aktif"], x["ad"]))
+    return satir
+
+
+def _satir(p, ay, hak, kalemler, mahsup, avans, din, odenen, od, e, u, kaynak, ek, yari):
+    kalan = hak - mahsup - odenen
+    devir = max(0, avans + din - mahsup) if kaynak == "evvel_yeni" else 0
+    yemek_hak = _kurus(ek.get("yemek_hak") or 0)
+    yemek_kalan = max(0, yemek_hak - od.get("Yemek ücreti", 0))
+    return {
+        "personel_id": p["id"], "ad": p["ad"], "sube_id": p.get("sube_id"), "gorev": p.get("gorev"), "aktif": bool(p.get("aktif", True)),
+        "cikis": p["cikis"].isoformat() if p.get("cikis") else None, "calisma_turu": "yari" if yari else "tam", "ay": ay, "kaynak": kaynak,
+        "kalemler": kalemler, "hak_edis": _tl(hak), "avans": _tl(avans), "avans_mahsup": _tl(mahsup), "odenen": _tl(odenen),
+        "odeme_kalemleri": {k: _tl(v) for k, v in od.items()}, "kalan": _tl(kalan), "avans_devir_sonraki": _tl(devir),
+        "oneri": {"Maaş": _tl(max(0, kalan - yemek_kalan)), "Yemek ücreti": _tl(min(yemek_kalan, max(kalan, 0)))},
+        "onay": bool(e.get("onay")), "onaylayan": e.get("onaylayan"),
+        "elle": {k: (float(e[k]) if isinstance(e.get(k), Decimal) else e.get(k)) for k in
+                 ("eksik_gun", "rapor_gun", "rapor_kesinti", "bayram_saat", "mesai_saat", "calisma_saat", "aciklama")} | {"duzeltme": _tl(e.get("duzeltme") or 0)},
+        **ek,
+    }
+
+
+def personel_giderleri(cur, ay: str) -> list:
+    """GİDER için: [(sube_id|None, hak kuruş, ad, tahmini)] — hak edişten, çalışma ayına, BİR KEZ."""
+    out = []
+    for r in hesapla(cur, ay):
+        h = _kurus(r["hak_edis"])
+        if h:
+            out.append({"sube_id": r["sube_id"], "tutar": h, "ad": r["ad"], "tahmini": not r["onay"] and r["kaynak"] == "evvel_yeni",
+                        "kaynak": r["kaynak"]})
+    return out
+
+
+@router.get("/liste")
+def maas_liste(ay: Optional[str] = None):
+    from evvel_yeni_kasa_api import _bugun
+    a_ = (ay or _ay_kaydir(_bugun().strftime("%Y-%m"), -1))[:7]   # varsayılan: ödenecek ay = geçen ay
+    with db() as (conn, cur):
+        _hazirla(cur)
+        from evvel_yeni_tanim_api import subeler
+        sube_ad = {s["id"]: s["ad"] for s in subeler(cur, hepsi=True)}
+        rows = hesapla(cur, a_)
+    for r in rows:
+        r["sube_ad"] = sube_ad.get(r["sube_id"]) or "Ortak"
+    T = lambda k: round(sum(r[k] for r in rows), 2)  # noqa: E731
+    return {"ay": a_, "eski_mod": a_ < YENI_HESAP_BASLANGIC, "personel": rows,
+            "toplam": {"hak_edis": T("hak_edis"), "avans_mahsup": T("avans_mahsup"), "odenen": T("odenen"), "kalan": T("kalan")},
+            "not": ("Ekim ve öncesi eski sistemin hesabıyla (avans düşülmüş net + mahsup). " if a_ < YENI_HESAP_BASLANGIC else "")
+            + "Kalan = hak ediş − avans mahsubu − ödenen (maaş, yemek, prim). SGK/vergi kişinin bakiyesini kapatmaz."}
+
+
+class ElleBody(BaseModel):
+    eksik_gun: Optional[Decimal] = None
+    rapor_gun: Optional[Decimal] = None
+    rapor_kesinti: Optional[bool] = None
+    bayram_saat: Optional[Decimal] = None
+    mesai_saat: Optional[Decimal] = None        # boş gönderilirse vardiya önerisi
+    calisma_saat: Optional[Decimal] = None
+    duzeltme: Optional[Decimal] = None
+    aciklama: Optional[str] = None
+    mesai_oneriye_don: bool = False
+    saat_oneriye_don: bool = False
+
+
+@router.post("/{pid}/{ay}")
+def maas_elle(pid: str, ay: str, b: ElleBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    from evvel_yeni_kasa_api import _aktor
+    if ay[:7] < YENI_HESAP_BASLANGIC:
+        raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
+    if b.duzeltme and not (b.aciklama or "").strip():
+        raise HTTPException(400, "Düzeltmenin gerekçesini yaz")
+    with db() as (conn, cur):
+        _hazirla(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        cur.execute("SELECT onay FROM ey_maas_ay WHERE personel_id=%s AND ay=%s", (pid, ay[:7]))
+        r = cur.fetchone()
+        if r and dict(r)["onay"]:
+            raise HTTPException(409, "Bu ay onaylanmış — önce onayı kaldır")
+        cur.execute("INSERT INTO ey_maas_ay (personel_id, ay, degistiren) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (pid, ay[:7], kim))
+        set_, prm = [], []
+        for k in ("eksik_gun", "rapor_gun", "rapor_kesinti", "bayram_saat", "aciklama"):
+            v = getattr(b, k)
+            if v is not None:
+                set_.append(f"{k}=%s")
+                prm.append(v.strip()[:200] if isinstance(v, str) else v)
+        if b.duzeltme is not None:
+            set_.append("duzeltme=%s")
+            prm.append(_kurus(b.duzeltme))
+        if b.mesai_oneriye_don:
+            set_.append("mesai_saat=NULL")
+        elif b.mesai_saat is not None:
+            set_.append("mesai_saat=%s")
+            prm.append(b.mesai_saat)
+        if b.saat_oneriye_don:
+            set_.append("calisma_saat=NULL")
+        elif b.calisma_saat is not None:
+            set_.append("calisma_saat=%s")
+            prm.append(b.calisma_saat)
+        if set_:
+            cur.execute(f"UPDATE ey_maas_ay SET {', '.join(set_)}, degistiren=%s, zaman=NOW() WHERE personel_id=%s AND ay=%s",
+                        prm + [kim, pid, ay[:7]])
+    return {"ok": True, "mesaj": "Kaydedildi"}
+
+
+@router.post("/{pid}/{ay}/onay")
+def maas_onay(pid: str, ay: str, kaldir: bool = False, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Onay: ayın kalemleri DONDURULUR (ücret/vardiya sonradan değişse de bu ay bozulmaz); gider 'kesin' olur."""
+    from evvel_yeni_kasa_api import _aktor
+    if ay[:7] < YENI_HESAP_BASLANGIC:
+        raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
+    with db() as (conn, cur):
+        _hazirla(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        if kaldir:
+            cur.execute("UPDATE ey_maas_ay SET onay=FALSE, kalemler=NULL, onaylayan=%s, onay_zaman=NOW() WHERE personel_id=%s AND ay=%s",
+                        (kim, pid, ay[:7]))
+            return {"ok": True, "mesaj": "Onay kaldırıldı — yeniden hesaplanır"}
+        r = next(iter(hesapla(cur, ay[:7], sadece=pid)), None)
+        if not r:
+            raise HTTPException(404, "Bu ay için personel satırı yok")
+        if r.get("ay_acik"):
+            raise HTTPException(400, "Ay bitmeden onaylanamaz")
+        cur.execute("INSERT INTO ey_maas_ay (personel_id, ay, degistiren) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (pid, ay[:7], kim))
+        cur.execute("""UPDATE ey_maas_ay SET onay=TRUE, kalemler=%s::jsonb, onaylayan=%s, onay_zaman=NOW()
+                        WHERE personel_id=%s AND ay=%s""", (json.dumps(r["kalemler"], ensure_ascii=False), kim, pid, ay[:7]))
+    return {"ok": True, "mesaj": f"{r['ad']} · {ay[:7]} onaylandı · hak ediş {r['hak_edis']:,.2f} ₺"}

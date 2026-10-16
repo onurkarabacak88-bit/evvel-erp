@@ -51,6 +51,17 @@ export default function OdemeModulu({ onToast }) {
   const listeYukle = useCallback(() => api(`/evvel-yeni/odeme/liste?ay=${ay}`).then(setListe).catch(() => setListe({ odemeler: [], hata: true })), [ay]);
   useEffect(() => { api('/evvel-yeni/odeme/listeler').then(setL).catch((e) => setHata(e?.message || 'Listeler okunamadı')); }, []);
   useEffect(() => { listeYukle(); }, [listeYukle]);
+  // Maaşlar → "Öde": kişi, kalem, çalışma ayı ve kalan hazır gelir (tutar düzeltilebilir)
+  useEffect(() => {
+    if (!L) return;
+    let on = null;
+    try { on = JSON.parse(window.sessionStorage.getItem('ey_odeme_on') || 'null'); window.sessionStorage.removeItem('ey_odeme_on'); } catch { /* yut */ }
+    if (!on) return;
+    const t = on.tutar > 0 ? String(on.tutar) : '';
+    otoTutar.current = t;
+    setF({ ...BOS(), konu: on.konu, personel_id: on.personel_id, personel_kalemi: on.personel_kalemi, ait_ay: on.ait_ay,
+      parcalar: [{ yontem: 'havale', cep: '', kart_id: '', tutar: t }] });
+  }, [L]);
 
   const set = (k, v) => { setBenzer(false); setF((x) => ({ ...x, [k]: v })); };
   const pdYukle = useCallback(() => {
@@ -104,7 +115,7 @@ export default function OdemeModulu({ onToast }) {
       setF({ ...BOS(), tarih: f.tarih });
       api('/evvel-yeni/odeme/listeler').then(setL).catch(() => {});
       listeYukle();
-    } catch (e) { const m = e?.message || 'Kaydedilemedi'; setBenzer(m.startsWith('BENZER KAYIT')); setHata(m); } finally { setMesgul(false); }
+    } catch (e) { const m = e?.message || 'Kaydedilemedi'; setBenzer(m.startsWith('BENZER KAYIT') || m.startsWith('KALANI AŞIYOR')); setHata(m); } finally { setMesgul(false); }
   };
 
   if (!L) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: hata ? R.kirmizi : R.not }}>{hata || 'Form hazırlanıyor…'}</div></div>;
@@ -161,30 +172,28 @@ export default function OdemeModulu({ onToast }) {
             )}
             {f.konu === 'personel' && (<>
               <Etiket ad="Personel"><select style={alan} value={f.personel_id || ''} onChange={(e) => set('personel_id', e.target.value)}>
-                <option value="">Seç…</option>{L.personel.map((p) => <option key={p.id} value={p.id}>{p.ad}{p.sube_ad ? ` · ${p.sube_ad}` : ''}</option>)}
+                <option value="">Seç…</option>{L.personel.map((p) => <option key={p.id} value={p.id}>{p.ad}{p.sube_ad ? ` · ${p.sube_ad}` : ''}{p.aktif === false ? ' · ayrıldı (son ödeme)' : ''}</option>)}
               </select></Etiket>
               <Etiket ad="Ne ödendi"><select style={alan} value={f.personel_kalemi || ''} onChange={(e) => set('personel_kalemi', e.target.value)}>
                 <option value="">Seç…</option>{L.personel_kalemleri.map((k) => <option key={k}>{k}</option>)}
               </select></Etiket>
+              {f.personel_kalemi === 'Maaş' && f.ait_ay === ayBugun() && (
+                <div style={{ gridColumn: '1 / -1', fontSize: 13 }}>Maaş genelde bir önceki ayın maaşıdır.{' '}
+                  <Dugme kucuk onClick={() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); set('ait_ay', `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); }}>Geçen ayın maaşı</Dugme>
+                </div>
+              )}
               {pd && (
                 <div style={{ gridColumn: '1 / -1', padding: '10px 12px', borderRadius: 10, background: 'var(--pi-accent-soft)', fontSize: 13.5, display: 'flex', flexDirection: 'column', gap: 6 }}>
+                  {pd.bulunamadi ? <div>{ayAdi(pd.ay)} için bu kişinin maaş satırı yok (işe giriş/ayrılış tarihine bak).</div> : (<>
                   <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                    <span>{ayAdi(pd.ay)} hak edişi: maaş <b style={num}>{fmt(pd.ucret.maas)}</b> ₺ · yemek <b style={num}>{fmt(pd.ucret.yemek)}</b> ₺</span>
-                    <Cip tur={pd.ucret.kaynak === 'evvel_yeni' ? undefined : 'sari'}>{pd.ucret.kaynak === 'eski_sistem' ? 'eski sistemden — kontrol et' : pd.ucret.kaynak === 'tanimsiz' ? 'ücret tanımlı değil' : `Evvel Yeni tanımı · ${pd.ucret.gecerli_ay}'dan beri`}</Cip>
-                    {!ucretDuz && <Dugme kucuk onClick={() => setUcretDuz({ maas: String(pd.ucret.maas || ''), yemek: String(pd.ucret.yemek || '') })}>Ücreti değiştir</Dugme>}
+                    <span>{ayAdi(pd.ay)} hak edişi <b style={num}>{fmt(pd.hak_edis)}</b> ₺ · avans mahsubu {fmt(pd.avans_mahsup)} · ödenen {fmt(pd.odenen)} · <b>kalan {fmt(pd.kalan)} ₺</b></span>
+                    <Cip tur={pd.kaynak === 'eski_sistem' ? 'sari' : pd.onay ? 'yesil' : undefined}>{pd.kaynak === 'eski_sistem' ? 'Ekim: eski sistemin hesabı' : pd.onay ? 'ay onaylı' : 'hesap · Maaşlar ekranında ayrıntı'}</Cip>
                   </div>
-                  {ucretDuz && (
-                    <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>
-                      <label>Maaş <input inputMode="decimal" style={{ ...alan, width: 120 }} value={ucretDuz.maas} onChange={(e) => setUcretDuz((u) => ({ ...u, maas: e.target.value }))} /></label>
-                      <label>Yemek <input inputMode="decimal" style={{ ...alan, width: 110 }} value={ucretDuz.yemek} onChange={(e) => setUcretDuz((u) => ({ ...u, yemek: e.target.value }))} /></label>
-                      <Dugme onClick={ucretKaydet}>{ayAdi(f.ait_ay)}'dan itibaren kaydet</Dugme>
-                      <Dugme kucuk onClick={() => setUcretDuz(null)}>Vazgeç</Dugme>
-                    </div>
-                  )}
-                  <div>{pd.toplam > 0 ? <>Bu aya şimdiye kadar ödenen: {Object.entries(pd.kalemler).map(([a, t]) => `${a} ${fmt(t)} ₺`).join(' · ')}</> : <>Bu aya henüz ödeme girilmemiş.</>}</div>
+                  {(pd.uyari || []).map((u) => <div key={u} style={{ color: R.kirmizi, fontWeight: 600 }}>⚠ {u}</div>)}
+                  </>)}
                   {pd.onerilen[f.personel_kalemi] != null && (
                     <div>👉 Ödenecek <b style={num}>{fmt(pd.onerilen[f.personel_kalemi])}</b> ₺
-                      {f.personel_kalemi === 'Maaş' && <> = maaş {fmt(pd.ucret.maas)}{pd.kalemler.Avans ? ` − avans ${fmt(pd.kalemler.Avans)}` : ''}{pd.kalemler['Maaş'] ? ` − önce ödenen ${fmt(pd.kalemler['Maaş'])}` : ''}</>}
+                      {f.personel_kalemi === 'Maaş' && <> (kalan, yemek hariç)</>}
                       {' '}<span style={{ color: R.not }}>(tutara yazıldı — gerekirse düzelt)</span></div>
                   )}
                 </div>
@@ -248,7 +257,7 @@ export default function OdemeModulu({ onToast }) {
             <span>Toplam <b style={num}>{fmt(toplam)}</b> ₺</span>
             {konuObj && (konuObj.gider && f.kimin !== 'patron'
               ? <Cip tur="sari">şube/ortak GİDERİ olarak yazılacak</Cip>
-              : <Cip>gider DEĞİL — {f.konu === 'toptanci' ? 'toptancı borcunu kapatır' : f.konu === 'kart_borcu' ? 'kart borcunu kapatır' : f.konu === 'kredi' ? 'patronun borcu' : 'patron çekişi'}</Cip>)}
+              : <Cip>gider DEĞİL — {f.konu === 'toptanci' ? 'toptancı borcunu kapatır' : f.konu === 'kart_borcu' ? 'kart borcunu kapatır' : f.konu === 'kredi' ? 'patronun borcu' : f.konu === 'personel' ? "personelin kalanını kapatır (gider Maaşlar'ın hak edişinden yazılır)" : 'patron çekişi'}</Cip>)}
             {f.parcalar.some((p) => p.yontem === 'kart') && <Cip>kart kısmı kasadan düşmez, kart borcu olur</Cip>}
           </div>
           {kiminAd !== null && f.konu && (
@@ -257,7 +266,7 @@ export default function OdemeModulu({ onToast }) {
             </div>
           )}
           {hata && <div style={{ color: R.kirmizi, fontWeight: 600, fontSize: 15, padding: '10px 14px', borderRadius: 10, background: 'var(--pi-bg)' }}>{hata}</div>}
-          {benzer && <div><Dugme onClick={() => gonder(true)}>Evet, bu ayrı bir ödeme — yine de kaydet</Dugme></div>}
+          {benzer && <div><Dugme onClick={() => gonder(true)}>Evet, doğru — yine de kaydet</Dugme></div>}
           <div><button type="button" onClick={() => gonder(false)} disabled={mesgul || !toplam || hataliSatir} style={{
             padding: '13px 26px', borderRadius: 12, border: 'none', background: 'var(--pi-accent)', color: 'var(--pi-on-accent)',
             font: 'inherit', fontSize: 16, fontWeight: 700, cursor: mesgul || !toplam || hataliSatir ? 'not-allowed' : 'pointer', opacity: mesgul || !toplam || hataliSatir ? 0.5 : 1,

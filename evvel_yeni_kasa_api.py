@@ -1638,7 +1638,7 @@ def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) 
     sonuc = {"yeni": 0, "kilitli": [], "iptal": 0}
     try:
         with savepoint(cur, "sp_pi_dukkan_gider"):
-            q = """SELECT id, tarih, tutar, sube, kategori, aciklama, durum FROM anlik_giderler
+            q = """SELECT id, tarih, tutar, sube, kategori, aciklama, durum, kaynak_tablo, kaynak_id FROM anlik_giderler
                     WHERE tarih >= %s AND sube IS NOT NULL
                       AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'"""
             prm = [bas]
@@ -1652,6 +1652,34 @@ def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) 
         return sonuc
     cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'anlik_gider:%%'")
     her_zaman = {dict(x)["kaynak_ref"] for x in cur.fetchall() or []}
+    # Sahip+Codex (2026-10-16): şubenin ELDEN AVANSI dükkân gideri değil, o personelin AVANSI (maaştan mahsup)
+    avanslar = {}
+    av_id = [str(r["kaynak_id"]) for r in kaynak if (r.get("kaynak_tablo") or "") == "personel_avans" and r.get("kaynak_id")]
+    if av_id:
+        try:
+            with savepoint(cur, "sp_pi_avans_es"):
+                cur.execute("""SELECT a.id::text AS id, a.personel_id::text AS pid, a.donem_yil, a.donem_ay, p.ad_soyad
+                                 FROM personel_avans a LEFT JOIN personel p ON p.id = a.personel_id WHERE a.id::text = ANY(%s)""", (av_id,))
+                avanslar = {dict(x)["id"]: dict(x) for x in cur.fetchall() or []}
+        except Exception:  # noqa: BLE001
+            avanslar = {}
+
+    def _avans_veri(r):
+        a = avanslar.get(str(r.get("kaynak_id") or "")) if (r.get("kaynak_tablo") or "") == "personel_avans" else None
+        if not a:
+            return None
+        ay = f"{int(a['donem_yil']):04d}-{int(a['donem_ay']):02d}" if a.get("donem_yil") and a.get("donem_ay") else None
+        return {"konu": {"tip": "personel", "ad": "Personel", "personel_id": a["pid"], "personel_ad": a.get("ad_soyad"), "kalem": "Avans"},
+                "ait_ay": ay, "gider": False, "kaynak": "sube_avansi", "aciklama": f"Avans (şubeden elden) · {a.get('ad_soyad') or ''}"[:120]}
+    if not kuru:   # daha önce "dükkân gideri" diye aktarılmış avansları düzelt (iz: veri.duzeltmeler)
+        gecerli = {h.get("kaynak_ref"): h for h in kayit if (h.get("kaynak_ref") or "").startswith("anlik_gider:")}
+        for r in kaynak:
+            av = _avans_veri(r)
+            h = gecerli.get("anlik_gider:" + str(r["id"]))
+            if av and h and h["veri"].get("kaynak") == "dukkan_gideri":
+                v2 = {**h["veri"], **av, "duzeltmeler": list(h["veri"].get("duzeltmeler") or []) +
+                      [{"kim": "otomatik", "zaman": _bugun().isoformat(), "degisen": {"tur": ["dükkân gideri", "personel avansı"]}}]}
+                cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(v2, ensure_ascii=False), h["id"]))
     gecerli = {h.get("kaynak_ref"): h for h in kayit if (h.get("kaynak_ref") or "").startswith("anlik_gider:")}
     canli = set()
     for r in kaynak:
@@ -1672,9 +1700,11 @@ def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) 
         sonuc["yeni"] += 1
         if not kuru:
             ac = " · ".join(x for x in [(r.get("kategori") or "").strip(), (r.get("aciklama") or "").strip()] if x) or "Dükkân gideri"
-            _yaz(cur, "odeme", g, kim, tutar=t,
-                 veri={"aciklama": ac[:120], "kimin": C[cep]["kisa"], "parcalar": [{"cep": cep, "tutar": t}],
-                       "kaynak": "dukkan_gideri"}, kaynak_ref=ref)
+            veri = {"aciklama": ac[:120], "kimin": C[cep]["kisa"], "parcalar": [{"cep": cep, "tutar": t}], "kaynak": "dukkan_gideri"}
+            av = _avans_veri(r)
+            if av:
+                veri.update(av)
+            _yaz(cur, "odeme", g, kim, tutar=t, veri=veri, kaynak_ref=ref)
     if not kuru:
         for ref, h in gecerli.items():
             pc = (h["veri"].get("parcalar") or [{}])[0].get("cep")

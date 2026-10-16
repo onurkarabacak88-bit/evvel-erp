@@ -37,7 +37,7 @@ KONULAR = {
     "toptanci": {"ad": "Toptancı", "gider": False},
     "kira": {"ad": "Kira", "gider": True},
     "fatura": {"ad": "Fatura / abonelik", "gider": True},
-    "personel": {"ad": "Personel", "gider": True},
+    "personel": {"ad": "Personel", "gider": False},   # gider Maaşlar'ın hak edişinden (çalışma ayına) yazılır
     "anlik": {"ad": "Anlık gider", "gider": True},
     "kredi": {"ad": "Kredi / borç taksiti", "gider": False},
     "kart_borcu": {"ad": "Kart borcu", "gider": False},
@@ -227,6 +227,17 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
                 if any((x["cep"], x["tutar"]) in eski for x in nakit_parca):
                     raise HTTPException(409, f"BENZER KAYIT: aynı gün, aynı yerden, aynı tutarda bir ödeme zaten var — "
                                              f"\"{h['veri'].get('aciklama') or 'Ödeme'}\". Aynı harcamayı iki kez girmiyorsan yine de kaydedebilirsin.")
+        if body.konu == "personel" and body.personel_kalemi in ("Maaş", "Yemek ücreti") and not body.tekrar_onay:
+            try:
+                from evvel_yeni_maas_api import hesapla as _maas_hesapla
+                ms = next(iter(_maas_hesapla(cur, ait_ay, sadece=str(body.personel_id))), None)
+            except Exception:  # noqa: BLE001
+                ms = None
+            if ms is not None:
+                sinir = _kurus(ms["oneri"].get(body.personel_kalemi, 0))
+                if toplam > sinir + 100:
+                    raise HTTPException(409, f"KALANI AŞIYOR: {ms['ad']} · {ait_ay} için kalan {body.personel_kalemi.lower()} "
+                                             f"{_tl(sinir)} — girilen {_tl(toplam)}. Doğruysa yine de kaydedebilirsin.")
         yeni = _sahte("odeme", gun, tutar=toplam, veri=veri)
         yeni_ol = _olaylar([yeni])
         etkiler = [(e["cep"], o["gun"]) for o in yeni_ol for e in _etki(o, C)]
@@ -356,26 +367,19 @@ def _ucret(cur, personel_id: str, ay: str) -> dict:
 
 @router.get("/personel-durum")
 def personel_durum(personel_id: str, ay: str):
-    """Seçilen personelin o ayki HAK EDİŞİ (yeni sistemin tanımı) − o aya ait şimdiye kadar ödenen = ÖNERİLEN tutar.
-    Form tutarı bununla kendiliğinden doldurur; kullanıcı düzeltebilir."""
+    """Maaşlar'daki o ayın satırı: hak ediş, avans mahsubu, ödenen, kalan + kalem önerisi (form tutarı bununla dolar)."""
+    from evvel_yeni_maas_api import hesapla
     _hazirla()
     with db() as (conn, cur):
-        _, _, kayit, _ = _yukle(cur, tum_donemler=True)
-        u = _ucret(cur, personel_id, ay)
-    kalem = {}
-    for h in kayit:
-        v = h["veri"]
-        k = v.get("konu") or {}
-        if h["tur"] != "odeme" or k.get("tip") != "personel" or str(k.get("personel_id")) != str(personel_id) or v.get("ait_ay") != ay[:7]:
-            continue
-        kalem[k.get("kalem") or "?"] = kalem.get(k.get("kalem") or "?", 0) + int(v.get("toplam", h["tutar"]))
-    # Maaş = hak ediş − avans − bu aya daha önce ödenen maaş; yemek = tanım − ödenen yemek
-    maas_kalan = max(0, u["maas"] - kalem.get("Avans", 0) - kalem.get("Maaş", 0))
-    yemek_kalan = max(0, u["yemek"] - kalem.get("Yemek ücreti", 0))
-    return {"ay": ay[:7], "kalemler": {a: _tl_sayi(t) for a, t in kalem.items()}, "toplam": _tl_sayi(sum(kalem.values())),
-            "ucret": {"maas": _tl_sayi(u["maas"]), "yemek": _tl_sayi(u["yemek"]), "kaynak": u["kaynak"],
-                      "gecerli_ay": u["gecerli_ay"], "degistiren": u["degistiren"]},
-            "onerilen": {"Maaş": _tl_sayi(maas_kalan), "Yemek ücreti": _tl_sayi(yemek_kalan)}}
+        r = next(iter(hesapla(cur, ay[:7], sadece=personel_id)), None)
+    if not r:
+        return {"ay": ay[:7], "bulunamadi": True, "kalemler": {}, "toplam": 0, "onerilen": {},
+                "ucret": {"maas": 0, "yemek": 0, "kaynak": "tanimsiz", "gecerli_ay": None}}
+    return {"ay": r["ay"], "kalemler": r["odeme_kalemleri"], "toplam": round(sum(r["odeme_kalemleri"].values()), 2),
+            "hak_edis": r["hak_edis"], "avans_mahsup": r["avans_mahsup"], "odenen": r["odenen"], "kalan": r["kalan"],
+            "kaynak": r["kaynak"], "onay": r["onay"], "uyari": r.get("uyari") or [],
+            "onerilen": r["oneri"], "ucret": {"maas": next((k["tutar"] for k in r["kalemler"] if k["kod"] == "taban"), 0),
+                                               "yemek": r.get("yemek_hak", 0), "kaynak": r["kaynak"], "gecerli_ay": None}}
 
 
 class UcretBody(BaseModel):

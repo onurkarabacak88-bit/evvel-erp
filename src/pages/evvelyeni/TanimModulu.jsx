@@ -31,9 +31,12 @@ const YAPI = {
     tur: 'personel', liste: 'personel', baslik: 'Personel', tekil: 'personel',
     not: 'Maaş ve yemek ücreti Ödeme formunda kendiliğinden kullanılır. Değişiklik "hangi aydan itibaren" geçerli olur — eski aylar bozulmaz.',
     alanlar: [{ k: 'ad', ad: 'Ad soyad', zorunlu: true }, { k: 'sube_id', ad: 'Şube', secim: 'sube' }, { k: 'gorev', ad: 'Görev' },
-      { k: 'giris', ad: 'İşe giriş', tip: 'date' }, { k: 'maas', ad: 'Aylık maaş ₺', sayi: true, zorunluYeni: true }, { k: 'yemek', ad: 'Aylık yemek ₺', sayi: true },
+      { k: 'calisma_turu', ad: 'Çalışma türü', secim: 'calisma' }, { k: 'giris', ad: 'İşe giriş', tip: 'date' }, { k: 'cikis', ad: 'Ayrılış (varsa)', tip: 'date' },
+      { k: 'maas', ad: 'Aylık maaş ₺ (tam zamanlı)', sayi: true, zorunluYeni: true }, { k: 'saatlik', ad: 'Saatlik ücret ₺ (yarı zamanlı)', sayi: true },
+      { k: 'yemek', ad: 'Aylık yemek ₺', sayi: true }, { k: 'yol', ad: 'Aylık yol ₺', sayi: true },
       { k: 'ucret_ay', ad: 'Ücret hangi aydan itibaren', tip: 'month', duzeltmede: true }],
-    kolon: (x) => [x.ad, `${x.sube_ad}${x.gorev ? ` · ${x.gorev}` : ''}`, `maaş ${fmt(x.maas)} · yemek ${fmt(x.yemek)}`, x.ucret_eski ? <Cip tur="sari">ücret eski sistemden — kontrol et</Cip> : null],
+    kolon: (x) => [x.ad, `${x.sube_ad}${x.gorev ? ` · ${x.gorev}` : ''} · ${x.calisma_turu === 'yari' ? 'yarı zamanlı' : 'tam zamanlı'}${x.cikis ? ` · ayrıldı ${x.cikis}` : ''}`,
+      x.calisma_turu === 'yari' ? `saatlik ${fmt(x.saatlik)} · yemek ${fmt(x.yemek)}` : `maaş ${fmt(x.maas)} · yemek ${fmt(x.yemek)}${x.yol ? ` · yol ${fmt(x.yol)}` : ''}`, x.ucret_eski ? <Cip tur="sari">ücret eski sistemden — kontrol et</Cip> : null],
   },
   tanim_banka: {
     tur: 'banka', liste: 'bankalar', baslik: 'Bankalar', tekil: 'banka hesabı',
@@ -74,6 +77,7 @@ export default function TanimModulu({ gorunum, onToast }) {
   const secimler = {
     sube: [{ id: '', ad: y.tur === 'banka' ? '— patron / ortak —' : 'Ortak (şubesiz)' }, ...v.subeler.filter((s) => s.aktif).map((s) => ({ id: s.id, ad: s.ad }))],
     banka_tur: [{ id: 'banka', ad: 'Banka hesabı' }, { id: 'hesap', ad: 'Geçiş hesabı (para toplanıp dağıtılan)' }],
+    calisma: [{ id: 'tam', ad: 'Tam zamanlı (aylık maaş)' }, { id: 'yari', ad: 'Yarı zamanlı (saatlik)' }],
   };
 
   const kaydet = async (ek = {}) => {
