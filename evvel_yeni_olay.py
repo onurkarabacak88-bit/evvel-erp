@@ -158,7 +158,7 @@ def olay_kontrol(gun: str, baslangic_ts: Optional[str] = None):
     bas = baslangic_ts or "1970-01-01"
     with db() as (conn, cur):
         eski = {}
-        cur.execute("""SELECT COUNT(*) n, COALESCE(SUM((meta->'x_rapor'->>'nakit')::numeric),0) t FROM sube_operasyon_event
+        cur.execute("""SELECT COUNT(*) n, COALESCE(SUM(NULLIF(meta::jsonb->'x_rapor'->>'nakit','')::numeric),0) t FROM sube_operasyon_event
                         WHERE tarih=%s AND tip='KAPANIS' AND durum='tamamlandi' AND cevap_ts >= %s::timestamp""", (gun, bas))
         eski["kapanis"] = dict(cur.fetchone())
         cur.execute("""SELECT COUNT(*) n, COALESCE(SUM(tutar),0) t FROM kasa_teslim
