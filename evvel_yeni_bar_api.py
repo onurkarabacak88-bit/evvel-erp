@@ -1,0 +1,215 @@
+"""🥤 EVVEL YENİ · BAR SAYIMI (2026-10-16) — açılış/kapanış bardak + bar içi ürün sayımı.
+
+Ortak karar (sahip + Codex + Fable + Claude):
+  · SAYIM KALIR, üstüne yapışmış motorlar (satış tahmini, kayıp, zimmet, Truth, reçete–Evo) GELMEZ.
+  · Kalemler: 8oz · 14oz · plastik bardak · su · Redbull · soda · cookie · PASTA TOPLAM (sahip: "toplam").
+    Süt / şurup / kahve / kapak / peçete sayılmaz — ürün aç ile izlenir.
+  · İki hesap, tek yerde:
+      DEVİR FARKI   = bugün açılış − (dün kapanış + gece ürün aç)      → "gece bir şey eksildi mi?"
+      NET EKSİLME   = açılış + gün içi ürün aç − kapanış                → satış+fire+ikram karışık; "kayıp" DENMEZ
+      ÜRÜN AÇ EKSİK = net eksilme < 0 (sayılandan fazlası çıkamaz)      → ürün aç girilmemiş olabilir
+  · Sayım GİDERİ değiştirmez (gider = ürün aç × fiyat), KASAYA para olarak bağlanmaz. Kimseye suç yazılmaz.
+  · Ürün aç kaynağı GİDERLE AYNI: URUN_AC + URUN_KULLANIMA_AL, [BİTTİ] hariç. Gece/gün içi ayrımı OLAY SAATİYLE
+    (kapanıştan sonra + ertesi açılıştan önce açılan = gece).
+  · Eksik kalem = "sayılmadı" (0 sayılmaz). Kapanışı olmayan gün hesaplanmaz.
+YALNIZ OKUR — eski tablolara yazmaz.
+"""
+
+import json
+import logging
+from datetime import date, timedelta
+from typing import Optional
+
+from fastapi import APIRouter
+
+from database import db, savepoint
+
+log = logging.getLogger(__name__)
+router = APIRouter(prefix="/api/evvel-yeni/bar", tags=["evvel-yeni-bar"])
+
+KALEMLER = [
+    ("bardak_kucuk", "8oz bardak"), ("bardak_buyuk", "14oz bardak"), ("bardak_plastik", "Plastik bardak"),
+    ("su_adet", "Su"), ("redbull_adet", "Redbull"), ("soda_adet", "Soda"), ("cookie_adet", "Cookie"), ("pasta", "Pasta (toplam)"),
+]
+KODLAR = [k for k, _ in KALEMLER]
+_PASTA_IZ = ("pasta", "porsiyon", "san sebast", "magnolya", "tart", "snickers", "malaga", "rulo", "browni", "cream puff",
+             "kavala", "cup", "profiterol", "kare ", "dilim", "cheesecake", "tiramisu")
+
+
+def _anahtar_ad(ad: str) -> Optional[str]:
+    """Ürün adından sayım kalemi — eski motorun eşlemesinin sade kopyası (eski dosya kalkınca da çalışsın)."""
+    n = (ad or "").strip().lower()
+    if not n:
+        return None
+    if "bardak" in n:
+        if "plastik" in n:
+            return "bardak_plastik"
+        if "karton" in n and not ("oz" in n):
+            return None
+        if "14" in n and "oz" in n or any(w in n for w in ("buyuk", "büyük", "large", "orta")):
+            return "bardak_buyuk"
+        if "8" in n and "oz" in n or any(w in n for w in ("kucuk", "küçük", "small")):
+            return "bardak_kucuk"
+        return None
+    if n in ("su", "su adet", "su_adet", "su sisesi", "su şişesi") or (" su " in f" {n} " and len(n) <= 15):
+        return "su_adet"
+    for w, k in (("redbull", "redbull_adet"), ("red bull", "redbull_adet"), ("soda", "soda_adet"), ("cookie", "cookie_adet")):
+        if w in n:
+            return k
+    if any(w in n for w in _PASTA_IZ):
+        return "pasta"
+    return None
+
+
+def _kod_anahtar(kod: Optional[str]) -> Optional[str]:
+    k = (kod or "").strip()
+    if k in KODLAR:
+        return k
+    if k == "pasta_adet" or k.startswith("pasta_"):
+        return "pasta"
+    return None
+
+
+def _sayim(meta, alan: str) -> Optional[dict]:
+    """meta.<alan> → {kalem: adet|None}. Pasta toplam = pasta_adet + bütün pasta_* çeşitleri."""
+    m = meta if isinstance(meta, dict) else (json.loads(meta) if meta else {})
+    blok = m.get(alan)
+    if blok is None and alan == "acilis_stok_sayim":
+        blok = m.get("stok_sayim")
+    if not isinstance(blok, dict) or not blok:
+        return None
+    out = {}
+    for k in KODLAR[:-1]:
+        v = blok.get(k)
+        out[k] = int(v) if isinstance(v, (int, float)) or (isinstance(v, str) and v.strip().lstrip("-").isdigit()) else None
+    pasta = [int(v) for kk, v in blok.items() if (kk == "pasta_adet" or kk.startswith("pasta_")) and isinstance(v, (int, float))]
+    out["pasta"] = sum(pasta) if pasta else None
+    return out
+
+
+def _urun_ac_parcala(aciklama: str):
+    raw = aciklama or ""
+    for on in ("URUN_AC_JSON:", "URUN_KULLANIMA_AL_JSON:"):
+        if raw.startswith(on):
+            raw = raw[len(on):]
+            break
+    else:
+        return []
+    try:
+        obj = json.loads(raw.split(" | ", 1)[0].strip())
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for it in (obj.get("kalemler") or []) if isinstance(obj, dict) else []:
+        if isinstance(it, dict):
+            try:
+                adet = max(0, int(it.get("adet") or 0))
+            except (TypeError, ValueError):
+                adet = 0
+            if adet:
+                out.append((str(it.get("urun_id") or "").strip(), str(it.get("urun_ad") or ""), adet))
+    return out
+
+
+def _bos():
+    return {k: 0 for k in KODLAR}
+
+
+@router.get("/ozet")
+def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    from evvel_yeni_kasa_api import _bugun
+    bugun = _bugun()
+    a_ = (ay or bugun.strftime("%Y-%m"))[:7]
+    ay_bas = date.fromisoformat(a_ + "-01")
+    ay_son = (ay_bas.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    bas, son = ay_bas - timedelta(days=1), min(ay_son, bugun)
+    with db() as (conn, cur):
+        subeler = [s for s in _ey_subeler(cur) if not sube_id or s["id"] == sube_id]
+        sids = [s["id"] for s in subeler]
+        cur.execute("""SELECT sube_id::text AS sube_id, tarih, tip, cevap_ts, meta FROM sube_operasyon_event
+                        WHERE tarih BETWEEN %s AND %s AND durum='tamamlandi' AND tip IN ('ACILIS','KAPANIS')
+                          AND sube_id::text = ANY(%s) ORDER BY tarih, cevap_ts NULLS LAST""", (bas, son + timedelta(days=1), sids))
+        olaylar = [dict(r) for r in cur.fetchall() or []]
+        cur.execute("""SELECT sube_id::text AS sube_id, tarih, olay_ts, aciklama FROM operasyon_defter
+                        WHERE etiket IN ('URUN_AC','URUN_KULLANIMA_AL') AND tarih BETWEEN %s AND %s
+                          AND NOT (etiket='URUN_AC' AND aciklama LIKE '%%[BİTTİ]%%') AND sube_id::text = ANY(%s)
+                        ORDER BY olay_ts""", (bas, son + timedelta(days=1), sids))
+        defter = [dict(r) for r in cur.fetchall() or []]
+        idler = sorted({u for d in defter for u, _, _ in _urun_ac_parcala(d["aciklama"]) if u})
+        urun = {}
+        if idler:
+            try:
+                with savepoint(cur, "sp_ey_bar_urun"):
+                    cur.execute("SELECT id::text AS id, ad, depo_stok_kalem_kodu FROM siparis_urun WHERE id::text = ANY(%s)", (idler,))
+                    urun = {dict(r)["id"]: dict(r) for r in cur.fetchall() or []}
+            except Exception:  # noqa: BLE001
+                urun = {}
+
+    def anahtar(uid, ad):
+        u = urun.get(uid) or {}
+        return _kod_anahtar(u.get("depo_stok_kalem_kodu")) or _anahtar_ad(u.get("ad") or ad)
+
+    # şube → [(ts, kalem, adet)] ürün aç; şube → gün → {ACILIS, KAPANIS}
+    ac = {}
+    for d in defter:
+        for uid, ad, adet in _urun_ac_parcala(d["aciklama"]):
+            k = anahtar(uid, ad)
+            if k:
+                ac.setdefault(d["sube_id"], []).append((d["olay_ts"], d["tarih"], k, adet))
+    ev = {}
+    for e in olaylar:
+        ev.setdefault(e["sube_id"], {}).setdefault(e["tarih"], {})[e["tip"]] = e   # aynı gün ikinci kayıt sonuncuyu tutar
+
+    def ac_topla(sid, t0, t1, gun_yedek=None):
+        """(t0, t1] aralığında açılan; saat yoksa iş gününe göre."""
+        out = _bos()
+        for ts, tarih, k, adet in ac.get(sid, []):
+            if ts is not None and t0 is not None and t1 is not None:
+                if t0 < ts <= t1:
+                    out[k] += adet
+            elif gun_yedek is not None and tarih == gun_yedek:
+                out[k] += adet
+        return out
+
+    sonuc = []
+    for s in subeler:
+        sid = s["id"]
+        gunler = []
+        g = ay_bas
+        while g <= son:
+            e = ev.get(sid, {}).get(g, {})
+            dun = ev.get(sid, {}).get(g - timedelta(days=1), {})
+            acil, kap, dkap = e.get("ACILIS"), e.get("KAPANIS"), dun.get("KAPANIS")
+            A = _sayim(acil["meta"], "acilis_stok_sayim") if acil else None
+            K = _sayim(kap["meta"], "kapanis_stok_sayim") if kap else None
+            DK = _sayim(dkap["meta"], "kapanis_stok_sayim") if dkap else None
+            gun = {"gun": g.isoformat(), "acilis_var": bool(A), "kapanis_var": bool(K), "kalemler": [], "devir_fark": 0, "ac_eksik": 0}
+            gun_ici = ac_topla(sid, acil["cevap_ts"] if acil else None, kap["cevap_ts"] if kap else None) if (acil and kap) else _bos()
+            gece = ac_topla(sid, dkap["cevap_ts"] if dkap else None, acil["cevap_ts"] if acil else None) if (dkap and acil) else _bos()
+            for k, ad in KALEMLER:
+                a = A.get(k) if A else None
+                kk = K.get(k) if K else None
+                dk = DK.get(k) if DK else None
+                net = (a + gun_ici[k] - kk) if (a is not None and kk is not None) else None
+                devir = (a - (dk + gece[k])) if (a is not None and dk is not None) else None
+                gun["kalemler"].append({"kod": k, "ad": ad, "dun_kapanis": dk, "gece_ac": gece[k], "acilis": a, "devir_fark": devir,
+                                        "gun_ici_ac": gun_ici[k], "kapanis": kk, "net_eksilme": net,
+                                        "ac_eksik": (-net if net is not None and net < 0 else 0)})
+                if devir:
+                    gun["devir_fark"] += 1
+                if net is not None and net < 0:
+                    gun["ac_eksik"] += 1
+            gun["durum"] = ("kapanis_yok" if not K else "acilis_yok" if not A else
+                            "sorun" if (gun["devir_fark"] or gun["ac_eksik"]) else "tamam")
+            gunler.append(gun)
+            g += timedelta(days=1)
+        sonuc.append({"sube_id": sid, "ad": s["ad"], "gunler": gunler,
+                      "ozet": {"devir_sorunlu_gun": sum(1 for x in gunler if x["devir_fark"]),
+                               "ac_eksik_gun": sum(1 for x in gunler if x["ac_eksik"]),
+                               "kapanis_yok": sum(1 for x in gunler if x["durum"] == "kapanis_yok"),
+                               "tamam": sum(1 for x in gunler if x["durum"] == "tamam")}})
+    return {"ay": a_, "kalemler": [{"kod": k, "ad": a} for k, a in KALEMLER], "subeler": sonuc,
+            "not": "Devir farkı = bugün açılış − (dün kapanış + gece açılan). Net eksilme = açılış + gün içi açılan − kapanış "
+                   "(satış + fire + ikram birlikte; kayıp değildir). Net eksilme eksiye düşerse ürün aç girilmemiş olabilir. "
+                   "Sayım gideri ve kasayı değiştirmez."}

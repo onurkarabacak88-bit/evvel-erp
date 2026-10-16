@@ -308,6 +308,14 @@ except Exception as _ey_tanim_err:
     logging.getLogger(__name__).warning(
         f"evvel_yeni_tanim modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_tanim_err}"
     )
+# 🥤 EVVEL YENİ · BAR SAYIMI (2026-10-16) — açılış/kapanış bardak + bar ürün sayımı; devir farkı + net eksilme.
+try:
+    from evvel_yeni_bar_api import router as evvel_yeni_bar_router
+    app.include_router(evvel_yeni_bar_router)
+except Exception as _ey_bar_err:
+    logging.getLogger(__name__).warning(
+        f"evvel_yeni_bar modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_bar_err}"
+    )
 # OPS ÖLÇÜM — "iş kuyruğu işe yarıyor mu?" (2026-08-27). AYRI modül, AYRI iki
 # tablo. bakis_olcum'a yazılmadı: onun ozet sorguları `gorunum`a göre süzmüyor,
 # OPS oturumları oraya girseydi BAKIŞ'ın M1-M5 medyanları iki farklı ekranın
