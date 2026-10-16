@@ -56,6 +56,7 @@ const KABUK_CSS = `
   font-size:14.5px;letter-spacing:.04em;text-transform:uppercase;color:var(--ink);font-weight:800;padding:12px 12px;border-radius:11px;margin-top:8px;border-left:4px solid var(--line)}
 .piapp-baslik:hover{border-color:var(--accent)}
 .piapp-baslik[data-aktif="1"]{border-left-color:var(--accent);background:var(--paper)}
+.piapp-baslik[aria-current="page"]{background:var(--accent);color:var(--on);border-color:var(--accent)}
 .piapp-baslik[aria-expanded="true"]{border-left-color:var(--accent)}
 .piapp-baslik .ikon{font-size:17px;letter-spacing:0}
 .piapp-baslik .ok{display:inline-block;transition:transform .15s;font-size:11px;color:var(--ink3)}
@@ -145,9 +146,10 @@ export default function EvvelYeniApp() {
   }, [toast]);
 
   const [menuAcik, setMenuAcik] = useState(false);   // dar ekranda menü katmanı
-  const [acik, setAcik] = useState(() => { try { return JSON.parse(localStorage.getItem('evvel_yeni_menu_acik') || '[]'); } catch { return []; } });
+  const [acik, setAcik] = useState(() => { try { return JSON.parse(localStorage.getItem('evvel_yeni_menu_acik') || '[]').slice(0, 1); } catch { return []; } });
+  // Sahip (2026-10-16): "bir başlığı açınca diğeri kapansın" → aynı anda TEK başlık açık
   const bolumAc = (ad) => setAcik((a) => {
-    const y = a.includes(ad) ? a.filter((x) => x !== ad) : [...a, ad];
+    const y = a.includes(ad) ? [] : [ad];
     try { localStorage.setItem('evvel_yeni_menu_acik', JSON.stringify(y)); } catch { /* yut */ }
     return y;
   });
@@ -181,12 +183,18 @@ export default function EvvelYeniApp() {
               const aktif = b.sayfalar.some((m) => m.id === sekme);
               const rozetTop = b.sayfalar.reduce((t, m) => t + (Number(rozet[m.id]) || 0), 0);
               return (<React.Fragment key={b.ad}>
-              <button type="button" className="piapp-baslik" aria-expanded={ac} data-aktif={aktif ? '1' : '0'} onClick={() => bolumAc(b.ad)}>
-                <span className="ikon" aria-hidden="true">{b.ikon}</span><span style={{ flex: 1 }}>{b.ad}</span><span className="ok">▶</span>
-                {aktif && !ac && <span className="nokta" title="Açık sayfa bu bölümde" />}
+              {/* Sahip: "altında başka başlık yoksa (Şube kazancı gibi) basınca alta açmak yerine DİREKT açılsın" */}
+              <button type="button" className="piapp-baslik" aria-expanded={b.sayfalar.length > 1 ? ac : undefined} data-aktif={aktif ? '1' : '0'}
+                aria-current={b.sayfalar.length === 1 && aktif ? 'page' : undefined}
+                onClick={() => {
+                  if (b.sayfalar.length === 1) { sekmeDegis(b.sayfalar[0].id); setMenuAcik(false); setAcik([]); }
+                  else bolumAc(b.ad);
+                }}>
+                <span className="ikon" aria-hidden="true">{b.ikon}</span><span style={{ flex: 1 }}>{b.ad}</span>{b.sayfalar.length > 1 && <span className="ok">▶</span>}
+                {aktif && !ac && b.sayfalar.length > 1 && <span className="nokta" title="Açık sayfa bu bölümde" />}
                 {!ac && rozetTop > 0 && <span style={{ background: 'var(--bad)', color: 'var(--on)', borderRadius: 999, padding: '0 7px', fontSize: 11.5, fontWeight: 700, letterSpacing: 0 }}>{rozetTop}</span>}
               </button>
-              {ac && b.sayfalar.map((m) => (
+              {ac && b.sayfalar.length > 1 && b.sayfalar.map((m) => (
               <a key={m.id} href={m.id === 'kasam' ? TABAN : `${TABAN}/${m.id}`} aria-current={sekme === m.id ? 'page' : undefined}
                 onClick={(e) => { e.preventDefault(); sekmeDegis(m.id); setMenuAcik(false); }}>
                 <span>{m.ad}<small>{m.alt}</small></span>
