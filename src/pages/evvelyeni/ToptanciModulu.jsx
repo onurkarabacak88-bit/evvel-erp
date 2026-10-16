@@ -266,8 +266,9 @@ export function UrunFiyatlari({ onToast }) {
           }}>
             <b style={{ fontSize: 14, lineHeight: 1.2 }}>{u.ad}</b>
             {u.gecerli != null
-              ? <span style={{ ...num, fontSize: 20, fontWeight: 800 }}>{fmt(u.gecerli)} ₺</span>
+              ? <span style={{ ...num, fontSize: 20, fontWeight: 800 }}>{fmt(u.gecerli)} ₺<span style={{ fontSize: 12, fontWeight: 600, color: R.not }}> / adet</span></span>
               : <span style={{ color: R.kirmizi, fontWeight: 700 }}>fiyat yok — gir</span>}
+            {u.koli && u.gecerli != null && <span style={{ fontSize: 11.5, color: R.not }}>1 koli ({u.koli} adet) = {fmt(u.gecerli * u.koli)} ₺</span>}
             {u.kaynak && <span style={{ fontSize: 11.5, color: KAYNAK_RENK[u.kaynak] }}>{u.kaynak}{u.kaynak === 'son alış' && u.son_alis?.kdv_yok ? ' (KDV oranı yok)' : ''}</span>}
             {u.toptanci.length > 0 && <span style={{ fontSize: 11, color: R.not }}>{u.toptanci.map((t) => `${t.toptanci}: ${fmt(t.birim)}`).join(' · ')}</span>}
           </button>
@@ -283,7 +284,7 @@ export function UrunFiyatlari({ onToast }) {
               <span>Katalog: {duz.u.katalog != null ? `${fmt(duz.u.katalog)} ₺` : 'yok'}</span>
               {duz.u.elle != null && <span>Elle girilen: {fmt(duz.u.elle)} ₺{duz.u.elle_kim ? ` · ${duz.u.elle_kim}` : ''}</span>}
             </div>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13, fontWeight: 600 }}>Birim fiyat ₺ (KDV dahil, panelde sayılan birim başına)
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13, fontWeight: 600 }}>1 ADET fiyatı ₺ (KDV dahil){duz.u.koli ? ` — kolide ${duz.u.koli} adet var, koli fiyatını ${duz.u.koli}'e böl` : ''}
               <input autoFocus inputMode="decimal" value={duz.deger} onChange={(e) => setDuz({ ...duz, deger: e.target.value })}
                 style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 18 }} /></label>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>
