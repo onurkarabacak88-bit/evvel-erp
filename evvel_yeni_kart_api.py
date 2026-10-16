@@ -92,6 +92,37 @@ def _hareketler(kayit) -> dict:
     return out
 
 
+def _eski_kopru(cur, H: dict, teyitler: dict) -> None:
+    """KÖPRÜ (sahip teyit edene kadar): çıpası ESKİ SİSTEMDEN gelen kartta, eski sistemin kart hareketleri
+    (harcama / borç ödemesi) de sayılır — Ekim boyunca iki sistem birlikte kullanılıyor. Aynı tutar ±2 gün
+    içinde Evvel Yeni'de de girilmişse BİR KEZ sayılır. Kart bankayla teyit edilince köprü o kart için kapanır."""
+    eski = {kid: ty[0]["tarih"] for kid, ty in teyitler.items() if ty and ty[0]["kaynak"] == "eski_sistem"}
+    if not eski:
+        return
+    try:
+        with savepoint(cur, "sp_ey_kart_kopru"):
+            cur.execute("""SELECT id, kart_id, tarih, islem_turu, tutar, aciklama FROM kart_hareketleri
+                            WHERE kart_id = ANY(%s) AND islem_turu IN ('HARCAMA','ODEME')
+                              AND COALESCE(durum,'aktif') NOT IN ('iptal','silindi') ORDER BY tarih""", (list(eski),))
+            satirlar = [dict(x) for x in cur.fetchall() or []]
+    except Exception:  # noqa: BLE001
+        return
+    for x in satirlar:
+        kid = str(x["kart_id"])
+        if x["tarih"] <= eski[kid]:
+            continue
+        tur = "harcama" if x["islem_turu"] == "HARCAMA" else "borc_odeme"
+        t = _kurus(x["tutar"] or 0)
+        if t <= 0:
+            continue
+        mevcut = H.setdefault(kid, [])
+        if any(m["tur"] == tur and abs(abs(m["tutar"]) - t) < 100 and not m.get("eski")
+               and abs((date.fromisoformat(m["gun"]) - x["tarih"]).days) <= 2 for m in mevcut):
+            continue
+        mevcut.append({"gun": x["tarih"].isoformat(), "tutar": -t if tur == "harcama" else t, "tur": tur, "eski": True,
+                       "aciklama": f"eski sistem · {(x.get('aciklama') or '').strip()[:60]}", "id": "eski:" + str(x["id"])})
+
+
 def _sonraki_son_odeme(kesim_gunu, son_odeme_gunu, bugun: date) -> Optional[date]:
     if not son_odeme_gunu:
         return None
@@ -118,6 +149,7 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
     if kayit is None:
         _, _, kayit, _ = _yukle(cur, tum_donemler=True)
     H = _hareketler(kayit)
+    _eski_kopru(cur, H, teyitler)
     out = []
     for k in kartlar:
         ty = teyitler.get(k["id"], [])
@@ -132,8 +164,8 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
         if ekstre_cipa:
             odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and x["gun"] > ekstre_cipa["tarih"].isoformat())
             son_tarih = ekstre_cipa.get("son_odeme")
-            if son_tarih and son_tarih < bugun - timedelta(days=20):
-                son_tarih = None   # eski ekstrenin tarihi — yeni ekstre girilmemiş
+            if son_tarih and son_tarih < bugun:
+                son_tarih = None   # o ekstrenin son günü geçti — sıradaki son ödeme günü
             son_tarih = son_tarih or _sonraki_son_odeme(k.get("kesim_gunu"), k.get("son_odeme_gunu"), bugun)
             kalan = max(0, int(ekstre_cipa["ekstre_borc"]) - odenen)
             so = {"tarih": son_tarih.isoformat() if son_tarih else None, "gun_kaldi": (son_tarih - bugun).days if son_tarih else None,
