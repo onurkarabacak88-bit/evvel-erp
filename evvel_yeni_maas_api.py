@@ -533,8 +533,8 @@ def takvim_karar(b: YoklamaKararBody, x_evvel_oturum: Optional[str] = Header(def
         _hazirla(cur)
         kim = _aktor(cur, x_evvel_oturum)
         t = (b.tarih or _bugun().isoformat())[:10]
-        cur.execute(""" + Q + """INSERT INTO ey_personel_yoklama_karar (id, personel_id, tarih, karar, izin_bitis, aciklama, degistiren)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s)""" + Q + """,
+        cur.execute("""INSERT INTO ey_personel_yoklama_karar (id, personel_id, tarih, karar, izin_bitis, aciklama, degistiren)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
                     (str(_uuid.uuid4()), b.personel_id, t, b.karar, (b.izin_bitis or None), (b.aciklama or None), kim))
         mesaj = {"izin": "Yıllık izin olarak işaretlendi", "devam": "Devam ediyor — soru kapandı"}.get(b.karar)
         if b.karar == "ayrildi":
