@@ -76,8 +76,12 @@ def _surum2(cur):
         for t in ("ey_urun", "ey_urun_kategori", "ey_urun_iz", "ey_urun_takma"):
             if _tablo_var(cur, t):
                 cur.execute(f"ALTER TABLE {t} RENAME TO {t}_v1_yedek")
-        for i in ("ey_urun_pkey", "ey_urun_kategori_pkey", "ey_urun_iz_pkey", "ey_urun_iz_kaynak_ref_key", "ey_urun_takma_pkey"):
-            cur.execute(f"ALTER INDEX IF EXISTS {i} RENAME TO {i.replace('ey_urun', 'ey_urun_v1y', 1)}")
+        # Fable: yedeğe kalkan tabloların BÜTÜN indeksleri (adı bilinmeyen dahil) yeniden adlandırılır → yeni tablolarla çakışmaz
+        cur.execute("""SELECT indexname FROM pg_indexes WHERE schemaname = current_schema()
+                        AND tablename IN ('ey_urun_v1_yedek', 'ey_urun_kategori_v1_yedek', 'ey_urun_iz_v1_yedek', 'ey_urun_takma_v1_yedek')""")
+        for i in [dict(x)["indexname"] for x in cur.fetchall() or []]:
+            if not i.startswith("v1y_"):
+                cur.execute(f'ALTER INDEX "{i}" RENAME TO "{("v1y_" + i)[:63]}"')
     _tablolar(cur)
     if not eski:
         return
@@ -90,9 +94,10 @@ def _surum2(cur):
                     (kat[r["id"]], r["ad"], r["emoji"], int(r["sira"] or 0)))
     cur.execute("""SELECT ad, kategori_id, birim_teyit, koli_ici, kdv_oran, sira FROM ey_urun_v1_yedek
                     WHERE aktif AND birlesti IS NULL ORDER BY sira, ad""")
-    n = 0
+    n, atlanan = 0, []
     for r in [dict(x) for x in cur.fetchall() or []]:
         if r["kategori_id"] not in kat:
+            atlanan.append(r["ad"])     # Fable: kategorisiz / pasif kategorideki ürün sessiz kaybolmasın
             continue
         uid = str(uuid.uuid4())
         cur.execute("""INSERT INTO ey_urun (id, ad, kategori_id, birim, birim_teyit, koli_ici, kdv_oran, aktif, sira)
@@ -102,6 +107,8 @@ def _surum2(cur):
                     (str(uuid.uuid4()), uid, r["ad"].strip(), "başlangıç listesi (2026-10-18, sahiple temizlendi)"))
         n += 1
     log.info("ürün kataloğu: sıfırdan kuruldu, başlangıç listesi %s ürün", n)
+    if atlanan:
+        log.warning("ürün kataloğu: kategorisi olmadığı için başlangıç listesine alınmayan %s ürün: %s", len(atlanan), ", ".join(atlanan)[:500])
 
 
 # ─────────────────────────── PUBLIC SERVİSLER ───────────────────────────
@@ -235,6 +242,8 @@ def kategori_duzelt(kid: str, b: KategoriBody, x_evvel_oturum: Optional[str] = H
         if not cur.fetchone():
             raise HTTPException(404, "Kategori bulunamadı")
         ad = _kategori_dogrula(cur, b, kid) if b.aktif else " ".join(b.ad.split())[:60]
+        if len(ad) < 2:
+            raise HTTPException(400, "Kategori adı en az 2 harf")
         if not b.aktif:
             cur.execute("SELECT COUNT(*) AS n FROM ey_urun WHERE kategori_id=%s AND aktif", (kid,))
             if int(dict(cur.fetchone())["n"]):
