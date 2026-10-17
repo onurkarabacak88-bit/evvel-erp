@@ -167,8 +167,10 @@ def _fiyat_ogren(cur, t: dict, gun: date) -> None:
 
 
 def guncel_fiyat(cur, urun_id: str, gun: Optional[date] = None) -> Optional[int]:
-    """PUBLIC — TEK FİYAT KURALI (kuruş, KDV dahil, 1 SAYIM birimi): o güne kadar öğrenilen en yeni toptancı fiyatı
-    (kesin tutardan) → elle girilen ürün fiyatı → yok (None: okuyan modül 'fiyatı eksik' der, uydurmaz)."""
+    """PUBLIC — TEK FİYAT KURALI (kuruş, KDV dahil): o güne kadar öğrenilen en yeni toptancı fiyatı (kesin tutardan)
+    → elle girilen ürün fiyatı → yok (None: okuyan modül 'fiyatı eksik' der, uydurmaz).
+    BİRİM: fiyat, kaydın girildiği birimdedir. Yeni şube panelinin kayıtları (ey_urun kimliği) SAYIM biriminde girilir → fiyat
+    1 sayım birimidir. Ekim'e kadarki eski kimlikli kayıtlar eski birimdedir (Fable: çevrim yapılmış sanılmasın)."""
     toptanci_hazirla(cur)
     uid = str(urun_id or "").strip()
     if not uid:

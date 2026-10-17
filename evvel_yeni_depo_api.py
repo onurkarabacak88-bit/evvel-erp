@@ -318,7 +318,8 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
               ad_coz=None) -> dict:
     """PUBLIC: kör sayım → her sayılan ürün için FARK hareketi (sayılan − o anki defter). Boş bırakılan SAYILMAZ (0 sayılmaz).
     tur: 'sayim' (merkez) · 'acilis' (konumdaki açılış) · 'gunluk' (şube paneli: fark<0 = 'tuketim' (bardak satışı),
-    fark>0 = 'sayim'). kaynak_ref verilirse aynı sayım ikinci kez yazılmaz ({'tekrar': True})."""
+    fark>0 = 'sayim'). kaynak_ref verilirse aynı sayım ikinci kez yazılmaz ({'tekrar': True}) — kaynak_ref KONUMU içermeli
+    (ör. panel:kapanis:{şube}:{gün}; kilit konum bazlı)."""
     depo_hazirla(cur)
     if not konum.startswith("depo:"):
         raise HTTPException(400, "Sayım yalnız bir şube deposunda yapılır")

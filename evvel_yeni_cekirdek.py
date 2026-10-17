@@ -137,6 +137,7 @@ def _ayar_hazirla(cur) -> None:
     global _AYAR_HAZIR
     if _AYAR_HAZIR:
         return
+    cur.execute("SET LOCAL lock_timeout = '3s'")
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_ayar (
         anahtar TEXT PRIMARY KEY, deger TEXT, degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     _AYAR_HAZIR = True
