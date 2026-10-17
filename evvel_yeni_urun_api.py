@@ -236,27 +236,42 @@ def _ayni_ad(cur, kategori_id: str, ad: str, haric: Optional[str]) -> None:
             raise HTTPException(409, f"Bu kategoride aynı adlı ürün var: {dict(r)['ad']}")
 
 
+def urun_olustur(cur, kategori_id: str, ad: str, kim: str, koli_ici: Optional[int] = None, kdv_oran=None,
+                 kategori_kod: Optional[str] = None, aktif: bool = True) -> dict:
+    """PUBLIC servis: yeni ürün — katalog + iz + (geçişte) eski kataloğa da. Çağıranın işleminde çalışır (ya tam ya hiç).
+    Eski sistemin özel talep → "kataloğa al" akışı da bunu kullanır (Fable 2. tur: eski ekleme kapısı kapanınca o akış kırılmasın)."""
+    _hazirla()
+    if kategori_kod and not kategori_id:
+        cur.execute("SELECT id FROM ey_urun_kategori WHERE kod=%s AND aktif", (kategori_kod.strip(),))
+        r = cur.fetchone()
+        kategori_id = dict(r)["id"] if r else None
+    cur.execute("SELECT 1 FROM ey_urun_kategori WHERE id=%s", (kategori_id,))
+    if not kategori_id or not cur.fetchone():
+        raise HTTPException(400, "Kategori seç")
+    cur.execute("SELECT pg_advisory_xact_lock(7012042)")   # Fable: eşzamanlı iki ekleme çift ürün açmasın
+    _ayni_ad(cur, kategori_id, ad, None)
+    cur.execute("SELECT COALESCE(MAX(sira), 0) + 10 AS s FROM ey_urun WHERE kategori_id=%s", (kategori_id,))
+    uid = str(uuid.uuid4())
+    u = {"id": uid, "ad": ad.strip()[:120], "kategori_id": kategori_id, "birim": "adet", "koli_ici": koli_ici,
+         "kdv_oran": kdv_oran, "aktif": bool(aktif), "sira": int(dict(cur.fetchone())["s"])}
+    cur.execute("""INSERT INTO ey_urun (id, ad, kategori_id, birim, birim_teyit, koli_ici, kdv_oran, aktif, sira) VALUES (%s,%s,%s,'adet',%s,%s,%s,%s,%s)""",
+                (uid, u["ad"], kategori_id, koli_ici is not None or kim != "merkez (özel talep)", koli_ici, kdv_oran, u["aktif"], u["sira"]))
+    cur.execute("INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim, kaynak_ref) VALUES (%s,%s,'olusturma',NULL,%s,%s,%s)",
+                (str(uuid.uuid4()), uid, json.dumps({k: str(v) if v is not None else None for k, v in u.items()}, ensure_ascii=False), kim, f"olustur:{uid}"))
+    _eskiye_yaz(cur, u)
+    cur.execute("SELECT kod FROM ey_urun_kategori WHERE id=%s", (kategori_id,))
+    k = cur.fetchone()
+    return {"id": uid, "ad": u["ad"], "kategori_id": kategori_id, "kategori_kod": (dict(k)["kod"] if k else kategori_kod)}
+
+
 @router.post("")
 def urun_ekle(b: UrunBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     _hazirla()
     _dogrula(b)
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
-        cur.execute("SELECT 1 FROM ey_urun_kategori WHERE id=%s", (b.kategori_id,))
-        if not cur.fetchone():
-            raise HTTPException(400, "Kategori seç")
-        cur.execute("SELECT pg_advisory_xact_lock(7012042)")   # Fable: eşzamanlı iki ekleme çift ürün açmasın
-        _ayni_ad(cur, b.kategori_id, b.ad, None)
-        cur.execute("SELECT COALESCE(MAX(sira), 0) + 10 AS s FROM ey_urun WHERE kategori_id=%s", (b.kategori_id,))
-        uid = str(uuid.uuid4())
-        u = {"id": uid, "ad": b.ad.strip()[:120], "kategori_id": b.kategori_id, "birim": b.birim, "koli_ici": b.koli_ici,
-             "kdv_oran": b.kdv_oran, "aktif": b.aktif, "sira": int(dict(cur.fetchone())["s"])}
-        cur.execute("""INSERT INTO ey_urun (id, ad, kategori_id, birim, birim_teyit, koli_ici, kdv_oran, aktif, sira) VALUES (%s,%s,%s,%s,TRUE,%s,%s,%s,%s)""",
-                    (uid, u["ad"], b.kategori_id, b.birim, b.koli_ici, b.kdv_oran, b.aktif, u["sira"]))
-        cur.execute("INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim, kaynak_ref) VALUES (%s,%s,'olusturma',NULL,%s,%s,%s)",
-                    (str(uuid.uuid4()), uid, json.dumps({k: str(v) if v is not None else None for k, v in u.items()}, ensure_ascii=False), kim, f"olustur:{uid}"))
-        _eskiye_yaz(cur, u)
-    return {"ok": True, "id": uid, "mesaj": f"{u['ad']} eklendi"}
+        r = urun_olustur(cur, b.kategori_id, b.ad, kim, koli_ici=b.koli_ici, kdv_oran=b.kdv_oran, aktif=b.aktif)
+    return {"ok": True, "id": r["id"], "mesaj": f"{r['ad']} eklendi"}
 
 
 @router.post("/{uid}")

@@ -9873,6 +9873,8 @@ def _siparis_urun_kanonik_ad(cur, depo_stok_kalem_kodu: Optional[str]) -> Option
 
 @router.post("/siparis/urun-depo-kalem")
 def ops_siparis_urun_depo_kalem(body: OpsSiparisUrunDepoKalemBody):
+    # 📚 Evvel Yeni tek katalog: depo kodu = takma ad, Evvel Yeni › Ürünler'de (Fable: kullanılmayan eski yazıcı)
+    raise HTTPException(409, "Ürünler artık Evvel Yeni › Tanımlar › Ürünler'den eklenir ve düzenlenir (tek katalog).")
     kod_sql = _depo_stok_kalem_kodu_normalize(body.depo_stok_kalem_kodu)
     with db() as (conn, cur):
         cur.execute(
@@ -14592,7 +14594,9 @@ def ops_siparis_ozel_islem(body: OpsSiparisOzelIslemBody):
             return {"success": True, "durum": "reddedildi"}
 
         if islem == "katalog":
-            rur = _siparis_urun_insert(cur, str(rd["kategori_kod"]), str(rd["urun_adi"]))
+            # 📚 Evvel Yeni tek katalog (2026-10-17, Fable): eski ekleme kapısı kapandı → ürün yeni katalogdan eklenir (eski kataloğa da yazılır)
+            import evvel_yeni_urun_api as _ey_urun
+            rur = _ey_urun.urun_olustur(cur, None, str(rd["urun_adi"]), "merkez (özel talep)", kategori_kod=str(rd["kategori_kod"]))
             uid = str(rur["id"])
             audit(cur, "siparis_urun", uid, "OZEL_ONAY_KATALOG")
             cur.execute(
