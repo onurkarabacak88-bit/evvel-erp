@@ -1036,9 +1036,15 @@ def _sahte(tur, gun, **kw) -> dict:
     return r
 
 
-@router.post("/hareket")
-def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(default=None)):
-    """Tek yazma kapısı. Tek transaction + modül kilidi: ya tamamı yazılır ya hiçbiri."""
+def kasa_hazirla() -> None:
+    """PUBLIC: Kasa tablolarını (kendi kısa işleminde) hazırlar — kasa_yaz çağrılmadan ÖNCE, çağıranın işlemi dışında."""
+    _hazirla()
+
+
+def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = None) -> dict:
+    """PUBLIC — Kasa'nın TEK yazma kapısı (merkez ucu + yeni şube paneli). Çağıranın işleminde çalışır: modül kilidi,
+    sayım kilidi, eksi denetimi burada. kaynak_ref verilirse (ör. kapanis:{şube}:{gün}) aynı kayıt ikinci kez yazılmaz.
+    Önce kasa_hazirla() çağrılmış olmalı."""
     t = body.tur
     evo_yerine = None
     if t not in {"acilis", "kapanis", "dis", "teslim", "tasima", "odeme", "sayim", "cozum", "pos_yatis"}:
@@ -1051,184 +1057,188 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
         raise HTTPException(400, "Gün YYYY-AA-GG olmalı")
     if gd > bugun:
         raise HTTPException(400, "Gelecek tarihli kayıt girilemez")
+    _kilit(cur)
+    bas = _baslangic(cur)
+    if gd < bas and t != "acilis":
+        raise HTTPException(400, f"Bu dönem {bas.strftime('%d.%m.%Y')} tarihinde başladı; öncesine kayıt girilemez")
+    ref = kaynak_ref or (f"hareket:{body.istek_id[:64]}" if body.istek_id else None)
+    if ref:   # Codex: tekrar gönderim — doğrulamadan ÖNCE, kilit altında
+        cur.execute("SELECT 1 FROM para_izi_hareket WHERE kaynak_ref = %s OR kaynak_ref LIKE %s LIMIT 1", (ref, ref + "#%"))
+        if cur.fetchone():
+            return {"ok": True, "id": None, "idler": [], "tekrar": True, "mesaj": "Bu kayıt zaten yazılmıştı (ikinci kez yazılmadı)"}
+    cep_list, C, kayit, _ = _yukle(cur)
+    ol = _olaylar(kayit)
+    kilit = _sayim_kilidi(ol)
+
+    def cep_var(cid, turler=None):
+        if not cid or cid not in C or (turler and C[cid]["tur"] not in turler):
+            raise HTTPException(400, "Cep bulunamadı ya da bu işlem için uygun değil")
+
+    tut = _kurus(body.tutar) if body.tutar is not None else 0
+    yeni = None
+    if t == "acilis":
+        cep_var(body.cep)
+        if tut < 0:
+            raise HTTPException(400, "Açılış bakiyesi eksi olamaz")
+        if any(h["tur"] == "acilis" and h["cep"] == body.cep and h["is_gunu"] == bas.isoformat() for h in kayit):
+            raise HTTPException(409, "Bu cebin açılış bakiyesi zaten girilmiş. Düzeltmek için önce eskisini iptal et.")
+        gun = bas.isoformat()
+        yeni = _sahte(t, gun, cep=body.cep, tutar=tut)
+    elif t == "kapanis":
+        cep_var(body.cep, {"sube"})
+        kart = _kurus(body.kart or 0)          # elle kapanışta 'kart' = POS
+        onl = _kurus(body.online or 0)
+        if tut < 0 or kart < 0 or (tut == 0 and kart == 0):
+            raise HTTPException(400, "Nakit ya da kart tutarı gir")
+        mevcut = next((h for h in kayit if h["tur"] == "kapanis" and h["cep"] == body.cep and h["is_gunu"] == gun), None)
+        if mevcut:
+            # Sahip (2026-10-16): Evo'nun TAHMİNİ (şube kapanış yapmamış) gerçek kapanışla DEĞİŞTİRİLİR;
+            # eskisi silinmez, iptal kaydıyla devre dışı kalır. Gerçek kapanış varsa 409.
+            if mevcut["veri"].get("eski_kaynak") != "evo_taslak":
+                raise HTTPException(409, "Bu şubenin bu güne ait kapanışı zaten var")
+            evo_yerine = mevcut
+            kayit = [h for h in kayit if h["id"] != mevcut["id"]]
+        yeni = _sahte(t, gun, cep=body.cep, tutar=tut, durum="bekliyor", veri={"kart": kart + onl, "pos": kart, "online": onl})
+    elif t == "dis":
+        cep_var(body.cep)
+        alt = body.alt if body.alt in DIS_TURLERI else None
+        if not alt:
+            raise HTTPException(400, "Giriş türü seç")
+        if tut <= 0:
+            raise HTTPException(400, "Tutar gir")
+        if alt in ("destek", "borc", "kredi") and not (body.kimden or "").strip():
+            raise HTTPException(400, "Kimden geldiğini yaz")
+        veri_ = {"alt": alt, "kimden": (body.kimden or "").strip()[:80], "not": (body.not_ or "").strip()[:200]}
+        if isinstance(body.bag, dict):
+            veri_["bag"] = {str(k)[:20]: (str(v)[:80] if v is not None else None) for k, v in list(body.bag.items())[:6]}
+        yeni = _sahte(t, gun, cep=body.cep, tutar=tut, veri=veri_)
+    elif t == "teslim":
+        cep_var(body.kaynak, {"sube"})
+        cep_var(body.hedef, {"ev", "hesap"})
+        if tut <= 0:
+            raise HTTPException(400, "Tutar gir")
+        yeni = _sahte(t, gun, kaynak=body.kaynak, hedef=body.hedef, tutar=tut, durum="bekliyor",
+                      veri={"teslim_eden": (body.teslim_eden or "").strip()[:60]})
+    elif t == "tasima":
+        # Sahip: "Onur'un ve Fatma'nın evindeki para toplanıp Fethi'nin hesabına gitti" →
+        # BİRDEN ÇOK KAYNAK tek hedefe, tek transaction (ya hepsi ya hiçbiri).
+        kaynaklar = ([{"cep": p.cep, "tutar": _kurus(p.tutar)} for p in body.parcalar if p.tutar and p.tutar > 0]
+                     if body.parcalar else [{"cep": body.kaynak, "tutar": tut}])
+        cep_var(body.hedef)
+        if not kaynaklar:
+            raise HTTPException(400, "En az bir kaynak ekle")
+        if len({k["cep"] for k in kaynaklar}) != len(kaynaklar):
+            raise HTTPException(400, "Aynı cep iki kez seçilemez")
+        yeniler = []
+        for k in kaynaklar:
+            cep_var(k["cep"])
+            if k["cep"] == body.hedef:
+                raise HTTPException(400, "Nereden ve nereye aynı olamaz")
+            if C[k["cep"]]["tur"] == "sube" and C[body.hedef]["tur"] == "ev":
+                raise HTTPException(400, "Şubeden patrona para TESLİM ile geçer. '+ Teslim'i kullan.")
+            if k["tutar"] <= 0:
+                raise HTTPException(400, "Tutar gir")
+            yeniler.append(_sahte(t, gun, kaynak=k["cep"], hedef=body.hedef, tutar=k["tutar"],
+                                  veri={"toplu": len(kaynaklar) > 1}))
+        yeni = yeniler[0]
+    elif t == "odeme":
+        ac = (body.aciklama or "").strip()
+        if not ac:
+            raise HTTPException(400, "Ne ödendiğini yaz")
+        ps = [{"cep": p.cep, "tutar": _kurus(p.tutar)} for p in (body.parcalar or []) if p.tutar and p.tutar > 0]
+        if not ps:
+            raise HTTPException(400, "En az bir kaynak ekle")
+        if len({p["cep"] for p in ps}) != len(ps):
+            raise HTTPException(400, "Aynı cep iki kez seçilemez")
+        for p in ps:
+            cep_var(p["cep"])
+        top = sum(p["tutar"] for p in ps)
+        if top != tut:
+            raise HTTPException(400, f"Kaynaklar ({_tl(top)}) ödemeye ({_tl(tut)}) eşit olmalı")
+        yeni = _sahte(t, gun, tutar=top, veri={"aciklama": ac[:120], "kimin": (body.kimin or "Ortak")[:40], "parcalar": ps})
+    elif t == "pos_yatis":
+        # 💳 POS/online parası bankaya YATTI (net). Brüt karşılığı: verilmezse şubenin
+        # komisyon oranıyla TAHMİN edilir (etiketli) — fark otomatik "komisyon" sayılmaz.
+        cep_var(body.cep, {"banka"})
+        sube_cep = body.kaynak if body.kaynak in C and C[body.kaynak]["tur"] == "sube" else None
+        if not sube_cep:
+            sid = C[body.cep].get("sube_id")
+            sube_cep = ("sube:" + sid) if sid and ("sube:" + sid) in C else None
+        if not sube_cep:
+            raise HTTPException(400, "POS yatışı hangi şubenin satışı? Şube seç.")
+        if tut <= 0:
+            raise HTTPException(400, "Yatan tutarı gir")
+        kanal = body.alt if body.alt in ("pos", "online") else "online"
+        if kanal == "pos":
+            raise HTTPException(400, "POS ertesi gün kendiliğinden yatar — elle girilmez. Fark varsa ekstre bakiyesiyle yakalanır.")
+        if body.kart is not None and body.kart > 0:
+            brut, tahmini = _kurus(body.kart), False
+        else:
+            oran = (_oranlar(cur).get(C[sube_cep].get("sube_id")) or (0, 0))[0 if kanal == "pos" else 1]
+            brut, tahmini = (round(tut / (1 - oran / 100)) if 0 <= oran < 100 else tut), True
+        yeni = _sahte(t, gun, cep=body.cep, tutar=tut,
+                      veri={"kanal": kanal, "sube_cep": sube_cep, "brut": brut, "brut_tahmini": tahmini,
+                            "not": (body.not_ or "").strip()[:200]})
+    elif t == "sayim":
+        cep_var(body.cep)
+        if C[body.cep]["tur"] == "banka":
+            _pos_otomatik(cur)
+            cep_list, C, kayit, _ = _yukle(cur)
+            ol = _olaylar(kayit)
+            kilit = _sayim_kilidi(ol)
+        if body.sayilan is None or body.sayilan < 0:
+            raise HTTPException(400, "Sayılan tutarı gir")
+        beklenen = _bakiye([o for o in ol if o["gun"] <= gun], C)["b"].get(body.cep, 0)
+        say = _kurus(body.sayilan)
+        yeni = _sahte(t, gun, cep=body.cep, tutar=say, veri={"beklenen": beklenen, "sayilan": say})
+    elif t == "cozum":
+        x = next((z for z in _farklar(ol, C) if z["id"] == body.fark_id), None)
+        if not x:
+            raise HTTPException(404, "Fark bulunamadı")
+        if x["coz"]:
+            raise HTTPException(409, "Bu fark zaten kapanmış")
+        if body.sebep not in _sebep_secenekleri(x):
+            raise HTTPException(400, "Bu fark için geçersiz sebep")
+        if body.sebep in ("kayip", "harcandi") and not (body.not_ or "").strip():
+            raise HTTPException(400, "Kayba ya da harcamaya yazarken açıklama zorunlu")
+        if gun < x["tarih"]:
+            raise HTTPException(400, "Fark, oluştuğu günden önce kapatılamaz")
+        yeni = _sahte(t, gun, tutar=abs(x["f"]),
+                      veri={"fark_id": x["id"], "fark_ad": x["ad"], "f": x["f"], "sebep": body.sebep, "cep": x["cep"],
+                            "sube_cep": x["sube_cep"], "sorumlu": (body.sorumlu or "")[:40], "not": (body.not_ or "").strip()[:200]})
+
+    # ── ortak korumalar: sayım kilidi + eksiye düşme ──
+    if t != "tasima":
+        yeniler = [yeni]
+    for i, y in enumerate(yeniler):
+        y["id"] = f"__yeni{i}__"
+    yeni_ol = _olaylar(yeniler)
+    etkiler = [(e["cep"], o["gun"]) for o in yeni_ol for e in _etki(o, C)]
+    if evo_yerine:   # Evo tahmininin kalkması da o cebi değiştirir → sayılmış güne dokunamaz
+        etkiler.append((evo_yerine["cep"], evo_yerine["is_gunu"]))
+    if t != "cozum":   # fark çözümü sayımın kendi kapanış yoludur — kilide takılmaz
+        _kilit_denetle(etkiler, kilit, C, sayim_icin=body.cep if t == "sayim" else None)
+    cikan = {e["cep"] for o in yeni_ol for e in _etki(o, C) if e["d"] < 0 and e["cep"] in C}
+    _eksi_denetle(_olaylar(kayit + yeniler), cikan, gun, C)
+
+    if evo_yerine:
+        _yaz(cur, "iptal", _bugun().isoformat(), kim,
+             veri={"hedef_id": evo_yerine["id"], "sebep": "Evo tahmini — şubenin gerçek kapanışı girildi"})
+        for y in yeniler:
+            y["veri"] = {**y["veri"], "evo_yerine": True, "evo_nakit": evo_yerine["tutar"], "evo_kart": int(evo_yerine["veri"].get("kart", 0))}
+    idler = [_yaz(cur, t, y["is_gunu"], kim, cep=y["cep"], kaynak=y["kaynak"], hedef=y["hedef"], tutar=y["tutar"], durum=y["durum"],
+                  veri=y["veri"], kaynak_ref=(ref if i == 0 else f"{ref}#{i}") if ref else None) for i, y in enumerate(yeniler)]
+    if ref and not idler[0]:
+        return {"ok": True, "id": None, "idler": [], "tekrar": True, "mesaj": "Bu kayıt zaten yazılmıştı (ikinci kez yazılmadı)"}
+    return {"ok": True, "id": idler[0], "idler": idler}
+
+
+@router.post("/hareket")
+def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Tek yazma kapısı. Tek transaction + modül kilidi: ya tamamı yazılır ya hiçbiri."""
     _hazirla()
     with db() as (conn, cur):
-        _kilit(cur)
-        bas = _baslangic(cur)
-        if gd < bas and t != "acilis":
-            raise HTTPException(400, f"Bu dönem {bas.strftime('%d.%m.%Y')} tarihinde başladı; öncesine kayıt girilemez")
-        kim = _aktor(cur, x_evvel_oturum)
-        if body.istek_id:   # Codex: tekrar gönderim — doğrulamadan ÖNCE, kilit altında
-            cur.execute("SELECT 1 FROM para_izi_hareket WHERE kaynak_ref = %s OR kaynak_ref LIKE %s LIMIT 1",
-                        (f"hareket:{body.istek_id[:64]}", f"hareket:{body.istek_id[:64]}#%"))
-            if cur.fetchone():
-                return {"ok": True, "id": None, "idler": [], "tekrar": True, "mesaj": "Bu kayıt zaten yazılmıştı (ikinci kez yazılmadı)"}
-        cep_list, C, kayit, _ = _yukle(cur)
-        ol = _olaylar(kayit)
-        kilit = _sayim_kilidi(ol)
-
-        def cep_var(cid, turler=None):
-            if not cid or cid not in C or (turler and C[cid]["tur"] not in turler):
-                raise HTTPException(400, "Cep bulunamadı ya da bu işlem için uygun değil")
-
-        tut = _kurus(body.tutar) if body.tutar is not None else 0
-        yeni = None
-        if t == "acilis":
-            cep_var(body.cep)
-            if tut < 0:
-                raise HTTPException(400, "Açılış bakiyesi eksi olamaz")
-            if any(h["tur"] == "acilis" and h["cep"] == body.cep and h["is_gunu"] == bas.isoformat() for h in kayit):
-                raise HTTPException(409, "Bu cebin açılış bakiyesi zaten girilmiş. Düzeltmek için önce eskisini iptal et.")
-            gun = bas.isoformat()
-            yeni = _sahte(t, gun, cep=body.cep, tutar=tut)
-        elif t == "kapanis":
-            cep_var(body.cep, {"sube"})
-            kart = _kurus(body.kart or 0)          # elle kapanışta 'kart' = POS
-            onl = _kurus(body.online or 0)
-            if tut < 0 or kart < 0 or (tut == 0 and kart == 0):
-                raise HTTPException(400, "Nakit ya da kart tutarı gir")
-            mevcut = next((h for h in kayit if h["tur"] == "kapanis" and h["cep"] == body.cep and h["is_gunu"] == gun), None)
-            if mevcut:
-                # Sahip (2026-10-16): Evo'nun TAHMİNİ (şube kapanış yapmamış) gerçek kapanışla DEĞİŞTİRİLİR;
-                # eskisi silinmez, iptal kaydıyla devre dışı kalır. Gerçek kapanış varsa 409.
-                if mevcut["veri"].get("eski_kaynak") != "evo_taslak":
-                    raise HTTPException(409, "Bu şubenin bu güne ait kapanışı zaten var")
-                evo_yerine = mevcut
-                kayit = [h for h in kayit if h["id"] != mevcut["id"]]
-            yeni = _sahte(t, gun, cep=body.cep, tutar=tut, durum="bekliyor", veri={"kart": kart + onl, "pos": kart, "online": onl})
-        elif t == "dis":
-            cep_var(body.cep)
-            alt = body.alt if body.alt in DIS_TURLERI else None
-            if not alt:
-                raise HTTPException(400, "Giriş türü seç")
-            if tut <= 0:
-                raise HTTPException(400, "Tutar gir")
-            if alt in ("destek", "borc", "kredi") and not (body.kimden or "").strip():
-                raise HTTPException(400, "Kimden geldiğini yaz")
-            veri_ = {"alt": alt, "kimden": (body.kimden or "").strip()[:80], "not": (body.not_ or "").strip()[:200]}
-            if isinstance(body.bag, dict):
-                veri_["bag"] = {str(k)[:20]: (str(v)[:80] if v is not None else None) for k, v in list(body.bag.items())[:6]}
-            yeni = _sahte(t, gun, cep=body.cep, tutar=tut, veri=veri_)
-        elif t == "teslim":
-            cep_var(body.kaynak, {"sube"})
-            cep_var(body.hedef, {"ev", "hesap"})
-            if tut <= 0:
-                raise HTTPException(400, "Tutar gir")
-            yeni = _sahte(t, gun, kaynak=body.kaynak, hedef=body.hedef, tutar=tut, durum="bekliyor",
-                          veri={"teslim_eden": (body.teslim_eden or "").strip()[:60]})
-        elif t == "tasima":
-            # Sahip: "Onur'un ve Fatma'nın evindeki para toplanıp Fethi'nin hesabına gitti" →
-            # BİRDEN ÇOK KAYNAK tek hedefe, tek transaction (ya hepsi ya hiçbiri).
-            kaynaklar = ([{"cep": p.cep, "tutar": _kurus(p.tutar)} for p in body.parcalar if p.tutar and p.tutar > 0]
-                         if body.parcalar else [{"cep": body.kaynak, "tutar": tut}])
-            cep_var(body.hedef)
-            if not kaynaklar:
-                raise HTTPException(400, "En az bir kaynak ekle")
-            if len({k["cep"] for k in kaynaklar}) != len(kaynaklar):
-                raise HTTPException(400, "Aynı cep iki kez seçilemez")
-            yeniler = []
-            for k in kaynaklar:
-                cep_var(k["cep"])
-                if k["cep"] == body.hedef:
-                    raise HTTPException(400, "Nereden ve nereye aynı olamaz")
-                if C[k["cep"]]["tur"] == "sube" and C[body.hedef]["tur"] == "ev":
-                    raise HTTPException(400, "Şubeden patrona para TESLİM ile geçer. '+ Teslim'i kullan.")
-                if k["tutar"] <= 0:
-                    raise HTTPException(400, "Tutar gir")
-                yeniler.append(_sahte(t, gun, kaynak=k["cep"], hedef=body.hedef, tutar=k["tutar"],
-                                      veri={"toplu": len(kaynaklar) > 1}))
-            yeni = yeniler[0]
-        elif t == "odeme":
-            ac = (body.aciklama or "").strip()
-            if not ac:
-                raise HTTPException(400, "Ne ödendiğini yaz")
-            ps = [{"cep": p.cep, "tutar": _kurus(p.tutar)} for p in (body.parcalar or []) if p.tutar and p.tutar > 0]
-            if not ps:
-                raise HTTPException(400, "En az bir kaynak ekle")
-            if len({p["cep"] for p in ps}) != len(ps):
-                raise HTTPException(400, "Aynı cep iki kez seçilemez")
-            for p in ps:
-                cep_var(p["cep"])
-            top = sum(p["tutar"] for p in ps)
-            if top != tut:
-                raise HTTPException(400, f"Kaynaklar ({_tl(top)}) ödemeye ({_tl(tut)}) eşit olmalı")
-            yeni = _sahte(t, gun, tutar=top, veri={"aciklama": ac[:120], "kimin": (body.kimin or "Ortak")[:40], "parcalar": ps})
-        elif t == "pos_yatis":
-            # 💳 POS/online parası bankaya YATTI (net). Brüt karşılığı: verilmezse şubenin
-            # komisyon oranıyla TAHMİN edilir (etiketli) — fark otomatik "komisyon" sayılmaz.
-            cep_var(body.cep, {"banka"})
-            sube_cep = body.kaynak if body.kaynak in C and C[body.kaynak]["tur"] == "sube" else None
-            if not sube_cep:
-                sid = C[body.cep].get("sube_id")
-                sube_cep = ("sube:" + sid) if sid and ("sube:" + sid) in C else None
-            if not sube_cep:
-                raise HTTPException(400, "POS yatışı hangi şubenin satışı? Şube seç.")
-            if tut <= 0:
-                raise HTTPException(400, "Yatan tutarı gir")
-            kanal = body.alt if body.alt in ("pos", "online") else "online"
-            if kanal == "pos":
-                raise HTTPException(400, "POS ertesi gün kendiliğinden yatar — elle girilmez. Fark varsa ekstre bakiyesiyle yakalanır.")
-            if body.kart is not None and body.kart > 0:
-                brut, tahmini = _kurus(body.kart), False
-            else:
-                oran = (_oranlar(cur).get(C[sube_cep].get("sube_id")) or (0, 0))[0 if kanal == "pos" else 1]
-                brut, tahmini = (round(tut / (1 - oran / 100)) if 0 <= oran < 100 else tut), True
-            yeni = _sahte(t, gun, cep=body.cep, tutar=tut,
-                          veri={"kanal": kanal, "sube_cep": sube_cep, "brut": brut, "brut_tahmini": tahmini,
-                                "not": (body.not_ or "").strip()[:200]})
-        elif t == "sayim":
-            cep_var(body.cep)
-            if C[body.cep]["tur"] == "banka":
-                _pos_otomatik(cur)
-                cep_list, C, kayit, _ = _yukle(cur)
-                ol = _olaylar(kayit)
-                kilit = _sayim_kilidi(ol)
-            if body.sayilan is None or body.sayilan < 0:
-                raise HTTPException(400, "Sayılan tutarı gir")
-            beklenen = _bakiye([o for o in ol if o["gun"] <= gun], C)["b"].get(body.cep, 0)
-            say = _kurus(body.sayilan)
-            yeni = _sahte(t, gun, cep=body.cep, tutar=say, veri={"beklenen": beklenen, "sayilan": say})
-        elif t == "cozum":
-            x = next((z for z in _farklar(ol, C) if z["id"] == body.fark_id), None)
-            if not x:
-                raise HTTPException(404, "Fark bulunamadı")
-            if x["coz"]:
-                raise HTTPException(409, "Bu fark zaten kapanmış")
-            if body.sebep not in _sebep_secenekleri(x):
-                raise HTTPException(400, "Bu fark için geçersiz sebep")
-            if body.sebep in ("kayip", "harcandi") and not (body.not_ or "").strip():
-                raise HTTPException(400, "Kayba ya da harcamaya yazarken açıklama zorunlu")
-            if gun < x["tarih"]:
-                raise HTTPException(400, "Fark, oluştuğu günden önce kapatılamaz")
-            yeni = _sahte(t, gun, tutar=abs(x["f"]),
-                          veri={"fark_id": x["id"], "fark_ad": x["ad"], "f": x["f"], "sebep": body.sebep, "cep": x["cep"],
-                                "sube_cep": x["sube_cep"], "sorumlu": (body.sorumlu or "")[:40], "not": (body.not_ or "").strip()[:200]})
-
-        # ── ortak korumalar: sayım kilidi + eksiye düşme ──
-        if t != "tasima":
-            yeniler = [yeni]
-        for i, y in enumerate(yeniler):
-            y["id"] = f"__yeni{i}__"
-        yeni_ol = _olaylar(yeniler)
-        etkiler = [(e["cep"], o["gun"]) for o in yeni_ol for e in _etki(o, C)]
-        if evo_yerine:   # Evo tahmininin kalkması da o cebi değiştirir → sayılmış güne dokunamaz
-            etkiler.append((evo_yerine["cep"], evo_yerine["is_gunu"]))
-        if t != "cozum":   # fark çözümü sayımın kendi kapanış yoludur — kilide takılmaz
-            _kilit_denetle(etkiler, kilit, C, sayim_icin=body.cep if t == "sayim" else None)
-        cikan = {e["cep"] for o in yeni_ol for e in _etki(o, C) if e["d"] < 0 and e["cep"] in C}
-        _eksi_denetle(_olaylar(kayit + yeniler), cikan, gun, C)
-
-        if evo_yerine:
-            _yaz(cur, "iptal", _bugun().isoformat(), kim,
-                 veri={"hedef_id": evo_yerine["id"], "sebep": "Evo tahmini — şubenin gerçek kapanışı girildi"})
-            for y in yeniler:
-                y["veri"] = {**y["veri"], "evo_yerine": True, "evo_nakit": evo_yerine["tutar"], "evo_kart": int(evo_yerine["veri"].get("kart", 0))}
-        ref = f"hareket:{body.istek_id[:64]}" if body.istek_id else None
-        idler = [_yaz(cur, t, y["is_gunu"], kim, cep=y["cep"], kaynak=y["kaynak"], hedef=y["hedef"], tutar=y["tutar"], durum=y["durum"],
-                      veri=y["veri"], kaynak_ref=(ref if i == 0 else f"{ref}#{i}") if ref else None) for i, y in enumerate(yeniler)]
-        if ref and not idler[0]:
-            return {"ok": True, "id": None, "idler": [], "tekrar": True, "mesaj": "Bu kayıt zaten yazılmıştı (ikinci kez yazılmadı)"}
-    return {"ok": True, "id": idler[0], "idler": idler}
+        return kasa_yaz(cur, body, _aktor(cur, x_evvel_oturum))
 
 
 class OnayBody(BaseModel):
