@@ -196,6 +196,11 @@ def sube_cepleri_yaz(cur) -> None:
             ("banka:" + str(r["id"]), ad + " bankası", ad + " banka", str(r["id"]), 50 + i))
 
 
+def donem_baslangici(cur) -> date:
+    """PUBLIC servis: geçerli dönemin ilk günü (takvimler 'Evvel Yeni öncesi' ayları ayırmak için)."""
+    return _baslangic(cur)
+
+
 def _baslangic(cur) -> date:
     """Geçerli dönemin ilk günü (ayar yoksa ilk dönem: 1 Ekim 2026)."""
     try:

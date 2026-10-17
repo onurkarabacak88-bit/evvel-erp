@@ -1,0 +1,91 @@
+// 🏦 KREDİLER — tak-çıkar modül (sunucu: evvel_yeni_kredi_api.py). Sahip (2026-10-17): "Krediler içinde kredi takvimi" —
+// kredi × 12 ay (kira takvimi gibi). Borç = taksit; ödeme Ödeme ekranından (kredi seçilerek) → takvimde "ödendi".
+import React, { useEffect, useRef, useState } from 'react';
+import { api } from '../../utils/api';
+import { PI_CSS, R, num, Dugme, fmt, tKisa } from './KasaModulu';
+import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici, tutarYaz } from './AyTakvim';
+
+export const KREDI_SAYFALAR = [{ id: 'kredi_takvimi', ad: 'Kredi takvimi', alt: 'Kredi × ay · taksitler' }];
+const alan = { padding: '8px 10px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, minWidth: 0, width: '100%' };
+const ayBugun = () => new Date().toISOString().slice(0, 7);
+
+export default function KrediModulu({ onToast, onSekme }) {
+  const [yil, setYil] = useState(() => new Date().getFullYear());
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState(null);
+  const [sec, setSec] = useState(null);
+  const [form, setForm] = useState(null);   // {id?, ad, tur, aylik_taksit, odeme_gunu, ilk_ay, taksit_sayisi, aktif}
+  const no = useRef(0);
+  const yukle = () => {
+    const n = ++no.current;
+    setV(null);
+    api(`/evvel-yeni/kredi/takvim?yil=${yil}`).then((r) => { if (n === no.current) { setV(r); setHata(null); } })
+      .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
+  };
+  useEffect(yukle, [yil]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  const ode = (k, a) => {   // takvimden → Ödeme formu hazır (kredi + ay + kalan)
+    try { window.sessionStorage.setItem('ey_odeme_on', JSON.stringify({ konu: 'kredi', kredi_id: k.id, kredi_ad: k.ad, ait_ay: a.ay, tutar: a.kalan })); } catch { /* yut */ }
+    onSekme?.('odemeler');
+  };
+  const kaydet = async () => {
+    try {
+      const govde = { ...form, aylik_taksit: Number(String(form.aylik_taksit).replace(',', '.')) || 0, odeme_gunu: Number(form.odeme_gunu) || 0,
+        taksit_sayisi: form.taksit_sayisi ? Number(form.taksit_sayisi) : null };
+      const r = await api(form.id ? `/evvel-yeni/kredi/${form.id}` : '/evvel-yeni/kredi', { method: 'POST', body: govde });
+      onToast?.(r.mesaj); setForm(null); yukle();
+    } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+  };
+
+  const satirlar = (v?.krediler || []).map((k) => ({
+    id: k.id, baslik: k.ad, alt: `${fmt(k.taksit)} ₺/ay · ${k.odeme_gunu}'i${k.son_ay ? ` · son ${k.son_ay}` : ''}`, k,
+    aylar: k.aylar.map((a) => ({ ...a, ust: a.odenen > 0 ? fmt(a.odenen) : a.durum === 'once' ? '·' : fmt(a.beklenen), alt: a.durum === 'kismi' ? `kalan ${fmt(a.kalan)}` : null })),
+    sag: fmt(k.yil_odenen), sagAlt: `/ ${fmt(k.yil_beklenen)}`,
+  }));
+  return (
+    <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <style>{PI_CSS}</style>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+        <div><div className="pi-eyebrow">Evvel Yeni · Krediler</div><h1 style={{ fontSize: 30 }}>Kredi takvimi</h1></div>
+        <Dugme kucuk ana onClick={() => setForm({ ad: '', tur: 'Kredi', aylik_taksit: '', odeme_gunu: '', ilk_ay: ayBugun(), taksit_sayisi: '', aktif: true })}>+ Kredi ekle</Dugme>
+        <YilSecici yil={yil} setYil={setYil} />
+      </div>
+      <Lejant />
+      {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
+      {!v && !hata && <div style={{ color: R.not }}>Takvim hazırlanıyor…</div>}
+      {v && v.krediler.length === 0 && <div style={{ color: R.not }}>Tanımlı kredi yok. "+ Kredi ekle" ile ekle.</div>}
+      {v && v.krediler.length > 0 && <>
+        <AyIzgara satirlar={satirlar} onHucre={(s, a, i) => setSec({ k: s.k, a, i })} />
+        <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', fontSize: 12.5, color: R.metin2 }}>
+          {v.ay_toplam.map((t, i) => <span key={t.ay}>{AY_UZUN[i].slice(0, 3)}: <b style={num}>{fmt(t.beklenen)}</b></span>)}
+        </div>
+        <div style={{ fontSize: 12, color: R.not }}>Bir aya tıkla: taksiti öde ya da krediyi düzelt. {v.baslangic} öncesi aylar "·" (Evvel Yeni öncesi, kayıt yok).</div>
+      </>}
+      {sec && (
+        <Pencere baslik={`🏦 ${sec.k.ad} · ${AY_UZUN[sec.i]} ${v.yil}`} onKapat={() => setSec(null)}>
+          <div>Taksit <b style={num}>{tutarYaz(sec.a.beklenen)}</b> ₺ · ödenen <b style={num}>{fmt(sec.a.odenen)}</b> ₺ · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺</div>
+          <div style={{ color: R.not, fontSize: 13 }}>Ödeme günü {tKisa(sec.a.vade)} · {DURUM[sec.a.durum]?.ad}</div>
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-start', flexWrap: 'wrap' }}>
+            {sec.a.kalan > 0 && sec.a.durum !== 'once' && <Dugme kucuk ana onClick={() => ode(sec.k, sec.a)}>Bu taksiti öde →</Dugme>}
+            <Dugme kucuk onClick={() => { setForm({ id: sec.k.id, ad: sec.k.ad, tur: sec.k.tur || 'Kredi', aylik_taksit: String(sec.k.taksit), odeme_gunu: String(sec.k.odeme_gunu), ilk_ay: sec.k.ilk_ay, taksit_sayisi: sec.k.son_ay ? String(monthsBetween(sec.k.ilk_ay, sec.k.son_ay)) : '', aktif: true }); setSec(null); }}>Krediyi düzelt</Dugme>
+          </div>
+        </Pencere>
+      )}
+      {form && (
+        <Pencere baslik={form.id ? 'Krediyi düzelt' : 'Yeni kredi'} onKapat={() => setForm(null)}>
+          {[['ad', 'Adı (banka · hesap no)'], ['aylik_taksit', 'Aylık taksit (₺)'], ['odeme_gunu', 'Ödeme günü (1–31)'], ['ilk_ay', 'İlk taksit ayı (YYYY-AA)'], ['taksit_sayisi', 'Taksit sayısı (bilmiyorsan boş)']].map(([k, a]) => (
+            <label key={k} style={{ display: 'grid', gap: 4, fontSize: 13 }}>{a}
+              <input style={alan} type={k === 'ilk_ay' ? 'month' : 'text'} inputMode={['aylik_taksit', 'odeme_gunu', 'taksit_sayisi'].includes(k) ? 'decimal' : undefined}
+                value={form[k] ?? ''} onChange={(e) => setForm((f) => ({ ...f, [k]: e.target.value }))} /></label>
+          ))}
+          {form.id && <label style={{ fontSize: 13 }}><input type="checkbox" checked={!form.aktif} onChange={(e) => setForm((f) => ({ ...f, aktif: !e.target.checked }))} /> Kredi bitti / kapandı (takvimden kalksın)</label>}
+          <div><Dugme ana onClick={kaydet}>Kaydet</Dugme></div>
+        </Pencere>
+      )}
+    </div>
+  );
+}
+
+function monthsBetween(a, b) {
+  return (Number(b.slice(0, 4)) - Number(a.slice(0, 4))) * 12 + (Number(b.slice(5, 7)) - Number(a.slice(5, 7))) + 1;
+}

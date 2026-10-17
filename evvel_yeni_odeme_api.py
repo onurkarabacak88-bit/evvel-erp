@@ -98,6 +98,8 @@ class OdemeBody(BaseModel):
     personel_kalemi: Optional[str] = None
     kimin: Optional[str] = None           # diğer/anlık: şube id | 'ortak' | 'patron'
     patron: Optional[str] = None          # kimin='patron' ise: Onur | Fethi | Fatma
+    kredi_id: Optional[str] = None        # konu=kredi: hangi kredi (Krediler modülü — takvimde 'ödendi')
+    kredi_ad: Optional[str] = None
     aciklama: Optional[str] = None
     parcalar: List[Parca]
     istek_id: Optional[str] = None        # formun tek kimliği — bağlantı kopup tekrar gönderilirse İKİNCİ KEZ yazılmaz
@@ -171,6 +173,9 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
             etiket = f"{body.personel_kalemi} · {p['ad']}"
         elif body.konu in ("kredi", "kart_borcu"):
             kimin = "patron"
+            if body.konu == "kredi" and body.kredi_id:
+                konu.update(kredi_id=str(body.kredi_id)[:64], kredi_ad=(body.kredi_ad or "").strip()[:120] or None)
+                etiket = f"Kredi taksiti · {konu['kredi_ad']}" if konu.get("kredi_ad") else etiket
             if body.konu == "kart_borcu":
                 k = next((x for x in L["kartlar"] if str(x["id"]) == str(body.toptanci_id or body.kimin or "")), None)
                 if not k:
@@ -338,7 +343,8 @@ def odeme_listesi(ay: Optional[str] = None):
                     "nakit": nakit, "kart": kart, "toplam": _tl_sayi(int(v.get("toplam", h["tutar"]))), "kaydeden": h.get("kaydeden"),
                     "fis": _hareket_dto(h, C, ol), "kimin_kod": v.get("kimin_kod"), "konu_tip": (v.get("konu") or {}).get("tip"),
                     "duzeltilebilir": v.get("kaynak") == "odeme_formu", "duzeltmeler": v.get("duzeltmeler") or [],
-                    "patron": v.get("patron")})
+                    "patron": v.get("patron"), "kredi_id": (v.get("konu") or {}).get("kredi_id"),
+                    "kart_id": (v.get("konu") or {}).get("kart_id")})
     out.sort(key=lambda x: x["tarih"], reverse=True)
     return {"ay": a_, "odemeler": out, "toplam": round(sum(x["toplam"] for x in out), 2),
             "nakit_toplam": round(sum(n["tutar"] for x in out for n in x["nakit"]), 2),

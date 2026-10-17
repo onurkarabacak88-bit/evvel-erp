@@ -9,9 +9,11 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, num, Dugme, Cip, fmt, tUzun, tKisa } from './KasaModulu';
+import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici, tutarYaz } from './AyTakvim';
 
 export const KART_SAYFALAR = [
   { id: 'kartlar', ad: 'Kartlar', alt: 'Kullanılabilir limit · son ödeme' },
+  { id: 'kart_takvimi', ad: 'Kart ödeme takvimi', alt: 'Kart × ay · son ödemeler' },
 ];
 
 const alan = {
@@ -171,4 +173,53 @@ function Kutu({ ad, deger, renk }) {
 
 function Etiket({ ad, children }) {
   return <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13, fontWeight: 600, color: R.metin2 }}>{ad}{children}</label>;
+}
+
+
+// 💳 KART ÖDEME TAKVİMİ — sahip (2026-10-17): "kredi kartı ödemeleri için de kira takvimi gibi". Kart × 12 ay:
+// son ödeme günü · ekstre (girilen teyitten; yoksa eski planın tutarı) · ödenen (Ödeme → Kart borcu) · durum.
+export function KartTakvim({ onSekme }) {
+  const [yil, setYil] = useState(() => new Date().getFullYear());
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState(null);
+  const [sec, setSec] = useState(null);
+  const no = useRef(0);
+  useEffect(() => {
+    const n = ++no.current;
+    setV(null);
+    api(`/evvel-yeni/kart/takvim?yil=${yil}`).then((r) => { if (n === no.current) { setV(r); setHata(null); } })
+      .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
+  }, [yil]);
+  const ode = (k, a) => {
+    try { window.sessionStorage.setItem('ey_odeme_on', JSON.stringify({ konu: 'kart_borcu', kimin: k.id, tutar: a.kalan || 0 })); } catch { /* yut */ }
+    onSekme?.('odemeler');
+  };
+  const satirlar = (v?.kartlar || []).map((k) => ({
+    id: k.id, baslik: k.ad, alt: k.son_odeme_gunu ? `son ödeme ${k.son_odeme_gunu}'i` : 'son ödeme günü tanımsız', k,
+    aylar: k.aylar.map((a) => ({ ...a, ust: a.odenen > 0 ? fmt(a.odenen) : a.ekstre != null ? fmt(a.ekstre) : a.durum === 'once' ? '·' : '?',
+      alt: a.durum === 'kismi' ? `kalan ${fmt(a.kalan)}` : (a.ekstre == null && !['once', 'odendi'].includes(a.durum) ? 'ekstre yok' : null) })),
+    sag: fmt(k.yil_odenen), sagAlt: 'ödenen',
+  }));
+  return (
+    <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <style>{PI_CSS}</style>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
+        <div><div className="pi-eyebrow">Evvel Yeni · Kartlar</div><h1 style={{ fontSize: 30 }}>Kart ödeme takvimi</h1></div>
+        <YilSecici yil={yil} setYil={setYil} />
+      </div>
+      <Lejant />
+      {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
+      {!v && !hata && <div style={{ color: R.not }}>Takvim hazırlanıyor…</div>}
+      {v && <AyIzgara satirlar={satirlar} onHucre={(s, a, i) => setSec({ k: s.k, a, i })} />}
+      {v && <div style={{ fontSize: 12, color: R.not }}>"?" = o ayın ekstre tutarı girilmedi (Kartlar → teyit). {v.baslangic} öncesi aylar "·".</div>}
+      {sec && (
+        <Pencere baslik={`💳 ${sec.k.ad} · ${AY_UZUN[sec.i]} ${v.yil}`} onKapat={() => setSec(null)}>
+          <div>Ekstre <b style={num}>{tutarYaz(sec.a.ekstre)}</b> ₺{sec.a.ekstre_kaynak === 'eski' && <span style={{ color: R.not }}> (eski sistemin tutarı)</span>}
+            {' '}· ödenen <b style={num}>{fmt(sec.a.odenen)}</b> ₺{sec.a.kalan != null && <> · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺</>}</div>
+          <div style={{ color: R.not, fontSize: 13 }}>{sec.a.son_odeme ? `Son ödeme ${tKisa(sec.a.son_odeme)}` : 'Son ödeme günü tanımsız'} · {DURUM[sec.a.durum]?.ad}</div>
+          {sec.a.durum !== 'odendi' && sec.a.durum !== 'once' && <div><Dugme kucuk ana onClick={() => ode(sec.k, sec.a)}>Kart borcunu öde →</Dugme></div>}
+        </Pencere>
+      )}
+    </div>
+  );
 }

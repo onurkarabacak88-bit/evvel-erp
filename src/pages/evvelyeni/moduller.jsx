@@ -14,7 +14,8 @@ import TanimModulu, { TANIM_SAYFALAR } from './TanimModulu';
 import BarModulu, { BAR_SAYFALAR } from './BarModulu';
 import MaasModulu, { MAAS_SAYFALAR, PersonelTakvim, GunlukYoklama } from './MaasModulu';
 import SatisModulu, { SATIS_SAYFALAR } from './SatisModulu';
-import KartModulu, { KART_SAYFALAR } from './KartModulu';
+import KartModulu, { KART_SAYFALAR, KartTakvim } from './KartModulu';
+import KrediModulu, { KREDI_SAYFALAR } from './KrediModulu';
 import { KiraTakvim } from './KiraModulu';
 import ToptanciModulu, { TOPTANCI_SAYFALAR, UrunFiyatlari } from './ToptanciModulu';
 import DepoModulu, { DEPO_SAYFALAR } from './DepoModulu';
@@ -31,7 +32,9 @@ export const MODULLER = [
   { mod: 'odeme', ad: 'Ödeme', ikon: '🧾', sektor: 'genel', sayfalar: ODEME_SAYFALAR,
     g: (s, c) => (s === 'kira_takvimi' ? <KiraTakvim /> : s === 'patron_harcama' ? <PatronHarcama /> : <OdemeModulu onToast={c.onToast} />) },
   { mod: 'fatura', bolum: 'odeme', ad: 'Faturaları dağıt', ikon: '🧾', sektor: 'ozel', sayfalar: FATURA_SAYFALAR, g: (s, c) => <FaturaModulu onToast={c.onToast} /> },
-  { mod: 'kart', ad: 'Kartlar', ikon: '💳', sektor: 'genel', sayfalar: KART_SAYFALAR, g: (s, c) => <KartModulu onToast={c.onToast} /> },
+  { mod: 'kredi', ad: 'Krediler', ikon: '🏦', sektor: 'genel', sayfalar: KREDI_SAYFALAR, g: (s, c) => <KrediModulu onToast={c.onToast} onSekme={c.onSekme} /> },
+  { mod: 'kart', ad: 'Kartlar', ikon: '💳', sektor: 'genel', sayfalar: KART_SAYFALAR,
+    g: (s, c) => (s === 'kart_takvimi' ? <KartTakvim onSekme={c.onSekme} /> : <KartModulu onToast={c.onToast} />) },
   { mod: 'toptanci', ad: 'Toptancılar', ikon: '🚚', sektor: 'genel', sayfalar: TOPTANCI_SAYFALAR,
     g: (s, c) => (s === 'urun_fiyatlari' ? <UrunFiyatlari onToast={c.onToast} /> : <ToptanciModulu onToast={c.onToast} />) },
   { mod: 'depo', ad: 'Depo', ikon: '📦', sektor: 'genel', sayfalar: DEPO_SAYFALAR, g: (s, c) => <DepoModulu gorunum={s} onToast={c.onToast} /> },

@@ -49,6 +49,9 @@ export default function OdemeModulu({ onToast }) {
   const [mesgul, setMesgul] = useState(false);
   const [ay, setAy] = useState(ayBugun());
   const [liste, setListe] = useState(null);
+  // 🏦 Krediler modülü açıksa: 'Kredi taksiti' hangi krediye (takvimde 'ödendi'). Kapalıysa liste gelmez, alan görünmez (tak-çıkar).
+  const [krediler, setKrediler] = useState(null);
+  useEffect(() => { api('/evvel-yeni/kredi/liste').then((d) => setKrediler(d?.krediler || null)).catch(() => setKrediler(null)); }, []);
 
   const listeYukle = useCallback(() => api(`/evvel-yeni/odeme/liste?ay=${ay}`).then(setListe).catch(() => setListe({ odemeler: [], hata: true })), [ay]);
   useEffect(() => { api('/evvel-yeni/odeme/listeler').then(setL).catch((e) => setHata(e?.message || 'Listeler okunamadı')); }, []);
@@ -61,7 +64,7 @@ export default function OdemeModulu({ onToast }) {
     if (!on) return;
     const t = on.tutar > 0 ? String(on.tutar) : '';
     otoTutar.current = t;
-    setF({ ...BOS(), konu: on.konu, personel_id: on.personel_id, personel_kalemi: on.personel_kalemi, ait_ay: on.ait_ay || ayBugun(), kimin: on.kimin, patron: on.patron, toptanci_id: on.toptanci_id,
+    setF({ ...BOS(), konu: on.konu, personel_id: on.personel_id, personel_kalemi: on.personel_kalemi, ait_ay: on.ait_ay || ayBugun(), kimin: on.kimin, patron: on.patron, toptanci_id: on.toptanci_id, kredi_id: on.kredi_id, kredi_ad: on.kredi_ad,
       parcalar: [{ yontem: 'havale', cep: '', kart_id: '', tutar: t }] });
   }, [L]);
 
@@ -234,6 +237,20 @@ export default function OdemeModulu({ onToast }) {
                 </div>
               )}
             </>)}
+            {f.konu === 'kredi' && krediler && krediler.length > 0 && (
+              <Etiket ad="Hangi kredi"><select style={alan} value={f.kredi_id || ''} onChange={(e) => {
+                const k = krediler.find((x) => x.id === e.target.value);
+                setBenzer(false);
+                setF((x) => {
+                  const t0 = x.parcalar[0]?.tutar ?? '';
+                  const oto = k && (t0 === '' || t0 === otoTutar.current) ? String(k.taksit) : null;
+                  if (oto) otoTutar.current = oto;
+                  return { ...x, kredi_id: k?.id || '', kredi_ad: k?.ad || '', parcalar: oto ? x.parcalar.map((q, j) => (j === 0 ? { ...q, tutar: oto } : q)) : x.parcalar };
+                });
+              }}>
+                <option value="">Seç…</option>{krediler.map((k) => <option key={k.id} value={k.id}>{k.ad} · {fmt(k.taksit)} ₺</option>)}
+              </select></Etiket>
+            )}
             {f.konu === 'kart_borcu' && (
               <Etiket ad="Hangi kartın borcu"><select style={alan} value={f.kimin || ''} onChange={(e) => set('kimin', e.target.value)}>
                 <option value="">Seç…</option>{L.kartlar.map((k) => <option key={k.id} value={k.id}>{k.ad}{k.banka ? ` · ${k.banka}` : ''}</option>)}
