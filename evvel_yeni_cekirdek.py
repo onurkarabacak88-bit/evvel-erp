@@ -129,6 +129,34 @@ def aktor(cur, jeton: Optional[str]) -> str:
         return "bilinmiyor"
 
 
+# ─────────────────────────── AYAR (tek ayar defteri) ───────────────────────────
+_AYAR_HAZIR = False
+
+
+def _ayar_hazirla(cur) -> None:
+    global _AYAR_HAZIR
+    if _AYAR_HAZIR:
+        return
+    cur.execute("""CREATE TABLE IF NOT EXISTS ey_ayar (
+        anahtar TEXT PRIMARY KEY, deger TEXT, degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    _AYAR_HAZIR = True
+
+
+def ayar_oku(cur, anahtar: str, varsayilan: Optional[str] = None) -> Optional[str]:
+    """Modüllerin ortak ayarı (ör. 'donem_baslangic' = yeni panelle sıfırdan başlama günü). Yoksa varsayılan."""
+    _ayar_hazirla(cur)
+    cur.execute("SELECT deger FROM ey_ayar WHERE anahtar=%s", (anahtar,))
+    r = cur.fetchone()
+    return dict(r)["deger"] if r else varsayilan
+
+
+def ayar_yaz(cur, anahtar: str, deger: Optional[str], kim: str) -> None:
+    _ayar_hazirla(cur)
+    cur.execute("""INSERT INTO ey_ayar (anahtar, deger, degistiren) VALUES (%s,%s,%s)
+                   ON CONFLICT (anahtar) DO UPDATE SET deger=EXCLUDED.deger, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
+                (anahtar, deger, kim))
+
+
 # ─────────────────────────── KAYIT DEFTERLERİ (registry) ───────────────────────────
 # Bekleyen işler: her sağlayıcı (cur, baglam) → [ {tur, id, tarih, ad, ...} ]. baglam = {"kayit": para defteri kayıtları, "C": cepler}
 _BEKLEYEN_IS: Dict[str, Callable] = {}
@@ -156,4 +184,5 @@ def bekleyen_saglayicilar() -> List[str]:
 
 
 __all__ = ["bugun", "tr_saat", "tr_gun", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tl", "kilit", "aktor",
-           "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime"]
+           "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
+           "ayar_oku", "ayar_yaz"]

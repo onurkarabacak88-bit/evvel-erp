@@ -38,6 +38,7 @@ def tanim_hazirla(cur) -> None:
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_sube (
         id TEXT PRIMARY KEY, ad TEXT NOT NULL, pos_oran NUMERIC(6,3) NOT NULL DEFAULT 0, online_oran NUMERIC(6,3) NOT NULL DEFAULT 0,
         aktif BOOLEAN NOT NULL DEFAULT TRUE, kaynak TEXT NOT NULL DEFAULT 'evvel_yeni', degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS depo BOOLEAN NOT NULL DEFAULT FALSE")   # merkez depo (Tema) — SIPARIS_TASARIM §1
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel (
         id TEXT PRIMARY KEY, ad TEXT NOT NULL, sube_id TEXT, gorev TEXT, giris DATE,
         aktif BOOLEAN NOT NULL DEFAULT TRUE, kaynak TEXT NOT NULL DEFAULT 'evvel_yeni', degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
@@ -102,8 +103,20 @@ def tanim_hazirla(cur) -> None:
 # ── OKUMA YARDIMCILARI (öbür modüller bunları kullanır) ──
 def subeler(cur, hepsi: bool = False):
     tanim_hazirla(cur)
-    cur.execute(f"SELECT id, ad, pos_oran, online_oran, aktif FROM ey_sube {'' if hepsi else 'WHERE aktif'} ORDER BY ad")
+    cur.execute(f"SELECT id, ad, pos_oran, online_oran, aktif, depo FROM ey_sube {'' if hepsi else 'WHERE aktif'} ORDER BY ad")
     return [dict(r) for r in cur.fetchall() or []]
+
+
+def depo_sube_id(cur) -> Optional[str]:
+    """PUBLIC: merkez depo olan şube (ey_sube.depo). Hiç işaretli yoksa ilk kez Tema işaretlenir (bugünkü gerçek)."""
+    tanim_hazirla(cur)
+    cur.execute("SELECT id FROM ey_sube WHERE depo AND aktif ORDER BY ad LIMIT 1")
+    r = cur.fetchone()
+    if r:
+        return dict(r)["id"]
+    cur.execute("UPDATE ey_sube SET depo=TRUE WHERE id='sube-tema' AND NOT EXISTS (SELECT 1 FROM ey_sube WHERE depo) RETURNING id")
+    r = cur.fetchone()
+    return dict(r)["id"] if r else None
 
 
 def secim_listeleri(cur) -> dict:

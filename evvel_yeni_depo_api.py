@@ -84,11 +84,9 @@ def _urun_haritasi(cur):
 
 
 def _depo_sube(cur) -> str:
-    try:
-        from evvel_yeni_gider_api import _depo_id
-        return _depo_id(cur) or "sube-tema"
-    except Exception:  # noqa: BLE001
-        return "sube-tema"
+    """Merkez depo = Tanım'daki şube 'depo' bayrağı (PUBLIC). Eski tablolardan tahmin YOK."""
+    from evvel_yeni_tanim_api import depo_sube_id
+    return depo_sube_id(cur) or "sube-tema"
 
 
 def _yaz(cur, rows: List[tuple]) -> int:
@@ -283,6 +281,91 @@ def _bakiyeler(cur) -> dict:
     return {(dict(r)["urun_id"], dict(r)["konum"]): int(dict(r)["adet"] or 0) for r in cur.fetchall() or []}
 
 
+# ─────────────────────────── PUBLIC SERVİSLER (yeni şube paneli + merkez aynı kapıdan yazar) ───────────────────────────
+TURLER = {"giris", "sevk", "kabul", "fazla_kabul", "ac", "tuketim", "fire", "sayim", "acilis_sayim", "iade", "kayip"}
+
+
+def _konum_gecerli(k: str) -> bool:
+    return bool(k) and (k.startswith("depo:") or k.startswith("dışarı:") or k in ("yolda", "askida"))
+
+
+def hareket_yaz(cur, *, kaynak_ref: str, tur: str, urun_id: str, adet: int, kaynak: str, hedef: str, kim: str,
+                urun_ad: Optional[str] = None, aciklama: Optional[str] = None, bag: Optional[str] = None,
+                gun: Optional[date] = None) -> bool:
+    """PUBLIC: tek stok hareketi. kaynak_ref ile BİR KEZ (tekrar gönderim ikinci kez yazılmaz → False döner).
+    Adet tam sayı > 0 (yön kaynak → hedef ile verilir). Eksi bakiye ENGELLENMEZ (Fable: sevk sorgulanmaz, eksi = merkeze iş)."""
+    depo_hazirla(cur)
+    if tur not in TURLER:
+        raise HTTPException(400, f"Bilinmeyen hareket türü: {tur}")
+    if not isinstance(adet, int) or isinstance(adet, bool) or adet <= 0:
+        raise HTTPException(400, "Adet 1 ya da daha fazla tam sayı olmalı")
+    if not (_konum_gecerli(kaynak) and _konum_gecerli(hedef)) or kaynak == hedef:
+        raise HTTPException(400, "Geçersiz konum")
+    if not kaynak_ref or not urun_id:
+        raise HTTPException(400, "kaynak_ref ve ürün gerekli")
+    return _yaz(cur, [(kaynak_ref, tur, str(urun_id), urun_ad, adet, kaynak, hedef, gun or _bugun(), datetime.now(),
+                       kim, aciklama, bag)]) == 1
+
+
+def bakiye(cur, konum: Optional[str] = None, urun_id: Optional[str] = None) -> dict:
+    """PUBLIC: {(urun_id, konum): adet} — iptal olmayan hareketlerden (ayrı saklanan bakiye yok)."""
+    depo_hazirla(cur)
+    return {k: v for k, v in _bakiyeler(cur).items()
+            if (konum is None or k[1] == konum) and (urun_id is None or k[0] == str(urun_id))}
+
+
+def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sayim", kaynak_ref: Optional[str] = None,
+              ad_coz=None) -> dict:
+    """PUBLIC: kör sayım → her sayılan ürün için FARK hareketi (sayılan − o anki defter). Boş bırakılan SAYILMAZ (0 sayılmaz).
+    tur: 'sayim' (merkez) · 'acilis' (konumdaki açılış) · 'gunluk' (şube paneli: fark<0 = 'tuketim' (bardak satışı),
+    fark>0 = 'sayim'). kaynak_ref verilirse aynı sayım ikinci kez yazılmaz ({'tekrar': True})."""
+    depo_hazirla(cur)
+    if not konum.startswith("depo:"):
+        raise HTTPException(400, "Sayım yalnız bir şube deposunda yapılır")
+    if tur not in ("sayim", "acilis", "gunluk"):
+        raise HTTPException(400, "Sayım türü: sayim / acilis / gunluk")
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_depo_sayim:" + konum,))
+    if kaynak_ref:
+        import hashlib
+        sid = "ss-" + hashlib.md5(kaynak_ref.encode("utf-8")).hexdigest()[:12]
+        cur.execute("SELECT 1 FROM ey_stok_sayim WHERE id=%s", (sid,))
+        if cur.fetchone():
+            return {"sayim_id": sid, "tekrar": True, "kayit": [], "farklar": []}
+    else:
+        sid = "ss-" + uuid.uuid4().hex[:12]
+    B = _bakiyeler(cur)
+    gun = _bugun()
+    rows, kayit = [], []
+    for s in satirlar:
+        if s.get("sayilan") in (None, ""):
+            continue
+        try:
+            say = int(s["sayilan"])
+        except (TypeError, ValueError):
+            raise HTTPException(400, f"Sayı yaz: {s.get('urun_id')}")
+        if say < 0:
+            raise HTTPException(400, "Sayılan eksi olamaz")
+        uid = str(s["urun_id"])
+        onceki = B.get((uid, konum), 0)
+        f_ = say - onceki
+        kayit.append({"urun_id": uid, "sayilan": say, "defter": onceki, "fark": f_})
+        if f_:
+            uad = ad_coz(uid) if ad_coz else s.get("urun_ad")
+            if tur == "gunluk" and f_ < 0:
+                ht, kaynak, hedef, acik = "tuketim", konum, "dışarı:tuketim", f"Günlük sayım — dün/defter {onceki}, bugün {say} (kullanılan)"
+            else:
+                ht = "acilis_sayim" if tur == "acilis" else "sayim"
+                kaynak, hedef = ("dışarı:sayim", konum) if f_ > 0 else (konum, "dışarı:sayim")
+                acik = ("Açılış sayımı" if tur == "acilis" else "Sayım") + f" — defter {onceki}, sayılan {say}"
+            rows.append((f"sayim:{sid}:{uid}", ht, uid, uad, abs(f_), kaynak, hedef, gun, datetime.now(), kim, acik, sid))
+    if not kayit:
+        raise HTTPException(400, "Hiç ürün sayılmadı")
+    cur.execute("INSERT INTO ey_stok_sayim (id, konum, is_gunu, kim, acilis, satirlar) VALUES (%s,%s,%s,%s,%s,%s::jsonb)",
+                (sid, konum, gun, kim, tur == "acilis", json.dumps(kayit, ensure_ascii=False)))
+    _yaz(cur, rows)
+    return {"sayim_id": sid, "tekrar": False, "kayit": kayit, "farklar": [k for k in kayit if k["fark"]]}
+
+
 def _konumlar(cur) -> list:
     from evvel_yeni_tanim_api import subeler as _ey_subeler
     depo = _depo_sube(cur)
@@ -419,43 +502,18 @@ class SayimBody(BaseModel):
 @router.post("/sayim")
 def depo_sayim(body: SayimBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Kör sayım → her sayılan ürün için FARK hareketi (sayılan − defter). Defter sayım ANINDAKİ haliyle karşılaştırılır."""
-    gun = _bugun()   # Fable/Codex: sayım ANINDAKİ defterle karşılaştırılır — geçmiş tarihli sayım yok
-    with db() as (conn, cur):
+    with db() as (conn, cur):   # Fable/Codex: sayım ANINDAKİ defterle karşılaştırılır — geçmiş tarihli sayım yok (sayim_yaz bugün yazar)
         depo_hazirla(cur)
         if body.konum not in {k["id"] for k in _konumlar(cur)} or body.konum == "yolda":
             raise HTTPException(400, "Sayım yalnız bir şube deposunda yapılır")
-        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_depo_sayim:" + body.konum,))
         kim = _aktor(cur, x_evvel_oturum)
         senkron(cur)   # Codex: aktarılmamış son kayıtlar farka girip sonra İKİNCİ kez yazılmasın
-        B = _bakiyeler(cur)
         coz = _urun_haritasi(cur)
-        sid = "ss-" + uuid.uuid4().hex[:12]
-        rows, kayit = [], []
-        for s in body.satirlar:
-            if s.get("sayilan") in (None, ""):
-                continue
-            try:
-                say = int(s["sayilan"])
-            except (TypeError, ValueError):
-                raise HTTPException(400, f"Sayı yaz: {s.get('urun_id')}")
-            if say < 0:
-                raise HTTPException(400, "Sayılan eksi olamaz")
-            uid = str(s["urun_id"])
-            onceki = B.get((uid, body.konum), 0)
-            f_ = say - onceki
-            kayit.append({"urun_id": uid, "sayilan": say, "defter": onceki, "fark": f_})
-            if f_:
-                uad = coz(uid)[1]
-                rows.append((f"sayim:{sid}:{uid}", "acilis_sayim" if body.acilis else "sayim", uid, uad, abs(f_),
-                             "dışarı:sayim" if f_ > 0 else body.konum, body.konum if f_ > 0 else "dışarı:sayim", gun, datetime.now(),
-                             kim, ("Açılış sayımı" if body.acilis else "Sayım") + f" — defter {onceki}, sayılan {say}", sid))
-        if not kayit:
-            raise HTTPException(400, "Hiç ürün sayılmadı")
-        cur.execute("INSERT INTO ey_stok_sayim (id, konum, is_gunu, kim, acilis, satirlar) VALUES (%s,%s,%s,%s,%s,%s::jsonb)",
-                    (sid, body.konum, gun, kim, body.acilis, json.dumps(kayit, ensure_ascii=False)))
-        _yaz(cur, rows)
-    return {"ok": True, "mesaj": f"{len(kayit)} ürün sayıldı · {sum(1 for k in kayit if k['fark'])} üründe fark yazıldı", "sayim_id": sid,
-            "farklar": [k for k in kayit if k["fark"]]}
+        r = sayim_yaz(cur, konum=body.konum, satirlar=body.satirlar, kim=kim, tur="acilis" if body.acilis else "sayim",
+                      ad_coz=lambda u: coz(u)[1])
+    kayit = r["kayit"]
+    return {"ok": True, "mesaj": f"{len(kayit)} ürün sayıldı · {sum(1 for k in kayit if k['fark'])} üründe fark yazıldı", "sayim_id": r["sayim_id"],
+            "farklar": r["farklar"]}
 
 
 class KabulBody(BaseModel):

@@ -166,6 +166,23 @@ def _fiyat_ogren(cur, t: dict, gun: date) -> None:
                            WHERE ey_toptanci_fiyat.tarih <= EXCLUDED.tarih""", (t["toptanci_id"], an, b, gun))
 
 
+def guncel_fiyat(cur, urun_id: str, gun: Optional[date] = None) -> Optional[int]:
+    """PUBLIC — TEK FİYAT KURALI (kuruş, KDV dahil, 1 SAYIM birimi): o güne kadar öğrenilen en yeni toptancı fiyatı
+    (kesin tutardan) → elle girilen ürün fiyatı → yok (None: okuyan modül 'fiyatı eksik' der, uydurmaz)."""
+    toptanci_hazirla(cur)
+    uid = str(urun_id or "").strip()
+    if not uid:
+        return None
+    cur.execute("""SELECT birim FROM ey_toptanci_fiyat WHERE urun_anahtar=%s AND tarih <= %s ORDER BY tarih DESC, zaman DESC LIMIT 1""",
+                (uid, gun or date.today()))
+    r = cur.fetchone()
+    if r:
+        return int(dict(r)["birim"])
+    cur.execute("SELECT birim FROM ey_urun_fiyat WHERE urun_id=%s", (uid,))
+    r = cur.fetchone()
+    return int(dict(r)["birim"]) if r else None
+
+
 def teslim_yaz(cur, *, kaynak_ref: str, toptanci_id: str, toptanci_ad: str, sube_id: Optional[str], gun: date,
                kalemler: List[dict], fatura_geldi: Optional[bool], kesin_tutar: Optional[int], fatura_no: Optional[str],
                teslim_alan: Optional[str], aciklama: Optional[str] = None, kesin_kaynak: str = "şube") -> Optional[str]:
