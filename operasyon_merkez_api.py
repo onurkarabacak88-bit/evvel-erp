@@ -9588,6 +9588,7 @@ class OpsSiparisUrunDusumModuBody(BaseModel):
 
 @router.post("/siparis/urun-dusum-modu")
 def ops_siparis_urun_dusum_modu(body: OpsSiparisUrunDusumModuBody):
+    raise HTTPException(409, "Eski katalog donduruldu — ürünler Evvel Yeni › Tanımlar › Ürünler'de (tek katalog).")
     """Ürünün stok düşüm modunu değiştir: açılınca ⇄ bitince."""
     mod = (body.dusum_modu or "").strip().lower()
     if mod not in ("acilinca", "bitince"):
@@ -9622,6 +9623,7 @@ def ops_siparis_urun_dusum_modu(body: OpsSiparisUrunDusumModuBody):
 
 @router.post("/siparis/urun-fiyat")
 def ops_siparis_urun_fiyat(body: OpsSiparisUrunFiyatBody):
+    raise HTTPException(409, "Eski katalog donduruldu — ürünler Evvel Yeni › Tanımlar › Ürünler'de (tek katalog).")
     fiyat = float(body.birim_fiyat_tl or 0)
     if fiyat < 0:
         raise HTTPException(400, "Birim fiyat 0 veya daha büyük olmalı")
@@ -10095,6 +10097,7 @@ class OpsSiparisKategoriBody(BaseModel):
 
 @router.post("/siparis/kategori")
 def ops_siparis_kategori_olustur(body: OpsSiparisKategoriBody):
+    raise HTTPException(409, "Eski katalog donduruldu — ürünler Evvel Yeni › Tanımlar › Ürünler'de (tek katalog).")
     ad = (body.ad or "").strip()
     if len(ad) < 2:
         raise HTTPException(400, "Kategori adı en az 2 karakter olmalı")

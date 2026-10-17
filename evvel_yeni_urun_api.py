@@ -33,6 +33,7 @@ log = logging.getLogger(__name__)
 BIRIMLER = ("adet", "paket", "kutu", "şişe", "rulo")      # sayım birimi (tam sayı); kg / lt miktar zinciri ondalığa geçince
 FATURA_BIRIMLER = ("adet", "paket", "kutu", "koli", "şişe", "rulo")
 TAKIPLER = ("sayim", "acilinca")
+KDV_ORANLARI = (Decimal("0"), Decimal("0.01"), Decimal("0.10"), Decimal("0.20"))
 SURUM = 4
 _HAZIR = False
 
@@ -107,6 +108,7 @@ def _surum2(cur):
         kat[r["id"]] = str(uuid.uuid4())
         cur.execute("INSERT INTO ey_urun_kategori (id, ad, emoji, sira, aktif) VALUES (%s,%s,%s,%s,TRUE)",
                     (kat[r["id"]], r["ad"], r["emoji"], int(r["sira"] or 0)))
+    cur.execute("ALTER TABLE ey_urun_v1_yedek ADD COLUMN IF NOT EXISTS birlesti TEXT")   # Codex: en eski v1 şemasında yok
     cur.execute("""SELECT ad, kategori_id, birim_teyit, koli_ici, kdv_oran, sira FROM ey_urun_v1_yedek
                     WHERE aktif AND birlesti IS NULL ORDER BY sira, ad""")
     n, atlanan = 0, []
@@ -222,6 +224,14 @@ def _cevrim(birim: str, koli_ici, fatura_birim, sayim_ici, fatura_ici):
     return fatura_birim, (int(sayim_ici) if sayim_ici else None), (int(fatura_ici) if fatura_ici else None)
 
 
+def _kdv_koli(kdv_oran, koli_ici) -> None:
+    """Codex: HTTP ucu da PUBLIC servis de aynı sınır — KDV yalnız %0/%1/%10/%20, koli 2–10000."""
+    if kdv_oran is not None and Decimal(str(kdv_oran)).quantize(Decimal("0.01")) not in KDV_ORANLARI:
+        raise HTTPException(400, "KDV oranı: %0 · %1 · %10 · %20")
+    if koli_ici is not None and not 2 <= int(koli_ici) <= 10000:
+        raise HTTPException(400, "1 koli kaç? (2 ya da daha fazla; koliyle gelmiyorsa boş bırak)")
+
+
 def urun_olustur(cur, kategori_id: str, ad: str, kim: str, koli_ici: Optional[int] = None, kdv_oran=None,
                  aktif: bool = True, birim_teyit: bool = True, birim: str = "adet", fatura_birim: Optional[str] = None,
                  sayim_ici: Optional[int] = None, fatura_ici: Optional[int] = None, takip: str = "sayim") -> dict:
@@ -233,7 +243,8 @@ def urun_olustur(cur, kategori_id: str, ad: str, kim: str, koli_ici: Optional[in
     fatura_birim, sayim_ici, fatura_ici = _cevrim(birim, koli_ici, fatura_birim, sayim_ici, fatura_ici)
     if takip not in TAKIPLER:
         raise HTTPException(400, "Takip: " + " / ".join(TAKIPLER))
-    cur.execute("SELECT 1 FROM ey_urun_kategori WHERE id=%s AND aktif", (kategori_id,))
+    _kdv_koli(kdv_oran, koli_ici)
+    cur.execute("SELECT 1 FROM ey_urun_kategori WHERE id=%s AND aktif FOR SHARE", (kategori_id,))
     if not kategori_id or not cur.fetchone():
         raise HTTPException(400, "Kategori seç")
     cur.execute("SELECT pg_advisory_xact_lock(7012042)")   # eşzamanlı iki ekleme çift ürün açmasın
@@ -297,6 +308,7 @@ def kategori_duzelt(kid: str, b: KategoriBody, x_evvel_oturum: Optional[str] = H
     _hazirla()
     with db() as (conn, cur):
         _aktor(cur, x_evvel_oturum)
+        cur.execute("SELECT pg_advisory_xact_lock(7012043)")   # Codex: ekleme ile aynı kilit — iki kategori aynı ada dönmesin
         cur.execute("SELECT 1 FROM ey_urun_kategori WHERE id=%s FOR UPDATE", (kid,))
         if not cur.fetchone():
             raise HTTPException(404, "Kategori bulunamadı")
@@ -331,8 +343,7 @@ def _dogrula(b: UrunBody) -> None:
         raise HTTPException(400, "Sayım birimi: " + " / ".join(BIRIMLER))
     if b.koli_ici is not None and not 2 <= int(b.koli_ici) <= 10000:
         raise HTTPException(400, "1 koli kaç adet? (2 ya da daha fazla; koliyle gelmiyorsa boş bırak)")
-    if b.kdv_oran is not None and not Decimal("0") <= b.kdv_oran <= Decimal("0.30"):
-        raise HTTPException(400, "KDV oranı 0–0,30 arası (ör. 0,10)")
+    _kdv_koli(b.kdv_oran, b.koli_ici)
     b.fatura_birim, b.sayim_ici, b.fatura_ici = _cevrim(b.birim, b.koli_ici, b.fatura_birim, b.sayim_ici, b.fatura_ici)
     if b.takip not in TAKIPLER:
         raise HTTPException(400, "Takip: " + " / ".join(TAKIPLER))
@@ -361,7 +372,7 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
         if not e:
             raise HTTPException(404, "Ürün bulunamadı")
         e = dict(e)
-        cur.execute("SELECT 1 FROM ey_urun_kategori WHERE id=%s AND aktif", (b.kategori_id,))
+        cur.execute("SELECT 1 FROM ey_urun_kategori WHERE id=%s AND aktif FOR SHARE", (b.kategori_id,))
         if not cur.fetchone():
             raise HTTPException(400, "Kategori seç")
         yeni = {"ad": " ".join(b.ad.split())[:120], "kategori_id": b.kategori_id, "birim": b.birim, "koli_ici": b.koli_ici,

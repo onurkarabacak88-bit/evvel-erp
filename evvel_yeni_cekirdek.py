@@ -18,7 +18,7 @@ from typing import Callable, Dict, List, Optional
 
 from fastapi import HTTPException
 
-from database import savepoint
+from database import db, savepoint
 
 log = logging.getLogger(__name__)
 
@@ -134,12 +134,16 @@ _AYAR_HAZIR = False
 
 
 def _ayar_hazirla(cur) -> None:
+    """Codex: tablo ÇAĞIRANIN işleminde kurulursa o işlem geri alındığında tablo kaybolur ama bayrak kalırdı →
+    ayrı kısa işlemde, süreçlerarası kilit altında kurulur; bayrak yalnız başarılı commit sonrası açılır."""
     global _AYAR_HAZIR
     if _AYAR_HAZIR:
         return
-    cur.execute("SET LOCAL lock_timeout = '3s'")
-    cur.execute("""CREATE TABLE IF NOT EXISTS ey_ayar (
-        anahtar TEXT PRIMARY KEY, deger TEXT, degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    with db() as (_c, c2):
+        c2.execute("SELECT pg_advisory_xact_lock(7012044)")
+        c2.execute("SET LOCAL lock_timeout = '3s'")
+        c2.execute("""CREATE TABLE IF NOT EXISTS ey_ayar (
+            anahtar TEXT PRIMARY KEY, deger TEXT, degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     _AYAR_HAZIR = True
 
 

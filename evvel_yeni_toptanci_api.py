@@ -182,6 +182,8 @@ def guncel_fiyat(cur, urun_id: str, gun: Optional[date] = None) -> Optional[int]
     uid = str(urun_id or "").strip()
     if not uid:
         return None
+    # Codex: ey_toptanci_fiyat toptancı×ürün başına TEK satır (yenisi ezer) → tarih geçmişi yok; 'gun' bugün için anlamlı.
+    # Fiyat geçmişi (teslim kaynaklı) yeni panelin teslim akışıyla gelir (SUBE_PANELI_TASARIM faz 2).
     cur.execute("""SELECT birim FROM ey_toptanci_fiyat WHERE urun_anahtar=%s AND tarih <= %s ORDER BY tarih DESC, zaman DESC LIMIT 1""",
                 (uid, gun or date.today()))
     r = cur.fetchone()

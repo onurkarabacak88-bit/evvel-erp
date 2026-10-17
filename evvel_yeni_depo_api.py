@@ -289,6 +289,12 @@ def _konum_gecerli(k: str) -> bool:
     return bool(k) and (k.startswith("depo:") or k.startswith("dışarı:") or k in ("yolda", "askida"))
 
 
+def _konum_kilidi(cur, *konumlar) -> None:
+    """Depo konumu kilidi — sayım, hareket ve iptal AYNI kilidi alır; birden çok konum SABİT sırayla (kilitlenme olmasın)."""
+    for k in sorted({k for k in konumlar if k and k.startswith("depo:")}):
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_depo_sayim:" + k,))
+
+
 def hareket_yaz(cur, *, kaynak_ref: str, tur: str, urun_id: str, adet: int, kaynak: str, hedef: str, kim: str,
                 urun_ad: Optional[str] = None, aciklama: Optional[str] = None, bag: Optional[str] = None,
                 gun: Optional[date] = None) -> bool:
@@ -303,6 +309,7 @@ def hareket_yaz(cur, *, kaynak_ref: str, tur: str, urun_id: str, adet: int, kayn
         raise HTTPException(400, "Geçersiz konum")
     if not kaynak_ref or not urun_id:
         raise HTTPException(400, "kaynak_ref ve ürün gerekli")
+    _konum_kilidi(cur, kaynak, hedef)   # Codex: sayımla eşzamanlı hareket fark hesabını bozmasın
     return _yaz(cur, [(kaynak_ref, tur, str(urun_id), urun_ad, adet, kaynak, hedef, gun or _bugun(), datetime.now(),
                        kim, aciklama, bag)]) == 1
 
@@ -336,17 +343,26 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
         sid = "ss-" + uuid.uuid4().hex[:12]
     B = _bakiyeler(cur)
     gun = _bugun()
-    rows, kayit = [], []
+    rows, kayit, gorulen = [], [], set()
     for s in satirlar:
-        if s.get("sayilan") in (None, ""):
+        v = s.get("sayilan")
+        if v in (None, ""):
             continue
-        try:
-            say = int(s["sayilan"])
+        if isinstance(v, bool):
+            raise HTTPException(400, f"Sayı yaz: {s.get('urun_id')}")
+        try:   # Codex: 1.9 sessizce 1 olmasın — yalnız tam sayı
+            f = float(str(v).replace(",", "."))
         except (TypeError, ValueError):
             raise HTTPException(400, f"Sayı yaz: {s.get('urun_id')}")
+        if f != int(f):
+            raise HTTPException(400, f"Tam sayı yaz: {s.get('urun_id')}")
+        say = int(f)
         if say < 0:
             raise HTTPException(400, "Sayılan eksi olamaz")
         uid = str(s["urun_id"])
+        if uid in gorulen:   # Codex: aynı ürün iki satırda → biri sessizce atlanıyordu
+            raise HTTPException(400, f"Aynı ürün iki kez sayıldı: {uid}")
+        gorulen.add(uid)
         onceki = B.get((uid, konum), 0)
         f_ = say - onceki
         kayit.append({"urun_id": uid, "sayilan": say, "defter": onceki, "fark": f_})
