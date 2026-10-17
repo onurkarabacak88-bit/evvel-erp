@@ -51,6 +51,7 @@ import EvTasarim from './pages/EvTasarim';
 import FireFotoYukle from './pages/FireFotoYukle';
 import CepApp from './pages/cep/CepApp';
 import EvvelYeniApp from './pages/evvelyeni/EvvelYeniApp';
+import SubePaneli from './pages/subepanel/SubePaneli';
 import DuyuPaneli from './pages/DuyuPaneli';
 import ReceteEslestirme from './pages/ReceteEslestirme';
 import BelgeMerkezi from './pages/BelgeMerkezi';
@@ -313,6 +314,12 @@ export default function App() {
   // Sahip: "evvel yeni yapalım" · "para izi hiç kullanma" → yalnız /evvel-yeni.
   if (/^\/evvel-yeni(\/|$)/.test(window.location.pathname)) {
     return <EvvelYeniApp />;
+  }
+
+  // 🧾 YENİ ŞUBE PANELİ (Evvel Yeni) — /panel/{sube_id}; eski /sube-panel'e dokunmaz (SUBE_PANELI_TASARIM.md)
+  const yeniPanel = window.location.pathname.match(/^\/panel\/([^/]+)\/?$/);
+  if (yeniPanel) {
+    return <SubePaneli subeId={decodeURIComponent(yeniPanel[1])} />;
   }
 
   // EVVEL · CEP — işletme sahibi mobil kabuğu (sidebar yok, ayrı kabuk)

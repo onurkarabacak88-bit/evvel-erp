@@ -1088,8 +1088,8 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
         cep_var(body.cep, {"sube"})
         kart = _kurus(body.kart or 0)          # elle kapanışta 'kart' = POS
         onl = _kurus(body.online or 0)
-        if tut < 0 or kart < 0 or (tut == 0 and kart == 0):
-            raise HTTPException(400, "Nakit ya da kart tutarı gir")
+        if tut < 0 or kart < 0 or onl < 0 or (tut == 0 and kart == 0 and onl == 0):
+            raise HTTPException(400, "Nakit, kart ya da online tutarı gir")
         mevcut = next((h for h in kayit if h["tur"] == "kapanis" and h["cep"] == body.cep and h["is_gunu"] == gun), None)
         if mevcut:
             # Sahip (2026-10-16): Evo'nun TAHMİNİ (şube kapanış yapmamış) gerçek kapanışla DEĞİŞTİRİLİR;
@@ -1882,6 +1882,22 @@ def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dic
             olaylar = [dict(r) for r in cur.fetchall() or []]
     except Exception as e:  # noqa: BLE001
         return {**rapor, "hata": str(e)[:200]}
+    # 🧾 YENİ ŞUBE PANELİ açılışları (ey_sube_olay, kaynak_tablo='panel') — eski olayla aynı biçime çevrilir; aynı şube+gün
+    # ikisinde de varsa ref ('sayim_acilis:{şube}:{gün}') aynı olduğundan bir kez yazılır (Codex: açılış nakdi Kasa'ya ulaşsın)
+    try:
+        with savepoint(cur, "sp_pi_panel_sayim_yeni"):
+            from evvel_yeni_olay import olaylar as _ey_olaylar
+            for o in _ey_olaylar(cur, bas=bas, son=_bugun(), turler={"acilis"}):
+                if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel":
+                    continue
+                v = o["veri"] if isinstance(o["veri"], dict) else json.loads(o["veri"] or "{}")
+                if v.get("kasa_sayim") is None:
+                    continue
+                g = o["is_gunu"] if hasattr(o["is_gunu"], "isoformat") else date.fromisoformat(str(o["is_gunu"])[:10])
+                olaylar.append({"sube_id": str(o["sube_id"]), "tarih": g, "tip": "ACILIS", "kasa_sayim": Decimal(int(v["kasa_sayim"])) / 100,
+                                "teslim": 0, "devir": None, "cevap_ts": o["olay_zamani"]})
+    except Exception as e:  # noqa: BLE001
+        log.warning("yeni panel açılış sayımları okunamadı: %s", str(e)[:200])
     cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'sayim_%%'")
     refler = {dict(x)["kaynak_ref"] for x in cur.fetchall() or []}
     sim = list(kayit)
