@@ -150,7 +150,7 @@ export default function SubePaneli({ subeId }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: C.bg1, borderBottom: `1px solid ${C.cizgi}`, flexWrap: 'wrap' }}>
         <b style={{ fontSize: 20 }}>☕ {d.sube.ad}</b>
         <span style={{ color: C.soluk }}>{new Date(d.gun + 'T12:00').toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
-        {d.kuru && <span style={{ background: 'rgba(245,158,11,.15)', color: C.sari, padding: '6px 10px', borderRadius: 8, fontWeight: 700 }}>DENEME — {new Date(d.panel_baslangic + 'T12:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })}'e kadar kaydedilmez</span>}
+        {d.kuru && <span style={{ background: 'rgba(245,158,11,.15)', color: C.sari, padding: '6px 10px', borderRadius: 8, fontWeight: 700 }}>DENEME — kaydedilmez · panel {new Date(d.panel_baslangic + 'T12:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })} sabahı açılır</span>}
         <span style={{ flex: 1 }} />
         <select className="sp-in" style={{ width: 240, fontSize: 18, minHeight: 52 }} value={kisi} onChange={(e) => setKisi(e.target.value)}>
           <option value="">— Adını seç —</option>
