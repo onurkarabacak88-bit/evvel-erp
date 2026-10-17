@@ -172,9 +172,9 @@ export default function OdemeModulu({ onToast, gorunum }) {
     : ['kira', 'fatura', 'anlik'].includes(f.konu) ? subeAd(f.sube_id)
     : f.konu === 'personel' ? (secPer ? (subeAd(secPer.sube_id) || 'Ortak') : null)
       : f.konu === 'diger' ? ({ ortak: 'Ortak', patron: 'Patron şahsi' }[f.kimin] || subeAd(f.kimin))
-        : f.konu === 'vergi' ? (f.kimin === 'ortak' ? 'Ortak' : subeAd(f.kimin)) : null;
+        : (f.konu === 'vergi' || f.konu === 'sgk') ? (f.kimin === 'ortak' ? 'Ortak' : subeAd(f.kimin)) : null;
   const ayAdi = (a) => { const [y, m] = (a || '').split('-'); return m ? `${['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'][Number(m) - 1]} ${y}` : ''; };
-  const giderAyi = ['kira', 'fatura', 'personel', 'vergi'].includes(f.konu) ? f.ait_ay : (f.tarih || '').slice(0, 7);
+  const giderAyi = ['kira', 'fatura', 'personel', 'vergi', 'sgk'].includes(f.konu) ? f.ait_ay : (f.tarih || '').slice(0, 7);
   const konuObj = L.konular.find((k) => k.kod === f.konu);
   const izgara = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 };
 
@@ -292,16 +292,17 @@ export default function OdemeModulu({ onToast, gorunum }) {
               <Etiket ad="Ait olduğu ay" ipucu="Gider bu aya yazılır (ödendiği güne değil)"><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
             )}
             {f.konu === 'personel' && (
-              <div style={{ fontSize: 12, color: R.not }}>SGK ya da vergi mi ödüyorsun? <button type="button" onClick={() => set('konu', 'vergi')} style={{ border: 'none', background: 'none', color: 'var(--pi-accent)', cursor: 'pointer', font: 'inherit', fontSize: 12, padding: 0, textDecoration: 'underline' }}>Vergi'den gir →</button></div>
+              <div style={{ fontSize: 12, color: R.not }}>SGK ya da vergi mi ödüyorsun?{' '}
+                {[['sgk', 'SGK'], ['vergi', 'Vergi']].map(([k, a]) => <button key={k} type="button" onClick={() => set('konu', k)} style={{ border: 'none', background: 'none', color: 'var(--pi-accent)', cursor: 'pointer', font: 'inherit', fontSize: 12, padding: '0 6px 0 0', textDecoration: 'underline' }}>{a}'den gir →</button>)}</div>
             )}
-            {f.konu === 'vergi' && (<>
-              <Etiket ad="Vergi türü"><select style={alan} value={f.vergi_turu || ''} onChange={(e) => set('vergi_turu', e.target.value)}>
+            {(f.konu === 'vergi' || f.konu === 'sgk') && (<>
+              {f.konu === 'vergi' && <Etiket ad="Vergi türü"><select style={alan} value={f.vergi_turu || ''} onChange={(e) => set('vergi_turu', e.target.value)}>
                 <option value="">Seç…</option>{(L.vergi_turleri || []).map((t) => <option key={t}>{t}</option>)}
-              </select></Etiket>
+              </select></Etiket>}
               <Etiket ad="Hangi şubenin"><select style={alan} value={f.kimin || ''} onChange={(e) => set('kimin', e.target.value)}>
                 <option value="">Seç…</option>{L.subeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}<option value="ortak">Ortak</option>
               </select></Etiket>
-              <Etiket ad="Hangi ayın vergisi"><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
+              <Etiket ad={f.konu === 'sgk' ? 'Hangi ayın SGK primi' : 'Hangi ayın vergisi'}><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
             </>)}
             {f.konu === 'kredi' && (
               <Etiket ad="Hangi ayın taksiti" ipucu="Kredi takviminde bu ay 'ödendi' olur"><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
@@ -353,7 +354,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
             <span>Toplam <b style={num}>{fmt(toplam)}</b> ₺</span>
             {konuObj && (konuObj.gider && f.kimin !== 'patron'
               ? <Cip tur="sari">şube/ortak GİDERİ olarak yazılacak</Cip>
-              : <Cip>gider DEĞİL — {f.konu === 'toptanci' ? 'toptancı borcunu kapatır' : f.konu === 'kart_borcu' ? 'kart borcunu kapatır' : f.konu === 'kredi' ? 'patronun borcu' : f.konu === 'vergi' ? 'vergi ödemesi (vergiyi muhasebeci hesaplar)' : f.konu === 'kira' ? "o ayın kirasını kapatır (gider tanımlı kiradan, ait olduğu aya yazılır)" : f.konu === 'personel' ? "personelin kalanını kapatır (gider Maaşlar'ın hak edişinden yazılır)" : 'patron çekişi'}</Cip>)}
+              : <Cip>gider DEĞİL — {f.konu === 'toptanci' ? 'toptancı borcunu kapatır' : f.konu === 'kart_borcu' ? 'kart borcunu kapatır' : f.konu === 'kredi' ? 'patronun borcu' : f.konu === 'vergi' ? 'vergi ödemesi (vergiyi muhasebeci hesaplar)' : f.konu === 'sgk' ? 'SGK primi ödemesi' : f.konu === 'kira' ? "o ayın kirasını kapatır (gider tanımlı kiradan, ait olduğu aya yazılır)" : f.konu === 'personel' ? "personelin kalanını kapatır (gider Maaşlar'ın hak edişinden yazılır)" : 'patron çekişi'}</Cip>)}
             {f.parcalar.some((p) => p.yontem === 'kart') && <Cip>kart kısmı kasadan düşmez, kart borcu olur</Cip>}
           </div>
           {kiminAd !== null && f.konu && (
@@ -400,9 +401,9 @@ export default function OdemeModulu({ onToast, gorunum }) {
                   <td style={{ textAlign: 'left' }}>{x.kimin || '—'}</td>
                   <td style={{ textAlign: 'left', fontSize: 12 }}>{[...x.nakit.map((n) => `${n.ad} ${fmt(n.tutar)}`), ...x.kart.map((k) => `💳 ${k.ad} ${fmt(k.tutar)}`)].join(' + ')}</td>
                   <td style={{ ...num, fontWeight: 700 }}>{fmt(x.toplam)}</td>
-                  <td style={{ textAlign: 'left' }}>{x.konu_tip === 'vergi' ? <Cip>vergi · {ayAdi(x.ait_ay)}</Cip> : x.gider ? <Cip tur="sari">gider · {ayAdi(x.ait_ay)}</Cip> : x.konu === 'Dükkân gideri' ? <Cip>dükkân gideri</Cip> : <span style={{ color: R.not }}>gider değil</span>}</td>
+                  <td style={{ textAlign: 'left' }}>{['vergi', 'sgk'].includes(x.konu_tip) ? <Cip>{x.konu_tip === 'sgk' ? 'SGK' : 'vergi'} · {ayAdi(x.ait_ay)}</Cip> : x.gider ? <Cip tur="sari">gider · {ayAdi(x.ait_ay)}</Cip> : x.konu === 'Dükkân gideri' ? <Cip>dükkân gideri</Cip> : <span style={{ color: R.not }}>gider değil</span>}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    {x.duzeltilebilir && x.gider !== undefined && ['kira', 'fatura', 'anlik', 'personel', 'diger', 'vergi'].includes(x.konu_tip) && (
+                    {x.duzeltilebilir && x.gider !== undefined && ['kira', 'fatura', 'anlik', 'personel', 'diger', 'vergi', 'sgk'].includes(x.konu_tip) && (
                       <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); setDuz({ id: x.id, konu_tip: x.konu_tip, kimin: x.kimin_kod || '', ait_ay: x.ait_ay || '', aciklama: x.aciklama || '', baslik: `${x.aciklama} · ${fmt(x.toplam)} ₺` }); }}>Düzelt</Dugme>)}{' '}
                     {x.duzeltilebilir && <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); iptalEt(x); }}>İptal</Dugme>}
                     {x.duzeltmeler?.length > 0 && <span title="Düzeltildi" style={{ marginLeft: 4 }}>✏️</span>}
@@ -423,9 +424,10 @@ export default function OdemeModulu({ onToast, gorunum }) {
             <div style={{ fontSize: 13, color: R.not }}>{duz.baslik}<br />Para oynamaz — cepler ve tutar aynı kalır. Tutar / cep yanlışsa: iptal edip yeniden gir.</div>
             <Etiket ad="Kimin gideri"><select style={alan} value={duz.kimin} onChange={(e) => setDuz((d) => ({ ...d, kimin: e.target.value }))}>
               {L.subeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
-              {['diger', 'personel', 'vergi'].includes(duz.konu_tip) && <><option value="ortak">Ortak</option><option value="patron">Patron şahsi (gider değil)</option></>}
+              {['diger', 'personel', 'vergi', 'sgk'].includes(duz.konu_tip) && <option value="ortak">Ortak</option>}
+              {['diger', 'personel'].includes(duz.konu_tip) && <option value="patron">Patron şahsi (gider değil)</option>}
             </select></Etiket>
-            {['kira', 'fatura', 'personel', 'vergi'].includes(duz.konu_tip) && (
+            {['kira', 'fatura', 'personel', 'vergi', 'sgk'].includes(duz.konu_tip) && (
               <Etiket ad="Ait olduğu ay"><input type="month" style={alan} value={duz.ait_ay} onChange={(e) => setDuz((d) => ({ ...d, ait_ay: e.target.value }))} /></Etiket>
             )}
             <Etiket ad="Açıklama"><input style={alan} value={duz.aciklama} onChange={(e) => setDuz((d) => ({ ...d, aciklama: e.target.value }))} /></Etiket>

@@ -22,7 +22,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
-from database import db
+from database import db, savepoint
 from evvel_yeni_cekirdek import aktor as _aktor, ay_kaydir, bekleyen_is_kaydet, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi
 
 router = APIRouter(prefix="/api/evvel-yeni/mulk", tags=["evvel-yeni-mulk"])
@@ -202,7 +202,7 @@ def _borc(cur, yil: int) -> dict:
             b += al - ge
             satir.append({"ay": a, "alinan": _tl_sayi(al), "geri": _tl_sayi(ge), "borc": _tl_sayi(b), "baslamadi": a < BORC_BAS[:7]})
         out.append({"sube": s, "ad": sube_ad.get(s, "Ortak (şubesiz)"), "devir": _tl_sayi(devir), "aylar": satir, "borc": _tl_sayi(b)})
-    return {"yil": yil, "baslangic": BORC_BAS, "subeler": out, "toplam_borc": round(sum(x["borc"] for x in out), 2), "karar_bekleyen": sor, "kararli": sorted(kararli, key=lambda x: x["gun"], reverse=True)[:50],
+    return {"yil": yil, "baslangic": BORC_BAS, "subeler": out, "toplam_borc": round(sum(x["borc"] for x in out), 2), "karar_bekleyen": sor, "kararli": sorted(kararli, key=lambda x: x["gun"], reverse=True),
             "sahsi": _tl_sayi(sahsi), "hareketler": [{**x, "alinan": _tl_sayi(x["alinan"]), "geri": _tl_sayi(x["geri"])}
                                                      for x in sorted(hareket, key=lambda x: x["gun"], reverse=True)[:200]]}
 
@@ -315,7 +315,8 @@ def _bekleyen(cur, baglam: dict) -> list:
     _hazirla()
     out = []
     try:
-        kb = _borc(cur, _bugun().year)["karar_bekleyen"]
+        with savepoint(cur, "sp_ey_mulk_borc"):   # Codex: SQL hatası ortak işlemi bozmasın
+            kb = _borc(cur, _bugun().year)["karar_bekleyen"]
     except Exception as e:  # noqa: BLE001 — Codex: sessizce kaybolmasın
         log.warning("kira hesabı borcu okunamadı: %s", str(e)[:150])
         return [{"tur": "mulk_hata", "genel": True, "grup": "kira", "id": "mulk_hata", "tarih": _bugun().isoformat(),

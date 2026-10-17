@@ -186,6 +186,7 @@ function odemeFisi(h, cepAd) {
       ...(karttan ? [{ etiket: 'Kartla (borç oldu)', deger: tl(karttan) }] : []),
       { etiket: 'Gider kimin', deger: h.gider === false ? 'gider değil' : (h.kimin || 'Ortak') },
       ...(h.gider && m ? [{ etiket: 'Hangi ayın gideri', deger: `${AY_AD[Number(m) - 1]} ${y}` }] : []),
+      ...(!h.gider && m && ['Vergi', 'SGK'].includes(h.konu) ? [{ etiket: 'Hangi ayın', deger: `${AY_AD[Number(m) - 1]} ${y}` }] : []),   // Codex: vergi/SGK dönemi fişte
     ],
     not: `Toplam kasa: ${fmt(h.toplam_once)} → ${fmt(h.toplam_sonra)} ₺`
       + (h.kiradan_destek ? ` · Fatma kira hesabından destek ${fmt(h.kiradan_destek)} ₺` : '')

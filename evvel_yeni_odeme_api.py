@@ -47,10 +47,11 @@ KONULAR = {
     "kart_borcu": {"ad": "Kart borcu", "gider": False},
     # Sahip (2026-10-17, envanter 18): vergi muhasebecide hesaplanır; burada yalnız ÖDEME — şube/ortak, tür, ait ay (gider sayılmaz)
     "vergi": {"ad": "Vergi", "gider": False},
+    "sgk": {"ad": "SGK", "gider": False},      # sahip: "SGK ödemesi ayrı, vergi ayrı" — ikisi de tek yoldan
     "diger": {"ad": "Diğer", "gider": True},
 }
 FATURA_TURLERI = ["Elektrik", "Su", "Doğalgaz", "İnternet / telefon", "Diğer abonelik"]
-VERGI_TURLERI = ["KDV", "Muhtasar / stopaj", "Gelir / kurumlar vergisi", "SGK", "Diğer vergi"]
+VERGI_TURLERI = ["KDV", "Muhtasar / stopaj", "Gelir / kurumlar vergisi", "Diğer vergi"]
 # Sahip (2026-10-17): "SGK da vergi de ödemelerden TEK düşümle; her alan bu alana yönlendirsin" → SGK/vergi personel kaleminden çıktı (Vergi konusu)
 PERSONEL_KALEMLERI = ["Maaş", "Avans", "Yemek ücreti", "Prim"]
 PATRONLAR = ["Onur", "Fethi", "Fatma"]   # sahip: "hangi patronun harcaması olduğuna karar verelim"
@@ -172,20 +173,22 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
             if not p:
                 raise HTTPException(400, "Personel seç")
             if body.personel_kalemi == "SGK / vergi":
-                raise HTTPException(400, "SGK ve vergi ödemeleri Ödeme → 'Vergi' konusundan girilir (tek yol)")
+                raise HTTPException(400, "SGK Ödeme → 'SGK', vergi Ödeme → 'Vergi' konusundan girilir (tek yol)")
             if body.personel_kalemi not in PERSONEL_KALEMLERI:
                 raise HTTPException(400, "Ödeme kalemini seç (maaş, avans, yemek ücreti…)")
             kimin = p.get("sube_id") if p.get("sube_id") in subeler else "ortak"
             konu.update(personel_id=p["id"], personel_ad=p["ad"], kalem=body.personel_kalemi)
             etiket = f"{body.personel_kalemi} · {p['ad']}"
-        elif body.konu == "vergi":
-            if body.vergi_turu not in VERGI_TURLERI:
+        elif body.konu in ("vergi", "sgk"):
+            if body.konu == "vergi" and body.vergi_turu not in VERGI_TURLERI:
                 raise HTTPException(400, "Vergi türünü seç")
             if body.kimin not in list(subeler) + ["ortak"]:
-                raise HTTPException(400, "Hangi şubenin vergisi (ya da Ortak)")
+                raise HTTPException(400, "Hangi şubenin (ya da Ortak)")
             kimin = body.kimin
-            konu.update(vergi_turu=body.vergi_turu, sube_id=kimin if kimin in subeler else None)
-            etiket = f"Vergi · {body.vergi_turu} · {subeler[kimin]['kisa'] if kimin in subeler else 'Ortak'}"
+            konu.update(sube_id=kimin if kimin in subeler else None)
+            if body.konu == "vergi":
+                konu["vergi_turu"] = body.vergi_turu
+            etiket = (f"Vergi · {body.vergi_turu}" if body.konu == "vergi" else "SGK") + f" · {subeler[kimin]['kisa'] if kimin in subeler else 'Ortak'}"
         elif body.konu in ("kredi", "kart_borcu"):
             kimin = "patron"
             if body.konu == "kredi" and body.kredi_id:
@@ -205,7 +208,7 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
             kimin = body.kimin
             etiket = f"{body.aciklama.strip()[:60]}"
         # Codex (2026-10-17): kredi taksiti / kart borcu da HANGİ AYIN borcunu kapattığını taşır (Eylül taksiti Ekim'de ödenirse Eylül kapanır)
-        AYLI = ("kira", "fatura", "personel", "kredi", "kart_borcu", "vergi")
+        AYLI = ("kira", "fatura", "personel", "kredi", "kart_borcu", "vergi", "sgk")
         ait_ay = (body.ait_ay or gun[:7])[:7] if body.konu in AYLI else gun[:7]
         if body.konu in ("kredi", "kart_borcu") and body.ait_ay:
             konu["donem"] = ait_ay      # açıkça seçilen dönem (takvimden 'öde'); yoksa takvim ödeme gününe göre yerleştirir
@@ -313,11 +316,12 @@ def odeme_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = Hea
         tip = (v.get("konu") or {}).get("tip")
         subeler = {c["sube_id"]: c for c in cep_list if c["tur"] == "sube"}
         eski = {"kimin": v.get("kimin"), "ait_ay": v.get("ait_ay"), "aciklama": v.get("aciklama")}
-        if body.kimin is not None and body.kimin != v.get("kimin_kod") and tip == "vergi":   # Fable: vergi şubesi düzeltilebilsin (gider değil)
+        if body.kimin is not None and body.kimin != v.get("kimin_kod") and tip in ("vergi", "sgk"):   # Fable: vergi şubesi düzeltilebilsin (gider değil)
             if body.kimin not in list(subeler) + ["ortak"]:
                 raise HTTPException(400, "Geçerli bir şube seç ya da Ortak")
             v["kimin_kod"] = body.kimin
             v["kimin"] = subeler[body.kimin]["kisa"] if body.kimin in subeler else "Ortak"
+            v["konu"] = {**(v.get("konu") or {}), "sube_id": body.kimin if body.kimin in subeler else None}   # Codex: eski şube kalmasın
         elif body.kimin is not None and body.kimin != v.get("kimin_kod"):
             if not KONULAR.get(tip, {}).get("gider"):
                 raise HTTPException(400, "Bu ödeme gider değil (toptancı / kredi / kart borcu) — kimin sorusu yok")
@@ -328,7 +332,7 @@ def odeme_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = Hea
             v["kimin"] = subeler[body.kimin]["kisa"] if body.kimin in subeler else {"ortak": "Ortak", "patron": "Patron"}[body.kimin]
             v["gider"] = body.kimin != "patron"
         if body.ait_ay is not None and body.ait_ay[:7] != v.get("ait_ay"):
-            if tip not in ("kira", "fatura", "personel", "vergi", "kredi", "kart_borcu"):
+            if tip not in ("kira", "fatura", "personel", "vergi", "sgk", "kredi", "kart_borcu"):
                 raise HTTPException(400, "Bu ödemenin ayı ödeme gününden gelir; gün yanlışsa iptal edip yeniden gir")
             try:
                 date.fromisoformat(body.ait_ay[:7] + "-01")
