@@ -936,7 +936,7 @@ export const IS_GRUPLARI = [
   { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri' },
   { id: 'isler_kira', grup: 'kira', ad: 'Kira hesabı', alt: 'Gelmeyen ev kirası' },
 ];
-const TUR_GRUP = { kart_son_odeme: 'odeme', toptanci_vade: 'odeme', toptanci_tutar: 'tedarik', depo_yolda: 'tedarik', avans_talep: 'personel', mulk_kira: 'kira' };
+const TUR_GRUP = { kart_son_odeme: 'odeme', toptanci_vade: 'odeme', toptanci_tutar: 'tedarik', depo_yolda: 'tedarik', avans_talep: 'personel', mulk_kira: 'kira', mulk_karar: 'kira' };
 export const isGrubu = (x) => x.grup || TUR_GRUP[x.tur] || 'kasa';
 
 export const SAYFALAR = [

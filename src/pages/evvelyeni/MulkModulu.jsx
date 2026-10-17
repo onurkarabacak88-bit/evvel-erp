@@ -131,9 +131,16 @@ function EvKiralari({ onToast }) {
   );
 }
 
-function IsletmeBorcu() {
+function IsletmeBorcu({ onToast }) {
   const [yil, setYil] = useState(() => new Date().getFullYear());
-  const [v, hata] = useVeri('/evvel-yeni/mulk/borc', yil);
+  const [v, hata, yukle] = useVeri('/evvel-yeni/mulk/borc', yil);
+  const [mesgul, setMesgul] = useState('');
+  const karar = async (x, k) => {
+    setMesgul(x.id);
+    try { const r = await api('/evvel-yeni/mulk/karar', { method: 'POST', body: { hareket_id: x.id, karar: k } }); onToast?.(r.mesaj); yukle(); }
+    catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+    setMesgul('');
+  };
   const hucre = { padding: '6px 6px', textAlign: 'right', borderTop: '1px solid var(--pi-line)', fontSize: 12.5, ...num };
   return (
     <>
@@ -141,6 +148,20 @@ function IsletmeBorcu() {
       <div style={{ fontSize: 13, color: R.metin2 }}>Fatma'nın kira hesabından işletme adına yapılan ödeme ve işletme bankasına aktarım borcu <b>artırır</b>; işletmeden kira hesabına aktarım (Kasa → Taşı / Yatır) <b>azaltır</b>. Şahsi harcama sayılmaz. {v && `${tKisa(v.baslangic)} ${v.baslangic.slice(0, 4)} itibarıyla sıfırdan.`}</div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Hazırlanıyor…</div>}
+      {v && v.karar_bekleyen?.length > 0 && (
+        <div style={{ ...kart, padding: '10px 14px', display: 'grid', gap: 4, borderColor: R.amber }}>
+          <div style={{ fontSize: 13, fontWeight: 700 }}>Karar bekleyen aktarımlar — şahsi mi, işletme borcu mu?</div>
+          {v.karar_bekleyen.map((x) => (
+            <div key={x.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${R.cizgi}`, padding: '6px 0', fontSize: 13 }}>
+              <span style={{ width: 52, color: R.metin2 }}>{tKisa(x.gun)}</span>
+              <span style={{ flex: 1 }}>{x.yon === 'cikis' ? `Kira hesabı → ${x.karsi}` : `${x.karsi} → kira hesabı`}</span>
+              <b style={num}>{fmt(x.tutar)} ₺</b>
+              <Dugme kucuk disabled={mesgul === x.id} onClick={() => karar(x, 'sahsi')}>Şahsi</Dugme>
+              <Dugme kucuk ana disabled={mesgul === x.id} onClick={() => karar(x, 'borc')}>{x.yon === 'cikis' ? 'İşletme borcu' : 'Borç geri ödemesi'}</Dugme>
+            </div>
+          ))}
+        </div>
+      )}
       {v && (<>
         <div style={{ ...kart, padding: '12px 16px', display: 'flex', gap: 24, flexWrap: 'wrap' }}>
           <div><div style={{ fontSize: 11, color: R.not, fontWeight: 700 }}>TOPLAM BORÇ</div><div style={{ ...num, fontSize: 24, fontWeight: 700, color: v.toplam_borc > 0 ? R.kirmizi : R.yesil }}>{fmt(v.toplam_borc)} ₺</div></div>
@@ -210,7 +231,7 @@ export default function MulkModulu({ gorunum, onToast, onSekme }) {
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
-      {gorunum === 'mulk_borc' ? <IsletmeBorcu /> : gorunum === 'mulk_uyari' ? <Uyarilar onSekme={onSekme} /> : <EvKiralari onToast={onToast} />}
+      {gorunum === 'mulk_borc' ? <IsletmeBorcu onToast={onToast} /> : gorunum === 'mulk_uyari' ? <Uyarilar onSekme={onSekme} /> : <EvKiralari onToast={onToast} />}
     </div>
   );
 }
