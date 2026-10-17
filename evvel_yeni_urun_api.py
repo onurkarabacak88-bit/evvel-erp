@@ -368,10 +368,15 @@ def urun_olustur(cur, kategori_id: str, ad: str, kim: str, koli_ici: Optional[in
     cur.execute("SELECT pg_advisory_xact_lock(7012042)")   # Fable: eşzamanlı iki ekleme çift ürün açmasın
     if varsa_bagla:   # Fable: özel talep katalogda zaten olan (pasif dahil) ürünü isterse ona bağlanır; pasifse izle aktiflenir
         from sevkiyat_helpers import ad_anahtar
-        cur.execute("SELECT id, ad, aktif FROM ey_urun WHERE kategori_id=%s ORDER BY aktif DESC, sira", (kategori_id,))
+        cur.execute("SELECT id, ad, aktif, birlesti FROM ey_urun WHERE kategori_id=%s ORDER BY aktif DESC, sira", (kategori_id,))
         for r in cur.fetchall() or []:
             r = dict(r)
             if ad_anahtar(r["ad"]) == ad_anahtar(ad.strip()[:120]):
+                if r.get("birlesti"):   # Fable: birleştirilmiş mükerrer diriltilmez → asıla bağlanır
+                    cur.execute("SELECT id, ad FROM ey_urun WHERE id=%s", (r["birlesti"],))
+                    a = cur.fetchone()
+                    if a:
+                        return {"id": dict(a)["id"], "ad": dict(a)["ad"], "kategori_id": kategori_id, "kategori_kod": kategori_kod, "mevcut": True}
                 if not r["aktif"]:
                     cur.execute("UPDATE ey_urun SET aktif=TRUE WHERE id=%s", (r["id"],))
                     cur.execute("UPDATE siparis_urun SET aktif=TRUE WHERE id::text=%s", (r["id"],))   # KÖPRÜ: panel eskiyi okuyor
@@ -425,15 +430,33 @@ def urun_birlestir(uid: str, b: BirlestirBody, x_evvel_oturum: Optional[str] = H
             raise HTTPException(409, "Bu kayıt zaten birleştirilmiş")
         if h.get("birlesti") or not h["aktif"]:
             raise HTTPException(409, "Asıl ürün kullanımda olmalı (pasif ya da birleştirilmiş ürüne birleştirilemez)")
+        if (m.get("birim") or "adet") != (h.get("birim") or "adet"):
+            raise HTTPException(409, "Sayım birimleri farklı — birleştirilemez (miktarlar karışır)")
         cur.execute("UPDATE ey_urun SET aktif=FALSE, birlesti=%s WHERE id=%s", (h["id"], uid))
         cur.execute("UPDATE ey_urun SET birlesti=%s WHERE birlesti=%s", (h["id"], uid))       # buna önceden birleşenler de asıla
         cur.execute("UPDATE ey_urun_takma SET urun_id=%s WHERE urun_id=%s", (h["id"], uid))
         cur.execute("""INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim, kaynak_ref) VALUES (%s,%s,'birlesti',%s,%s,%s,%s),
                                                                                                (%s,%s,'birlesen',NULL,%s,%s,%s)""",
-                    (str(uuid.uuid4()), uid, m["ad"], f"{h['ad']} ({h['id']})", kim, f"birlestir:{uid}",
-                     str(uuid.uuid4()), h["id"], f"{m['ad']} ({uid})", kim, f"birlesen:{uid}"))
+                    (str(uuid.uuid4()), uid, m["ad"], f"{h['ad']} ({h['id']})", kim, None,
+                     str(uuid.uuid4()), h["id"], f"{m['ad']} ({uid})", kim, None))
         _eskiye_yaz(cur, {**m, "aktif": False})    # KÖPRÜ: şube paneli mükerreri artık görmesin
     return {"ok": True, "mesaj": f"{m['ad']} → {h['ad']} ile birleştirildi"}
+
+
+@router.post("/{uid}/ayir")
+def urun_ayir(uid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Yanlış birleştirmeyi geri alır: kayıt pasif kalır (gerekirse Düzelt ile açılır); taşınan kodlar asılda kalır (izden bakılır)."""
+    _hazirla()
+    with db() as (conn, cur):
+        kim = _aktor(cur, x_evvel_oturum)
+        cur.execute("SELECT birlesti FROM ey_urun WHERE id=%s FOR UPDATE", (uid,))
+        e = cur.fetchone()
+        if not e or not dict(e)["birlesti"]:
+            raise HTTPException(404, "Birleştirilmiş kayıt bulunamadı")
+        cur.execute("UPDATE ey_urun SET birlesti=NULL WHERE id=%s", (uid,))
+        cur.execute("INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim, kaynak_ref) VALUES (%s,%s,'birlesti',%s,NULL,%s,NULL)",
+                    (str(uuid.uuid4()), uid, dict(e)["birlesti"], kim))
+    return {"ok": True, "mesaj": "Birleştirme geri alındı (kayıt pasif)"}
 
 
 class TakmaBody(BaseModel):
