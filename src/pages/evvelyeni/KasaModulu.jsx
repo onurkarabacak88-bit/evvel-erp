@@ -1511,6 +1511,16 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
       </div>
     );
   }
+  if (x.genel) {   // 🧩 tak-çıkar: modülün kendi tarif ettiği satır (etiket · ad · alt · sayfa) — Kasa modülü tanımaz
+    const git = () => { window.history.pushState({}, '', `/evvel-yeni/${x.sayfa}`); window.dispatchEvent(new window.PopStateEvent('popstate')); };
+    return (
+      <div style={{ ...satir, border: `1px solid ${alfa(R.amber, 55)}` }}>
+        <Cip tur="sari">{x.etiket}</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.alt} · {yas}</div></div>
+        {x.sayfa ? <Dugme kucuk onClick={git}>{x.dugme || 'Aç'}</Dugme> : <span />}
+      </div>
+    );
+  }
   if (x.tur === 'teslim') {
     return (
       <div style={satir}>
