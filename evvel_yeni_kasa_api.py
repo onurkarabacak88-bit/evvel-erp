@@ -700,7 +700,8 @@ def yaklasan_odemeler_kutusu(gun_sayisi: int = 7):
     ufuk = bugun + timedelta(days=max(1, min(int(gun_sayisi or 7), 31)))
     with db() as (conn, cur):
         _, _, kayit, _ = _yukle(cur)
-        satirlar = yaklasan_odemeler(cur, {"bugun": bugun, "ufuk": ufuk, "kayit": kayit})
+        bas = _baslangic(cur)   # yalnız Evvel Yeni dönemi: eski sistemde kaydı eksik kalan aylar yanlış "gecikti" üretmesin
+        satirlar = yaklasan_odemeler(cur, {"bugun": bugun, "ufuk": ufuk, "kayit": kayit, "baslangic": str(bas)[:10] if bas else None})
     satirlar.sort(key=lambda x: (x.get("tarih") or "9999", x.get("ad") or ""))
     bilinen = [x for x in satirlar if x.get("tutar") is not None]
     return {"bugun": bugun.isoformat(), "ufuk": ufuk.isoformat(), "gun_sayisi": (ufuk - bugun).days,
