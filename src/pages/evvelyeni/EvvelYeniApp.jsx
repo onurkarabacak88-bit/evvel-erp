@@ -10,6 +10,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import { MODULLER, TUM_SAYFALAR } from './moduller';
+import { IS_GRUPLARI, isGrubu } from './KasaModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
@@ -109,13 +110,15 @@ export default function EvvelYeniApp() {
       .catch(() => setAcikMod(null));
     return undefined;
   }, [durum]);
-  const GORUNUR = acikMod ? MODULLER.filter((b) => b.mod === 'kasa' || acikMod.has(b.mod)) : MODULLER;
+  const GORUNUR = acikMod ? MODULLER.filter((b) => b.mod === 'kasa' || b.her_zaman || acikMod.has(b.mod)) : MODULLER;
   // 'bolum' taşıyan modülün sayfaları ana bölümün altına eklenir (her sayfa kendi modülünü bilir → kapanınca o da kalkar)
   const BOLUMLER = GORUNUR.filter((b) => !b.bolum).map((b) => ({
     ...b, sayfalar: [...b.sayfalar, ...GORUNUR.filter((e) => e.bolum === b.mod).flatMap((e) => e.sayfalar)],
   }));
   const veriGeldi = (v) => setRozet({
-    isler: v.isler.length, teslim: v.isler.filter((x) => x.tur === 'teslim').length, farklar: v.ozet.acik_fark_sayisi,
+    teslim: v.isler.filter((x) => x.tur === 'teslim').length, farklar: v.ozet.acik_fark_sayisi,
+    // Bekleyen işler alt sekmeleri: her biri kendi sayısı (bölüm başlığında toplamı)
+    ...Object.fromEntries(IS_GRUPLARI.map((g) => [g.id, v.isler.filter((x) => isGrubu(x) === g.grup).length])),
   });
 
   useEffect(() => {

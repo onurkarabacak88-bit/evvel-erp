@@ -5,7 +5,7 @@
 // sektor: 'genel' her işletmede · 'kahve' kahveciliğe özgü · 'ozel' yalnız bu işletmenin düzeni. yetki: rol anahtarı (sonra).
 // bolum: modülün sayfaları BAŞKA bir bölümün altında görünür (ör. Faturaları dağıt → Ödeme); modül kapanınca sayfa da kalkar.
 import React from 'react';
-import KasaModulu, { SAYFALAR } from './KasaModulu';
+import KasaModulu, { SAYFALAR, IS_GRUPLARI } from './KasaModulu';
 import GelirModulu, { GELIR_SAYFALAR } from './GelirModulu';
 import GiderModulu, { GIDER_SAYFALAR } from './GiderModulu';
 import OdemeModulu, { ODEME_SAYFALAR, PatronHarcama } from './OdemeModulu';
@@ -27,6 +27,9 @@ import MulkModulu, { MULK_SAYFALAR } from './MulkModulu';
 // g(sekme, c): c = { onToast, onSekme, onVeri } — kabuğun modüllere verdiği ortak bağlantılar
 export const MODULLER = [
   { mod: 'kasa', ad: 'Kasa', ikon: '💰', sektor: 'genel', sayfalar: SAYFALAR,
+    g: (s, c) => <KasaModulu gorunum={s} onSekme={c.onSekme} onToast={c.onToast} onVeri={c.onVeri} sekmesiz /> },
+  // 📋 Bekleyen işler — kendi başlığı + konu alt sekmeleri (sahip 2026-10-17). Her zaman görünür (çekirdek görünüm).
+  { mod: 'isler', her_zaman: true, ad: 'Bekleyen işler', ikon: '📋', sektor: 'genel', sayfalar: IS_GRUPLARI,
     g: (s, c) => <KasaModulu gorunum={s} onSekme={c.onSekme} onToast={c.onToast} onVeri={c.onVeri} sekmesiz /> },
   { mod: 'gelir', ad: 'Gelir', ikon: '📥', sektor: 'genel', sayfalar: GELIR_SAYFALAR, g: () => <GelirModulu /> },
   { mod: 'gider', ad: 'Gider', ikon: '💸', sektor: 'genel', sayfalar: GIDER_SAYFALAR, g: (s, c) => <GiderModulu onToast={c.onToast} /> },

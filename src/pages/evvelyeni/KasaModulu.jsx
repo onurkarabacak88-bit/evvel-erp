@@ -926,13 +926,25 @@ function BankaSekmesi({ onToast, onDegisti }) {
 // ─────────────────────────── ANA MODÜL ───────────────────────────
 // Sahip: "Sadece kasam görünür; buraya tıkladığımda şubelerin kasaları, evde bulunan
 // paralar vs. kart hâlinde görünür — gibi düşün." → her konu kendi SAYFASI (sol menü).
+// 📋 BEKLEYEN İŞLER — sahip (2026-10-17): "Bekleyen işler ayrı sekme kurgusu olsun, orada da alt sekmeler olsun; böyle
+// karmaşıklaşacak." → menüde KENDİ başlığı, konuya göre alt sekmeler. Modül satırı kendi grubunu `grup` ile söyler
+// (tak-çıkar); söylemeyen eski türler aşağıdaki eşlemeyle yerleşir.
+export const IS_GRUPLARI = [
+  { id: 'isler_kasa', grup: 'kasa', ad: 'Kasa & kapanış', alt: 'Kapanış · teslim · fark' },
+  { id: 'isler_odeme', grup: 'odeme', ad: 'Ödemeler', alt: 'Kart · toptancı vadesi · kredi' },
+  { id: 'isler_tedarik', grup: 'tedarik', ad: 'Tedarik & depo', alt: 'Yolda kalan · fatura tutarı' },
+  { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri' },
+  { id: 'isler_kira', grup: 'kira', ad: 'Kira hesabı', alt: 'Gelmeyen ev kirası' },
+];
+const TUR_GRUP = { kart_son_odeme: 'odeme', toptanci_vade: 'odeme', toptanci_tutar: 'tedarik', depo_yolda: 'tedarik', avans_talep: 'personel', mulk_kira: 'kira' };
+export const isGrubu = (x) => x.grup || TUR_GRUP[x.tur] || 'kasa';
+
 export const SAYFALAR = [
   { id: 'kasam', ad: 'Kasam', alt: 'Toplam kasa · gruplar' },
   { id: 'subeler', ad: 'Dükkân nakitleri', alt: 'Çekmecedeki nakit · şube şube' },
   { id: 'evler', ad: 'Evler', alt: 'Onur · Fatma' },
   { id: 'bankalar', ad: 'Bankalar', alt: 'Şube bankaları · kira · geçiş' },
   { id: 'hareketler', ad: 'Günlük hareketler', alt: 'Gün seç, ne oldu' },
-  { id: 'isler', ad: 'Bekleyen işler', alt: 'Onaylar · farklar' },
   { id: 'uyarilar', ad: 'Uyarılar', alt: 'Eksik tanımlar · dikkat' },
   { id: 'teslim', ad: 'Teslim onayları', alt: 'Şubeden patrona' },
   { id: 'banka', ad: 'Banka mutabakatı', alt: 'Aylık ekstre kontrolü' },
@@ -942,7 +954,8 @@ const SEVIYE_SIRA = { kirmizi: 3, sari: 2, yesil: 1, gri: 0 };
 
 export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri }) {
   const [ck, setCk] = useState(null);
-  const sayfaCoz = (g) => (SAYFALAR.some((x) => x.id === g) ? g : 'kasam');
+  const sayfaCoz = (g) => (SAYFALAR.some((x) => x.id === g) || g === 'isler' || String(g || '').startsWith('isler_') ? g : 'kasam');
+  const isGrup = (IS_GRUPLARI.find((x) => x.id === gorunum) || {}).grup || null;   // Bekleyen işler alt sekmesi
   const [sekme, setSekme] = useState(sayfaCoz(gorunum));
   useEffect(() => { if (gorunum) setSekme(sayfaCoz(gorunum)); }, [gorunum]);   // eslint-disable-line react-hooks/exhaustive-deps
   const git = (k) => { setSekme(k); onSekme?.(k); };
@@ -1230,11 +1243,11 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
           <GrupKart ad="Evler" tutar={o.ev} liste={evler} hedef="evler" alt={evler.map((c) => c.kisa).join(' · ')} />
           {/* Sahip: "Kasam bankalar alanında (Fethi'nin hesabı) görünmüyor" → geçiş hesabı Bankalar'ın içinde */}
           <GrupKart ad="Bankalar" tutar={o.banka + o.gecis} liste={[...bankalar, ...hesaplar]} hedef="bankalar" alt={`${bankalar.length} şube bankası + Fethi hesabı${veri.pos_bekleyen_brut > 0 ? ` · + ${fmt(veri.pos_bekleyen_brut)} ₺ POS/online gelecek` : ''}`} />
-          {o.yolda >= 0.005 && <GrupKart ad="Teslim yolda" tutar={o.yolda} liste={[]} hedef="isler" alt="teslim edildi, 'aldı' onayı bekliyor" />}
+          {o.yolda >= 0.005 && <GrupKart ad="Teslim yolda" tutar={o.yolda} liste={[]} hedef="isler_kasa" alt="teslim edildi, 'aldı' onayı bekliyor" />}
           <GrupKart ad="Kira hesabı" tutar={o.kira} liste={kiraHesap} hedef="bankalar" alt="İşletmeden ayrı · destek için" />
           <GrupKart ad="Açık farklar" tutar={o.acik_eksik} hedef="farklar" renk={o.acik_fark_sayisi ? 'kirmizi' : 'yesil'}
             alt={o.acik_fark_sayisi ? `${o.acik_fark_sayisi} fark çözülmedi${o.acik_fazla > 0 ? ` · +${fmt(o.acik_fazla)} fazla` : ''}` : 'Çözülmemiş fark yok'} />
-          <GrupKart ad="Bekleyen işler" tutar={0} deger={`${veri.isler.length} iş`} hedef="isler" renk={veri.isler.length ? 'sari' : 'yesil'}
+          <GrupKart ad="Bekleyen işler" tutar={0} deger={`${veri.isler.length} iş`} hedef={(IS_GRUPLARI.find((g) => veri.isler.some((x) => isGrubu(x) === g.grup)) || IS_GRUPLARI[0]).id} renk={veri.isler.length ? 'sari' : 'yesil'}
             alt={veri.isler.length ? `${veri.isler.length} iş · onay / fark` : 'Hepsi tamam'} />
         </div>
       </>)}
@@ -1251,14 +1264,15 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         )}
         {kiraHesap.length > 0 && (<><div style={etiketStil}>Kira hesabı · işletmeden ayrı</div><KartIzgara liste={kiraHesap} /></>)}
       </>)}
-      {sekme === 'isler' && (
-          <div ref={islerRef} style={{ ...kart, padding: 12, display: 'flex', flexDirection: 'column', gap: 6, border: veri.isler.length ? `2px solid ${R.amber}` : kart.border }}>
+      {(sekme === 'isler' || String(sekme).startsWith('isler_')) && (
+          (() => { const isler = isGrup ? veri.isler.filter((x) => isGrubu(x) === isGrup) : veri.isler; return (
+          <div ref={islerRef} style={{ ...kart, padding: 12, display: 'flex', flexDirection: 'column', gap: 6, border: isler.length ? `2px solid ${R.amber}` : kart.border }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <span style={{ fontWeight: 700, fontSize: 14 }}>Bekleyen işler</span>
-              {veri.isler.length ? <Cip tur="kirmizi">{veri.isler.length}</Cip> : <Cip tur="yesil">Hepsi tamam</Cip>}
+              <span style={{ fontWeight: 700, fontSize: 14 }}>Bekleyen işler{isGrup ? ` · ${(IS_GRUPLARI.find((x) => x.grup === isGrup) || {}).ad}` : ''}</span>
+              {isler.length ? <Cip tur="kirmizi">{isler.length}</Cip> : <Cip tur="yesil">Hepsi tamam</Cip>}
             </div>
             {(() => {
-              const kp = veri.isler.filter((x) => x.tur === 'kapanis');
+              const kp = isler.filter((x) => x.tur === 'kapanis');
               if (kp.length < 2) return null;
               return (
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, padding: '6px 2px' }}>
@@ -1273,7 +1287,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
               );
             })()}
             {(() => {
-              const t = veri.isler.filter((x) => x.tur === 'teslim');
+              const t = isler.filter((x) => x.tur === 'teslim');
               if (!t.length) return null;
               return (
                 <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '8px 10px', borderRadius: 9, background: R.girinti, border: `1px solid ${R.cizgi}` }}>
@@ -1284,7 +1298,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
               );
             })()}
             {/* Sahip/Fable: "30 Evo tahmini tek tek çözülemez" → şube başına TEK satır + toplu kabul */}
-            {Object.entries(veri.isler.filter((x) => x.tur === 'evo_kapanis').reduce((a, x) => { (a[x.cep] = a[x.cep] || []).push(x); return a; }, {})).map(([cep, xs]) => (
+            {Object.entries(isler.filter((x) => x.tur === 'evo_kapanis').reduce((a, x) => { (a[x.cep] = a[x.cep] || []).push(x); return a; }, {})).map(([cep, xs]) => (
               <div key={`evo${cep}`} style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10, alignItems: 'center', padding: '8px 10px', borderRadius: 9, background: R.girinti, border: `1px solid ${alfa(R.amber, 55)}` }}>
                 <Cip tur="sari">Evo tahmini · {xs.length} gün</Cip>
                 <div style={{ fontSize: 13 }}><b>{xs[0].ad}</b> · {xs.map((x) => tKisa(x.tarih)).join(', ')}
@@ -1298,7 +1312,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
                 </span>
               </div>
             ))}
-            {veri.isler.filter((x) => x.tur !== 'teslim' && x.tur !== 'evo_kapanis').map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })}
+            {isler.filter((x) => x.tur !== 'teslim' && x.tur !== 'evo_kapanis').map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })}
               onPosKabul={async (id) => { try { const r = await api('/evvel-yeni/kasa/pos-sifir-kabul', { method: 'POST', body: { id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); } }}
               onGecKapanis={async (x) => {
                 if (!window.confirm(`${x.ad} ${x.tarih} kapanışı, personelin girdiği verilerle GEÇ KAPANIŞ olarak işlensin mi?
@@ -1307,6 +1321,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
               }}
               onKapanisGordum={async (x) => { try { await api('/evvel-yeni/kasa/kapanis-uyari-gordum', { method: 'POST', body: { deneme_id: x.id } }); yukle(); } catch (e) { onToast?.(e.message); } }} />)}
           </div>
+          ); })()
       )}
       {sekme === 'hareketler' && (<>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
