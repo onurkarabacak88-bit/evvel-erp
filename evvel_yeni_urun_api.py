@@ -49,6 +49,7 @@ def _hazirla():
             id TEXT PRIMARY KEY, ad TEXT NOT NULL, kategori_id TEXT, birim TEXT NOT NULL DEFAULT 'adet', birim_teyit BOOLEAN NOT NULL DEFAULT FALSE,
             koli_ici INT, kdv_oran NUMERIC(5,4), aktif BOOLEAN NOT NULL DEFAULT TRUE, sira INT NOT NULL DEFAULT 0,
             olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+        cur.execute("ALTER TABLE ey_urun ADD COLUMN IF NOT EXISTS birlesti TEXT")   # mükerrer kayıt → asıl ürün (sahip 2026-10-18)
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_urun_takma (
             takma TEXT PRIMARY KEY, urun_id TEXT NOT NULL, kaynak TEXT NOT NULL DEFAULT 'elle')""")
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_urun_iz (
@@ -121,23 +122,33 @@ def urun_haritasi(cur):
     """Kimlik / takma ad (eski depo kodu) / ad → (urun_id, ad). Depo'nun eski `_urun_haritasi` ile AYNI imza:
     bulunamayan kod 'kod:<kod>', ad 'ad:<ad>' olarak döner (kaybolmaz, izlenir)."""
     _hazirla()
-    cur.execute("SELECT id, ad FROM ey_urun ORDER BY aktif DESC, sira, ad")
-    ad = {dict(r)["id"]: dict(r)["ad"] for r in cur.fetchall() or []}
+    cur.execute("SELECT id, ad, birlesti FROM ey_urun ORDER BY aktif DESC, sira, ad")
+    satir = [dict(r) for r in cur.fetchall() or []]
+    ad = {r["id"]: r["ad"] for r in satir}
+    asil = {r["id"]: r["birlesti"] for r in satir if r.get("birlesti")}   # birleştirilmiş mükerrer → asıl ürün
     cur.execute("SELECT takma, urun_id FROM ey_urun_takma")
     takma = {dict(r)["takma"]: dict(r)["urun_id"] for r in cur.fetchall() or []}
     by_ad: Dict[str, str] = {}
     for uid, a in ad.items():
         by_ad.setdefault(_n(a), uid)
 
+    def _asil(u):
+        for _ in range(5):     # zincir (A→B→C) güvenli
+            if u not in asil:
+                break
+            u = asil[u]
+        return u
+
     def coz(kod, adi=None):
         kod = str(kod or "").strip()
         if kod in ad:
-            return kod, ad[kod]
+            u = _asil(kod)
+            return u, ad.get(u)
         if kod in takma:
-            u = takma[kod]
+            u = _asil(takma[kod])
             return u, ad.get(u) or adi
         if adi and _n(adi) in by_ad:
-            u = by_ad[_n(adi)]
+            u = _asil(by_ad[_n(adi)])
             return u, ad.get(u)
         return ("kod:" + kod if kod else "ad:" + _n(adi)), (adi or kod)
     return coz
@@ -154,7 +165,8 @@ def katalog(cur, hepsi: bool = False) -> List[dict]:
     for u in uruns:
         by_k.setdefault(u.get("kategori_id") or "", []).append({
             "id": u["id"], "ad": u["ad"], "birim": u["birim"], "birim_teyit": u["birim_teyit"], "koli_ici": u.get("koli_ici"),
-            "kdv_oran": float(u["kdv_oran"]) if u.get("kdv_oran") is not None else None, "aktif": u["aktif"]})
+            "kdv_oran": float(u["kdv_oran"]) if u.get("kdv_oran") is not None else None, "aktif": u["aktif"],
+            "birlesti": u.get("birlesti")})
     out = [{"id": k["id"], "ad": k["ad"], "emoji": k.get("emoji"), "aktif": k["aktif"], "urunler": by_k.pop(k["id"], [])} for k in kats]
     if by_k:
         out.append({"id": "", "ad": "Kategorisiz", "emoji": "❔", "aktif": True, "urunler": [x for v in by_k.values() for x in v]})
@@ -391,6 +403,71 @@ def urun_ekle(b: UrunBody, x_evvel_oturum: Optional[str] = Header(default=None))
     return {"ok": True, "id": r["id"], "mesaj": f"{r['ad']} eklendi"}
 
 
+class BirlestirBody(BaseModel):
+    hedef_id: str
+
+
+@router.post("/{uid}/birlestir")
+def urun_birlestir(uid: str, b: BirlestirBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Mükerrer kayıt → asıl ürün (sahip 2026-10-18: "aynı ürün iki kez kodlanmış"). Silme YOK: mükerrer pasif olur, 'birlesti' asılı gösterir,
+    takma adları asıla taşınır; okuyucular (urun_haritasi) eski kimliği ve kodları asıla çözer → geçmiş stok/sipariş/fiyat kaybolmaz."""
+    _hazirla()
+    if uid == b.hedef_id:
+        raise HTTPException(400, "Ürün kendisiyle birleştirilemez")
+    with db() as (conn, cur):
+        kim = _aktor(cur, x_evvel_oturum)
+        cur.execute("SELECT * FROM ey_urun WHERE id = ANY(%s) ORDER BY id FOR UPDATE", ([uid, b.hedef_id],))
+        r = {dict(x)["id"]: dict(x) for x in cur.fetchall() or []}
+        if uid not in r or b.hedef_id not in r:
+            raise HTTPException(404, "Ürün bulunamadı")
+        m, h = r[uid], r[b.hedef_id]
+        if m.get("birlesti"):
+            raise HTTPException(409, "Bu kayıt zaten birleştirilmiş")
+        if h.get("birlesti") or not h["aktif"]:
+            raise HTTPException(409, "Asıl ürün kullanımda olmalı (pasif ya da birleştirilmiş ürüne birleştirilemez)")
+        cur.execute("UPDATE ey_urun SET aktif=FALSE, birlesti=%s WHERE id=%s", (h["id"], uid))
+        cur.execute("UPDATE ey_urun SET birlesti=%s WHERE birlesti=%s", (h["id"], uid))       # buna önceden birleşenler de asıla
+        cur.execute("UPDATE ey_urun_takma SET urun_id=%s WHERE urun_id=%s", (h["id"], uid))
+        cur.execute("""INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim, kaynak_ref) VALUES (%s,%s,'birlesti',%s,%s,%s,%s),
+                                                                                               (%s,%s,'birlesen',NULL,%s,%s,%s)""",
+                    (str(uuid.uuid4()), uid, m["ad"], f"{h['ad']} ({h['id']})", kim, f"birlestir:{uid}",
+                     str(uuid.uuid4()), h["id"], f"{m['ad']} ({uid})", kim, f"birlesen:{uid}"))
+        _eskiye_yaz(cur, {**m, "aktif": False})    # KÖPRÜ: şube paneli mükerreri artık görmesin
+    return {"ok": True, "mesaj": f"{m['ad']} → {h['ad']} ile birleştirildi"}
+
+
+class TakmaBody(BaseModel):
+    takma: str
+
+
+@router.post("/{uid}/takma")
+def urun_takma(uid: str, b: TakmaBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Eski bir kodu (ör. bar/stok havuz kodu 'sut_litre') bu ürüne bağlar; başka üründeyse taşır (izli)."""
+    _hazirla()
+    t = (b.takma or "").strip()
+    if not t:
+        raise HTTPException(400, "Kod boş")
+    with db() as (conn, cur):
+        kim = _aktor(cur, x_evvel_oturum)
+        cur.execute("SELECT id, aktif FROM ey_urun WHERE id=%s", (uid,))
+        u = cur.fetchone()
+        if not u or not dict(u)["aktif"]:
+            raise HTTPException(404, "Kullanımdaki ürün bulunamadı")
+        cur.execute("SELECT 1 FROM ey_urun WHERE id=%s", (t,))
+        if cur.fetchone():
+            raise HTTPException(409, "Bu kod bir ürün kimliği — birleştirme kullan")
+        cur.execute("SELECT urun_id FROM ey_urun_takma WHERE takma=%s FOR UPDATE", (t,))
+        e = cur.fetchone()
+        onceki = dict(e)["urun_id"] if e else None
+        if onceki == uid:
+            return {"ok": True, "mesaj": "Zaten bağlı"}
+        cur.execute("""INSERT INTO ey_urun_takma (takma, urun_id, kaynak) VALUES (%s,%s,'elle')
+                       ON CONFLICT (takma) DO UPDATE SET urun_id=EXCLUDED.urun_id, kaynak='elle'""", (t, uid))
+        cur.execute("INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim, kaynak_ref) VALUES (%s,%s,'takma',%s,%s,%s,NULL)",
+                    (str(uuid.uuid4()), uid, onceki, t, kim))
+    return {"ok": True, "mesaj": f"'{t}' bağlandı" + (" (başka üründen taşındı)" if onceki else "")}
+
+
 @router.post("/{uid}")
 def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Değişen her alan ayrı iz kaydı. Birim TEYİT edilir (değişmese bile kaydetmek 'teyitli' yapar)."""
@@ -403,6 +480,8 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
         if not e:
             raise HTTPException(404, "Ürün bulunamadı")
         e = dict(e)
+        if e.get("birlesti") and b.aktif:
+            raise HTTPException(409, "Bu kayıt başka bir ürünle birleştirildi — asıl ürünü düzelt")
         yeni = {"ad": b.ad.strip()[:120], "kategori_id": b.kategori_id, "birim": b.birim, "koli_ici": b.koli_ici,
                 "kdv_oran": b.kdv_oran, "aktif": b.aktif}
         def _es(a, b_):
