@@ -22,6 +22,7 @@ import DepoModulu, { DEPO_SAYFALAR } from './DepoModulu';
 import FaturaModulu, { FATURA_SAYFALAR } from './FaturaModulu';
 import FisModulu, { FIS_SAYFALAR } from './FisModulu';
 import AvansModulu, { AVANS_SAYFALAR } from './AvansModulu';
+import MulkModulu, { MULK_SAYFALAR } from './MulkModulu';
 
 // g(sekme, c): c = { onToast, onSekme, onVeri } — kabuğun modüllere verdiği ortak bağlantılar
 export const MODULLER = [
@@ -35,6 +36,7 @@ export const MODULLER = [
     g: (s, c) => (s === 'kira_takvimi' ? <KiraTakvim /> : s === 'patron_harcama' ? <PatronHarcama /> : <OdemeModulu onToast={c.onToast} />) },
   { mod: 'fatura', bolum: 'odeme', ad: 'Faturaları dağıt', ikon: '🧾', sektor: 'ozel', sayfalar: FATURA_SAYFALAR, g: (s, c) => <FaturaModulu onToast={c.onToast} /> },
   { mod: 'kredi', ad: 'Krediler', ikon: '🏦', sektor: 'genel', sayfalar: KREDI_SAYFALAR, g: (s, c) => <KrediModulu onToast={c.onToast} onSekme={c.onSekme} /> },
+  { mod: 'mulk', ad: 'Kira hesabı', ikon: '🏠', sektor: 'ozel', sayfalar: MULK_SAYFALAR, g: (s, c) => <MulkModulu gorunum={s} onToast={c.onToast} onSekme={c.onSekme} /> },
   { mod: 'kart', ad: 'Kartlar', ikon: '💳', sektor: 'genel', sayfalar: KART_SAYFALAR,
     g: (s, c) => (s === 'kart_takvimi' ? <KartTakvim onSekme={c.onSekme} /> : <KartModulu onToast={c.onToast} />) },
   { mod: 'toptanci', ad: 'Toptancılar', ikon: '🚚', sektor: 'genel', sayfalar: TOPTANCI_SAYFALAR,

@@ -41,6 +41,8 @@ MODULLER: List[dict] = [
      "aciklama": "personelin QR sayfasından avans talepleri → havale / elden / ret (sayfası Personel altında)"},
     {"kod": "fis", "ad": "Anlık gider fiş kontrol", "ikon": "🧾", "sektor": "genel", "gerekir": ["kasa"], "menu": False,
      "aciklama": "panelden girilen giderlerin fişi geldi mi; gelmeyen girişi yapan personelle (sayfası Gider altında)"},
+    {"kod": "mulk", "ad": "Kira hesabı", "ikon": "🏠", "sektor": "ozel", "gerekir": ["kasa"],
+     "aciklama": "ev kiraları takvimi + işletmelerin Fatma'nın kira hesabına borcu (Kasım'dan)"},
     {"kod": "fatura", "ad": "Faturaları dağıt", "ikon": "🧾", "sektor": "ozel", "gerekir": ["odeme", "kart"], "menu": False,
      "aciklama": "kart ekstresindeki otomatik fatura ödemeleri → şube gideri (sayfası Ödeme altında)"},
     {"kod": "bar", "ad": "Bar", "ikon": "🥤", "sektor": "kahve", "gerekir": ["kasa"], "aciklama": "bardak + bar ürün sayımı"},

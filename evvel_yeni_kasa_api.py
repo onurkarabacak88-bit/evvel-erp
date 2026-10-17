@@ -196,6 +196,16 @@ def sube_cepleri_yaz(cur) -> None:
             ("banka:" + str(r["id"]), ad + " bankası", ad + " banka", str(r["id"]), 50 + i))
 
 
+def defter_ozeti(cur) -> dict:
+    """PUBLIC servis (Kira hesabı modülü vb.): iptaller düşülmüş BÜTÜN kayıtlar (hafif) + cepler. Tek okuma.
+    {"cepler": {id: {ad, kisa, tur, sube_id, kira}}, "kayitlar": [{id, tur, is_gunu, cep, kaynak, hedef, tutar, veri}]}"""
+    cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
+    return {"cepler": {c["id"]: {"ad": c["ad"], "kisa": c.get("kisa"), "tur": c["tur"], "sube_id": c.get("sube_id"),
+                                 "kira": c["id"] in KIRA_CEPLERI} for c in cep_list},
+            "kayitlar": [{"id": h["id"], "tur": h["tur"], "is_gunu": h["is_gunu"], "cep": h.get("cep"), "kaynak": h.get("kaynak"),
+                          "hedef": h.get("hedef"), "tutar": int(h["tutar"] or 0), "veri": h["veri"]} for h in kayit]}
+
+
 def donem_baslangici(cur) -> date:
     """PUBLIC servis: geçerli dönemin ilk günü (takvimler 'Evvel Yeni öncesi' ayları ayırmak için)."""
     return _baslangic(cur)
@@ -725,7 +735,9 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
         "dis_giris": _tl_sayi(sum(o["tutar"] for o in gunun_ol if o["olay"] == "dis")),
         "teslim": _tl_sayi(sum(o["tutar"] for o in gunun_ol if o["olay"] == "teslim_cikis")),
         "kiradan_destek": _tl_sayi(sum(int(p["tutar"]) for o in gunun_ol if o["olay"] == "odeme"
-                                       for p in o["veri"].get("parcalar", []) if p["cep"] in KIRA_CEPLERI)),
+                                       for p in o["veri"].get("parcalar", []) if p["cep"] in KIRA_CEPLERI)
+                                   + sum(o["tutar"] for o in gunun_ol if o["olay"] == "tasima"
+                                         and o.get("kaynak") in KIRA_CEPLERI and o.get("hedef") not in KIRA_CEPLERI)),
         "bankaya_giren": _tl_sayi(sum(e["d"] for o in gunun_ol for e in _etki(o, C) if e["d"] > 0 and C.get(e["cep"], {}).get("tur") == "banka")),
         # Kayıtsız elden harcama da ödemedir (Codex): bir kez sayılır, cebi tekrar düşmez.
         # Yalnız NAKİT/HAVALE parçaları — kartla ödenen kısım kasadan çıkmadı (kart borcu oldu)
@@ -979,6 +991,8 @@ class HareketBody(BaseModel):
     sorumlu: Optional[str] = None
     teslim_eden: Optional[str] = None
     online: Optional[Decimal] = None
+    bag: Optional[dict] = None          # 🧩 tak-çıkar: bu kaydı hangi modülün neyine bağlar (ör. {"modul":"mulk","id":..,"ay":..}) — Kasa yorumlamaz
+    istek_id: Optional[str] = None      # formun tek kimliği — tekrar gönderilirse İKİNCİ KEZ yazılmaz
 
 
 def _yaz(cur, tur, gun, kaydeden, cep=None, kaynak=None, hedef=None, tutar=0, durum=None, veri=None, kaynak_ref=None):
@@ -1065,8 +1079,10 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
                 raise HTTPException(400, "Tutar gir")
             if alt in ("destek", "borc", "kredi") and not (body.kimden or "").strip():
                 raise HTTPException(400, "Kimden geldiğini yaz")
-            yeni = _sahte(t, gun, cep=body.cep, tutar=tut,
-                          veri={"alt": alt, "kimden": (body.kimden or "").strip()[:80], "not": (body.not_ or "").strip()[:200]})
+            veri_ = {"alt": alt, "kimden": (body.kimden or "").strip()[:80], "not": (body.not_ or "").strip()[:200]}
+            if isinstance(body.bag, dict):
+                veri_["bag"] = {str(k)[:20]: (str(v)[:80] if v is not None else None) for k, v in list(body.bag.items())[:6]}
+            yeni = _sahte(t, gun, cep=body.cep, tutar=tut, veri=veri_)
         elif t == "teslim":
             cep_var(body.kaynak, {"sube"})
             cep_var(body.hedef, {"ev", "hesap"})
@@ -1181,8 +1197,11 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
                  veri={"hedef_id": evo_yerine["id"], "sebep": "Evo tahmini — şubenin gerçek kapanışı girildi"})
             for y in yeniler:
                 y["veri"] = {**y["veri"], "evo_yerine": True, "evo_nakit": evo_yerine["tutar"], "evo_kart": int(evo_yerine["veri"].get("kart", 0))}
+        ref = f"hareket:{body.istek_id[:64]}" if (body.istek_id and len(yeniler) == 1) else None
         idler = [_yaz(cur, t, y["is_gunu"], kim, cep=y["cep"], kaynak=y["kaynak"], hedef=y["hedef"],
-                      tutar=y["tutar"], durum=y["durum"], veri=y["veri"]) for y in yeniler]
+                      tutar=y["tutar"], durum=y["durum"], veri=y["veri"], kaynak_ref=ref) for y in yeniler]
+        if ref and not idler[0]:
+            return {"ok": True, "id": None, "idler": [], "tekrar": True, "mesaj": "Bu kayıt zaten yazılmıştı (ikinci kez yazılmadı)"}
     return {"ok": True, "id": idler[0], "idler": idler}
 
 
