@@ -1224,7 +1224,8 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
           </div>
           {veri.pos_bekleyen_brut > 0 && <div style={{ marginLeft: 'auto', fontSize: 12.5, color: R.amber }}>Toplama dahil değil · POS/online bankaya gelecek (brüt) <b style={num}>{fmt(veri.pos_bekleyen_brut)}</b> ₺</div>}
         </div>
-        {(hepsi || gun === veri.bugun) && <YaklasanOdemeler eldeki={o.toplam} posYolda={veri.pos_bekleyen_brut} />}
+        {/* seçili gün ne olursa olsun BUGÜNÜN parası: anlık bakiye (kira hesabı hariç = işletme parası) */}
+        <YaklasanOdemeler eldeki={Object.entries(veri.anlik_bakiye || {}).filter(([k]) => !k.startsWith('kira:')).reduce((t, [, v]) => t + (Number(v) || 0), 0)} posYolda={veri.pos_bekleyen_brut} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
           <GrupKart ad="Dükkân nakitleri" tutar={o.sube} liste={subeler} hedef="subeler" alt={`${subeler.length} dükkân · çekmecedeki nakit`} />
           <GrupKart ad="Evler" tutar={o.ev} liste={evler} hedef="evler" alt={evler.map((c) => c.kisa).join(' · ')} />
@@ -1369,7 +1370,7 @@ function YaklasanOdemeler({ eldeki, posYolda }) {
     <div style={{ ...kart, padding: '12px 16px', borderColor: yetmiyor ? alfa(R.kirmizi, 60) : 'var(--pi-line)' }}>
       <button type="button" onClick={() => setAcik((x) => !x)} aria-expanded={acik}
         style={{ all: 'unset', cursor: 'pointer', display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-end', width: '100%' }}>
-        <div><div style={etiketStil}>Eldeki işletme parası</div><div style={{ ...num, fontSize: 17 }}>{fmt(eldeki)}</div></div>
+        <div><div style={etiketStil}>Şu an eldeki işletme parası</div><div style={{ ...num, fontSize: 17 }}>{fmt(eldeki)}</div></div>
         <div><div style={etiketStil}>{v.gun_sayisi} gün içinde kesin ödemeler</div><div style={{ ...num, fontSize: 17 }}>− {fmt(v.toplam)}</div></div>
         <div><div style={etiketStil}>Fark</div>
           <div style={{ ...num, fontSize: 17, fontWeight: 700, color: yetmiyor ? R.kirmizi : R.yesil }}>{fark > 0 ? '+' : ''}{fmt(fark)}</div></div>
