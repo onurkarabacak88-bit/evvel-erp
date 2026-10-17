@@ -210,7 +210,7 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit, onFis }) {
   if (h.tur === 'dis') { ust = h.alt_ad + (h.kimden ? ` · ${h.kimden}` : ''); alt = `${cepAd(h.cep)} cebine girdi${h.not_ ? ` · ${h.not_}` : ''}`; renk = R.yesil; tutar = `+${tutar}`; cip = h.geri_odenecek ? <Cip tur="sari">geri ödenecek</Cip> : null; cipTur = 'yesil'; }
   if (h.tur === 'teslim') {
     ust = `${cepAd(h.kaynak)} → ${cepAd(h.hedef)}`;
-    alt = 'Dükkân nakdinden çıktı · patron "aldım" deyince evine girer';
+    alt = 'Dükkân nakdinden çıktı · girildiği gün alınmış sayılır (almadıysa 7 gün içinde Düzelt)';
     cip = h.durum !== 'onaylandi' ? <Cip tur="sari">onay bekliyor</Cip>
       : (h.fark ? <Cip tur="kirmizi">sayılan {fmt(h.alinan)} · {h.fark > 0 ? 'eksik' : 'fazla'} {fmt(Math.abs(h.fark))}</Cip> : <Cip tur="yesil">alındı</Cip>);
     if (h.durum === 'onaylandi' && h.onay_gunu && h.onay_gunu !== h.tarih) alt = `${tUzun(h.onay_gunu)} günü alındı — o güne kadar "yolda"`;
@@ -725,8 +725,8 @@ function TeslimSekmesi({ onToast, onDegisti }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ ...kart, padding: '10px 14px', fontSize: 13, color: R.metin2, background: 'var(--pi-bg)' }}>
-        Teslimi alınca <b>tek dokunuşla</b> "aldım" demek yeterli. Hiç dokunulmazsa teslim <b>ertesi gün kendiliğinden kabul</b> edilir.
-        Eksik çıkarsa {v.duzeltme_suresi_gun} gün içinde "Düzelt" ile yazılır ya da evdeki sayımda ortaya çıkar.
+        Teslim <b>girildiği gün alınmış sayılır</b> — "aldım" demeniz gerekmez. Para gelmediyse ya da eksik geldiyse{' '}
+        {v.duzeltme_suresi_gun} gün içinde "Düzelt" ile yazılır ya da evdeki sayımda ortaya çıkar.
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
         <div style={{ ...kart, padding: '12px 14px', background: 'var(--pi-accent-soft)' }}>

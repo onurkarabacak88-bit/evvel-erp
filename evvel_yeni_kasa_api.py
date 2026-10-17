@@ -67,7 +67,9 @@ SENKRON_ARALIK_SN = 600                  # eski sistemden otomatik köprü — e
 # beklemez: dokunulmayan teslim ERTESİ GÜN kendiliğinden kabul edilir (itiraz yok).
 # Kontrol tek tek teslimde değil, evdeki para ara sıra SAYILARAK yapılır; 7 gün içinde
 # "aslında eksikti" düzeltmesi yapılabilir.
-OTOMATIK_KABUL_GUN = 1
+# Sahip (2026-10-17, envanter madde 3-b): "teslim girildiği AN alınmış sayılsın; yalnız 'almadım' denirse açılsın" → 0 gün
+# (köprü en geç 10 dk'da bir çeker ve aynı işlemde kabul eder). "Almadım/eksikti" = 7 gün içinde Düzelt.
+OTOMATIK_KABUL_GUN = 0
 DUZELTME_SURESI_GUN = 7
 ACIK = "__acik"                          # açık fark kovası (cep değil)
 YOLDA = "__yolda"                        # teslim edildi, "aldım" bekleniyor (cep değil)

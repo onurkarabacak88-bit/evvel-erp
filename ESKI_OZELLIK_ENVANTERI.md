@@ -97,3 +97,5 @@
 |---|---|---|
 | 1 | Eski kasa defteri ÇIKAR | Panel yalnız EY'ye yazınca köprü kesilir. a) kişi bazlı kasa açığı: YOK. b) Kasa'ya "7 gün içinde kesin çıkışlar" kutusu: KURULACAK (kesin çıkış = kart son ödeme + kira + maaş; ciro tahmini yok; POS yolda ayrı satır) |
 | 45 | Evo ÇIKAR | Evo kullanılmıyor |
+| 2 | Eski ciro taslak / onay / fark defteri ÇIKAR | Ciro yalnız panel kapanışından (bugünkü EY hâli); onay yok; eksik gün Bekleyen işler. Panel ciroyu doğrudan EY'ye yazmaya geçer (panel taşımasının ilk adımı) |
+| 3 | Eski teslim / alıcı / banka yatırımı ekranları ÇIKAR | Teslim panelden yalnız EY Kasa'ya. 3-b: teslim GİRİLDİĞİ GÜN alınmış sayılır ("aldım" yok); almadı/eksik → 7 gün içinde Düzelt |
