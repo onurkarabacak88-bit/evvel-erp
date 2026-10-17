@@ -91,6 +91,7 @@ def _takvim(cur, yil: int) -> dict:
     bugun = _bugun()
     ks = _kalemler(cur)
     defter = kasa.defter_ozeti(cur)
+    donem_ay = kasa.donem_baslangici(cur).strftime("%Y-%m")
     gelen = _gelenler(defter)
     aylar = [f"{yil}-{m:02d}" for m in range(1, 13)]
     out = []
@@ -101,12 +102,14 @@ def _takvim(cur, yil: int) -> dict:
             bek = _tutar(k, a) if aktif_ay else 0
             g = gelen.get((k["id"], a), 0)
             vade = _gun(int(a[:4]), int(a[5:7]), k["odeme_gunu"])
-            if not aktif_ay:
+            if not aktif_ay or bek == 0:
                 durum = "yok" if g == 0 else "odendi"
             elif bek and g >= bek - 100:
                 durum = "odendi"
             elif g > 0:
-                durum = "kismi"
+                durum = "gecikti" if vade < bugun else "kismi"      # Codex: vadesi geçmiş kısmi ödeme = gecikti
+            elif a < donem_ay:
+                durum = "once"                                       # Evvel Yeni öncesi, kayıt yok — borç sayılmaz
             elif vade < bugun:
                 durum = "gecikti"
             elif (vade - bugun).days <= 7:
@@ -138,7 +141,7 @@ def borc(yil: Optional[int] = None):
     with db() as (conn, cur):
         defter = kasa.defter_ozeti(cur)
     C = defter["cepler"]
-    kiralar = {c for c, x in C.items() if x["kira"]}
+    kiralar = {c for c, x in C.items() if x["kira"]} | {KIRA_CEP}
     sube_ad = {x["sube_id"]: x["kisa"] or x["ad"] for x in C.values() if x["tur"] == "sube" and x.get("sube_id")}
     hareket, sahsi = [], 0
     for h in defter["kayitlar"]:
@@ -149,10 +152,12 @@ def borc(yil: Optional[int] = None):
             kira_parca = sum(int(p["tutar"]) for p in v.get("parcalar", []) if p.get("cep") in kiralar)
             if not kira_parca:
                 continue
-            if v.get("kimin_kod") == "patron":
-                sahsi += kira_parca      # şahsi harcama işletme borcu değil
+            tip = (v.get("konu") or {}).get("tip")
+            if v.get("kimin_kod") == "patron" and tip in ("anlik", "diger"):
+                sahsi += kira_parca      # patronun ŞAHSİ harcaması işletme borcu değil (kredi/kart borcu 'patron' kodlansa da işletmenin)
                 continue
-            s = v.get("kimin_kod") if v.get("kimin_kod") in sube_ad else "ortak"
+            kisa_sube = {ad_: sid for sid, ad_ in sube_ad.items()}
+            s = v.get("kimin_kod") if v.get("kimin_kod") in sube_ad else kisa_sube.get(v.get("kimin"), "ortak")   # Fable: Kasa formu yalnız kısa ad yazar
             hareket.append({"gun": h["is_gunu"], "sube": s, "alinan": kira_parca, "geri": 0, "aciklama": v.get("aciklama") or "Ödeme", "id": h["id"]})
         elif h["tur"] == "tasima" and (h.get("kaynak") in kiralar) != (h.get("hedef") in kiralar):
             if h.get("kaynak") in kiralar:
@@ -219,6 +224,8 @@ def kalem_kaydet(b: KalemBody, mid: Optional[str] = None, x_evvel_oturum: Option
     bugun_ay = _bugun().strftime("%Y-%m")
     bas = _ay_dogrula(b.baslangic_ay, "Başlangıç ayı") or bugun_ay
     bit = _ay_dogrula(b.bitis_ay, "Bitiş ayı")
+    if not b.aktif and not bit:
+        bit = bugun_ay          # Codex: "kiralama bitti" → bu aydan sonra kira beklenmez, uyarı üretmez
     gec = _ay_dogrula(b.gecerli_ay, "Geçerli ay") or bas
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
@@ -234,8 +241,12 @@ def kalem_kaydet(b: KalemBody, mid: Optional[str] = None, x_evvel_oturum: Option
                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                         (mid, b.ad.strip()[:120], (b.kiraci or "").strip()[:120] or None, int(b.odeme_gunu), b.artis_ayi, bas, bit, b.aktif,
                          (b.not_ or "").strip()[:300] or None, kim))
-        cur.execute("""INSERT INTO ey_mulk_kira (mulk_id, gecerli_ay, tutar) VALUES (%s,%s,%s)
-                       ON CONFLICT (mulk_id, gecerli_ay) DO UPDATE SET tutar=EXCLUDED.tutar""", (mid, gec, t))
+        # Fable: düzeltmede tutar DEĞİŞMEDİYSE yeni zam satırı açılmaz (kiracı adı düzeltmek geçmişi kirletmesin)
+        cur.execute("SELECT gecerli_ay, tutar FROM ey_mulk_kira WHERE mulk_id=%s AND gecerli_ay <= %s ORDER BY gecerli_ay DESC LIMIT 1", (mid, gec))
+        onceki = cur.fetchone()
+        if not onceki or int(dict(onceki)["tutar"]) != t:
+            cur.execute("""INSERT INTO ey_mulk_kira (mulk_id, gecerli_ay, tutar) VALUES (%s,%s,%s)
+                           ON CONFLICT (mulk_id, gecerli_ay) DO UPDATE SET tutar=EXCLUDED.tutar""", (mid, gec, t))
     return {"ok": True, "id": mid, "mesaj": "Kaydedildi"}
 
 
@@ -265,23 +276,73 @@ def tahsilat(b: TahsilatBody, x_evvel_oturum: Optional[str] = Header(default=Non
     return {"ok": True, "tekrar": bool(r.get("tekrar")), "mesaj": r.get("mesaj") or f"{k['ad']} · {ay} kirası Fatma'nın kira hesabına girdi"}
 
 
+def _gecikenler(cur) -> list:
+    """Ödeme günü geçmiş, eksik kalan kira — son 3 ay (yıl sınırını aşar: Ocak'ta Kasım/Aralık da gelir)."""
+    bugun = _bugun()
+    son3 = {ay_kaydir(bugun.strftime("%Y-%m"), -i) for i in range(3)}
+    evler = {}
+    for yil in sorted({int(a[:4]) for a in son3}):
+        for e in _takvim(cur, yil)["evler"]:
+            evler.setdefault(e["id"], {**e, "gec": []})
+            evler[e["id"]]["gec"] += [a for a in e["aylar"] if a["ay"] in son3 and a["durum"] == "gecikti" and a["kalan"] > 0]
+    return [e for e in evler.values() if e["gec"]]
+
+
 def _bekleyen(cur, baglam: dict) -> list:
-    """Bekleyen işler: ödeme günü geçmiş, gelmemiş kira (bu ay ve önceki 2 ay) — ev başına tek satır."""
+    """Bekleyen işler (Kira hesabı alt sekmesi): ödeme günü geçmiş, gelmemiş kira — ev başına tek satır."""
+    _hazirla()
+    out = []
+    for e in _gecikenler(cur):
+        top = sum(a["kalan"] for a in e["gec"])
+        out.append({"tur": "mulk_kira", "genel": True, "grup": "kira", "id": f"mulk:{e['id']}", "tarih": e["gec"][0]["vade"],
+                    "etiket": "🏠 Kira gelmedi", "ad": f"{e['ad']}{(' · ' + e['kiraci']) if e.get('kiraci') else ''}",
+                    "alt": f"{len(e['gec'])} ay · {top:,.0f} ₺ — geldiyse Kira hesabı → 'Kira geldi'".replace(",", "."),
+                    "sayfa": "mulk_takvim", "dugme": "Ev kiraları"})
+    return out
+
+
+@router.get("/uyarilar")
+def uyarilar():
     _hazirla()
     bugun = _bugun()
-    yil = bugun.year
-    t = _takvim(cur, yil)
-    out = []
-    son3 = {ay_kaydir(bugun.strftime("%Y-%m"), -i) for i in range(3)}
-    for e in t["evler"]:
-        gec = [a for a in e["aylar"] if a["ay"] in son3 and a["durum"] in ("gecikti", "kismi") and a["vade"] < bugun.isoformat()]
-        if gec:
-            top = sum(a["kalan"] for a in gec)
-            out.append({"tur": "mulk_kira", "genel": True, "id": f"mulk:{e['id']}", "tarih": gec[0]["vade"], "etiket": "🏠 Kira gelmedi",
-                        "ad": f"{e['ad']}{(' · ' + e['kiraci']) if e.get('kiraci') else ''}",
-                        "alt": f"{len(gec)} ay · {top:,.0f} ₺ — geldiyse Kira hesabı → 'Kira geldi'".replace(",", "."),
-                        "sayfa": "mulk_takvim", "dugme": "Ev kiraları"})
-    return out
+    with db() as (conn, cur):
+        gec = _gecikenler(cur)
+        evler = _kalemler(cur)
+    simdi, sonraki = bugun.month, bugun.month % 12 + 1
+    return {"geciken": [{"id": e["id"], "ad": e["ad"], "kiraci": e.get("kiraci"), "ay": a["ay"], "kalan": a["kalan"]} for e in gec for a in e["gec"]],
+            "artis": [{"id": k["id"], "ad": k["ad"], "artis_ayi": k["artis_ayi"]} for k in evler
+                      if k["aktif"] and k.get("artis_ayi") in (simdi, sonraki)]}
+
+
+@router.get("/baglanmamis")
+def baglanmamis():
+    """Kasa'ya daha önce (bu modül dışında) girilmiş, hiçbir eve bağlanmamış kira girişleri — 'Kira geldi' yerine BAĞLANIR (Codex)."""
+    import evvel_yeni_kasa_api as kasa
+    with db() as (conn, cur):
+        d = kasa.defter_ozeti(cur)
+    return {"girisler": [{"id": h["id"], "gun": h["is_gunu"], "tutar": _tl_sayi(h["tutar"]), "kimden": (h["veri"] or {}).get("kimden"),
+                          "not": (h["veri"] or {}).get("not")}
+                         for h in d["kayitlar"] if h["tur"] == "dis" and (h["veri"] or {}).get("alt") == "kira" and not (h["veri"] or {}).get("bag")][-60:]}
+
+
+class BaglaBody(BaseModel):
+    hareket_id: str
+    mulk_id: str
+    ay: str
+
+
+@router.post("/bagla")
+def bagla(b: BaglaBody):
+    _hazirla()
+    ay = _ay_dogrula(b.ay, "Ay")
+    import evvel_yeni_kasa_api as kasa
+    with db() as (conn, cur):
+        cur.execute("SELECT 1 FROM ey_mulk WHERE id=%s", (b.mulk_id,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Ev bulunamadı")
+        if not kasa.dis_giris_bagla(cur, b.hareket_id, {"modul": "mulk", "id": b.mulk_id, "ay": ay}, "kira"):
+            raise HTTPException(409, "Bu giriş bulunamadı ya da zaten bir eve bağlı")
+    return {"ok": True, "mesaj": "Giriş eve bağlandı (para değişmedi)"}
 
 
 bekleyen_is_kaydet("mulk_kira", _bekleyen)

@@ -199,11 +199,30 @@ def sube_cepleri_yaz(cur) -> None:
 def defter_ozeti(cur) -> dict:
     """PUBLIC servis (Kira hesabı modülü vb.): iptaller düşülmüş BÜTÜN kayıtlar (hafif) + cepler. Tek okuma.
     {"cepler": {id: {ad, kisa, tur, sube_id, kira}}, "kayitlar": [{id, tur, is_gunu, cep, kaynak, hedef, tutar, veri}]}"""
-    cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
+    _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+    cur.execute("SELECT id, ad, kisa, tur, sube_id FROM para_izi_cep")   # Codex: PASİF cepler de — geçmiş hesap sıfırlanmasın
+    cep_list = [dict(r) for r in cur.fetchall() or []]
     return {"cepler": {c["id"]: {"ad": c["ad"], "kisa": c.get("kisa"), "tur": c["tur"], "sube_id": c.get("sube_id"),
                                  "kira": c["id"] in KIRA_CEPLERI} for c in cep_list},
             "kayitlar": [{"id": h["id"], "tur": h["tur"], "is_gunu": h["is_gunu"], "cep": h.get("cep"), "kaynak": h.get("kaynak"),
                           "hedef": h.get("hedef"), "tutar": int(h["tutar"] or 0), "veri": h["veri"]} for h in kayit]}
+
+
+def dis_giris_bagla(cur, hid: str, bag: dict, alt: str) -> bool:
+    """PUBLIC servis: var olan, iptal edilmemiş bir DIŞ GİRİŞE (yalnız verilen alt türde) bağ yazar; para DEĞİŞMEZ.
+    Zaten bağlıysa False (başka bir şeye bağlanmaz)."""
+    cur.execute("""SELECT veri FROM para_izi_hareket WHERE id=%s AND tur='dis'
+                    AND id NOT IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal' AND veri ? 'hedef_id') FOR UPDATE""", (hid,))
+    r = cur.fetchone()
+    if not r:
+        return False
+    v = dict(r)["veri"]
+    v = v if isinstance(v, dict) else json.loads(v or "{}")
+    if v.get("alt") != alt or v.get("bag"):
+        return False
+    v["bag"] = {str(k)[:20]: (str(x)[:80] if x is not None else None) for k, x in list(bag.items())[:6]}
+    cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(v, ensure_ascii=False), hid))
+    return True
 
 
 def donem_baslangici(cur) -> date:
@@ -534,7 +553,7 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
     v = r["veri"]
     d = {"id": r["id"], "tur": r["tur"], "tarih": r["is_gunu"], "kaydeden": r.get("kaydeden"), "durum": r.get("durum"),
          "cep": r.get("cep"), "kaynak": r.get("kaynak"), "hedef": r.get("hedef"), "tutar": _tl_sayi(r["tutar"]),
-         "eski_sistem": bool(r.get("kaynak_ref")) and not str(r.get("kaynak_ref")).startswith("odeme_formu:")}
+         "eski_sistem": bool(r.get("kaynak_ref")) and not str(r.get("kaynak_ref")).startswith(("odeme_formu:", "hareket:"))}
     if r["tur"] == "kapanis":
         d["kart"] = _tl_sayi(int(v.get("kart", 0)))
         d["pos"] = _tl_sayi(int(v["pos"])) if "pos" in v else None
@@ -824,7 +843,7 @@ def teslimler():
             continue
         satir = {"id": h["id"], "tarih": h["is_gunu"], "kaynak": h["kaynak"], "kaynak_ad": ad(h["kaynak"]),
                  "hedef": h["hedef"], "hedef_ad": ad(h["hedef"]), "hedef_kisa": C.get(h["hedef"], {}).get("kisa"),
-                 "tutar": _tl_sayi(h["tutar"]), "eski_sistem": bool(h.get("kaynak_ref")), "kaydeden": h.get("kaydeden"),
+                 "tutar": _tl_sayi(h["tutar"]), "eski_sistem": bool(h.get("kaynak_ref")) and not str(h.get("kaynak_ref")).startswith(("odeme_formu:", "hareket:")), "kaydeden": h.get("kaydeden"),
                  "yas_gun": _gun_fark(h["is_gunu"], bugun)}
         if h["durum"] != "onaylandi":
             bek.append(satir)
@@ -1037,6 +1056,11 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
         if gd < bas and t != "acilis":
             raise HTTPException(400, f"Bu dönem {bas.strftime('%d.%m.%Y')} tarihinde başladı; öncesine kayıt girilemez")
         kim = _aktor(cur, x_evvel_oturum)
+        if body.istek_id:   # Codex: tekrar gönderim — doğrulamadan ÖNCE, kilit altında
+            cur.execute("SELECT 1 FROM para_izi_hareket WHERE kaynak_ref = %s OR kaynak_ref LIKE %s LIMIT 1",
+                        (f"hareket:{body.istek_id[:64]}", f"hareket:{body.istek_id[:64]}#%"))
+            if cur.fetchone():
+                return {"ok": True, "id": None, "idler": [], "tekrar": True, "mesaj": "Bu kayıt zaten yazılmıştı (ikinci kez yazılmadı)"}
         cep_list, C, kayit, _ = _yukle(cur)
         ol = _olaylar(kayit)
         kilit = _sayim_kilidi(ol)
@@ -1197,9 +1221,9 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
                  veri={"hedef_id": evo_yerine["id"], "sebep": "Evo tahmini — şubenin gerçek kapanışı girildi"})
             for y in yeniler:
                 y["veri"] = {**y["veri"], "evo_yerine": True, "evo_nakit": evo_yerine["tutar"], "evo_kart": int(evo_yerine["veri"].get("kart", 0))}
-        ref = f"hareket:{body.istek_id[:64]}" if (body.istek_id and len(yeniler) == 1) else None
-        idler = [_yaz(cur, t, y["is_gunu"], kim, cep=y["cep"], kaynak=y["kaynak"], hedef=y["hedef"],
-                      tutar=y["tutar"], durum=y["durum"], veri=y["veri"], kaynak_ref=ref) for y in yeniler]
+        ref = f"hareket:{body.istek_id[:64]}" if body.istek_id else None
+        idler = [_yaz(cur, t, y["is_gunu"], kim, cep=y["cep"], kaynak=y["kaynak"], hedef=y["hedef"], tutar=y["tutar"], durum=y["durum"],
+                      veri=y["veri"], kaynak_ref=(ref if i == 0 else f"{ref}#{i}") if ref else None) for i, y in enumerate(yeniler)]
         if ref and not idler[0]:
             return {"ok": True, "id": None, "idler": [], "tekrar": True, "mesaj": "Bu kayıt zaten yazılmıştı (ikinci kez yazılmadı)"}
     return {"ok": True, "id": idler[0], "idler": idler}
