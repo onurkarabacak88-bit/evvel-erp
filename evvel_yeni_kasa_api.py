@@ -1659,6 +1659,38 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
     return rapor
 
 
+def _giren_adlari(cur, idler: set) -> Dict[str, str]:
+    """Panel girişini yapan personelin adı (eski personel / panel kullanıcısı). Okunamazsa boş."""
+    out: Dict[str, str] = {}
+    if not idler:
+        return out
+    for q in ("SELECT id::text AS id, ad_soyad AS ad FROM personel WHERE id::text = ANY(%s)",
+              "SELECT id::text AS id, ad FROM sube_panel_kullanici WHERE id::text = ANY(%s)"):
+        try:
+            with savepoint(cur, "sp_pi_giren"):
+                cur.execute(q, (list(idler),))
+                for x in cur.fetchall() or []:
+                    out.setdefault(dict(x)["id"], dict(x)["ad"])
+        except Exception:  # noqa: BLE001
+            pass
+    return out
+
+
+def dukkan_giderleri(cur, bas_gun: str) -> List[dict]:
+    """PUBLIC servis (Fiş kontrolü modülü kullanır): şube PANELİNDEN girilmiş dükkân giderleri (avans hariç), iptaller düşülmüş.
+    Her satır: ref (kaynak_ref), tarih, cep, şube kısa adı, tutar (TL), açıklama, giren (personel adı/kimliği, varsa)."""
+    _, C, kayit, _ = _yukle(cur, tum_donemler=True)
+    out = []
+    for h in kayit:
+        v = h["veri"]
+        if h["tur"] != "odeme" or v.get("kaynak") != "dukkan_gideri" or h["is_gunu"] < bas_gun:
+            continue
+        cep = (v.get("parcalar") or [{}])[0].get("cep")
+        out.append({"ref": h.get("kaynak_ref"), "id": h["id"], "tarih": h["is_gunu"], "cep": cep, "sube": C.get(cep, {}).get("kisa"),
+                    "tutar": _tl_sayi(h["tutar"]), "aciklama": v.get("aciklama"), "giren": v.get("giren"), "giren_id": v.get("giren_id")})
+    return out
+
+
 def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) -> dict:
     """🧾 Şubenin ÇEKMECEDEN yaptığı nakit harcamalar (eski anlik_giderler, ödeme yöntemi
     nakit; 'aktif' + 'onay_bekliyor' — para çekmeceden fiilen çıktı) → dükkân nakdinden
@@ -1667,7 +1699,7 @@ def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) 
     sonuc = {"yeni": 0, "kilitli": [], "iptal": 0}
     try:
         with savepoint(cur, "sp_pi_dukkan_gider"):
-            q = """SELECT id, tarih, tutar, sube, kategori, aciklama, durum, kaynak_tablo, kaynak_id FROM anlik_giderler
+            q = """SELECT id, tarih, tutar, sube, kategori, aciklama, durum, kaynak_tablo, kaynak_id, personel_id FROM anlik_giderler
                     WHERE tarih >= %s AND sube IS NOT NULL
                       AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'"""
             prm = [bas]
@@ -1679,6 +1711,7 @@ def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) 
     except Exception as e:  # noqa: BLE001
         sonuc["hata"] = str(e)[:120]
         return sonuc
+    giren_ad = _giren_adlari(cur, {str(r.get("personel_id")) for r in kaynak if r.get("personel_id")})
     cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'anlik_gider:%%'")
     her_zaman = {dict(x)["kaynak_ref"] for x in cur.fetchall() or []}
     # Sahip+Codex (2026-10-16): şubenin ELDEN AVANSI dükkân gideri değil, o personelin AVANSI (maaştan mahsup)
@@ -1730,6 +1763,8 @@ def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) 
         if not kuru:
             ac = " · ".join(x for x in [(r.get("kategori") or "").strip(), (r.get("aciklama") or "").strip()] if x) or "Dükkân gideri"
             veri = {"aciklama": ac[:120], "kimin": C[cep]["kisa"], "parcalar": [{"cep": cep, "tutar": t}], "kaynak": "dukkan_gideri"}
+            if r.get("personel_id"):   # sahip (2026-10-17): fiş kontrolü "girişi yapan personel" ile — eski sistem kalkınca da bilinsin
+                veri.update(giren_id=str(r["personel_id"]), giren=giren_ad.get(str(r["personel_id"])))
             av = _avans_veri(r)
             if av:
                 veri.update(av)

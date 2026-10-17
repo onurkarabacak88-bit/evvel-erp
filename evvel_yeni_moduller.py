@@ -35,6 +35,8 @@ MODULLER: List[dict] = [
     {"kod": "toptanci", "ad": "Toptancılar", "ikon": "🚚", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "borç = açılış + alım − ödeme"},
     {"kod": "depo", "ad": "Depo", "ikon": "📦", "sektor": "genel", "gerekir": ["gider"], "aciklama": "ürün nerede — tek hareket defteri"},
     {"kod": "kazanc", "ad": "Şube kazancı", "ikon": "📈", "sektor": "genel", "gerekir": ["gelir", "gider"], "aciklama": "gelir − şubenin gideri"},
+    {"kod": "fis", "ad": "Anlık gider fiş kontrol", "ikon": "🧾", "sektor": "genel", "gerekir": ["kasa"], "menu": False,
+     "aciklama": "panelden girilen giderlerin fişi geldi mi; gelmeyen girişi yapan personelle (sayfası Gider altında)"},
     {"kod": "fatura", "ad": "Faturaları dağıt", "ikon": "🧾", "sektor": "ozel", "gerekir": ["odeme", "kart"], "menu": False,
      "aciklama": "kart ekstresindeki otomatik fatura ödemeleri → şube gideri (sayfası Ödeme altında)"},
     {"kod": "bar", "ad": "Bar", "ikon": "🥤", "sektor": "kahve", "gerekir": ["kasa"], "aciklama": "bardak + bar ürün sayımı"},

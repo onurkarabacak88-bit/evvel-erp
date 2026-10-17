@@ -101,3 +101,4 @@
 | 3 | Eski teslim / alıcı / banka yatırımı ekranları ÇIKAR | Teslim panelden yalnız EY Kasa'ya. 3-b: teslim GİRİLDİĞİ GÜN alınmış sayılır ("aldım" yok); almadı/eksik → 7 gün içinde Düzelt |
 | 4 | Eski ödeme planı motoru + ekranları ÇIKAR | Vade takvimi YOK (kutu kaldırıldı — sadelik). Toplu ödeme / vade disiplini raporu YOK |
 | 5 | Eski sabit gider tanımları + aylık plan ÇIKAR | Yerine İŞLETMEYE ÖZEL modül "Faturaları dağıt" (Ödeme altında): kart ekstresi PDF → fatura satırları → şube (abone no / kart+sağlayıcı kuralı öğrenilir) → Ödeme'nin kartlı fatura kaydı. Eski 26 abone no TAŞINMADI (ekstreyle tutmuyor) |
+| 6 | Eski anlık gider ekranları + onay kuyruğu + kart önerisi ÇIKAR | Panel girişi kalır. FİŞ KONTROL KALIR → EY modülü "Anlık gider fiş kontrol" (Gider altında ayrı sekme): YALNIZ panelden girilen giderler; fiş gelmezse girişi yapan personelle; işaret hem EY'ye (ey_fis_kontrol) hem eskiye (köprü) yazılır. Merkez girişlerinde fiş kontrol YOK |
