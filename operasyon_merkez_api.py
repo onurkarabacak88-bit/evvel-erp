@@ -14596,7 +14596,8 @@ def ops_siparis_ozel_islem(body: OpsSiparisOzelIslemBody):
         if islem == "katalog":
             # 📚 Evvel Yeni tek katalog (2026-10-17, Fable): eski ekleme kapısı kapandı → ürün yeni katalogdan eklenir (eski kataloğa da yazılır)
             import evvel_yeni_urun_api as _ey_urun
-            rur = _ey_urun.urun_olustur(cur, None, str(rd["urun_adi"]), "merkez (özel talep)", kategori_kod=str(rd["kategori_kod"]))
+            rur = _ey_urun.urun_olustur(cur, None, str(rd["urun_adi"]), "merkez (özel talep)", kategori_kod=str(rd["kategori_kod"]),
+                                       birim_teyit=False, varsa_bagla=True)
             uid = str(rur["id"])
             audit(cur, "siparis_urun", uid, "OZEL_ONAY_KATALOG")
             cur.execute(
