@@ -109,7 +109,11 @@ export default function EvvelYeniApp() {
       .catch(() => setAcikMod(null));
     return undefined;
   }, [durum]);
-  const BOLUMLER = acikMod ? MODULLER.filter((b) => b.mod === 'kasa' || acikMod.has(b.mod)) : MODULLER;
+  const GORUNUR = acikMod ? MODULLER.filter((b) => b.mod === 'kasa' || acikMod.has(b.mod)) : MODULLER;
+  // 'bolum' taşıyan modülün sayfaları ana bölümün altına eklenir (her sayfa kendi modülünü bilir → kapanınca o da kalkar)
+  const BOLUMLER = GORUNUR.filter((b) => !b.bolum).map((b) => ({
+    ...b, sayfalar: [...b.sayfalar, ...GORUNUR.filter((e) => e.bolum === b.mod).flatMap((e) => e.sayfalar)],
+  }));
   const veriGeldi = (v) => setRozet({
     isler: v.isler.length, teslim: v.isler.filter((x) => x.tur === 'teslim').length, farklar: v.ozet.acik_fark_sayisi,
   });
@@ -193,7 +197,7 @@ export default function EvvelYeniApp() {
             })}
           </nav>
           <main className="piapp-ic">
-            {(BOLUMLER.find((b) => b.mod === (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod) || MODULLER[0])
+            {(GORUNUR.find((b) => b.mod === (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod) || MODULLER[0])
               .g(sekme, { onToast: setToast, onSekme: sekmeDegis, onVeri: veriGeldi })}
           </main>
         </div>

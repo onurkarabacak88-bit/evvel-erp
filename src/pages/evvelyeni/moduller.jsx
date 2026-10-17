@@ -2,7 +2,8 @@
 // Sol menü ve sayfa yönlendirmesi YALNIZ bu listeden. Sunucu karşılığı: evvel_yeni_moduller.py (kod = mod).
 //   Modül EKLEMEK  = buraya bir satır (+ sunucu listesine bir satır).
 //   Modül KAPATMAK = sunucu listesinde acik=False → /api/evvel-yeni/moduller "yuklendi" demez → menüden kalkar.
-// sektor: 'genel' her işletmede · 'kahve' kahveciliğe özgü. yetki: rol anahtarı (yetkilendirme sonra).
+// sektor: 'genel' her işletmede · 'kahve' kahveciliğe özgü · 'ozel' yalnız bu işletmenin düzeni. yetki: rol anahtarı (sonra).
+// bolum: modülün sayfaları BAŞKA bir bölümün altında görünür (ör. Faturaları dağıt → Ödeme); modül kapanınca sayfa da kalkar.
 import React from 'react';
 import KasaModulu, { SAYFALAR } from './KasaModulu';
 import GelirModulu, { GELIR_SAYFALAR } from './GelirModulu';
@@ -17,6 +18,7 @@ import KartModulu, { KART_SAYFALAR } from './KartModulu';
 import { KiraTakvim } from './KiraModulu';
 import ToptanciModulu, { TOPTANCI_SAYFALAR, UrunFiyatlari } from './ToptanciModulu';
 import DepoModulu, { DEPO_SAYFALAR } from './DepoModulu';
+import FaturaModulu, { FATURA_SAYFALAR } from './FaturaModulu';
 
 // g(sekme, c): c = { onToast, onSekme, onVeri } — kabuğun modüllere verdiği ortak bağlantılar
 export const MODULLER = [
@@ -26,6 +28,7 @@ export const MODULLER = [
   { mod: 'gider', ad: 'Gider', ikon: '💸', sektor: 'genel', sayfalar: GIDER_SAYFALAR, g: (s, c) => <GiderModulu onToast={c.onToast} /> },
   { mod: 'odeme', ad: 'Ödeme', ikon: '🧾', sektor: 'genel', sayfalar: ODEME_SAYFALAR,
     g: (s, c) => (s === 'kira_takvimi' ? <KiraTakvim /> : s === 'patron_harcama' ? <PatronHarcama /> : <OdemeModulu onToast={c.onToast} />) },
+  { mod: 'fatura', bolum: 'odeme', ad: 'Faturaları dağıt', ikon: '🧾', sektor: 'ozel', sayfalar: FATURA_SAYFALAR, g: (s, c) => <FaturaModulu onToast={c.onToast} /> },
   { mod: 'kart', ad: 'Kartlar', ikon: '💳', sektor: 'genel', sayfalar: KART_SAYFALAR, g: (s, c) => <KartModulu onToast={c.onToast} /> },
   { mod: 'toptanci', ad: 'Toptancılar', ikon: '🚚', sektor: 'genel', sayfalar: TOPTANCI_SAYFALAR,
     g: (s, c) => (s === 'urun_fiyatlari' ? <UrunFiyatlari onToast={c.onToast} /> : <ToptanciModulu onToast={c.onToast} />) },

@@ -5,6 +5,7 @@ Bütün Evvel Yeni modülleri BU listede. main.py tek satırla `modulleri_yukle(
   · Modül EKLEMEK   = evvel_yeni_<kod>_api.py (router + gerekiyorsa çekirdeğe kayıt) + buraya bir satır
                       + src/pages/evvelyeni/moduller.jsx'e bir satır.
   · sektor: "genel" = her işletmede olur · "kahve" = kahveciliğe özgü (başka iş kolunda kapatılır).
+            "ozel"  = yalnız BU işletmenin düzenine özgü (kart/abonelik alışkanlığı gibi) — genel çekirdekle bağı yok.
   · yetki : yetkilendirmede kullanılacak anahtar (rol → modül; şimdilik yalnız etiket — giriş kapısı EN SONA, sahip kararı).
   · gerekir: çalışmak için açık olması gereken modüller; biri kapalıysa bu modül de yüklenmez (kırık yarım modül olmasın).
 Her modül ayrı try içinde yüklenir: biri bozulursa diğerleri ve eski Evvel çalışmaya devam eder.
@@ -34,6 +35,8 @@ MODULLER: List[dict] = [
     {"kod": "toptanci", "ad": "Toptancılar", "ikon": "🚚", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "borç = açılış + alım − ödeme"},
     {"kod": "depo", "ad": "Depo", "ikon": "📦", "sektor": "genel", "gerekir": ["gider"], "aciklama": "ürün nerede — tek hareket defteri"},
     {"kod": "kazanc", "ad": "Şube kazancı", "ikon": "📈", "sektor": "genel", "gerekir": ["gelir", "gider"], "aciklama": "gelir − şubenin gideri"},
+    {"kod": "fatura", "ad": "Faturaları dağıt", "ikon": "🧾", "sektor": "ozel", "gerekir": ["odeme", "kart"], "menu": False,
+     "aciklama": "kart ekstresindeki otomatik fatura ödemeleri → şube gideri (sayfası Ödeme altında)"},
     {"kod": "bar", "ad": "Bar", "ikon": "🥤", "sektor": "kahve", "gerekir": ["kasa"], "aciklama": "bardak + bar ürün sayımı"},
     {"kod": "satis", "ad": "Satış kontrolü", "ikon": "🔍", "sektor": "kahve", "gerekir": ["kasa", "bar"],
      "aciklama": "bardak × bardak başına ciro ↔ gerçek ciro"},
