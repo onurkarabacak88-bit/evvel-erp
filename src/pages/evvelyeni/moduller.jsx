@@ -36,7 +36,7 @@ export const MODULLER = [
   { mod: 'avans', bolum: 'maas', ad: 'Avans talepleri', ikon: '🤝', sektor: 'genel', sayfalar: AVANS_SAYFALAR, g: (s, c) => <AvansModulu onToast={c.onToast} /> },
   { mod: 'fis', bolum: 'gider', ad: 'Anlık gider fiş kontrol', ikon: '🧾', sektor: 'genel', sayfalar: FIS_SAYFALAR, g: (s, c) => <FisModulu onToast={c.onToast} /> },
   { mod: 'odeme', ad: 'Ödeme', ikon: '🧾', sektor: 'genel', sayfalar: ODEME_SAYFALAR,
-    g: (s, c) => (s === 'kira_takvimi' ? <KiraTakvim /> : s === 'patron_harcama' ? <PatronHarcama /> : <OdemeModulu onToast={c.onToast} />) },
+    g: (s, c) => (s === 'kira_takvimi' ? <KiraTakvim /> : s === 'patron_harcama' ? <PatronHarcama /> : <OdemeModulu key={s} gorunum={s} onToast={c.onToast} />) },
   { mod: 'fatura', bolum: 'odeme', ad: 'Faturaları dağıt', ikon: '🧾', sektor: 'ozel', sayfalar: FATURA_SAYFALAR, g: (s, c) => <FaturaModulu onToast={c.onToast} /> },
   { mod: 'kredi', ad: 'Krediler', ikon: '🏦', sektor: 'genel', sayfalar: KREDI_SAYFALAR, g: (s, c) => <KrediModulu onToast={c.onToast} onSekme={c.onSekme} /> },
   { mod: 'mulk', ad: 'Kira hesabı', ikon: '🏠', sektor: 'ozel', sayfalar: MULK_SAYFALAR, g: (s, c) => <MulkModulu gorunum={s} onToast={c.onToast} onSekme={c.onSekme} /> },

@@ -11,6 +11,7 @@ import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, odemeFisi, fmt, 
 
 export const ODEME_SAYFALAR = [
   { id: 'odemeler', ad: 'Ödeme / gider gir', alt: 'Nakit · havale · kart' },
+  { id: 'odeme_defteri', ad: 'Ödeme defteri', alt: 'Gün gün ödenenler' },
   { id: 'patron_harcama', ad: 'Patron harcamaları', alt: 'Şahsi · çekiş · kredi · kart borcu' },
   { id: 'kira_takvimi', ad: 'Kira takvimi', alt: 'Şube × ay · artış ayları' },
 ];
@@ -36,7 +37,9 @@ const BOS = () => ({ konu: '', tarih: gunBugun(), ait_ay: ayBugun(), parcalar: B
 // Türkçe klavye: "12,50" da "12.50" de olur; binlik noktası "1.250,00" da olur
 const sayi = (x) => { const t = String(x ?? '').trim().replace(/\s/g, ''); if (!t) return 0; const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t); return Number.isFinite(n) ? n : NaN; };
 
-export default function OdemeModulu({ onToast }) {
+// Sahip (2026-10-17): "Ödeme / gider gir ayrı olsun; altındaki defter 'Ödeme defteri' diye ayrı olsun, gün gün bakılabilsin."
+export default function OdemeModulu({ onToast, gorunum }) {
+  const defter = gorunum === 'odeme_defteri';
   const [L, setL] = useState(null);
   const [f, setF] = useState(BOS);
   const [benzer, setBenzer] = useState(false);
@@ -49,6 +52,9 @@ export default function OdemeModulu({ onToast }) {
   const [mesgul, setMesgul] = useState(false);
   const [ay, setAy] = useState(ayBugun());
   const [liste, setListe] = useState(null);
+  const [gun, setGun] = useState(gunBugun());      // Ödeme defteri: seçili gün
+  const [tumAy, setTumAy] = useState(false);       // Ödeme defteri: bütün ay
+  const gunKaydir = (n) => { const d = new Date(`${gun}T12:00:00`); d.setDate(d.getDate() + n); const g = d.toISOString().slice(0, 10); setGun(g); setAy(g.slice(0, 7)); };
   // 🏦 Krediler modülü açıksa: 'Kredi taksiti' hangi krediye (takvimde 'ödendi'). Kapalıysa liste gelmez, alan görünmez (tak-çıkar).
   const [krediler, setKrediler] = useState(null);
   useEffect(() => {
@@ -167,8 +173,9 @@ export default function OdemeModulu({ onToast }) {
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
-      <div><div className="pi-eyebrow">Evvel Yeni · Ödeme</div><h1 style={{ fontSize: 30 }}>Ödeme / gider gir</h1></div>
+      <div><div className="pi-eyebrow">Evvel Yeni · Ödeme</div><h1 style={{ fontSize: 30 }}>{defter ? 'Ödeme defteri' : 'Ödeme / gider gir'}</h1></div>
 
+      {!defter && (
       <div style={{ ...kart, padding: 18, display: 'flex', flexDirection: 'column', gap: 16 }}>
         {/* 1 · NE İÇİN */}
         <div>
@@ -342,19 +349,29 @@ export default function OdemeModulu({ onToast }) {
           }}>{mesgul ? 'Kaydediliyor…' : 'Ödemeyi kaydet'}</button></div>
         </>)}
       </div>
+      )}
 
-      {/* AYIN ÖDEMELERİ */}
+      {/* ÖDEME DEFTERİ — gün gün (sahip: ayrı sekme) */}
+      {defter && (() => {
+        const gosterilen = (liste?.odemeler || []).filter((x) => tumAy || x.tarih === gun);
+        const t = (k) => gosterilen.reduce((a, x) => a + (k === 'toplam' ? x.toplam : k === 'nakit' ? x.nakit.reduce((q, n) => q + n.tutar, 0) : x.kart.reduce((q, n) => q + n.tutar, 0)), 0);
+        return (
       <div style={{ ...kart, overflow: 'hidden' }}>
-        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--pi-line)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <b>Ödemeler</b>
-          {liste && <span style={{ color: R.not, fontSize: 13 }}>bu ay ödenen {fmt(liste.toplam)} ₺ · kasadan {fmt(liste.nakit_toplam)} · kartla {fmt(liste.kart_toplam)}</span>}
-          <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, width: 'auto', padding: '6px 9px', fontSize: 13, marginLeft: 'auto' }} />
+        <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--pi-line)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {!tumAy ? <>
+            <Dugme kucuk onClick={() => gunKaydir(-1)}>‹</Dugme>
+            <input type="date" value={gun} max={gunBugun()} onChange={(e) => { if (e.target.value) { setGun(e.target.value); setAy(e.target.value.slice(0, 7)); } }} style={{ ...alan, width: 'auto', padding: '6px 9px', fontSize: 13 }} />
+            <Dugme kucuk disabled={gun >= gunBugun()} onClick={() => gunKaydir(1)}>›</Dugme>
+            <Dugme kucuk onClick={() => { setGun(gunBugun()); setAy(ayBugun()); }}>Bugün</Dugme>
+          </> : <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, width: 'auto', padding: '6px 9px', fontSize: 13 }} />}
+          <Dugme kucuk ana={tumAy} onClick={() => setTumAy((x) => !x)}>{tumAy ? 'Gün gün' : 'Bütün ay'}</Dugme>
+          {liste && <span style={{ color: R.not, fontSize: 13, marginLeft: 'auto' }}>{tumAy ? 'bu ay' : 'bu gün'} ödenen <b style={num}>{fmt(t('toplam'))}</b> ₺ · kasadan {fmt(t('nakit'))} · kartla {fmt(t('kart'))}</span>}
         </div>
         <div style={{ overflowX: 'auto' }}>
           <table className="pi-tablo pi-excel">
             <thead><tr><th>Gün</th><th style={{ textAlign: 'left' }}>Ne için</th><th style={{ textAlign: 'left' }}>Açıklama</th><th style={{ textAlign: 'left' }}>Kimin</th><th style={{ textAlign: 'left' }}>Nasıl</th><th>Tutar</th><th style={{ textAlign: 'left' }}>Gider mi</th><th /></tr></thead>
             <tbody>
-              {(liste?.odemeler || []).map((x) => (
+              {gosterilen.map((x) => (
                 <tr key={x.id} onClick={() => x.fis && setCk(odemeFisi(x.fis, (id) => (L.nakit_cepler.concat(L.banka_cepler).find((c) => c.id === id) || {}).ad || id))}
                   style={{ cursor: 'pointer' }} title="Ödeme fişini aç">
                   <td style={{ ...num, whiteSpace: 'nowrap' }}>{tKisa(x.tarih)}</td>
@@ -372,11 +389,13 @@ export default function OdemeModulu({ onToast }) {
                   </td>
                 </tr>
               ))}
-              {liste && !liste.odemeler.length && <tr><td colSpan={8} style={{ textAlign: 'center', color: R.not }}>Bu ay ödeme yok.</td></tr>}
+              {liste && !gosterilen.length && <tr><td colSpan={8} style={{ textAlign: 'center', color: R.not }}>{tumAy ? 'Bu ay ödeme yok.' : 'Bu gün ödeme yok.'}</td></tr>}
             </tbody>
           </table>
         </div>
       </div>
+        );
+      })()}
       {duz && (
         <div role="dialog" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'grid', placeItems: 'center', zIndex: 50, padding: 16 }} onClick={() => setDuz(null)}>
           <div style={{ ...kart, padding: 18, width: 'min(460px, 100%)', display: 'flex', flexDirection: 'column', gap: 12 }} onClick={(e) => e.stopPropagation()}>
