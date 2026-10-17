@@ -126,7 +126,7 @@ Ortak: sube_id=ey_sube.id · urun_id=ey_urun.id · adet INT sayım biriminde · 
 | Açılış | `panel:acilis:{sube}:{gun}` | olay acilis(kasa_sayim, sayim[]) · Kasa `sayim` cep sube:{sube}, is_gunu gün−1, ref `sayim_acilis:{sube}:{gun}` (mevcut biçim; ilk = başlangıç) · Depo `sayim_yaz(depo:{sube}, tur='gunluk')` |
 | Ürün aç | `panel:ac:{olay}:{i}` | olay urun_ac · Depo `ac` depo:{sube}→dışarı:tuketim. Fiyat yazılmaz; Gider `guncel_fiyat × adet` (yoksa "fiyatı eksik" → Bekleyen iş). Eksi bakiye engellenmez, uyarı merkeze |
 | Tedarikçiden teslim | `panel:teslim:{olay}` | olay teslim_toptanci · `toptanci.teslim_yaz(kaynak_ref=taban, kalemler[{urun_id, adet}], kesin_tutar, fatura_geldi, fatura_no, teslim_alan)` · Depo `giris` `taban:{i}` dışarı:toptanci→depo:{sube}. Koli yardımcısı → sayım birimi. Hata → 503, hiçbiri yazılmaz |
-| Depodan gelen | `yolda:{bag}:kabul` | Depo `kabul` (mevcut); fazla→askida; 0 kabul gerçek. `bag` = merkez "Sevk et" (`sevk` depo:tema→yolda) ya da faz 2'ye kadar eski stok_yolda id |
+| Depodan gelen | `yolda:{bag}:kabul` | Depo `kabul` (mevcut); fazla→askida; 0 kabul gerçek. `bag` = merkez "Sevk et" (`sevk` depo:sube-tema→yolda) ya da faz 2'ye kadar eski stok_yolda id |
 | Fire | `panel:fire:{olay}:{i}` | olay fire(sebep, fis_no) · Depo `fire` |
 | Anlık gider | `panel:gider:{olay}` | olay gider · Kasa `odeme` veri={aciklama, kimin, parcalar:[{cep:sube:{sube}, tutar}], kaynak:'dukkan_gideri', giren_id, giren, fis:bool} → `dukkan_giderleri` `panel:gider:` ön ekini sayar → Fiş kontrol |
 | Ara teslim | `panel:ara:{olay}` | olay teslim · Kasa `teslim` sube→ev:{alan} |
@@ -134,7 +134,7 @@ Ortak: sube_id=ey_sube.id · urun_id=ey_urun.id · adet INT sayım biriminde · 
 | Kapanış | kök `panel:kapanis:{sube}:{gun}` (düzeltme = sürüm) | olay kapanis(nakit,pos,online,kor_sayim,teslimler,birakilan,sayim[]) · Kasa `kapanis` ref `kapanis:{sube}:{gun}` tutar=nakit veri{pos,online,kart,birakilan} bekliyor · Kasa `teslim` `{kök}:teslim:{i}` · Depo `sayim_yaz(tur='gunluk')`: takip='sayim' ürünler; **fark<0 → `tuketim`** depo→dışarı:tuketim (bardak satışı; Gider/Satış okur) · **fark>0 → `sayim`** dışarı:sayim→depo; sayılmayan 0 sayılmaz · kör sayım Kasa'ya yazılmaz (mevcut karar) |
 | Geri al | `panel:iptal:{hedef_kok}` | olay iptal · Kasa `iptal` (sayım kilidi 409 → merkeze düşer) · Depo iptal=TRUE. Personel yalnız bugün/dün |
 
-Ürün aç maliyeti tek kural: `guncel_fiyat` (kuruş / 1 sayım birimi, KDV dahil; fatura fiyatı `urun.birim_maliyet()` ile çevrilir); Gider okuma anında hesaplar. Şube stoğu tek konum `depo:{sube}`; Tema `depo:tema` (mevcut).
+Ürün aç maliyeti tek kural: `guncel_fiyat` (kuruş / 1 sayım birimi, KDV dahil; fatura fiyatı `urun.birim_maliyet()` ile çevrilir); Gider okuma anında hesaplar. Şube stoğu tek konum `depo:{sube}`; Tema `depo:sube-tema` (mevcut).
 
 ### B4. 1 Kasım'dan merkez modülleri yalnız yeni veriyi okur
 
@@ -165,3 +165,18 @@ Tek geçiş ayarı: `para_izi_ayar` → çekirdeğe `ey_ayar` (`donem_baslangic=
 | 5 | Sipariş altı · giriş/yetki · foto · eski sube_panel/sube_operasyon/fire_bildirim/operasyon_defter/stok_yolda sökümü | ayrı plan | — | — |
 
 Her faz yayın öncesi Codex + Fable; 23:45–00:15 deploy yok; `python scripts/kapi_kontrol.py`.
+
+
+---
+
+## C. CODEX DENETİMİ (2026-10-18) — tasarıma işlenenler
+
+| # | Bulgu | Karar / düzeltme |
+|---|---|---|
+| C1 | **BLOKER — sipariş/sevk:** sipariş eski akışta kalıp 1 Kasım'da `stok_yolda` senkronu kesilirse eski akıştan çıkan sevk yeni depoya ulaşmaz; eski kimliği yeni ürüne bağlamak köprü kuralına aykırı | Merkez **"Sevk et"** (Depo `sevk` depo:sube-tema→yolda, ey_urun) + panel **"Depodan gelen"** (Depo `kabul`) **1 Kasım'dan ÖNCE** (faz 2'de) biter. Şube talebi eski ekranda kalsa da sevk YALNIZ yeni yoldan yapılır. 31 Ekim akşamı açık eski sevkler kapatılır (kabul / fark çöz) — kesim şartı. **Sahip onayı gerekir.** |
+| C2 | **BLOKER — toptancı açılış borcu çift sayılabilir:** hesap bütün teslim + ödemeleri toplar; 1 Kasım net açılışı girilince Ekim hareketleri ikinci kez sayılır | Toptancı hesabı `ey_ayar.donem_baslangic`'tan ÖNCEKİ teslim/ödemeyi saymaz (arşiv, salt okunur); açılış = 1 Kasım net bakiye. Faz 3'te. |
+| C3 | Önceki sayımı geri almak sonraki sayımı bozar (100→80→60; ilk düşüş iptal → 80) | Personel yalnız **son** sayımı geri alabilir; daha eski sayım düzeltmesi merkezde, sonraki sayımlar yeniden hesaplanarak (çıpa korunur). |
+| C4 | Tema konum anahtarı `depo:tema` ↔ kod `depo:sube-tema` | Bütün konumlar gerçek `ey_sube.id` ile: `depo:sube-tema` (belge düzeltildi). |
+| C5 | Fiyat geçmişi yok (`ey_toptanci_fiyat` satırı eziliyor), teslim iptali öğrenilmiş fiyatı geri almıyor | Faz 2: fiyat, teslim kaynaklı geçmiş olarak tutulur (tarih + iptal); `guncel_fiyat` oradan seçer. |
+| C6 | Yeni ürünün fiyatı arayüzden girilemiyor (Ürün fiyatları eski kataloğu listeliyor) | Faz 0 sonu: Toptancılar › Ürün fiyatları yeni katalogdan (ey_urun) listelenir. 128 ürünün başlangıç fiyatı 2026-10-18 faturalardan girildi. |
+| C7 | Sayım/hareket kilidi, sayım girdisi, kategori kilidi, KDV sınırı, ey_ayar bayrağı, eski katalog yazıcıları, manifest bağımlılıkları | **Düzeltildi ve yayında** (2026-10-18). |
