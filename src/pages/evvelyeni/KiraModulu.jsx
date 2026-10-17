@@ -20,6 +20,7 @@ const DURUM = {
   gelecek: { renk: 'var(--pi-ink3, #7F6C57)', ad: 'gelecek', ikon: '' },
   tanimsiz: { renk: 'var(--pi-ink3, #7F6C57)', ad: 'kira tanımsız', ikon: '—' },
   mulk: { renk: 'var(--pi-ink3, #7F6C57)', ad: 'mülk bizim', ikon: '🏠' },
+  once: { renk: 'var(--pi-ink3, #7F6C57)', ad: 'Evvel Yeni öncesi', ikon: '·' },
 };
 
 export function KiraTakvim() {
@@ -72,8 +73,8 @@ export function KiraTakvim() {
                     <td key={a.ay} style={{ ...hucre, padding: 3 }}>
                       <button type="button" onClick={() => setSec({ s, a, i })} title={`${AY_UZUN[i]} · ${d.ad}`} style={{
                         width: '100%', minHeight: 52, borderRadius: 8, cursor: 'pointer', font: 'inherit', fontSize: 11.5, lineHeight: 1.25, padding: '4px 2px',
-                        border: artis ? `2px solid ${MOR}` : `1px solid ${a.durum === 'gelecek' || a.durum === 'tanimsiz' ? 'var(--pi-line)' : d.renk}`,
-                        background: artis ? `${MOR}22` : a.durum === 'gelecek' || a.durum === 'tanimsiz' ? 'transparent' : `color-mix(in srgb, ${d.renk} 16%, transparent)`,
+                        border: artis ? `2px solid ${MOR}` : `1px solid ${['gelecek', 'tanimsiz', 'once'].includes(a.durum) ? 'var(--pi-line)' : d.renk}`,
+                        background: artis ? `${MOR}22` : ['gelecek', 'tanimsiz', 'once'].includes(a.durum) ? 'transparent' : `color-mix(in srgb, ${d.renk} 16%, transparent)`,
                         color: 'var(--pi-ink)',
                       }}>
                         {artis && <div style={{ color: MOR, fontWeight: 800 }}>📈{a.artis ? ' artış' : ''}</div>}

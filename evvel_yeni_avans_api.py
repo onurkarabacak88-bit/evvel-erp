@@ -4,10 +4,7 @@ Sahip (envanter madde 13): "Avans taleplerini görebileceğim bir mekanizma olma
 gönderiyor (eski avans_service → personel_avans 'talep'); onay yalnız eski Cep uygulamasındaydı → Eylül'den bekleyen talepler
 kimse görmeden kaldı.
   · Liste: açık talepler (talep · onaylandı-elden teslim bekliyor) + Bekleyen işler'de tek satır (çekirdek kayıt defteri).
-  · Havaleyle öde: Evvel Yeni'de Ödeme'nin KENDİ kaydı (konu personel, kalem Avans, seçilen bankadan) + eski sistemde aynı
-    talep 'ödendi' (eski bordro mahsubu sürsün). Önce eski koşullar sınanır (durum/pasif/tavan); Evvel Yeni yazılamazsa
-    eskiye dokunulmaz; eski onay yazılamazsa Evvel Yeni kaydı iptal edilir (iki sistem ayrışmasın).
-  · Elden ver: yalnız eski onay (şube seçilir) — para dükkândan verilince panel kaydı köprüyle Kasa'ya düşer (çift yazım yok).
+  · Onay (havale / elden) ve ret ŞİMDİLİK yalnız eski avans akışıyla (Codex: iki sisteme yazmak çift mahsup + ayrışma üretiyordu).
   · Reddet: eski reddet.
 KÖPRÜ (eski sistem kalkınca: talepler doğrudan Evvel Yeni'ye yazılacak — KESIM_LISTESI): personel_avans okuması ve
 avans_service.avans_onayla / avans_reddet çağrıları.
@@ -27,7 +24,7 @@ log = logging.getLogger(__name__)
 
 
 def _acik_talepler(cur) -> list:
-    """KÖPRÜ: eski personel_avans'ta açık talepler (talep · onaylandı-elden)."""
+    """KÖPRÜ: eski personel_avans'ta açık talepler (talep · onaylandı-elden). Okunamazsa HATA yükselir (Codex: 'talep yok' sanılmasın)."""
     try:
         with savepoint(cur, "sp_ey_avans_oku"):
             cur.execute("""SELECT pa.id::text AS id, pa.personel_id::text AS personel_id, pa.tutar, pa.durum, pa.odeme_yontemi,
@@ -46,9 +43,9 @@ def _acik_talepler(cur) -> list:
                             "talep": str(r.get("talep_ts") or "")[:16], "onay": str(r.get("onay_ts") or "")[:16],
                             "donem": f"{int(r['donem_yil'])}-{int(r['donem_ay']):02d}" if r.get("donem_yil") else None})
             return out
-    except Exception as e:  # noqa: BLE001 — eski sistem kalkmış olabilir
-        log.info("avans talepleri okunamadı: %s", str(e)[:150])
-        return []
+    except Exception as e:  # noqa: BLE001
+        log.warning("avans talepleri okunamadı: %s", str(e)[:150])
+        raise HTTPException(503, "Avans talepleri okunamadı — biraz sonra yeniden dene")
 
 
 def _bekleyen(cur, baglam: dict) -> list:
@@ -76,38 +73,20 @@ class OnayBody(BaseModel):
 
 @router.post("/{aid}/onayla")
 def onayla(aid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Codex denetimi (2026-10-17): iki sisteme ayrı ayrı yazmak çift mahsup / ayrışma / yarış üretiyordu → ŞİMDİLİK onay YALNIZ eski
+    avans akışıyla (eski Cep ekranının yaptığı birebir): havale = eski kasa + eski maaş mahsubu; elden = şube panelinden teslim
+    edilince Kasa köprüsüyle Evvel Yeni dükkân nakdinden düşer. Avansın Evvel Yeni'ye tam taşınması (havalenin EY bankasından
+    düşmesi) envanter madde 35'te, 1 Kasım öncesi — KESIM_LISTESI."""
     import avans_service as eski
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
-        t = next((x for x in _acik_talepler(cur) if x["id"] == aid), None)
-    if not t:
-        raise HTTPException(404, "Talep bulunamadı")
-    if t["durum"] != "talep":
-        raise HTTPException(400, "Bu talep zaten onaylanmış — yalnız bekleyen talep onaylanır")
-    if body.yontem == "elden":
-        if not body.sube_id:
-            raise HTTPException(400, "Elden verilecekse şubeyi seç")
-        eski.avans_onayla(aid, eski.AvansOnayModel(yontem="elden", sube_id=body.sube_id, onaylayan=kim))
-        return {"ok": True, "mesaj": f"{t['ad']} · {t['tutar']:,.0f} ₺ elden verilecek — şube panelinden teslim edilince kasadan düşer".replace(",", ".")}
-    if body.yontem != "havale" or not body.cep:
-        raise HTTPException(400, "Havale için bankayı seç")
-    import evvel_yeni_odeme_api as odeme
-    gun = _bugun().isoformat()
-    r = odeme.odeme_gir(odeme.OdemeBody(konu="personel", tarih=gun, ait_ay=gun[:7], personel_id=t["personel_id"], personel_kalemi="Avans",
-                                        aciklama="Avans talebi (havale)", istek_id=f"avans:{aid}", tekrar_onay=True,
-                                        parcalar=[odeme.Parca(yontem="havale", cep=body.cep, tutar=t["tutar"])]), x_evvel_oturum)
-    try:
-        eski.avans_onayla(aid, eski.AvansOnayModel(yontem="havale", onaylayan=kim))
-    except HTTPException as e:
-        # eski onay yazılamadı (tavan / pasif) → Evvel Yeni kaydını geri al: iki sistem ayrışmasın
-        if r.get("id"):
-            import evvel_yeni_kasa_api as kasa
-            try:
-                kasa.iptal(r["id"], kasa.IptalBody(sebep=f"Avans eski sistemde onaylanamadı: {e.detail}"[:200]), x_evvel_oturum)
-            except Exception as e2:  # noqa: BLE001
-                log.error("avans: eski onay başarısız, EY kaydı iptal edilemedi (%s): %s", r.get("id"), e2)
-        raise HTTPException(400, f"Onaylanamadı: {e.detail}")
-    return {"ok": True, "mesaj": f"{t['ad']} · {t['tutar']:,.0f} ₺ avans havaleyle ödendi (maaştan düşer)".replace(",", ".")}
+    if body.yontem not in ("havale", "elden"):
+        raise HTTPException(400, "Yöntem: havale ya da elden")
+    if body.yontem == "elden" and not body.sube_id:
+        raise HTTPException(400, "Elden verilecekse şubeyi seç")
+    eski.avans_onayla(aid, eski.AvansOnayModel(yontem=body.yontem, sube_id=body.sube_id if body.yontem == "elden" else None, onaylayan=kim))
+    return {"ok": True, "mesaj": "Avans havaleyle ödendi olarak işaretlendi (maaştan düşer)" if body.yontem == "havale"
+            else "Avans onaylandı — şube panelinden teslim edilince dükkân kasasından düşer"}
 
 
 class RedBody(BaseModel):

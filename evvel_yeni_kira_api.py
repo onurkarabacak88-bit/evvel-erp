@@ -166,6 +166,8 @@ def kira_aylari(cur, yil: int, bugun: date) -> list:
     tan = kira_tanimlari(cur)
     _, _, kayit, _ = _yukle(cur, tum_donemler=True)
     eski = _eski_odenenler(cur)
+    import evvel_yeni_kasa_api as _kasa
+    bas_ay = _kasa.donem_baslangici(cur).strftime("%Y-%m")   # sahip: "geçmiş aylar ödenmişti" — Evvel Yeni öncesi 'gecikti' DENMEZ
     yeni = {}
     for h in kayit:
         if h["tur"] != "odeme":
@@ -199,6 +201,8 @@ def kira_aylari(cur, yil: int, bugun: date) -> list:
                 durum = "odendi"
             elif od > 0:
                 durum = "kismi"
+            elif ay < bas_ay:
+                durum = "once"          # Evvel Yeni öncesi, eski sistemde kaydı eksik — borç sayılmaz
             elif vade < bugun:
                 durum = "gecikti"
             elif (vade - bugun).days <= 7:
