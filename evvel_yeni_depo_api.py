@@ -113,10 +113,10 @@ def _tr_gun(ts) -> date:
 def _yaz_guncel(cur, row: tuple) -> int:
     """Kaynak satırı SONRADAN değişebilen olaylar (sevk/kabul adedi — merkez uzlaşması) için: aynı tabandaki etkin kayıt
     aynı adetse dokunma; farklıysa eskisini İPTAL (iz kalır) edip yenisini yaz. Hiç yoksa tabanla yaz."""
-    taban, adet = row[0], row[4]
-    cur.execute("""SELECT id, adet FROM ey_stok_hareket WHERE (kaynak_ref=%s OR kaynak_ref LIKE %s) AND NOT iptal""", (taban, taban + ":r%"))
+    taban, adet, kaynak, hedef = row[0], row[4], row[5], row[6]
+    cur.execute("""SELECT id, adet, kaynak, hedef FROM ey_stok_hareket WHERE (kaynak_ref=%s OR kaynak_ref LIKE %s) AND NOT iptal""", (taban, taban + ":r%"))
     etkin = [dict(x) for x in cur.fetchall() or []]
-    if any(e["adet"] == adet for e in etkin):
+    if any(e["adet"] == adet and e["kaynak"] == kaynak and e["hedef"] == hedef for e in etkin):
         return 0
     for e in etkin:
         cur.execute("UPDATE ey_stok_hareket SET iptal=TRUE, iptal_sebep='kaynak kayıt değişti (uzlaşma/düzeltme)' WHERE id=%s", (e["id"],))
