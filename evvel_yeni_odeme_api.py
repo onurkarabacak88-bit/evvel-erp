@@ -45,9 +45,12 @@ KONULAR = {
     "anlik": {"ad": "Anlık gider", "gider": True},
     "kredi": {"ad": "Kredi / borç taksiti", "gider": False},
     "kart_borcu": {"ad": "Kart borcu", "gider": False},
+    # Sahip (2026-10-17, envanter 18): vergi muhasebecide hesaplanır; burada yalnız ÖDEME — şube/ortak, tür, ait ay (gider sayılmaz)
+    "vergi": {"ad": "Vergi", "gider": False},
     "diger": {"ad": "Diğer", "gider": True},
 }
 FATURA_TURLERI = ["Elektrik", "Su", "Doğalgaz", "İnternet / telefon", "Diğer abonelik"]
+VERGI_TURLERI = ["KDV", "Muhtasar / stopaj", "Gelir / kurumlar vergisi", "SGK", "Diğer vergi"]
 PERSONEL_KALEMLERI = ["Maaş", "Avans", "Yemek ücreti", "Prim", "SGK / vergi"]
 PATRONLAR = ["Onur", "Fethi", "Fatma"]   # sahip: "hangi patronun harcaması olduğuna karar verelim"
 
@@ -72,7 +75,7 @@ def listeler():
         p["sube_ad"] = sube_ad.get(p.get("sube_id"))
     return {
         "konular": [{"kod": k, **v} for k, v in KONULAR.items()],
-        "fatura_turleri": FATURA_TURLERI, "personel_kalemleri": PERSONEL_KALEMLERI,
+        "fatura_turleri": FATURA_TURLERI, "personel_kalemleri": PERSONEL_KALEMLERI, "vergi_turleri": VERGI_TURLERI,
         "subeler": subeler, **L,
         "nakit_cepler": [{"id": c["id"], "ad": c["ad"], "bakiye": _tl_sayi(B.get(c["id"], 0))} for c in cep_list if c["tur"] == "ev"],
         # Sahip (2026-10-15): "dükkân nakdinden ödenirse panelden girilir" → dükkân çekmecesi bu formda YOK (çift giriş biter)
@@ -100,6 +103,7 @@ class OdemeBody(BaseModel):
     patron: Optional[str] = None          # kimin='patron' ise: Onur | Fethi | Fatma
     kredi_id: Optional[str] = None        # konu=kredi: hangi kredi (Krediler modülü — takvimde 'ödendi')
     kredi_ad: Optional[str] = None
+    vergi_turu: Optional[str] = None      # konu=vergi: KDV · stopaj · gelir/kurumlar · SGK · diğer
     aciklama: Optional[str] = None
     parcalar: List[Parca]
     istek_id: Optional[str] = None        # formun tek kimliği — bağlantı kopup tekrar gönderilirse İKİNCİ KEZ yazılmaz
@@ -171,6 +175,14 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
             kimin = p.get("sube_id") if p.get("sube_id") in subeler else "ortak"
             konu.update(personel_id=p["id"], personel_ad=p["ad"], kalem=body.personel_kalemi)
             etiket = f"{body.personel_kalemi} · {p['ad']}"
+        elif body.konu == "vergi":
+            if body.vergi_turu not in VERGI_TURLERI:
+                raise HTTPException(400, "Vergi türünü seç")
+            if body.kimin not in list(subeler) + ["ortak"]:
+                raise HTTPException(400, "Hangi şubenin vergisi (ya da Ortak)")
+            kimin = body.kimin
+            konu.update(vergi_turu=body.vergi_turu)
+            etiket = f"Vergi · {body.vergi_turu} · {subeler[kimin]['kisa'] if kimin in subeler else 'Ortak'}"
         elif body.konu in ("kredi", "kart_borcu"):
             kimin = "patron"
             if body.konu == "kredi" and body.kredi_id:
@@ -190,7 +202,7 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
             kimin = body.kimin
             etiket = f"{body.aciklama.strip()[:60]}"
         # Codex (2026-10-17): kredi taksiti / kart borcu da HANGİ AYIN borcunu kapattığını taşır (Eylül taksiti Ekim'de ödenirse Eylül kapanır)
-        AYLI = ("kira", "fatura", "personel", "kredi", "kart_borcu")
+        AYLI = ("kira", "fatura", "personel", "kredi", "kart_borcu", "vergi")
         ait_ay = (body.ait_ay or gun[:7])[:7] if body.konu in AYLI else gun[:7]
         if body.konu in ("kredi", "kart_borcu") and body.ait_ay:
             konu["donem"] = ait_ay      # açıkça seçilen dönem (takvimden 'öde'); yoksa takvim ödeme gününe göre yerleştirir

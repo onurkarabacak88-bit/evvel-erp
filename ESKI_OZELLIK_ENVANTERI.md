@@ -110,3 +110,8 @@
 | 11 | Eski borç navigasyonu / finansal sağlık / projeksiyon ÇIKAR | Yerine şimdilik HİÇBİR ŞEY (veri oturmadan tahmin karmaşa çıkarır); ileri bakış = kredi + kart + kira takvimleri. 1 Kasım sonrası yeniden konuşulabilir |
 | 12 | Eski tedarikçi ödeme eşleştirme motoru + karar defteri ÇIKAR | Ödeme girerken toptancı doğrudan seçilir; ad birleştirme Tanımlar'da |
 | 13 | Eski şube içi borç + çekmece sayımı ÇIKAR | Avans (Personel), taşıma ve sayım (Kasa) karşılıyor. Sahip ek isteği: AVANS TALEPLERİNİ görebileceği mekanizma |
+| 14 | Kiralık mülk defteri → YENİDEN KURULDU | İşletmeye özel "Kira hesabı" modülü: ev kiraları takvimi + işletmelerin kira hesabına borcu (1 Kasım'dan sıfır) + ev/hesap aktarımında "şahsi mi borç mu" kararı. Eski mulk_api ÇIKAR (boştu) |
+| 15 | Eski dış kaynak geliri ÇIKAR | Kasa → "+ Dış giriş" (borç/kredi/kira/satış/destek/diğer; ciro sayılmaz) |
+| 16 | Eski işletmeci (şahsi harcama sahibi) + satıcı kuralı ÇIKAR | Ödeme → Patron harcamaları |
+| 17 | Eski "Para Nerede" şelalesi ÇIKAR | Kasa → Kasam (tek defter) |
+| 18 | Eski vergi/KDV ekranları ÇIKAR | Vergi muhasebecide. Ödeme'ye "Vergi" konusu (şube/ortak, tür, ait ay). Ürün KDV oranları ürün kataloğu taşınırken EY ürün tanımına (KESIM 13) |

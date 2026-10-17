@@ -283,6 +283,15 @@ export default function OdemeModulu({ onToast, gorunum }) {
             {['kira', 'fatura', 'personel'].includes(f.konu) && (
               <Etiket ad="Ait olduğu ay" ipucu="Gider bu aya yazılır (ödendiği güne değil)"><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
             )}
+            {f.konu === 'vergi' && (<>
+              <Etiket ad="Vergi türü"><select style={alan} value={f.vergi_turu || ''} onChange={(e) => set('vergi_turu', e.target.value)}>
+                <option value="">Seç…</option>{(L.vergi_turleri || []).map((t) => <option key={t}>{t}</option>)}
+              </select></Etiket>
+              <Etiket ad="Hangi şubenin"><select style={alan} value={f.kimin || ''} onChange={(e) => set('kimin', e.target.value)}>
+                <option value="">Seç…</option>{L.subeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}<option value="ortak">Ortak</option>
+              </select></Etiket>
+              <Etiket ad="Hangi ayın vergisi"><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
+            </>)}
             {f.konu === 'kredi' && (
               <Etiket ad="Hangi ayın taksiti" ipucu="Kredi takviminde bu ay 'ödendi' olur"><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
             )}
@@ -333,7 +342,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
             <span>Toplam <b style={num}>{fmt(toplam)}</b> ₺</span>
             {konuObj && (konuObj.gider && f.kimin !== 'patron'
               ? <Cip tur="sari">şube/ortak GİDERİ olarak yazılacak</Cip>
-              : <Cip>gider DEĞİL — {f.konu === 'toptanci' ? 'toptancı borcunu kapatır' : f.konu === 'kart_borcu' ? 'kart borcunu kapatır' : f.konu === 'kredi' ? 'patronun borcu' : f.konu === 'kira' ? "o ayın kirasını kapatır (gider tanımlı kiradan, ait olduğu aya yazılır)" : f.konu === 'personel' ? "personelin kalanını kapatır (gider Maaşlar'ın hak edişinden yazılır)" : 'patron çekişi'}</Cip>)}
+              : <Cip>gider DEĞİL — {f.konu === 'toptanci' ? 'toptancı borcunu kapatır' : f.konu === 'kart_borcu' ? 'kart borcunu kapatır' : f.konu === 'kredi' ? 'patronun borcu' : f.konu === 'vergi' ? 'vergi ödemesi (vergiyi muhasebeci hesaplar)' : f.konu === 'kira' ? "o ayın kirasını kapatır (gider tanımlı kiradan, ait olduğu aya yazılır)" : f.konu === 'personel' ? "personelin kalanını kapatır (gider Maaşlar'ın hak edişinden yazılır)" : 'patron çekişi'}</Cip>)}
             {f.parcalar.some((p) => p.yontem === 'kart') && <Cip>kart kısmı kasadan düşmez, kart borcu olur</Cip>}
           </div>
           {kiminAd !== null && f.konu && (
