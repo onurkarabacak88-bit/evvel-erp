@@ -12,7 +12,8 @@ hareket defterine (ey_stok_hareket) ve mevcut toptancı teslim kaydına (ey_topt
 ## 1. Ürün kataloğu — yeni "urun" modülü (Depo ile aynı mantık)
 - **Bugün ürünü BEŞ ayrı yer kendi başına çözüyor:** Depo `_urun_haritasi` (id/kod/ad), Toptancılar `_anahtar` + `_tahmin`, Bar `_kod_anahtar/_anahtar_ad`,
   Gider (siparis_urun JOIN), Satış `_urun_ad`. Hepsi eski siparis_urun tablosunu okuyor. Katalog bunların **YERİNE** geçer (altıncı yapı olmaz).
-- **Tek kimlik:** eski siparis_urun kimlikleri BİR KEZ, Tanımlar'ın kopya deseniyle aynen korunarak kopyalanır (Depo ve Toptancı kayıtları bu kimlikleri kullanıyor → köprü gerekmez).
+- **SIFIRDAN (sahip 2026-10-18):** eski kimlik kopyası / takma ad / eski kataloğa geri yazma YOK. Başlangıç = sahiple temizlenen liste, YENİ kimliklerle (sürüm 2).
+  Eski katalog donduruldu; Depo / Toptancı / Satış ürün anahtarı yeni kimliğe taşınır, eski veri 1 Kasım açılış sayımıyla sıfırlanır (köprü kurulmaz).
 - **Değişiklik izi (Depo deseni):** ürünün güncel kartı + her değişiklik bir kayıt (kim, ne zaman, alan, eski → yeni, kaynak_ref tekil, iptal). Silme yok: pasif + iz.
 - **Alanlar:** ad · kategori · sayım birimi (tek; ilk sürümde ADET — kg/lt mevcut tam sayı miktar zinciri dönüştürülünce açılır) · koli içi adet (mevcut
   `koli_ic_adet`; ikizi `koli_adet` kopyada tek kolona indirilir) · KDV (eski kalem_kdv_oran'dan taşınır) · aktif · **takma adlar** (eski depo kodu + fatura adları).
