@@ -257,120 +257,13 @@ except Exception as _para_nerede_err:
     logging.getLogger(__name__).warning(
         f"para_nerede modulu yuklenemedi (izole, ana akis etkilenmez): {_para_nerede_err}"
     )
-# 💰 EVVEL YENİ · KASA (2026-10-15) — sade çekirdeğin ilk bölümü (/evvel-yeni).
-# Sahip: "eski sistemden AYRI kur, bu aydan itibaren". Kendi tabloları var, eski para
-# tablolarına HİÇ yazmaz; eskiden yalnız okuyarak tek yönlü aktarır.
+# 🧩 EVVEL YENİ (/evvel-yeni) — sade çekirdek; eski para tablolarına yazmaz. BÜTÜN modüller TEK listede:
+# evvel_yeni_moduller.py (aç/kapat, sektör, gerekir). Her modül ayrı try'da — biri bozulursa ana akış etkilenmez.
 try:
-    from evvel_yeni_kasa_api import router as evvel_yeni_kasa_router
-    app.include_router(evvel_yeni_kasa_router)
-except Exception as _ey_kasa_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_kasa modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_kasa_err}"
-    )
-# 📈 EVVEL YENİ · GELİR (2026-10-15) — sahip: "önce gelir mekanizmasını, sonra gider".
-# Yalnız okur (Kasa'nın kapanış kayıtlarından); şube şube / gün gün gelir.
-try:
-    from evvel_yeni_gelir_api import router as evvel_yeni_gelir_router
-    app.include_router(evvel_yeni_gelir_router)
-except Exception as _ey_gelir_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_gelir modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_gelir_err}"
-    )
-# 💸 EVVEL YENİ · GİDER (2026-10-15) — şubenin KENDİ işletme yükü (mal = sevk × güncel fiyat).
-try:
-    from evvel_yeni_gider_api import router as evvel_yeni_gider_router
-    app.include_router(evvel_yeni_gider_router)
-except Exception as _ey_gider_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_gider modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_gider_err}"
-    )
-# 🧾 EVVEL YENİ · ÖDEME (2026-10-15) — seçmeli ödeme/gider girişi (nakit · havale · kart).
-try:
-    from evvel_yeni_odeme_api import router as evvel_yeni_odeme_router
-    app.include_router(evvel_yeni_odeme_router)
-except Exception as _ey_odeme_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_odeme modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_odeme_err}"
-    )
-# 📦 EVVEL YENİ · DEPO (2026-10-17) — tek hareket defteri; panel kayıtları köprüyle; "Nerede?" ürün × konum.
-try:
-    from evvel_yeni_depo_api import router as evvel_yeni_depo_router
-    app.include_router(evvel_yeni_depo_router)
-except Exception as _ey_depo_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_depo modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_depo_err}"
-    )
-# 🚚 EVVEL YENİ · TOPTANCILAR (2026-10-16) — borcumuz = açılış + alım − ödeme.
-try:
-    from evvel_yeni_toptanci_api import router as evvel_yeni_toptanci_router
-    app.include_router(evvel_yeni_toptanci_router)
-except Exception as _ey_top_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_toptanci modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_top_err}"
-    )
-# 🏠 EVVEL YENİ · KİRALAR (2026-10-16) — şube kirası tanımı + yıllık kira takvimi.
-try:
-    from evvel_yeni_kira_api import router as evvel_yeni_kira_router
-    app.include_router(evvel_yeni_kira_router)
-except Exception as _ey_kira_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_kira modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_kira_err}"
-    )
-# 💳 EVVEL YENİ · KARTLAR (2026-10-16) — sade: kullanılabilir limit = son teyit ± ödeme formundaki kart hareketleri.
-try:
-    from evvel_yeni_kart_api import router as evvel_yeni_kart_router
-    app.include_router(evvel_yeni_kart_router)
-except Exception as _ey_kart_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_kart modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_kart_err}"
-    )
-# 📈 EVVEL YENİ · ŞUBE KAZANCI (2026-10-15) — gelir − şubenin kendi gideri; kim kimi taşıyor.
-try:
-    from evvel_yeni_kazanc_api import router as evvel_yeni_kazanc_router
-    app.include_router(evvel_yeni_kazanc_router)
-except Exception as _ey_kazanc_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_kazanc modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_kazanc_err}"
-    )
-# ⚙️ EVVEL YENİ · TANIMLAR (2026-10-16) — şube/personel/banka/kart/toptancı Evvel Yeni'nin KENDİ tablolarında.
-try:
-    from evvel_yeni_tanim_api import router as evvel_yeni_tanim_router
-    app.include_router(evvel_yeni_tanim_router)
-except Exception as _ey_tanim_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_tanim modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_tanim_err}"
-    )
-# 🥤 EVVEL YENİ · BAR SAYIMI (2026-10-16) — açılış/kapanış bardak + bar ürün sayımı; devir farkı + net eksilme.
-try:
-    from evvel_yeni_bar_api import router as evvel_yeni_bar_router
-    app.include_router(evvel_yeni_bar_router)
-except Exception as _ey_bar_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_bar modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_bar_err}"
-    )
-# 👥 EVVEL YENİ · MAAŞLAR (2026-10-16) — hak ediş − avans − ödenen = kalan; gider hak edişten.
-try:
-    from evvel_yeni_maas_api import router as evvel_yeni_maas_router
-    app.include_router(evvel_yeni_maas_router)
-except Exception as _ey_maas_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_maas modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_maas_err}"
-    )
-# 🔍 EVVEL YENİ · SATIŞ KONTROLÜ (2026-10-16) — bardak × bardak başına ciro = beklenen ciro ↔ gerçek ciro.
-try:
-    from evvel_yeni_satis_api import router as evvel_yeni_satis_router
-    app.include_router(evvel_yeni_satis_router)
-except Exception as _ey_satis_err:
-    logging.getLogger(__name__).warning(
-        f"evvel_yeni_satis modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_satis_err}"
-    )
-# 📒 EVVEL YENİ · ŞUBE OLAY DEFTERİ (2026-10-16) — panel çift yazımı; tablo AÇILIŞTA kurulur (panel işleminde DDL yok).
-try:
-    from evvel_yeni_olay import olay_tablosu_kur, router as evvel_yeni_olay_router
-    olay_tablosu_kur()
-    app.include_router(evvel_yeni_olay_router)
-except Exception as _ey_olay_err:
-    logging.getLogger(__name__).warning(f"evvel_yeni olay defteri kurulamadi: {_ey_olay_err}")
+    from evvel_yeni_moduller import modulleri_yukle as _ey_modulleri_yukle
+    _ey_modulleri_yukle(app)
+except Exception as _ey_err:
+    logging.getLogger(__name__).warning(f"evvel_yeni modül listesi yüklenemedi (izole, ana akis etkilenmez): {_ey_err}")
 # OPS ÖLÇÜM — "iş kuyruğu işe yarıyor mu?" (2026-08-27). AYRI modül, AYRI iki
 # tablo. bakis_olcum'a yazılmadı: onun ozet sorguları `gorunum`a göre süzmüyor,
 # OPS oturumları oraya girseydi BAKIŞ'ın M1-M5 medyanları iki farklı ekranın

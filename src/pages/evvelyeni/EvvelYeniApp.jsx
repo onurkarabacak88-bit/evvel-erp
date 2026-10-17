@@ -9,41 +9,14 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import KasaModulu, { SAYFALAR } from './KasaModulu';
-import GelirModulu, { GELIR_SAYFALAR } from './GelirModulu';
-import GiderModulu, { GIDER_SAYFALAR } from './GiderModulu';
-import OdemeModulu, { ODEME_SAYFALAR, PatronHarcama } from './OdemeModulu';
-import KazancModulu, { KAZANC_SAYFALAR } from './KazancModulu';
-import TanimModulu, { TANIM_SAYFALAR } from './TanimModulu';
-import BarModulu, { BAR_SAYFALAR } from './BarModulu';
-import MaasModulu, { MAAS_SAYFALAR, PersonelTakvim, GunlukYoklama } from './MaasModulu';
-import SatisModulu, { SATIS_SAYFALAR } from './SatisModulu';
-import KartModulu, { KART_SAYFALAR } from './KartModulu';
-import { KiraTakvim } from './KiraModulu';
-import ToptanciModulu, { TOPTANCI_SAYFALAR, UrunFiyatlari } from './ToptanciModulu';
-import DepoModulu, { DEPO_SAYFALAR } from './DepoModulu';
+import { MODULLER, TUM_SAYFALAR } from './moduller';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
 // Sahip: "evvel yeni yapalım" → uygulamanın adı EVVEL YENİ, adresi /evvel-yeni.
 // Eski /para-izi adresi buraya yönlenir. Sol menü BÖLÜM BÖLÜM büyüyecek (Para · Tedarik · İşletme).
 export const TABAN = '/evvel-yeni';
-// Sahip: "kasa ve gelir ayrı; sol alanda FARKLI isimlerde olmalı" → her bölüm kendi başlığı.
-const BOLUMLER = [
-  { ad: 'Kasa', ikon: '💰', mod: 'kasa', sayfalar: SAYFALAR },
-  { ad: 'Gelir', ikon: '📥', mod: 'gelir', sayfalar: GELIR_SAYFALAR },
-  { ad: 'Gider', ikon: '💸', mod: 'gider', sayfalar: GIDER_SAYFALAR },
-  { ad: 'Ödeme', ikon: '🧾', mod: 'odeme', sayfalar: ODEME_SAYFALAR },
-  { ad: 'Kartlar', ikon: '💳', mod: 'kart', sayfalar: KART_SAYFALAR },
-  { ad: 'Toptancılar', ikon: '🚚', mod: 'toptanci', sayfalar: TOPTANCI_SAYFALAR },
-  { ad: 'Depo', ikon: '📦', mod: 'depo', sayfalar: DEPO_SAYFALAR },
-  { ad: 'Şube kazancı', ikon: '📈', mod: 'kazanc', sayfalar: KAZANC_SAYFALAR },
-  { ad: 'Bar', ikon: '🥤', mod: 'bar', sayfalar: BAR_SAYFALAR },
-  { ad: 'Satış kontrolü', ikon: '🔍', mod: 'satis', sayfalar: SATIS_SAYFALAR },
-  { ad: 'Personel', ikon: '👥', mod: 'maas', sayfalar: MAAS_SAYFALAR },
-  { ad: 'Tanımlar', ikon: '⚙️', mod: 'tanim', sayfalar: TANIM_SAYFALAR },
-];
-const TUM_SAYFALAR = BOLUMLER.flatMap((b) => b.sayfalar.map((x) => ({ ...x, mod: b.mod })));
+// Sahip: "kasa ve gelir ayrı; sol alanda FARKLI isimlerde olmalı" → her bölüm kendi başlığı. Liste: moduller.jsx (tek yer).
 
 const sekmeAdresten = () => {
   const p = (window.location.pathname || '').replace(/\/+$/, '');
@@ -128,6 +101,15 @@ export default function EvvelYeniApp() {
   const [sekme, setSekme] = useState(sekmeAdresten);
   const [toast, setToast] = useState('');
   const [rozet, setRozet] = useState({});
+  // 🧩 sunucuda yüklenen modüller (kapatılan / bozulan menüden kalkar). Okunamazsa hepsi gösterilir.
+  const [acikMod, setAcikMod] = useState(null);
+  useEffect(() => {
+    if (durum !== 'tamam') return undefined;
+    api('/evvel-yeni/moduller').then((d) => setAcikMod(new Set((d?.moduller || []).filter((m) => m.durum === 'yuklendi').map((m) => m.kod))))
+      .catch(() => setAcikMod(null));
+    return undefined;
+  }, [durum]);
+  const BOLUMLER = acikMod ? MODULLER.filter((b) => b.mod === 'kasa' || acikMod.has(b.mod)) : MODULLER;
   const veriGeldi = (v) => setRozet({
     isler: v.isler.length, teslim: v.isler.filter((x) => x.tur === 'teslim').length, farklar: v.ozet.acik_fark_sayisi,
   });
@@ -211,29 +193,8 @@ export default function EvvelYeniApp() {
             })}
           </nav>
           <main className="piapp-ic">
-            {(TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'satis'
-              ? <SatisModulu gorunum={sekme} />
-              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'maas'
-              ? (sekme === 'personel_yoklama' ? <GunlukYoklama /> : sekme === 'personel_takvim' ? <PersonelTakvim onToast={setToast} /> : <MaasModulu onToast={setToast} onSekme={sekmeDegis} />)
-              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'bar'
-              ? <BarModulu />
-              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'tanim'
-              ? <TanimModulu gorunum={sekme} onToast={setToast} />
-              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'depo'
-              ? <DepoModulu gorunum={sekme} onToast={setToast} />
-              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'toptanci'
-              ? (sekme === 'urun_fiyatlari' ? <UrunFiyatlari onToast={setToast} /> : <ToptanciModulu onToast={setToast} />)
-              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'kart'
-              ? <KartModulu onToast={setToast} />
-              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'kazanc'
-              ? <KazancModulu />
-              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'odeme'
-              ? (sekme === 'kira_takvimi' ? <KiraTakvim /> : sekme === 'patron_harcama' ? <PatronHarcama /> : <OdemeModulu onToast={setToast} />)
-              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'gider'
-              ? <GiderModulu onToast={setToast} />
-              : (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod === 'gelir'
-              ? <GelirModulu />
-              : <KasaModulu gorunum={sekme} onSekme={sekmeDegis} onToast={setToast} onVeri={veriGeldi} sekmesiz />}
+            {(BOLUMLER.find((b) => b.mod === (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod) || MODULLER[0])
+              .g(sekme, { onToast: setToast, onSekme: sekmeDegis, onVeri: veriGeldi })}
           </main>
         </div>
       )}

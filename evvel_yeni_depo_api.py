@@ -25,7 +25,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun
+from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, bekleyen_is_kaydet
 
 router = APIRouter(prefix="/api/evvel-yeni/depo", tags=["evvel-yeni-depo"])
 log = logging.getLogger(__name__)
@@ -552,3 +552,7 @@ def depo_isleri(cur) -> list:
         return []
     return [{"tur": "depo_yolda", "id": "dy", "tarih": min(r["gun"] for r in rs).isoformat(), "ad": f"{len(rs)} sevk kalemi",
              "sayi": len(rs), "ornek": ", ".join(str(r["urun"]) for r in rs[:3])}]
+
+
+# 🧩 Bekleyen işler kayıt defterine (Kasa bu modülü tanımaz; modül kapanınca satırları da kalkar)
+bekleyen_is_kaydet("depo", lambda cur, b: depo_isleri(cur))

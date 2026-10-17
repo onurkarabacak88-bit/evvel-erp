@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from database import db, savepoint
 from evvel_yeni_kasa_api import _hazirla, _yukle
-from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi
+from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi, bekleyen_is_kaydet
 
 router = APIRouter(prefix="/api/evvel-yeni/toptanci", tags=["evvel-yeni-toptanci"])
 log = logging.getLogger(__name__)
@@ -568,3 +568,7 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
                     (body.urun_id, b, _aktor(cur, x_evvel_oturum)))
         tahminleri_tazele(cur)
     return {"ok": True, "mesaj": f"{dict(r)['ad']}: {_tl_sayi(b):,.2f} ₺ (KDV dahil) kaydedildi"}
+
+
+# 🧩 Bekleyen işler kayıt defterine (Kasa bu modülü tanımaz; modül kapanınca satırları da kalkar)
+bekleyen_is_kaydet("toptanci", lambda cur, b: toptanci_isleri(cur))

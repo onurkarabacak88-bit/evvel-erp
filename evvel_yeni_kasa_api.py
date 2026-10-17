@@ -47,7 +47,8 @@ from database import db, savepoint
 # 🧩 Ortak yardımcılar ÇEKİRDEKTE (2026-10-17). Eski iç adlar geçiş için burada takma ad olarak duruyor —
 #    modüller çekirdeğe geçince (adım 2) bu satırlar silinecek.
 from evvel_yeni_cekirdek import (bugun as _bugun, tr_baslik as _tr_baslik, aktor as _aktor, tl_sayi as _tl_sayi, tl as _tl,
-                                 kurus as _kurus, kilit as _cekirdek_kilit, KASA_KILIT)
+                                 kurus as _kurus, kilit as _cekirdek_kilit, KASA_KILIT,
+                                 bekleyen_isler, bekleyen_is_kaydet)
 
 
 def _kilit(cur) -> None:
@@ -698,30 +699,9 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
         cep_list, C, kayit, iptaller = _yukle(cur)
         bas = _baslangic(cur)
         oranlar = _oranlar(cur)
-        kart_isleri = []
-        try:   # 💳 son ödemesi yaklaşan kartlar (Kartlar bölümü) — okunamazsa ekran yine açılır
-            with savepoint(cur, "sp_ey_kart_isler"):
-                from evvel_yeni_kart_api import kart_isleri as _kart_isleri
-                kart_isleri = _kart_isleri(cur, kayit)
-        except Exception as e:  # noqa: BLE001
-            log.warning("kart işleri okunamadı: %s", str(e)[:150])
-        try:   # 🛟 reddedilen / uyarılı panel kapanışları (Zafer 16 Ekim dersi)
-            with savepoint(cur, "sp_ey_kap_deneme"):
-                kart_isleri = kart_isleri + _kapanis_deneme_isleri(cur, C)
-        except Exception as e:  # noqa: BLE001
-            log.warning("kapanış denemeleri okunamadı: %s", str(e)[:150])
-        try:   # 📦 2+ gündür yolda kalan sevkler (şube kabul etmedi)
-            with savepoint(cur, "sp_ey_depo_isler"):
-                from evvel_yeni_depo_api import depo_isleri as _depo_isleri
-                kart_isleri = kart_isleri + _depo_isleri(cur)
-        except Exception as e:  # noqa: BLE001
-            log.warning("depo işleri okunamadı: %s", str(e)[:150])
-        try:   # 🚚 vadesi geçen toptancı borcu · tutarı bilinmeyen teslim
-            with savepoint(cur, "sp_ey_top_isler"):
-                from evvel_yeni_toptanci_api import toptanci_isleri as _top_isleri
-                kart_isleri = kart_isleri + _top_isleri(cur)
-        except Exception as e:  # noqa: BLE001
-            log.warning("toptancı işleri okunamadı: %s", str(e)[:150])
+        # 🧩 Bekleyen işler: her modül kendi satırlarını çekirdeğin kayıt defterine bırakır (kart, depo, toptancı, kapanış…).
+        #    Kasa onları TANIMAZ; modül kapanırsa satırları da kalkar. Biri okunamazsa diğerleri yine gelir.
+        kart_isleri = bekleyen_isler(cur, {"kayit": kayit, "C": C})
     bugun = _bugun().isoformat()
     g = _gun_coz(gun)
     ref = bugun if hepsi else g
@@ -2062,3 +2042,7 @@ def kapanis_uyari_gordum(body: DenemeBody, x_evvel_oturum: Optional[str] = Heade
         if not cur.fetchone():
             raise HTTPException(404, "Bulunamadı")
     return {"ok": True}
+
+
+# 🧩 Kasa'nın kendi bekleyen işi: reddedilen / uyarılı panel kapanışları (Zafer 16 Ekim dersi)
+bekleyen_is_kaydet("kapanis", lambda cur, b: _kapanis_deneme_isleri(cur, b["C"]))
