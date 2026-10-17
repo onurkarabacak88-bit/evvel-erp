@@ -27,8 +27,12 @@ export default function UrunModulu({ onToast }) {
     if (mesgul) return;
     setMesgul(true);
     try {
-      const govde = { ad: form.ad, kategori_id: form.kategori_id, birim: 'adet', koli_ici: form.koliyle && form.koli_ici ? Number(form.koli_ici) : null,
-        kdv_oran: form.kdv_oran === '' ? null : Number(form.kdv_oran), aktif: form.aktif };
+      const farkli = form.fatura_birim && form.fatura_birim !== form.birim;
+      const govde = { ad: form.ad, kategori_id: form.kategori_id, birim: form.birim, koli_ici: form.koliyle && form.koli_ici ? Number(form.koli_ici) : null,
+        kdv_oran: form.kdv_oran === '' ? null : Number(form.kdv_oran), aktif: form.aktif,
+        fatura_birim: farkli ? form.fatura_birim : null,
+        sayim_ici: farkli && form.yon === 'sayim' && form.cevrim ? Number(form.cevrim) : null,
+        fatura_ici: farkli && form.yon === 'fatura' && form.cevrim ? Number(form.cevrim) : null };
       const r = await api(form.id ? `/evvel-yeni/urun/${form.id}` : '/evvel-yeni/urun', { method: 'POST', body: govde });
       onToast?.(r.mesaj); setForm(null); yukle();
     } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
@@ -53,10 +57,10 @@ export default function UrunModulu({ onToast }) {
       <style>{PI_CSS}</style>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
         <div><div className="pi-eyebrow">Evvel Yeni · Tanımlar</div><h1 style={{ fontSize: 30 }}>Ürünler</h1></div>
-        <Dugme kucuk ana disabled={!v} onClick={() => setForm({ ad: '', kategori_id: (kat && kat !== '' ? kat : '') || v?.kategoriler.find((k) => k.id)?.id || '', koliyle: false, koli_ici: '', kdv_oran: '0.10', aktif: true })}>+ Ürün ekle</Dugme>
+        <Dugme kucuk ana disabled={!v} onClick={() => setForm({ ad: '', kategori_id: (kat && kat !== '' ? kat : '') || v?.kategoriler.find((k) => k.id)?.id || '', koliyle: false, koli_ici: '', kdv_oran: '0.10', aktif: true, birim: 'adet', fatura_birim: 'adet', yon: 'sayim', cevrim: '' })}>+ Ürün ekle</Dugme>
         <Dugme kucuk disabled={!v} onClick={() => setKatForm({ ad: '', emoji: '' })}>+ Kategori</Dugme>
       </div>
-      <div style={{ fontSize: 13, color: R.metin2 }}>Her ürün <b>adetle</b> sayılır. Koliyle geliyorsa "1 koli kaç adet" yazılır; siparişte ve teslimde "2 koli + 3" yazılınca sistem adede çevirir. Fiyatlar burada değil, Toptancılar › Ürün fiyatları'nda.</div>
+      <div style={{ fontSize: 13, color: R.metin2 }}>Her ürün <b>personelin saydığı birimle</b> (adet, paket, kutu…) tutulur. Koliyle geliyorsa "1 koli kaç paket/adet" yazılır. Faturada başka birimle geliyorsa (ör. peçete faturada tek tek, biz paket sayıyoruz) çevrim yazılır; maliyet ona göre hesaplanır. Fiyatlar burada değil.</div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Hazırlanıyor…</div>}
       {v && (<>
@@ -70,10 +74,12 @@ export default function UrunModulu({ onToast }) {
           {liste.map((u) => (
             <div key={u.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${R.cizgi}`, padding: '7px 0', fontSize: 13.5, opacity: u.aktif ? 1 : 0.5 }}>
               <span style={{ flex: '1 1 220px', minWidth: 0 }}><b>{u.ad}</b>{(ara || yalnizBelirsiz) && <span style={{ color: R.not }}> · {u.kategori}</span>}</span>
-              <span style={{ width: 120, color: R.metin2 }}>{u.koli_ici ? <>koli = <b style={num}>{u.koli_ici}</b> adet</> : 'adet'}</span>
+              <span style={{ width: 210, color: R.metin2 }}><b>{u.birim}</b>{u.koli_ici ? <> · koli = <b style={num}>{u.koli_ici}</b> {u.birim}</> : ''}
+                {u.sayim_ici ? <> · 1 {u.birim} = {u.sayim_ici} {u.fatura_birim}</> : u.fatura_ici ? <> · faturada 1 {u.fatura_birim} = {u.fatura_ici} {u.birim}</> : ''}</span>
               <span style={{ width: 70, color: R.metin2 }}>{u.kdv_oran != null ? `KDV %${Math.round(u.kdv_oran * 100)}` : '—'}</span>
               {!u.aktif ? <Cip>pasif</Cip> : !u.birim_teyit ? <Cip tur="sari">birim teyit edilmedi</Cip> : <Cip tur="yesil">teyitli</Cip>}
-              <Dugme kucuk onClick={() => setForm({ id: u.id, ad: u.ad, kategori_id: u.kategori_id, koliyle: !!u.koli_ici, koli_ici: u.koli_ici ? String(u.koli_ici) : '', kdv_oran: u.kdv_oran != null ? Number(u.kdv_oran).toFixed(2) : '', aktif: u.aktif, teyit: u.birim_teyit })}>Düzelt</Dugme>
+              <Dugme kucuk onClick={() => setForm({ id: u.id, ad: u.ad, kategori_id: u.kategori_id, koliyle: !!u.koli_ici, koli_ici: u.koli_ici ? String(u.koli_ici) : '', kdv_oran: u.kdv_oran != null ? Number(u.kdv_oran).toFixed(2) : '', aktif: u.aktif, teyit: u.birim_teyit,
+                birim: u.birim || 'adet', fatura_birim: u.fatura_birim || u.birim || 'adet', yon: u.fatura_ici ? 'fatura' : 'sayim', cevrim: String(u.sayim_ici || u.fatura_ici || '') })}>Düzelt</Dugme>
               <Dugme kucuk onClick={() => izAc(u)}>İz</Dugme>
             </div>
           ))}
@@ -86,14 +92,24 @@ export default function UrunModulu({ onToast }) {
             <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Adı<input style={alan} value={form.ad} onChange={(e) => setForm((f) => ({ ...f, ad: e.target.value }))} /></label>
             <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Kategori<select style={alan} value={form.kategori_id} onChange={(e) => setForm((f) => ({ ...f, kategori_id: e.target.value }))}>
               {v.kategoriler.filter((k) => k.id).map((k) => <option key={k.id} value={k.id}>{k.ad}</option>)}</select></label>
-            <div style={{ fontSize: 13 }}>Nasıl sayılır? <b>Adet</b></div>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Personel nasıl sayar?<select style={alan} value={form.birim} onChange={(e) => setForm((f) => ({ ...f, birim: e.target.value }))}>
+              {(v.birimler || ['adet']).map((b) => <option key={b} value={b}>{b}</option>)}</select></label>
             <label style={{ fontSize: 13 }}><input type="checkbox" checked={form.koliyle} onChange={(e) => setForm((f) => ({ ...f, koliyle: e.target.checked }))} /> Koliyle gelir</label>
-            {form.koliyle && <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>1 koli kaç adet?<input style={alan} inputMode="numeric" value={form.koli_ici} onChange={(e) => setForm((f) => ({ ...f, koli_ici: e.target.value.replace(/\D/g, '') }))} /></label>}
+            {form.koliyle && <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>1 koli kaç {form.birim}?<input style={alan} inputMode="numeric" value={form.koli_ici} onChange={(e) => setForm((f) => ({ ...f, koli_ici: e.target.value.replace(/\D/g, '') }))} /></label>}
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Faturada nasıl geliyor?<select style={alan} value={form.fatura_birim} onChange={(e) => setForm((f) => ({ ...f, fatura_birim: e.target.value }))}>
+              {(v.fatura_birimleri || ['adet']).map((b) => <option key={b} value={b}>{b}{b === form.birim ? ' (sayımla aynı)' : ''}</option>)}</select></label>
+            {form.fatura_birim !== form.birim && (
+              <div style={{ display: 'grid', gap: 6, fontSize: 13 }}>
+                <label><input type="radio" checked={form.yon === 'sayim'} onChange={() => setForm((f) => ({ ...f, yon: 'sayim' }))} /> 1 {form.birim} içinde kaç {form.fatura_birim} var</label>
+                <label><input type="radio" checked={form.yon === 'fatura'} onChange={() => setForm((f) => ({ ...f, yon: 'fatura' }))} /> 1 {form.fatura_birim} içinde kaç {form.birim} var</label>
+                <input style={alan} inputMode="numeric" placeholder="sayı" value={form.cevrim} onChange={(e) => setForm((f) => ({ ...f, cevrim: e.target.value.replace(/\D/g, '') }))} />
+              </div>
+            )}
             <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>KDV<select style={alan} value={form.kdv_oran} onChange={(e) => setForm((f) => ({ ...f, kdv_oran: e.target.value }))}>
               {KDVLER.map(([d, a]) => <option key={d} value={d}>{a}</option>)}</select></label>
             {form.id && <label style={{ fontSize: 13 }}><input type="checkbox" checked={!form.aktif} onChange={(e) => setForm((f) => ({ ...f, aktif: !e.target.checked }))} /> Artık kullanılmıyor (pasif — geçmişi korunur)</label>}
             {form.id && !form.teyit && <div style={{ fontSize: 12.5, color: R.amber }}>Kaydedince bu ürünün birimi ve koli bilgisi "teyitli" olur.</div>}
-            <div><Dugme ana disabled={mesgul || !form.ad.trim() || (form.koliyle && Number(form.koli_ici) < 2)} onClick={kaydet}>Kaydet</Dugme></div>
+            <div><Dugme ana disabled={mesgul || !form.ad.trim() || (form.koliyle && Number(form.koli_ici) < 2) || (form.fatura_birim !== form.birim && Number(form.cevrim) < 2)} onClick={kaydet}>Kaydet</Dugme></div>
           </div>
         </div>
       )}

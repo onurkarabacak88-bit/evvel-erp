@@ -6,7 +6,11 @@ kopyalayıp oradan tekrar bağlayıp Evvel'in ilk versiyonu gibi olmasın."
   · Başlangıç listesi: 2026-10-17/18 akşamı sahiple temizlenen liste (mükerrerler ayıklanmış, birim / koli / KDV düzeltilmiş) — YENİ kimliklerle,
     bir kez yazılır (sürüm 2). İlk denemenin tabloları silinmez, *_v1_yedek adıyla saklanır (sürümleri sakla).
   · DEĞİŞİKLİK İZİ: ürünün güncel kartı + her değişiklik bir kayıt (alan, eski → yeni, kim, zaman). Silme yok: pasif + iz.
-  · BİRİM: tek sayım birimi (ilk sürüm 'adet'); koli = giriş yardımcısı (1 koli kaç adet). KDV ürün kartında. FİYAT katalogda değil.
+  · ÜÇ ÖLÇÜ (sahip 2026-10-18: "biz bunları koli değil PAKET olarak saydırıyoruz; faturada adet var, pakette 50"):
+      sayım birimi (birim: personelin saydığı — adet/paket/kutu/şişe/rulo, hep TAM SAYI) · koli (1 koli kaç sayım birimi) ·
+      fatura birimi (faturada nasıl geliyor) + çevrim: 1 sayım birimi = sayim_ici fatura adedi (peçete: 1 paket = 50 adet)
+      YA DA 1 fatura birimi = fatura_ici sayım birimi (Z peçete: 1 koli = 12 paket). Maliyet çevrimi TEK yerde: birim_maliyet().
+  · KDV ürün kartında. FİYAT katalogda değil.
   · PUBLIC servis: urun_haritasi(cur) · katalog(cur) · urun_bilgi(cur, idler) · urun_ad(cur, id) · urun_olustur(cur, …).
 """
 
@@ -24,8 +28,9 @@ from evvel_yeni_cekirdek import aktor as _aktor, bekleyen_is_kaydet
 
 router = APIRouter(prefix="/api/evvel-yeni/urun", tags=["evvel-yeni-urun"])
 log = logging.getLogger(__name__)
-BIRIMLER = ("adet",)          # kg / lt: miktar zinciri ondalığa geçince açılır
-SURUM = 2
+BIRIMLER = ("adet", "paket", "kutu", "şişe", "rulo")      # sayım birimi (tam sayı); kg / lt miktar zinciri ondalığa geçince
+FATURA_BIRIMLER = ("adet", "paket", "kutu", "koli", "şişe", "rulo")
+SURUM = 3
 _HAZIR = False
 
 
@@ -49,8 +54,13 @@ def _hazirla():
         cur.execute("CREATE TABLE IF NOT EXISTS ey_urun_surum (surum INT NOT NULL)")
         cur.execute("SELECT MAX(surum) AS s FROM ey_urun_surum")
         s = dict(cur.fetchone())["s"] or 0
-        if s < SURUM:
+        if s < 2:
             _surum2(cur)
+        if s < 3:      # fatura birimi + çevrim
+            cur.execute("ALTER TABLE ey_urun ADD COLUMN IF NOT EXISTS fatura_birim TEXT")
+            cur.execute("ALTER TABLE ey_urun ADD COLUMN IF NOT EXISTS sayim_ici INT")    # 1 sayım birimi = N fatura adedi
+            cur.execute("ALTER TABLE ey_urun ADD COLUMN IF NOT EXISTS fatura_ici INT")   # 1 fatura birimi = N sayım birimi
+        if s < SURUM:
             cur.execute("INSERT INTO ey_urun_surum (surum) VALUES (%s)", (SURUM,))
     _HAZIR = True
 
@@ -142,7 +152,8 @@ def katalog(cur, hepsi: bool = False) -> List[dict]:
     for u in [dict(r) for r in cur.fetchall() or []]:
         by_k.setdefault(u["kategori_id"], []).append({
             "id": u["id"], "ad": u["ad"], "birim": u["birim"], "birim_teyit": u["birim_teyit"], "koli_ici": u.get("koli_ici"),
-            "kdv_oran": float(u["kdv_oran"]) if u.get("kdv_oran") is not None else None, "aktif": u["aktif"]})
+            "kdv_oran": float(u["kdv_oran"]) if u.get("kdv_oran") is not None else None, "aktif": u["aktif"],
+            "fatura_birim": u.get("fatura_birim") or u["birim"], "sayim_ici": u.get("sayim_ici"), "fatura_ici": u.get("fatura_ici")})
     return [{"id": k["id"], "ad": k["ad"], "emoji": k.get("emoji"), "aktif": k["aktif"], "urunler": by_k.get(k["id"], [])} for k in kats]
 
 
@@ -152,13 +163,27 @@ def urun_bilgi(cur, idler) -> Dict[str, dict]:
     idler = [str(i) for i in (idler or []) if i]
     if not idler:
         return {}
-    cur.execute("SELECT id, ad, birim, koli_ici, kdv_oran, aktif FROM ey_urun WHERE id = ANY(%s)", (idler,))
+    cur.execute("SELECT id, ad, birim, koli_ici, kdv_oran, aktif, fatura_birim, sayim_ici, fatura_ici FROM ey_urun WHERE id = ANY(%s)", (idler,))
     return {dict(r)["id"]: {**dict(r), "kdv_oran": float(dict(r)["kdv_oran"]) if dict(r)["kdv_oran"] is not None else None}
             for r in cur.fetchall() or []}
 
 
 def urun_ad(cur, uid: str) -> Optional[str]:
     return (urun_bilgi(cur, [uid]).get(str(uid)) or {}).get("ad")
+
+
+def birim_maliyet(urun: dict, fatura_birim_fiyat) -> Optional[Decimal]:
+    """PUBLIC: faturadaki birim fiyat → 1 SAYIM biriminin maliyeti (peçete: 0,21 ₺/adet × 50 = 10,50 ₺/paket;
+    Z peçete: 917,50 ₺/koli ÷ 12 = 76,46 ₺/paket). Çevrim kuralının TEK yeri."""
+    if fatura_birim_fiyat is None:
+        return None
+    f = Decimal(str(fatura_birim_fiyat))
+    return f * int(urun.get("sayim_ici") or 1) / int(urun.get("fatura_ici") or 1)
+
+
+def faturadan_sayima(urun: dict, fatura_adet) -> Decimal:
+    """PUBLIC: faturadaki miktar → sayım birimi (60.000 adet peçete = 1.200 paket; 3 koli Z peçete = 36 paket)."""
+    return Decimal(str(fatura_adet or 0)) * int(urun.get("fatura_ici") or 1) / int(urun.get("sayim_ici") or 1)
 
 
 def _ayni_ad(cur, kategori_id: str, ad: str, haric: Optional[str]) -> None:
@@ -170,7 +195,8 @@ def _ayni_ad(cur, kategori_id: str, ad: str, haric: Optional[str]) -> None:
 
 
 def urun_olustur(cur, kategori_id: str, ad: str, kim: str, koli_ici: Optional[int] = None, kdv_oran=None,
-                 aktif: bool = True, birim_teyit: bool = True) -> dict:
+                 aktif: bool = True, birim_teyit: bool = True, birim: str = "adet", fatura_birim: Optional[str] = None,
+                 sayim_ici: Optional[int] = None, fatura_ici: Optional[int] = None) -> dict:
     """PUBLIC servis: yeni ürün + iz. Çağıranın işleminde çalışır (ya tam ya hiç)."""
     _hazirla()
     ad = " ".join(str(ad or "").split())[:120]
@@ -184,10 +210,12 @@ def urun_olustur(cur, kategori_id: str, ad: str, kim: str, koli_ici: Optional[in
     cur.execute("SELECT COALESCE(MAX(sira), 0) + 10 AS s FROM ey_urun WHERE kategori_id=%s", (kategori_id,))
     sira = int(dict(cur.fetchone())["s"])
     uid = str(uuid.uuid4())
-    cur.execute("""INSERT INTO ey_urun (id, ad, kategori_id, birim, birim_teyit, koli_ici, kdv_oran, aktif, sira) VALUES (%s,%s,%s,'adet',%s,%s,%s,%s,%s)""",
-                (uid, ad, kategori_id, bool(birim_teyit) or koli_ici is not None, koli_ici, kdv_oran, bool(aktif), sira))
+    cur.execute("""INSERT INTO ey_urun (id, ad, kategori_id, birim, birim_teyit, koli_ici, kdv_oran, aktif, sira, fatura_birim, sayim_ici, fatura_ici)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                (uid, ad, kategori_id, birim, bool(birim_teyit) or koli_ici is not None, koli_ici, kdv_oran, bool(aktif), sira,
+                 fatura_birim if fatura_birim and fatura_birim != birim else None, sayim_ici, fatura_ici))
     cur.execute("INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim) VALUES (%s,%s,'olusturma',NULL,%s,%s)",
-                (str(uuid.uuid4()), uid, json.dumps({"ad": ad, "koli_ici": koli_ici, "kdv_oran": None if kdv_oran is None else str(kdv_oran),
+                (str(uuid.uuid4()), uid, json.dumps({"ad": ad, "birim": birim, "koli_ici": koli_ici, "fatura_birim": fatura_birim, "sayim_ici": sayim_ici, "fatura_ici": fatura_ici, "kdv_oran": None if kdv_oran is None else str(kdv_oran),
                                                      "aktif": bool(aktif)}, ensure_ascii=False), kim))
     return {"id": uid, "ad": ad, "kategori_id": kategori_id}
 
@@ -199,7 +227,7 @@ def katalog_ucu(hepsi: bool = True):
         k = katalog(cur, hepsi=hepsi)
         cur.execute("SELECT COUNT(*) AS n FROM ey_urun WHERE aktif AND NOT birim_teyit")
         belirsiz = int(dict(cur.fetchone())["n"])
-    return {"kategoriler": k, "birim_belirsiz": belirsiz, "birimler": list(BIRIMLER)}
+    return {"kategoriler": k, "birim_belirsiz": belirsiz, "birimler": list(BIRIMLER), "fatura_birimleri": list(FATURA_BIRIMLER)}
 
 
 class KategoriBody(BaseModel):
@@ -259,6 +287,9 @@ class UrunBody(BaseModel):
     koli_ici: Optional[int] = None
     kdv_oran: Optional[Decimal] = None     # 0.01 · 0.10 · 0.20
     aktif: bool = True
+    fatura_birim: Optional[str] = None     # boş = sayım birimiyle aynı
+    sayim_ici: Optional[int] = None        # 1 sayım birimi = N fatura adedi (peçete 1 paket = 50 adet)
+    fatura_ici: Optional[int] = None       # 1 fatura birimi = N sayım birimi (Z peçete 1 koli = 12 paket)
 
 
 def _dogrula(b: UrunBody) -> None:
@@ -270,6 +301,16 @@ def _dogrula(b: UrunBody) -> None:
         raise HTTPException(400, "1 koli kaç adet? (2 ya da daha fazla; koliyle gelmiyorsa boş bırak)")
     if b.kdv_oran is not None and not Decimal("0") <= b.kdv_oran <= Decimal("0.30"):
         raise HTTPException(400, "KDV oranı 0–0,30 arası (ör. 0,10)")
+    if b.fatura_birim in (None, "", b.birim):
+        b.fatura_birim, b.sayim_ici, b.fatura_ici = None, None, None
+        return
+    if b.fatura_birim not in FATURA_BIRIMLER:
+        raise HTTPException(400, "Faturadaki birim: " + " / ".join(FATURA_BIRIMLER))
+    for v in (b.sayim_ici, b.fatura_ici):
+        if v is not None and not 2 <= int(v) <= 100000:
+            raise HTTPException(400, "Çevrim sayısı 2 ya da daha fazla olmalı")
+    if bool(b.sayim_ici) == bool(b.fatura_ici):
+        raise HTTPException(400, f"Faturada '{b.fatura_birim}' geliyor: ya '1 {b.birim} kaç {b.fatura_birim}' ya da '1 {b.fatura_birim} kaç {b.birim}' — birini yaz")
 
 
 @router.post("")
@@ -278,7 +319,8 @@ def urun_ekle(b: UrunBody, x_evvel_oturum: Optional[str] = Header(default=None))
     _dogrula(b)
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
-        r = urun_olustur(cur, b.kategori_id, b.ad, kim, koli_ici=b.koli_ici, kdv_oran=b.kdv_oran, aktif=b.aktif)
+        r = urun_olustur(cur, b.kategori_id, b.ad, kim, koli_ici=b.koli_ici, kdv_oran=b.kdv_oran, aktif=b.aktif, birim=b.birim,
+                         fatura_birim=b.fatura_birim, sayim_ici=b.sayim_ici, fatura_ici=b.fatura_ici)
     return {"ok": True, "id": r["id"], "mesaj": f"{r['ad']} eklendi"}
 
 
@@ -298,7 +340,7 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
         if not cur.fetchone():
             raise HTTPException(400, "Kategori seç")
         yeni = {"ad": " ".join(b.ad.split())[:120], "kategori_id": b.kategori_id, "birim": b.birim, "koli_ici": b.koli_ici,
-                "kdv_oran": b.kdv_oran, "aktif": b.aktif}
+                "kdv_oran": b.kdv_oran, "aktif": b.aktif, "fatura_birim": b.fatura_birim, "sayim_ici": b.sayim_ici, "fatura_ici": b.fatura_ici}
 
         def _es(a, b_):
             if a is None or b_ is None:
@@ -310,12 +352,12 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
         if b.aktif and ("ad" in degisen or "kategori_id" in degisen or "aktif" in degisen):
             cur.execute("SELECT pg_advisory_xact_lock(7012042)")
             _ayni_ad(cur, b.kategori_id, yeni["ad"], uid)
-        if e["birim"] != b.birim and e.get("birim_teyit"):
-            raise HTTPException(409, "Sayım birimi teyitli ürünün birimi değiştirilemez — farklı paket ayrı ürün olur")
+        # Birim kilidi (hareket görmüş ürünün sayım birimi değişmez) Depo hareketleri bu kataloğa bağlanınca (1b) gelir; yeni katalogda henüz hareket yok.
         if not degisen and e["birim_teyit"]:
             return {"ok": True, "mesaj": "Değişiklik yok"}
-        cur.execute("""UPDATE ey_urun SET ad=%s, kategori_id=%s, birim=%s, birim_teyit=TRUE, koli_ici=%s, kdv_oran=%s, aktif=%s WHERE id=%s""",
-                    (yeni["ad"], b.kategori_id, b.birim, b.koli_ici, b.kdv_oran, b.aktif, uid))
+        cur.execute("""UPDATE ey_urun SET ad=%s, kategori_id=%s, birim=%s, birim_teyit=TRUE, koli_ici=%s, kdv_oran=%s, aktif=%s,
+                              fatura_birim=%s, sayim_ici=%s, fatura_ici=%s WHERE id=%s""",
+                    (yeni["ad"], b.kategori_id, b.birim, b.koli_ici, b.kdv_oran, b.aktif, b.fatura_birim, b.sayim_ici, b.fatura_ici, uid))
         for k in degisen + ([] if e["birim_teyit"] else ["birim_teyit"]):
             cur.execute("INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim) VALUES (%s,%s,%s,%s,%s,%s)",
                         (str(uuid.uuid4()), uid, k, None if e.get(k) is None else str(e.get(k)),
