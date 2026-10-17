@@ -191,7 +191,7 @@ def _eskiye_yaz(cur, u: dict) -> None:
             cur.execute("""INSERT INTO siparis_urun (id, kategori_id, ad, norm_ad, sira, aktif, birim, koli_ic_adet, koli_adet)
                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                            ON CONFLICT (id) DO UPDATE SET kategori_id=EXCLUDED.kategori_id, ad=EXCLUDED.ad,
-                               norm_ad=CASE WHEN siparis_urun.ad IS DISTINCT FROM EXCLUDED.ad OR siparis_urun.kategori_id IS DISTINCT FROM EXCLUDED.kategori_id
+                               norm_ad=CASE WHEN TRIM(siparis_urun.ad) IS DISTINCT FROM TRIM(EXCLUDED.ad) OR siparis_urun.kategori_id IS DISTINCT FROM EXCLUDED.kategori_id
                                             THEN EXCLUDED.norm_ad ELSE siparis_urun.norm_ad END,   -- ad değişmediyse eski anahtar kalır (pasif ikizle çakışmasın)
                                aktif=EXCLUDED.aktif, koli_ic_adet=EXCLUDED.koli_ic_adet,
                                koli_adet=EXCLUDED.koli_adet, guncelleme=NOW()""",
@@ -202,7 +202,7 @@ def _eskiye_yaz(cur, u: dict) -> None:
     except Exception as e:  # noqa: BLE001
         log.warning("ürün kataloğu: eski kataloğa yazılamadı (%s): %s", u.get("id"), str(e)[:160])
         if "norm_ad" in str(e) or "unique" in str(e).lower():
-            raise HTTPException(409, "Eski katalogda bu adla kayıtlı (pasif) bir ürün var — farklı bir ad yaz")
+            raise HTTPException(409, "Bu kategoride bu adla kayıtlı başka bir ürün var — farklı bir ad yaz ya da pasif olanı yeniden aç")
         raise HTTPException(409, "Şube paneli kataloğu güncellenemedi — kayıt yapılmadı, tekrar dene")
 
 
