@@ -164,7 +164,8 @@ def urun_bilgi(cur, idler) -> Dict[str, dict]:
     if not idler:
         return {}
     cur.execute("SELECT id, ad, birim, koli_ici, kdv_oran, aktif, fatura_birim, sayim_ici, fatura_ici FROM ey_urun WHERE id = ANY(%s)", (idler,))
-    return {dict(r)["id"]: {**dict(r), "kdv_oran": float(dict(r)["kdv_oran"]) if dict(r)["kdv_oran"] is not None else None}
+    return {dict(r)["id"]: {**dict(r), "kdv_oran": float(dict(r)["kdv_oran"]) if dict(r)["kdv_oran"] is not None else None,
+                            "fatura_birim": dict(r)["fatura_birim"] or dict(r)["birim"]}
             for r in cur.fetchall() or []}
 
 
@@ -194,6 +195,27 @@ def _ayni_ad(cur, kategori_id: str, ad: str, haric: Optional[str]) -> None:
             raise HTTPException(409, f"Bu kategoride aynı adlı ürün var: {dict(r)['ad']}")
 
 
+def _cevrim(birim: str, koli_ici, fatura_birim, sayim_ici, fatura_ici):
+    """Sayım / fatura birimi kuralı (tek yer). Döner: (fatura_birim, sayim_ici, fatura_ici) — aynı birimse üçü boş.
+    Faturada KOLİ geliyorsa çevrim koli bilgisinden türer (Fable: aynı bilgi iki yerde tutulup çelişmesin)."""
+    if birim not in BIRIMLER:
+        raise HTTPException(400, "Sayım birimi: " + " / ".join(BIRIMLER))
+    if fatura_birim in (None, "", birim):
+        return None, None, None
+    if fatura_birim not in FATURA_BIRIMLER:
+        raise HTTPException(400, "Faturadaki birim: " + " / ".join(FATURA_BIRIMLER))
+    if fatura_birim == "koli":
+        if not koli_ici:
+            raise HTTPException(400, f"Faturada koli geliyor — '1 koli kaç {birim}' yaz")
+        return "koli", None, int(koli_ici)
+    for v in (sayim_ici, fatura_ici):
+        if v is not None and not 2 <= int(v) <= 100000:
+            raise HTTPException(400, "Çevrim sayısı 2 ya da daha fazla olmalı")
+    if bool(sayim_ici) == bool(fatura_ici):
+        raise HTTPException(400, f"Faturada '{fatura_birim}' geliyor: ya '1 {birim} kaç {fatura_birim}' ya da '1 {fatura_birim} kaç {birim}' — birini yaz")
+    return fatura_birim, (int(sayim_ici) if sayim_ici else None), (int(fatura_ici) if fatura_ici else None)
+
+
 def urun_olustur(cur, kategori_id: str, ad: str, kim: str, koli_ici: Optional[int] = None, kdv_oran=None,
                  aktif: bool = True, birim_teyit: bool = True, birim: str = "adet", fatura_birim: Optional[str] = None,
                  sayim_ici: Optional[int] = None, fatura_ici: Optional[int] = None) -> dict:
@@ -202,6 +224,7 @@ def urun_olustur(cur, kategori_id: str, ad: str, kim: str, koli_ici: Optional[in
     ad = " ".join(str(ad or "").split())[:120]
     if len(ad) < 2:
         raise HTTPException(400, "Ürün adı en az 2 harf")
+    fatura_birim, sayim_ici, fatura_ici = _cevrim(birim, koli_ici, fatura_birim, sayim_ici, fatura_ici)
     cur.execute("SELECT 1 FROM ey_urun_kategori WHERE id=%s AND aktif", (kategori_id,))
     if not kategori_id or not cur.fetchone():
         raise HTTPException(400, "Kategori seç")
@@ -213,7 +236,7 @@ def urun_olustur(cur, kategori_id: str, ad: str, kim: str, koli_ici: Optional[in
     cur.execute("""INSERT INTO ey_urun (id, ad, kategori_id, birim, birim_teyit, koli_ici, kdv_oran, aktif, sira, fatura_birim, sayim_ici, fatura_ici)
                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                 (uid, ad, kategori_id, birim, bool(birim_teyit) or koli_ici is not None, koli_ici, kdv_oran, bool(aktif), sira,
-                 fatura_birim if fatura_birim and fatura_birim != birim else None, sayim_ici, fatura_ici))
+                 fatura_birim, sayim_ici, fatura_ici))
     cur.execute("INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim) VALUES (%s,%s,'olusturma',NULL,%s,%s)",
                 (str(uuid.uuid4()), uid, json.dumps({"ad": ad, "birim": birim, "koli_ici": koli_ici, "fatura_birim": fatura_birim, "sayim_ici": sayim_ici, "fatura_ici": fatura_ici, "kdv_oran": None if kdv_oran is None else str(kdv_oran),
                                                      "aktif": bool(aktif)}, ensure_ascii=False), kim))
@@ -301,16 +324,7 @@ def _dogrula(b: UrunBody) -> None:
         raise HTTPException(400, "1 koli kaç adet? (2 ya da daha fazla; koliyle gelmiyorsa boş bırak)")
     if b.kdv_oran is not None and not Decimal("0") <= b.kdv_oran <= Decimal("0.30"):
         raise HTTPException(400, "KDV oranı 0–0,30 arası (ör. 0,10)")
-    if b.fatura_birim in (None, "", b.birim):
-        b.fatura_birim, b.sayim_ici, b.fatura_ici = None, None, None
-        return
-    if b.fatura_birim not in FATURA_BIRIMLER:
-        raise HTTPException(400, "Faturadaki birim: " + " / ".join(FATURA_BIRIMLER))
-    for v in (b.sayim_ici, b.fatura_ici):
-        if v is not None and not 2 <= int(v) <= 100000:
-            raise HTTPException(400, "Çevrim sayısı 2 ya da daha fazla olmalı")
-    if bool(b.sayim_ici) == bool(b.fatura_ici):
-        raise HTTPException(400, f"Faturada '{b.fatura_birim}' geliyor: ya '1 {b.birim} kaç {b.fatura_birim}' ya da '1 {b.fatura_birim} kaç {b.birim}' — birini yaz")
+    b.fatura_birim, b.sayim_ici, b.fatura_ici = _cevrim(b.birim, b.koli_ici, b.fatura_birim, b.sayim_ici, b.fatura_ici)
 
 
 @router.post("")
