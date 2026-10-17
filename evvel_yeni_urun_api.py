@@ -84,7 +84,7 @@ def _ilk_kopya(cur) -> bool:
             cur.execute("""SELECT id::text AS id, ad, kategori_id::text AS kategori_id, sira, aktif, depo_stok_kalem_kodu AS kod,
                                   NULLIF(TRIM(COALESCE(birim, '')), '') AS birim,
                                   koli_ic_adet AS k1, koli_adet AS k2
-                             FROM siparis_urun ORDER BY sira, ad""")   # Fable: paylaşılan depo kodunda sonuç sıraya bağlı olmasın
+                             FROM siparis_urun ORDER BY aktif DESC, sira, ad""")   # paylaşılan depo kodu KULLANIMDAKİ ürüne bağlanır (pasif ikize değil)
             n = 0
             for r in cur.fetchall() or []:
                 r = dict(r)
@@ -261,6 +261,39 @@ def urun_denetim():
     # Hiçbir ürüne bağlanmamış kodlar (eski ad/kod ile kalmış stok, fatura eşlemesi…) — "aynı ürün iki kodla" kanıtı
     yetim = {ad: {k: v for k, v in veri[ad].items() if k not in bilinen} for ad in ("stok", "stok_hareket", "fatura_esleme", "fatura_satir", "alis", "acilis_birimi", "siparis", "ey_hareket")}
     return {"urunler": satirlar, "yetim_kodlar": yetim, "hatalar": hatalar}
+
+
+@router.post("/onar/takma")
+def takma_onar(uygula: bool = False, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Tek seferlik onarım (önce KURU): ilk kopyada eski depo kodu, aynı kodu taşıyan PASİF ikize bağlanmıştı (ör. 'pasta_snickers'
+    pasif Snickers'a) → kodu aynı kategoride aynı kodlu TEK kullanımdaki ürüne taşır. Birden çok aday varsa dokunmaz, listeler."""
+    _hazirla()
+    with db() as (conn, cur):
+        kim = _aktor(cur, x_evvel_oturum)
+        cur.execute("""SELECT t.takma, t.urun_id AS pasif_id, p.ad AS pasif_ad,
+                              ARRAY_AGG(a.id ORDER BY a.sira) FILTER (WHERE a.id IS NOT NULL) AS adaylar,
+                              ARRAY_AGG(a.ad ORDER BY a.sira) FILTER (WHERE a.id IS NOT NULL) AS aday_adlar
+                         FROM ey_urun_takma t
+                         JOIN ey_urun p ON p.id=t.urun_id AND NOT p.aktif
+                         LEFT JOIN siparis_urun so ON so.depo_stok_kalem_kodu=t.takma AND so.id::text<>t.urun_id
+                         LEFT JOIN ey_urun a ON a.id=so.id::text AND a.aktif AND a.kategori_id=p.kategori_id
+                        WHERE t.kaynak='eski_kod'
+                        GROUP BY t.takma, t.urun_id, p.ad""")
+        tasinan, belirsiz = [], []
+        for r in [dict(x) for x in cur.fetchall() or []]:
+            adaylar = r["adaylar"] or []
+            if len(adaylar) != 1:
+                if adaylar:
+                    belirsiz.append({"takma": r["takma"], "pasif": r["pasif_ad"], "adaylar": r["aday_adlar"]})
+                continue
+            tasinan.append({"takma": r["takma"], "urun": r["aday_adlar"][0], "eski": r["pasif_ad"]})
+            if uygula:
+                cur.execute("UPDATE ey_urun_takma SET urun_id=%s WHERE takma=%s AND urun_id=%s", (adaylar[0], r["takma"], r["pasif_id"]))
+                cur.execute("""INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim, kaynak_ref) VALUES (%s,%s,'takma',%s,%s,%s,%s)
+                               ON CONFLICT DO NOTHING""",
+                            (str(uuid.uuid4()), adaylar[0], f"{r['takma']} → pasif {r['pasif_id']}", r["takma"], kim,
+                             f"onar_takma:{r['takma']}"))
+    return {"uygulandi": uygula, "tasinan": tasinan, "belirsiz": belirsiz}
 
 
 @router.get("/katalog")
