@@ -14594,10 +14594,9 @@ def ops_siparis_ozel_islem(body: OpsSiparisOzelIslemBody):
             return {"success": True, "durum": "reddedildi"}
 
         if islem == "katalog":
-            # 📚 Evvel Yeni tek katalog (2026-10-17, Fable): eski ekleme kapısı kapandı → ürün yeni katalogdan eklenir (eski kataloğa da yazılır)
-            import evvel_yeni_urun_api as _ey_urun
-            rur = _ey_urun.urun_olustur(cur, None, str(rd["urun_adi"]), "merkez (özel talep)", kategori_kod=str(rd["kategori_kod"]),
-                                       birim_teyit=False, varsa_bagla=True)
+            # 📚 Eski katalog DONDURULDU (sahip 2026-10-18: yeni katalog sıfırdan, eski sisteme bağ yok; eski sistem kaldırılacak)
+            raise HTTPException(409, "Eski katalog donduruldu — ürün Evvel Yeni › Tanımlar › Ürünler'den eklenir")
+            rur = _siparis_urun_insert(cur, str(rd["kategori_kod"]), str(rd["urun_adi"]))
             uid = str(rur["id"])
             audit(cur, "siparis_urun", uid, "OZEL_ONAY_KATALOG")
             cur.execute(

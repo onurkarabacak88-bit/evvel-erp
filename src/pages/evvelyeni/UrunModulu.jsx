@@ -1,5 +1,5 @@
 // 📚 ÜRÜN KATALOĞU — tak-çıkar modül (sunucu: evvel_yeni_urun_api.py). Sayfası Tanımlar altında.
-// Sahip (2026-10-17): "Katalog örüntüsü ile depo örüntüsü aynı mantıkta; yeni Evvel'in altyapısını yok sayma." Tek ürün kimliği,
+// Sahip (2026-10-18): katalog SIFIRDAN — eski sisteme bağ yok (eski kimlik / kod / geri yazma yok). Tek ürün kimliği,
 // her değişiklik izli; tek sayım birimi (adet), koli = giriş yardımcısı ("1 koli kaç adet"). Fiyat burada değil (Ürün fiyatları).
 import React, { useEffect, useState } from 'react';
 import { api } from '../../utils/api';
@@ -18,6 +18,7 @@ export default function UrunModulu({ onToast }) {
   const [form, setForm] = useState(null);
   const [iz, setIz] = useState(null);
   const [mesgul, setMesgul] = useState(false);
+  const [katForm, setKatForm] = useState(null);
   const yukle = () => api('/evvel-yeni/urun/katalog?hepsi=true').then((d) => { setV(d); setHata(''); setKat((k) => k || d.kategoriler.find((x) => x.id)?.id || ''); })
     .catch((e) => setHata(e?.message || 'Katalog okunamadı'));
   useEffect(() => { yukle(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -33,6 +34,15 @@ export default function UrunModulu({ onToast }) {
     } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
     setMesgul(false);
   };
+  const katKaydet = async () => {
+    if (mesgul) return;
+    setMesgul(true);
+    try {
+      const r = await api('/evvel-yeni/urun/kategori', { method: 'POST', body: { ad: katForm.ad, emoji: katForm.emoji || null } });
+      onToast?.(r.mesaj); setKatForm(null); setKat(r.id); yukle();
+    } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+    setMesgul(false);
+  };
   const izAc = (u) => api(`/evvel-yeni/urun/${u.id}/iz`).then((d) => setIz({ u, satir: d.iz })).catch(() => {});
 
   const tum = (v?.kategoriler || []).flatMap((k) => k.urunler.map((u) => ({ ...u, kategori_id: k.id, kategori: k.ad })));
@@ -44,6 +54,7 @@ export default function UrunModulu({ onToast }) {
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
         <div><div className="pi-eyebrow">Evvel Yeni · Tanımlar</div><h1 style={{ fontSize: 30 }}>Ürünler</h1></div>
         <Dugme kucuk ana disabled={!v} onClick={() => setForm({ ad: '', kategori_id: (kat && kat !== '' ? kat : '') || v?.kategoriler.find((k) => k.id)?.id || '', koliyle: false, koli_ici: '', kdv_oran: '0.10', aktif: true })}>+ Ürün ekle</Dugme>
+        <Dugme kucuk disabled={!v} onClick={() => setKatForm({ ad: '', emoji: '' })}>+ Kategori</Dugme>
       </div>
       <div style={{ fontSize: 13, color: R.metin2 }}>Her ürün <b>adetle</b> sayılır. Koliyle geliyorsa "1 koli kaç adet" yazılır; siparişte ve teslimde "2 koli + 3" yazılınca sistem adede çevirir. Fiyatlar burada değil, Toptancılar › Ürün fiyatları'nda.</div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
@@ -83,6 +94,16 @@ export default function UrunModulu({ onToast }) {
             {form.id && <label style={{ fontSize: 13 }}><input type="checkbox" checked={!form.aktif} onChange={(e) => setForm((f) => ({ ...f, aktif: !e.target.checked }))} /> Artık kullanılmıyor (pasif — geçmişi korunur)</label>}
             {form.id && !form.teyit && <div style={{ fontSize: 12.5, color: R.amber }}>Kaydedince bu ürünün birimi ve koli bilgisi "teyitli" olur.</div>}
             <div><Dugme ana disabled={mesgul || !form.ad.trim() || (form.koliyle && Number(form.koli_ici) < 2)} onClick={kaydet}>Kaydet</Dugme></div>
+          </div>
+        </div>
+      )}
+      {katForm && (
+        <div onClick={() => setKatForm(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} style={{ ...kart, padding: 18, width: 'min(380px, 100%)', display: 'grid', gap: 10 }}>
+            <b style={{ fontSize: 17 }}>Yeni kategori</b>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Adı<input style={alan} value={katForm.ad} onChange={(e) => setKatForm((f) => ({ ...f, ad: e.target.value }))} /></label>
+            <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Simge (isteğe bağlı)<input style={alan} value={katForm.emoji} maxLength={4} onChange={(e) => setKatForm((f) => ({ ...f, emoji: e.target.value }))} /></label>
+            <div><Dugme ana disabled={mesgul || katForm.ad.trim().length < 2} onClick={katKaydet}>Kaydet</Dugme></div>
           </div>
         </div>
       )}
