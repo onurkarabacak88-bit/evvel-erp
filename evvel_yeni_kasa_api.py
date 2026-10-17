@@ -270,12 +270,25 @@ def _olaylar(kayitlar: List[dict]) -> List[dict]:
             out.append({**r, "olay": "teslim_cikis", "gun": r["is_gunu"], "s": r["_sira"]})
             if r["durum"] == "onaylandi":
                 g = r["veri"].get("onay_gunu") or r["is_gunu"]
+                if _geriye_donuk(r):
+                    g = r["is_gunu"]   # Fable: sonradan (geriye dönük) girilen teslim evde de TESLİM günü görünür (yoksa günlerce "yolda")
                 s = r["onay_zamani"].isoformat() if hasattr(r.get("onay_zamani"), "isoformat") else r["_sira"]
                 out.append({**r, "olay": "teslim_alim", "gun": g, "s": s})
         else:
             out.append({**r, "olay": r["tur"], "gun": r["is_gunu"], "s": r["_sira"]})
-    out.sort(key=lambda o: (o["gun"], o["s"], o["id"], o["olay"]))
+    # Fable: gün içinde önce GİRİŞ (açılış, satış nakdi, dış giriş, POS) sonra çıkış — teslim kapanıştan önce yazılınca sahte eksi oluyordu
+    sira = {"acilis": 0, "kapanis": 1, "dis": 1, "pos_yatis": 1}
+    out.sort(key=lambda o: (o["gun"], sira.get(o["olay"], 2), o["s"], o["id"], o["olay"]))
     return out
+
+
+def _geriye_donuk(r: dict) -> bool:
+    """Teslim kaydı, teslim gününden ≥2 gün sonra GİRİLMİŞSE (yönetimin geriye dönük girişi) True."""
+    kz = r.get("kayit_zamani")
+    try:
+        return bool(kz and (kz.date() - date.fromisoformat(str(r["is_gunu"])[:10])).days >= 2)
+    except Exception:  # noqa: BLE001
+        return False
 
 
 # ─────────────────────────── MOTOR ───────────────────────────
@@ -1259,7 +1272,7 @@ def onayla(hid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(defa
             al = _kurus(body.alinan)
             if al < 0:
                 raise HTTPException(400, "Sayılan tutar eksi olamaz")
-            bugun = max(_bugun().isoformat(), r["is_gunu"])
+            bugun = r["is_gunu"] if _geriye_donuk(r) else max(_bugun().isoformat(), r["is_gunu"])
             veri.update(alinan=al, onay_gunu=bugun)
             kilit = _sayim_kilidi(_olaylar(kayit))
             _kilit_denetle([(r["hedef"], bugun)], kilit, C)

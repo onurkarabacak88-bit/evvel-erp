@@ -284,7 +284,8 @@ export function DevirDefteri() {
                   <td style={hucre}>{g.aksam ? <><b>{g.aksam.kim || '?'}</b> · {g.aksam.saat}<br />kör toplam <b style={num}>{tut(g.aksam.kor_toplam)}</b>
                     {g.aksam.teslim ? <> · teslim <b style={num}>{tut(g.aksam.teslim)}</b> → {g.aksam.kime || <span style={{ color: R.kirmizi }}>kime? kayıt yok</span>}</> : ' · teslim yok'}
                     {g.aksam.ara_teslim && <div style={{ color: R.not }}>ara teslim: {g.aksam.ara_teslim}</div>}
-                    <div>bıraktı <b style={num}>{tut(g.aksam.birakilan)}</b></div></> : <span style={{ color: R.not }}>kapanış yok</span>}</td>
+                    <div>bıraktı <b style={num}>{tut(g.aksam.birakilan)}</b></div></> : <span style={{ color: R.not }}>kapanış yok</span>}
+                    {g.elle_teslim && <div style={{ color: 'var(--pi-accent)', fontSize: 12 }}>teslim (Kasa'ya elle): {g.elle_teslim}</div>}</td>
                   <td style={hucre}>{g.ertesi_sabah ? <><b>{g.ertesi_sabah.kim || '?'}</b> · {g.ertesi_sabah.saat}<br />saydı <b style={num}>{tut(g.ertesi_sabah.sayilan)}</b></> : <span style={{ color: R.not }}>—</span>}</td>
                   <td style={{ ...hucre, fontWeight: 700 }}>{g.zincir_fark == null ? <span style={{ color: R.not }}>—</span> : g.zincir_tutuyor ? <span style={{ color: R.yesil }}>tuttu ✓</span> : <span style={{ color: R.kirmizi }}>{g.zincir_fark > 0 ? '+' : ''}{fmt(g.zincir_fark)}</span>}</td>
                 </tr>

@@ -902,7 +902,7 @@ function BankaSekmesi({ onToast, onDegisti }) {
                           {b.satirlar.map((x, i) => (
                             <tr key={i}>
                               <td style={{ ...num, whiteSpace: 'nowrap' }}>{tKisa(x.gun)}</td>
-                              <td style={{ textAlign: 'left' }}>{IZ_AD[x.tur] || x.etiket}{x.otomatik ? <span style={{ color: R.not }}> · otomatik</span> : null}</td>
+                              <td style={{ textAlign: 'left' }}>{x.etiket || IZ_AD[x.tur]}{x.otomatik ? <span style={{ color: R.not }}> · otomatik</span> : null}</td>
                               <td style={{ textAlign: 'left' }}>{x.sube || '—'}</td>
                               <td style={{ textAlign: 'left' }}>{x.personel || '—'}</td>
                               <td style={{ ...num, color: R.yesil }}>{x.d > 0 ? fmt(x.d) : ''}</td>
@@ -1034,7 +1034,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
             kolonlar: [{ ad: 'Gün' }, { ad: 'Hareket', sar: true }, { ad: 'Şube' }, { ad: 'Teslim eden / yapan' }, { ad: 'Alan' },
               { ad: 'Giren', sag: true }, { ad: 'Çıkan', sag: true }, { ad: 'Bakiye', sag: true }],
             satirlar: r.iz.map((x) => [
-              tKisa(x.tarih), IZ_AD[x.tur] || x.etiket, x.sube || '—', x.personel || '—', x.alan || '—',
+              tKisa(x.tarih), x.etiket || IZ_AD[x.tur], x.sube || '—', x.personel || '—', x.alan || '—',
               x.d > 0 ? { t: fmt(x.d), renk: R.yesil } : '', x.d < 0 ? { t: fmt(-x.d), renk: R.kirmizi } : '',
               { t: fmt(x.bakiye), kalin: true, renk: x.bakiye < 0 ? R.kirmizi : undefined },
             ]),

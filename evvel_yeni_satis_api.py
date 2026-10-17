@@ -450,6 +450,22 @@ def devir_defteri(ay: Optional[str] = None):
                         {"tur": r["teslim_turu"], "tutar": float(r["tutar"] or 0), "alan": r.get("teslim_alan_ad"), "eden": r.get("teslim_eden_ad")})
         except Exception:  # noqa: BLE001
             pass
+    # Fable: yönetimin Kasa'ya ELLE girdiği teslimler (panelde yok) devir defterinde "kime"de görünmüyordu
+    elle_tes = {}
+    try:
+        from evvel_yeni_kasa_api import _hazirla as _kh, _yukle as _ky
+        _kh()
+        with db() as (conn2, cur2):
+            _, C2, kayit2, _ = _ky(cur2, tum_donemler=True)
+        for h in kayit2:
+            if h["tur"] != "teslim" or (h.get("kaynak_ref") or "").startswith("kasa_teslim:"):
+                continue
+            ks = (C2.get(h.get("kaynak")) or {}).get("sube_id")
+            if ks:
+                elle_tes.setdefault((str(ks), h["is_gunu"]), []).append(
+                    f"{(C2.get(h.get('hedef')) or {}).get('kisa') or h.get('hedef')} {h['tutar'] / 100:,.0f}".replace(",", "."))
+    except Exception as e:  # noqa: BLE001
+        log.warning("devir defteri: Kasa teslimleri okunamadı: %s", str(e)[:150])
     f = lambda v: float(v) if v is not None else None  # noqa: E731
     saat = lambda ts, gun=None: _tr_saat(ts, gun)  # noqa: E731
     out = []
@@ -484,6 +500,7 @@ def devir_defteri(ay: Optional[str] = None):
             if aksam and ertesi and aksam["birakilan"] is not None and ertesi["sayilan"] is not None:
                 kopuk = round(ertesi["sayilan"] - aksam["birakilan"], 2)
             gunler.append({"gun": gi, "sabah": sabah if a else None, "vardiya": vardiya, "aksam": aksam, "ertesi_sabah": ertesi,
+                           "elle_teslim": ", ".join(elle_tes.get((sid, gi), [])) or None,
                            "zincir_fark": kopuk, "zincir_tutuyor": (kopuk is not None and abs(kopuk) < 1)})
             g += timedelta(days=1)
         out.append({"sube_id": sid, "ad": s["ad"], "gunler": gunler,
