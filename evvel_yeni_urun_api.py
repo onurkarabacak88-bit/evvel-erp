@@ -207,6 +207,62 @@ def _eskiye_yaz(cur, u: dict) -> None:
 
 
 # ─────────────────────────── UÇLAR ───────────────────────────
+@router.get("/denetim")
+def urun_denetim():
+    """SALT-OKUR: her ürünün eski + yeni sistemde nerede kullanıldığı (stok, hareket, sipariş, teslim, fatura, eşleme, koli kanıtı).
+    Sahip (2026-10-17): "aynı ürün iki kez kodlanmış; eski sistem doğru kurulmadı — dikkatli denetle". Hiçbir şey YAZMAZ."""
+    _hazirla()
+    sorgular = {
+        "eski": """SELECT id::text AS id, ad, norm_ad, aktif, depo_stok_kalem_kodu AS depo_kodu, birim, koli_ic_adet, koli_adet, birim_fiyat_tl FROM siparis_urun""",
+        "stok": """SELECT kalem_kodu AS id, COUNT(*) AS satir, SUM(mevcut_adet) AS mevcut, string_agg(sube_id || ':' || mevcut_adet, ' ') AS dagilim
+                   FROM sube_depo_stok GROUP BY kalem_kodu""",
+        "stok_hareket": """SELECT kalem_kodu AS id, COUNT(*) AS n, MAX(zaman)::date::text AS son FROM sube_depo_stok_hareket GROUP BY kalem_kodu""",
+        "ey_hareket": """SELECT urun_id AS id, COUNT(*) AS n, MAX(is_gunu)::text AS son FROM ey_stok_hareket WHERE NOT iptal GROUP BY urun_id""",
+        "siparis": """SELECT k->>'urun_id' AS id, COUNT(*) AS n, MAX(t.tarih)::text AS son, SUM(COALESCE((k->>'adet')::numeric,0)) AS adet
+                      FROM siparis_talep t, jsonb_array_elements(CASE WHEN jsonb_typeof(t.kalemler)='array' THEN t.kalemler ELSE '[]'::jsonb END) k
+                      GROUP BY 1""",
+        "teslim": """SELECT k->>'urun_id' AS id, COUNT(*) AS n, MAX(t.tarih)::text AS son
+                     FROM ey_toptanci_teslim t, jsonb_array_elements(t.kalemler) k WHERE NOT t.iptal GROUP BY 1""",
+        "alis": """SELECT DISTINCT ON (kalem_kodu) kalem_kodu AS id, birim, birim_maliyet_tl AS fiyat, gecerli_baslangic::text AS tarih, tedarikci
+                   FROM urun_alis_fiyat ORDER BY kalem_kodu, gecerli_baslangic DESC""",
+        "fatura_esleme": """SELECT kalem_kodu AS id, string_agg(anahtar || ' ×' || adet, ' | ') AS eslesmeler FROM fatura_kalem_eslestirme GROUP BY kalem_kodu""",
+        "fatura_satir": """SELECT eslesen_stok_kodu AS id, COUNT(*) AS n,
+                                  string_agg(DISTINCT COALESCE(ocr_ad,'?') || ' [' || COALESCE(birim,'?') || ']', ' | ') AS adlar,
+                                  MIN(birim_fiyat) AS min_fiyat, MAX(birim_fiyat) AS max_fiyat
+                           FROM tedarikci_fatura_kalem WHERE eslesen_stok_kodu IS NOT NULL GROUP BY 1""",
+        "acilis_birimi": """SELECT kalem_kodu AS id, acilis_birim, fatura_icerik, notlar FROM urun_acilis_birimi""",
+        "kullanimda": """SELECT urun_id AS id, COUNT(*) AS n FROM sube_kullanimda_urun GROUP BY urun_id""",
+        "takma": """SELECT urun_id AS id, string_agg(takma, ' | ') AS takmalar FROM ey_urun_takma GROUP BY urun_id""",
+    }
+    veri, hatalar = {}, {}
+    with db() as (conn, cur):
+        try:
+            with savepoint(cur, "sp_den_ro"):
+                cur.execute("SET LOCAL statement_timeout = '20s'")
+        except Exception:  # noqa: BLE001
+            pass
+        for ad, q in sorgular.items():
+            try:
+                with savepoint(cur, f"sp_den_{ad}"):
+                    cur.execute(q)
+                    veri[ad] = {str(dict(r)["id"]): {k: (float(v) if isinstance(v, Decimal) else v) for k, v in dict(r).items() if k != "id"}
+                                for r in cur.fetchall() or [] if dict(r).get("id") is not None}
+            except Exception as e:  # noqa: BLE001 — tablo yoksa o kanıt boş
+                hatalar[ad] = str(e)[:160]
+                veri[ad] = {}
+        cur.execute("""SELECT u.id, u.ad, u.aktif, u.birim_teyit, u.koli_ici, u.kdv_oran, k.ad AS kategori
+                       FROM ey_urun u LEFT JOIN ey_urun_kategori k ON k.id=u.kategori_id ORDER BY k.sira, u.sira""")
+        urunler = [dict(r) for r in cur.fetchall() or []]
+    bilinen = {u["id"] for u in urunler}
+    satirlar = []
+    for u in urunler:
+        u["kdv_oran"] = float(u["kdv_oran"]) if u["kdv_oran"] is not None else None
+        satirlar.append({**u, **{ad: veri[ad].get(u["id"]) for ad in sorgular}})
+    # Hiçbir ürüne bağlanmamış kodlar (eski ad/kod ile kalmış stok, fatura eşlemesi…) — "aynı ürün iki kodla" kanıtı
+    yetim = {ad: {k: v for k, v in veri[ad].items() if k not in bilinen} for ad in ("stok", "stok_hareket", "fatura_esleme", "fatura_satir", "alis", "acilis_birimi", "siparis", "ey_hareket")}
+    return {"urunler": satirlar, "yetim_kodlar": yetim, "hatalar": hatalar}
+
+
 @router.get("/katalog")
 def katalog_ucu(hepsi: bool = True):
     with db() as (conn, cur):
