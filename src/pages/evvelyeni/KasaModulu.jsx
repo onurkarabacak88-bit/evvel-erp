@@ -1479,6 +1479,16 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
       </div>
     );
   }
+  if (x.tur === 'depo_yolda') {
+    const git = () => { window.history.pushState({}, '', '/evvel-yeni/depo_yolda'); window.dispatchEvent(new window.PopStateEvent('popstate')); };
+    return (
+      <div style={{ ...satir, border: `1px solid ${alfa(R.amber, 60)}` }}>
+        <Cip tur="sari">📦 Yolda kaldı</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> şube tarafından kabul edilmedi<div style={{ fontSize: 11.5, color: R.not }}>{x.ornek}{x.sayi > 3 ? '…' : ''} — şubeye sor ya da merkez adına kabul et</div></div>
+        <Dugme kucuk onClick={git}>Yoldakiler</Dugme>
+      </div>
+    );
+  }
   if (x.tur === 'toptanci_vade' || x.tur === 'toptanci_tutar') {
     const git = () => { window.history.pushState({}, '', '/evvel-yeni/toptancilar'); window.dispatchEvent(new window.PopStateEvent('popstate')); };
     return (

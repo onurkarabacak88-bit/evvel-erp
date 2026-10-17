@@ -292,6 +292,14 @@ except Exception as _ey_odeme_err:
     logging.getLogger(__name__).warning(
         f"evvel_yeni_odeme modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_odeme_err}"
     )
+# 📦 EVVEL YENİ · DEPO (2026-10-17) — tek hareket defteri; panel kayıtları köprüyle; "Nerede?" ürün × konum.
+try:
+    from evvel_yeni_depo_api import router as evvel_yeni_depo_router
+    app.include_router(evvel_yeni_depo_router)
+except Exception as _ey_depo_err:
+    logging.getLogger(__name__).warning(
+        f"evvel_yeni_depo modulu yuklenemedi (izole, ana akis etkilenmez): {_ey_depo_err}"
+    )
 # 🚚 EVVEL YENİ · TOPTANCILAR (2026-10-16) — borcumuz = açılış + alım − ödeme.
 try:
     from evvel_yeni_toptanci_api import router as evvel_yeni_toptanci_router

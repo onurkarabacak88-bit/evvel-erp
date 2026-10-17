@@ -765,6 +765,12 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
                 kart_isleri = kart_isleri + _kapanis_deneme_isleri(cur, C)
         except Exception as e:  # noqa: BLE001
             log.warning("kapanış denemeleri okunamadı: %s", str(e)[:150])
+        try:   # 📦 2+ gündür yolda kalan sevkler (şube kabul etmedi)
+            with savepoint(cur, "sp_ey_depo_isler"):
+                from evvel_yeni_depo_api import depo_isleri as _depo_isleri
+                kart_isleri = kart_isleri + _depo_isleri(cur)
+        except Exception as e:  # noqa: BLE001
+            log.warning("depo işleri okunamadı: %s", str(e)[:150])
         try:   # 🚚 vadesi geçen toptancı borcu · tutarı bilinmeyen teslim
             with savepoint(cur, "sp_ey_top_isler"):
                 from evvel_yeni_toptanci_api import toptanci_isleri as _top_isleri
