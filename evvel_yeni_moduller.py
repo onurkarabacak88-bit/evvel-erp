@@ -33,7 +33,7 @@ MODULLER: List[dict] = [
     {"kod": "odeme", "ad": "Ödeme", "ikon": "🧾", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "ödeme / gider girişi, patron harcamaları"},
     {"kod": "kredi", "ad": "Krediler", "ikon": "🏦", "sektor": "genel", "gerekir": ["kasa", "odeme"],
      "aciklama": "kredi tanımı + kredi takvimi (borç = taksit; ödeme Ödeme'den)"},
-    {"kod": "kart", "ad": "Kartlar", "ikon": "💳", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "kullanılabilir limit, son ödeme"},
+    {"kod": "kart", "ad": "Kartlar", "ikon": "💳", "sektor": "genel", "gerekir": ["kasa", "odeme"], "aciklama": "kullanılabilir limit, son ödeme"},
     {"kod": "toptanci", "ad": "Toptancılar", "ikon": "🚚", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "borç = açılış + alım − ödeme"},
     {"kod": "depo", "ad": "Depo", "ikon": "📦", "sektor": "genel", "gerekir": ["gider"], "aciklama": "ürün nerede — tek hareket defteri"},
     {"kod": "kazanc", "ad": "Şube kazancı", "ikon": "📈", "sektor": "genel", "gerekir": ["gelir", "gider"], "aciklama": "gelir − şubenin gideri"},

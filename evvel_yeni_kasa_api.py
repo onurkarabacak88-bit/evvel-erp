@@ -581,7 +581,7 @@ def _isler(kayitlar: List[dict], C: dict, fl: List[dict]) -> List[dict]:
         if h["tur"] == "kapanis" and h["durum"] != "onaylandi":
             out.append({"tur": "kapanis", "id": h["id"], "tarih": h["is_gunu"], "cep": h["cep"], "ad": C.get(h["cep"], {}).get("ad"),
                         "nakit": _tl_sayi(h["tutar"]), "kart": _tl_sayi(int(h["veri"].get("kart", 0))), "eski_sistem": bool(h.get("kaynak_ref"))})
-        if h["tur"] == "teslim" and h["durum"] != "onaylandi":
+        if h["tur"] == "teslim" and h["durum"] != "onaylandi" and OTOMATIK_KABUL_GUN > 0:
             out.append({"tur": "teslim", "id": h["id"], "tarih": h["is_gunu"], "kaynak": h["kaynak"], "hedef": h["hedef"],
                         "ad": f"{C.get(h['kaynak'], {}).get('ad')} → {C.get(h['hedef'], {}).get('ad')}",
                         "hedef_kisa": C.get(h["hedef"], {}).get("kisa"), "tutar": _tl_sayi(h["tutar"]), "eski_sistem": bool(h.get("kaynak_ref"))})
@@ -1984,16 +1984,25 @@ def panel_teslim_esle(cur) -> None:
                 cur.execute("SELECT id, sube_id, tarih, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim WHERE tarih >= %s", (bas,))
                 kaynak = [dict(x) for x in cur.fetchall() or []]
             canli = {"kasa_teslim:" + str(x["id"]) for x in kaynak}
-            cur.execute("""SELECT id, kaynak_ref, durum, onaylayan, hedef, is_gunu FROM para_izi_hareket
+            cur.execute("""SELECT id, kaynak_ref, durum, onaylayan, kaynak, hedef, tutar, is_gunu FROM para_izi_hareket
                             WHERE tur='teslim' AND kaynak_ref LIKE 'kasa_teslim:%%' AND is_gunu >= %s
                               AND id NOT IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal')""", (bas,))
             var = {dict(x)["kaynak_ref"]: dict(x) for x in cur.fetchall() or []}
             cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'kasa_teslim:%%'")
             her_zaman = {dict(x)["kaynak_ref"] for x in cur.fetchall() or []}
+            # Codex 2. tur: panelde geri alınmış ama sayım yüzünden iptal EDİLEMEYEN teslim (yetim) varken, yeniden kapanışın
+            # ürettiği AYNI teslim (aynı dükkân, alan, gün, tutar) ikinci kez yazılmaz → çift çıkış olmaz.
+            def _g(v):
+                return v.isoformat() if hasattr(v, "isoformat") else str(v)
+            yetim = {(h["kaynak"], h["hedef"], _g(h["is_gunu"]), int(h["tutar"])) for r_, h in var.items() if r_ not in canli}
             for x in kaynak:
                 ref = "kasa_teslim:" + str(x["id"])
                 cep, hedef = sube_cep.get(str(x["sube_id"])), _patron_bul(x.get("teslim_alan_ad"))
                 if ref in her_zaman or not cep or not hedef:
+                    continue
+                anahtar = (cep, hedef, x["tarih"].isoformat(), _kurus(x["tutar"]))
+                if anahtar in yetim:
+                    yetim.discard(anahtar)
                     continue
                 _yaz(cur, "teslim", x["tarih"].isoformat(), "şube paneli", kaynak=cep, hedef=hedef, tutar=_kurus(x["tutar"]),
                      durum="bekliyor", veri={"eski_alan_ad": x.get("teslim_alan_ad"), "teslim_eden": x.get("teslim_eden_ad")}, kaynak_ref=ref)
@@ -2011,13 +2020,11 @@ def panel_teslim_esle(cur) -> None:
                     if kilit is None:
                         kilit = _sayim_kilidi(_olaylar(_yukle(cur)[2]))
                     g = h["is_gunu"].isoformat() if hasattr(h["is_gunu"], "isoformat") else str(h["is_gunu"])
-                    if h.get("hedef") in kilit and g <= kilit[h["hedef"]]:
+                    if any(cp in kilit and g <= kilit[cp] for cp in (h.get("hedef"), h.get("kaynak"))):
                         log.warning("panel teslimi geri alındı ama %s o günden sonra sayılmış — iptal edilmedi: %s", h.get("hedef"), ref)
                         continue
                 _yaz(cur, "iptal", _bugun().isoformat(), "şube paneli",
                      veri={"hedef_id": h["id"], "sebep": "Şube panelinde geri alındı (kapanış geri al)"})
-            if OTOMATIK_KABUL_GUN == 0:   # Fable: "girildiği AN alınmış" — 10 dk'lık senkronu beklemeden
-                _otomatik_kabul(cur)
     except Exception as e:  # noqa: BLE001 — panel ASLA durmaz
         log.warning("evvel-yeni kasa panel teslim eşlenemedi: %s", str(e)[:200])
 

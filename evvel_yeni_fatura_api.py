@@ -159,7 +159,8 @@ def _tur_tahmin(aciklama: str) -> Optional[str]:
 
 def _satir_id(kart_id: str, x: dict, sira: int = 0) -> str:
     """Aynı gün + tutar + açıklamalı İKİ gerçek işlem ayrı kimlik alır (kaçıncı tekrar olduğu eklenir — Fable/Codex)."""
-    h = hashlib.sha1(f"{kart_id}|{x['tarih']}|{x['tutar']}|{_sade(x['aciklama'])}|{sira}".encode()).hexdigest()[:16]
+    ek = f"|{sira}" if sira else ""      # ilk satır ESKİ kimlikle aynı (önceki kayıtlar tanınsın — Codex 2. tur)
+    h = hashlib.sha1(f"{kart_id}|{x['tarih']}|{x['tutar']}|{_sade(x['aciklama'])}{ek}".encode()).hexdigest()[:16]
     return f"ekstre:{h}"
 
 
@@ -198,7 +199,8 @@ def oku(body: OkuBody):
     with db() as (conn, cur):
         mevcut = [(date.fromisoformat(m["tarih"]), Decimal(m["tutar"]) / 100, m["aciklama"]) for m in o.kart_harcamalari(cur, body.kart_id)]
         bas = kasa.donem_baslangici(cur)
-        cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'odeme_formu:ekstre:%%'")
+        cur.execute("""SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'odeme_formu:ekstre:%%'
+                         AND id NOT IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal' AND veri ? 'hedef_id')""")
         yazilmis = {dict(r)["kaynak_ref"][len("odeme_formu:"):] for r in cur.fetchall() or []}
     out, diger, sayac = [], 0, {}
     for x in tum:
@@ -206,7 +208,11 @@ def oku(body: OkuBody):
             continue   # ödeme/iade satırı — fatura değil
         no = _numara(x["aciklama"])
         imza = _imza(x["aciklama"])
-        kural = (K.get(("", "no:" + no)) if no else None) or K.get((body.kart_id, "ad:" + imza))
+        k_no = K.get(("", f"no:{imza}:{no}")) if no else None      # numara SAĞLAYICIYLA birlikte (referans no her ay farklı → eşleşmez)
+        k_ad = K.get((body.kart_id, "ad:" + imza))
+        kural = k_no or k_ad
+        if k_no and k_ad and not k_no["belirsiz"] and not k_ad["belirsiz"] and k_no["hedef"] != k_ad["hedef"]:
+            kural = {**k_no, "belirsiz": True}                       # Codex: numara ve imza farklı şube diyorsa kesin değil
         if not kural and not _aday(x["aciklama"]):
             diger += 1
             continue
@@ -215,7 +221,7 @@ def oku(body: OkuBody):
             continue
         oneri, kesin = None, False
         if kural and not kural["belirsiz"]:
-            oneri, kesin = kural["hedef"], kural["anahtar"].startswith("no:")
+            oneri, kesin = kural["hedef"], kural["anahtar"].startswith("no:") and k_ad is not None and not k_ad["belirsiz"] and k_ad["hedef"] == kural["hedef"]
         anahtar = (x["tarih"], x["tutar"], _sade(x["aciklama"]))
         sayac[anahtar] = sayac.get(anahtar, -1) + 1
         sid = _satir_id(body.kart_id, x, sayac[anahtar])
@@ -289,7 +295,7 @@ def kaydet(body: KaydetBody, x_evvel_oturum: Optional[str] = Header(default=None
 def _ogren(kart_id: str, s: Satir, kim: str) -> None:
     """Numara varsa numara kuralı (kartsız) + kart+imza kuralı. Aynı anahtar farklı hedefe seçilirse BELİRSİZ olur (üzerine
     yazılmaz — Codex); belirsiz kural öneri vermez, her ay sorulur. 'Yok say' de öğrenilir (Kurallar'dan unutulabilir)."""
-    anahtarlar = ([("", "no:" + s.no)] if s.no else []) + ([(kart_id, "ad:" + s.imza)] if s.imza else [])
+    anahtarlar = ([("", f"no:{s.imza or ''}:{s.no}")] if s.no else []) + ([(kart_id, "ad:" + s.imza)] if s.imza else [])
     try:
         with db() as (conn, cur):
             for kart_, anahtar in anahtarlar:

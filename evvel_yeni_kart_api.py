@@ -250,22 +250,30 @@ def kart_takvimi(yil: Optional[int] = None):
     out = []
     for k in kartlar:
         odemeler = sorted((x for x in tum_od if str(x.get("kart_id")) == str(k["id"])), key=lambda x: x["tarih"])
-        aylar, onceki_son = [], None
+        # Her ayın etkin son ödeme günü (teyit > kartın günü > ay sonu). Dönemi seçilmemiş her ödeme TEK bir aya gider:
+        # tarihine en yakın, tarihinden sonraki ilk son ödeme günü (Codex 2. tur: aralıklar çakışmasın).
+        sonlar = {}
         for m in range(1, 13):
             a = f"{yil}-{m:02d}"
             ty = teyit.get((k["id"], a))
-            son = ty[1] if ty else (_son_gun(yil, m, k["son_odeme_gunu"]) if k.get("son_odeme_gunu") else None)
-            # dönemi AÇIKÇA seçilmiş ödeme (takvimden 'öde') o aya; seçilmemişse (önceki son, bu son] aralığına
-            od_yeni = sum(x["toplam"] for x in odemeler if x.get("donem") == a)
-            if son:
-                alt = onceki_son or (son - timedelta(days=31))
-                od_yeni += sum(x["toplam"] for x in odemeler if not x.get("donem") and alt.isoformat() < x["tarih"] <= son.isoformat())
-                onceki_son = son
-            else:
-                od_yeni += sum(x["toplam"] for x in odemeler if not x.get("donem") and x["tarih"][:7] == a)
+            sonlar[a] = ty[1] if ty else (_son_gun(yil, m, k["son_odeme_gunu"]) if k.get("son_odeme_gunu") else _son_gun(yil, m, 31))
+        yer = {}
+        for x in odemeler:
+            if x.get("donem"):
+                yer[x["donem"]] = yer.get(x["donem"], 0) + x["toplam"]
+                continue
+            t = date.fromisoformat(x["tarih"])
+            hedef_ay = next((a for a in sorted(sonlar) if sonlar[a] >= t), None) or x["tarih"][:7]
+            yer[hedef_ay] = yer.get(hedef_ay, 0) + x["toplam"]
+        aylar = []
+        for m in range(1, 13):
+            a = f"{yil}-{m:02d}"
+            ty = teyit.get((k["id"], a))
+            son = sonlar[a] if (ty or k.get("son_odeme_gunu")) else None
+            od_yeni = yer.get(a, 0)
             e = eski.get((k["id"], a)) or {}
             od_e = int(e.get("odenen") or 0)
-            od = od_yeni if od_yeni > 0 else od_e      # iki sistemde de girilmişse TOPLANMAZ
+            od = max(od_yeni, od_e)      # iki sistemde de varsa TOPLANMAZ (aynı ödeme olabilir) — büyüğü + "iki sistemde" işareti
             iki_yerde = od_yeni > 0 and od_e > 0
             ekstre, ekstre_kaynak = (ty[0] if ty else None), "teyit"
             if ekstre is None and e.get("ekstre"):

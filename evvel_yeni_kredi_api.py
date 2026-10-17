@@ -38,7 +38,11 @@ def _hazirla():
             id TEXT PRIMARY KEY, ad TEXT NOT NULL, tur TEXT, aylik_taksit BIGINT NOT NULL, odeme_gunu INT NOT NULL,
             ilk_ay TEXT NOT NULL, taksit_sayisi INT, aktif BOOLEAN NOT NULL DEFAULT TRUE, eski_id TEXT,
             kim TEXT, olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ey_kredi_eski_id ON ey_kredi(eski_id) WHERE eski_id IS NOT NULL")
+        try:   # Fable: daha önce mükerrer kopya oluşmuşsa index kurulamaz — modül yine çalışsın (log)
+            with savepoint(cur, "sp_ey_kredi_idx"):
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ey_kredi_eski_id ON ey_kredi(eski_id) WHERE eski_id IS NOT NULL")
+        except Exception as e:  # noqa: BLE001
+            log.warning("krediler: eski_id tekil index kurulamadı (mükerrer kopya?): %s", str(e)[:150])
         cur.execute("SELECT COUNT(*) AS n FROM ey_kredi")
         if int(dict(cur.fetchone())["n"]) == 0:
             _ilk_kopya(cur)
@@ -46,7 +50,7 @@ def _hazirla():
 
 
 def _ilk_kopya(cur) -> None:
-    """KÖPRÜ (bir kez): eski borc_envanteri'ndeki AKTİF krediler → ey_kredi. Kalan taksit sayısı eski kalan_vade'den."""
+    """KÖPRÜ (bir kez): eski borc_envanteri'ndeki AKTİF krediler → ey_kredi. Taksit sayısı = eski toplam_vade (TOPLAM)."""
     try:
         with savepoint(cur, "sp_ey_kredi_kopya"):
             cur.execute("""SELECT id::text AS id, kurum, borc_turu, aylik_taksit, odeme_gunu, ilk_taksit_tarihi, baslangic_tarihi,
@@ -137,7 +141,7 @@ def takvim(yil: Optional[int] = None):
             # Fable+Codex: aynı taksit iki sistemde de girilmişse TOPLANMAZ — yeni kayıt varsa eski sayılmaz; ikisi de varsa işaret
             od_y = yeni.get((k["id"], a), 0)
             od_e = eski.get((k.get("eski_id"), a), 0) if k.get("eski_id") else 0
-            od = od_y if od_y > 0 else od_e
+            od = max(od_y, od_e)   # toplanmaz (aynı taksit olabilir); büyüğü + işaret — sahip bakar
             iki_yerde = od_y > 0 and od_e > 0
             vade = _gun(int(a[:4]), int(a[5:7]), k["odeme_gunu"])
             if not aktif_ay:
