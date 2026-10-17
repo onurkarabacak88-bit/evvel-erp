@@ -48,7 +48,7 @@ from database import db, savepoint
 #    modüller çekirdeğe geçince (adım 2) bu satırlar silinecek.
 from evvel_yeni_cekirdek import (bugun as _bugun, tr_baslik as _tr_baslik, aktor as _aktor, tl_sayi as _tl_sayi, tl as _tl,
                                  kurus as _kurus, kilit as _cekirdek_kilit, KASA_KILIT,
-                                 bekleyen_isler, bekleyen_is_kaydet)
+                                 bekleyen_isler, bekleyen_is_kaydet, yaklasan_odemeler)
 
 
 def _kilit(cur) -> None:
@@ -687,6 +687,24 @@ def _gun_coz(gun: Optional[str]) -> str:
     except ValueError:
         raise HTTPException(400, "gun YYYY-AA-GG olmalı")
     return g
+
+
+@router.get("/yaklasan-odemeler")
+def yaklasan_odemeler_kutusu(gun_sayisi: int = 7):
+    """💡 Sahip (2026-10-17, Codex + Fable): "kasa önümüzdeki günlerde ödemelere yetiyor mu" — YALNIZ kesinleşmiş çıkışlar
+    (kart son ödeme, kira, maaş, toptancı vadesi); ciro tahmini YOK. Satırları modüller çekirdeğin kayıt defterine bırakır;
+    Kasa onları tanımaz (modül kapanırsa satırı da düşer). Tutarı bilinmeyen satır toplama katılmaz, ayrıca sayılır."""
+    from datetime import timedelta
+    _hazirla()
+    bugun = _bugun()
+    ufuk = bugun + timedelta(days=max(1, min(int(gun_sayisi or 7), 31)))
+    with db() as (conn, cur):
+        _, _, kayit, _ = _yukle(cur)
+        satirlar = yaklasan_odemeler(cur, {"bugun": bugun, "ufuk": ufuk, "kayit": kayit})
+    satirlar.sort(key=lambda x: (x.get("tarih") or "9999", x.get("ad") or ""))
+    bilinen = [x for x in satirlar if x.get("tutar") is not None]
+    return {"bugun": bugun.isoformat(), "ufuk": ufuk.isoformat(), "gun_sayisi": (ufuk - bugun).days,
+            "toplam": round(sum(x["tutar"] for x in bilinen), 2), "bilinmeyen_sayi": len(satirlar) - len(bilinen), "satirlar": satirlar}
 
 
 @router.get("/durum")

@@ -1224,6 +1224,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
           </div>
           {veri.pos_bekleyen_brut > 0 && <div style={{ marginLeft: 'auto', fontSize: 12.5, color: R.amber }}>Toplama dahil değil · POS/online bankaya gelecek (brüt) <b style={num}>{fmt(veri.pos_bekleyen_brut)}</b> ₺</div>}
         </div>
+        {(hepsi || gun === veri.bugun) && <YaklasanOdemeler eldeki={o.toplam} posYolda={veri.pos_bekleyen_brut} />}
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
           <GrupKart ad="Dükkân nakitleri" tutar={o.sube} liste={subeler} hedef="subeler" alt={`${subeler.length} dükkân · çekmecedeki nakit`} />
           <GrupKart ad="Evler" tutar={o.ev} liste={evler} hedef="evler" alt={evler.map((c) => c.kisa).join(' · ')} />
@@ -1349,6 +1350,53 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
 }
 
 // ─── AÇIK FARKLAR sayfası (gün gün defter) ───
+// 💡 Sahip (2026-10-17, Codex + Fable): "kasa önümüzdeki günlerde ödemelere yetiyor mu?" — YALNIZ kesinleşmiş çıkışlar
+// (kart son ödeme, kira, maaş, toptancı vadesi); ciro tahmini yok. Satırları modüller kendi bırakır (tak-çıkar).
+const YO_AD = { kart: '💳', kira: '🏠', maas: '👥', toptanci: '🚚' };
+function YaklasanOdemeler({ eldeki, posYolda }) {
+  const [v, setV] = useState(null);
+  const [acik, setAcik] = useState(false);
+  useEffect(() => {
+    let iptal = false;
+    api('/evvel-yeni/kasa/yaklasan-odemeler').then((d) => { if (!iptal) setV(d); }).catch(() => { if (!iptal) setV({ hata: true }); });
+    return () => { iptal = true; };
+  }, []);
+  if (!v) return <div style={{ ...kart, padding: '10px 16px', fontSize: 12.5, color: R.not }}>Önümüzdeki ödemeler hesaplanıyor…</div>;
+  if (v.hata) return null;
+  const fark = Math.round((eldeki - v.toplam) * 100) / 100;
+  const yetmiyor = fark < 0;
+  return (
+    <div style={{ ...kart, padding: '12px 16px', borderColor: yetmiyor ? alfa(R.kirmizi, 60) : 'var(--pi-line)' }}>
+      <button type="button" onClick={() => setAcik((x) => !x)} aria-expanded={acik}
+        style={{ all: 'unset', cursor: 'pointer', display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-end', width: '100%' }}>
+        <div><div style={etiketStil}>Eldeki işletme parası</div><div style={{ ...num, fontSize: 17 }}>{fmt(eldeki)}</div></div>
+        <div><div style={etiketStil}>{v.gun_sayisi} gün içinde kesin ödemeler</div><div style={{ ...num, fontSize: 17 }}>− {fmt(v.toplam)}</div></div>
+        <div><div style={etiketStil}>Fark</div>
+          <div style={{ ...num, fontSize: 17, fontWeight: 700, color: yetmiyor ? R.kirmizi : R.yesil }}>{fark > 0 ? '+' : ''}{fmt(fark)}</div></div>
+        <div style={{ marginLeft: 'auto', fontSize: 12.5, color: yetmiyor ? R.kirmizi : R.metin2 }}>
+          {yetmiyor ? '⚠ Eldeki para bu ödemelere yetmiyor (girişler sayılmadı)' : 'Girişler (ciro) sayılmadı'}
+          {v.bilinmeyen_sayi > 0 && <span style={{ color: R.amber }}> · {v.bilinmeyen_sayi} ödemenin tutarı bilinmiyor</span>}
+          {' '}<span style={{ color: R.not }}>{acik ? '▲' : '▼'} {v.satirlar.length} satır</span>
+        </div>
+      </button>
+      {acik && (
+        <div style={{ marginTop: 10, display: 'grid', gap: 4, fontSize: 13 }}>
+          {v.satirlar.length === 0 && <div style={{ color: R.not }}>Önümüzdeki {v.gun_sayisi} günde kesinleşmiş ödeme yok.</div>}
+          {v.satirlar.map((x, i) => (
+            <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'baseline', borderTop: i ? `1px solid ${R.cizgi}` : 'none', paddingTop: i ? 4 : 0 }}>
+              <span style={{ width: 22 }} aria-hidden="true">{YO_AD[x.kaynak] || '•'}</span>
+              <span style={{ width: 70, color: R.metin2 }}>{x.tarih ? tKisa(x.tarih) : 'bu hafta'}</span>
+              <span style={{ flex: 1 }}>{x.ad}{x.not && <span style={{ color: x.not === 'gecikti' ? R.kirmizi : R.not }}> · {x.not}</span>}</span>
+              <b style={num}>{x.tutar == null ? '—' : fmt(x.tutar)}</b>
+            </div>
+          ))}
+          {posYolda > 0 && <div style={{ color: R.amber, marginTop: 4 }}>Yolda (toplama katılmadı): POS/online bankaya gelecek {fmt(posYolda)} ₺</div>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function AcikSayfa({ onCoz, onCepAc, yenile }) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);

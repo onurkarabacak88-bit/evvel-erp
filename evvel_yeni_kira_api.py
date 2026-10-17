@@ -19,7 +19,7 @@ from pydantic import BaseModel
 
 from database import db, savepoint
 from evvel_yeni_kasa_api import _hazirla, _yukle
-from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi
+from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi, yaklasan_odeme_kaydet
 
 router = APIRouter(prefix="/api/evvel-yeni/kira", tags=["evvel-yeni-kira"])
 _HAZIR = False
@@ -154,12 +154,18 @@ def kira_takvimi(yil: Optional[int] = None):
     bugun = _bugun()
     yil = yil or bugun.year
     with db() as (conn, cur):
-        kira_hazirla(cur)
-        from evvel_yeni_tanim_api import subeler as _ey_subeler
-        subeler = _ey_subeler(cur)
-        tan = kira_tanimlari(cur)
-        _, _, kayit, _ = _yukle(cur, tum_donemler=True)
-        eski = _eski_odenenler(cur)
+        out = kira_aylari(cur, yil, bugun)
+    return {"yil": yil, "bugun": bugun.isoformat(), "subeler": out}
+
+
+def kira_aylari(cur, yil: int, bugun: date) -> list:
+    """Şube × 12 ay kira durumu (takvim ekranı + Kasa'nın 'yaklaşan ödemeler' kutusu aynı hesabı kullanır)."""
+    kira_hazirla(cur)
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    subeler = _ey_subeler(cur)
+    tan = kira_tanimlari(cur)
+    _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+    eski = _eski_odenenler(cur)
     yeni = {}
     for h in kayit:
         if h["tur"] != "odeme":
@@ -208,7 +214,7 @@ def kira_takvimi(yil: Optional[int] = None):
                     "kira_yok": bool(t.get("kira_yok")),
                     "aylar": aylar, "yil_beklenen": round(sum(a["beklenen"] or 0 for a in aylar), 2),
                     "yil_odenen": round(sum(a["odenen"] for a in aylar), 2)})
-    return {"yil": yil, "bugun": bugun.isoformat(), "subeler": out}
+    return out
 
 
 class KiraBody(BaseModel):
@@ -240,3 +246,18 @@ def kira_tahakkuk(cur, ay: str) -> dict:
         r = dict(r)
         out[r["id"]] = "yok" if r["kira_yok"] else kira_tutari(cur, r["id"], ay)
     return out
+
+
+def _yaklasan_kira(cur, b: dict) -> list:
+    """Kasa kutusu: vadesi ufka kadar gelen (ya da geçmiş) ödenmemiş kira — 'mülk bizim' şube hariç."""
+    out = []
+    for yil in sorted({b["bugun"].year, b["ufuk"].year}):
+        for s_ in kira_aylari(cur, yil, b["bugun"]):
+            for a in s_["aylar"]:
+                if a["durum"] in ("gecikti", "yaklasiyor", "kismi") and a["kalan"] > 0 and a["vade"] <= b["ufuk"].isoformat():
+                    out.append({"kaynak": "kira", "ad": f"{s_['ad']} kirası ({a['ay']})", "tarih": a["vade"], "tutar": a["kalan"],
+                                "not": "gecikti" if a["durum"] == "gecikti" else None})
+    return out
+
+
+yaklasan_odeme_kaydet("kira", _yaklasan_kira)

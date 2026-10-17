@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from database import db, savepoint
 from evvel_yeni_kasa_api import _hazirla, _yukle
-from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi, bekleyen_is_kaydet
+from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi, bekleyen_is_kaydet, yaklasan_odeme_kaydet
 
 router = APIRouter(prefix="/api/evvel-yeni/kart", tags=["evvel-yeni-kart"])
 
@@ -287,3 +287,20 @@ def teyit_sil(tid: str):
 
 # 🧩 Bekleyen işler kayıt defterine (Kasa bu modülü tanımaz; modül kapanınca satırları da kalkar)
 bekleyen_is_kaydet("kart", lambda cur, b: kart_isleri(cur, b["kayit"]))
+
+
+def _yaklasan_kart(cur, b: dict) -> list:
+    """Kasa kutusu: son ödemesi ufka kadar gelen kartlar. Ekstre tutarı girilmemişse tutar uydurulmaz (None)."""
+    out = []
+    for k in kart_durumu(cur, kayit=b.get("kayit")):
+        so = k["son_odeme"]
+        if not so or so.get("eski") or so.get("gun_kaldi") is None or so["tarih"] > b["ufuk"].isoformat():
+            continue
+        if so["kalan"] is not None and so["kalan"] <= 0:
+            continue
+        out.append({"kaynak": "kart", "ad": f"{k['ad']} son ödeme", "tarih": so["tarih"], "tutar": so["kalan"],
+                    "not": None if so["kalan"] is not None else "ekstre tutarı girilmemiş"})
+    return out
+
+
+yaklasan_odeme_kaydet("kart", _yaklasan_kart)
