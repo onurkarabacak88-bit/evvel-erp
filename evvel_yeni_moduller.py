@@ -23,6 +23,8 @@ MODULLER: List[dict] = [
     # kod          ad                 ikon  sektor    gerekir                 açıklama
     {"kod": "olay", "ad": "Şube olay defteri", "ikon": "📒", "sektor": "genel", "gerekir": [], "dosya": "evvel_yeni_olay",
      "kurulum": "olay_tablosu_kur", "menu": False, "aciklama": "panel kayıtlarının Evvel Yeni kopyası"},
+    {"kod": "urun", "ad": "Ürün kataloğu", "ikon": "📚", "sektor": "genel", "gerekir": [], "menu": False,
+     "aciklama": "tek ürün kimliği + değişiklik izi; Depo / Toptancılar / Bar / Gider / Satış buradan okur (sayfası Tanımlar altında)"},
     {"kod": "kasa", "ad": "Kasa", "ikon": "💰", "sektor": "genel", "gerekir": [], "aciklama": "para nerede — tek para defteri"},
     {"kod": "tanim", "ad": "Tanımlar", "ikon": "⚙️", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "şube, personel, banka, kart, toptancı"},
     {"kod": "gelir", "ad": "Gelir", "ikon": "📥", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "şube şube, gün gün ciro"},
