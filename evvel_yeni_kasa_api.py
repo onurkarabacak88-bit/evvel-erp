@@ -34,16 +34,24 @@ Codex denetimi (2026-10-15) sonrası kurallar:
 
 import json
 import logging
-import math
+
 import uuid
 from datetime import date, timedelta
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel, ConfigDict, Field
 
 from database import db, savepoint
+# 🧩 Ortak yardımcılar ÇEKİRDEKTE (2026-10-17). Eski iç adlar geçiş için burada takma ad olarak duruyor —
+#    modüller çekirdeğe geçince (adım 2) bu satırlar silinecek.
+from evvel_yeni_cekirdek import (bugun as _bugun, tr_baslik as _tr_baslik, aktor as _aktor, tl_sayi as _tl_sayi, tl as _tl,
+                                 kurus as _kurus, kilit as _cekirdek_kilit, KASA_KILIT)
+
+
+def _kilit(cur) -> None:
+    _cekirdek_kilit(cur, KASA_KILIT)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/evvel-yeni/kasa", tags=["evvel-yeni-kasa"])
@@ -97,21 +105,6 @@ SEBEPLER = {
     "kayip": "Kayıp / kasa açığı",
     "kabul": "Fazla para kabul edildi",
 }
-
-
-def _bugun() -> date:
-    try:
-        from tr_saat import bugun_tr
-        return bugun_tr()
-    except Exception:  # noqa: BLE001
-        return date.today()
-
-
-def _tr_baslik(s: str) -> str:
-    """'KÖYCEĞİZ' → 'Köyceğiz' (Türkçe I/İ kuralıyla; str.title() bozar)."""
-    def kucuk(x):
-        return x.replace("I", "ı").replace("İ", "i").lower()
-    return " ".join((w[:1] + kucuk(w[1:])) if w else w for w in s.split(" "))
 
 
 # ─────────────────────────── TABLOLAR ───────────────────────────
@@ -211,28 +204,6 @@ def _baslangic(cur) -> date:
     except Exception:  # noqa: BLE001
         pass
     return BASLANGIC
-
-
-def _kilit(cur) -> None:
-    cur.execute("SELECT pg_advisory_xact_lock(%s)", (KILIT_ANAHTARI,))
-
-
-def _aktor(cur, jeton: Optional[str]) -> str:
-    """Kaydı yapan — oturum jetonundan (istemciden gelen isim yazılmaz)."""
-    try:
-        from admin_oturum import jeton_coz
-        gecerli, _, kid = jeton_coz(jeton or "")
-        if not gecerli:
-            return "oturumsuz"
-        if kid:
-            with savepoint(cur, "sp_pi_aktor"):
-                cur.execute("SELECT ad FROM kullanici WHERE id=%s", (kid,))
-                r = cur.fetchone()
-                if r and dict(r).get("ad"):
-                    return str(dict(r)["ad"])[:60]
-        return "yönetim (ortak giriş)"
-    except Exception:  # noqa: BLE001
-        return "bilinmiyor"
 
 
 # ─────────────────────────── OKUMA ───────────────────────────
@@ -539,32 +510,6 @@ def _cep_durum(c: dict, ol: List[dict], D: dict, ref: str, fl: List[dict], C: di
             "gelen_toplam": _tl_sayi(sum(gelen.values())), "cikan": _tl_sayi(cikan), "son_teslim": son_teslim,
             "son_sayim": son_sayim,
             "bosaldi": None if not iz["bosaldi"] or not bos else {"tarih": iz["bosaldi"]["tarih"], "etiket": iz["bosaldi"]["etiket"]}}
-
-
-def _tl_sayi(k: int) -> float:
-    return round(k / 100.0, 2)
-
-
-def _tl(k: int) -> str:
-    tam, kurus = divmod(abs(int(k)), 100)
-    s = f"{tam:,}".replace(",", ".") + (f",{kurus:02d}" if kurus else "")
-    return ("−" if k < 0 else "") + s + " ₺"
-
-
-def _kurus(x) -> int:
-    """Tutarı KURUŞA çevirir: Decimal ile, en fazla 2 ondalık, sonlu, sınırlı."""
-    try:
-        d = Decimal(str(x))
-    except (InvalidOperation, TypeError, ValueError):
-        raise HTTPException(400, "Tutar sayı olmalı")
-    if not d.is_finite() or (isinstance(x, float) and not math.isfinite(x)):
-        raise HTTPException(400, "Tutar geçersiz")
-    if d != d.quantize(Decimal("0.01")):
-        raise HTTPException(400, "Tutar en fazla 2 ondalık (kuruş) olabilir")
-    k = int(d * 100)
-    if abs(k) > MAKS_KURUS:
-        raise HTTPException(400, "Tutar çok büyük")
-    return k
 
 
 def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
