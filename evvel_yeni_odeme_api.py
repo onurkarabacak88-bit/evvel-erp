@@ -51,7 +51,8 @@ KONULAR = {
 }
 FATURA_TURLERI = ["Elektrik", "Su", "Doğalgaz", "İnternet / telefon", "Diğer abonelik"]
 VERGI_TURLERI = ["KDV", "Muhtasar / stopaj", "Gelir / kurumlar vergisi", "SGK", "Diğer vergi"]
-PERSONEL_KALEMLERI = ["Maaş", "Avans", "Yemek ücreti", "Prim", "SGK / vergi"]
+# Sahip (2026-10-17): "SGK da vergi de ödemelerden TEK düşümle; her alan bu alana yönlendirsin" → SGK/vergi personel kaleminden çıktı (Vergi konusu)
+PERSONEL_KALEMLERI = ["Maaş", "Avans", "Yemek ücreti", "Prim"]
 PATRONLAR = ["Onur", "Fethi", "Fatma"]   # sahip: "hangi patronun harcaması olduğuna karar verelim"
 
 
@@ -170,6 +171,8 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
             p = next((x for x in L["personel"] if str(x["id"]) == str(body.personel_id)), None)
             if not p:
                 raise HTTPException(400, "Personel seç")
+            if body.personel_kalemi == "SGK / vergi":
+                raise HTTPException(400, "SGK ve vergi ödemeleri Ödeme → 'Vergi' konusundan girilir (tek yol)")
             if body.personel_kalemi not in PERSONEL_KALEMLERI:
                 raise HTTPException(400, "Ödeme kalemini seç (maaş, avans, yemek ücreti…)")
             kimin = p.get("sube_id") if p.get("sube_id") in subeler else "ortak"

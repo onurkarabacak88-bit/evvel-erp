@@ -291,6 +291,9 @@ export default function OdemeModulu({ onToast, gorunum }) {
             {['kira', 'fatura', 'personel'].includes(f.konu) && (
               <Etiket ad="Ait olduğu ay" ipucu="Gider bu aya yazılır (ödendiği güne değil)"><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
             )}
+            {f.konu === 'personel' && (
+              <div style={{ fontSize: 12, color: R.not }}>SGK ya da vergi mi ödüyorsun? <button type="button" onClick={() => set('konu', 'vergi')} style={{ border: 'none', background: 'none', color: 'var(--pi-accent)', cursor: 'pointer', font: 'inherit', fontSize: 12, padding: 0, textDecoration: 'underline' }}>Vergi'den gir →</button></div>
+            )}
             {f.konu === 'vergi' && (<>
               <Etiket ad="Vergi türü"><select style={alan} value={f.vergi_turu || ''} onChange={(e) => set('vergi_turu', e.target.value)}>
                 <option value="">Seç…</option>{(L.vergi_turleri || []).map((t) => <option key={t}>{t}</option>)}
