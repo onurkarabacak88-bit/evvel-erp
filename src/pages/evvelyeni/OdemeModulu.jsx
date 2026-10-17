@@ -51,7 +51,12 @@ export default function OdemeModulu({ onToast }) {
   const [liste, setListe] = useState(null);
   // 🏦 Krediler modülü açıksa: 'Kredi taksiti' hangi krediye (takvimde 'ödendi'). Kapalıysa liste gelmez, alan görünmez (tak-çıkar).
   const [krediler, setKrediler] = useState(null);
-  useEffect(() => { api('/evvel-yeni/kredi/liste').then((d) => setKrediler(d?.krediler || null)).catch(() => setKrediler(null)); }, []);
+  useEffect(() => {
+    api('/evvel-yeni/moduller').then((m) => {
+      if (!(m?.moduller || []).some((x) => x.kod === 'kredi' && x.durum === 'yuklendi')) return;
+      api('/evvel-yeni/kredi/liste').then((d) => setKrediler(d?.krediler || null)).catch(() => setKrediler(null));
+    }).catch(() => {});
+  }, []);
 
   const listeYukle = useCallback(() => api(`/evvel-yeni/odeme/liste?ay=${ay}`).then(setListe).catch(() => setListe({ odemeler: [], hata: true })), [ay]);
   useEffect(() => { api('/evvel-yeni/odeme/listeler').then(setL).catch((e) => setHata(e?.message || 'Listeler okunamadı')); }, []);
@@ -65,6 +70,7 @@ export default function OdemeModulu({ onToast }) {
     const t = on.tutar > 0 ? String(on.tutar) : '';
     otoTutar.current = t;
     setF({ ...BOS(), konu: on.konu, personel_id: on.personel_id, personel_kalemi: on.personel_kalemi, ait_ay: on.ait_ay || ayBugun(), kimin: on.kimin, patron: on.patron, toptanci_id: on.toptanci_id, kredi_id: on.kredi_id, kredi_ad: on.kredi_ad,
+      kart_donem: on.konu === 'kart_borcu' ? (on.ait_ay || '') : '',
       parcalar: [{ yontem: 'havale', cep: '', kart_id: '', tutar: t }] });
   }, [L]);
 
@@ -133,7 +139,7 @@ export default function OdemeModulu({ onToast }) {
     setHata(''); setMesgul(true);
     try {
       // Boş/hatalı satır SESSİZCE atılmaz — sunucu açıkça söyler
-      const body = { ...f, tekrar_onay, parcalar: f.parcalar.map((p) => ({ yontem: p.yontem, cep: p.cep || null, kart_id: p.kart_id || null, tutar: sayi(p.tutar) || 0 })) };
+      const body = { ...f, ...(f.konu === 'kart_borcu' ? { ait_ay: f.kart_donem || null } : {}), tekrar_onay, parcalar: f.parcalar.map((p) => ({ yontem: p.yontem, cep: p.cep || null, kart_id: p.kart_id || null, tutar: sayi(p.tutar) || 0 })) };
       const r = await api('/evvel-yeni/odeme', { method: 'POST', body });
       onToast?.(r.mesaj);
       setBenzer(false);
@@ -269,6 +275,12 @@ export default function OdemeModulu({ onToast }) {
             )}
             {['kira', 'fatura', 'personel'].includes(f.konu) && (
               <Etiket ad="Ait olduğu ay" ipucu="Gider bu aya yazılır (ödendiği güne değil)"><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
+            )}
+            {f.konu === 'kredi' && (
+              <Etiket ad="Hangi ayın taksiti" ipucu="Kredi takviminde bu ay 'ödendi' olur"><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
+            )}
+            {f.konu === 'kart_borcu' && (
+              <Etiket ad="Hangi ayın ekstresi (son ödeme ayı)" ipucu="Boş bırakırsan ödeme gününe göre kendiliğinden yerleşir"><input type="month" style={alan} value={f.kart_donem || ''} onChange={(e) => set('kart_donem', e.target.value)} /></Etiket>
             )}
             <Etiket ad="Ödeme günü"><input type="date" style={alan} value={f.tarih} max={gunBugun()} onChange={(e) => set('tarih', e.target.value)} /></Etiket>
             <Etiket ad={['anlik', 'diger'].includes(f.konu) ? 'Ne alındı / açıklama' : 'Not (isteğe bağlı)'}>

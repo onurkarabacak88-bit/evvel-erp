@@ -27,7 +27,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db
-from evvel_yeni_cekirdek import aktor as _aktor, ay_kaydir, bugun as _bugun
+from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun
 
 router = APIRouter(prefix="/api/evvel-yeni/fatura", tags=["evvel-yeni-fatura"])
 log = logging.getLogger(__name__)
@@ -55,6 +55,7 @@ def _hazirla():
     if _HAZIR:
         return
     with db() as (conn, cur):
+        cur.execute("SET LOCAL lock_timeout = '3s'")
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_fatura_kural (
             kart_id TEXT NOT NULL DEFAULT '', anahtar TEXT NOT NULL,
             hedef TEXT, fatura_turu TEXT, belirsiz BOOLEAN NOT NULL DEFAULT FALSE,
@@ -64,7 +65,7 @@ def _hazirla():
 
 
 # ─────────────────────────── EKSTRE OKUMA (bankaya özel kalıp YOK) ───────────────────────────
-_TUTAR = re.compile(r"([+-]?\d{1,3}(?:\.\d{3})*,\d{2}|[+-]?\d+,\d{2})\s*(?:TL|₺)?\s*(?:[+-])?\s*$")
+_TUTAR = re.compile(r"([+-]?\d{1,3}(?:\.\d{3})*,\d{2}|[+-]?\d+,\d{2})\s*(?:TL|₺)?\s*([+-])?\s*$")
 _T1 = re.compile(r"^(\d{1,2})[./](\d{1,2})[./](\d{2,4})\b")
 _T2 = re.compile(r"^(\d{1,2})\s+([A-Za-zÇĞİÖŞÜçğıöşü]+)\s+(\d{4})\b")
 
@@ -105,7 +106,9 @@ def _satirlar(metin: str) -> List[dict]:
         aciklama = kalan[:m.start()].strip(" -*")
         if not aciklama:
             continue
-        out.append({"tarih": gun, "aciklama": aciklama[:160], "tutar": abs(tutar), "eksi": tutar < 0 or ham_t.startswith("+")})
+        # Codex/Fable: işaret tutarın ÖNÜNDE ya da ARKASINDA olabilir ('250,00+' iade, '1.234,56 -') → fatura değil
+        isaret = bool(m.group(2)) or ham_t.startswith(("+", "-"))
+        out.append({"tarih": gun, "aciklama": aciklama[:160], "tutar": abs(tutar), "eksi": isaret})
     return out
 
 
@@ -125,13 +128,19 @@ def _pdf_metin(b64: str) -> str:
 
 def _numara(aciklama: str) -> Optional[str]:
     """Abone/tesisat numarası adayı: 6+ haneli sayı (baştaki sıfırlar atılır — '01445524' = '1445524')."""
-    m = re.findall(r"(?<!\d)(\d{6,14})(?!\d)", aciklama)
-    return (m[0].lstrip("0") or "0") if m else None
+    temiz = re.sub(r"\d+[.,]\d{2}(?!\d)", " ", aciklama)                   # tutar parçaları (123456,78)
+    temiz = re.sub(r"\b\d{1,2}[./]\d{1,2}[./]\d{2,4}\b", " ", temiz)        # tarih (01.10.2026)
+    for n in re.findall(r"(?<![\d.,])(\d{6,14})(?![\d.,])", temiz):
+        if len(n) == 8 and (n[:2] in ("19", "20") or n[4:6] in ("19", "20")):
+            continue                                                         # 20261001 / 01102026 = tarih
+        return n.lstrip("0") or "0"
+    return None
 
 
 def _imza(aciklama: str) -> str:
     """Numarasız satırın sağlayıcı imzası: sayı/işaret atılmış ilk iki kelime ("KONYA SU", "ENAY ENERJI")."""
-    k = [w for w in re.sub(r"[^A-Z ]", " ", _sade(aciklama)).split() if len(w) > 1]
+    genel = {"OTOMATIK", "ODEME", "TALIMAT", "TALIMATINIZ", "TALIMATI", "FATURA", "FATURASI", "TAHSILAT", "POS", "KREDI", "KARTI", "ISLEM"}
+    k = [w for w in re.sub(r"[^A-Z ]", " ", _sade(aciklama)).split() if len(w) > 1 and w not in genel]
     return " ".join(k[:2])
 
 
@@ -148,8 +157,9 @@ def _tur_tahmin(aciklama: str) -> Optional[str]:
     return None
 
 
-def _satir_id(kart_id: str, x: dict) -> str:
-    h = hashlib.sha1(f"{kart_id}|{x['tarih']}|{x['tutar']}|{_sade(x['aciklama'])}".encode()).hexdigest()[:16]
+def _satir_id(kart_id: str, x: dict, sira: int = 0) -> str:
+    """Aynı gün + tutar + açıklamalı İKİ gerçek işlem ayrı kimlik alır (kaçıncı tekrar olduğu eklenir — Fable/Codex)."""
+    h = hashlib.sha1(f"{kart_id}|{x['tarih']}|{x['tutar']}|{_sade(x['aciklama'])}|{sira}".encode()).hexdigest()[:16]
     return f"ekstre:{h}"
 
 
@@ -182,15 +192,15 @@ def oku(body: OkuBody):
     with db() as (conn, cur):
         cur.execute("SELECT kart_id, anahtar, hedef, fatura_turu, belirsiz FROM ey_fatura_kural WHERE kart_id IN ('', %s)", (body.kart_id,))
         K = {(r["kart_id"], r["anahtar"]): dict(r) for r in cur.fetchall() or []}
-    # zaten girilmiş mi: aynı kart, aynı tutar, ±5 gün (Ödeme'nin kendi listesinden)
-    aylar = sorted({x["tarih"].strftime("%Y-%m") for x in tum})
-    mevcut = []
-    for a in set(aylar) | {ay_kaydir(a, -1) for a in aylar} | {ay_kaydir(a, 1) for a in aylar}:
-        for od in o.odeme_listesi(a)["odemeler"]:
-            for k in od.get("kart") or []:
-                if (k.get("ad") or "").strip() == (kart["ad"] or "").strip():
-                    mevcut.append((date.fromisoformat(od["tarih"]), Decimal(str(k["tutar"])), od["aciklama"]))
-    out, diger = [], 0
+    # benzer kayıt: aynı kart, aynı tutar, ±5 gün — YALNIZ UYARI (Codex: başka bir harcama faturayı engellemesin).
+    # Kesin tekrar koruması satır kimliğidir (istek_id) → aynı satır ikinci kez yazılmaz; daha önce yazılanlar 'girilmiş'.
+    import evvel_yeni_kasa_api as kasa
+    with db() as (conn, cur):
+        mevcut = [(date.fromisoformat(m["tarih"]), Decimal(m["tutar"]) / 100, m["aciklama"]) for m in o.kart_harcamalari(cur, body.kart_id)]
+        bas = kasa.donem_baslangici(cur)
+        cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'odeme_formu:ekstre:%%'")
+        yazilmis = {dict(r)["kaynak_ref"][len("odeme_formu:"):] for r in cur.fetchall() or []}
+    out, diger, sayac = [], 0, {}
     for x in tum:
         if x["eksi"]:
             continue   # ödeme/iade satırı — fatura değil
@@ -206,13 +216,23 @@ def oku(body: OkuBody):
         oneri, kesin = None, False
         if kural and not kural["belirsiz"]:
             oneri, kesin = kural["hedef"], kural["anahtar"].startswith("no:")
+        anahtar = (x["tarih"], x["tutar"], _sade(x["aciklama"]))
+        sayac[anahtar] = sayac.get(anahtar, -1) + 1
+        sid = _satir_id(body.kart_id, x, sayac[anahtar])
         g = next((m for m in mevcut if m[1] == x["tutar"] and abs((m[0] - x["tarih"]).days) <= 5), None)
-        durum = "girilmis" if g else ("gelecek" if x["tarih"] > _bugun() else "yeni")   # dönem öncesi satırı Ödeme kendisi reddeder
-        out.append({"id": _satir_id(body.kart_id, x), "tarih": x["tarih"].isoformat(), "aciklama": x["aciklama"],
+        if sid in yazilmis:
+            durum = "girilmis"              # bu ekstre satırı daha önce buradan kaydedildi
+        elif x["tarih"] > _bugun():
+            durum = "gelecek"
+        elif bas and x["tarih"] < bas:
+            durum = "donem_oncesi"          # Fable: seçtirip sonra reddetmesin
+        else:
+            durum = "yeni"
+        out.append({"id": sid, "tarih": x["tarih"].isoformat(), "benzer": (g[2] if g and durum == "yeni" else None), "aciklama": x["aciklama"],
                     "tutar": float(x["tutar"]), "no": no, "imza": imza, "oneri": oneri, "kesin": kesin,
                     "belirsiz": bool(kural and kural["belirsiz"]),
                     "fatura_turu": (kural or {}).get("fatura_turu") or _tur_tahmin(x["aciklama"]) or "Diğer abonelik",
-                    "durum": durum, "girilmis": g[2] if g else None})
+                    "durum": durum})
     return {"kart": {"id": kart["id"], "ad": kart["ad"]}, "satirlar": out, "diger_sayi": diger, "toplam_satir": len(tum),
             "subeler": L["subeler"], "fatura_turleri": L["fatura_turleri"], "patronlar": list(PATRONLAR)}
 
@@ -267,23 +287,20 @@ def kaydet(body: KaydetBody, x_evvel_oturum: Optional[str] = Header(default=None
 
 
 def _ogren(kart_id: str, s: Satir, kim: str) -> None:
-    """Numara varsa numara kuralı (kartsız, kesin); yoksa kart+imza kuralı. Aynı imza farklı hedefe seçilirse BELİRSİZ."""
+    """Numara varsa numara kuralı (kartsız) + kart+imza kuralı. Aynı anahtar farklı hedefe seçilirse BELİRSİZ olur (üzerine
+    yazılmaz — Codex); belirsiz kural öneri vermez, her ay sorulur. 'Yok say' de öğrenilir (Kurallar'dan unutulabilir)."""
+    anahtarlar = ([("", "no:" + s.no)] if s.no else []) + ([(kart_id, "ad:" + s.imza)] if s.imza else [])
     try:
         with db() as (conn, cur):
-            if s.no:
-                cur.execute("""INSERT INTO ey_fatura_kural (kart_id, anahtar, hedef, fatura_turu, ornek, kim) VALUES ('', %s, %s, %s, %s, %s)
-                               ON CONFLICT (kart_id, anahtar) DO UPDATE SET hedef=EXCLUDED.hedef, fatura_turu=EXCLUDED.fatura_turu,
-                               belirsiz=FALSE, ornek=EXCLUDED.ornek, kim=EXCLUDED.kim, zaman=NOW()""",
-                            ("no:" + s.no, s.hedef, s.fatura_turu, s.aciklama[:120], kim))
-            elif s.imza:
-                cur.execute("SELECT hedef, belirsiz FROM ey_fatura_kural WHERE kart_id=%s AND anahtar=%s", (kart_id, "ad:" + s.imza))
+            for kart_, anahtar in anahtarlar:
+                cur.execute("SELECT hedef, belirsiz FROM ey_fatura_kural WHERE kart_id=%s AND anahtar=%s", (kart_, anahtar))
                 r = cur.fetchone()
                 if r is None:
-                    cur.execute("""INSERT INTO ey_fatura_kural (kart_id, anahtar, hedef, fatura_turu, ornek, kim) VALUES (%s,%s,%s,%s,%s,%s)""",
-                                (kart_id, "ad:" + s.imza, s.hedef, s.fatura_turu, s.aciklama[:120], kim))
+                    cur.execute("""INSERT INTO ey_fatura_kural (kart_id, anahtar, hedef, fatura_turu, ornek, kim) VALUES (%s,%s,%s,%s,%s,%s)
+                                   ON CONFLICT DO NOTHING""", (kart_, anahtar, s.hedef, s.fatura_turu, s.aciklama[:120], kim))
                 elif not r["belirsiz"] and r["hedef"] != s.hedef:
-                    cur.execute("""UPDATE ey_fatura_kural SET belirsiz=TRUE, kim=%s, zaman=NOW() WHERE kart_id=%s AND anahtar=%s""",
-                                (kim, kart_id, "ad:" + s.imza))
+                    cur.execute("UPDATE ey_fatura_kural SET belirsiz=TRUE, kim=%s, zaman=NOW() WHERE kart_id=%s AND anahtar=%s",
+                                (kim, kart_, anahtar))
     except Exception as e:  # noqa: BLE001 — öğrenme yazılamazsa ödeme yine yazılmıştır
         log.warning("fatura dağıt: kural öğrenilemedi: %s", str(e)[:150])
 

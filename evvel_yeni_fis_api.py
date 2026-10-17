@@ -33,6 +33,7 @@ def _hazirla():
     if _HAZIR:
         return
     with db() as (conn, cur):
+        cur.execute("SET LOCAL lock_timeout = '3s'")
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_fis_kontrol (
             ref TEXT PRIMARY KEY, durum TEXT NOT NULL, notu TEXT, kim TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             giren TEXT, sube TEXT, tarih DATE, tutar NUMERIC(14,2), aciklama TEXT)""")
@@ -46,7 +47,7 @@ def _eski_bilgi(cur, refler: List[str]) -> Dict[str, dict]:
         return {}
     try:
         with savepoint(cur, "sp_ey_fis_eski"):
-            cur.execute("""SELECT g.id::text AS id, COALESCE(p.ad_soyad, u.ad) AS giren,
+            cur.execute("""SELECT g.id::text AS id, COALESCE(p.ad_soyad, u.ad) AS giren, g.personel_id::text AS personel_id,
                                   COALESCE(g.fis_gonderildi, FALSE) AS gonderildi,
                                   NULLIF(TRIM(g.fis_kontrol_durumu), '') AS durum, g.fis_kontrol_notu AS notu
                              FROM anlik_giderler g
@@ -73,6 +74,24 @@ def _eskiye_yaz(cur, ref: str, durum: str, notu: Optional[str]) -> bool:
         return False
 
 
+def _eski_panel_kart_giderleri(cur, bas: str) -> list:
+    """KÖPRÜ: panelden KART/HAVALE ile girilen giderler Kasa defterine girmez (dükkân nakdi değil) ama fiş kontrolüne girer
+    (Fable A6). Eski sistem kalkınca panel bunları doğrudan Evvel Yeni'ye yazacak (KESIM_LISTESI)."""
+    try:
+        with savepoint(cur, "sp_ey_fis_kart"):
+            cur.execute("""SELECT g.id::text AS id, g.tarih, g.tutar, COALESCE(s.ad, g.sube::text) AS sube,
+                                  TRIM(CONCAT_WS(' · ', NULLIF(TRIM(g.kategori),''), NULLIF(TRIM(g.aciklama),''))) AS aciklama
+                             FROM anlik_giderler g LEFT JOIN subeler s ON s.id::text = g.sube::text
+                            WHERE g.tarih >= %s AND g.personel_id IS NOT NULL AND g.sube IS NOT NULL
+                              AND COALESCE(g.durum,'aktif') IN ('aktif','onay_bekliyor')
+                              AND LOWER(COALESCE(NULLIF(TRIM(g.odeme_yontemi),''),'nakit')) <> 'nakit'""", (bas,))
+            return [{"ref": "anlik_gider:" + dict(r)["id"], "tarih": str(dict(r)["tarih"])[:10], "sube": dict(r)["sube"],
+                     "tutar": float(dict(r)["tutar"] or 0), "aciklama": dict(r)["aciklama"], "giren": None, "giren_id": None, "kart": True}
+                    for r in cur.fetchall() or []]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 @router.get("/liste")
 def liste(gun: int = 45, durum: str = "bekliyor"):
     """Panelden girilen dükkân giderleri + fiş durumu. durum: bekliyor | gelmedi | hepsi."""
@@ -80,7 +99,7 @@ def liste(gun: int = 45, durum: str = "bekliyor"):
     import evvel_yeni_kasa_api as kasa
     bas = (_bugun() - timedelta(days=max(1, min(int(gun or 45), 400)))).isoformat()
     with db() as (conn, cur):
-        satirlar = kasa.dukkan_giderleri(cur, bas)
+        satirlar = kasa.dukkan_giderleri(cur, bas) + _eski_panel_kart_giderleri(cur, bas)
         refler = [x["ref"] for x in satirlar if x.get("ref")]
         cur.execute("SELECT ref, durum, notu, kim, zaman FROM ey_fis_kontrol WHERE ref = ANY(%s)", (refler,))
         ey = {dict(r)["ref"]: dict(r) for r in cur.fetchall() or []}
@@ -90,6 +109,8 @@ def liste(gun: int = 45, durum: str = "bekliyor"):
         if not x.get("ref"):
             continue
         e, o = ey.get(x["ref"]), eski.get(x["ref"]) or {}
+        if not (x.get("giren_id") or o.get("personel_id") or (e or {}).get("giren")):
+            continue   # Codex: yalnız PANEL girişleri (girişi yapan personeli olan); merkez girişlerinde fiş kontrolü yok
         d = (e or {}).get("durum") or (o.get("durum") if o.get("durum") in DURUMLAR else None) or "bekliyor"
         gec = (_bugun() - date.fromisoformat(x["tarih"])).days
         out.append({**x, "giren": x.get("giren") or o.get("giren") or "—", "durum": d,
@@ -127,12 +148,13 @@ def isaretle(body: IsaretBody, x_evvel_oturum: Optional[str] = Header(default=No
     notu = (body.notu or "").strip()[:300] or None
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
-        x = next((s for s in kasa.dukkan_giderleri(cur, "2000-01-01") if s.get("ref") == body.ref), None)
+        x = next((s for s in kasa.dukkan_giderleri(cur, "2000-01-01") + _eski_panel_kart_giderleri(cur, "2000-01-01")
+                  if s.get("ref") == body.ref), None)
         if not x:
             raise HTTPException(404, "Gider bulunamadı")
         if body.durum == "bekliyor":
             cur.execute("DELETE FROM ey_fis_kontrol WHERE ref=%s", (body.ref,))
-            _eskiye_yaz(cur, body.ref, None, None)
+            _eskiye_yaz(cur, body.ref, "bekliyor", None)   # eski sütun NOT NULL DEFAULT 'bekliyor' (Fable+Codex)
         else:
             giren = x.get("giren") or (_eski_bilgi(cur, [body.ref]).get(body.ref) or {}).get("giren")
             cur.execute("""INSERT INTO ey_fis_kontrol (ref, durum, notu, kim, giren, sube, tarih, tutar, aciklama)

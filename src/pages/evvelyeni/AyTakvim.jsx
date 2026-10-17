@@ -9,6 +9,7 @@ const GRI = 'var(--pi-ink3, #7F6C57)';
 export const DURUM = {
   odendi: { renk: R.yesil, ad: 'ödendi', ikon: '✓' },
   kismi: { renk: R.amber, ad: 'kısmi', ikon: '◐' },
+  odeme_var: { renk: R.amber, ad: 'ödeme var · ekstre bilinmiyor', ikon: '?' },
   gecikti: { renk: R.kirmizi, ad: 'gecikti', ikon: '!' },
   yaklasiyor: { renk: '#D9822B', ad: 'yaklaşıyor', ikon: '⏰' },
   gelecek: { renk: GRI, ad: 'gelecek', ikon: '' },

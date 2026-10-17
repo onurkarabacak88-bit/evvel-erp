@@ -212,8 +212,9 @@ def _eski_plan(cur) -> dict:
     try:
         with savepoint(cur, "sp_ey_kart_eski_plan"):
             cur.execute("""SELECT kart_id::text AS kid, TO_CHAR(COALESCE(referans_ay, tarih), 'YYYY-MM') AS ay,
-                                  SUM(odenecek_tutar) AS ekstre,
-                                  SUM(CASE WHEN durum='odendi' THEN COALESCE(odenen_tutar, odenecek_tutar) ELSE 0 END) AS odenen
+                                  MAX(odenecek_tutar) AS ekstre,   -- Fable: mükerrer plan satırları toplanmasın
+                                  SUM(CASE WHEN durum='odendi' THEN COALESCE(odenen_tutar, odenecek_tutar)
+                                           ELSE COALESCE(odenen_tutar, 0) END) AS odenen   -- Codex: kısmi (asgariye ulaşmayan) ödeme de sayılır
                              FROM odeme_plani WHERE kart_id IS NOT NULL AND COALESCE(durum,'') <> 'iptal' GROUP BY 1, 2""")
             for r in cur.fetchall() or []:
                 r = dict(r)
@@ -235,31 +236,38 @@ def kart_takvimi(yil: Optional[int] = None):
         kart_hazirla(cur)
         cur.execute("SELECT * FROM ey_kart WHERE aktif ORDER BY limit_grup NULLS LAST, ad")
         kartlar = [dict(r) for r in cur.fetchall() or []]
-        cur.execute("SELECT kart_id, ekstre_borc, son_odeme FROM ey_kart_teyit WHERE ekstre_borc IS NOT NULL AND son_odeme IS NOT NULL")
+        # Codex: aynı aya birden çok teyit → EN SON girilen kazanır (sıralı okuma); teyitteki gerçek son ödeme tarihi korunur
+        cur.execute("""SELECT kart_id, ekstre_borc, son_odeme FROM ey_kart_teyit
+                        WHERE ekstre_borc IS NOT NULL AND son_odeme IS NOT NULL ORDER BY tarih, zaman""")
         teyit = {}
         for r in cur.fetchall() or []:
             r = dict(r)
-            teyit[(r["kart_id"], r["son_odeme"].strftime("%Y-%m"))] = int(r["ekstre_borc"])
-        _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+            teyit[(r["kart_id"], r["son_odeme"].strftime("%Y-%m"))] = (int(r["ekstre_borc"]), r["son_odeme"])
         eski = _eski_plan(cur)
         bas = kasa.donem_baslangici(cur).strftime("%Y-%m")
-    H = _hareketler(kayit)
+        import evvel_yeni_odeme_api as odeme   # PUBLIC özet (Kasa'nın iç defterine dokunmadan)
+        tum_od = odeme.konu_odemeleri(cur, "kart_borcu")
     out = []
     for k in kartlar:
-        odemeler = sorted((x for x in H.get(k["id"], []) if x["tur"] == "borc_odeme"), key=lambda x: x["gun"])
+        odemeler = sorted((x for x in tum_od if str(x.get("kart_id")) == str(k["id"])), key=lambda x: x["tarih"])
         aylar, onceki_son = [], None
         for m in range(1, 13):
             a = f"{yil}-{m:02d}"
-            son = _son_gun(yil, m, k["son_odeme_gunu"]) if k.get("son_odeme_gunu") else None
+            ty = teyit.get((k["id"], a))
+            son = ty[1] if ty else (_son_gun(yil, m, k["son_odeme_gunu"]) if k.get("son_odeme_gunu") else None)
+            # dönemi AÇIKÇA seçilmiş ödeme (takvimden 'öde') o aya; seçilmemişse (önceki son, bu son] aralığına
+            od_yeni = sum(x["toplam"] for x in odemeler if x.get("donem") == a)
             if son:
                 alt = onceki_son or (son - timedelta(days=31))
-                od_yeni = sum(x["tutar"] for x in odemeler if alt.isoformat() < x["gun"] <= son.isoformat())
+                od_yeni += sum(x["toplam"] for x in odemeler if not x.get("donem") and alt.isoformat() < x["tarih"] <= son.isoformat())
                 onceki_son = son
             else:
-                od_yeni = sum(x["tutar"] for x in odemeler if x["gun"][:7] == a)
+                od_yeni += sum(x["toplam"] for x in odemeler if not x.get("donem") and x["tarih"][:7] == a)
             e = eski.get((k["id"], a)) or {}
-            od = od_yeni + int(e.get("odenen") or 0)
-            ekstre, ekstre_kaynak = teyit.get((k["id"], a)), "teyit"
+            od_e = int(e.get("odenen") or 0)
+            od = od_yeni if od_yeni > 0 else od_e      # iki sistemde de girilmişse TOPLANMAZ
+            iki_yerde = od_yeni > 0 and od_e > 0
+            ekstre, ekstre_kaynak = (ty[0] if ty else None), "teyit"
             if ekstre is None and e.get("ekstre"):
                 ekstre, ekstre_kaynak = int(e["ekstre"]), "eski"
             if ekstre is None:
@@ -267,7 +275,7 @@ def kart_takvimi(yil: Optional[int] = None):
             if ekstre is not None and od >= ekstre - 100:
                 durum = "odendi"
             elif ekstre is None and od > 0:
-                durum = "odendi"            # tutar bilinmiyor ama ödeme var
+                durum = "odeme_var"         # Codex: ekstre bilinmeden 'ödendi' DENMEZ
             elif od > 0:
                 durum = "kismi"
             elif a < bas:
@@ -280,7 +288,7 @@ def kart_takvimi(yil: Optional[int] = None):
                 durum = "gelecek"
             aylar.append({"ay": a, "son_odeme": son.isoformat() if son else None, "ekstre": _tl_sayi(ekstre) if ekstre is not None else None,
                           "ekstre_kaynak": ekstre_kaynak, "odenen": _tl_sayi(od),
-                          "kalan": _tl_sayi(max(0, ekstre - od)) if ekstre is not None else None, "durum": durum})
+                          "kalan": _tl_sayi(max(0, ekstre - od)) if ekstre is not None else None, "durum": durum, "iki_yerde": iki_yerde})
         out.append({"id": k["id"], "ad": k["ad"], "kimin": k.get("kimin"), "son_odeme_gunu": k.get("son_odeme_gunu"), "aylar": aylar,
                     "yil_odenen": round(sum(x["odenen"] for x in aylar), 2)})
     return {"yil": yil, "bugun": bugun.isoformat(), "baslangic": bas, "kartlar": out}

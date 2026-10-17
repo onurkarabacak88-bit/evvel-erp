@@ -191,13 +191,13 @@ export function KartTakvim({ onSekme }) {
       .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
   }, [yil]);
   const ode = (k, a) => {
-    try { window.sessionStorage.setItem('ey_odeme_on', JSON.stringify({ konu: 'kart_borcu', kimin: k.id, tutar: a.kalan || 0 })); } catch { /* yut */ }
+    try { window.sessionStorage.setItem('ey_odeme_on', JSON.stringify({ konu: 'kart_borcu', kimin: k.id, ait_ay: a.ay, tutar: a.kalan || 0 })); } catch { /* yut */ }
     onSekme?.('odemeler');
   };
   const satirlar = (v?.kartlar || []).map((k) => ({
     id: k.id, baslik: k.ad, alt: k.son_odeme_gunu ? `son ödeme ${k.son_odeme_gunu}'i` : 'son ödeme günü tanımsız', k,
     aylar: k.aylar.map((a) => ({ ...a, ust: a.odenen > 0 ? fmt(a.odenen) : a.ekstre != null ? fmt(a.ekstre) : a.durum === 'once' ? '·' : '?',
-      alt: a.durum === 'kismi' ? `kalan ${fmt(a.kalan)}` : (a.ekstre == null && !['once', 'odendi'].includes(a.durum) ? 'ekstre yok' : null) })),
+      alt: a.iki_yerde ? '⚠ iki sistemde' : a.durum === 'kismi' ? `kalan ${fmt(a.kalan)}` : (a.ekstre == null && !['once', 'odendi'].includes(a.durum) ? 'ekstre yok' : null) })),
     sag: fmt(k.yil_odenen), sagAlt: 'ödenen',
   }));
   return (
@@ -217,6 +217,8 @@ export function KartTakvim({ onSekme }) {
           <div>Ekstre <b style={num}>{tutarYaz(sec.a.ekstre)}</b> ₺{sec.a.ekstre_kaynak === 'eski' && <span style={{ color: R.not }}> (eski sistemin tutarı)</span>}
             {' '}· ödenen <b style={num}>{fmt(sec.a.odenen)}</b> ₺{sec.a.kalan != null && <> · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺</>}</div>
           <div style={{ color: R.not, fontSize: 13 }}>{sec.a.son_odeme ? `Son ödeme ${tKisa(sec.a.son_odeme)}` : 'Son ödeme günü tanımsız'} · {DURUM[sec.a.durum]?.ad}</div>
+          {sec.a.iki_yerde && <div style={{ fontSize: 12.5, color: R.amber }}>⚠ Hem eski sistemde hem Evvel Yeni'de ödeme var — biri mükerrer olabilir (toplanmadı).</div>}
+          {sec.a.durum === 'odeme_var' && <div style={{ fontSize: 12.5, color: R.amber }}>Ödeme var ama bu ayın ekstre tutarı girilmedi — borcun kapandığı bilinmiyor (Kartlar → teyit).</div>}
           {sec.a.durum !== 'odendi' && sec.a.durum !== 'once' && <div><Dugme kucuk ana onClick={() => ode(sec.k, sec.a)}>Kart borcunu öde →</Dugme></div>}
         </Pencere>
       )}

@@ -39,7 +39,7 @@ export default function KrediModulu({ onToast, onSekme }) {
 
   const satirlar = (v?.krediler || []).map((k) => ({
     id: k.id, baslik: k.ad, alt: `${fmt(k.taksit)} ₺/ay · ${k.odeme_gunu}'i${k.son_ay ? ` · son ${k.son_ay}` : ''}`, k,
-    aylar: k.aylar.map((a) => ({ ...a, ust: a.odenen > 0 ? fmt(a.odenen) : a.durum === 'once' ? '·' : fmt(a.beklenen), alt: a.durum === 'kismi' ? `kalan ${fmt(a.kalan)}` : null })),
+    aylar: k.aylar.map((a) => ({ ...a, ust: a.odenen > 0 ? fmt(a.odenen) : a.durum === 'once' ? '·' : fmt(a.beklenen), alt: a.iki_yerde ? '⚠ iki sistemde' : a.durum === 'kismi' ? `kalan ${fmt(a.kalan)}` : null })),
     sag: fmt(k.yil_odenen), sagAlt: `/ ${fmt(k.yil_beklenen)}`,
   }));
   return (
@@ -65,6 +65,7 @@ export default function KrediModulu({ onToast, onSekme }) {
         <Pencere baslik={`🏦 ${sec.k.ad} · ${AY_UZUN[sec.i]} ${v.yil}`} onKapat={() => setSec(null)}>
           <div>Taksit <b style={num}>{tutarYaz(sec.a.beklenen)}</b> ₺ · ödenen <b style={num}>{fmt(sec.a.odenen)}</b> ₺ · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺</div>
           <div style={{ color: R.not, fontSize: 13 }}>Ödeme günü {tKisa(sec.a.vade)} · {DURUM[sec.a.durum]?.ad}</div>
+          {sec.a.iki_yerde && <div style={{ color: R.amber, fontSize: 13 }}>⚠ Bu taksit hem eski sistemde hem Evvel Yeni'de ödenmiş görünüyor — biri mükerrer olabilir (toplanmadı).</div>}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-start', flexWrap: 'wrap' }}>
             {sec.a.kalan > 0 && sec.a.durum !== 'once' && <Dugme kucuk ana onClick={() => ode(sec.k, sec.a)}>Bu taksiti öde →</Dugme>}
             <Dugme kucuk onClick={() => { setForm({ id: sec.k.id, ad: sec.k.ad, tur: sec.k.tur || 'Kredi', aylik_taksit: String(sec.k.taksit), odeme_gunu: String(sec.k.odeme_gunu), ilk_ay: sec.k.ilk_ay, taksit_sayisi: sec.k.son_ay ? String(monthsBetween(sec.k.ilk_ay, sec.k.son_ay)) : '', aktif: true }); setSec(null); }}>Krediyi düzelt</Dugme>

@@ -32,10 +32,13 @@ def _hazirla():
     if _HAZIR:
         return
     with db() as (conn, cur):
+        cur.execute("SET LOCAL lock_timeout = '3s'")
+        cur.execute("SELECT pg_advisory_xact_lock(7012031)")   # Fable: çok işçide ilk kopya bir kez
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_kredi (
             id TEXT PRIMARY KEY, ad TEXT NOT NULL, tur TEXT, aylik_taksit BIGINT NOT NULL, odeme_gunu INT NOT NULL,
             ilk_ay TEXT NOT NULL, taksit_sayisi INT, aktif BOOLEAN NOT NULL DEFAULT TRUE, eski_id TEXT,
             kim TEXT, olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ey_kredi_eski_id ON ey_kredi(eski_id) WHERE eski_id IS NOT NULL")
         cur.execute("SELECT COUNT(*) AS n FROM ey_kredi")
         if int(dict(cur.fetchone())["n"]) == 0:
             _ilk_kopya(cur)
@@ -50,11 +53,14 @@ def _ilk_kopya(cur) -> None:
                                   toplam_vade, aktif FROM borc_envanteri WHERE COALESCE(aktif, TRUE) = TRUE""")
             for r in cur.fetchall() or []:
                 r = dict(r)
-                ilk = r.get("ilk_taksit_tarihi") or r.get("baslangic_tarihi")
+                ilk = r.get("ilk_taksit_tarihi")
+                if not ilk and r.get("baslangic_tarihi"):   # Codex: eski hesap — ilk taksit başlangıçtan BİR AY sonra
+                    b0 = r["baslangic_tarihi"]
+                    ilk = date(b0.year + (b0.month == 12), b0.month % 12 + 1, 1)
                 if not r.get("aylik_taksit") or not ilk:
                     continue
                 cur.execute("""INSERT INTO ey_kredi (id, ad, tur, aylik_taksit, odeme_gunu, ilk_ay, taksit_sayisi, eski_id, kim)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'eski sistemden kopya')""",
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'eski sistemden kopya') ON CONFLICT DO NOTHING""",
                             (str(uuid.uuid4()), (r["kurum"] or "Kredi").strip(), r.get("borc_turu"), _kurus(round(float(r["aylik_taksit"]), 2)),
                              int(r.get("odeme_gunu") or ilk.day), str(ilk)[:7], int(r["toplam_vade"]) if r.get("toplam_vade") else None, r["id"]))
     except Exception as e:  # noqa: BLE001
@@ -82,17 +88,22 @@ def _krediler(cur, hepsi: bool = False) -> list:
     return [dict(r) for r in cur.fetchall() or []]
 
 
-def _yeni_odenen(aylar: set) -> dict:
-    """Ödeme modülünden: {(kredi_id, 'YYYY-AA'): kuruş} — ait ay, yoksa ödeme günü ayı."""
+def _yeni_odenen(cur) -> dict:
+    """Ödeme modülünün PUBLIC özetinden (tek okuma): {(kredi_id, 'YYYY-AA'): kuruş} — ait olduğu ay (takvimden seçilen)."""
     import evvel_yeni_odeme_api as odeme
     out = {}
-    for a in aylar:
-        for x in odeme.odeme_listesi(a)["odemeler"]:
-            if x.get("konu_tip") != "kredi" or not x.get("kredi_id"):
-                continue
-            k = (x["kredi_id"], (x.get("ait_ay") or x["tarih"])[:7])
-            out[k] = out.get(k, 0) + _kurus(x["toplam"])
+    for x in odeme.konu_odemeleri(cur, "kredi"):
+        if not x.get("kredi_id"):
+            continue
+        k = (x["kredi_id"], (x.get("donem") or x.get("ait_ay") or x["tarih"])[:7])
+        out[k] = out.get(k, 0) + int(x["toplam"])
     return out
+
+
+def _gun(y: int, m: int, d: int) -> date:
+    """Ayın gerçek son gününe kırpılmış tarih (31 → Şubat 28/29)."""
+    import calendar
+    return date(y, m, min(int(d or 1), calendar.monthrange(y, m)[1]))
 
 
 @router.get("/liste")
@@ -114,8 +125,8 @@ def takvim(yil: Optional[int] = None):
         kr = _krediler(cur)
         eski = _eski_odenen(cur)
         bas = kasa.donem_baslangici(cur).isoformat()[:7]
+        yeni = _yeni_odenen(cur)
     aylar = [f"{yil}-{m:02d}" for m in range(1, 13)]
-    yeni = _yeni_odenen({a for a in aylar if bas <= a <= bugun.strftime("%Y-%m")})   # ödeme ileri tarihli olamaz
     out = []
     for k in kr:
         son_ay = ay_kaydir(k["ilk_ay"], k["taksit_sayisi"] - 1) if k.get("taksit_sayisi") else None
@@ -123,8 +134,12 @@ def takvim(yil: Optional[int] = None):
         for a in aylar:
             aktif_ay = a >= k["ilk_ay"] and (son_ay is None or a <= son_ay)
             bek = int(k["aylik_taksit"]) if aktif_ay else 0
-            od = yeni.get((k["id"], a), 0) + (eski.get((k.get("eski_id"), a), 0) if k.get("eski_id") else 0)
-            vade = date(int(a[:4]), int(a[5:7]), min(int(k["odeme_gunu"] or 1), 28))
+            # Fable+Codex: aynı taksit iki sistemde de girilmişse TOPLANMAZ — yeni kayıt varsa eski sayılmaz; ikisi de varsa işaret
+            od_y = yeni.get((k["id"], a), 0)
+            od_e = eski.get((k.get("eski_id"), a), 0) if k.get("eski_id") else 0
+            od = od_y if od_y > 0 else od_e
+            iki_yerde = od_y > 0 and od_e > 0
+            vade = _gun(int(a[:4]), int(a[5:7]), k["odeme_gunu"])
             if not aktif_ay:
                 durum = "yok"
             elif od >= bek - 100:
@@ -140,7 +155,7 @@ def takvim(yil: Optional[int] = None):
             else:
                 durum = "gelecek"
             satir.append({"ay": a, "beklenen": _tl_sayi(bek), "odenen": _tl_sayi(od), "kalan": _tl_sayi(max(0, bek - od)),
-                          "durum": durum, "vade": vade.isoformat()})
+                          "durum": durum, "vade": vade.isoformat(), "iki_yerde": iki_yerde})
         out.append({"id": k["id"], "ad": k["ad"], "tur": k.get("tur"), "taksit": _tl_sayi(k["aylik_taksit"]), "odeme_gunu": k["odeme_gunu"],
                     "ilk_ay": k["ilk_ay"], "son_ay": son_ay, "aylar": satir,
                     "yil_beklenen": _tl_sayi(sum(int(round(x["beklenen"] * 100)) for x in satir)),

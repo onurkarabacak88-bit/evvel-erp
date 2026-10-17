@@ -2,7 +2,7 @@
 // Sahip (2026-10-17): "Otomatik ödenen faturaları kart ekstresinden abone kodlarıyla şubelere eşleştirelim; çıkarıldığında
 // başka alanları sıkıntıya sokmasın, sadece bize özgü." Ayda bir: kart seç → ekstre PDF → satırların şubesi → kaydet.
 // Kaydedilen satır Ödeme'nin kendi kaydıdır (kartla fatura) → şube gideri; bir kez seçilen şube sonraki ay hatırlanır.
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, fmt, tKisa } from './KasaModulu';
 
@@ -21,15 +21,21 @@ export default function FaturaModulu({ onToast }) {
   const [metin, setMetin] = useState('');
   const [sonuc, setSonuc] = useState(null);
   const [sonGovde, setSonGovde] = useState(null);   // kaydettikten sonra aynı ekstreyi yeniden okumak için
+  const istekNo = useRef(0);                          // Codex: geç gelen eski cevap ekrana basılmasın
+  const [kurallar, setKurallar] = useState(null);
+  const kuralYukle = () => api('/evvel-yeni/fatura/kurallar').then((d) => setKurallar(d.kurallar)).catch(() => {});
+  const unut = async (k) => { try { await api(`/evvel-yeni/fatura/kural-sil?kart_id=${encodeURIComponent(k.kart_id)}&anahtar=${encodeURIComponent(k.anahtar)}`, { method: 'POST' }); kuralYukle(); } catch (e) { setHata(e?.message || 'Silinemedi'); } };
 
   useEffect(() => {
     api('/evvel-yeni/odeme/listeler').then((d) => setKartlar(d?.kartlar || [])).catch(() => setHata('Kartlar okunamadı'));
   }, []);
 
   const oku = async (govde, sonucuKoru) => {
+    const n = ++istekNo.current;
     setMesgul(true); setHata(''); if (!sonucuKoru) setSonuc(null); setSonGovde(govde);
     try {
       const d = await api('/evvel-yeni/fatura/oku', { method: 'POST', body: { kart_id: kartId, ...govde } });
+      if (n !== istekNo.current) return;
       setV(d);
       const s = {};
       d.satirlar.forEach((x) => { s[x.id] = { hedef: x.durum === 'yeni' ? (x.oneri || '') : '', fatura_turu: x.fatura_turu }; });
@@ -51,7 +57,7 @@ export default function FaturaModulu({ onToast }) {
     if (!satirlar.length) { setHata('Şubesi seçilmiş satır yok'); return; }
     setMesgul(true); setHata('');
     try {
-      const d = await api('/evvel-yeni/fatura/kaydet', { method: 'POST', body: { kart_id: kartId, satirlar } });
+      const d = await api('/evvel-yeni/fatura/kaydet', { method: 'POST', body: { kart_id: v.kart.id, satirlar } });   // okunan ekstrenin kartı
       setSonuc(d); onToast?.(d.mesaj);
       if (sonGovde) await oku(sonGovde, true);
     } catch (e) { setHata(e?.message || 'Kaydedilemedi'); }
@@ -65,7 +71,7 @@ export default function FaturaModulu({ onToast }) {
       <style>{PI_CSS}</style>
       <div><div className="pi-eyebrow">Evvel Yeni · Ödeme</div><h1 style={{ fontSize: 30 }}>Faturaları şubelere dağıt</h1></div>
       <div style={{ ...kart, padding: '12px 14px', display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-        <select value={kartId} onChange={(e) => { setKartId(e.target.value); setV(null); }} style={alan}>
+        <select value={kartId} disabled={mesgul} onChange={(e) => { istekNo.current += 1; setKartId(e.target.value); setV(null); setSonuc(null); }} style={alan}>
           <option value="">Kart seç…</option>
           {kartlar.map((k) => <option key={k.id} value={k.id}>{k.ad}</option>)}
         </select>
@@ -87,6 +93,23 @@ export default function FaturaModulu({ onToast }) {
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {sonuc && <div style={{ ...kart, padding: '10px 14px', color: R.yesil }}>{sonuc.mesaj}
         {sonuc.sonuc.filter((x) => !x.ok).map((x) => <div key={x.id} style={{ color: R.kirmizi, fontSize: 12.5 }}>• {x.mesaj}</div>)}</div>}
+      <div>
+        <Dugme kucuk onClick={() => (kurallar ? setKurallar(null) : kuralYukle())}>{kurallar ? 'Hatırlananları gizle' : 'Hatırlanan eşleşmeler'}</Dugme>
+      </div>
+      {kurallar && (
+        <div style={{ ...kart, padding: '10px 14px', display: 'grid', gap: 4, fontSize: 13 }}>
+          {kurallar.length === 0 && <div style={{ color: R.not }}>Henüz hatırlanan eşleşme yok.</div>}
+          {kurallar.map((k) => (
+            <div key={k.kart_id + k.anahtar} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+              <span style={{ flex: '1 1 260px' }}>{k.anahtar.startsWith('no:') ? `abone no ${k.anahtar.slice(3)}` : `"${k.anahtar.slice(3)}"`}
+                <span style={{ color: R.not }}> · {k.ornek}</span></span>
+              <span>{k.belirsiz ? <Cip tur="sari">birden çok şube — her ay sorulur</Cip> : k.hedef === 'yoksay' ? <Cip>yok sayılıyor</Cip>
+                : <b>{(v?.subeler || []).find((b) => b.id === k.hedef)?.ad || k.hedef}</b>}</span>
+              <Dugme kucuk onClick={() => unut(k)}>Unut</Dugme>
+            </div>
+          ))}
+        </div>
+      )}
       {v && (
         <div style={{ ...kart, padding: '12px 14px', display: 'grid', gap: 6 }}>
           <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', alignItems: 'baseline' }}>
@@ -107,6 +130,8 @@ export default function FaturaModulu({ onToast }) {
                   {x.aciklama}{' '}
                   {x.durum === 'girilmis' && <Cip tur="yesil">zaten girilmiş</Cip>}
                   {x.durum === 'gelecek' && <Cip tur="sari">ileri tarihli</Cip>}
+                  {x.durum === 'donem_oncesi' && <Cip>Evvel Yeni öncesi — yazılmaz</Cip>}
+                  {x.benzer && <Cip tur="sari" >benzer kayıt var: {x.benzer}</Cip>}
                   {x.kesin && x.durum === 'yeni' && <Cip tur="yesil">numaradan</Cip>}
                   {!x.kesin && x.oneri && x.durum === 'yeni' && <Cip tur="sari">geçen aydan</Cip>}
                   {x.belirsiz && x.durum === 'yeni' && <Cip tur="sari">birden çok şube — seç</Cip>}

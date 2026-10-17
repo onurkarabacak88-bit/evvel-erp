@@ -189,8 +189,12 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
                 raise HTTPException(400, "Açıklama yaz")
             kimin = body.kimin
             etiket = f"{body.aciklama.strip()[:60]}"
-        ait_ay = (body.ait_ay or gun[:7])[:7] if body.konu in ("kira", "fatura", "personel") else gun[:7]
-        if body.konu in ("kira", "fatura", "personel"):
+        # Codex (2026-10-17): kredi taksiti / kart borcu da HANGİ AYIN borcunu kapattığını taşır (Eylül taksiti Ekim'de ödenirse Eylül kapanır)
+        AYLI = ("kira", "fatura", "personel", "kredi", "kart_borcu")
+        ait_ay = (body.ait_ay or gun[:7])[:7] if body.konu in AYLI else gun[:7]
+        if body.konu in ("kredi", "kart_borcu") and body.ait_ay:
+            konu["donem"] = ait_ay      # açıkça seçilen dönem (takvimden 'öde'); yoksa takvim ödeme gününe göre yerleştirir
+        if body.konu in AYLI:
             try:
                 date.fromisoformat(ait_ay + "-01")
             except ValueError:
@@ -503,3 +507,34 @@ def patron_ata(body: PatronAtaBody, x_evvel_oturum: Optional[str] = Header(defau
         else:
             raise HTTPException(400, "kaynak: odeme | cekis")
     return {"ok": True, "mesaj": "Şube giderine geri alındı" if body.geri_al else f"{body.patron}'un harcaması olarak işaretlendi"}
+
+
+def konu_odemeleri(cur, konu_tip: str) -> list:
+    """PUBLIC servis (Krediler / Kartlar takvimleri): bir konudaki BÜTÜN ödemeler tek okumada (iptaller düşülmüş).
+    Her satır: id, tarih, ait_ay, donem (açıkça seçildiyse), toplam (kuruş), kredi_id, kart_id."""
+    _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+    out = []
+    for h in kayit:
+        if h["tur"] != "odeme":
+            continue
+        v = h["veri"]
+        k = v.get("konu") or {}
+        if k.get("tip") != konu_tip:
+            continue
+        out.append({"id": h["id"], "tarih": h["is_gunu"], "ait_ay": v.get("ait_ay"), "donem": k.get("donem"),
+                    "toplam": int(v.get("toplam", h["tutar"])), "kredi_id": k.get("kredi_id"), "kart_id": k.get("kart_id")})
+    return out
+
+
+def kart_harcamalari(cur, kart_id: str) -> list:
+    """PUBLIC servis (Faturaları dağıt — 'benzer kayıt var mı'): bir kartla yapılmış bütün ödeme parçaları, tek okuma.
+    Her satır: tarih, tutar (kuruş), aciklama."""
+    _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+    out = []
+    for h in kayit:
+        if h["tur"] != "odeme":
+            continue
+        for p in h["veri"].get("kart_parcalar") or []:
+            if str(p.get("kart_id")) == str(kart_id):
+                out.append({"tarih": h["is_gunu"], "tutar": int(p["tutar"]), "aciklama": h["veri"].get("aciklama")})
+    return out
