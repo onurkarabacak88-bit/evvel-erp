@@ -115,3 +115,4 @@
 | 16 | Eski işletmeci (şahsi harcama sahibi) + satıcı kuralı ÇIKAR | Ödeme → Patron harcamaları |
 | 17 | Eski "Para Nerede" şelalesi ÇIKAR | Kasa → Kasam (tek defter) |
 | 18 | Eski vergi/KDV ekranları ÇIKAR | Vergi muhasebecide. Ödeme'ye "Vergi" konusu (şube/ortak, tür, ait ay). Ürün KDV oranları ürün kataloğu taşınırken EY ürün tanımına (KESIM 13) |
+| 19 | Eski onay kuyruğu ÇIKAR | Bekleyen işler (5 alt sekme) yerini aldı; kasa farkı eşiği 20 ₺ (altı Bekleyen işler'e düşmez, Açık farklar'da). Eski 337 bekleyen onaya DOKUNULMADI (EY okumuyor; reddet yan etkili) — eski sistemle kalkar |

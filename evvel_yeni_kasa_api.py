@@ -70,6 +70,7 @@ SENKRON_ARALIK_SN = 600                  # eski sistemden otomatik köprü — e
 # Sahip (2026-10-17, envanter madde 3-b): "teslim girildiği AN alınmış sayılsın; yalnız 'almadım' denirse açılsın" → 0 gün
 # (köprü en geç 10 dk'da bir çeker ve aynı işlemde kabul eder). "Almadım/eksikti" = 7 gün içinde Düzelt.
 OTOMATIK_KABUL_GUN = 0
+FARK_ESIK_KURUS = 2000      # 20 ₺ — altındaki farklar iş çıkarmaz (sahip, envanter 19)
 DUZELTME_SURESI_GUN = 7
 ACIK = "__acik"                          # açık fark kovası (cep değil)
 YOLDA = "__yolda"                        # teslim edildi, "aldım" bekleniyor (cep değil)
@@ -615,7 +616,8 @@ def _isler(kayitlar: List[dict], C: dict, fl: List[dict]) -> List[dict]:
                         "ad": f"{C.get(h['kaynak'], {}).get('ad')} → {C.get(h['hedef'], {}).get('ad')}",
                         "hedef_kisa": C.get(h["hedef"], {}).get("kisa"), "tutar": _tl_sayi(h["tutar"]), "eski_sistem": bool(h.get("kaynak_ref"))})
     for x in fl:
-        if not x["coz"]:
+        # Sahip (2026-10-17, envanter 19): 20 ₺ altındaki kasa farkı Bekleyen işler'e DÜŞMEZ — Açık farklar'da görünür
+        if not x["coz"] and abs(int(x["f"])) >= FARK_ESIK_KURUS:
             out.append({"tur": "fark", "id": x["id"], "tarih": x["tarih"], "ad": x["ad"], "f": _tl_sayi(x["f"])})
     out.extend(_eksik_kapanislar(kayitlar, C))
     out.sort(key=lambda x: x["tarih"])
