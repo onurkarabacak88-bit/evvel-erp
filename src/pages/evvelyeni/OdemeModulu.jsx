@@ -297,7 +297,7 @@ export default function OdemeModulu({ onToast }) {
             <span>Toplam <b style={num}>{fmt(toplam)}</b> ₺</span>
             {konuObj && (konuObj.gider && f.kimin !== 'patron'
               ? <Cip tur="sari">şube/ortak GİDERİ olarak yazılacak</Cip>
-              : <Cip>gider DEĞİL — {f.konu === 'toptanci' ? 'toptancı borcunu kapatır' : f.konu === 'kart_borcu' ? 'kart borcunu kapatır' : f.konu === 'kredi' ? 'patronun borcu' : f.konu === 'personel' ? "personelin kalanını kapatır (gider Maaşlar'ın hak edişinden yazılır)" : 'patron çekişi'}</Cip>)}
+              : <Cip>gider DEĞİL — {f.konu === 'toptanci' ? 'toptancı borcunu kapatır' : f.konu === 'kart_borcu' ? 'kart borcunu kapatır' : f.konu === 'kredi' ? 'patronun borcu' : f.konu === 'kira' ? "o ayın kirasını kapatır (gider tanımlı kiradan, ait olduğu aya yazılır)" : f.konu === 'personel' ? "personelin kalanını kapatır (gider Maaşlar'ın hak edişinden yazılır)" : 'patron çekişi'}</Cip>)}
             {f.parcalar.some((p) => p.yontem === 'kart') && <Cip>kart kısmı kasadan düşmez, kart borcu olur</Cip>}
           </div>
           {kiminAd !== null && f.konu && (

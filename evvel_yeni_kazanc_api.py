@@ -42,8 +42,8 @@ def kazanc_ozet(ay: Optional[str] = None):
             uyarilar.append(f"{len(g['eksik_gunler'])} günün kapanışı eksik — gelir eksik")
         if d.get("kesin_olmayan_gun"):
             uyarilar.append(f"{len(d['kesin_olmayan_gun'])} gün kesinleşmedi")
-        if not d.get("kira"):
-            uyarilar.append("Bu ay kira girilmemiş")
+        if d.get("kira_durum") == "tanimsiz":
+            uyarilar.append("Kira tanımlı değil (Tanımlar → Şubeler)")
         if not d.get("personel"):
             uyarilar.append("Bu ay personel ödemesi girilmemiş")
         subeler.append({

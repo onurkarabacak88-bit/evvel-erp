@@ -35,6 +35,7 @@ def kira_hazirla(cur) -> None:
         degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (sube_id, gecerli_ay))""")
     cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_artis_ayi INT")
     cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_odeme_gunu INT")
+    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_yok BOOLEAN NOT NULL DEFAULT FALSE")   # mülk bizim
     try:
         with savepoint(cur, "sp_ey_kira_es"):
             cur.execute("""SELECT sube_id::text AS sid, tutar, odeme_gunu, baslangic_tarihi FROM sabit_giderler
@@ -65,21 +66,24 @@ def kira_tanimlari(cur) -> dict:
     """{sube_id: {"kira": tl (bugün geçerli), "artis_ayi", "odeme_gunu", "gecmis": [...]}} — Tanımlar listesi için."""
     kira_hazirla(cur)
     ay = _bugun().strftime("%Y-%m")
-    cur.execute("SELECT id, kira_artis_ayi, kira_odeme_gunu FROM ey_sube")
-    out = {dict(r)["id"]: {"artis_ayi": dict(r)["kira_artis_ayi"], "odeme_gunu": dict(r)["kira_odeme_gunu"], "kira": None, "gecmis": []}
+    cur.execute("SELECT id, kira_artis_ayi, kira_odeme_gunu, kira_yok FROM ey_sube")
+    out = {dict(r)["id"]: {"artis_ayi": dict(r)["kira_artis_ayi"], "odeme_gunu": dict(r)["kira_odeme_gunu"], "kira": None, "gecmis": [],
+                           "kira_yok": bool(dict(r)["kira_yok"])}
            for r in cur.fetchall() or []}
     cur.execute("SELECT sube_id, gecerli_ay, tutar FROM ey_sube_kira ORDER BY gecerli_ay")
     for r in cur.fetchall() or []:
         r = dict(r)
-        o = out.setdefault(r["sube_id"], {"artis_ayi": None, "odeme_gunu": None, "kira": None, "gecmis": []})
+        o = out.setdefault(r["sube_id"], {"artis_ayi": None, "odeme_gunu": None, "kira": None, "gecmis": [], "kira_yok": False})
         o["gecmis"].append({"ay": r["gecerli_ay"], "tutar": _tl_sayi(int(r["tutar"]))})
         if r["gecerli_ay"] <= ay:
             o["kira"] = _tl_sayi(int(r["tutar"]))
     return out
 
 
-def kira_yaz(cur, sube_id: str, kim: str, tutar=None, gecerli_ay=None, artis_ayi=None, odeme_gunu=None) -> None:
+def kira_yaz(cur, sube_id: str, kim: str, tutar=None, gecerli_ay=None, artis_ayi=None, odeme_gunu=None, kira_yok=None) -> None:
     kira_hazirla(cur)
+    if kira_yok is not None:
+        cur.execute("UPDATE ey_sube SET kira_yok=%s WHERE id=%s", (bool(kira_yok), sube_id))
     for g, ad in ((artis_ayi, "Artış ayı 1–12"), (odeme_gunu, "Kira ödeme günü 1–31")):
         if g is not None and not 1 <= int(g) <= (12 if ad.startswith("Artış") else 31):
             raise HTTPException(400, f"{ad} olmalı")
@@ -169,7 +173,7 @@ def kira_takvimi(yil: Optional[int] = None):
     out = []
     for s in subeler:
         sid = s["id"]
-        t = tan.get(sid) or {"gecmis": [], "artis_ayi": None, "odeme_gunu": None, "kira": None}
+        t = tan.get(sid) or {"gecmis": [], "artis_ayi": None, "odeme_gunu": None, "kira": None, "kira_yok": False}
         aylar = []
         onceki = None
         for m in range(1, 13):
@@ -180,7 +184,9 @@ def kira_takvimi(yil: Optional[int] = None):
             od = round(sum(x["tutar"] for x in yn) + _tl_sayi(eski.get((sid, ay), 0)), 2)
             vade_gunu = min(t["odeme_gunu"] or 1, 28)
             vade = date(yil, m, vade_gunu)
-            if bek is None:
+            if t.get("kira_yok"):
+                bek, durum = None, "mulk"
+            elif bek is None:
                 durum = "tanimsiz" if od == 0 else "odendi"
             elif od >= bek - 1:
                 durum = "odendi"
@@ -198,6 +204,7 @@ def kira_takvimi(yil: Optional[int] = None):
                           "yeni_kayitlar": yn, "eski_sistem": _tl_sayi(eski.get((sid, ay), 0)), "vade": vade.isoformat()})
             onceki = bek if bek is not None else onceki
         out.append({"sube_id": sid, "ad": s["ad"], "kira": t["kira"], "artis_ayi": t["artis_ayi"], "odeme_gunu": t["odeme_gunu"],
+                    "kira_yok": bool(t.get("kira_yok")),
                     "aylar": aylar, "yil_beklenen": round(sum(a["beklenen"] or 0 for a in aylar), 2),
                     "yil_odenen": round(sum(a["odenen"] for a in aylar), 2)})
     return {"yil": yil, "bugun": bugun.isoformat(), "subeler": out}
@@ -220,3 +227,15 @@ def kira_tanimla(sube_id: str, body: KiraBody, x_evvel_oturum: Optional[str] = H
             raise HTTPException(404, "Şube bulunamadı")
         kira_yaz(cur, sube_id, _aktor(cur, x_evvel_oturum), body.tutar, body.gecerli_ay, body.artis_ayi, body.odeme_gunu)
     return {"ok": True, "mesaj": "Kira kaydedildi"}
+
+
+
+def kira_tahakkuk(cur, ay: str) -> dict:
+    """GİDER için: {sube_id: kuruş | None (tanımsız) | 'yok' (mülk bizim)} — o ayın tanımlı kirası."""
+    kira_hazirla(cur)
+    cur.execute("SELECT id, kira_yok FROM ey_sube")
+    out = {}
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        out[r["id"]] = "yok" if r["kira_yok"] else kira_tutari(cur, r["id"], ay)
+    return out

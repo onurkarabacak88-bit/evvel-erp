@@ -26,9 +26,10 @@ const YAPI = {
     not: 'Şube eklenince Kasa\'da "dükkân nakdi" ve "bankası" cepleri kendiliğinden açılır.',
     alanlar: [{ k: 'ad', ad: 'Şube adı', zorunlu: true }, { k: 'pos_oran', ad: 'POS komisyonu %', sayi: true }, { k: 'online_oran', ad: 'Online komisyonu %', sayi: true },
       { k: 'kira', ad: 'Aylık kira ₺', sayi: true }, { k: 'kira_ay', ad: 'Kira hangi aydan geçerli', tip: 'month' },
-      { k: 'kira_odeme_gunu', ad: 'Kira ödeme günü (1–31)', sayi: true }, { k: 'kira_artis_ayi', ad: 'Kira artış ayı (1–12, ör. 6 = Haziran)', sayi: true }],
+      { k: 'kira_odeme_gunu', ad: 'Kira ödeme günü (1–31)', sayi: true }, { k: 'kira_artis_ayi', ad: 'Kira artış ayı (1–12, ör. 6 = Haziran)', sayi: true },
+      { k: 'kira_yok', ad: 'Kira yok — mülk bizim', secim: 'evet_hayir' }],
     kolon: (x) => [x.ad, `POS %${fmt(x.pos_oran)} · online %${fmt(x.online_oran)}`,
-      x.kira != null ? `kira ${fmt(x.kira)} ₺${x.kira_odeme_gunu ? ` · her ayın ${x.kira_odeme_gunu}'i` : ''}${x.kira_artis_ayi ? ` · artış ${['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'][x.kira_artis_ayi - 1]}` : ''}` : 'kira tanımsız'],
+      x.kira_yok ? 'mülk bizim — kira yok' : x.kira != null ? `kira ${fmt(x.kira)} ₺${x.kira_odeme_gunu ? ` · her ayın ${x.kira_odeme_gunu}'i` : ''}${x.kira_artis_ayi ? ` · artış ${['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'][x.kira_artis_ayi - 1]}` : ''}` : 'kira tanımsız'],
   },
   tanim_personel: {
     tur: 'personel', liste: 'personel', baslik: 'Personel', tekil: 'personel',
@@ -83,6 +84,7 @@ export default function TanimModulu({ gorunum, onToast }) {
   const secimler = {
     sube: [{ id: '', ad: y.tur === 'banka' ? '— patron / ortak —' : 'Ortak (şubesiz)' }, ...v.subeler.filter((s) => s.aktif).map((s) => ({ id: s.id, ad: s.ad }))],
     banka_tur: [{ id: 'banka', ad: 'Banka hesabı' }, { id: 'hesap', ad: 'Geçiş hesabı (para toplanıp dağıtılan)' }],
+    evet_hayir: [{ id: '', ad: '— değiştirme —' }, { id: '0', ad: 'Hayır (kira ödeniyor)' }, { id: '1', ad: 'Evet — mülk bizim' }],
     calisma: [{ id: 'tam', ad: 'Tam zamanlı (aylık maaş)' }, { id: 'yari', ad: 'Yarı zamanlı (saatlik)' }],
   };
 
@@ -94,6 +96,7 @@ export default function TanimModulu({ gorunum, onToast }) {
         if (!(a.k in form) || (a.yalnizYeni && !yeni)) continue;
         if (a.sayi) { const n = sayi(form[a.k]); if (Number.isNaN(n)) throw new Error(`${a.ad}: sayı yaz`); if (n != null) body[a.k] = n; }
         else if (a.secim === 'sube') body[a.k] = form[a.k] || (yeni ? null : 'ortak');
+        else if (a.secim === 'evet_hayir') body[a.k] = form[a.k] === '1' ? true : form[a.k] === '0' ? false : null;
         else body[a.k] = form[a.k] || null;
       }
       const r = await api(`/evvel-yeni/tanim/${y.tur}${form.id ? `/${encodeURIComponent(form.id)}` : ''}`, { method: 'POST', body });

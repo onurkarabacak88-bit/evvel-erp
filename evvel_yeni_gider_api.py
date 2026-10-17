@@ -288,8 +288,8 @@ def gider_ozet(ay: Optional[str] = None):
         if (v.get("ait_ay") or h["is_gunu"][:7]) != a_:
             continue
         tip = (v.get("konu") or {}).get("tip") or "diger"
-        if tip == "personel":
-            continue   # personel gideri hak edişten yazılır (aşağıda) — ödeme yalnız kasayı etkiler
+        if tip in ("personel", "kira"):
+            continue   # personel hak edişten, kira TAHAKKUKTAN yazılır (aşağıda) — ödeme yalnız kasayı etkiler
         tip = tip if tip in TURLER else "diger"
         t = int(v.get("toplam", h["tutar"]))
         satir = {"gun": h["is_gunu"], "tur": tip, "aciklama": v.get("aciklama"), "adet": None, "birim": None, "tutar": _tl_sayi(t),
@@ -301,6 +301,21 @@ def gider_ozet(ay: Optional[str] = None):
         else:
             ORTAK["toplam"] += t
             ORTAK["satirlar"].append(satir)
+    # 1c') KİRA — TAHAKKUK (sahip 2026-10-17): o ayın tanımlı kirası, ödenmiş olsun olmasın; "mülk bizim" şubede yok
+    try:
+        with db() as (_c3, cur3):
+            from evvel_yeni_kira_api import kira_tahakkuk
+            kt = kira_tahakkuk(cur3, a_)
+    except Exception as e:  # noqa: BLE001
+        log.warning("evvel-yeni gider: kira tahakkuku okunamadı: %s", str(e)[:200])
+        kt = {}
+    for sid in S:
+        k_ = kt.get(sid)
+        S[sid]["kira_durum"] = "yok" if k_ == "yok" else ("tanimsiz" if k_ is None else "var")
+        if isinstance(k_, int) and k_ > 0:
+            S[sid]["kira"] += k_
+            S[sid]["satirlar"].append({"gun": a_ + "-01", "tur": "kira", "aciklama": "Kira (ayın tahakkuku — ödeme durumu Kira takviminde)",
+                                       "adet": None, "birim": None, "tutar": _tl_sayi(k_), "not": "tahakkuk"})
     # 1d) PERSONEL — Maaşlar'ın HAK EDİŞİ (sahip + Codex: gider bir kez, çalışma ayına; avans/ödeme gider değil)
     try:
         with db() as (_c2, cur2):
@@ -357,6 +372,7 @@ def gider_ozet(ay: Optional[str] = None):
         out.append({"sube_id": sid, "cep": sube_cep[sid], "ad": subeler[sid]["kisa"], "depo_mu": sid == depo,
                     "toplam": _tl_sayi(top), **{k: _tl_sayi(s[k]) for k in KALEMLER},
                     "fiyat_eksik": s["fiyat_eksik"], "katalog_fiyatli": s["katalog"], "kesin_olmayan_gun": sorted(s["kesin_degil"]),
+                    "kira_durum": s.get("kira_durum"),
                     "sevk_bedeli": _tl_sayi(s["sevk"]), "sevk_fiyat_eksik": s["sevk_eksik"],
                     "rafta_fark": _tl_sayi(s["sevk"] - s["mal"]),
                     "sevk_satirlar": sorted(s["sevk_satir"], key=lambda x: x["gun"]),

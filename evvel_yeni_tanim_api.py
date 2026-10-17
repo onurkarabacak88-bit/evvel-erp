@@ -181,7 +181,8 @@ def liste():
     return {
         "subeler": [{"id": s["id"], "ad": s["ad"], "pos_oran": float(s["pos_oran"]), "online_oran": float(s["online_oran"]), "aktif": s["aktif"],
                      "kira": (kira_t.get(s["id"]) or {}).get("kira"), "kira_artis_ayi": (kira_t.get(s["id"]) or {}).get("artis_ayi"),
-                     "kira_odeme_gunu": (kira_t.get(s["id"]) or {}).get("odeme_gunu"), "kira_gecmis": (kira_t.get(s["id"]) or {}).get("gecmis", [])}
+                     "kira_odeme_gunu": (kira_t.get(s["id"]) or {}).get("odeme_gunu"), "kira_gecmis": (kira_t.get(s["id"]) or {}).get("gecmis", []),
+                     "kira_yok": (kira_t.get(s["id"]) or {}).get("kira_yok", False)}
                     for s in sube],
         "personel": personel, "kartlar": kart, "toptancilar": top, "bankalar": banka, "ay": ay,
     }
@@ -214,6 +215,7 @@ class TanimBody(BaseModel):
     kira_ay: Optional[str] = None            # kira hangi aydan geçerli (YYYY-AA)
     kira_artis_ayi: Optional[int] = None     # her yıl hangi ay artar (1–12)
     kira_odeme_gunu: Optional[int] = None
+    kira_yok: Optional[bool] = None          # mülk bizim — kira gideri yok
     kesim_gunu: Optional[int] = None
     son_odeme_gunu: Optional[int] = None
     limit_grup: Optional[str] = None
@@ -282,9 +284,9 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                                  aktif=COALESCE(%s,aktif), degistiren=%s, zaman=NOW() WHERE id=%s""",
                             (ad, b.pos_oran, b.online_oran, b.aktif, kim, tid))
             sube_cepleri_yaz(cur)   # dükkân nakdi + şube bankası cepleri hemen açılır / adı güncellenir
-            if any(x is not None for x in (b.kira, b.kira_artis_ayi, b.kira_odeme_gunu)):
+            if any(x is not None for x in (b.kira, b.kira_artis_ayi, b.kira_odeme_gunu, b.kira_yok)):
                 from evvel_yeni_kira_api import kira_yaz
-                kira_yaz(cur, tid, kim, b.kira, b.kira_ay, b.kira_artis_ayi, b.kira_odeme_gunu)
+                kira_yaz(cur, tid, kim, b.kira, b.kira_ay, b.kira_artis_ayi, b.kira_odeme_gunu, b.kira_yok)
             return {"ok": True, "id": tid, "mesaj": f"Şube {'eklendi — dükkân nakdi ve banka cebi açıldı' if yeni else 'güncellendi'}"}
 
         if tur == "personel":

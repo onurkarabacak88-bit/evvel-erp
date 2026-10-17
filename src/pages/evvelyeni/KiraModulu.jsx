@@ -19,6 +19,7 @@ const DURUM = {
   yaklasiyor: { renk: '#D9822B', ad: 'yaklaşıyor', ikon: '⏰' },
   gelecek: { renk: 'var(--pi-ink3, #7F6C57)', ad: 'gelecek', ikon: '' },
   tanimsiz: { renk: 'var(--pi-ink3, #7F6C57)', ad: 'kira tanımsız', ikon: '—' },
+  mulk: { renk: 'var(--pi-ink3, #7F6C57)', ad: 'mülk bizim', ikon: '🏠' },
 };
 
 export function KiraTakvim() {
@@ -62,7 +63,7 @@ export function KiraTakvim() {
               <tr key={s.sube_id}>
                 <td style={{ ...hucre, textAlign: 'left', padding: '8px 10px', whiteSpace: 'nowrap' }}>
                   <b style={{ fontSize: 14 }}>{s.ad}</b>
-                  <div style={{ color: R.not, fontSize: 11.5 }}>{s.kira != null ? `${fmt(s.kira)} ₺/ay` : 'kira tanımsız'}{s.odeme_gunu ? ` · ${s.odeme_gunu}'i` : ''}{s.artis_ayi ? ` · artış ${AY_UZUN[s.artis_ayi - 1]}` : ''}</div>
+                  <div style={{ color: R.not, fontSize: 11.5 }}>{s.kira_yok ? 'mülk bizim — kira yok' : s.kira != null ? `${fmt(s.kira)} ₺/ay` : 'kira tanımsız'}{s.odeme_gunu ? ` · ${s.odeme_gunu}'i` : ''}{s.artis_ayi ? ` · artış ${AY_UZUN[s.artis_ayi - 1]}` : ''}</div>
                 </td>
                 {s.aylar.map((a, i) => {
                   const d = DURUM[a.durum];

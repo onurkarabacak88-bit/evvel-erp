@@ -37,7 +37,7 @@ log = logging.getLogger(__name__)
 
 KONULAR = {
     "toptanci": {"ad": "Toptancı", "gider": False},
-    "kira": {"ad": "Kira", "gider": True},
+    "kira": {"ad": "Kira", "gider": False},   # gider TAHAKKUKTAN (Kira takvimi); ödeme yalnız kirayı kapatır
     "fatura": {"ad": "Fatura / abonelik", "gider": True},
     "personel": {"ad": "Personel", "gider": False},   # gider Maaşlar'ın hak edişinden (çalışma ayına) yazılır
     "anlik": {"ad": "Anlık gider", "gider": True},
