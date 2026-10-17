@@ -931,13 +931,14 @@ function BankaSekmesi({ onToast, onDegisti }) {
 // (tak-çıkar); söylemeyen eski türler aşağıdaki eşlemeyle yerleşir.
 export const IS_GRUPLARI = [
   { id: 'isler_kasa', grup: 'kasa', ad: 'Kasa & kapanış', alt: 'Kapanış · teslim · fark' },
-  { id: 'isler_odeme', grup: 'odeme', ad: 'Ödemeler', alt: 'Kart · toptancı vadesi · kredi' },
+  { id: 'isler_odeme', grup: 'odeme', ad: 'Ödemeler', alt: 'Kart son ödeme · toptancı vadesi' },
   { id: 'isler_tedarik', grup: 'tedarik', ad: 'Tedarik & depo', alt: 'Yolda kalan · fatura tutarı' },
-  { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri' },
-  { id: 'isler_kira', grup: 'kira', ad: 'Kira hesabı', alt: 'Gelmeyen ev kirası' },
+  { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri', mod: 'avans' },
+  { id: 'isler_kira', grup: 'kira', ad: 'Kira hesabı', alt: 'Gelmeyen kira · şahsi mi borç mu', mod: 'mulk' },
 ];
-const TUR_GRUP = { kart_son_odeme: 'odeme', toptanci_vade: 'odeme', toptanci_tutar: 'tedarik', depo_yolda: 'tedarik', avans_talep: 'personel', mulk_kira: 'kira', mulk_karar: 'kira' };
-export const isGrubu = (x) => x.grup || TUR_GRUP[x.tur] || 'kasa';
+const GRUPLAR = new Set(['kasa', 'odeme', 'tedarik', 'personel', 'kira']);
+// Codex: tanınmayan grup taşıyan iş kaybolmasın → Kasa & kapanış'a düşer
+export const isGrubu = (x) => (GRUPLAR.has(x.grup) ? x.grup : 'kasa');   // Fable: Kasa iş türlerini tanımaz — sağlayıcı 'grup' yazar
 
 export const SAYFALAR = [
   { id: 'kasam', ad: 'Kasam', alt: 'Toplam kasa · gruplar' },
@@ -1123,7 +1124,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
 
   const cepAc = (c) => cekmeceAc({ tur: 'cep', id: c.id, ad: c.ad }, true);
   const enKotu = (liste) => liste.reduce((m, c) => (SEVIYE_SIRA[c.seviye] > SEVIYE_SIRA[m] ? c.seviye : m), 'gri');
-  const sayfaAd = (SAYFALAR.find((x) => x.id === sekme) || SAYFALAR[0]).ad;
+  const sayfaAd = (SAYFALAR.find((x) => x.id === sekme) || IS_GRUPLARI.find((x) => x.id === sekme) || (sekme === 'isler' ? { ad: 'Bekleyen işler' } : SAYFALAR[0])).ad;
   const guneBagli = ['kasam', 'subeler', 'evler', 'bankalar', 'hareketler'].includes(sekme);
   const KartIzgara = ({ liste }) => (
     <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>

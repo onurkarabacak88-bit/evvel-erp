@@ -343,13 +343,13 @@ def toptanci_isleri(cur) -> list:
     out = []
     for t in _hesap(cur, bugun):
         if t["vadesi_gecen"] > 0:
-            out.append({"tur": "toptanci_vade", "id": f"tv:{t['id']}", "tarih": bugun.isoformat(), "ad": t["ad"],
+            out.append({"tur": "toptanci_vade", "grup": "odeme", "id": f"tv:{t['id']}", "tarih": bugun.isoformat(), "ad": t["ad"],
                         "tutar": t["vadesi_gecen"], "gecti": True})
         if t["uc_gun"] > 0:
-            out.append({"tur": "toptanci_vade", "id": f"t3:{t['id']}", "tarih": bugun.isoformat(), "ad": t["ad"],
+            out.append({"tur": "toptanci_vade", "grup": "odeme", "id": f"t3:{t['id']}", "tarih": bugun.isoformat(), "ad": t["ad"],
                         "tutar": t["uc_gun"], "gecti": False})
         if t["bilinmeyen_eski"]:
-            out.append({"tur": "toptanci_tutar", "id": f"tb:{t['id']}", "tarih": t["bilinmeyen_eski"][0]["tarih"], "ad": t["ad"],
+            out.append({"tur": "toptanci_tutar", "grup": "tedarik", "id": f"tb:{t['id']}", "tarih": t["bilinmeyen_eski"][0]["tarih"], "ad": t["ad"],
                         "sayi": len(t["bilinmeyen_eski"])})
     return out
 

@@ -145,7 +145,7 @@ function IsletmeBorcu({ onToast }) {
   return (
     <>
       <Baslik ad="İşletmelerin borcu" yil={yil} setYil={setYil} />
-      <div style={{ fontSize: 13, color: R.metin2 }}>Fatma'nın kira hesabından işletme adına yapılan ödeme ve işletme bankasına aktarım borcu <b>artırır</b>; işletmeden kira hesabına aktarım (Kasa → Taşı / Yatır) <b>azaltır</b>. Şahsi harcama sayılmaz. {v && `${tKisa(v.baslangic)} ${v.baslangic.slice(0, 4)} itibarıyla sıfırdan.`}</div>
+      <div style={{ fontSize: 13, color: R.metin2 }}>Fatma'nın kira hesabından işletme adına yapılan ödeme ve işletme bankasına aktarım borcu <b>artırır</b>; işletmeden kira hesabına aktarım (Kasa → Taşı / Yatır) <b>azaltır</b>. Şahsi harcama sayılmaz. Bir eve ya da Fethi'nin hesabına aktarımda "şahsi mi, borç mu" diye sorulur. {v && `${tKisa(v.baslangic)} ${v.baslangic.slice(0, 4)} itibarıyla sıfırdan.`}</div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Hazırlanıyor…</div>}
       {v && v.karar_bekleyen?.length > 0 && (
@@ -161,6 +161,21 @@ function IsletmeBorcu({ onToast }) {
             </div>
           ))}
         </div>
+      )}
+      {v && v.kararli?.length > 0 && (
+        <details style={{ ...kart, padding: '8px 14px', fontSize: 13 }}>
+          <summary style={{ cursor: 'pointer', color: R.metin2 }}>Karar verilmiş aktarımlar ({v.kararli.length}) — değiştirmek için aç</summary>
+          {v.kararli.map((x) => (
+            <div key={x.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${R.cizgi}`, padding: '6px 0' }}>
+              <span style={{ width: 52, color: R.metin2 }}>{tKisa(x.gun)}</span>
+              <span style={{ flex: 1 }}>{x.yon === 'cikis' ? `Kira hesabı → ${x.karsi}` : `${x.karsi} → kira hesabı`}</span>
+              <b style={num}>{fmt(x.tutar)} ₺</b>
+              <Cip tur={x.karar === 'sahsi' ? undefined : 'sari'}>{x.karar === 'sahsi' ? 'şahsi' : 'işletme borcu'}</Cip>
+              <Dugme kucuk disabled={mesgul === x.id} onClick={() => karar(x, x.karar === 'sahsi' ? 'borc' : 'sahsi')}>{x.karar === 'sahsi' ? 'Borç yap' : 'Şahsi yap'}</Dugme>
+              <Dugme kucuk disabled={mesgul === x.id} onClick={() => karar(x, '')}>Kararı geri al</Dugme>
+            </div>
+          ))}
+        </details>
       )}
       {v && (<>
         <div style={{ ...kart, padding: '12px 16px', display: 'flex', gap: 24, flexWrap: 'wrap' }}>

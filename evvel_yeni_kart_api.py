@@ -195,7 +195,7 @@ def kart_isleri(cur, kayit) -> list:
     for k in kart_durumu(cur, kayit=kayit):
         so = k["son_odeme"]
         if so and not so.get("eski") and so["gun_kaldi"] is not None and 0 <= so["gun_kaldi"] <= 7 and (so["kalan"] is None or so["kalan"] > 0):
-            out.append({"tur": "kart_son_odeme", "id": f"kso:{k['id']}:{so['tarih']}", "tarih": so["tarih"], "ad": k["ad"],
+            out.append({"tur": "kart_son_odeme", "grup": "odeme", "id": f"kso:{k['id']}:{so['tarih']}", "tarih": so["tarih"], "ad": k["ad"],
                         "gun_kaldi": so["gun_kaldi"], "kalan": so["kalan"], "ekstre": so["ekstre"]})
     return out
 

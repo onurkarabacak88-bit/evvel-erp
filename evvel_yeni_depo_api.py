@@ -550,7 +550,7 @@ def depo_isleri(cur) -> list:
     rs = [dict(r) for r in cur.fetchall() or []]
     if not rs:
         return []
-    return [{"tur": "depo_yolda", "id": "dy", "tarih": min(r["gun"] for r in rs).isoformat(), "ad": f"{len(rs)} sevk kalemi",
+    return [{"tur": "depo_yolda", "grup": "tedarik", "id": "dy", "tarih": min(r["gun"] for r in rs).isoformat(), "ad": f"{len(rs)} sevk kalemi",
              "sayi": len(rs), "ornek": ", ".join(str(r["urun"]) for r in rs[:3])}]
 
 

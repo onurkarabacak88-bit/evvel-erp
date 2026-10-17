@@ -181,7 +181,7 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
             if body.kimin not in list(subeler) + ["ortak"]:
                 raise HTTPException(400, "Hangi şubenin vergisi (ya da Ortak)")
             kimin = body.kimin
-            konu.update(vergi_turu=body.vergi_turu)
+            konu.update(vergi_turu=body.vergi_turu, sube_id=kimin if kimin in subeler else None)
             etiket = f"Vergi · {body.vergi_turu} · {subeler[kimin]['kisa'] if kimin in subeler else 'Ortak'}"
         elif body.konu in ("kredi", "kart_borcu"):
             kimin = "patron"
@@ -310,7 +310,12 @@ def odeme_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = Hea
         tip = (v.get("konu") or {}).get("tip")
         subeler = {c["sube_id"]: c for c in cep_list if c["tur"] == "sube"}
         eski = {"kimin": v.get("kimin"), "ait_ay": v.get("ait_ay"), "aciklama": v.get("aciklama")}
-        if body.kimin is not None and body.kimin != v.get("kimin_kod"):
+        if body.kimin is not None and body.kimin != v.get("kimin_kod") and tip == "vergi":   # Fable: vergi şubesi düzeltilebilsin (gider değil)
+            if body.kimin not in list(subeler) + ["ortak"]:
+                raise HTTPException(400, "Geçerli bir şube seç ya da Ortak")
+            v["kimin_kod"] = body.kimin
+            v["kimin"] = subeler[body.kimin]["kisa"] if body.kimin in subeler else "Ortak"
+        elif body.kimin is not None and body.kimin != v.get("kimin_kod"):
             if not KONULAR.get(tip, {}).get("gider"):
                 raise HTTPException(400, "Bu ödeme gider değil (toptancı / kredi / kart borcu) — kimin sorusu yok")
             izin = list(subeler) + (["ortak", "patron"] if tip in ("diger", "personel") else [])
@@ -320,7 +325,7 @@ def odeme_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = Hea
             v["kimin"] = subeler[body.kimin]["kisa"] if body.kimin in subeler else {"ortak": "Ortak", "patron": "Patron"}[body.kimin]
             v["gider"] = body.kimin != "patron"
         if body.ait_ay is not None and body.ait_ay[:7] != v.get("ait_ay"):
-            if tip not in ("kira", "fatura", "personel"):
+            if tip not in ("kira", "fatura", "personel", "vergi", "kredi", "kart_borcu"):
                 raise HTTPException(400, "Bu ödemenin ayı ödeme gününden gelir; gün yanlışsa iptal edip yeniden gir")
             try:
                 date.fromisoformat(body.ait_ay[:7] + "-01")

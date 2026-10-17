@@ -138,14 +138,17 @@ def takvim(yil: Optional[int] = None):
 def borc(yil: Optional[int] = None):
     """İşletmelerin kira hesabına borcu — şube × ay: alınan / geri ödenen / kapanış borcu (BORC_BAS'tan itibaren, devirli)."""
     _hazirla()
-    import evvel_yeni_kasa_api as kasa
-    yil = yil or _bugun().year
     with db() as (conn, cur):
-        defter = kasa.defter_ozeti(cur)
-        cur.execute("SELECT hareket_id, karar FROM ey_mulk_karar")
-        karar = {dict(r)["hareket_id"]: dict(r)["karar"] for r in cur.fetchall() or []}
+        return _borc(cur, yil or _bugun().year)
+
+
+def _borc(cur, yil: int) -> dict:
+    import evvel_yeni_kasa_api as kasa
+    defter = kasa.defter_ozeti(cur)
+    cur.execute("SELECT hareket_id, karar FROM ey_mulk_karar")
+    karar = {dict(r)["hareket_id"]: dict(r)["karar"] for r in cur.fetchall() or []}
     C = defter["cepler"]
-    sor = []      # sahip (2026-10-17): kira hesabı ↔ ev / Fethi hesabı aktarımı "şahsi mi borç mu" diye SORULSUN
+    sor, kararli = [], []   # sahip (2026-10-17): kira hesabı ↔ ev / Fethi hesabı aktarımı "şahsi mi borç mu" diye SORULSUN
     kiralar = {c for c, x in C.items() if x["kira"]} | {KIRA_CEP}
     sube_ad = {x["sube_id"]: x["kisa"] or x["ad"] for x in C.values() if x["tur"] == "sube" and x.get("sube_id")}
     hareket, sahsi = [], 0
@@ -169,10 +172,12 @@ def borc(yil: Optional[int] = None):
             if (C.get(karsi) or {}).get("tur") in ("ev", "hesap"):
                 k_ = karar.get(h["id"])
                 yon = "cikis" if h.get("kaynak") in kiralar else "giris"
+                satir_ = {"id": h["id"], "gun": h["is_gunu"], "tutar": _tl_sayi(h["tutar"]), "yon": yon,
+                          "karsi": (C.get(karsi) or {}).get("ad", karsi), "karar": k_}
                 if k_ is None:
-                    sor.append({"id": h["id"], "gun": h["is_gunu"], "tutar": _tl_sayi(h["tutar"]), "yon": yon,
-                                "karsi": (C.get(karsi) or {}).get("ad", karsi)})
+                    sor.append(satir_)
                     continue
+                kararli.append(satir_)   # Codex: verilen karar görünsün, değiştirilebilsin
                 if k_ == "sahsi":
                     sahsi += h["tutar"] if yon == "cikis" else 0
                     continue
@@ -197,7 +202,7 @@ def borc(yil: Optional[int] = None):
             b += al - ge
             satir.append({"ay": a, "alinan": _tl_sayi(al), "geri": _tl_sayi(ge), "borc": _tl_sayi(b), "baslamadi": a < BORC_BAS[:7]})
         out.append({"sube": s, "ad": sube_ad.get(s, "Ortak (şubesiz)"), "devir": _tl_sayi(devir), "aylar": satir, "borc": _tl_sayi(b)})
-    return {"yil": yil, "baslangic": BORC_BAS, "subeler": out, "toplam_borc": round(sum(x["borc"] for x in out), 2), "karar_bekleyen": sor,
+    return {"yil": yil, "baslangic": BORC_BAS, "subeler": out, "toplam_borc": round(sum(x["borc"] for x in out), 2), "karar_bekleyen": sor, "kararli": sorted(kararli, key=lambda x: x["gun"], reverse=True)[:50],
             "sahsi": _tl_sayi(sahsi), "hareketler": [{**x, "alinan": _tl_sayi(x["alinan"]), "geri": _tl_sayi(x["geri"])}
                                                      for x in sorted(hareket, key=lambda x: x["gun"], reverse=True)[:200]]}
 
@@ -310,11 +315,14 @@ def _bekleyen(cur, baglam: dict) -> list:
     _hazirla()
     out = []
     try:
-        kb = borc()["karar_bekleyen"]
-    except Exception:  # noqa: BLE001
-        kb = []
+        kb = _borc(cur, _bugun().year)["karar_bekleyen"]
+    except Exception as e:  # noqa: BLE001 — Codex: sessizce kaybolmasın
+        log.warning("kira hesabı borcu okunamadı: %s", str(e)[:150])
+        return [{"tur": "mulk_hata", "genel": True, "grup": "kira", "id": "mulk_hata", "tarih": _bugun().isoformat(),
+                 "etiket": "⚠ Kira hesabı okunamadı", "ad": "İşletmelerin borcu hesaplanamadı", "alt": "sayfayı açıp tekrar dene",
+                 "sayfa": "mulk_borc", "dugme": "İşletmelerin borcu"}]
     if kb:
-        out.append({"tur": "mulk_karar", "genel": True, "grup": "kira", "id": "mulk_karar", "tarih": kb[-1]["gun"],
+        out.append({"tur": "mulk_karar", "genel": True, "grup": "kira", "id": "mulk_karar", "tarih": kb[0]["gun"],
                     "etiket": "🏠 Şahsi mi borç mu?", "ad": f"{len(kb)} aktarım kira hesabı ↔ ev / hesap",
                     "alt": "işletme borcu mu, şahsi mi — karar ver", "sayfa": "mulk_borc", "dugme": "İşletmelerin borcu"})
     for e in _gecikenler(cur):

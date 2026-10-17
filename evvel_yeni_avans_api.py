@@ -50,7 +50,7 @@ def _acik_talepler(cur) -> list:
 
 def _bekleyen(cur, baglam: dict) -> list:
     """Bekleyen işler: karar bekleyen (durum 'talep') her avans talebi tek satır."""
-    return [{"tur": "avans_talep", "genel": True, "id": f"avans:{t['id']}", "tarih": (t["talep"] or _bugun().isoformat())[:10],
+    return [{"tur": "avans_talep", "genel": True, "grup": "personel", "id": f"avans:{t['id']}", "tarih": (t["talep"] or _bugun().isoformat())[:10],
              "etiket": "🤝 Avans talebi", "ad": t["ad"], "alt": f"{t['tutar']:,.0f} ₺ — onayla ya da reddet".replace(",", "."),
              "sayfa": "avans_talepleri", "dugme": "Avans talepleri"}
             for t in _acik_talepler(cur) if t["durum"] == "talep"]
