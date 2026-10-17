@@ -1362,15 +1362,19 @@ const YO_AD = { kart: '💳', kira: '🏠', maas: '👥', toptanci: '🚚' };
 function YaklasanOdemeler({ eldeki, posYolda, ozet, onAc }) {
   const [v, setV] = useState(null);
   const acik = !ozet;
+  // Sahip (2026-10-17, envanter madde 4): eski ödeme planı motoru yerine vade takvimi = bu kutunun 30 günlük görünümü (Uyarılar'da)
+  const [gunSayisi, setGunSayisi] = useState(7);
   useEffect(() => {
     let iptal = false;
-    api('/evvel-yeni/kasa/yaklasan-odemeler').then((d) => { if (!iptal) setV(d); }).catch(() => { if (!iptal) setV({ hata: true }); });
+    setV(null);
+    api(`/evvel-yeni/kasa/yaklasan-odemeler?gun_sayisi=${gunSayisi}`).then((d) => { if (!iptal) setV(d); }).catch(() => { if (!iptal) setV({ hata: true }); });
     return () => { iptal = true; };
-  }, []);
+  }, [gunSayisi]);
   if (!v) return <div style={{ ...kart, padding: '10px 16px', fontSize: 12.5, color: R.not }}>Önümüzdeki ödemeler hesaplanıyor…</div>;
   if (v.hata) return null;
   const fark = Math.round((eldeki - v.toplam) * 100) / 100;
   const yetmiyor = fark < 0;
+  const belirsiz = !yetmiyor && v.bilinmeyen_sayi > 0;   // tutarı bilinmeyen ödeme varken "yetiyor" denmez
   return (
     <div style={{ ...kart, padding: '12px 16px', borderColor: yetmiyor ? alfa(R.kirmizi, 60) : 'var(--pi-line)' }}>
       <button type="button" onClick={() => (ozet ? onAc?.() : null)} disabled={!ozet}
@@ -1378,15 +1382,18 @@ function YaklasanOdemeler({ eldeki, posYolda, ozet, onAc }) {
         <div><div style={etiketStil}>Şu an eldeki işletme parası</div><div style={{ ...num, fontSize: 17 }}>{fmt(eldeki)}</div></div>
         <div><div style={etiketStil}>{v.gun_sayisi} gün içinde kesin ödemeler</div><div style={{ ...num, fontSize: 17 }}>− {fmt(v.toplam)}</div></div>
         <div><div style={etiketStil}>Fark</div>
-          <div style={{ ...num, fontSize: 17, fontWeight: 700, color: yetmiyor ? R.kirmizi : R.yesil }}>{fark > 0 ? '+' : ''}{fmt(fark)}</div></div>
+          <div style={{ ...num, fontSize: 17, fontWeight: 700, color: yetmiyor ? R.kirmizi : belirsiz ? R.amber : R.yesil }}>{fark > 0 ? '+' : ''}{fmt(fark)}</div></div>
         <div style={{ marginLeft: 'auto', fontSize: 12.5, color: R.metin2 }}>
-          {ozet ? <span style={{ color: 'var(--pi-accent)', fontWeight: 600 }}>Ayrıntı → Uyarılar</span>
-            : <>{yetmiyor ? <span style={{ color: R.kirmizi }}>⚠ Eldeki para bu ödemelere yetmiyor</span> : 'Eldeki para yetiyor'} · girişler (ciro) sayılmadı
+          {ozet ? <span style={{ color: 'var(--pi-accent)', fontWeight: 600 }}>{v.bilinmeyen_sayi > 0 && <span style={{ color: R.amber }}>{v.bilinmeyen_sayi} ödemenin tutarı bilinmiyor · </span>}Ayrıntı → Uyarılar</span>
+            : <>{yetmiyor ? <span style={{ color: R.kirmizi }}>⚠ Eldeki para bu ödemelere yetmiyor</span> : belirsiz ? <span style={{ color: R.amber }}>Tutarı bilinmeyen ödeme var — yetip yetmediği belli değil</span> : 'Eldeki para yetiyor'} · girişler (ciro) sayılmadı
               {v.bilinmeyen_sayi > 0 && <span style={{ color: R.amber }}> · {v.bilinmeyen_sayi} ödemenin tutarı bilinmiyor</span>}</>}
         </div>
       </button>
       {acik && (
         <div style={{ marginTop: 10, display: 'grid', gap: 4, fontSize: 13 }}>
+          <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
+            {[7, 30].map((g) => <Dugme key={g} kucuk ana={gunSayisi === g} onClick={() => setGunSayisi(g)}>{g} gün</Dugme>)}
+          </div>
           {v.satirlar.length === 0 && <div style={{ color: R.not }}>Önümüzdeki {v.gun_sayisi} günde kesinleşmiş ödeme yok.</div>}
           {v.satirlar.map((x, i) => (
             <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'baseline', borderTop: i ? `1px solid ${R.cizgi}` : 'none', paddingTop: i ? 4 : 0 }}>

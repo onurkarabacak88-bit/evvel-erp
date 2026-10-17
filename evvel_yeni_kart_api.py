@@ -294,12 +294,18 @@ def _yaklasan_kart(cur, b: dict) -> list:
     out = []
     for k in kart_durumu(cur, kayit=b.get("kayit")):
         so = k["son_odeme"]
-        if not so or so.get("eski") or so.get("gun_kaldi") is None or so["tarih"] > b["ufuk"].isoformat():
+        if not so or so.get("gun_kaldi") is None or so["tarih"] > b["ufuk"].isoformat():
             continue
         if so["kalan"] is not None and so["kalan"] <= 0:
             continue
-        out.append({"kaynak": "kart", "ad": f"{k['ad']} son ödeme", "tarih": so["tarih"], "tutar": so["kalan"],
-                    "not": None if so["kalan"] is not None else "ekstre tutarı girilmemiş"})
+        # Ekstre bu dönem için girilmemişse tutar UYDURULMAZ (None → toplama girmez, "bilinmiyor" sayılır) ama satır GİZLENMEZ:
+        # yoksa kutu kart ödemesi varken "yetiyor" der. Son bilinen ekstre yalnız bilgi.
+        bilinen = so["kalan"] if not so.get("eski") else None
+        n = None
+        if bilinen is None:
+            n = "bu dönemin ekstre tutarı girilmedi" + (f" (son bilinen {so['ekstre_tarihi'][:7]}: {so['ekstre']:,.0f} ₺)".replace(",", ".")
+                                                         if so.get("ekstre") and so.get("ekstre_tarihi") else "")
+        out.append({"kaynak": "kart", "ad": f"{k['ad']} son ödeme", "tarih": so["tarih"], "tutar": bilinen, "not": n})
     return out
 
 

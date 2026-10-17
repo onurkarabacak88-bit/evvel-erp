@@ -256,7 +256,7 @@ def _yaklasan_kira(cur, b: dict) -> list:
             for a in s_["aylar"]:
                 if b.get("baslangic") and a["ay"] < b["baslangic"][:7]:
                     continue
-                if a["durum"] in ("gecikti", "yaklasiyor", "kismi") and a["kalan"] > 0 and a["vade"] <= b["ufuk"].isoformat():
+                if a["durum"] in ("gecikti", "yaklasiyor", "kismi", "gelecek") and a["kalan"] > 0 and a["vade"] <= b["ufuk"].isoformat():
                     out.append({"kaynak": "kira", "ad": f"{s_['ad']} kirası ({a['ay']})", "tarih": a["vade"], "tutar": a["kalan"],
                                 "not": "gecikti" if a["durum"] == "gecikti" else None})
     return out
