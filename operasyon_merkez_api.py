@@ -9059,6 +9059,8 @@ def _ops_defter_sube_sevkiyat_hedef(hedef_depo_sube_id: Optional[str], cur) -> s
 
 
 def _siparis_urun_insert(cur, kategori_kod: str, urun_adi: str, aciklama: Optional[str] = None) -> Dict[str, Any]:
+    # 📚 Evvel Yeni tek katalog (2026-10-17, Codex + Fable): eski katalog yazıcıları kapalı — köprü tek yönlü kalmasın
+    raise HTTPException(409, "Ürünler artık Evvel Yeni › Tanımlar › Ürünler'den eklenir ve düzenlenir (tek katalog).")
     ad = (urun_adi or "").strip()
     if len(ad) < 2:
         raise HTTPException(400, "Ürün adı en az 2 karakter olmalı")
@@ -9521,6 +9523,8 @@ class OpsSiparisUrunFiyatBody(BaseModel):
 
 @router.post("/siparis/urun-durum")
 def ops_siparis_urun_durum(body: OpsSiparisUrunDurumBody):
+    # 📚 Evvel Yeni tek katalog (2026-10-17, Codex + Fable): eski katalog yazıcıları kapalı — köprü tek yönlü kalmasın
+    raise HTTPException(409, "Ürünler artık Evvel Yeni › Tanımlar › Ürünler'den eklenir ve düzenlenir (tek katalog).")
     with db() as (conn, cur):
         cur.execute(
             "SELECT id FROM siparis_kategori WHERE kod=%s",
@@ -9673,6 +9677,8 @@ class OpsSiparisUrunAdBody(BaseModel):
 @router.post("/siparis/urun-ad")
 def ops_siparis_urun_ad(body: OpsSiparisUrunAdBody):
     """Ürün adını güncelle ve geçmiş talep JSONB'sini de senkronize et."""
+    # 📚 Evvel Yeni tek katalog (2026-10-17, Codex + Fable): eski katalog yazıcıları kapalı — köprü tek yönlü kalmasın
+    raise HTTPException(409, "Ürünler artık Evvel Yeni › Tanımlar › Ürünler'den eklenir ve düzenlenir (tek katalog).")
     yeni = str(body.yeni_ad or "").strip()
     if not yeni:
         raise HTTPException(400, "Yeni ad boş olamaz")
@@ -9931,6 +9937,8 @@ def ops_siparis_urun_depo_kalem(body: OpsSiparisUrunDepoKalemBody):
 def ops_siparis_sync_urun_adlari():
     """Tek seferlik / isteğe bağlı migration: siparis_urun.ad alanını depo kanonik adıyla senkronize eder.
     Aynı zamanda geçmiş siparis_talep.kalemler JSONB içindeki urun_ad'ları da günceller."""
+    # 📚 Evvel Yeni tek katalog (2026-10-17, Codex + Fable): eski katalog yazıcıları kapalı — köprü tek yönlü kalmasın
+    raise HTTPException(409, "Ürünler artık Evvel Yeni › Tanımlar › Ürünler'den eklenir ve düzenlenir (tek katalog).")
     with db() as (conn, cur):
         # 1) siparis_urun tablosunu güncelle
         cur.execute("SELECT id, ad, depo_stok_kalem_kodu FROM siparis_urun WHERE depo_stok_kalem_kodu IS NOT NULL")

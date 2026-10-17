@@ -18,7 +18,7 @@ export default function UrunModulu({ onToast }) {
   const [form, setForm] = useState(null);
   const [iz, setIz] = useState(null);
   const [mesgul, setMesgul] = useState(false);
-  const yukle = () => api('/evvel-yeni/urun/katalog?hepsi=true').then((d) => { setV(d); setHata(''); if (!kat && d.kategoriler[0]) setKat(d.kategoriler[0].id); })
+  const yukle = () => api('/evvel-yeni/urun/katalog?hepsi=true').then((d) => { setV(d); setHata(''); setKat((k) => k || d.kategoriler.find((x) => x.id)?.id || ''); })
     .catch((e) => setHata(e?.message || 'Katalog okunamadı'));
   useEffect(() => { yukle(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -43,7 +43,7 @@ export default function UrunModulu({ onToast }) {
       <style>{PI_CSS}</style>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
         <div><div className="pi-eyebrow">Evvel Yeni · Tanımlar</div><h1 style={{ fontSize: 30 }}>Ürünler</h1></div>
-        <Dugme kucuk ana disabled={!v} onClick={() => setForm({ ad: '', kategori_id: kat || v?.kategoriler[0]?.id || '', koliyle: false, koli_ici: '', kdv_oran: '0.10', aktif: true })}>+ Ürün ekle</Dugme>
+        <Dugme kucuk ana disabled={!v} onClick={() => setForm({ ad: '', kategori_id: (kat && kat !== '' ? kat : '') || v?.kategoriler.find((k) => k.id)?.id || '', koliyle: false, koli_ici: '', kdv_oran: '0.10', aktif: true })}>+ Ürün ekle</Dugme>
       </div>
       <div style={{ fontSize: 13, color: R.metin2 }}>Her ürün <b>adetle</b> sayılır. Koliyle geliyorsa "1 koli kaç adet" yazılır; siparişte ve teslimde "2 koli + 3" yazılınca sistem adede çevirir. Fiyatlar burada değil, Toptancılar › Ürün fiyatları'nda.</div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
@@ -62,7 +62,7 @@ export default function UrunModulu({ onToast }) {
               <span style={{ width: 120, color: R.metin2 }}>{u.koli_ici ? <>koli = <b style={num}>{u.koli_ici}</b> adet</> : 'adet'}</span>
               <span style={{ width: 70, color: R.metin2 }}>{u.kdv_oran != null ? `KDV %${Math.round(u.kdv_oran * 100)}` : '—'}</span>
               {!u.aktif ? <Cip>pasif</Cip> : !u.birim_teyit ? <Cip tur="sari">birim teyit edilmedi</Cip> : <Cip tur="yesil">teyitli</Cip>}
-              <Dugme kucuk onClick={() => setForm({ id: u.id, ad: u.ad, kategori_id: u.kategori_id, koliyle: !!u.koli_ici, koli_ici: u.koli_ici ? String(u.koli_ici) : '', kdv_oran: u.kdv_oran != null ? String(u.kdv_oran) : '', aktif: u.aktif, teyit: u.birim_teyit })}>Düzelt</Dugme>
+              <Dugme kucuk onClick={() => setForm({ id: u.id, ad: u.ad, kategori_id: u.kategori_id, koliyle: !!u.koli_ici, koli_ici: u.koli_ici ? String(u.koli_ici) : '', kdv_oran: u.kdv_oran != null ? Number(u.kdv_oran).toFixed(2) : '', aktif: u.aktif, teyit: u.birim_teyit })}>Düzelt</Dugme>
               <Dugme kucuk onClick={() => izAc(u)}>İz</Dugme>
             </div>
           ))}

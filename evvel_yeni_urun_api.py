@@ -38,11 +38,13 @@ def _hazirla():
     global _HAZIR
     if _HAZIR:
         return
+    ok = True
     with db() as (conn, cur):
+        cur.execute("SELECT pg_advisory_xact_lock(7012041)")   # ilk kopya çok işçide bir kez (Fable: lock_timeout bu beklemeye uygulanmasın)
         cur.execute("SET LOCAL lock_timeout = '3s'")
-        cur.execute("SELECT pg_advisory_xact_lock(7012041)")   # ilk kopya çok işçide bir kez
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_urun_kategori (
             id TEXT PRIMARY KEY, ad TEXT NOT NULL, emoji TEXT, sira INT NOT NULL DEFAULT 0, aktif BOOLEAN NOT NULL DEFAULT TRUE)""")
+        cur.execute("ALTER TABLE ey_urun_kategori ADD COLUMN IF NOT EXISTS kod TEXT")
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_urun (
             id TEXT PRIMARY KEY, ad TEXT NOT NULL, kategori_id TEXT, birim TEXT NOT NULL DEFAULT 'adet', birim_teyit BOOLEAN NOT NULL DEFAULT FALSE,
             koli_ici INT, kdv_oran NUMERIC(5,4), aktif BOOLEAN NOT NULL DEFAULT TRUE, sira INT NOT NULL DEFAULT 0,
@@ -54,17 +56,17 @@ def _hazirla():
             zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), kaynak_ref TEXT UNIQUE, iptal BOOLEAN NOT NULL DEFAULT FALSE)""")
         cur.execute("SELECT COUNT(*) AS n FROM ey_urun")
         if int(dict(cur.fetchone())["n"]) == 0:
-            _ilk_kopya(cur)
-    _HAZIR = True
+            ok = _ilk_kopya(cur)
+    _HAZIR = ok          # Fable: kopya başarısızsa bir sonraki istekte yeniden denensin (boş katalogla kalınmasın)
 
 
-def _ilk_kopya(cur) -> None:
+def _ilk_kopya(cur) -> bool:
     """KÖPRÜ (bir kez): siparis_kategori → ey_urun_kategori, siparis_urun → ey_urun (kimlikler AYNI), depo kodu → takma ad, KDV → ürüne.
     Birim: eski 'birim' doluysa ve 'adet' ise teyitli; değilse 'adet' + birim_teyit=FALSE ("birim belirsiz" — tek tek çözülür)."""
     try:
         with savepoint(cur, "sp_ey_urun_kopya"):
-            cur.execute("""INSERT INTO ey_urun_kategori (id, ad, emoji, sira, aktif)
-                           SELECT id::text, ad, emoji, sira, aktif FROM siparis_kategori ON CONFLICT DO NOTHING""")
+            cur.execute("""INSERT INTO ey_urun_kategori (id, ad, emoji, sira, aktif, kod)
+                           SELECT id::text, ad, emoji, sira, aktif, kod FROM siparis_kategori ON CONFLICT DO NOTHING""")
             kdv = {}
             try:
                 with savepoint(cur, "sp_ey_urun_kdv"):
@@ -72,28 +74,40 @@ def _ilk_kopya(cur) -> None:
                     kdv = {str(dict(r)["kalem_kodu"]): dict(r)["kdv_oran"] for r in cur.fetchall() or []}
             except Exception:  # noqa: BLE001 — tablo yoksa KDV boş başlar
                 kdv = {}
+            from sevkiyat_helpers import ad_anahtar
             cur.execute("""SELECT id::text AS id, ad, kategori_id::text AS kategori_id, sira, aktif, depo_stok_kalem_kodu AS kod,
                                   NULLIF(TRIM(COALESCE(birim, '')), '') AS birim,
-                                  GREATEST(COALESCE(koli_ic_adet, 0), COALESCE(koli_adet, 0)) AS koli
-                             FROM siparis_urun""")
+                                  koli_ic_adet AS k1, koli_adet AS k2
+                             FROM siparis_urun ORDER BY sira, ad""")   # Fable: paylaşılan depo kodunda sonuç sıraya bağlı olmasın
             n = 0
             for r in cur.fetchall() or []:
                 r = dict(r)
                 birim_eski = _n(r.get("birim"))
-                koli = int(r["koli"]) if r.get("koli") and int(r["koli"]) > 1 else None
-                k_ = kdv.get(r["id"]) if r["id"] in kdv else kdv.get(str(r.get("kod") or ""))
+                k1 = int(r["k1"]) if r.get("k1") and int(r["k1"]) > 1 else None
+                k2 = int(r["k2"]) if r.get("k2") and int(r["k2"]) > 1 else None
+                celiski = bool(k1 and k2 and k1 != k2)        # Codex: ikiz kolon çelişirse sessizce büyüğü SEÇME → boş + teyitsiz
+                koli = None if celiski else (k1 or k2)
+                k_ = next((kdv[a] for a in (str(r.get("kod") or ""), r["id"], ad_anahtar(r["ad"])) if a and a in kdv), None)   # eski sıra: kod → id → ad
                 cur.execute("""INSERT INTO ey_urun (id, ad, kategori_id, birim, birim_teyit, koli_ici, kdv_oran, aktif, sira)
                                VALUES (%s,%s,%s,'adet',%s,%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
-                            (r["id"], r["ad"], r["kategori_id"], birim_eski == "adet", koli, k_, bool(r["aktif"]), int(r.get("sira") or 0)))
+                            (r["id"], r["ad"], r["kategori_id"], birim_eski == "adet" and not celiski, koli, k_, bool(r["aktif"]), int(r.get("sira") or 0)))
+                kod_cakisma = None
                 if r.get("kod"):
-                    cur.execute("INSERT INTO ey_urun_takma (takma, urun_id, kaynak) VALUES (%s,%s,'eski_kod') ON CONFLICT DO NOTHING",
+                    cur.execute("INSERT INTO ey_urun_takma (takma, urun_id, kaynak) VALUES (%s,%s,'eski_kod') ON CONFLICT DO NOTHING RETURNING takma",
                                 (str(r["kod"]), r["id"]))
-                cur.execute("""INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim, kaynak_ref) VALUES (%s,%s,'kopya',NULL,%s,'eski sistem kopyası',%s)
-                               ON CONFLICT DO NOTHING""", (str(uuid.uuid4()), r["id"], r["ad"], f"eski:siparis_urun:{r['id']}"))
+                    if not cur.fetchone():
+                        kod_cakisma = str(r["kod"])     # aynı depo kodu başka üründe — izde görünür (1b'de karar)
+                eski_bilgi = {"ad": r["ad"], "birim": r.get("birim"), "koli_ic_adet": r.get("k1"), "koli_adet": r.get("k2"), "depo_kodu": r.get("kod"),
+                              "kdv": str(k_) if k_ is not None else None, "koli_celiski": celiski, "kod_baska_urunde": kod_cakisma}
+                cur.execute("""INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim, kaynak_ref) VALUES (%s,%s,'kopya',%s,%s,'eski sistem kopyası',%s)
+                               ON CONFLICT DO NOTHING""", (str(uuid.uuid4()), r["id"], json.dumps(eski_bilgi, ensure_ascii=False), r["ad"],
+                                                         f"eski:siparis_urun:{r['id']}"))
                 n += 1
             log.info("ürün kataloğu: eski sistemden %s ürün kopyalandı", n)
+        return True
     except Exception as e:  # noqa: BLE001
         log.warning("ürün kataloğu: eski katalog kopyalanamadı: %s", str(e)[:200])
+        return False
 
 
 # ─────────────────────────── PUBLIC SERVİSLER ───────────────────────────
@@ -101,7 +115,7 @@ def urun_haritasi(cur):
     """Kimlik / takma ad (eski depo kodu) / ad → (urun_id, ad). Depo'nun eski `_urun_haritasi` ile AYNI imza:
     bulunamayan kod 'kod:<kod>', ad 'ad:<ad>' olarak döner (kaybolmaz, izlenir)."""
     _hazirla()
-    cur.execute("SELECT id, ad FROM ey_urun")
+    cur.execute("SELECT id, ad FROM ey_urun ORDER BY aktif DESC, sira, ad")
     ad = {dict(r)["id"]: dict(r)["ad"] for r in cur.fetchall() or []}
     cur.execute("SELECT takma, urun_id FROM ey_urun_takma")
     takma = {dict(r)["takma"]: dict(r)["urun_id"] for r in cur.fetchall() or []}
@@ -126,7 +140,7 @@ def urun_haritasi(cur):
 def katalog(cur, hepsi: bool = False) -> List[dict]:
     """Kategori → ürünler (birim, koli, KDV, aktif). Fiyat YOK (Ürün fiyatları'nda)."""
     _hazirla()
-    cur.execute("SELECT * FROM ey_urun_kategori" + ("" if hepsi else " WHERE aktif") + " ORDER BY sira, ad")
+    cur.execute("SELECT * FROM ey_urun_kategori ORDER BY sira, ad")
     kats = [dict(r) for r in cur.fetchall() or []]
     cur.execute("SELECT * FROM ey_urun" + ("" if hepsi else " WHERE aktif") + " ORDER BY sira, ad")
     uruns = [dict(r) for r in cur.fetchall() or []]
@@ -158,18 +172,28 @@ def urun_ad(cur, uid: str) -> Optional[str]:
 
 # ─────────────────────────── KÖPRÜ: eski kataloğa geri yaz (panel görsün) ───────────────────────────
 def _eskiye_yaz(cur, u: dict) -> None:
-    """Geçiş süresince ŞUBE PANELİ eski siparis_urun'u okuyor → aynı kimlikle eskiye de yazılır. Hata olursa yeni kayıt yine geçerli (log)."""
+    """Geçiş süresince ŞUBE PANELİ eski siparis_urun'u okuyor → aynı kimlikle eskiye de yazılır (iki koli kolonu birlikte).
+    Codex: hata GİZLENMEZ — eskiye yazılamazsa işlem bütünüyle geri alınır ve sebep söylenir (panel ile katalog ayrışmasın)."""
+    from sevkiyat_helpers import ad_anahtar
     try:
         with savepoint(cur, "sp_ey_urun_eskiye"):
-            from sevkiyat_helpers import ad_anahtar
-            cur.execute("""INSERT INTO siparis_urun (id, kategori_id, ad, norm_ad, sira, aktif, birim, koli_ic_adet)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            cur.execute("SELECT id::text AS id FROM siparis_urun WHERE kategori_id=%s AND norm_ad=%s AND id::text<>%s",
+                        (u["kategori_id"], ad_anahtar(u["ad"]), u["id"]))
+            r = cur.fetchone()
+            if r:
+                raise HTTPException(409, "Bu kategoride aynı adlı (büyük/küçük harf, Türkçe karakter farkı dahil) başka ürün var")
+            cur.execute("""INSERT INTO siparis_urun (id, kategori_id, ad, norm_ad, sira, aktif, birim, koli_ic_adet, koli_adet)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
                            ON CONFLICT (id) DO UPDATE SET kategori_id=EXCLUDED.kategori_id, ad=EXCLUDED.ad, norm_ad=EXCLUDED.norm_ad,
-                               aktif=EXCLUDED.aktif, birim=EXCLUDED.birim, koli_ic_adet=EXCLUDED.koli_ic_adet, guncelleme=NOW()""",
+                               aktif=EXCLUDED.aktif, koli_ic_adet=EXCLUDED.koli_ic_adet,
+                               koli_adet=EXCLUDED.koli_adet, guncelleme=NOW()""",
                         (u["id"], u["kategori_id"], u["ad"], ad_anahtar(u["ad"]), int(u.get("sira") or 0), bool(u["aktif"]),
-                         u["birim"], u.get("koli_ici")))
+                         u["birim"], u.get("koli_ici"), u.get("koli_ici")))
+    except HTTPException:
+        raise
     except Exception as e:  # noqa: BLE001
         log.warning("ürün kataloğu: eski kataloğa yazılamadı (%s): %s", u.get("id"), str(e)[:160])
+        raise HTTPException(409, "Şube paneli kataloğu güncellenemedi — kayıt yapılmadı, tekrar dene")
 
 
 # ─────────────────────────── UÇLAR ───────────────────────────
@@ -202,6 +226,16 @@ def _dogrula(b: UrunBody) -> None:
         raise HTTPException(400, "KDV oranı 0–0,30 arası (ör. 0,10)")
 
 
+def _ayni_ad(cur, kategori_id: str, ad: str, haric: Optional[str]) -> None:
+    """Aynı kategoride aynı ad (Türkçe büyük/küçük ve İ/I farkı dahil — eski katalogla aynı anahtar) → 409."""
+    from sevkiyat_helpers import ad_anahtar
+    hedef = ad_anahtar(ad.strip()[:120])
+    cur.execute("SELECT id, ad FROM ey_urun WHERE kategori_id=%s", (kategori_id,))
+    for r in cur.fetchall() or []:
+        if dict(r)["id"] != haric and ad_anahtar(dict(r)["ad"]) == hedef:
+            raise HTTPException(409, f"Bu kategoride aynı adlı ürün var: {dict(r)['ad']}")
+
+
 @router.post("")
 def urun_ekle(b: UrunBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     _hazirla()
@@ -211,14 +245,14 @@ def urun_ekle(b: UrunBody, x_evvel_oturum: Optional[str] = Header(default=None))
         cur.execute("SELECT 1 FROM ey_urun_kategori WHERE id=%s", (b.kategori_id,))
         if not cur.fetchone():
             raise HTTPException(400, "Kategori seç")
-        cur.execute("SELECT id FROM ey_urun WHERE kategori_id=%s AND lower(ad)=lower(%s)", (b.kategori_id, b.ad.strip()))
-        if cur.fetchone():
-            raise HTTPException(409, "Bu kategoride aynı adlı ürün zaten var")
+        cur.execute("SELECT pg_advisory_xact_lock(7012042)")   # Fable: eşzamanlı iki ekleme çift ürün açmasın
+        _ayni_ad(cur, b.kategori_id, b.ad, None)
+        cur.execute("SELECT COALESCE(MAX(sira), 0) + 10 AS s FROM ey_urun WHERE kategori_id=%s", (b.kategori_id,))
         uid = str(uuid.uuid4())
         u = {"id": uid, "ad": b.ad.strip()[:120], "kategori_id": b.kategori_id, "birim": b.birim, "koli_ici": b.koli_ici,
-             "kdv_oran": b.kdv_oran, "aktif": b.aktif, "sira": 0}
-        cur.execute("""INSERT INTO ey_urun (id, ad, kategori_id, birim, birim_teyit, koli_ici, kdv_oran, aktif) VALUES (%s,%s,%s,%s,TRUE,%s,%s,%s)""",
-                    (uid, u["ad"], b.kategori_id, b.birim, b.koli_ici, b.kdv_oran, b.aktif))
+             "kdv_oran": b.kdv_oran, "aktif": b.aktif, "sira": int(dict(cur.fetchone())["s"])}
+        cur.execute("""INSERT INTO ey_urun (id, ad, kategori_id, birim, birim_teyit, koli_ici, kdv_oran, aktif, sira) VALUES (%s,%s,%s,%s,TRUE,%s,%s,%s,%s)""",
+                    (uid, u["ad"], b.kategori_id, b.birim, b.koli_ici, b.kdv_oran, b.aktif, u["sira"]))
         cur.execute("INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim, kaynak_ref) VALUES (%s,%s,'olusturma',NULL,%s,%s,%s)",
                     (str(uuid.uuid4()), uid, json.dumps({k: str(v) if v is not None else None for k, v in u.items()}, ensure_ascii=False), kim, f"olustur:{uid}"))
         _eskiye_yaz(cur, u)
@@ -239,7 +273,15 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
         e = dict(e)
         yeni = {"ad": b.ad.strip()[:120], "kategori_id": b.kategori_id, "birim": b.birim, "koli_ici": b.koli_ici,
                 "kdv_oran": b.kdv_oran, "aktif": b.aktif}
-        degisen = [k for k, v in yeni.items() if str(e.get(k) if e.get(k) is not None else "") != str(v if v is not None else "")]
+        def _es(a, b_):
+            if a is None or b_ is None:
+                return a is None and b_ is None
+            if isinstance(a, (Decimal, float)) or isinstance(b_, (Decimal, float)):
+                return Decimal(str(a)).quantize(Decimal("0.0001")) == Decimal(str(b_)).quantize(Decimal("0.0001"))   # Fable: 0.1000 = 0.1
+            return str(a) == str(b_)
+        degisen = [k for k, v in yeni.items() if not _es(e.get(k), v)]
+        if "ad" in degisen or "kategori_id" in degisen:
+            _ayni_ad(cur, b.kategori_id, b.ad, uid)
         if e["birim"] != b.birim and e.get("birim_teyit"):
             raise HTTPException(409, "Sayım birimi teyitli ürünün birimi değiştirilemez — farklı paket ayrı ürün olur")
         if not degisen and e["birim_teyit"]:
@@ -258,7 +300,7 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
 def urun_iz(uid: str):
     _hazirla()
     with db() as (conn, cur):
-        cur.execute("SELECT alan, eski, yeni, kim, zaman FROM ey_urun_iz WHERE urun_id=%s AND NOT iptal ORDER BY zaman DESC", (uid,))
+        cur.execute("SELECT alan, eski, yeni, kim, zaman FROM ey_urun_iz WHERE urun_id=%s AND NOT iptal ORDER BY zaman DESC, alan", (uid,))
         return {"iz": [{**dict(r), "zaman": str(dict(r)["zaman"])[:16]} for r in cur.fetchall() or []]}
 
 

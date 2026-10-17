@@ -2253,6 +2253,8 @@ def birim_onerileri(gun: int = 400):
 @router.post("/birim-ata")
 def birim_ata(body: BirimBody):
     """Sahibin birim/koli kararını ürüne yazar (kaynakta damgalanır)."""
+    # 📚 Evvel Yeni tek katalog (2026-10-17, Codex + Fable): eski katalog yazıcıları kapalı — köprü tek yönlü kalmasın
+    raise HTTPException(409, "Ürünler artık Evvel Yeni › Tanımlar › Ürünler'den eklenir ve düzenlenir (tek katalog).")
     b = (body.birim or "adet").strip().lower()
     if b not in ("adet", "koli", "kg", "lt", "paket"):
         raise HTTPException(400, "birim: adet | koli | kg | lt | paket")
@@ -2299,6 +2301,8 @@ def koli_kolonu_hizala(uygula: int = 0) -> dict:
     ⚠️ ÜZERİNE YAZMAZ: yalnız `koli_ic_adet IS NULL` satırlara dokunur.
     ⚠️ `uygula=0` (varsayılan) SALT OKUR — kaç satır etkilenecek onu söyler.
     """
+    # 📚 Evvel Yeni tek katalog (2026-10-17, Codex + Fable): eski katalog yazıcıları kapalı — köprü tek yönlü kalmasın
+    raise HTTPException(409, "Ürünler artık Evvel Yeni › Tanımlar › Ürünler'den eklenir ve düzenlenir (tek katalog).")
     with db() as (conn, cur):
         cur.execute("ALTER TABLE siparis_urun ADD COLUMN IF NOT EXISTS koli_ic_adet INT")
         cur.execute(
