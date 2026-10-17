@@ -79,3 +79,51 @@ def moduller():
     """Ekran menüsü bunu okur: yalnız yüklenen modüller gösterilir."""
     return {"moduller": [{k: m[k] for k in ("kod", "ad", "ikon", "sektor", "yetki", "gerekir", "menu", "aciklama")}
                          | {"durum": DURUM.get(m["kod"], "bilinmiyor")} for m in MODULLER]}
+
+
+# ─────────── ESKİ SİSTEM ENVANTERİ: "son 30 günde kullanıldı mı?" (yalnız OKUR) ───────────
+# Sahip: eski Evvel özellikleri tek tek TAŞI / DÜZELT / ÇIKAR. Eski sistemde sayfa ziyaret kaydı yok →
+# kullanım = tabloya son 30 günde yazılan kayıt sayısı + son kayıt tarihi. Ağır: 1 saat önbellek.
+_TARIH_TERCIH = ("created_at", "olusturma", "olusturma_zamani", "kayit_zamani", "zaman", "olay_zaman", "ts", "tarih",
+                 "updated_at", "guncelleme", "is_gunu", "gun")
+_KULLANIM_ONBELLEK: dict = {}
+
+
+@router.get("/eski-kullanim")
+def eski_kullanim(tazele: bool = False):
+    import time
+    from database import db, savepoint
+    if not tazele and _KULLANIM_ONBELLEK.get("t", 0) > time.time() - 3600:
+        return _KULLANIM_ONBELLEK["v"]
+    out = []
+    with db() as (conn, cur):
+        cur.execute("""SELECT c.table_name, c.column_name, c.data_type FROM information_schema.columns c
+                       JOIN information_schema.tables t ON t.table_name=c.table_name AND t.table_schema=c.table_schema
+                       WHERE c.table_schema='public' AND t.table_type='BASE TABLE'
+                         AND c.data_type IN ('timestamp with time zone','timestamp without time zone','date')""")
+        kolon: Dict[str, List[str]] = {}
+        for r in cur.fetchall():
+            r = dict(r)
+            kolon.setdefault(r["table_name"], []).append(r["column_name"])
+        cur.execute("""SELECT relname, n_live_tup, n_tup_ins, n_tup_upd, n_tup_del FROM pg_stat_user_tables WHERE schemaname='public'""")
+        stat = {dict(r)["relname"]: dict(r) for r in cur.fetchall()}
+        for tablo in sorted(stat):
+            s = stat[tablo]
+            kol = kolon.get(tablo, [])
+            sec = next((k for k in _TARIH_TERCIH if k in kol), kol[0] if kol else None)
+            satir = {"tablo": tablo, "satir": s["n_live_tup"], "ekleme": s["n_tup_ins"], "guncelleme": s["n_tup_upd"],
+                     "tarih_kolonu": sec, "son30": None, "son_kayit": None}
+            if sec:
+                try:
+                    with savepoint(cur, "sp_ey_envanter"):
+                        cur.execute("SET LOCAL statement_timeout = '4s'")
+                        cur.execute(f'SELECT count(*) FILTER (WHERE "{sec}" >= now() - interval \'30 days\' AND "{sec}" <= now() + interval \'1 day\') AS n, '
+                                    f'max("{sec}") FILTER (WHERE "{sec}" <= now() + interval \'1 day\') AS son FROM "{tablo}"')
+                        r = dict(cur.fetchone())
+                        satir["son30"], satir["son_kayit"] = r["n"], (str(r["son"])[:16] if r["son"] else None)
+                except Exception as e:  # noqa: BLE001
+                    satir["hata"] = str(e)[:80]
+            out.append(satir)
+    v = {"tablolar": out, "not": "son30 = tarih kolonuna göre son 30 günde yazılan kayıt; tarih kolonu yoksa yalnız pg istatistiği"}
+    _KULLANIM_ONBELLEK.update(t=time.time(), v=v)
+    return v
