@@ -130,6 +130,11 @@ function Yoldakiler({ onToast }) {
     try { const r = await api(`/evvel-yeni/depo/yolda/${encodeURIComponent(x.id)}/merkez-kabul`, { method: 'POST', body: {} }); onToast?.(r.mesaj); yukle(); }
     catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
   };
+  const coz = async (x, karar, soru) => {
+    if (!window.confirm(soru)) return;
+    try { const r = await api(`/evvel-yeni/depo/yolda/${encodeURIComponent(x.id)}/fark-coz`, { method: 'POST', body: { karar } }); onToast?.(r.mesaj); yukle(); }
+    catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+  };
   if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>{hata}</div></div>;
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Yoldakiler okunuyor…</div></div>;
   const hucre = { padding: '7px 9px', borderTop: '1px solid var(--pi-line)', fontSize: 13 };
@@ -160,9 +165,16 @@ function Yoldakiler({ onToast }) {
               <tr key={x.id}>
                 <td style={{ ...hucre, whiteSpace: 'nowrap' }}>{x.sevk_gunu ? tKisa(x.sevk_gunu) : '—'}</td>
                 <td style={hucre}><b>{x.urun}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.nereden} → {x.nereye}</div></td>
-                <td style={{ ...hucre, textAlign: 'right', ...num }}>sevk {x.sevk} · kabul {x.kabul + x.fazla}</td>
-                <td style={{ ...hucre, textAlign: 'right', color: x.fazla ? R.amber : R.kirmizi, fontWeight: 700 }}>
-                  {x.fazla ? `+${x.fazla} fazla geldi (birim karışmış olabilir)` : `${x.sevk - x.kabul} adet eksik geldi — yolda kaldı`}</td>
+                <td style={{ ...hucre, textAlign: 'right', ...num }}>sevk {x.sevk} · kabul {x.kabul + Math.max(0, x.fazla)}{x.merkez_kabul ? ' (merkez)' : ''}</td>
+                <td style={{ ...hucre, textAlign: 'right', color: x.fazla > 0 ? R.amber : R.kirmizi, fontWeight: 700 }}>
+                  {x.fazla > 0 ? <>+{x.fazla} fazla geldi — ASKIDA (birim karışmış olabilir)
+                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>
+                      <Dugme kucuk onClick={() => coz(x, 'fazla_onay', `${x.urun}: ${x.fazla} adet fazla GERÇEKTEN geldi mi? Şube stoğuna eklensin mi?`)}>Gerçekten geldi</Dugme>
+                      <Dugme kucuk onClick={() => coz(x, 'fazla_ret', `${x.urun}: ${x.fazla} adet fazla yanlış (birim hatası) — reddedilsin mi?`)}>Yanlış, reddet</Dugme></div></>
+                    : <>{x.eksik} adet eksik geldi — yolda kaldı
+                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>
+                      <Dugme kucuk onClick={() => coz(x, 'kayip', `${x.urun}: ${x.eksik} adet KAYIP olarak kapatılsın mı?`)}>Kayıp</Dugme>
+                      <Dugme kucuk onClick={() => coz(x, 'iade', `${x.urun}: ${x.eksik} adet ${x.nereden} deposuna GERİ yazılsın mı (hiç çıkmamış)?`)}>Kaynağa geri</Dugme></div></>}</td>
               </tr>
             ))}
           </tbody></table>
@@ -188,7 +200,7 @@ function DepoSayim({ onToast }) {
   if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>{hata}</div></div>;
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Ürünler okunuyor…</div></div>;
   const k = v.konumlar.find((x) => x.id === konum);
-  const urunler = v.satirlar.filter((s) => s.kategori !== '❔ Katalogda eşleşmeyen');
+  const urunler = v.satirlar;   // Codex: katalogda eşleşmeyen (eski kodlu) ürünler de sayılabilsin
   const kaydet = async () => {
     const satirlar = Object.entries(deger).filter(([, d]) => String(d).trim() !== '').map(([urun_id, d]) => ({ urun_id, sayilan: Number(String(d).replace(',', '.')) }));
     if (!satirlar.length) { onToast?.('En az bir ürün say'); return; }
