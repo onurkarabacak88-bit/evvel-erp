@@ -933,7 +933,7 @@ export const SAYFALAR = [
   { id: 'bankalar', ad: 'Bankalar', alt: 'Şube bankaları · kira · geçiş' },
   { id: 'hareketler', ad: 'Günlük hareketler', alt: 'Gün seç, ne oldu' },
   { id: 'isler', ad: 'Bekleyen işler', alt: 'Onaylar · farklar' },
-  { id: 'uyarilar', ad: 'Uyarılar', alt: 'Yaklaşan ödemeler · eksik tanımlar' },
+  { id: 'uyarilar', ad: 'Uyarılar', alt: 'Eksik tanımlar · dikkat' },
   { id: 'teslim', ad: 'Teslim onayları', alt: 'Şubeden patrona' },
   { id: 'banka', ad: 'Banka mutabakatı', alt: 'Aylık ekstre kontrolü' },
   { id: 'farklar', ad: 'Açık farklar', alt: 'Gün gün defter' },
@@ -1105,8 +1105,6 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
   const bankalar = veri.cepler.filter((c) => c.tur === 'banka' && !c.kira);
   const kiraHesap = veri.cepler.filter((c) => c.tur === 'banka' && c.kira);
   const acilisEksik = veri.cepler.filter((c) => !(veri.acilis_girilen || []).includes(c.id));
-  // seçili gün ne olursa olsun BUGÜNÜN parası: anlık bakiye (kira hesabı hariç = işletme parası)
-  const eldekiIsletme = Object.entries(veri.anlik_bakiye || {}).filter(([k]) => !k.startsWith('kira:')).reduce((t, [, x]) => t + (Number(x) || 0), 0);
   const deg = veri.degisim;
   const k = veri.kpi;
 
@@ -1227,7 +1225,6 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
           </div>
           {veri.pos_bekleyen_brut > 0 && <div style={{ marginLeft: 'auto', fontSize: 12.5, color: R.amber }}>Toplama dahil değil · POS/online bankaya gelecek (brüt) <b style={num}>{fmt(veri.pos_bekleyen_brut)}</b> ₺</div>}
         </div>
-        <YaklasanOdemeler ozet onAc={() => git('uyarilar')} eldeki={eldekiIsletme} posYolda={veri.pos_bekleyen_brut} />
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
           <GrupKart ad="Dükkân nakitleri" tutar={o.sube} liste={subeler} hedef="subeler" alt={`${subeler.length} dükkân · çekmecedeki nakit`} />
           <GrupKart ad="Evler" tutar={o.ev} liste={evler} hedef="evler" alt={evler.map((c) => c.kisa).join(' · ')} />
@@ -1242,7 +1239,6 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         </div>
       </>)}
 
-      {sekme === 'uyarilar' && <YaklasanOdemeler eldeki={eldekiIsletme} posYolda={veri.pos_bekleyen_brut} />}
       {sekme === 'subeler' && <KartIzgara liste={subeler} />}
       {sekme === 'evler' && <KartIzgara liste={evler} />}
       {sekme === 'bankalar' && (<>
@@ -1354,62 +1350,6 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
 }
 
 // ─── AÇIK FARKLAR sayfası (gün gün defter) ───
-// 💡 Sahip (2026-10-17, Codex + Fable): "kasa önümüzdeki günlerde ödemelere yetiyor mu?" — YALNIZ kesinleşmiş çıkışlar
-// (kart son ödeme, kira, maaş, toptancı vadesi); ciro tahmini yok. Satırları modüller kendi bırakır (tak-çıkar).
-const YO_AD = { kart: '💳', kira: '🏠', maas: '👥', toptanci: '🚚' };
-// Sahip (2026-10-17): "uyarıları ayrı bir sekmede tut; kullanım karmaşası oluşturmasın" → Kasam'da YALNIZ tek satır özet
-// (tıklayınca Kasa › Uyarılar); satırlar ve 'gecikti' uyarıları Uyarılar sekmesinde.
-function YaklasanOdemeler({ eldeki, posYolda, ozet, onAc }) {
-  const [v, setV] = useState(null);
-  const acik = !ozet;
-  // Sahip (2026-10-17, envanter madde 4): eski ödeme planı motoru yerine vade takvimi = bu kutunun 30 günlük görünümü (Uyarılar'da)
-  const [gunSayisi, setGunSayisi] = useState(7);
-  useEffect(() => {
-    let iptal = false;
-    setV(null);
-    api(`/evvel-yeni/kasa/yaklasan-odemeler?gun_sayisi=${gunSayisi}`).then((d) => { if (!iptal) setV(d); }).catch(() => { if (!iptal) setV({ hata: true }); });
-    return () => { iptal = true; };
-  }, [gunSayisi]);
-  if (!v) return <div style={{ ...kart, padding: '10px 16px', fontSize: 12.5, color: R.not }}>Önümüzdeki ödemeler hesaplanıyor…</div>;
-  if (v.hata) return null;
-  const fark = Math.round((eldeki - v.toplam) * 100) / 100;
-  const yetmiyor = fark < 0;
-  const belirsiz = !yetmiyor && v.bilinmeyen_sayi > 0;   // tutarı bilinmeyen ödeme varken "yetiyor" denmez
-  return (
-    <div style={{ ...kart, padding: '12px 16px', borderColor: yetmiyor ? alfa(R.kirmizi, 60) : 'var(--pi-line)' }}>
-      <button type="button" onClick={() => (ozet ? onAc?.() : null)} disabled={!ozet}
-        style={{ all: 'unset', cursor: 'pointer', display: 'flex', gap: 22, flexWrap: 'wrap', alignItems: 'flex-end', width: '100%' }}>
-        <div><div style={etiketStil}>Şu an eldeki işletme parası</div><div style={{ ...num, fontSize: 17 }}>{fmt(eldeki)}</div></div>
-        <div><div style={etiketStil}>{v.gun_sayisi} gün içinde kesin ödemeler</div><div style={{ ...num, fontSize: 17 }}>− {fmt(v.toplam)}</div></div>
-        <div><div style={etiketStil}>Fark</div>
-          <div style={{ ...num, fontSize: 17, fontWeight: 700, color: yetmiyor ? R.kirmizi : belirsiz ? R.amber : R.yesil }}>{fark > 0 ? '+' : ''}{fmt(fark)}</div></div>
-        <div style={{ marginLeft: 'auto', fontSize: 12.5, color: R.metin2 }}>
-          {ozet ? <span style={{ color: 'var(--pi-accent)', fontWeight: 600 }}>{v.bilinmeyen_sayi > 0 && <span style={{ color: R.amber }}>{v.bilinmeyen_sayi} ödemenin tutarı bilinmiyor · </span>}Ayrıntı → Uyarılar</span>
-            : <>{yetmiyor ? <span style={{ color: R.kirmizi }}>⚠ Eldeki para bu ödemelere yetmiyor</span> : belirsiz ? <span style={{ color: R.amber }}>Tutarı bilinmeyen ödeme var — yetip yetmediği belli değil</span> : 'Eldeki para yetiyor'} · girişler (ciro) sayılmadı
-              {v.bilinmeyen_sayi > 0 && <span style={{ color: R.amber }}> · {v.bilinmeyen_sayi} ödemenin tutarı bilinmiyor</span>}</>}
-        </div>
-      </button>
-      {acik && (
-        <div style={{ marginTop: 10, display: 'grid', gap: 4, fontSize: 13 }}>
-          <div style={{ display: 'flex', gap: 6, marginBottom: 4 }}>
-            {[7, 30].map((g) => <Dugme key={g} kucuk ana={gunSayisi === g} onClick={() => setGunSayisi(g)}>{g} gün</Dugme>)}
-          </div>
-          {v.satirlar.length === 0 && <div style={{ color: R.not }}>Önümüzdeki {v.gun_sayisi} günde kesinleşmiş ödeme yok.</div>}
-          {v.satirlar.map((x, i) => (
-            <div key={i} style={{ display: 'flex', gap: 10, alignItems: 'baseline', borderTop: i ? `1px solid ${R.cizgi}` : 'none', paddingTop: i ? 4 : 0 }}>
-              <span style={{ width: 22 }} aria-hidden="true">{YO_AD[x.kaynak] || '•'}</span>
-              <span style={{ width: 70, color: R.metin2 }}>{x.tarih ? tKisa(x.tarih) : 'bu hafta'}</span>
-              <span style={{ flex: 1 }}>{x.ad}{x.not && <span style={{ color: x.not === 'gecikti' ? R.kirmizi : R.not }}> · {x.not}</span>}</span>
-              <b style={num}>{x.tutar == null ? '—' : fmt(x.tutar)}</b>
-            </div>
-          ))}
-          {posYolda > 0 && <div style={{ color: R.amber, marginTop: 4 }}>Yolda (toplama katılmadı): POS/online bankaya gelecek {fmt(posYolda)} ₺</div>}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function AcikSayfa({ onCoz, onCepAc, yenile }) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);

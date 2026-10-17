@@ -721,27 +721,3 @@ def _ey_subeler_aktif():
     from evvel_yeni_tanim_api import subeler as _s
     with db() as (conn, cur):
         return _s(cur)
-
-
-def _yaklasan_maas(cur, b: dict) -> list:
-    """Kasa kutusu: geçen ayın ödenmemiş maaşı (vadesi geldi) + ay sonu ufka girdiyse bu ayın hak edişi (ay kapanmadığı için tahmini)."""
-    bugun = b["bugun"]
-    ay = bugun.strftime("%Y-%m")
-    out = []
-    onceki = _ay_kaydir(ay, -1)
-    r = [x for x in hesapla(cur, onceki) if (x.get("kalan") or 0) > 0]
-    if r:
-        out.append({"kaynak": "maas", "ad": f"{onceki} maaş kalanı ({len(r)} kişi)", "tarih": bugun.isoformat(),
-                    "tutar": round(sum(x["kalan"] for x in r), 2), "not": "ödenmemiş hak ediş"})
-    _, ay_son = _ay_sinir(ay)
-    if ay_son <= b["ufuk"]:
-        r = [x for x in hesapla(cur, ay) if (x.get("kalan") or 0) > 0]
-        if r:
-            out.append({"kaynak": "maas", "ad": f"{ay} maaşı ({len(r)} kişi)", "tarih": ay_son.isoformat(),
-                        "tutar": round(sum(x["kalan"] for x in r), 2), "not": "ay kapanmadı — hak edişe göre"})
-    return out
-
-
-from evvel_yeni_cekirdek import yaklasan_odeme_kaydet  # noqa: E402
-
-yaklasan_odeme_kaydet("maas", _yaklasan_maas)

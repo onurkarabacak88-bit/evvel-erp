@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from database import db, savepoint
 from evvel_yeni_kasa_api import _hazirla, _yukle
-from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi, bekleyen_is_kaydet, yaklasan_odeme_kaydet
+from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi, bekleyen_is_kaydet
 
 router = APIRouter(prefix="/api/evvel-yeni/toptanci", tags=["evvel-yeni-toptanci"])
 log = logging.getLogger(__name__)
@@ -572,18 +572,3 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
 
 # 🧩 Bekleyen işler kayıt defterine (Kasa bu modülü tanımaz; modül kapanınca satırları da kalkar)
 bekleyen_is_kaydet("toptanci", lambda cur, b: toptanci_isleri(cur))
-
-
-def _yaklasan_toptanci(cur, b: dict) -> list:
-    """Kasa kutusu: vadesi geçmiş + 7 gün içinde dolan toptancı borcu (ödemeler en eski borçtan düşülmüş)."""
-    out = []
-    for t in _hesap(cur, b["bugun"]):
-        if t["vadesi_gecen"] > 0:
-            out.append({"kaynak": "toptanci", "ad": f"{t['ad']} (vadesi geçti)", "tarih": b["bugun"].isoformat(),
-                        "tutar": t["vadesi_gecen"], "not": "gecikti"})
-        if t["bu_hafta"] > 0:
-            out.append({"kaynak": "toptanci", "ad": f"{t['ad']} (7 gün içinde vade)", "tarih": None, "tutar": t["bu_hafta"], "not": None})
-    return out
-
-
-yaklasan_odeme_kaydet("toptanci", _yaklasan_toptanci)

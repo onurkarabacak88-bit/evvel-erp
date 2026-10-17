@@ -95,8 +95,8 @@
 
 | # | Karar | Not |
 |---|---|---|
-| 1 | Eski kasa defteri ÇIKAR | Panel yalnız EY'ye yazınca köprü kesilir. a) kişi bazlı kasa açığı: YOK. b) Kasa'ya "7 gün içinde kesin çıkışlar" kutusu: KURULACAK (kesin çıkış = kart son ödeme + kira + maaş; ciro tahmini yok; POS yolda ayrı satır) |
+| 1 | Eski kasa defteri ÇIKAR | Panel yalnız EY'ye yazınca köprü kesilir. a) kişi bazlı kasa açığı: YOK. b) nakit tahmini kutusu: kuruldu, sonra SAHİP KALDIRTTI ("kargaşa yaratacaksa kaldır, hiç uğraşmayalım" — kart ekstreleri girilmeden 'bilinmiyor' üretiyordu) |
 | 45 | Evo ÇIKAR | Evo kullanılmıyor |
 | 2 | Eski ciro taslak / onay / fark defteri ÇIKAR | Ciro yalnız panel kapanışından (bugünkü EY hâli); onay yok; eksik gün Bekleyen işler. Panel ciroyu doğrudan EY'ye yazmaya geçer (panel taşımasının ilk adımı) |
 | 3 | Eski teslim / alıcı / banka yatırımı ekranları ÇIKAR | Teslim panelden yalnız EY Kasa'ya. 3-b: teslim GİRİLDİĞİ GÜN alınmış sayılır ("aldım" yok); almadı/eksik → 7 gün içinde Düzelt |
-| 4 | Eski ödeme planı motoru + ekranları ÇIKAR | Vade takvimi = Kasa › Uyarılar'daki yaklaşan ödemeler kutusunun 30 gün görünümü (ikinci borç defteri yok). Toplu ödeme / vade disiplini raporu YOK |
+| 4 | Eski ödeme planı motoru + ekranları ÇIKAR | Vade takvimi YOK (kutu kaldırıldı — sadelik). Toplu ödeme / vade disiplini raporu YOK |

@@ -155,26 +155,5 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-# Yaklaşan ödemeler (Kasa'daki "7 gün içinde kesin çıkışlar" kutusu): sağlayıcı (cur, baglam) →
-# [ {kaynak, ad, tarih (iso), tutar (TL; bilinmiyorsa None), not} ]. baglam = {"bugun": date, "ufuk": date, "kayit": ...}
-_YAKLASAN_ODEME: Dict[str, Callable] = {}
-
-
-def yaklasan_odeme_kaydet(ad: str, saglayici: Callable) -> None:
-    """Modül, Kasa'nın 'yaklaşan kesin ödemeler' kutusuna kendi satırlarını bu kayıtla ekler (kart, kira, maaş, toptancı…)."""
-    _YAKLASAN_ODEME[ad] = saglayici
-
-
-def yaklasan_odemeler(cur, baglam: dict) -> List[dict]:
-    out: List[dict] = []
-    for ad, f in list(_YAKLASAN_ODEME.items()):
-        try:
-            with savepoint(cur, f"sp_ey_yo_{ad}"[:60]):
-                out.extend(f(cur, baglam) or [])
-        except Exception as e:  # noqa: BLE001
-            log.warning("yaklaşan ödeme sağlayıcısı '%s' okunamadı: %s", ad, str(e)[:150])
-    return out
-
-
 __all__ = ["bugun", "tr_saat", "tr_gun", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tl", "kilit", "aktor",
-           "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "yaklasan_odeme_kaydet", "yaklasan_odemeler", "MAKS_KURUS", "KASA_KILIT", "datetime"]
+           "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime"]
