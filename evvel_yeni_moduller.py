@@ -38,6 +38,8 @@ MODULLER: List[dict] = [
     {"kod": "kart", "ad": "Kartlar", "ikon": "💳", "sektor": "genel", "gerekir": ["kasa", "odeme"], "aciklama": "kullanılabilir limit, son ödeme"},
     {"kod": "toptanci", "ad": "Toptancılar", "ikon": "🚚", "sektor": "genel", "gerekir": ["kasa", "tanim", "urun"], "aciklama": "borç = açılış + alım − ödeme"},
     {"kod": "depo", "ad": "Depo", "ikon": "📦", "sektor": "genel", "gerekir": ["gider", "tanim"], "aciklama": "ürün nerede — tek hareket defteri"},
+    {"kod": "panel", "ad": "Şube paneli", "ikon": "🧾", "sektor": "genel", "gerekir": ["olay", "kasa", "tanim", "urun", "depo"],
+     "menu": False, "aciklama": "şube personelinin ekranı (açılış, kapanış, ürün aç, fire…) — Evvel Yeni defterlerine yazar; 1 Kasım'a kadar deneme"},
     {"kod": "kazanc", "ad": "Şube kazancı", "ikon": "📈", "sektor": "genel", "gerekir": ["gelir", "gider"], "aciklama": "gelir − şubenin gideri"},
     {"kod": "avans", "ad": "Avans talepleri", "ikon": "🤝", "sektor": "genel", "gerekir": ["maas"], "menu": False,
      "aciklama": "personelin QR sayfasından avans talepleri → havale / elden / ret (sayfası Personel altında)"},
