@@ -26,7 +26,8 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_kasa_api import _aktor, _bugun, _hazirla, _kurus, _tl_sayi, _yukle
+from evvel_yeni_kasa_api import _hazirla, _yukle
+from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi
 
 router = APIRouter(prefix="/api/evvel-yeni/toptanci", tags=["evvel-yeni-toptanci"])
 log = logging.getLogger(__name__)
@@ -191,7 +192,7 @@ def panel_teslim_yaz(cur, *, defter_id, sube_id, toptanci_id, toptanci_ad, kalem
     """sube_panel /urun-sevk kancası — kendi SAVEPOINT'inde; hata teslimi (stok) BOZMAZ, iz bırakır."""
     try:
         with savepoint(cur, "sp_ey_top_panel"):
-            from evvel_yeni_kasa_api import _bugun as _b
+            from evvel_yeni_cekirdek import bugun as _b
             teslim_yaz(cur, kaynak_ref=f"urun_sevk:{defter_id}", toptanci_id=str(toptanci_id), toptanci_ad=toptanci_ad,
                        sube_id=str(sube_id), gun=_b(), kalemler=kalemler or [], fatura_geldi=fatura_geldi,
                        kesin_tutar=_kr(fatura_tutar) if fatura_tutar else None, fatura_no=fatura_no, teslim_alan=teslim_alan)

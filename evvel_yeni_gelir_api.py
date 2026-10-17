@@ -17,8 +17,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from database import db
-from evvel_yeni_kasa_api import (DIS_TURLERI, KIRA_CEPLERI, _baslangic, _bugun, _hazirla,
-                                 _oranlar, _tl_sayi, _yukle)
+from evvel_yeni_kasa_api import (DIS_TURLERI, KIRA_CEPLERI, _baslangic, _hazirla, _oranlar, _yukle)
+from evvel_yeni_cekirdek import bugun as _bugun, tl_sayi as _tl_sayi
 
 router = APIRouter(prefix="/api/evvel-yeni/gelir", tags=["evvel-yeni-gelir"])
 

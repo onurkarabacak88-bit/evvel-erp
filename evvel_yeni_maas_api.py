@@ -180,7 +180,7 @@ def _gecen_gun(giris, cikis, ay_bas, ay_son, bugun):
 
 def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict] = None, _devir_cache=None) -> list:
     """Ayın bütün personel satırları. Avans devri için önceki ayları yeni hesap başlangıcından zincirler."""
-    from evvel_yeni_kasa_api import _bugun
+    from evvel_yeni_cekirdek import bugun as _bugun
     _hazirla(cur)
     bugun = _bugun()
     ay_bas, ay_son = _ay_sinir(ay)
@@ -313,7 +313,7 @@ def personel_giderleri(cur, ay: str) -> list:
 
 @router.get("/liste")
 def maas_liste(ay: Optional[str] = None):
-    from evvel_yeni_kasa_api import _bugun
+    from evvel_yeni_cekirdek import bugun as _bugun
     a_ = (ay or _ay_kaydir(_bugun().strftime("%Y-%m"), -1))[:7]   # varsayılan: ödenecek ay = geçen ay
     with db() as (conn, cur):
         _hazirla(cur)
@@ -346,7 +346,7 @@ class ElleBody(BaseModel):
 
 @router.post("/{pid}/{ay}")
 def maas_elle(pid: str, ay: str, b: ElleBody, x_evvel_oturum: Optional[str] = Header(default=None)):
-    from evvel_yeni_kasa_api import _aktor
+    from evvel_yeni_cekirdek import aktor as _aktor
     if ay[:7] < YENI_HESAP_BASLANGIC:
         raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
     if b.duzeltme and not (b.aciklama or "").strip():
@@ -387,7 +387,7 @@ def maas_elle(pid: str, ay: str, b: ElleBody, x_evvel_oturum: Optional[str] = He
 @router.post("/{pid}/{ay}/onay")
 def maas_onay(pid: str, ay: str, kaldir: bool = False, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Onay: ayın kalemleri DONDURULUR (ücret/vardiya sonradan değişse de bu ay bozulmaz); gider 'kesin' olur."""
-    from evvel_yeni_kasa_api import _aktor
+    from evvel_yeni_cekirdek import aktor as _aktor
     if ay[:7] < YENI_HESAP_BASLANGIC:
         raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
     with db() as (conn, cur):
@@ -420,7 +420,7 @@ def personel_takvim(ay: Optional[str] = None):
     """👥 PERSONEL TAKVİMİ (sahip 2026-10-16): "personellerin panel verilerinden bulundukları şubeler gün gün;
     panelde QR girişi olmadıysa izinlidir." Kaynak: panelin QR yoklaması (gorev_yoklama) — YALNIZ OKUR.
     Gün: QR girişi varsa şube(ler) + giriş saati; yoksa 'izinli'; işe girişinden önce / ayrılışından sonra '—'."""
-    from evvel_yeni_kasa_api import _bugun
+    from evvel_yeni_cekirdek import bugun as _bugun
     from evvel_yeni_tanim_api import subeler as _ey_subeler
     bugun = _bugun()
     a_ = (ay or bugun.strftime("%Y-%m"))[:7]
@@ -590,7 +590,7 @@ class YoklamaKararBody(BaseModel):
 def takvim_karar(b: YoklamaKararBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """İki gün QR yok sorusunun cevabı. 'ayrildi' → personel pasif, ayrılış = son QR günü (yoksa sorunun ilk günü − 1)."""
     import uuid as _uuid
-    from evvel_yeni_kasa_api import _aktor, _bugun
+    from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun
     if b.karar not in ("ayrildi", "izin", "devam"):
         raise HTTPException(400, "karar: ayrildi | izin | devam")
     with db() as (conn, cur):
@@ -624,7 +624,7 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
     """📋 GÜNLÜK YOKLAMA (sahip 2026-10-16): "personel hangi gün hangi şubede QR okutmuş, kim okutmamış,
     okutan geç mi kalmış — bunu görmek dert." Panelin VARDİYA PLANI (vardiya_atama) × QR girişi (gorev_yoklama).
     Durum: zamaninda · gec (dk) · okutmadi (planlı, QR yok) · plansiz (planda yok, QR var). YALNIZ OKUR."""
-    from evvel_yeni_kasa_api import _bugun
+    from evvel_yeni_cekirdek import bugun as _bugun
     from evvel_yeni_tanim_api import subeler as _ey_subeler
     from zoneinfo import ZoneInfo
     TR = ZoneInfo("Europe/Istanbul")

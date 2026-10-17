@@ -30,7 +30,8 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_kasa_api import _aktor, _hazirla, _kilit, _kurus, _oranlar, _tl_sayi, _yukle
+from evvel_yeni_kasa_api import _hazirla, _oranlar, _yukle
+from evvel_yeni_cekirdek import aktor as _aktor, kilit as _kilit, kurus as _kurus, tl_sayi as _tl_sayi
 from evvel_yeni_gelir_api import _ay_sinirlari, _kapanis_kanallari
 
 log = logging.getLogger(__name__)

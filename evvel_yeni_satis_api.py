@@ -120,7 +120,7 @@ def _mad(xs, m):
 
 @router.get("/kontrol")
 def satis_kontrol(ay: Optional[str] = None):
-    from evvel_yeni_kasa_api import _bugun
+    from evvel_yeni_cekirdek import bugun as _bugun
     from evvel_yeni_tanim_api import subeler as _ey_subeler
     bugun = _bugun()
     a_ = (ay or bugun.strftime("%Y-%m"))[:7]
@@ -296,7 +296,8 @@ def satis_gun(gun: Optional[str] = None):
     fire listesi (sebep), ciro, bardaktan BEKLENEN ciro → SATIŞTAN AÇIK, kör kasa sayımı → KASA AÇIĞI."""
     import json as _json
     from evvel_yeni_bar_api import bar_ozet, _kod_anahtar, _anahtar_ad, KALEMLER
-    from evvel_yeni_kasa_api import _bugun, _hazirla, _yukle
+    from evvel_yeni_kasa_api import _hazirla, _yukle
+    from evvel_yeni_cekirdek import bugun as _bugun
     g_ = (gun or (_bugun() - timedelta(days=1)).isoformat())[:10]
     ay = g_[:7]
     bar = {s["sube_id"]: s for s in bar_ozet(ay)["subeler"]}
@@ -399,7 +400,7 @@ def devir_defteri(ay: Optional[str] = None):
       AKŞAM: kim kapattı, kör toplam, kime ne teslim, ne bıraktı → ERTESİ SABAH kim devraldı, ne saydı
     Kopukluk (bırakılan ≠ ertesi sabah sayılan) kırmızı. YALNIZ OKUR (panel tabloları)."""
     import json as _json
-    from evvel_yeni_kasa_api import _bugun
+    from evvel_yeni_cekirdek import bugun as _bugun
     from evvel_yeni_tanim_api import subeler as _ey_subeler
     bugun = _bugun()
     a_ = (ay or bugun.strftime("%Y-%m"))[:7]

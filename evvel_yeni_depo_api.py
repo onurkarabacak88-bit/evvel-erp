@@ -25,7 +25,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_kasa_api import _aktor, _bugun
+from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun
 
 router = APIRouter(prefix="/api/evvel-yeni/depo", tags=["evvel-yeni-depo"])
 log = logging.getLogger(__name__)

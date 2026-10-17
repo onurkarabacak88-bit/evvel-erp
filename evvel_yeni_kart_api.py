@@ -20,7 +20,8 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_kasa_api import _aktor, _bugun, _hazirla, _kurus, _tl_sayi, _yukle
+from evvel_yeni_kasa_api import _hazirla, _yukle
+from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi
 
 router = APIRouter(prefix="/api/evvel-yeni/kart", tags=["evvel-yeni-kart"])
 

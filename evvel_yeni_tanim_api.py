@@ -145,7 +145,8 @@ def _slug(ad: str) -> str:
 @router.get("/liste")
 def liste():
     """Bütün tanımlar tek seferde (aktif + pasif)."""
-    from evvel_yeni_kasa_api import _hazirla, _bugun
+    from evvel_yeni_kasa_api import _hazirla
+    from evvel_yeni_cekirdek import bugun as _bugun
     _hazirla()
     ay = _bugun().strftime("%Y-%m")
     with db() as (conn, cur):
@@ -246,7 +247,8 @@ def duzelt(tur: str, tid: str, body: TanimBody, x_evvel_oturum: Optional[str] = 
 def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
     if tur not in ("sube", "personel", "kart", "toptanci", "banka"):
         raise HTTPException(404, "Bilinmeyen tanım")
-    from evvel_yeni_kasa_api import _aktor, _bugun, _kilit, sube_cepleri_yaz
+    from evvel_yeni_kasa_api import sube_cepleri_yaz
+    from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kilit as _kilit
     yeni = tid is None
     with db() as (conn, cur):
         tanim_hazirla(cur)

@@ -29,8 +29,10 @@ from pydantic import BaseModel
 from decimal import Decimal
 
 from database import db
-from evvel_yeni_kasa_api import (_aktor, _hareket_dto, _bakiye, _baslangic, _bugun, _eksi_denetle, _etki, _hazirla, _kilit,
-                                 _kilit_denetle, _kurus, _olaylar, _sahte, _sayim_kilidi, _tl, _tl_sayi, _yaz, _yukle)
+from evvel_yeni_kasa_api import (_hareket_dto, _bakiye, _baslangic, _eksi_denetle, _etki, _hazirla, _kilit_denetle, _olaylar,
+                                 _sahte, _sayim_kilidi, _yaz, _yukle)
+from evvel_yeni_cekirdek import (aktor as _aktor, bugun as _bugun, kilit as _kilit, kurus as _kurus, tl as _tl,
+                                 tl_sayi as _tl_sayi)
 
 router = APIRouter(prefix="/api/evvel-yeni/odeme", tags=["evvel-yeni-odeme"])
 log = logging.getLogger(__name__)

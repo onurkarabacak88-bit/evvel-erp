@@ -141,7 +141,7 @@ def _bos():
 @router.get("/ozet")
 def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
     from evvel_yeni_tanim_api import subeler as _ey_subeler
-    from evvel_yeni_kasa_api import _bugun
+    from evvel_yeni_cekirdek import bugun as _bugun
     bugun = _bugun()
     a_ = (ay or bugun.strftime("%Y-%m"))[:7]
     ay_bas = date.fromisoformat(a_ + "-01")
