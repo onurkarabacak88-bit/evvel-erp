@@ -59,10 +59,39 @@ def _bekleyen(cur, baglam: dict) -> list:
 bekleyen_is_kaydet("avans_talep", _bekleyen)
 
 
+def _kapananlar(cur) -> list:
+    """KÖPRÜ: son 60 günde kapatılan / reddedilen talepler (ekranda gri)."""
+    try:
+        with savepoint(cur, "sp_ey_avans_kapali"):
+            cur.execute("""SELECT pa.id::text AS id, pa.tutar, pa.durum, pa.talep_ts, pa.not_aciklama, p.ad_soyad AS ad
+                             FROM personel_avans pa LEFT JOIN personel p ON p.id::text = pa.personel_id::text
+                            WHERE pa.durum IN ('iptal','reddedildi') AND pa.talep_ts >= NOW() - INTERVAL '60 days'
+                            ORDER BY pa.talep_ts DESC""")
+            return [{"id": dict(r)["id"], "ad": dict(r)["ad"] or "—", "tutar": float(dict(r)["tutar"] or 0), "durum": dict(r)["durum"],
+                     "talep": str(dict(r)["talep_ts"] or "")[:16], "not": dict(r).get("not_aciklama")} for r in cur.fetchall() or []]
+    except Exception:  # noqa: BLE001
+        return []
+
+
 @router.get("/talepler")
 def talepler():
     with db() as (conn, cur):
-        return {"talepler": _acik_talepler(cur), "bugun": _bugun().isoformat()}
+        return {"talepler": _acik_talepler(cur), "kapananlar": _kapananlar(cur), "bugun": _bugun().isoformat()}
+
+
+class KapatBody(BaseModel):
+    not_: Optional[str] = None
+
+
+@router.post("/{aid}/kapat")
+def kapat(aid: str, body: KapatBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Sahip (2026-10-17): "Bu avanslar Eylül'de verilmişti, kapatıldı — grileştir." Talep PARA HAREKETİ OLMADAN kapanır
+    (eski sistemde 'iptal' — para çıkmamış kayıt; maaş mahsubu oluşturmaz). Açık talep kalırsa personel yeni talep açamıyordu."""
+    import avans_service as eski
+    with db() as (conn, cur):
+        kim = _aktor(cur, x_evvel_oturum)
+    eski.avans_iptal(aid, eski.AvansIptalModel(neden=f"Kapatıldı ({kim}): {(body.not_ or 'daha önce verildi')}"[:200]))
+    return {"ok": True, "mesaj": "Talep kapatıldı (para hareketi yok)"}
 
 
 class OnayBody(BaseModel):

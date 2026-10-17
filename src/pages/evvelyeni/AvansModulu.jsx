@@ -49,11 +49,23 @@ export default function AvansModulu({ onToast }) {
                     <option value="">Şube…</option>{(L?.subeler || []).map((b) => <option key={b.id} value={b.id}>{b.ad}</option>)}
                   </select>
                   <Dugme kucuk disabled={!s.sube_id || mesgul[t.id]} onClick={() => yap(t, 'onayla', { yontem: 'elden', sube_id: s.sube_id })}>Elden ver</Dugme>
+                  <Dugme kucuk disabled={mesgul[t.id]} onClick={() => yap(t, 'kapat', { not_: 'daha önce verildi' })}>Kapat (verildi)</Dugme>
                   <Dugme kucuk disabled={mesgul[t.id]} onClick={() => { if (window.confirm(`${t.ad} · ${fmt(t.tutar)} ₺ avans talebi reddedilsin mi?`)) yap(t, 'reddet', {}); }}>Reddet</Dugme>
                 </span>
               </div>
             );
           })}
+        </div>
+      )}
+      {(v?.kapananlar || []).length > 0 && (
+        <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 2, opacity: 0.6 }}>
+          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700 }}>Kapatılanlar (son 60 gün)</div>
+          {v.kapananlar.map((t) => (
+            <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', borderTop: `1px solid ${R.cizgi}`, padding: '6px 0', fontSize: 13, color: R.not }}>
+              <span style={{ flex: 1 }}>{t.ad} · talep {t.talep}{t.not ? ` · ${t.not}` : ''}</span><span style={num}>{fmt(t.tutar)} ₺</span>
+              <Cip>{t.durum === 'reddedildi' ? 'reddedildi' : 'kapatıldı'}</Cip>
+            </div>
+          ))}
         </div>
       )}
       {elden.length > 0 && (
