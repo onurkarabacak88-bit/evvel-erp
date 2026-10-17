@@ -183,14 +183,16 @@ def _eskiye_yaz(cur, u: dict) -> None:
     from sevkiyat_helpers import ad_anahtar
     try:
         with savepoint(cur, "sp_ey_urun_eskiye"):
-            cur.execute("SELECT id::text AS id FROM siparis_urun WHERE kategori_id=%s AND norm_ad=%s AND id::text<>%s",
+            cur.execute("SELECT id::text AS id FROM siparis_urun WHERE kategori_id=%s AND norm_ad=%s AND id::text<>%s AND aktif",
                         (u["kategori_id"], ad_anahtar(u["ad"]), u["id"]))
-            r = cur.fetchone()
+            r = cur.fetchone() if u.get("aktif", True) else None
             if r:
                 raise HTTPException(409, "Bu kategoride aynı adlı (büyük/küçük harf, Türkçe karakter farkı dahil) başka ürün var")
             cur.execute("""INSERT INTO siparis_urun (id, kategori_id, ad, norm_ad, sira, aktif, birim, koli_ic_adet, koli_adet)
                            VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-                           ON CONFLICT (id) DO UPDATE SET kategori_id=EXCLUDED.kategori_id, ad=EXCLUDED.ad, norm_ad=EXCLUDED.norm_ad,
+                           ON CONFLICT (id) DO UPDATE SET kategori_id=EXCLUDED.kategori_id, ad=EXCLUDED.ad,
+                               norm_ad=CASE WHEN siparis_urun.ad IS DISTINCT FROM EXCLUDED.ad OR siparis_urun.kategori_id IS DISTINCT FROM EXCLUDED.kategori_id
+                                            THEN EXCLUDED.norm_ad ELSE siparis_urun.norm_ad END,   -- ad değişmediyse eski anahtar kalır (pasif ikizle çakışmasın)
                                aktif=EXCLUDED.aktif, koli_ic_adet=EXCLUDED.koli_ic_adet,
                                koli_adet=EXCLUDED.koli_adet, guncelleme=NOW()""",
                         (u["id"], u["kategori_id"], u["ad"], ad_anahtar(u["ad"]), int(u.get("sira") or 0), bool(u["aktif"]),
@@ -199,6 +201,8 @@ def _eskiye_yaz(cur, u: dict) -> None:
         raise
     except Exception as e:  # noqa: BLE001
         log.warning("ürün kataloğu: eski kataloğa yazılamadı (%s): %s", u.get("id"), str(e)[:160])
+        if "norm_ad" in str(e) or "unique" in str(e).lower():
+            raise HTTPException(409, "Eski katalogda bu adla kayıtlı (pasif) bir ürün var — farklı bir ad yaz")
         raise HTTPException(409, "Şube paneli kataloğu güncellenemedi — kayıt yapılmadı, tekrar dene")
 
 
@@ -233,10 +237,11 @@ def _dogrula(b: UrunBody) -> None:
 
 
 def _ayni_ad(cur, kategori_id: str, ad: str, haric: Optional[str]) -> None:
-    """Aynı kategoride aynı ad (Türkçe büyük/küçük ve İ/I farkı dahil — eski katalogla aynı anahtar) → 409."""
+    """Aynı kategoride aynı adlı KULLANIMDAKİ ürün (Türkçe büyük/küçük ve İ/I farkı dahil) → 409.
+    Pasif eski ikizler engellemez (eski katalogda 30+ aynı adlı pasif kopya var; yoksa aktif kardeşi hiç düzeltilemiyordu)."""
     from sevkiyat_helpers import ad_anahtar
     hedef = ad_anahtar(ad.strip()[:120])
-    cur.execute("SELECT id, ad FROM ey_urun WHERE kategori_id=%s", (kategori_id,))
+    cur.execute("SELECT id, ad FROM ey_urun WHERE kategori_id=%s AND aktif", (kategori_id,))
     for r in cur.fetchall() or []:
         if dict(r)["id"] != haric and ad_anahtar(dict(r)["ad"]) == hedef:
             raise HTTPException(409, f"Bu kategoride aynı adlı ürün var: {dict(r)['ad']}")
@@ -262,7 +267,7 @@ def urun_olustur(cur, kategori_id: str, ad: str, kim: str, koli_ici: Optional[in
     cur.execute("SELECT pg_advisory_xact_lock(7012042)")   # Fable: eşzamanlı iki ekleme çift ürün açmasın
     if varsa_bagla:   # Fable: özel talep katalogda zaten olan (pasif dahil) ürünü isterse ona bağlanır; pasifse izle aktiflenir
         from sevkiyat_helpers import ad_anahtar
-        cur.execute("SELECT id, ad, aktif FROM ey_urun WHERE kategori_id=%s", (kategori_id,))
+        cur.execute("SELECT id, ad, aktif FROM ey_urun WHERE kategori_id=%s ORDER BY aktif DESC, sira", (kategori_id,))
         for r in cur.fetchall() or []:
             r = dict(r)
             if ad_anahtar(r["ad"]) == ad_anahtar(ad.strip()[:120]):
@@ -318,7 +323,7 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
                 return Decimal(str(a)).quantize(Decimal("0.0001")) == Decimal(str(b_)).quantize(Decimal("0.0001"))   # Fable: 0.1000 = 0.1
             return str(a) == str(b_)
         degisen = [k for k, v in yeni.items() if not _es(e.get(k), v)]
-        if "ad" in degisen or "kategori_id" in degisen:
+        if b.aktif and ("ad" in degisen or "kategori_id" in degisen or "aktif" in degisen):   # pasif ikiz yeniden açılırken de
             _ayni_ad(cur, b.kategori_id, b.ad, uid)
         if e["birim"] != b.birim and e.get("birim_teyit"):
             raise HTTPException(409, "Sayım birimi teyitli ürünün birimi değiştirilemez — farklı paket ayrı ürün olur")
