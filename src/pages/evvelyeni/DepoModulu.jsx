@@ -11,7 +11,8 @@ import { PI_CSS, R, kart, num, Dugme, Cip, Cekmece, tKisa } from './KasaModulu';
 
 export const DEPO_SAYFALAR = [
   { id: 'depo_nerede', ad: 'Depo — Nerede?', alt: 'Ürün × konum · tıkla → iz' },
-  { id: 'depo_yolda', ad: 'Yoldakiler', alt: 'Kabul bekleyen · fark' },
+  { id: 'depo_yolda', ad: 'Yoldakiler', alt: 'Yalnız kabul bekleyen sevkler' },
+  { id: 'depo_fark', ad: 'Sevk farkları', alt: 'Eksik / fazla gelen · çözüm' },
   { id: 'depo_sayim', ad: 'Depo sayımı', alt: 'Kör sayım · açılış sayımı' },
 ];
 
@@ -31,7 +32,8 @@ function useOzet() {
 }
 
 export default function DepoModulu({ gorunum, onToast }) {
-  if (gorunum === 'depo_yolda') return <Yoldakiler onToast={onToast} />;
+  if (gorunum === 'depo_yolda') return <Yoldakiler onToast={onToast} mod="yolda" />;
+  if (gorunum === 'depo_fark') return <Yoldakiler onToast={onToast} mod="fark" />;
   if (gorunum === 'depo_sayim') return <DepoSayim onToast={onToast} />;
   return <Nerede />;
 }
@@ -65,6 +67,7 @@ function Nerede() {
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Depo hesaplanıyor (ilk açılışta panel kayıtları aktarılıyor)…</div></div>;
   let sonKat = null;
   const hucre = { padding: '5px 8px', borderTop: '1px solid var(--pi-line)', fontSize: 13 };
+  const subeK = v.konumlar.filter((k) => k.id.startsWith('depo:'));   // sahip: yolda / askıda kendi sekmesinde, burada karışmasın
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <style>{PI_CSS}</style>
@@ -78,7 +81,7 @@ function Nerede() {
       </div>
       <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {v.konumlar.filter((k) => k.id !== 'yolda').map((k) => (
+        {v.konumlar.filter((k) => k.id.startsWith('depo:')).map((k) => (
           <Cip key={k.id} tur={k.acilis_sayimi ? 'yesil' : 'sari'}>{k.ad}: {k.acilis_sayimi ? `açılış sayımı var${k.son_sayim ? ` · son ${tKisa(k.son_sayim)}` : ''}` : 'açılış sayımı YOK'}</Cip>
         ))}
       </div>
@@ -86,17 +89,17 @@ function Nerede() {
         <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 760 }}>
           <thead><tr style={{ fontSize: 12, color: R.metin2, textAlign: 'right' }}>
             <th style={{ ...hucre, textAlign: 'left', borderTop: 'none' }}>Ürün</th>
-            {v.konumlar.map((k) => <th key={k.id} style={{ ...hucre, borderTop: 'none' }}>{k.ad}</th>)}
+            {subeK.map((k) => <th key={k.id} style={{ ...hucre, borderTop: 'none' }}>{k.ad}</th>)}
           </tr></thead>
           <tbody>{satirlar.map((s) => {
             const baslik = s.kategori !== sonKat ? s.kategori : null;
             sonKat = s.kategori;
             return (
               <React.Fragment key={s.urun_id}>
-                {baslik && <tr><td colSpan={v.konumlar.length + 1} style={{ ...hucre, fontWeight: 800, background: 'var(--pi-bg)' }}>{baslik}</td></tr>}
+                {baslik && <tr><td colSpan={subeK.length + 1} style={{ ...hucre, fontWeight: 800, background: 'var(--pi-bg)' }}>{baslik}</td></tr>}
                 <tr>
                   <td style={{ ...hucre, textAlign: 'left' }}>{s.ad}</td>
-                  {v.konumlar.map((k) => {
+                  {subeK.map((k) => {
                     const b = s.bakiye[k.id];
                     return (
                       <td key={k.id} style={{ ...hucre, textAlign: 'right', padding: 2 }}>
@@ -118,7 +121,7 @@ function Nerede() {
   );
 }
 
-function Yoldakiler({ onToast }) {
+function Yoldakiler({ onToast, mod }) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const yukle = useCallback(async () => {
@@ -141,8 +144,8 @@ function Yoldakiler({ onToast }) {
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
-      <div><div className="pi-eyebrow">Evvel Yeni · Depo</div><h1 style={{ fontSize: 30 }}>Yoldakiler</h1></div>
-      <div style={{ ...kart, overflow: 'hidden' }}>
+      <div><div className="pi-eyebrow">Evvel Yeni · Depo</div><h1 style={{ fontSize: 30 }}>{mod === 'fark' ? 'Sevk farkları' : 'Yoldakiler'}</h1></div>
+      {mod === 'yolda' && (<div style={{ ...kart, overflow: 'hidden' }}>
         <div style={{ padding: '10px 14px', fontWeight: 700 }}>🚚 Kabul bekleyen sevkler {v.gec_sayi > 0 && <Cip tur="kirmizi">{v.gec_sayi} kalem {v.gec_gun}+ gündür yolda</Cip>}</div>
         {v.bekleyen.length === 0 ? <div style={{ padding: '0 14px 14px', color: R.not, fontSize: 13 }}>Yolda mal yok ✓</div> : (
           <table style={{ borderCollapse: 'collapse', width: '100%' }}><tbody>
@@ -156,9 +159,9 @@ function Yoldakiler({ onToast }) {
             ))}
           </tbody></table>
         )}
-      </div>
-      <div style={{ ...kart, overflow: 'hidden' }}>
-        <div style={{ padding: '10px 14px', fontWeight: 700 }}>⚖️ Sevk ≠ kabul</div>
+      </div>)}
+      {mod === 'fark' && (<div style={{ ...kart, overflow: 'hidden' }}>
+        <div style={{ padding: '10px 14px', fontWeight: 700 }}>⚖️ Sevk ≠ kabul — eksik gelen yolda bekler, fazla gelen askıda bekler; karar verince kapanır</div>
         {v.fark.length === 0 ? <div style={{ padding: '0 14px 14px', color: R.not, fontSize: 13 }}>Fark yok ✓</div> : (
           <table style={{ borderCollapse: 'collapse', width: '100%' }}><tbody>
             {v.fark.map((x) => (
@@ -179,7 +182,7 @@ function Yoldakiler({ onToast }) {
             ))}
           </tbody></table>
         )}
-      </div>
+      </div>)}
     </div>
   );
 }
@@ -193,7 +196,7 @@ function DepoSayim({ onToast }) {
   const [sonuc, setSonuc] = useState(null);
   useEffect(() => {
     if (v && !konum) {
-      const k = v.konumlar.find((x) => x.id !== 'yolda');
+      const k = v.konumlar.find((x) => x.id.startsWith('depo:'));
       if (k) { setKonum(k.id); setAcilis(!k.acilis_sayimi); }
     }
   }, [v, konum]);
@@ -221,7 +224,7 @@ function DepoSayim({ onToast }) {
         Kaydedince her ürün için fark (sayılan − sistem) iz bırakan bir hareket olarak yazılır. Konumdaki ilk sayım AÇILIŞ sayımıdır.</div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
         <select value={konum} onChange={(e) => { setKonum(e.target.value); setDeger({}); const kk = v.konumlar.find((x) => x.id === e.target.value); setAcilis(!kk?.acilis_sayimi); }} style={{ ...alan, width: 'auto' }}>
-          {v.konumlar.filter((x) => x.id !== 'yolda').map((x) => <option key={x.id} value={x.id}>{x.ad}{x.acilis_sayimi ? '' : ' — açılış sayımı yok'}</option>)}
+          {v.konumlar.filter((x) => x.id.startsWith('depo:')).map((x) => <option key={x.id} value={x.id}>{x.ad}{x.acilis_sayimi ? '' : ' — açılış sayımı yok'}</option>)}
         </select>
         <label style={{ fontSize: 13, display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={acilis} onChange={(e) => setAcilis(e.target.checked)} />açılış sayımı</label>
         <span style={{ marginLeft: 'auto', fontSize: 13, color: R.not }}>{Object.values(deger).filter((d) => String(d).trim() !== '').length} ürün sayıldı</span>
