@@ -41,6 +41,13 @@ def _kr(x) -> int:
     return _kurus(Decimal(str(x)).quantize(Decimal("0.01")))
 
 
+def _kdv_kesir(oran) -> Decimal:
+    """kalem_kdv_oran KESİR saklıyor (0.10 = %10); yüzde (10) gelirse çevir. Önceki '/100' KDV'yi binde bire indiriyordu
+    (Espresso 750 ₺ + %1 = 757,50 olmalıyken 750,75 gösteriyordu)."""
+    o = Decimal(str(oran or 0))
+    return o / 100 if o >= 1 else o
+
+
 def toptanci_hazirla(cur) -> None:
     global _HAZIR
     if _HAZIR:
@@ -131,7 +138,7 @@ def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
             birim, fk = elle[uid], "elle girilen fiyat"
         elif uid in genel:
             oran = (kdv.get(uid) if kdv.get(uid) is not None else Decimal(0))
-            birim, fk = _kr(genel[uid] * (1 + oran / 100)), "son alış fiyatı" + ("" if kdv.get(uid) is not None else " (KDV oranı yok)")
+            birim, fk = _kr(genel[uid] * (1 + _kdv_kesir(oran))), "son alış fiyatı" + ("" if kdv.get(uid) is not None else " (KDV oranı yok)")
         elif uid in katalog:
             birim, fk = _kr(katalog[uid]), "katalog"
         t = birim * adet if birim is not None else None
@@ -520,7 +527,7 @@ def urun_fiyatlari():
             for kod in (u["id"], u.get("depo_stok_kalem_kodu")):
                 if kod and kod in af:
                     oran = ko.get(kod, ko.get(u["id"]))
-                    son = {"birim": _tl_sayi(_kr(Decimal(af[kod]["birim_maliyet_tl"]) * (1 + (oran or 0) / 100))),
+                    son = {"birim": _tl_sayi(_kr(Decimal(af[kod]["birim_maliyet_tl"]) * (1 + _kdv_kesir(oran or 0)))),
                            "kdv_yok": oran is None, "tarih": af[kod]["gecerli_baslangic"].isoformat() if af[kod].get("gecerli_baslangic") else None}
                     break
             e = elle.get(u["id"])
@@ -573,6 +580,10 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
         toptanci_hazirla(cur)
         cur.execute("SELECT ad FROM siparis_urun WHERE id::text=%s", (body.urun_id,))
         r = cur.fetchone()
+        if not r:   # yeni katalog (sıfırdan, yeni kimlik) — 1 SAYIM biriminin fiyatı
+            from evvel_yeni_urun_api import urun_ad
+            ad = urun_ad(cur, body.urun_id)
+            r = {"ad": ad} if ad else None
         if not r:
             raise HTTPException(404, "Ürün bulunamadı")
         if body.birim is None:
