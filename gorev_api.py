@@ -1527,7 +1527,13 @@ def kapanis_bekleyen(sube_id: str):
               AND gy.cikis_ts IS NULL
         """, (sube_id, tarih))
         rows = cur.fetchall()
+        # 🛟 (2026-10-17, Zafer 16 Ekim): "bekleyen boş" ≠ "mühürlendi" — yönetici-kapat da listeyi boşaltır.
+        # Panel gerçek mühür (cikis_tip='kapalis') var mı diye buna bakar.
+        cur.execute("""SELECT 1 FROM gorev_yoklama WHERE sube_id=%s AND tarih=%s AND cikis_tip='kapalis'
+                         AND cikis_ts IS NOT NULL LIMIT 1""", (sube_id, tarih))
+        muhur_var = bool(cur.fetchone())
     return {
+        "muhur_var": muhur_var,
         "bekleyen": [
             {"yoklama_id": r["id"], "personel_id": r["personel_id"],
              "ad_soyad": r["ad_soyad"], "giris_ts": str(r["giris_ts"])}

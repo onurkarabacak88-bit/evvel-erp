@@ -6876,6 +6876,15 @@ function setKapanisStep(step) {
       try {
         var r = await api('/gorev/kapanis-bekleyen?sube_id=' + encodeURIComponent(SUBE_ID));
         var bekleyen = (r && r.bekleyen) || [];
+        // 🛟 (2026-10-17) Bekleyen boş ama GERÇEK MÜHÜR yok (yönetici-kapat listeyi boşaltır) → "mühürlendi" DEME
+        if (bekleyen.length === 0 && r && r.muhur_var === false) {
+          var _tEl0 = document.getElementById('kapQrBekleText');
+          if (_tEl0) _tEl0.innerHTML = '<div style="color:#B42318;font-weight:800;font-size:15px">⚠️ Herkesin mesaisi kapalı ama KAPANIŞ MÜHRÜ ATILMADI.</div>'
+            + '<div style="margin-top:6px">Kapanışçı telefonda QR\'ı okutup mühürlesin. Olmuyorsa kasa verilerini girip aşağıdan <b>mühürsüz gönder</b> — kayıt alınır, merkeze bildirilir.</div>';
+          var _kg0 = document.getElementById('kapGonder');
+          if (_kg0) { _kg0.style.display = 'flex'; _kg0.textContent = '⚠ Mühürsüz Gönder (merkeze bildirilir)'; }
+          return;   // yoklamaya devam: QR okutulursa normal akışa geçer
+        }
         // Bekleyen yoksa → biri QR okuttu ve mühürledi
         if (bekleyen.length === 0) {
           clearInterval(_kapQrTimer);
