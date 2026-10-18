@@ -398,7 +398,13 @@ def _onay_sart(sube_id: str, ad: str, tur: str, govde: dict) -> None:
         else:
             kod, msg = 409, f"{ad} telefonla onaylanır — ekrandaki 'QR ile onayla' düğmesini kullan"
     # Fable: reddedilen gün kaydı kaybolmasın → deneme defterine 'ret' (merkez Bekleyen işler / geç kapanış görür); PIN asla
-    did = _deneme_ac(sube_id, tur, _bugun(), {k: v for k, v in govde.items() if k != "pin"})
+    gun = _bugun()
+    try:
+        if govde.get("istemci_gunu"):
+            gun = date.fromisoformat(str(govde["istemci_gunu"])[:10])   # Codex: formun açıldığı iş günü
+    except ValueError:
+        pass
+    did = _deneme_ac(sube_id, tur, gun, {k: v for k, v in govde.items() if k != "pin"})
     _deneme_kapat(did, "ret" if kod == 409 else "hata", msg)
     raise HTTPException(kod, msg)
 

@@ -151,9 +151,11 @@ export function SayiTusTakimi({ kapsam }) {
     const kok = kapsam?.current || document;
     const odak = (e) => {
       const el = e.target;
-      if (!(el instanceof window.HTMLInputElement)) return;
-      const m = el.getAttribute('inputmode');
-      if ((m !== 'numeric' && m !== 'decimal') || (el.type === 'password' && !el.dataset.pin) || el.type === 'time') return;
+      const m = el instanceof window.HTMLInputElement ? (el.dataset.imOnceki || el.getAttribute('inputmode')) : null;
+      if (!(el instanceof window.HTMLInputElement) || (m !== 'numeric' && m !== 'decimal') || (el.type === 'password' && !el.dataset.pin) || el.type === 'time') {
+        setHedef(null);   // Codex: Tab ile düğmeye / metne geçildi → takım bırakır
+        return;
+      }
       ilk.current = true; eski.current = el.value;
       el.dataset.imOnceki = m; el.setAttribute('inputmode', 'none');   // dokunmatik PC: Windows klavyesi + tuş takımı birlikte açılmasın
       setHedef(el);

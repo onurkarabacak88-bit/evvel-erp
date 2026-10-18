@@ -64,12 +64,8 @@ export default function SubePaneli({ subeId }) {
         } catch (e) {
           if (e instanceof TypeError) break;               // hâlâ internet yok → kalsın
           if (!e?.status || e.status >= 500 || e.status === 429) break;   // sunucu geçici → kalsın (Codex: 5xx'te silinmez)
-          if (e.status === 409 && (it.yol === 'kapanis' || it.yol === 'acilis')) {   // Codex: onay şartına takılan gün kaydı kaybolmasın
-            setAnladim((o) => o || `Bekleyen ${it.ad || it.yol} telefon onayı istiyor — kayıt tablette duruyor, merkeze haber ver`);
-            break;
-          }
-          kuyrukCikar(it.govde.istek_id);
-          setAnladim((o) => o || `Bekleyen kayıt gönderilemedi (${it.ad || it.yol}): ${e?.message || 'hata'}`);
+          kuyrukCikar(it.govde.istek_id);   // 4xx: sunucu reddi deneme defterine yazdı (açılış/kapanış dahil) → merkez Bekleyen işler'de görür
+          setAnladim((o) => o || `Bekleyen kayıt gönderilemedi (${it.ad || it.yol}): ${e?.message || 'hata'} — merkeze iletildi`);
         }
       }
     } finally { gonderiyor.current = false; }
