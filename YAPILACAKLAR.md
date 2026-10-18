@@ -9,7 +9,7 @@
 | # | İş | Durum |
 |---|---|---|
 | 1 | **Yeni Şube Paneli** faz 1: açılış · kapanış · kasa devri · ara teslim · ürün aç · fire (deneme modunda yayında) | 🟡 yayında (deneme) |
-| 2 | Panel sahip kararları D2/D6/D7/D9/D10 + "kapanış kaybolmasın" (deneme kaydı + geç kapanış) | 🟡 yazıldı, Codex denetiminde |
+| 2 | Panel sahip kararları D2/D6/D7/D9/D10 + "kapanış kaybolmasın" (deneme kaydı + geç kapanış) | ✅ yayında (deneme) — Codex 2 tur + Fable; son düzeltmeler Codex'e tekrar gösterilecek (kota) |
 | 3 | **QR telefon / yoklama modülü** — Y0 şube koordinatı (eski içerik bir kez) + telefon bağlama linki + giriş/çıkış + dönen QR + panel QR kapısı + "Bugün girenler" | ⏳ |
 | 4 | Y1 yemek molası (telefon) + merkez **Personel › Yemek molaları** sekmesi + ≤60 dk hak kazanılır · **61. dk'dan itibaren** merkez "uzun" bildirimi + telefonda "hak kazanılamadı" + **maaşta o günün yemek hakkı düşer** · merkez gerekirse elle hak verir (izli) | ⏳ |
 | 5 | Y2 **kasa devri çift onay** (devreden + devralan kendi telefonunda), devir = devredenin çıkışı, "tutmuyor" → merkez | ⏳ |
@@ -28,6 +28,9 @@
 
 | # | İş |
 |---|---|
+| 15a | Tanımlar › Personel: **erken açılış izni** ve **konum muafiyeti** işaretleri ekrandan yönetilsin |
+| 15b | Devirde 3 bardak ürün adına göre seçiliyor → katalogda 'bardak' rolüyle sabitlensin |
+| 15c | Panelde geçersiz form (422) deneme kaydına düşmüyor — ön yüz doğrulaması var, sunucu izi eklenecek |
 | 16 | Panel: X rapor okuma (OCR) · fire / fatura fotoğrafı · personel puanı · operasyon geri bildirimi · ekranın kendiliğinden yenilenmesi |
 | 17 | Panel: "geri al" (personel aynı gün, yalnız son kayıt — Codex C3 sayım çıpası) |
 | 18 | Panel merkez sinyalleri: fiyatı eksik ürün açıldı · stok eksiye düştü · saat dışı / geç kapanış (Bekleyen işler) |
