@@ -1,5 +1,9 @@
 # 🧾 ŞUBE PANELİ — YENİDEN KURULUM ŞABLONU (eski panel ESAS)
 
+> ## ⭐ ANA KURAL (sahip 2026-10-19, ÜSTÜN): "Paneli AYNEN al, sadece geliştirdiğin QR sistemini uygula — yoksa çok karışacak."
+> Eski panelin TÜM ekranları, adımları, alanları, yazıları, uyarıları, PIN'li onayları AYNEN. Tek değişiklik: eskiden QR olan yerler (kasa öncesi personel girişi, vardiya giriş kartı, yemek molası, kasa devri telefon onayları, kapanış QR mühür) → yeni QR sistemi (bir kez bağlı telefon + dakikada dönen QR + konum) ve açılış 5. adım QR onay (R1). Aşağıdaki "sahibe sor / öneri" maddeleri bu kuralla ESKİ PANEL LEHİNE kapandı: Kullanımda/Bitti, mesaisini kapat, merkez kasa denetimi (KONTROL), bip/uyarılar, ürün aç bandı, eksik ürünler, EKSİK VAR kartı, mühürsüz gönder, dünkü kapanış kartı, kasa devri 5 adım — hepsi KALIR. Kayıt arka planda Evvel Yeni defterlerine (sahibin göreceği fark değil).
+
+
 > Sahip (2026-10-19): "Paneli baştan sona kuralım gerekirse" · "Her değişikliği denemede kontrol ederek gidelim, her basamakta Codex ve Fable ile konuşalım" ·
 > "Bir kere telefon ve QR'ın sürekli değişmesi mantığı çok hoşuma gitti".
 > Kaynak: eski panel `sube_panel.html` (15.102 satır) ekran ekran envanteri (2026-10-19). Hazırlayan: Claude · Denetim: Codex + Fable.
