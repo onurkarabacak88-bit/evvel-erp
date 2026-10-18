@@ -170,6 +170,7 @@ class AcilisBody(BaseModel):
     personel_id: str
     kasa_sayim: Decimal                      # sabah kasadaki nakit (TL)
     sayim: List[SayimSatir] = []             # sayılan ürünler (boş bırakılan SAYILMAZ)
+    pasta_toplam: Optional[Decimal] = None   # sahip: pasta yalnız TOPLAM adet (eski panel "Pasta adedi")
     istek_id: Optional[str] = None
 
 
@@ -216,7 +217,8 @@ def acilis(sube_id: str, b: AcilisBody):
         kok = f"panel:acilis:{sube_id}:{c['gun'].isoformat()}"
         oid = _olay(cur, sube_id=sube_id, tur="acilis", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(kasa) / 100,
-                       veri={"kasa_sayim": kasa, "sayim": satir, "istek_id": b.istek_id})
+                       veri={"kasa_sayim": kasa, "sayim": satir, "istek_id": b.istek_id,
+                             "pasta_toplam": None if b.pasta_toplam is None else _tam(b.pasta_toplam, "Pasta")})
         d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=f"{KIM} · {p['ad']}", tur="gunluk",
                       kaynak_ref=f"{kok}:sayim") if satir else None
         return {"olay": oid, "tekrar": oid is None, "sayilan": len(satir) if d else 0, "mesaj": "Açılış kaydedildi"}
@@ -238,6 +240,7 @@ class KapanisBody(BaseModel):
     birakilan: Optional[Decimal] = None      # kasada bırakılan
     degirmen: Optional[dict] = None          # değirmen sayaçları (sahip: kalır) — {gunluk, doz1, doz2, doz3} (eski panelle aynı 4 alan)
     sayim: List[SayimSatir] = []
+    pasta_toplam: Optional[Decimal] = None   # sahip: pasta yalnız TOPLAM adet
     istek_id: Optional[str] = None
 
 
@@ -266,6 +269,7 @@ def kapanis(sube_id: str, b: KapanisBody):
                              "kor_sayim": None if b.kor_sayim is None else _tl(b.kor_sayim, "Kör sayım"),
                              "birakilan": None if b.birakilan is None else _tl(b.birakilan, "Bırakılan"),
                              "degirmen": _degirmen(b.degirmen),
+                             "pasta_toplam": None if b.pasta_toplam is None else _tam(b.pasta_toplam, "Pasta"),
                              "istek_id": b.istek_id})
         kim = f"{KIM} · {p['ad']}"
         k = kasa_yaz(cur, HareketBody(tur="kapanis", is_gunu=gun, cep=f"sube:{sube_id}", tutar=Decimal(nakit) / 100,

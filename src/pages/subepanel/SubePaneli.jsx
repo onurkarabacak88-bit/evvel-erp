@@ -213,8 +213,12 @@ export default function SubePaneli({ subeId }) {
             <input className="sp-in" inputMode="decimal" value={f.kasa ?? ''} onChange={(e) => setF({ ...f, kasa: tutar(e.target.value) })} placeholder="0,00" /></label>
           <div><b>Sayım</b> <span style={{ color: C.soluk }}>— saydığın ürünleri yaz, boş bırakılan sayılmaz</span></div>
           <SayimListesi gruplar={d.sayilan} sayim={sayim} setSayim={setSayim} />
+          <label className="sp-kart" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8 }}>
+            <span style={{ flex: 1 }}><b>🍰 Pasta</b><div style={{ color: C.soluk, fontSize: 13 }}>toplam kaç adet?</div></span>
+            <input className="sp-in" style={{ width: 110, textAlign: 'center' }} inputMode="numeric" value={f.pasta ?? ''} onChange={(e) => setF({ ...f, pasta: sayi(e.target.value) })} /></label>
           <button className="sp-btn sp-yesil" disabled={mesgul || f.kasa === undefined || f.kasa === ''}
-            onClick={() => gonder('acilis', { personel_id: kisi, kasa_sayim: tutarNum(f.kasa), sayim: sayimGovde(sayim) })}>✔ Açılışı Kaydet</button>
+            onClick={() => gonder('acilis', { personel_id: kisi, kasa_sayim: tutarNum(f.kasa), sayim: sayimGovde(sayim),
+              pasta_toplam: f.pasta === undefined || f.pasta === '' ? null : Number(f.pasta) })}>✔ Açılışı Kaydet</button>
         </Modal>
       )}
       {(modal === 'ac' || modal === 'fire') && (
@@ -263,7 +267,7 @@ export default function SubePaneli({ subeId }) {
 // 🌙 Kapanış — 4 adım (eski 5 adım: ürün aç sorusu kalktı, QR mühür/saat kilidi merkeze)
 function Kapanis({ d, mesgul, sayim, setSayim, kapat, gonder }) {
   const [adim, setAdim] = useState(1);
-  const [v, setV] = useState({ nakit: '', pos: '', online: '', kor: '', birakilan: '', deg: {}, teslim: {} });
+  const [v, setV] = useState({ nakit: '', pos: '', online: '', kor: '', birakilan: '', deg: {}, teslim: {}, pasta: '' });
   const set = (k, x) => setV((o) => ({ ...o, [k]: x }));
   const teslimler = Object.entries(v.teslim).filter(([, t]) => tutarNum(t) > 0).map(([alan, t]) => ({ alan, tutar: tutarNum(t) }));
   // bileşen DEĞİL düz fonksiyon: her tuşta yeniden kurulup odağı kaybetmesin
@@ -299,8 +303,11 @@ function Kapanis({ d, mesgul, sayim, setSayim, kapat, gonder }) {
           <button className="sp-btn sp-ana" style={{ flex: 1 }} onClick={() => setAdim(3)}>Sayıma Geç →</button></div>
       </>)}
       {adim === 3 && (<>
-        <div><b>Ürün sayımı</b> <span style={{ color: C.soluk }}>— bardak, su, süt, Redbull, soda, cookie, pasta</span></div>
+        <div><b>Ürün sayımı</b> <span style={{ color: C.soluk }}>— bardak, su, süt, Redbull, soda, cookie</span></div>
         <SayimListesi gruplar={d.sayilan} sayim={sayim} setSayim={setSayim} />
+        <label className="sp-kart" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8 }}>
+          <span style={{ flex: 1 }}><b>🍰 Pasta</b><div style={{ color: C.soluk, fontSize: 13 }}>toplam kaç adet?</div></span>
+          <input className="sp-in" style={{ width: 110, textAlign: 'center' }} inputMode="numeric" value={v.pasta} onChange={(e) => set('pasta', sayi(e.target.value))} /></label>
         <div style={{ display: 'flex', gap: 8 }}><button className="sp-btn" onClick={() => setAdim(2)}>← Geri</button>
           <button className="sp-btn sp-ana" style={{ flex: 1 }} onClick={() => setAdim(4)}>Özete Geç →</button></div>
       </>)}
@@ -309,13 +316,14 @@ function Kapanis({ d, mesgul, sayim, setSayim, kapat, gonder }) {
           <div>Nakit: <b>{tl(tutarNum(v.nakit))}</b> · POS: <b>{tl(tutarNum(v.pos))}</b> · Online: <b>{tl(tutarNum(v.online))}</b></div>
           <div>Kasada sayılan: <b>{tl(tutarNum(v.kor))}</b> · Bırakılan: <b>{tl(tutarNum(v.birakilan))}</b></div>
           <div>Teslim: {teslimler.length ? teslimler.map((t) => `${t.alan.split(':')[1]} ${tl(t.tutar)}`).join(' · ') : '—'}</div>
-          <div>Sayılan ürün: <b>{Object.values(sayim).filter((x) => x !== '').length}</b></div>
+          <div>Sayılan ürün: <b>{Object.values(sayim).filter((x) => x !== '').length}</b> · Pasta: <b>{v.pasta === '' ? '—' : v.pasta}</b></div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}><button className="sp-btn" onClick={() => setAdim(3)}>← Geri</button>
           <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul}
             onClick={() => gonder({ nakit: tutarNum(v.nakit), pos: tutarNum(v.pos), online: tutarNum(v.online), teslimler,
               kor_sayim: v.kor === '' ? null : tutarNum(v.kor), birakilan: v.birakilan === '' ? null : tutarNum(v.birakilan),
-              degirmen: Object.values(v.deg).some((x) => x !== '') ? v.deg : null })}>✔ Kapanışı Gönder</button></div>
+              degirmen: Object.values(v.deg).some((x) => x !== '') ? v.deg : null,
+              pasta_toplam: v.pasta === '' ? null : Number(v.pasta) })}>✔ Kapanışı Gönder</button></div>
       </>)}
     </Modal>
   );
