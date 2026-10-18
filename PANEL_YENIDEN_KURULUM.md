@@ -120,3 +120,14 @@ Hata: kasa devrinde pasta 0 · ürün aç taslak düğmesi ham HTML · süt doğ
 4. **Panel PIN uçları**: sık işlemler gövdesine `pin`; `_personel` PIN'i doğrular (yoklama açıkken); onay yolu PIN istemez; deneme kaydına PIN yazılmaz (model_dump exclude).
 5. **Katalog**: panelde sayılan ürünler = eski sabit liste (3 bardak + su, süt, redbull, soda, cookie) ile birebir mi — kontrol.
 Sonra: denemede ekranda dene → sahibe görüntü → yayın.
+
+> **Sahip (2026-10-19):** "Her şeyi detay detay al; Fable ile düzende ve kurguda azaltma, eksiltme yapma — ama daha sağlam yap, kırılım olmasın." Denetim yalnız SAĞLAMLIK içindir; ekran/adım/alan eksiltme önerisi uygulanmaz.
+
+### Basamak 0 — Fable denetimi sonrası kesin kurgu
+- **PIN kopyası:** `sha256(salt:pin)` aynen; eşleşme `personel.id::text = ey_personel.id`; tek seferlik `ayar(pin_kopya)`; yalnız `pin_hash IS NULL` satırlara; boş hash kopyalanmaz; eski deneme PIN'i taşınmaz.
+- **Yanlış PIN sayacı:** ayrı `ey_pin_deneme` tablosu, AYRI bağlantıda atomik (+1 RETURNING) → işlem geri alınsa / deneme modu olsa da sayılır; 5 yanlış → 15 dk kilit; ey_personel satırına yazılmaz (Tanımlar izi kirlenmez).
+- **PIN sızıntısı yok:** gövdede düz `pin: Optional[str]` (Pydantic kalıbı yok → 422'de pin görünmez); doğrulama `_personel(pin=…)` içinde 400; deneme kaydı `model_dump(exclude={"pin"})`; log yok.
+- **PIN'li / QR'lı ayrımı:** PIN yalnız sık işlem gövdelerinde zorunlu; açılış/kapanış gövdesinde PIN alanı YOK, kimlik telefondan (onay yolu). "onayli" bayrağı gövdede taşınmaz (taklit edilemez). `_onay_ozet` ölü dalları silinir.
+- **S17:** yalnız AÇILIŞTA başka girişli personel onaylayabilir (kayıt onaylayan adına, olay verisinde onay_id + cihaz_id). **Kapanışı kapanışçı kendi telefonuyla onaylar** (kapanış = onu çıkış yapar); telefonu yoksa "mühürsüz gönder" + merkeze bildirim.
+- **Kasa devri 5 adım:** ürün + pasta sürüm özetine girer; Depo'ya yazmaz (ara ölçüm, yalnız olay); sürüm tek fonksiyondan.
+- **Yetkiler:** `yetki_geri_alma` ey_personel'de (Tanımlar); eski `panel_yonetici` ile karışmaz. `yetki_teslim_alma` → para hangi cebe gider kararı (sahibe soruldu) gelmeden yazılmaz.
