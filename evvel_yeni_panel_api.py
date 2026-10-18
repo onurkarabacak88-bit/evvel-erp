@@ -13,13 +13,15 @@ Uyarılar personele GİTMEZ (sahip): eksi stok, fiyatı eksik ürün vb. yalnız
 Faz 1: açılış · kapanış · kasa devri · ara teslim · ürün aç · fire. (Teslim al / depodan gelen / anlık gider: faz 2.)
 """
 
+import json
 import logging
 import re
+import uuid
 from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db
@@ -65,7 +67,7 @@ def _personel(cur, sube_id: str, pid: Optional[str]) -> dict:
         raise HTTPException(400, "Personel bulunamadı")
     if str(p.get("sube_id") or "") != str(sube_id):   # Codex: başka şubenin personeli bu şubeye yazamasın
         raise HTTPException(400, "Bu şubenin personeli değilsin — adını listeden seç")
-    return {"id": str(p["id"]), "ad": p["ad"]}
+    return {"id": str(p["id"]), "ad": p["ad"], "erken_acilis": bool(p.get("erken_acilis"))}
 
 
 def _tam(v, ad: str) -> int:
@@ -105,8 +107,112 @@ def _urunler(cur, idler: List[str], takip: Optional[str] = None) -> dict:
     return b
 
 
-def _calistir(sube_id: str, istek_id: Optional[str], is_fn) -> dict:
-    """Ortak iskelet: hazırlık → tek işlem → (deneme modunda geri al). is_fn(cur, ctx) yazar ve özet döner."""
+ACILIS_SAAT = (7, 0)       # sahip D10: 07:00'den önce açılış ENGELLENİR (kişiye özel erken açılış izni hariç)
+KAPANIS_SAAT = (22, 30)    # sahip D10: 22:30'dan önce kapanış ENGELLENİR
+FIRE_SEBEPLERI = {         # sahip D9 — eski panelin sebep kartları (fire_bildirim.FIRE_SEBEP ile aynı anlam)
+    "iade": "Müşteri iadesi / bozuk ürün", "siparis_iptali": "Sipariş iptali", "skt_bozulma": "SKT / bozulma",
+    "kirilma_dokulme": "Kırılma / dökülme", "yanlis_urun": "Yanlış ürün / değişim", "hazirlik_deneme": "Hazırlık / deneme / eğitim",
+    "ikram": "İkram", "personel_kullanim": "Personel kullanımı", "sayim_hatasi": "Sayım hatası", "panel_hatasi": "Panel kullanım hatası",
+    "diger": "Diğer",
+}
+# fire DIŞI çıkışlar ayrı konuma gider (maliyet raporunda ayrı satır — sahip D9)
+FIRE_HEDEF = {"ikram": "dışarı:ikram", "personel_kullanim": "dışarı:personel", "sayim_hatasi": "dışarı:sayim", "panel_hatasi": "dışarı:sayim"}
+
+
+def _simdi_tr():
+    from tr_saat import dt_now_tr
+    return dt_now_tr()
+
+
+def _saat_kurali(tur: str, personel: dict) -> Optional[str]:
+    """Açılış / kapanış saat kuralı (iş günü saatiyle). Engelse mesaj döner."""
+    n = _simdi_tr()
+    hm = (n.hour, n.minute)
+    if tur == "acilis" and 2 <= n.hour and hm < ACILIS_SAAT and not personel.get("erken_acilis"):
+        return "Açılış 07:00'den önce yapılamaz"
+    if tur == "kapanis" and 2 <= n.hour and hm < KAPANIS_SAAT:
+        return "Kapanış 22:30'dan önce yapılamaz"
+    return None
+
+
+def _gun_kapali(cur, sube_id: str, gun) -> bool:
+    """Bugünün kapanışı yapıldıysa gün kapalıdır (D7): ürün aç / fire / ara teslim / kasa devri yazılmaz."""
+    from evvel_yeni_olay import olaylar
+    return any(not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"
+               for o in olaylar(cur, sube_id=sube_id, bas=gun, son=gun, turler={"kapanis"}))
+
+
+def _gun_acik_mi(cur, c: dict, sube_id: str) -> None:
+    if not c.get("merkez") and _gun_kapali(cur, sube_id, c["gun"]):
+        raise HTTPException(409, "Gün kapandı — bu işlem yapılamaz")
+
+
+# ─────────────── 🛟 KAPANIŞ KAYBOLMASIN (Zafer 16 Ekim dersi; sahip: "gönderdim sandı ama gelmedi — bunu atlama") ───────────────
+# Her gönderim, asıl işlemden ÖNCE ayrı bağlantıyla ey_panel_deneme'ye yazılır (ham gövde); sonuç / ret SEBEBİ sonra ayrı
+# bağlantıyla işlenir → asıl işlem geri alınsa da deneme kalır. Reddedilen / hata veren kapanış merkez Bekleyen işler'e
+# "Geç kapanış olarak işle" diye düşer; merkez tek tıkla, personelin girdiği verilerle o iş gününe işler.
+_DENEME_HAZIR = False
+
+
+def _deneme_hazirla() -> None:
+    global _DENEME_HAZIR
+    if _DENEME_HAZIR:
+        return
+    with db() as (_c, cur):
+        cur.execute("SELECT pg_advisory_xact_lock(7012045)")
+        cur.execute("SET LOCAL lock_timeout = '3s'")
+        cur.execute("""CREATE TABLE IF NOT EXISTS ey_panel_deneme (
+            id TEXT PRIMARY KEY, sube_id TEXT NOT NULL, tur TEXT NOT NULL, is_gunu DATE NOT NULL, istek_id TEXT, personel_id TEXT,
+            govde JSONB NOT NULL DEFAULT '{}'::jsonb, sonuc TEXT NOT NULL DEFAULT 'bekliyor', sebep TEXT,
+            zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), islendi BOOLEAN NOT NULL DEFAULT FALSE, isleyen TEXT)""")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_panel_deneme ON ey_panel_deneme (tur, sonuc, zaman)")
+    _DENEME_HAZIR = True
+
+
+def _deneme_ac(sube_id: str, tur: str, gun, govde: dict) -> Optional[str]:
+    try:
+        _deneme_hazirla()
+        did = str(uuid.uuid4())
+        with db() as (_c, cur):
+            cur.execute("""INSERT INTO ey_panel_deneme (id, sube_id, tur, is_gunu, istek_id, personel_id, govde)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+                        (did, str(sube_id), tur, gun, govde.get("istek_id"), govde.get("personel_id") or govde.get("devreden_id"),
+                         json.dumps(govde, ensure_ascii=False, default=str)))
+        return did
+    except Exception as e:  # noqa: BLE001 — deneme yazılamazsa asıl işlem yine denenir (log'da iz)
+        log.error("panel denemesi yazılamadı (%s %s): %s", sube_id, tur, str(e)[:200])
+        return None
+
+
+def _deneme_kapat(did: Optional[str], sonuc: str, sebep: Optional[str] = None) -> None:
+    if not did:
+        return
+    try:
+        with db() as (_c, cur):
+            cur.execute("UPDATE ey_panel_deneme SET sonuc=%s, sebep=%s WHERE id=%s", (sonuc, (sebep or "")[:300] or None, did))
+    except Exception as e:  # noqa: BLE001
+        log.error("panel denemesi sonucu yazılamadı (%s): %s", did, str(e)[:200])
+
+
+def _calistir(sube_id: str, istek_id: Optional[str], is_fn, tur: Optional[str] = None, govde: Optional[dict] = None,
+              gun=None, merkez: Optional[str] = None) -> dict:
+    """Ortak iskelet: deneme kaydı → hazırlık → tek işlem → (deneme modunda geri al) → deneme sonucu.
+    gun/merkez: yalnız merkezin 'geç kapanış' işlemi (o iş gününe; saat kuralı ve gün kilidi uygulanmaz)."""
+    did = _deneme_ac(sube_id, tur, gun or _bugun(), govde or {}) if tur else None
+    try:
+        sonuc = _calistir_ic(sube_id, istek_id, is_fn, gun, merkez)
+    except HTTPException as e:
+        _deneme_kapat(did, "ret" if e.status_code < 500 else "hata", str(e.detail))
+        raise
+    except Exception as e:  # noqa: BLE001
+        _deneme_kapat(did, "hata", str(e)[:300])
+        raise
+    _deneme_kapat(did, "deneme" if sonuc.get("kuru") else "ok")
+    return sonuc
+
+
+def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez: Optional[str] = None) -> dict:
+    """Hazırlık → tek işlem → (deneme modunda geri al). is_fn(cur, ctx) yazar ve özet döner."""
     if istek_id is not None and not re.fullmatch(r"[A-Za-z0-9-]{8,64}", istek_id):   # Codex: '#', '%', '_' ref çakışması üretmesin
         raise HTTPException(400, "İstek kimliği geçersiz")
     from evvel_yeni_depo_api import depo_hazirla
@@ -120,14 +226,15 @@ def _calistir(sube_id: str, istek_id: Optional[str], is_fn) -> dict:
         depo_hazirla(hc)
     try:
         with db() as (conn, cur):
-            ctx = {"gun": _bugun(), "sube": _sube(cur, sube_id), "kuru": _bugun() < _baslangic(cur)}
+            g = gun or _bugun()
+            ctx = {"gun": g, "sube": _sube(cur, sube_id), "kuru": g < _baslangic(cur), "merkez": merkez}
             sonuc = is_fn(cur, ctx)
             sonuc = {"ok": True, "kuru": ctx["kuru"], **sonuc}
             if ctx["kuru"]:
                 raise _Kuru(sonuc)
             return sonuc
     except _Kuru as k:
-        return {**k.sonuc, "mesaj": "DENEME — kaydedilmedi (panel " + "henüz açılmadı)"}
+        return {**k.sonuc, "mesaj": "DENEME — kaydedilmedi (panel henüz açılmadı)" + (f" · gerçekte: {k.sonuc['saat_engeli']}" if k.sonuc.get("saat_engeli") else "")}
 
 
 # ─────────────────────────── OKUMA ───────────────────────────
@@ -157,7 +264,9 @@ def panel_durum(sube_id: str):
             "acilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "acilinca"]} for k in kat],
             "bugun": bugunku,
             "acilis_var": any(o["tur"] == "acilis" and not o["iptal"] for o in bugunku),
-            "kapanis_var": any(o["tur"] == "kapanis" and not o["iptal"] for o in bugunku)}
+            "kapanis_var": any(o["tur"] == "kapanis" and not o["iptal"] for o in bugunku),
+            "fire_sebepleri": [{"kod": k, "ad": v} for k, v in FIRE_SEBEPLERI.items()],
+            "saat": {"acilis": "%02d:%02d" % ACILIS_SAAT, "kapanis": "%02d:%02d" % KAPANIS_SAAT}}
 
 
 # ─────────────────────────── YAZMA ───────────────────────────
@@ -198,6 +307,17 @@ def _degirmen(d: Optional[dict]) -> Optional[dict]:
     return out or None
 
 
+def _bardak_satirlari(cur, sayim: List[SayimSatir]) -> list:
+    """Devir bardak sayımı — yalnız olaya yazılır (Depo'ya hareket YAZMAZ: ara ölçüm gider üretmez)."""
+    satir = [{"urun_id": x.urun_id, "sayilan": _tam(x.sayilan, "Bardak")} for x in sayim if x.sayilan is not None]
+    if satir:
+        b = _urunler(cur, [x["urun_id"] for x in satir], takip="sayim")
+        for x in satir:
+            if "bardak" not in (b[x["urun_id"]]["ad"] or "").lower():
+                raise HTTPException(400, "Devirde yalnız bardak sayılır")
+    return satir
+
+
 def _sayim_satirlari(cur, sayim: List[SayimSatir]) -> list:
     satir = [{"urun_id": x.urun_id, "sayilan": _tam(x.sayilan, "Sayım")} for x in sayim if x.sayilan is not None]
     if satir:
@@ -209,9 +329,13 @@ def _sayim_satirlari(cur, sayim: List[SayimSatir]) -> list:
 def acilis(sube_id: str, b: AcilisBody):
     """Açılış: kasadaki nakit + sayılan ürünler. Kasa sabah sayımı (gün−1'e) Kasa'nın kendi takvimiyle sonra yazılır
     (geç gelen kayıtlar kilide takılmasın — mevcut kural); burada ham olay + Depo günlük sayımı."""
+    _TUR = "acilis"
     def is_(cur, c):
         from evvel_yeni_depo_api import sayim_yaz
         p = _personel(cur, sube_id, b.personel_id)
+        engel = _saat_kurali("acilis", p)
+        if engel and not c["kuru"]:
+            raise HTTPException(409, engel)
         kasa = _tl(b.kasa_sayim, "Kasadaki para")
         satir = _sayim_satirlari(cur, b.sayim)
         kok = f"panel:acilis:{sube_id}:{c['gun'].isoformat()}"
@@ -221,8 +345,8 @@ def acilis(sube_id: str, b: AcilisBody):
                              "pasta_toplam": None if b.pasta_toplam is None else _tam(b.pasta_toplam, "Pasta")})
         d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=f"{KIM} · {p['ad']}", tur="gunluk",
                       kaynak_ref=f"{kok}:sayim") if satir else None
-        return {"olay": oid, "tekrar": oid is None, "sayilan": len(satir) if d else 0, "mesaj": "Açılış kaydedildi"}
-    return _calistir(sube_id, b.istek_id, is_)
+        return {"olay": oid, "tekrar": oid is None, "sayilan": len(satir) if d else 0, "mesaj": "Açılış kaydedildi", "saat_engeli": engel}
+    return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
 
 class TeslimSatir(BaseModel):
@@ -244,14 +368,17 @@ class KapanisBody(BaseModel):
     istek_id: Optional[str] = None
 
 
-@router.post("/{sube_id}/kapanis")
-def kapanis(sube_id: str, b: KapanisBody):
+def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str] = None) -> dict:
     """Kapanış: ciro (nakit / POS / online) → Kasa kapanış beyanı; teslimler → Kasa teslim; sayım → Depo günlük sayımı
     (düşüş = kullanılan, sahip kararı); hepsi tek işlemde. Aynı gün ikinci kapanış Kasa'da reddedilir (düzeltme merkezde)."""
+    _TUR = "kapanis"
     def is_(cur, c):
         from evvel_yeni_depo_api import sayim_yaz
         from evvel_yeni_kasa_api import HareketBody, kasa_yaz
         p = _personel(cur, sube_id, b.personel_id)
+        engel = None if c.get("merkez") else _saat_kurali("kapanis", p)
+        if engel and not c["kuru"]:
+            raise HTTPException(409, engel)
         gun = c["gun"].isoformat()
         nakit, pos, onl = _tl(b.nakit, "Nakit"), _tl(b.pos, "POS"), _tl(b.online, "Online")
         tes = []
@@ -271,7 +398,7 @@ def kapanis(sube_id: str, b: KapanisBody):
                              "degirmen": _degirmen(b.degirmen),
                              "pasta_toplam": None if b.pasta_toplam is None else _tam(b.pasta_toplam, "Pasta"),
                              "istek_id": b.istek_id})
-        kim = f"{KIM} · {p['ad']}"
+        kim = (f"merkez (geç kapanış) · {c['merkez']} · {p['ad']}" if c.get("merkez") else f"{KIM} · {p['ad']}")
         k = kasa_yaz(cur, HareketBody(tur="kapanis", is_gunu=gun, cep=f"sube:{sube_id}", tutar=Decimal(nakit) / 100,
                                       kart=Decimal(pos) / 100, online=Decimal(onl) / 100), kim,
                      kaynak_ref=f"kapanis:{sube_id}:{gun}")
@@ -285,30 +412,38 @@ def kapanis(sube_id: str, b: KapanisBody):
         d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=kim, tur="gunluk",
                       kaynak_ref=f"{kok}:sayim") if satir else None
         return {"olay": oid, "tekrar": oid is None and bool(k.get("tekrar")), "sayilan": len(satir) if d else 0,
-                "mesaj": "Kapanış kaydedildi"}
-    return _calistir(sube_id, b.istek_id, is_)
+                "mesaj": "Kapanış kaydedildi", "saat_engeli": engel}
+    return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"), gun=gun, merkez=merkez)
+
+
+@router.post("/{sube_id}/kapanis")
+def kapanis(sube_id: str, b: KapanisBody):
+    return _kapanis_yaz(sube_id, b)
 
 
 class DevirBody(BaseModel):
     devreden_id: str
     devralan_id: str
     sayilan: Decimal
+    bardak: List[SayimSatir] = []    # sahip D2: devirde yalnız 3 bardak (küçük / büyük / plastik) — gider üretmez, merkez görür
     istek_id: str
 
 
 @router.post("/{sube_id}/devir")
 def kasa_devri(sube_id: str, b: DevirBody):
     """Vardiya kasa devri — yalnız ham olay (para el değiştirmez, aynı dükkân kasası)."""
+    _TUR = "devir"
     def is_(cur, c):
+        _gun_acik_mi(cur, c, sube_id)
         a, v = _personel(cur, sube_id, b.devreden_id), _personel(cur, sube_id, b.devralan_id)
         if a["id"] == v["id"]:
             raise HTTPException(400, "Devreden ve devralan aynı kişi olamaz")
         k = _tl(b.sayilan, "Sayılan")
         oid = _olay(cur, sube_id=sube_id, tur="vardiya", is_gunu=c["gun"], kok=f"panel:vardiya:{sube_id}:{b.istek_id}",
                        kaynak_tablo="panel", personel_id=a["id"], personel_ad=a["ad"], tutar=Decimal(k) / 100,
-                       veri={"devreden": a, "devralan": v, "sayilan": k})
+                       veri={"devreden": a, "devralan": v, "sayilan": k, "bardak": _bardak_satirlari(cur, b.bardak)})
         return {"olay": oid, "tekrar": oid is None, "mesaj": "Kasa devri kaydedildi"}
-    return _calistir(sube_id, b.istek_id, is_)
+    return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
 
 class AraTeslimBody(BaseModel):
@@ -321,8 +456,10 @@ class AraTeslimBody(BaseModel):
 @router.post("/{sube_id}/ara-teslim")
 def ara_teslim(sube_id: str, b: AraTeslimBody):
     """Gün içi para teslimi (Onur / Fethi / Fatma) → Kasa teslim ('onay bekliyor')."""
+    _TUR = "ara_teslim"
     def is_(cur, c):
         from evvel_yeni_kasa_api import HareketBody, kasa_yaz
+        _gun_acik_mi(cur, c, sube_id)
         p = _personel(cur, sube_id, b.personel_id)
         if b.alan not in TESLIM_ALANLAR:
             raise HTTPException(400, "Teslim alan: Onur / Fethi / Fatma")
@@ -335,7 +472,7 @@ def ara_teslim(sube_id: str, b: AraTeslimBody):
         r = kasa_yaz(cur, HareketBody(tur="teslim", is_gunu=c["gun"].isoformat(), kaynak=f"sube:{sube_id}", hedef=b.alan,
                                       tutar=Decimal(k) / 100, teslim_eden=p["ad"]), f"{KIM} · {p['ad']}", kaynak_ref=kok)
         return {"olay": oid, "tekrar": oid is None and bool(r.get("tekrar")), "mesaj": "Teslim kaydedildi"}
-    return _calistir(sube_id, b.istek_id, is_)
+    return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
 
 class Kalem(BaseModel):
@@ -366,8 +503,10 @@ def _kalemler(cur, kalemler: List[Kalem], takip: Optional[str] = None) -> list:
 def urun_ac(sube_id: str, b: UrunAcBody):
     """Ürün aç (yalnız 'açılınca gider' ürünler): Depo 'ac' depo:şube → dışarı:tuketim. Fiyat yazılmaz (Gider okurken hesaplar).
     Eksi stok ENGELLENMEZ — merkeze iş düşer (personele uyarı yok)."""
+    _TUR = "urun_ac"
     def is_(cur, c):
         from evvel_yeni_depo_api import hareket_yaz
+        _gun_acik_mi(cur, c, sube_id)
         p = _personel(cur, sube_id, b.personel_id)
         k = _kalemler(cur, b.kalemler, takip="acilinca")
         kok = f"panel:ac:{sube_id}:{b.istek_id}"
@@ -377,46 +516,131 @@ def urun_ac(sube_id: str, b: UrunAcBody):
             hareket_yaz(cur, kaynak_ref=f"{kok}:{i}", tur="ac", urun_id=x["urun_id"], urun_ad=x["ad"], adet=x["adet"],
                         kaynak=f"depo:{sube_id}", hedef="dışarı:tuketim", kim=f"{KIM} · {p['ad']}", bag=kok, gun=c["gun"])
         return {"olay": oid, "tekrar": oid is None, "mesaj": f"{len(k)} ürün açıldı"}
-    return _calistir(sube_id, b.istek_id, is_)
+    return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
+
+
+class IadeBilgi(BaseModel):
+    fis_no: str
+    iade_saat: str                    # "HH:MM"
+    musteri_ad: Optional[str] = None  # personele GÖSTERİLMEZ (yalnız merkez)
+    musteri_tel: Optional[str] = None
 
 
 class FireBody(BaseModel):
     personel_id: str
     kalemler: List[Kalem]
-    sebep: str
+    sebep: str                         # FIRE_SEBEPLERI kodu
+    aciklama: Optional[str] = None     # 'diger' için zorunlu
+    iade: Optional[IadeBilgi] = None   # 'iade' için zorunlu
     istek_id: str
 
 
 @router.post("/{sube_id}/fire")
 def fire(sube_id: str, b: FireBody):
     """Fire: Depo 'fire' depo:şube → dışarı:fire (sebep zorunlu)."""
+    _TUR = "fire"
     def is_(cur, c):
         from evvel_yeni_depo_api import hareket_yaz
+        _gun_acik_mi(cur, c, sube_id)
         p = _personel(cur, sube_id, b.personel_id)
-        sebep = (b.sebep or "").strip()[:200]
-        if len(sebep) < 2:
-            raise HTTPException(400, "Fire sebebini yaz")
+        if b.sebep not in FIRE_SEBEPLERI:
+            raise HTTPException(400, "Fire sebebini seç")
+        aciklama = (b.aciklama or "").strip()[:200]
+        if b.sebep == "diger" and len(aciklama) < 2:
+            raise HTTPException(400, "Sebebi yaz")
+        iade = None
+        if b.sebep == "iade":
+            if not b.iade or len((b.iade.fis_no or "").strip()) < 1 or not re.fullmatch(r"\d{1,2}:\d{2}", (b.iade.iade_saat or "").strip()):
+                raise HTTPException(400, "İadede fiş numarası ve iade saati zorunlu")
+            iade = {"fis_no": b.iade.fis_no.strip()[:40], "iade_saat": b.iade.iade_saat.strip(),
+                    "musteri_ad": (b.iade.musteri_ad or "").strip()[:80] or None,
+                    "musteri_tel": re.sub(r"[^\d+]", "", b.iade.musteri_tel or "")[:20] or None}
+        sebep_ad = FIRE_SEBEPLERI[b.sebep]
         k = _kalemler(cur, b.kalemler)
         kok = f"panel:fire:{sube_id}:{b.istek_id}"
         oid = _olay(cur, sube_id=sube_id, tur="fire", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
-                       personel_id=p["id"], personel_ad=p["ad"], veri={"kalemler": k, "sebep": sebep})
+                    personel_id=p["id"], personel_ad=p["ad"],
+                    veri={"kalemler": k, "sebep": b.sebep, "sebep_ad": sebep_ad, "aciklama": aciklama or None, "iade": iade})
+        hedef = FIRE_HEDEF.get(b.sebep, "dışarı:fire")
         for i, x in enumerate(k):
             hareket_yaz(cur, kaynak_ref=f"{kok}:{i}", tur="fire", urun_id=x["urun_id"], urun_ad=x["ad"], adet=x["adet"],
-                        kaynak=f"depo:{sube_id}", hedef="dışarı:fire", kim=f"{KIM} · {p['ad']}", aciklama=sebep, bag=kok, gun=c["gun"])
+                        kaynak=f"depo:{sube_id}", hedef=hedef, kim=f"{KIM} · {p['ad']}",
+                        aciklama=sebep_ad + (f" — {aciklama}" if aciklama else "") + (f" · fiş {iade['fis_no']}" if iade else ""),
+                        bag=kok, gun=c["gun"])
         return {"olay": oid, "tekrar": oid is None, "mesaj": "Fire kaydedildi"}
-    return _calistir(sube_id, b.istek_id, is_)
+    return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
+
+
+# ─────────────────────────── MERKEZ: geç kapanış (reddedilen / hata veren kapanış) ───────────────────────────
+class DenemeBody(BaseModel):
+    deneme_id: str
+
+
+@router.post("/gec-kapanis")
+def gec_kapanis(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez: reddedilen / hata veren panel kapanışını, personelin girdiği verilerle O İŞ GÜNÜNE işler
+    (saat kuralı ve gün kilidi uygulanmaz; yeni istek kimliğiyle — eski deneme izli kalır)."""
+    from evvel_yeni_cekirdek import aktor
+    _deneme_hazirla()
+    with db() as (conn, cur):
+        kim = aktor(cur, x_evvel_oturum)
+        cur.execute("SELECT * FROM ey_panel_deneme WHERE id=%s FOR UPDATE", (body.deneme_id,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Deneme bulunamadı")
+        r = dict(r)
+        if r["tur"] != "kapanis" or r["sonuc"] not in ("ret", "hata") or r["islendi"]:
+            raise HTTPException(409, "Bu deneme işlenemez (kapanış değil, başarılı ya da zaten işlendi)")
+    govde = r["govde"] if isinstance(r["govde"], dict) else json.loads(r["govde"] or "{}")
+    govde["istek_id"] = uuid.uuid4().hex
+    try:
+        kb = KapanisBody(**govde)
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Kayıtlı kapanış verisi okunamadı: {str(e)[:150]}")
+    sonuc = _kapanis_yaz(r["sube_id"], kb, gun=r["is_gunu"], merkez=kim)
+    with db() as (conn, cur):
+        cur.execute("UPDATE ey_panel_deneme SET islendi=TRUE, isleyen=%s WHERE id=%s", (kim, body.deneme_id))
+    return {"ok": True, "mesaj": "Geç kapanış işlendi", "sonuc": sonuc}
+
+
+def _kapanis_isleri(cur) -> list:
+    """Son 7 gün: kapanış denemesi reddedilmiş / hata vermiş ve o gün için başarılı panel kapanışı YOK → merkez işi."""
+    from evvel_yeni_olay import olaylar
+    from evvel_yeni_tanim_api import subeler
+    cur.execute("SELECT to_regclass('ey_panel_deneme') IS NOT NULL AS v")
+    if not dict(cur.fetchone())["v"]:
+        return []
+    cur.execute("""SELECT DISTINCT ON (sube_id, is_gunu) id, sube_id, is_gunu, sonuc, sebep, zaman FROM ey_panel_deneme
+                    WHERE tur='kapanis' AND zaman >= NOW() - INTERVAL '7 days' AND NOT islendi AND sonuc IN ('ret','hata')
+                      AND is_gunu >= %s
+                    ORDER BY sube_id, is_gunu, zaman DESC""", (_baslangic(cur),))   # deneme dönemi merkeze iş üretmez
+    adlar = {str(s["id"]): s["ad"] for s in subeler(cur)}
+    out = []
+    for r in [dict(x) for x in cur.fetchall() or []]:
+        kapali = any(not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"
+                     for o in olaylar(cur, sube_id=r["sube_id"], bas=r["is_gunu"], son=r["is_gunu"], turler={"kapanis"}))
+        if kapali:
+            continue
+        out.append({"tur": "kapanis_red", "grup": "kasa", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
+                    "ad": adlar.get(str(r["sube_id"]), r["sube_id"]), "sebep": r.get("sebep") or "sonuç alınamadı",
+                    "saat": str(r["zaman"])[5:16].replace("-", ".").replace(" ", " "), "islem": "/evvel-yeni/panel/gec-kapanis"})
+    return out
 
 
 # ─────────────────────────── MERKEZ: Bekleyen işler (personele gitmez) ───────────────────────────
 def _bekleyen(cur, baglam: dict) -> list:
     """Panel açıldıysa: dün kapanışı olmayan aktif şube."""
+    out = []
+    try:
+        out.extend(_kapanis_isleri(cur))   # 🛟 reddedilen kapanış — panel açılmadan da (deneme dışı) görünür
+    except Exception as e:  # noqa: BLE001
+        log.warning("panel kapanış denemeleri okunamadı: %s", str(e)[:150])
     if _bugun() <= _baslangic(cur):
-        return []
+        return out
     from evvel_yeni_olay import olaylar
     from evvel_yeni_tanim_api import subeler
     dun = _bugun() - timedelta(days=1)
     kapanan = {str(o["sube_id"]) for o in olaylar(cur, bas=dun, son=dun, turler={"kapanis"}) if not o.get("iptal")}
-    out = []
     for s in subeler(cur):
         if str(s["id"]) not in kapanan:
             out.append({"tur": "panel_kapanis_yok", "genel": True, "grup": "kasa", "id": f"panel_kapanis:{s['id']}:{dun}",

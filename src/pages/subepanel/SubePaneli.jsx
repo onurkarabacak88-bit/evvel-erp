@@ -104,6 +104,43 @@ export default function SubePaneli({ subeId }) {
   const [sebep, setSebep] = useState('');
   const [sayim, setSayim] = useState({});
   const [f, setF] = useState({});
+  const [anladim, setAnladim] = useState(null);     // tam ekran hata kartı (D6): işlem yapılmadı → personel görmeden geçemez
+  const [kuyrukSay, setKuyrukSay] = useState(0);
+
+  // 💾 TASLAK (D6): açık formun her değişikliği tablete — pencere kapansa / sayfa yenilense geri gelir (iş günü boyunca)
+  const tKey = (m) => `sp_taslak:${subeId}:${d?.gun || ''}:${m}`;
+  const taslakOku = (m) => { try { return JSON.parse(localStorage.getItem(tKey(m)) || 'null'); } catch { return null; } };
+  const taslakSil = (m) => { try { localStorage.removeItem(tKey(m)); } catch { /* yok say */ } };
+  useEffect(() => {
+    if (!modal || modal === 'kapanis' || !d) return;
+    try { localStorage.setItem(tKey(modal), JSON.stringify({ adet, sebep, sayim, f })); } catch { /* yok say */ }
+  }, [modal, adet, sebep, sayim, f]);   // eslint-disable-line react-hooks/exhaustive-deps
+
+  // 🔁 KUYRUK (D6): internet yoksa gönderim tablette bekler, gelince kendiliğinden gider (istek_id → ikinci kez yazılmaz)
+  const qKey = `sp_kuyruk:${subeId}`;
+  const kuyrukOku = () => { try { return JSON.parse(localStorage.getItem(qKey) || '[]'); } catch { return []; } };
+  const kuyrukYaz = (q) => { try { localStorage.setItem(qKey, JSON.stringify(q)); } catch { /* yok say */ } setKuyrukSay(q.length); };
+  const kuyruguGonder = useCallback(async () => {
+    let q = kuyrukOku();
+    setKuyrukSay(q.length);
+    for (const it of [...q]) {
+      try {
+        await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/${it.yol}`, { method: 'POST', body: it.govde });
+        q = q.filter((x) => x.govde.istek_id !== it.govde.istek_id);
+      } catch (e) {
+        if (e instanceof TypeError) break;   // hâlâ internet yok
+        q = q.filter((x) => x.govde.istek_id !== it.govde.istek_id);
+        setAnladim(`Bekleyen kayıt gönderilemedi (${it.ad || it.yol}): ${e?.message || 'hata'}`);
+      }
+    }
+    kuyrukYaz(q);
+  }, [subeId]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    kuyruguGonder();
+    const t = window.setInterval(kuyruguGonder, 20000);
+    window.addEventListener('online', kuyruguGonder);
+    return () => { window.clearInterval(t); window.removeEventListener('online', kuyruguGonder); };
+  }, [kuyruguGonder]);
 
   const yukle = useCallback(() => api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/durum`)
     .then((x) => { setD(x); setHata(''); }).catch((e) => setHata(e?.message || 'Panel açılamadı')), [subeId]);
@@ -111,17 +148,29 @@ export default function SubePaneli({ subeId }) {
   useEffect(() => { try { if (kisi) localStorage.setItem('sp_kisi:' + subeId, kisi); } catch { /* yok say */ } }, [kisi, subeId]);
 
   const temizle = () => { setAdet({}); setSebep(''); setSayim({}); setF({}); setIstek(yeniIstek()); };
-  const ac = (m) => { temizle(); setModal(m); };
+  const ac = (m) => {
+    temizle();
+    const t = m !== 'kapanis' ? taslakOku(m) : null;
+    if (t) { setAdet(t.adet || {}); setSebep(t.sebep || ''); setSayim(t.sayim || {}); setF(t.f || {}); }
+    setModal(m);
+  };
   const gonder = async (yol, govde, sonra) => {
     if (mesgul) return;
     if (!kisi) { setMesaj({ tur: 'hata', metin: 'Önce adını seç' }); return; }
     setMesgul(true);
+    const body = { ...govde, istek_id: istek };
     try {
-      const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/${yol}`, { method: 'POST', body: { ...govde, istek_id: istek } });
+      const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/${yol}`, { method: 'POST', body });
       setMesaj({ tur: r.kuru ? 'deneme' : 'tamam', metin: r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : (r.tekrar ? 'Bu kayıt zaten alınmıştı' : 'Kaydedildi ✓') });
-      setModal(null); temizle(); sonra?.(); yukle();
+      taslakSil(modal); setModal(null); temizle(); sonra?.(); yukle();
     } catch (e) {
-      setMesaj({ tur: 'hata', metin: e?.message && e.message.length < 140 ? e.message : 'Kaydedilemedi, tekrar deneyin' });
+      if (e instanceof TypeError) {   // internet yok → kuyruğa (aynı istek_id: sonra ikinci kez yazılmaz)
+        kuyrukYaz([...kuyrukOku(), { yol, govde: body, ad: modal }]);
+        setMesaj({ tur: 'deneme', metin: 'İnternet yok — kayıt tablette bekliyor, bağlantı gelince kendiliğinden gönderilecek' });
+        taslakSil(modal); setModal(null); temizle();
+      } else {
+        setAnladim(e?.message && e.message.length < 160 ? e.message : 'Kaydedilemedi — tekrar deneyin');
+      }
     }
     setMesgul(false);
   };
@@ -136,6 +185,8 @@ export default function SubePaneli({ subeId }) {
   if (hata) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style><h2>Panel açılamadı</h2><p>{hata}</p><button className="sp-btn" onClick={yukle}>Tekrar dene</button></div>;
   if (!d) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style>Yükleniyor…</div>;
   const kisiAd = d.personel.find((p) => p.id === kisi)?.ad;
+  const kapali = !!d.kapanis_var;   // D7: kapanıştan sonra yalnız Ana / Depodan gelen / Sipariş takip
+  const bardaklar = d.sayilan.flatMap((g) => g.urunler).filter((u) => /bardak/i.test(u.ad));
 
   const MENU = [
     ['ana', '🏠', 'Ana Sayfa'], ['ac', '📦', 'Ürün Aç'], ['fire', '🗑️', 'Fire'], ['araTeslim', '💵', 'Ara Teslim'],
@@ -167,7 +218,7 @@ export default function SubePaneli({ subeId }) {
         {/* SOL MENÜ */}
         <div className="sp-kart" style={{ padding: 6, alignSelf: 'start' }}>
           {MENU.map((m, i) => m[0] === '-' ? <div key={i} style={{ height: 1, background: C.cizgi, margin: '8px 6px' }} />
-            : <button key={m[0]} className={'sp-sol' + (sekme === m[0] ? ' akt' : '')} disabled={m[3]} title={m[3] ? 'Yakında' : ''}
+            : <button key={m[0]} className={'sp-sol' + (sekme === m[0] ? ' akt' : '')} disabled={m[3] || (kapali && ['ac', 'fire', 'araTeslim'].includes(m[0]))} title={m[3] ? 'Yakında' : ''}
                 onClick={() => (m[0] === 'ana' ? setSekme('ana') : ac(m[0]))}>
                 <span style={{ fontSize: 20, width: 26 }}>{m[1]}</span>{m[2]}{m[3] && <small style={{ marginLeft: 'auto' }}>yakında</small>}
               </button>)}
@@ -178,10 +229,12 @@ export default function SubePaneli({ subeId }) {
           {!d.acilis_var && (
             <button className="sp-btn sp-ana" style={{ minHeight: 96, fontSize: 22 }} onClick={() => ac('acilis')}>☀️ Açılışı Yap — kasa + sayım</button>
           )}
+          {kapali && <div className="sp-kart" style={{ color: C.soluk, fontWeight: 700 }}>🔒 Gün kapandı — yeni iş günü 02:00'de başlar</div>}
+          {kuyrukSay > 0 && <div className="sp-kart" style={{ color: C.sari, fontWeight: 700 }}>⏳ {kuyrukSay} kayıt internet bekliyor</div>}
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(160px,1fr))', gap: 10 }}>
-            <button className="sp-btn" onClick={() => ac('ac')}>📦 Ürün Aç</button>
-            <button className="sp-btn" onClick={() => ac('fire')}>🗑️ Fire</button>
-            <button className="sp-btn" onClick={() => ac('araTeslim')}>💵 Ara Teslim</button>
+            <button className="sp-btn" disabled={kapali} onClick={() => ac('ac')}>📦 Ürün Aç</button>
+            <button className="sp-btn" disabled={kapali} onClick={() => ac('fire')}>🗑️ Fire</button>
+            <button className="sp-btn" disabled={kapali} onClick={() => ac('araTeslim')}>💵 Ara Teslim</button>
           </div>
           <div className="sp-kart">
             <b>Bugün kaydedilenler</b>
@@ -200,12 +253,22 @@ export default function SubePaneli({ subeId }) {
         <div style={{ display: 'grid', gap: 10, alignContent: 'start' }}>
           <div className="sp-kart" style={{ display: 'grid', gap: 10 }}>
             <div style={{ color: C.soluk }}>{kisiAd ? `👤 ${kisiAd}` : 'Adını seç'}</div>
-            <button className="sp-btn sp-ana" onClick={() => ac('devir')}>💵 Kasa Devri</button>
+            <button className="sp-btn sp-ana" disabled={kapali} onClick={() => ac('devir')}>💵 Kasa Devri</button>
             <button className="sp-btn sp-mor" disabled={d.kapanis_var} onClick={() => ac('kapanis')}>{d.kapanis_var ? '🌙 Kapanış yapıldı' : '🌙 Kapanışı Başlat'}</button>
           </div>
         </div>
       </div>
 
+      {anladim && (
+        <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.85)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div className="sp-kart" style={{ maxWidth: 520, display: 'grid', gap: 16, textAlign: 'center', borderColor: C.kirmizi }}>
+            <div style={{ fontSize: 44 }}>⛔</div>
+            <b style={{ fontSize: 22 }}>{anladim}</b>
+            <div style={{ color: C.soluk }}>Bu işlem kaydedilmedi.</div>
+            <button className="sp-btn sp-ana" onClick={() => setAnladim(null)}>ANLADIM</button>
+          </div>
+        </div>
+      )}
       {/* ── MODALLAR ── */}
       {modal === 'acilis' && (
         <Modal baslik="☀️ Açılış" kapat={() => setModal(null)} genis>
@@ -223,11 +286,29 @@ export default function SubePaneli({ subeId }) {
       )}
       {(modal === 'ac' || modal === 'fire') && (
         <Modal baslik={modal === 'ac' ? '📦 Ürün Aç' : '🗑️ Fire'} kapat={() => setModal(null)} genis>
+          {modal === 'fire' && (<>
+            <b>1 · Sebep</b>
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(190px,1fr))', gap: 8 }}>
+              {d.fire_sebepleri.map((x) => <button key={x.kod} className={'sp-btn' + (sebep === x.kod ? ' sp-ana' : '')} onClick={() => setSebep(x.kod)}>{x.ad}</button>)}
+            </div>
+            {sebep === 'diger' && <input className="sp-in" style={{ fontSize: 18 }} value={f.aciklama || ''} onChange={(e) => setF({ ...f, aciklama: e.target.value })} placeholder="Sebebi yaz" />}
+            {sebep === 'iade' && (
+              <div className="sp-kart" style={{ display: 'grid', gap: 8 }}>
+                <b>Müşteri iadesi</b>
+                <label style={{ display: 'grid', gap: 4 }}>Fiş numarası (zorunlu)<input className="sp-in" value={f.fis || ''} onChange={(e) => setF({ ...f, fis: e.target.value })} /></label>
+                <label style={{ display: 'grid', gap: 4 }}>İade saati (zorunlu)<input className="sp-in" type="time" value={f.iadeSaat || ''} onChange={(e) => setF({ ...f, iadeSaat: e.target.value })} /></label>
+                <label style={{ display: 'grid', gap: 4 }}>Müşteri adı (isteğe bağlı)<input className="sp-in" style={{ fontSize: 18 }} value={f.mAd || ''} onChange={(e) => setF({ ...f, mAd: e.target.value })} /></label>
+                <label style={{ display: 'grid', gap: 4 }}>Müşteri telefonu (isteğe bağlı)<input className="sp-in" inputMode="tel" value={f.mTel || ''} onChange={(e) => setF({ ...f, mTel: e.target.value.replace(/[^\d+ ]/g, '') })} /></label>
+              </div>
+            )}
+            <b>2 · Ürünler</b>
+          </>)}
           <AdetListesi gruplar={modal === 'ac' ? d.acilan : tumUrunler} adet={adet} setAdet={setAdet} />
-          {modal === 'fire' && <label style={{ display: 'grid', gap: 6 }}><b>Sebep</b>
-            <input className="sp-in" style={{ fontSize: 18 }} value={sebep} onChange={(e) => setSebep(e.target.value)} placeholder="ör. döküldü, bozuldu" /></label>}
-          <button className="sp-btn sp-yesil" disabled={mesgul || !kalemGovde(adet).length || (modal === 'fire' && sebep.trim().length < 2)}
-            onClick={() => gonder(modal === 'ac' ? 'urun-ac' : 'fire', { personel_id: kisi, kalemler: kalemGovde(adet), ...(modal === 'fire' ? { sebep } : {}) })}>
+          <button className="sp-btn sp-yesil"
+            disabled={mesgul || !kalemGovde(adet).length || (modal === 'fire' && (!sebep || (sebep === 'diger' && (f.aciklama || '').trim().length < 2) || (sebep === 'iade' && (!(f.fis || '').trim() || !f.iadeSaat))))}
+            onClick={() => gonder(modal === 'ac' ? 'urun-ac' : 'fire', { personel_id: kisi, kalemler: kalemGovde(adet),
+              ...(modal === 'fire' ? { sebep, aciklama: f.aciklama || null,
+                iade: sebep === 'iade' ? { fis_no: f.fis, iade_saat: f.iadeSaat, musteri_ad: f.mAd || null, musteri_tel: f.mTel || null } : null } : {}) })}>
             ✔ {modal === 'ac' ? 'Açtıklarımı Kaydet' : 'Fireyi Kaydet'} ({kalemGovde(adet).reduce((a, x) => a + x.adet, 0)})</button>
         </Modal>
       )}
@@ -252,12 +333,14 @@ export default function SubePaneli({ subeId }) {
             </select></label>
           <label style={{ display: 'grid', gap: 6 }}><b>Kasada sayılan</b>
             <input className="sp-in" inputMode="decimal" value={f.sayilan ?? ''} onChange={(e) => setF({ ...f, sayilan: tutar(e.target.value) })} placeholder="0,00" /></label>
+          <b>Bardak sayımı</b>
+          <SayimListesi gruplar={[{ kategori: '', urunler: bardaklar }]} sayim={sayim} setSayim={setSayim} />
           <button className="sp-btn sp-yesil" disabled={mesgul || !f.devralan || f.sayilan === undefined || f.sayilan === ''}
-            onClick={() => gonder('devir', { devreden_id: kisi, devralan_id: f.devralan, sayilan: tutarNum(f.sayilan) })}>✔ Devri Kaydet</button>
+            onClick={() => gonder('devir', { devreden_id: kisi, devralan_id: f.devralan, sayilan: tutarNum(f.sayilan), bardak: sayimGovde(sayim) })}>✔ Devri Kaydet</button>
         </Modal>
       )}
       {modal === 'kapanis' && (
-        <Kapanis d={d} kisi={kisi} mesgul={mesgul} sayim={sayim} setSayim={setSayim} kapat={() => setModal(null)}
+        <Kapanis d={d} kisi={kisi} mesgul={mesgul} sayim={sayim} setSayim={setSayim} kapat={() => setModal(null)} taslakAnahtar={tKey('kapanis')}
           gonder={(govde) => gonder('kapanis', { personel_id: kisi, ...govde, sayim: sayimGovde(sayim) })} />
       )}
     </div>
@@ -265,9 +348,14 @@ export default function SubePaneli({ subeId }) {
 }
 
 // 🌙 Kapanış — 4 adım (eski 5 adım: ürün aç sorusu kalktı, QR mühür/saat kilidi merkeze)
-function Kapanis({ d, mesgul, sayim, setSayim, kapat, gonder }) {
-  const [adim, setAdim] = useState(1);
-  const [v, setV] = useState({ nakit: '', pos: '', online: '', kor: '', birakilan: '', deg: {}, teslim: {}, pasta: '' });
+function Kapanis({ d, mesgul, sayim, setSayim, kapat, gonder, taslakAnahtar }) {
+  const ilk = (() => { try { return JSON.parse(localStorage.getItem(taslakAnahtar) || 'null'); } catch { return null; } })();
+  const [adim, setAdim] = useState(ilk?.adim || 1);
+  const [v, setV] = useState(ilk?.v || { nakit: '', pos: '', online: '', kor: '', birakilan: '', deg: {}, teslim: {}, pasta: '' });
+  useEffect(() => { if (ilk?.sayim) setSayim(ilk.sayim); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {   // 💾 her tuşta tablete (D6) — gönderim başarılı olunca silinir
+    try { localStorage.setItem(taslakAnahtar, JSON.stringify({ adim, v, sayim })); } catch { /* yok say */ }
+  }, [adim, v, sayim, taslakAnahtar]);
   const set = (k, x) => setV((o) => ({ ...o, [k]: x }));
   const teslimler = Object.entries(v.teslim).filter(([, t]) => tutarNum(t) > 0).map(([alan, t]) => ({ alan, tutar: tutarNum(t) }));
   // bileşen DEĞİL düz fonksiyon: her tuşta yeniden kurulup odağı kaybetmesin

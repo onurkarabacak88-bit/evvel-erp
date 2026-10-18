@@ -1319,7 +1319,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
               onGecKapanis={async (x) => {
                 if (!window.confirm(`${x.ad} ${x.tarih} kapanışı, personelin girdiği verilerle GEÇ KAPANIŞ olarak işlensin mi?
 (Reddin sebebi: ${x.sebep})`)) return;
-                try { const r = await api('/evvel-yeni/kasa/gec-kapanis', { method: 'POST', body: { deneme_id: x.id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); }
+                try { const r = await api(x.islem || '/evvel-yeni/kasa/gec-kapanis', { method: 'POST', body: { deneme_id: x.id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); }
               }}
               onKapanisGordum={async (x) => { try { await api('/evvel-yeni/kasa/kapanis-uyari-gordum', { method: 'POST', body: { deneme_id: x.id } }); yukle(); } catch (e) { onToast?.(e.message); } }} />)}
           </div>

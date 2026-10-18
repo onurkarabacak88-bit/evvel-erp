@@ -36,7 +36,8 @@ GEC_KABUL_GUN = 2
 _HAZIR = False
 _SON_SENKRON = {"zaman": 0.0, "sonuc": None}
 DISARI = {"dışarı:toptanci": "Toptancı", "dışarı:tuketim": "Ürün aç (tüketim)", "dışarı:fire": "Fire",
-          "dışarı:sayim": "Sayım farkı", "dışarı:bilinmeyen": "Kaynağı belirsiz", "dışarı:kayip": "Kayıp (yolda)"}
+          "dışarı:sayim": "Sayım farkı", "dışarı:bilinmeyen": "Kaynağı belirsiz", "dışarı:kayip": "Kayıp (yolda)",
+          "dışarı:ikram": "İkram", "dışarı:personel": "Personel kullanımı"}
 
 
 def depo_hazirla(cur) -> None:
