@@ -162,7 +162,7 @@ export default function SubePaneli({ subeId }) {
     let t = null;
     try { t = m !== 'kapanis' ? JSON.parse(localStorage.getItem(tKey(m, d.gun)) || 'null') : null; } catch { t = null; }
     if (t) {
-      const { mAd, mTel, ...fGuvenli } = t.f || {};   // eslint-disable-line no-unused-vars — eski taslaktaki müşteri bilgisi gösterilmez
+      const { mAd, mTel, ...fGuvenli } = t.f || {};   // eslint-disable-line no-unused-vars
       setAdet(t.adet || {}); setSebep(t.sebep || ''); setSayim(t.sayim || {}); setF(fGuvenli); if (t.istek) setIstek(t.istek);
     }
     setModal(m);
