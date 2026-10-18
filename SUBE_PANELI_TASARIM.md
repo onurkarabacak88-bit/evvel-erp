@@ -206,3 +206,18 @@ Kaynak: tmp/eski_panel_envanter_fable.md, tmp/eski_panel_envanter_codex.txt (85 
 | R1 | **İşlem sonunda QR ile onay** — "Adını seç" listesi ve PIN kalkar. Panel PC'si bir kez tanımlanınca ekrandaki her QR o şubenin kimliğidir. Açılış (ve kimlik isteyen her işlem) adım adım doldurulur → **en sonda ekranda QR** → personel kendi telefonuyla okutur → işlem o kişi adına, konumla kaydedilir. Eski paneldeki "en sonunda tek tek gelip QR ile onay" akışı | "Girdim panele QR girişi yaptım, açılış için kurgu vardı, en sonunda tek tek geliyordu, sonra onayı QR ile yapıyordu. PIN'i kaldıralım; bir kere PC tanımlandı mı her QR artık onun tanımı" | ⏳ tasarım (Fable) |
 | R2 | Menüde "yakında" kalan 5 bölüm 1 Kasım'dan ÖNCE: Tedarikçiden teslim al · Depodan gelen · Sipariş ver/takip/gönderilecek/eksik · Anlık gider · Not/Mesaj/Puan/Geri bildirim · X raporu foto | "Panel her konuda hatalı" | ⏳ |
 | R3 | "Sadeleştirme" ile çıkarılanların her biri sahibe sorulur (ana sayfa uyarıları, kapanış "ürün aç kontrolü"/"EKSİK VAR" kartı, ürün aç kullanımda/bitti, foto) | "Kurguladığım birçok şeyi yok saymış" | ⏳ sahibe sorulacak |
+
+### R1 — Tasarım (Claude hazırladı; Fable + Codex denetler · sahip 2026-10-18 "hazırlamaları sen yap, Fable denetimde")
+**Eski paneldeki karşılığı** (sube_panel.html `_AW_TTL`): Açılış 5 adım = 1 Kasa sayımı (kör) · 2 Bardak · 3 Ürün (su/süt/redbull/soda/cookie) · 4 Pasta · **5 Personel & Onay**. Kapanış 5. adım = **"QR ile Mühürle — telefonunla bu QR'ı okut → kapanış otomatik mühürlenir"**.
+
+**Yeni akış (PIN yok, ad seçimi yok):**
+1. Panelde adımlar TEK TEK doldurulur (açılış: kasa → bardak → ürün → pasta; kapanış: ciro → teslim + kör sayım + bırakılan → bar/değirmen → pasta). Taslak her tuşta tabletine (mevcut).
+2. Son adım **"QR ile onayla"**: panel formu sunucuya **onay isteği** olarak gönderir → `ey_panel_onay` (id, şube, tür, form gövdesi, istek_id, durum bekliyor/onaylandi/hata/iptal, son geçerlilik 10 dk, onaylayan personel, sonuç). Para/stok YAZILMAZ.
+3. Ekranda büyük QR = şubenin dönen QR'ı + onay kimliği (`/q/{şube}/{jeton}?o={onay}`). Yalnız kayıtlı panel PC'si üretir (mevcut kural).
+4. Personel kendi telefonuyla okutur → telefonda özet ("Açılış · Tema · kasa 1.250 ₺ · bardak 40/30/20") → **ONAYLA**.
+5. Sunucu (aynı istek): cihaz imzası + QR + konum (mevcut `cihaz_coz` / `_qr_islem` / `konum_kontrol`) → kişi = telefonun sahibi (istemciden gelmez) → **panelin mevcut yazma yolu** (`_calistir` → açılış/kapanış iş mantığı; tek yazar, kopya iş mantığı yok) o kişi adına çalışır → onay satırı sonuçla kapanır.
+6. Panel 2 sn'de bir onay durumunu sorar → "✓ Ayşe adına kaydedildi" (ya da hata cümlesi; taslak korunur).
+
+**Kurallar:** QR döneminde onaylayanın bu şubede açık girişi olmalı (yoksa telefonda "Önce giriş yap" — aynı QR ile önce giriş, sonra onay). Deneme döneminde de çalışır (kayıt kuru) → 1 Kasım öncesi gerçek telefonla prova yapılabilir. İnternet yoksa onay istenemez → "İnternet yok — taslak saklandı". Aynı onay iki kez işlenmez (onay kimliği + formun istek_id'si). Yoklama modülü kapalıysa panel eski ad seçimiyle çalışır (tak-çıkar).
+**Uçlar:** panel `POST /{şube}/onay-iste` · `GET /onay/{id}` (panel yoklar) · `POST /onay/{id}/iptal` · telefon (imzalı) `GET /onay/{id}/ozet` · `POST /onay/{id}/onayla`. Sahibi: panel modülü; yoklamanın PUBLIC servislerini kullanır (ikinci kimlik sistemi yok).
+**Sahibe soru:** sık yapılan işlemler (ürün aç, fire, ara teslim, anlık gider, teslim al) da her seferinde QR mı?
