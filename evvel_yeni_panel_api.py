@@ -299,6 +299,11 @@ def panel_durum(sube_id: str):
             yok["son_okutanlar"] = y.son_okutanlar(cur, str(sube_id), 120)
             cur.execute("SELECT 1 FROM ey_cihaz WHERE sube_id=%s AND tur='tablet' AND durum='aktif' LIMIT 1", (str(sube_id),))
             yok["tablet_kayitli"] = bool(cur.fetchone())
+            yok["devir"] = y.devir_durum(cur, str(sube_id), gun)
+            yok["kapanis_sorumlusu"] = y.kapanis_sorumlusu(cur, str(sube_id), gun)
+            giren = {g["personel_id"] for g in yok["girenler"] if g["acik"]}
+            yok["devralan_adaylari"] = ([{"id": g["personel_id"], "ad": g["ad"], "girdi": True} for g in yok["girenler"] if g["acik"]]
+                                        + [{"id": x["id"], "ad": x["ad"], "girdi": False} for x in per if x["id"] not in giren])
             if yok["qr_gerekli"]:   # ad listesi = bu şubede QR'la girmiş olanlar (K11: başka şubenin personeli dahil)
                 per = [{"id": g["personel_id"], "ad": g["ad"]} for g in yok["girenler"] if g["acik"]]
     def _u(x):
@@ -497,15 +502,41 @@ def kasa_devri(sube_id: str, b: DevirBody):
     _TUR = "devir"
     def is_(cur, c):
         _gun_acik_mi(cur, c, sube_id)
-        a, v = _personel(cur, sube_id, b.devreden_id), _personel(cur, sube_id, b.devralan_id)
+        y = _yoklama()
+        # devralan henüz girmemiş olabilir (kabulüyle girişi açılır) → kapı yalnız devredende
+        a, v = _personel(cur, sube_id, b.devreden_id), _personel(cur, sube_id, b.devralan_id, kapi=y is None)
         if a["id"] == v["id"]:
             raise HTTPException(400, "Devreden ve devralan aynı kişi olamaz")
         k = _tl(b.sayilan, "Sayılan")
+        if y is not None:   # D5: onaylar kişilerin KENDİ telefonunda; vardiya olayını devralanın onayı yazar (tek yazar)
+            bardak = _bardak_satirlari(cur, b.bardak)
+            if bardak:
+                ad = _urunler(cur, [x["urun_id"] for x in bardak], takip="sayim")
+                bardak = [{**x, "ad": ad[x["urun_id"]]["ad"]} for x in bardak]
+            r = y.devir_ac(cur, str(sube_id), c["gun"], a, v, k, bardak, b.istek_id)
+            return {**r, "tekrar": bool(r.get("tekrar")),
+                    "mesaj": f"Devir hazır — {a['ad']} telefonundan 'Devrediyorum', sonra {v['ad']} 'Kabul ediyorum' desin"}
         oid = _olay(cur, sube_id=sube_id, tur="vardiya", is_gunu=c["gun"], kok=f"panel:vardiya:{sube_id}:{b.istek_id}",
                        kaynak_tablo="panel", personel_id=a["id"], personel_ad=a["ad"], tutar=Decimal(k) / 100,
                        veri={"devreden": a, "devralan": v, "sayilan": k, "bardak": _bardak_satirlari(cur, b.bardak)})
         return {"olay": oid, "tekrar": oid is None, "mesaj": "Kasa devri kaydedildi"}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
+
+
+class DevirIptalBody(BaseModel):
+    istek_id: Optional[str] = None
+
+
+@router.post("/{sube_id}/devir-iptal")
+def kasa_devri_iptal(sube_id: str, b: DevirIptalBody):
+    """Panel: devreden henüz onaylamadıysa açık devri iptal eder (onaylandıysa merkez kapatır)."""
+    y = _yoklama()
+    if y is None:
+        raise HTTPException(400, "Devir onayı açık değil")
+    with db() as (conn, cur):
+        if not y.devir_iptal(cur, str(sube_id), _bugun()):
+            raise HTTPException(409, "İptal edilecek bekleyen devir yok (devreden onayladıysa merkeze haber verin)")
+    return {"ok": True, "mesaj": "Devir iptal edildi"}
 
 
 class AraTeslimBody(BaseModel):
