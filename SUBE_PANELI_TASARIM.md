@@ -188,4 +188,4 @@ Kaynak: tmp/eski_panel_envanter_fable.md, tmp/eski_panel_envanter_codex.txt (85 
 |---|---|---|
 | D1 | KONTROL (rastgele kör kasa sayımı + aktivite pingi + kilit/bip/alarm) | ✅ **OLMASIN** (sahip; Fable + Codex: sayım hiçbir şeyle karşılaştırılmıyordu, yalnız cevap süresi ölçülüyordu; alarm kuralına aykırı). Şüphede merkez habersiz yerinde sayar. |
 | D2 | Kasa devrinde ürün sayımı | ✅ **Yalnız 3 bardak** (küçük, büyük, plastik) tek ekranda; ürün/pasta yok. Ara ölçüm gider üretmez; vardiya farkı yalnız merkezde (Codex önerisi, sahip onayı). |
-| D3 | Mesai çıkışı kaydı (QR) | ⏳ sahip kararı bekliyor |
+| D3 | Mesai çıkışı kaydı (QR) | ✅ **TAŞINIR**: giriş/çıkış telefondan QR (konum aynen); kasa devri = devredenin çıkışı, kapanış = kapanışçının çıkışı otomatik; çıkışsız personel → merkez Bekleyen işler; QR mühür adımı GELMEZ; kayıt EY Personel (yoklama) modülüne, eski tabloya bağsız. |
