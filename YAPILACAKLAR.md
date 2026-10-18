@@ -13,7 +13,7 @@
 | **Ana yol** | Sipariş Faz 1 (A) → adım **1b** "okuyucular yeni kataloğa" |
 | **1b'den dalınan yan yol** | Yeni Şube Paneli (B) — çünkü eski panel eski kimlik yazıyor; okuyucuların yeni kataloğa geçmesi panelin yeni sisteme yazmasını gerektirdi |
 | **📍 Şu an** | B4 — QR telefon / yoklama modülü (Y0) |
-| **↩ B bitince dönüş** | B14 (okuyucular yeni panel verisine — 1b'nin asıl işi) → A 1d/1e (sipariş tabloları + merkez "Sevk et") → C listesindeki "Bende" işleri → D1 envanter 21. madde |
+| **↩ B bitince dönüş** | B14 (okuyucular yeni panel verisine — 1b'nin asıl işi) → A 1d/1e (sipariş tabloları + merkez "Sevk et") → C listesindeki "Bende" işleri → D "olmalı mı?" sorgulaması (⏳ olanlar) |
 
 ## A. ANA YOL — Sipariş Faz 1
 
@@ -73,11 +73,57 @@
 
 **Sonra ayrıntılandırılacaklar (17 Ekim):** Gider alanı · Toptancılar (iade, ekstreyle teyit, "fatura keser mi", FIFO, KDV ayrıştırma) · Günlük yoklama (geç kalma toleransı, vardiya planı) · Kasa devir defteri zincir uyarısı · kart / kira hatırlatmaları.
 
-## D. ENVANTER / KESİM / YETKİ
+## D. "EVVEL YENİ'DE OLMALI MI?" SORGULAMASI (ESKI_OZELLIK_ENVANTERI — 59 madde)
+
+**1–20: karara bağlandı** (karar tablosu dosyanın sonunda; 20 = Sipariş zinciri TAŞI → A bölümü).
+**21–59:** aşağıda. "Panelde verildi" = Yeni Şube Paneli konuşulurken sahip kararı çıktı; dosyaya resmî karar olarak işlenecek.
+
+| # | Özellik | Durum |
+|---|---|---|
+| 21 | Sipariş kontrol kulesi | ⏳ sorulacak (öneri: Ç) |
+| 22 | Depo stoğu | 🟡 EY Depo var — yeni panel verisine geçiş (B14) |
+| 23 | Ürün aç / kullanılan ürün | ✅ panelde verildi: TAŞINDI (yeni panel, açılınca gider; "kullanımda/bitti" ÇIKAR) |
+| 24 | Stok sayım görevi, demirbaş, arıza | ⏳ sorulacak (telefon sayfası kurgusunda — B8) |
+| 25 | Fire bildirimi | ✅ panelde verildi: TAŞINDI (sebep kartları + iade; foto faz 2) |
+| 26 | Reçete & değirmen sayacı | 🟡 değirmen sayacı KALIR (panelde verildi); reçete ⏳ sorulacak |
+| 27 | Kâr & maliyet (P&L) | ⏳ sorulacak (öneri: Ç → Şube kazancı) |
+| 28 | Alış fiyatları & zam takibi | 🟡 Ürün fiyatları yeni katalogda (B12); zam takibi ⏳ |
+| 29 | Tedarikçi tanımları & sözleşmeler | ⏳ sorulacak (öneri: Ç → Tanımlar) |
+| 30 | Fatura & belge merkezi | ⏳ sorulacak (öneri: D — teslimde fatura foto) |
+| 31 | Belge talep | ⏳ sorulacak (öneri: Ç) |
+| 32 | Tedarik mutabakatı | ⏳ sorulacak (öneri: Ç) |
+| 33 | Stok tahmin & kayıp | ⏳ sorulacak (öneri: Ç) |
+| 34 | Personel, maaş, bordro | 🟡 EY Personel; yemek kuralı değişti (B5) |
+| 35 | Avans | ✅ TAŞINDI (EY Avans); talep yeni telefon sayfasından (B8) |
+| 36 | Vardiya planlama | ⏳ sorulacak |
+| 37 | Görev & QR yoklama | ✅ panelde verildi: YENİDEN KURULUYOR (B4–B6); görev listesi ⏳ (B8) |
+| 38 | Personel puan defteri | 🟡 panelde verildi: telefon sayfasına (B8) — kurgu ⏳ |
+| 39 | Kimlik birleştirme | ⏳ sorulacak (öneri: Ç → Tanımlar) |
+| 40 | Personel davranış / risk skoru | 🟡 KONTROL olmasın (panelde verildi); geç kalma yoklamada; risk skoru ⏳ |
+| 41 | İş başvurusu | ⏳ sorulacak |
+| 42 | Şube paneli | ✅ YENİ ŞUBE PANELİ (B) |
+| 43 | Operasyon Merkezi (40+ sekme) | ⏳ sorulacak (öneri: Ç) |
+| 44 | WhatsApp bildirimleri | 🟡 kapanış hatırlatması YOK (panelde verildi, D10); gece özeti ⏳ |
+| 45 | Evo | ✅ ÇIKAR |
+| 46 | TV menü | ⏳ sorulacak |
+| 47 | Ev / dükkân tasarımı | ⏳ sorulacak |
+| 48 | Akıllı Denetim (Truth motor) | ⏳ sorulacak (öneri: Ç) |
+| 49 | Duyular | ⏳ sorulacak (öneri: Ç) |
+| 50 | Evvel Beyni | ⏳ sorulacak (öneri: Ç) |
+| 51 | CFO Panel / Kadife v2 / Strateji | ⏳ sorulacak (öneri: Ç) |
+| 52 | Aylık rapor | ⏳ sorulacak (öneri: Ç → Gelir/Gider/Kazanç) |
+| 53 | Denetim izi / mutabakat merkezi | ⏳ sorulacak (öneri: Ç) |
+| 54 | Ekran ölçümü & arama | ⏳ sorulacak (öneri: Ç) |
+| 55 | Cep (/cep) | ⏳ sorulacak (öneri: Ç) |
+| 56 | Kullanıcılar & giriş | ⏳ EN SON (yetki) |
+| 57 | Excel import / sistem sıfırla | ⏳ sorulacak (öneri: Ç) |
+| 58 | Veritabanı & ortak yardımcılar | KALIR |
+| 59 | Gece zinciri | her ÇIKAR kararında ilgili gece adımı sökülür |
+
+## E. KESİM / YETKİ
 
 | # | İş |
 |---|---|
-| D1 | ESKI_OZELLIK_ENVANTERI.md — **21. maddeden itibaren** kararlar (sahip) + verilen kararların uygulanması (KESIM_LISTESI) |
-| D2 | Eski sistem sökümü (sube_panel, sube_operasyon, fire_bildirim, operasyon_defter, stok_yolda, siparis_urun …) — 1 Kasım sonrası |
-| D3 | Giriş kapısı + kullanıcı tanımında yetki (rol × alt sekme × şube) — EN SON |
-| D4 | Kira hesabı: evlerin tanımı |
+| E1 | Verilen kararların uygulanması (KESIM_LISTESI) + eski sistem sökümü (sube_panel, sube_operasyon, fire_bildirim, operasyon_defter, stok_yolda, siparis_urun …) — 1 Kasım sonrası |
+| E2 | Giriş kapısı + kullanıcı tanımında yetki (rol × alt sekme × şube) — EN SON |
+| E3 | Kira hesabı: evlerin tanımı |
