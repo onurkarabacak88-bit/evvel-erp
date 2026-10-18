@@ -4,7 +4,7 @@
 // Uyarılar ayrı sekme kuralı: burada bant yok; eksikler Bekleyen işler › Personel'de.
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import { bugunTR, tarihKaydir } from '../../utils/trTarih';
+import { bugunTR } from '../../utils/trTarih';
 import { PI_CSS, R, kart, num, Dugme, Cip } from './KasaModulu';
 
 export const YOKLAMA_SAYFALAR = [{ id: 'personel_telefon', ad: 'Telefonlar', alt: 'Telefon bağla · tablet onayı · çıkış düzelt' }];
@@ -29,8 +29,8 @@ export default function YoklamaModulu({ onToast }) {
   const bugun = bugunTR();
   const yukle = useCallback(() => {
     api('/evvel-yeni/yoklama/cihazlar').then((d) => { setV(d); setHata(''); }).catch((e) => setHata(e?.message || 'Cihazlar okunamadı'));
-    api(`/evvel-yeni/yoklama/gunler?bas=${tarihKaydir(-14)}&son=${bugun}`)
-      .then((d) => setAcik((d?.satirlar || []).filter((s) => !s.cikis && s.gun < bugun)))
+    api('/evvel-yeni/yoklama/gunler?acik=1')   // Codex: sınırsız + sunucunun iş günü ölçütü (Bekleyen işler ile aynı)
+      .then((d) => setAcik(d?.satirlar || []))
       .catch(() => setAcik([]));
   }, [bugun]);
   useEffect(() => { yukle(); }, [yukle]);

@@ -71,7 +71,7 @@ def _qr_gerekli(cur) -> bool:
     return _yoklama() is not None and _bugun() >= _baslangic(cur)
 
 
-def _personel(cur, sube_id: str, pid: Optional[str]) -> dict:
+def _personel(cur, sube_id: str, pid: Optional[str], kapi: bool = True) -> dict:
     """Ad seçimi (sahip: yetki fazına kadar PIN yok). Her kayıt personel kimliği taşır."""
     from evvel_yeni_tanim_api import secim_listeleri
     if not pid:
@@ -79,10 +79,11 @@ def _personel(cur, sube_id: str, pid: Optional[str]) -> dict:
     p = next((x for x in secim_listeleri(cur)["personel"] if str(x["id"]) == str(pid) and x["aktif"]), None)
     if not p:
         raise HTTPException(400, "Personel bulunamadı")
-    if str(p.get("sube_id") or "") != str(sube_id):   # Codex: başka şubenin personeli bu şubeye yazamasın
-        raise HTTPException(400, "Bu şubenin personeli değilsin — adını listeden seç")
     y = _yoklama()
-    if y is not None and _qr_gerekli(cur) and not y.acik_mi(cur, sube_id, str(p["id"])):   # K: panel ad listesi = bugün girenler
+    burada = y is not None and _qr_gerekli(cur) and y.acik_mi(cur, sube_id, str(p["id"]))   # K11: QR'la bu şubeye girmiş
+    if str(p.get("sube_id") or "") != str(sube_id) and not burada:   # Codex: başka şubenin personeli bu şubeye yazamasın
+        raise HTTPException(400, "Bu şubenin personeli değilsin — adını listeden seç")
+    if kapi and y is not None and _qr_gerekli(cur) and not y.acik_mi(cur, sube_id, str(p["id"])):   # K: panel ad listesi = bugün girenler
         raise HTTPException(400, "Önce telefonundan QR ile giriş yap")
     return {"id": str(p["id"]), "ad": p["ad"], "erken_acilis": bool(p.get("erken_acilis"))}
 
@@ -296,9 +297,8 @@ def panel_durum(sube_id: str):
             yok["son_okutanlar"] = y.son_okutanlar(cur, str(sube_id), 120)
             cur.execute("SELECT 1 FROM ey_cihaz WHERE sube_id=%s AND tur='tablet' AND durum='aktif' LIMIT 1", (str(sube_id),))
             yok["tablet_kayitli"] = bool(cur.fetchone())
-            if yok["qr_gerekli"]:
-                acik = {g["personel_id"] for g in yok["girenler"] if g["acik"]}
-                per = [x for x in per if x["id"] in acik]
+            if yok["qr_gerekli"]:   # ad listesi = bu şubede QR'la girmiş olanlar (K11: başka şubenin personeli dahil)
+                per = [{"id": g["personel_id"], "ad": g["ad"]} for g in yok["girenler"] if g["acik"]]
     def _u(x):
         return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici")}
     return {"sube": {"id": s["id"], "ad": s["ad"]}, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
@@ -421,7 +421,7 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
     def is_(cur, c):
         from evvel_yeni_depo_api import sayim_yaz
         from evvel_yeni_kasa_api import HareketBody, kasa_yaz
-        p = _personel(cur, sube_id, b.personel_id)
+        p = _personel(cur, sube_id, b.personel_id, kapi=False)   # QR kapısı aşağıda: tekrar gönderim ve merkez geç kapanış geçer
         engel = None if c.get("merkez") else _saat_kurali("kapanis", p)
         if engel and not c["kuru"]:
             raise HTTPException(409, engel)
@@ -464,7 +464,10 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
             cur.execute("""UPDATE ey_sube_olay SET veri = veri || '{"sayim_uygulanmadi": true}'::jsonb WHERE id=%s""", (oid,)) if oid else None
         y = _yoklama()
         if y is not None and not c["kuru"] and not c.get("merkez") and oid is not None:
-            y.cikis_yaz(cur, p["id"], "kapanis", kim=kim)   # tasarım: kapanış = kapanışçının çıkışı
+            y.personel_kilidi(cur, p["id"])   # Codex: telefon çıkış/giriş ile yarışmasın
+            if _qr_gerekli(cur) and not y.acik_mi(cur, sube_id, p["id"]):
+                raise HTTPException(400, "Önce telefonundan QR ile giriş yap")   # yeni kapanış; işlem geri alınır
+            y.cikis_yaz(cur, p["id"], "kapanis", kim=kim, sube_id=str(sube_id))   # tasarım: kapanış = kapanışçının çıkışı
         return {"olay": oid, "tekrar": oid is None and bool(k.get("tekrar")), "sayilan": len(satir) if d else 0,
                 "mesaj": "Kapanış kaydedildi" + (" — ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)" if satir and gecmis else ""),
                 "saat_engeli": engel}

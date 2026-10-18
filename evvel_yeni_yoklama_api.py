@@ -249,11 +249,19 @@ def acik_mi(cur, sube_id: str, personel_id: str) -> bool:
     return bool(cur.fetchone())
 
 
+def personel_kilidi(cur, personel_id: str) -> None:
+    """PUBLIC: kişinin yoklama işlemleri sıraya girer (telefon giriş/çıkış ile panel kapanışı yarışmasın)."""
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_yoklama:" + str(personel_id),))
+
+
 def cikis_yaz(cur, personel_id: str, tur: str, kim: Optional[str] = None, mesafe: Optional[int] = None,
-              cihaz_id: Optional[str] = None, istek_id: Optional[str] = None) -> Optional[str]:
-    """PUBLIC: açık girişi kapatır (tur: qr / devir / kapanis / merkez). Açık giriş yoksa sessizce None (zaten çıkmış)."""
+              cihaz_id: Optional[str] = None, istek_id: Optional[str] = None, sube_id: Optional[str] = None) -> Optional[str]:
+    """PUBLIC: açık girişi kapatır (tur: qr / devir / kapanis / merkez). sube_id verilirse yalnız o şubedeki açık giriş.
+    Açık giriş yoksa sessizce None (zaten çıkmış)."""
     yoklama_hazirla()
-    cur.execute("SELECT id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL FOR UPDATE", (personel_id,))
+    personel_kilidi(cur, personel_id)
+    cur.execute("SELECT id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL AND (%s::text IS NULL OR sube_id=%s) FOR UPDATE",
+                (personel_id, sube_id, sube_id))
     r = cur.fetchone()
     if not r:
         return None
@@ -499,11 +507,13 @@ async def giris(request: Request):
     """QR + konum ile giriş. Açık girişi varsa: aynı şubeyse aynı kayıt; başka şubeyse önce çıkış (K11). Çıkıştan sonra yeni satır (K4)."""
     def fn(cur, c, p, v):
         ist = _istek(v)
-        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_yoklama:" + p["id"],))
-        cur.execute("SELECT id, sube_id FROM ey_yoklama WHERE istek_id=%s", (ist,))
+        personel_kilidi(cur, p["id"])
+        cur.execute("SELECT personel_id, giris_ts FROM ey_yoklama WHERE istek_id=%s", (ist,))
         r = cur.fetchone()
         if r:
-            return {"ok": True, "tekrar": True, "mesaj": "Giriş zaten kaydedildi"}
+            if dict(r)["personel_id"] != p["id"]:
+                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
+            return {"ok": True, "tekrar": True, "mesaj": f"Giriş zaten kaydedildi · {_saat(dict(r)['giris_ts'])}"}
         cur.execute("SELECT y.id, y.sube_id, s.ad FROM ey_yoklama y LEFT JOIN ey_sube s ON s.id=y.sube_id "
                     "WHERE y.personel_id=%s AND y.cikis_ts IS NULL", (p["id"],))
         a = cur.fetchone()
@@ -524,10 +534,13 @@ async def giris(request: Request):
 async def cikis(request: Request):
     def fn(cur, c, p, v):
         ist = _istek(v)
-        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_yoklama:" + p["id"],))
-        cur.execute("SELECT 1 FROM ey_yoklama WHERE cikis_istek_id=%s", (ist,))
-        if cur.fetchone():
-            return {"ok": True, "tekrar": True, "mesaj": "Çıkış zaten kaydedildi"}
+        personel_kilidi(cur, p["id"])
+        cur.execute("SELECT personel_id, cikis_ts FROM ey_yoklama WHERE cikis_istek_id=%s", (ist,))
+        r = cur.fetchone()
+        if r:
+            if dict(r)["personel_id"] != p["id"]:
+                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
+            return {"ok": True, "tekrar": True, "mesaj": f"Çıkış zaten kaydedildi · {_saat(dict(r)['cikis_ts'])}"}
         cur.execute("SELECT sube_id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL", (p["id"],))
         a = cur.fetchone()
         if not a:
@@ -542,12 +555,21 @@ async def cikis(request: Request):
 
 # ─────────────────────────── MERKEZ: okuma + düzeltme ───────────────────────────
 @router.get("/gunler")
-def gunler(bas: str, son: str, x_evvel_oturum: Optional[str] = Header(default=None)):
+def gunler(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = False,
+           x_evvel_oturum: Optional[str] = Header(default=None)):
+    """acik=1: iş günü geçmiş, çıkışı yazılmamış TÜM kayıtlar (Bekleyen işler ile aynı ölçüt)."""
     yoklama_hazirla()
     with db() as (conn, cur):
         _merkez(cur, x_evvel_oturum)
-        cur.execute("""SELECT y.*, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
-                         LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE y.is_gunu BETWEEN %s AND %s ORDER BY y.is_gunu, y.giris_ts""", (bas, son))
+        if acik:
+            cur.execute("""SELECT y.*, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
+                             LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE y.cikis_ts IS NULL AND y.is_gunu < %s
+                            ORDER BY y.is_gunu, y.giris_ts""", (is_gunu(),))
+        elif bas and son:
+            cur.execute("""SELECT y.*, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
+                             LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE y.is_gunu BETWEEN %s AND %s ORDER BY y.is_gunu, y.giris_ts""", (bas, son))
+        else:
+            raise HTTPException(400, "bas/son ya da acik=1")
         rows = [dict(r) for r in cur.fetchall() or []]
     return {"satirlar": [{"id": r["id"], "gun": r["is_gunu"].isoformat(), "ad": r["ad"], "sube": r["sube_ad"], "giris": _saat(r["giris_ts"]),
                           "cikis": _saat(r["cikis_ts"]), "cikis_tur": r["cikis_tur"], "mesafe": r["giris_mesafe_m"], "muaf": r["giris_muaf"]}
