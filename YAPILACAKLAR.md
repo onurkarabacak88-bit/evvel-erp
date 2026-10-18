@@ -68,7 +68,7 @@
 | B5 | Y1: yemek molası + merkez "Yemek molaları" sekmesi + 61. dk / molasız gün hak yok + maaş yemek kalemi + merkez elle hak verir | ⏳ |
 | B6 | Y2: kasa devri çift onay (iki telefon) · "tutmuyor" → merkez | ⏳ |
 | B7 | Konum muafiyeti (yönetici) + erken açılış izni + **müdür (maaş her türlü tam)** — Tanımlar › Personel'de işaret | ⏳ |
-| B7a | **Vardiya planı Evvel Yeni'de** (Fable tasarımı; zamanında/geç + mesai önerisi; "olmalı mı" 36 = TAŞI) | ⏳ Fable'a soruluyor |
+| B7a | **Vardiya planı Evvel Yeni'de** (VARDIYA_PLANI_TASARIM.md; V1–V10 Fable önerileri onaylı) — V0 24–26 Ekim, V1 27–29 Ekim, V2 Kasım 1. hafta | ⏳ tasarım ✅ |
 | B8 | **Telefon sayfası yeniden kurulacak** (avans talebi buradan; puan + geri bildirim buraya) | ⏳ |
 | B9 | Panel faz 2: Teslim al (+ fatura çek QR, eksik geldi) · Depodan gelen · Anlık gider (fiş var/yok) · Not/Mesaj | ⏳ |
 | B10 | Panel küçükler (sahip: "sen bitir"): büyük sayı tuş takımı · ürün aç notu · ara teslim açıklaması · online = nakit+POS kontrolü | ⏳ |
