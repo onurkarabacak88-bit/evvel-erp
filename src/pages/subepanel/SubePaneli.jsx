@@ -5,17 +5,18 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 
-const C = { bg: '#0b0f1a', bg1: '#111827', bg2: '#1a2236', bg3: '#222d42', cizgi: 'rgba(99,120,160,0.18)', yazi: '#f0f4ff', soluk: '#7a8ba8',
-  mavi: '#3b82f6', yesil: '#22c55e', sari: '#f59e0b', kirmizi: '#ef4444', mor: '#7c3aed' };
+// Sahip (2026-10-18): "ekranın rengini, parlaklığını aç" → AÇIK, parlak tema (QR / personel ekranlarıyla aynı aile)
+const C = { bg: '#f4f6fb', bg1: '#ffffff', bg2: '#ffffff', bg3: '#eef2f8', cizgi: 'rgba(30,41,59,0.14)', yazi: '#0f172a', soluk: '#5b6b84',
+  mavi: '#2563eb', yesil: '#16a34a', sari: '#b45309', kirmizi: '#dc2626', mor: '#7c3aed' };
 const CSS = `
 .sp *{box-sizing:border-box} .sp{font-family:Inter,system-ui,sans-serif;background:${C.bg};color:${C.yazi};min-height:100vh;font-size:15px}
-.sp-btn{min-height:72px;border-radius:12px;border:1px solid ${C.cizgi};background:${C.bg2};color:${C.yazi};font-size:17px;font-weight:700;cursor:pointer;padding:10px 16px}
-.sp-btn:disabled{opacity:.45;cursor:default} .sp-ana{background:${C.mavi};border-color:${C.mavi}} .sp-yesil{background:${C.yesil};border-color:${C.yesil};color:#05210f}
-.sp-mor{background:linear-gradient(135deg,#4c1d95,${C.mor});border-color:rgba(168,85,247,.4)}
+.sp-btn{min-height:72px;border-radius:12px;border:1px solid ${C.cizgi};background:${C.bg2};color:${C.yazi};font-size:17px;font-weight:700;cursor:pointer;padding:10px 16px;box-shadow:0 1px 3px rgba(15,23,42,.08)}
+.sp-btn:disabled{opacity:.45;cursor:default} .sp-ana{background:${C.mavi};border-color:${C.mavi};color:#fff} .sp-yesil{background:${C.yesil};border-color:${C.yesil};color:#fff}
+.sp-mor{background:linear-gradient(135deg,#6d28d9,${C.mor});border-color:#6d28d9;color:#fff}
 .sp-in{width:100%;min-height:56px;border-radius:10px;border:1px solid ${C.cizgi};background:${C.bg1};color:${C.yazi};font-size:22px;padding:8px 12px}
 .sp-sol{display:flex;align-items:center;gap:10px;width:100%;min-height:56px;padding:10px 14px;border-radius:8px;border:none;background:transparent;color:${C.soluk};font-size:15px;font-weight:600;cursor:pointer;text-align:left}
-.sp-sol.akt{background:rgba(59,130,246,.15);color:${C.mavi}} .sp-sol:disabled{opacity:.4;cursor:default}
-.sp-kart{background:${C.bg1};border:1px solid ${C.cizgi};border-radius:12px;padding:14px}
+.sp-sol.akt{background:rgba(37,99,235,.10);color:${C.mavi}} .sp-sol:disabled{opacity:.4;cursor:default}
+.sp-kart{background:${C.bg1};border:1px solid ${C.cizgi};border-radius:12px;padding:14px;box-shadow:0 1px 3px rgba(15,23,42,.06)}
 .sp-pm{width:72px;height:72px;border-radius:12px;border:1px solid ${C.cizgi};background:${C.bg3};color:${C.yazi};font-size:30px;font-weight:800;cursor:pointer}
 .sp-govde{display:grid;grid-template-columns:220px 1fr 260px;gap:12px;padding:12px}
 @media (max-width:980px){.sp-govde{grid-template-columns:1fr}}
@@ -29,7 +30,7 @@ const tutarNum = (s) => (s === '' || s == null ? 0 : Number(String(s).replace(/\
 
 function Modal({ baslik, kapat, children, genis }) {
   return (
-    <div onClick={kapat} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+    <div onClick={kapat} style={{ position: 'fixed', inset: 0, background: 'rgba(15,23,42,.45)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
       <div onClick={(e) => e.stopPropagation()} className="sp-kart" style={{ width: genis ? 'min(980px,100%)' : 'min(560px,100%)', maxHeight: '92vh', overflow: 'auto', display: 'grid', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><b style={{ fontSize: 20, flex: 1 }}>{baslik}</b>
           <button className="sp-btn" style={{ minHeight: 48, padding: '4px 14px' }} onClick={kapat}>✕</button></div>
@@ -214,7 +215,7 @@ export default function SubePaneli({ subeId }) {
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px', background: C.bg1, borderBottom: `1px solid ${C.cizgi}`, flexWrap: 'wrap' }}>
         <b style={{ fontSize: 20 }}>☕ {d.sube.ad}</b>
         <span style={{ color: C.soluk }}>{new Date(d.gun + 'T12:00').toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' })}</span>
-        {d.kuru && <span style={{ background: 'rgba(245,158,11,.15)', color: C.sari, padding: '6px 10px', borderRadius: 8, fontWeight: 700 }}>DENEME — kaydedilmez · panel {new Date(d.panel_baslangic + 'T12:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })} sabahı açılır</span>}
+        {d.kuru && <span style={{ background: 'rgba(245,158,11,.16)', color: C.sari, padding: '6px 10px', borderRadius: 8, fontWeight: 700 }}>DENEME — kaydedilmez · panel {new Date(d.panel_baslangic + 'T12:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })} sabahı açılır</span>}
         <span style={{ flex: 1 }} />
         <select className="sp-in" style={{ width: 240, fontSize: 18, minHeight: 52 }} value={kisi} onChange={(e) => setKisi(e.target.value)}>
           <option value="">— Adını seç —</option>
