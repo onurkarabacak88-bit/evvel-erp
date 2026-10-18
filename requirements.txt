@@ -12,3 +12,4 @@ qrcode
 requests
 pdfplumber
 pymupdf
+cryptography

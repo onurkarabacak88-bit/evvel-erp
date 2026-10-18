@@ -52,6 +52,7 @@ import FireFotoYukle from './pages/FireFotoYukle';
 import CepApp from './pages/cep/CepApp';
 import EvvelYeniApp from './pages/evvelyeni/EvvelYeniApp';
 import SubePaneli from './pages/subepanel/SubePaneli';
+import TelefonSayfasi from './pages/telefon/TelefonSayfasi';
 import DuyuPaneli from './pages/DuyuPaneli';
 import ReceteEslestirme from './pages/ReceteEslestirme';
 import BelgeMerkezi from './pages/BelgeMerkezi';
@@ -321,6 +322,13 @@ export default function App() {
   if (yeniPanel) {
     return <SubePaneli subeId={decodeURIComponent(yeniPanel[1])} />;
   }
+
+  // 📱 YOKLAMA TELEFON SAYFASI (Evvel Yeni) — /q/bagla/{davet} · /q/{sube}/{jeton} (QR) · /q (durum); menüsüz, açık tema (YOKLAMA_QR_TASARIM.md)
+  const qBagla = window.location.pathname.match(/^\/q\/bagla\/([^/]+)\/?$/);
+  if (qBagla) return <TelefonSayfasi mod="bagla" davet={decodeURIComponent(qBagla[1])} />;
+  const qOkut = window.location.pathname.match(/^\/q\/([^/]+)\/([^/]+)\/?$/);
+  if (qOkut) return <TelefonSayfasi mod="qr" sube={decodeURIComponent(qOkut[1])} jeton={decodeURIComponent(qOkut[2])} />;
+  if (/^\/q\/?$/.test(window.location.pathname)) return <TelefonSayfasi mod="durum" />;
 
   // EVVEL · CEP — işletme sahibi mobil kabuğu (sidebar yok, ayrı kabuk)
   if (window.location.pathname === '/cep' || window.location.pathname.startsWith('/cep/')) {

@@ -57,6 +57,20 @@ def _sube(cur, sube_id: str) -> dict:
     return s
 
 
+def _yoklama():
+    """Yumuşak bağ: yoklama modülü yüklüyse PUBLIC servisleri; değilse None (panel yoklamasız çalışır)."""
+    from evvel_yeni_moduller import DURUM
+    if DURUM.get("yoklama") != "yuklendi":
+        return None
+    import evvel_yeni_yoklama_api as y
+    return y
+
+
+def _qr_gerekli(cur) -> bool:
+    """QR kapısı: yoklama yüklü + deneme dönemi bitti (panel_baslangic). Denemede kapı uyarı olarak görünür, engel olmaz."""
+    return _yoklama() is not None and _bugun() >= _baslangic(cur)
+
+
 def _personel(cur, sube_id: str, pid: Optional[str]) -> dict:
     """Ad seçimi (sahip: yetki fazına kadar PIN yok). Her kayıt personel kimliği taşır."""
     from evvel_yeni_tanim_api import secim_listeleri
@@ -67,6 +81,9 @@ def _personel(cur, sube_id: str, pid: Optional[str]) -> dict:
         raise HTTPException(400, "Personel bulunamadı")
     if str(p.get("sube_id") or "") != str(sube_id):   # Codex: başka şubenin personeli bu şubeye yazamasın
         raise HTTPException(400, "Bu şubenin personeli değilsin — adını listeden seç")
+    y = _yoklama()
+    if y is not None and _qr_gerekli(cur) and not y.acik_mi(cur, sube_id, str(p["id"])):   # K: panel ad listesi = bugün girenler
+        raise HTTPException(400, "Önce telefonundan QR ile giriş yap")
     return {"id": str(p["id"]), "ad": p["ad"], "erken_acilis": bool(p.get("erken_acilis"))}
 
 
@@ -271,6 +288,17 @@ def panel_durum(sube_id: str):
                     "iptal": o.get("iptal", False)}
                    for o in olaylar(cur, sube_id=sube_id, bas=gun, son=gun) if (o.get("kaynak_tablo") or "") == "panel"]
         bas = _baslangic(cur)
+        y = _yoklama()
+        yok = {"var": y is not None, "qr_gerekli": False, "girenler": [], "son_okutanlar": [], "tablet_kayitli": False}
+        if y is not None:
+            yok["qr_gerekli"] = gun >= bas
+            yok["girenler"] = y.bugun_girenler(cur, str(sube_id), gun)
+            yok["son_okutanlar"] = y.son_okutanlar(cur, str(sube_id), 120)
+            cur.execute("SELECT 1 FROM ey_cihaz WHERE sube_id=%s AND tur='tablet' AND durum='aktif' LIMIT 1", (str(sube_id),))
+            yok["tablet_kayitli"] = bool(cur.fetchone())
+            if yok["qr_gerekli"]:
+                acik = {g["personel_id"] for g in yok["girenler"] if g["acik"]}
+                per = [x for x in per if x["id"] in acik]
     def _u(x):
         return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici")}
     return {"sube": {"id": s["id"], "ad": s["ad"]}, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
@@ -278,7 +306,7 @@ def panel_durum(sube_id: str):
             "sayilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "sayim" and x.get("panel_sayim")]}
                         for k in kat],
             "acilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "acilinca"]} for k in kat],
-            "bugun": bugunku,
+            "bugun": bugunku, "yoklama": yok,
             "acilis_var": any(o["tur"] == "acilis" and not o["iptal"] for o in bugunku),
             "kapanis_var": any(o["tur"] == "kapanis" and not o["iptal"] for o in bugunku),
             "fire_sebepleri": [{"kod": k, "ad": v} for k, v in FIRE_SEBEPLERI.items()],
@@ -434,6 +462,9 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
         if satir and gecmis:
             log.warning("geç kapanış %s %s: ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)", sube_id, gun)
             cur.execute("""UPDATE ey_sube_olay SET veri = veri || '{"sayim_uygulanmadi": true}'::jsonb WHERE id=%s""", (oid,)) if oid else None
+        y = _yoklama()
+        if y is not None and not c["kuru"] and not c.get("merkez") and oid is not None:
+            y.cikis_yaz(cur, p["id"], "kapanis", kim=kim)   # tasarım: kapanış = kapanışçının çıkışı
         return {"olay": oid, "tekrar": oid is None and bool(k.get("tekrar")), "sayilan": len(satir) if d else 0,
                 "mesaj": "Kapanış kaydedildi" + (" — ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)" if satir and gecmis else ""),
                 "saat_engeli": engel}

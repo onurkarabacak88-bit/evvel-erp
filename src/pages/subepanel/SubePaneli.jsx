@@ -4,6 +4,7 @@
 // POS kuralı: düğme ≥ 72px, +/− 72×72, adet 32px. Ad seçimi (PIN yetki fazında). Panel 1 Kasım'a kadar DENEME (kaydetmez).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
+import { cihazId, imzaliFetch } from '../../utils/cihazImza';
 
 const C = { bg: '#0b0f1a', bg1: '#111827', bg2: '#1a2236', bg3: '#222d42', cizgi: 'rgba(99,120,160,0.18)', yazi: '#f0f4ff', soluk: '#7a8ba8',
   mavi: '#3b82f6', yesil: '#22c55e', sari: '#f59e0b', kirmizi: '#ef4444', mor: '#7c3aed' };
@@ -87,6 +88,32 @@ function SayimListesi({ gruplar, sayim, setSayim }) {
   );
 }
 
+// 📱 Dönen QR (YOKLAMA_QR_TASARIM.md §B5): yalnız bu tarayıcıda KAYITLI tabletin imzalı isteğine PNG döner; 20 sn'de bir yenilenir.
+function TabletQR({ boyut, onClick }) {
+  const [src, setSrc] = useState('');
+  const [hata, setHata] = useState('');
+  useEffect(() => {
+    let canli = true;
+    let onceki = '';
+    const cek = () => imzaliFetch('tablet', 'GET', '/api/evvel-yeni/yoklama/qr.png')
+      .then(async (r) => {
+        if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(typeof d.detail === 'string' ? d.detail : 'QR alınamadı'); }
+        return r.blob();
+      })
+      .then((b) => { if (!canli) return; const u = URL.createObjectURL(b); if (onceki) URL.revokeObjectURL(onceki); onceki = u; setSrc(u); setHata(''); })
+      .catch((e) => { if (canli) setHata(e instanceof TypeError ? 'İnternet yok' : (e?.message || 'QR alınamadı')); });
+    cek();
+    const t = window.setInterval(cek, 20000);
+    return () => { canli = false; window.clearInterval(t); if (onceki) URL.revokeObjectURL(onceki); };
+  }, []);
+  return (
+    <div onClick={onClick} style={{ width: boyut, height: boyut, background: '#fff', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: onClick ? 'pointer' : 'default', overflow: 'hidden' }}>
+      {src ? <img src={src} alt="QR" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+        : <span style={{ color: '#333', fontSize: boyut > 200 ? 16 : 11, textAlign: 'center', padding: 6 }}>{hata || 'QR…'}</span>}
+    </div>
+  );
+}
+
 const sayimGovde = (sayim) => Object.entries(sayim).filter(([, v]) => v !== '' && v != null).map(([urun_id, v]) => ({ urun_id, sayilan: Number(v) }));
 const kalemGovde = (adet) => Object.entries(adet).filter(([, n]) => n > 0).map(([urun_id, n]) => ({ urun_id, adet: n }));
 
@@ -106,6 +133,12 @@ export default function SubePaneli({ subeId }) {
   const [f, setF] = useState({});
   const [anladim, setAnladim] = useState(null);     // tam ekran hata kartı (D6): işlem yapılmadı → personel görmeden geçemez
   const [kuyrukSay, setKuyrukSay] = useState(0);
+  // 📱 Yoklama (QR telefon): tablet bu tarayıcıda kayıtlıysa köşede küçük QR (dokununca büyür); kapı açıkken büyük QR
+  const [qrBuyuk, setQrBuyuk] = useState(false);
+  const tabletVar = !!cihazId('tablet');
+  const yok = d?.yoklama || { var: false, qr_gerekli: false, girenler: [], son_okutanlar: [], tablet_kayitli: false };
+  const qrKapi = yok.qr_gerekli && tabletVar && !(yok.girenler || []).some((g) => g.acik);   // kimse içeride değil → tam QR
+  const qrGorunur = tabletVar && (qrBuyuk || qrKapi);
 
   // 💾 TASLAK (D6): açık formun her değişikliği tablete — pencere kapansa / sayfa yenilense geri gelir (iş günü boyunca)
   const [formGun, setFormGun] = useState(null);   // Codex: açık formun günü, açıldığı an sabitlenir
@@ -152,7 +185,7 @@ export default function SubePaneli({ subeId }) {
 
   const yukle = useCallback(() => api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/durum`)
     .then((x) => { setD(x); setHata(''); }).catch((e) => setHata(e?.message || 'Panel açılamadı')), [subeId]);
-  useEffect(() => { yukle(); const t = window.setInterval(yukle, 60000); return () => window.clearInterval(t); }, [yukle]);   // gün değişimi (02:00) ve yeni kayıtlar
+  useEffect(() => { yukle(); const t = window.setInterval(yukle, qrGorunur ? 5000 : 60000); return () => window.clearInterval(t); }, [yukle, qrGorunur]);   // gün değişimi (02:00) ve yeni kayıtlar; QR görünürken 5 sn (giriş düşünce kapansın)
   useEffect(() => { try { if (kisi) localStorage.setItem('sp_kisi:' + subeId, kisi); } catch { /* yok say */ } }, [kisi, subeId]);
 
   const temizle = () => { setAdet({}); setSebep(''); setSayim({}); setF({}); setIstek(yeniIstek()); };
@@ -249,6 +282,38 @@ export default function SubePaneli({ subeId }) {
             <button className="sp-btn" disabled={kapali} onClick={() => ac('fire')}>🗑️ Fire</button>
             <button className="sp-btn" disabled={kapali} onClick={() => ac('araTeslim')}>💵 Ara Teslim</button>
           </div>
+          {yok.var && (
+            <div className="sp-kart" style={{ display: 'grid', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><b>📱 Bugün girenler</b>
+                {!tabletVar && <span style={{ color: C.soluk, fontSize: 13 }}>· Tablet kayıtlı değil — merkezden link</span>}</div>
+              {yok.girenler.length === 0 && !qrKapi && <div style={{ color: C.soluk }}>{yok.qr_gerekli ? 'Önce telefonundan QR ile giriş yap' : 'Henüz QR ile giren yok.'}</div>}
+              {qrKapi && (
+                <div style={{ display: 'grid', justifyItems: 'center', gap: 10, padding: 8 }}>
+                  <b style={{ fontSize: 22 }}>Önce telefonundan QR ile giriş yap</b>
+                  <TabletQR boyut={Math.min(420, Math.max(260, (window.innerWidth || 600) - 80))} />
+                  <span style={{ color: C.soluk }}>QR 60 saniyede bir değişir — telefon kamerasıyla okut</span>
+                </div>
+              )}
+              {yok.girenler.map((g) => (
+                <div key={g.personel_id} style={{ display: 'flex', gap: 10, padding: '8px 0', borderTop: `1px solid ${C.cizgi}`, opacity: g.acik ? 1 : 0.6 }}>
+                  <b style={{ flex: 1 }}>{g.ad}</b>
+                  <span style={{ color: C.soluk }}>giriş {g.giris || '—'}</span>
+                  <span style={{ color: g.cikis ? C.yesil : C.soluk, width: 110, textAlign: 'right' }}>{g.cikis ? `çıkış ${g.cikis} ✓` : 'içeride'}</span>
+                </div>
+              ))}
+              {yok.son_okutanlar.length > 0 && (
+                <div style={{ borderTop: `1px solid ${C.cizgi}`, paddingTop: 8 }}>
+                  <div style={{ color: C.soluk, fontSize: 13, fontWeight: 700 }}>Son okutanlar</div>
+                  {yok.son_okutanlar.map((o, i) => (
+                    <div key={i} style={{ display: 'flex', gap: 10, padding: '4px 0', fontSize: 14 }}>
+                      <span style={{ color: C.soluk, width: 48 }}>{o.saat}</span><b style={{ flex: 1 }}>{o.ad}</b>
+                      <span style={{ color: o.islem === 'giris' ? C.yesil : C.sari }}>{o.islem === 'giris' ? 'giriş' : 'çıkış'}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
           <div className="sp-kart">
             <b>Bugün kaydedilenler</b>
             {d.bugun.length === 0 && <div style={{ color: C.soluk, marginTop: 6 }}>Henüz kayıt yok.</div>}
@@ -272,6 +337,19 @@ export default function SubePaneli({ subeId }) {
         </div>
       </div>
 
+      {tabletVar && yok.var && !qrKapi && !qrBuyuk && (
+        <div style={{ position: 'fixed', right: 12, bottom: 12, zIndex: 40, padding: 6, borderRadius: 14, background: C.bg1, border: `1px solid ${C.cizgi}` }}>
+          <TabletQR boyut={120} onClick={() => setQrBuyuk(true)} />
+        </div>
+      )}
+      {qrBuyuk && (
+        <Modal baslik="📱 Giriş / çıkış QR" kapat={() => setQrBuyuk(false)}>
+          <div style={{ display: 'grid', justifyItems: 'center', gap: 10 }}>
+            <TabletQR boyut={Math.min(440, Math.max(260, (window.innerWidth || 600) - 80))} />
+            <span style={{ color: C.soluk }}>Telefonundan okut — 60 saniyede bir değişir</span>
+          </div>
+        </Modal>
+      )}
       {anladim && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.85)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div className="sp-kart" style={{ maxWidth: 520, display: 'grid', gap: 16, textAlign: 'center', borderColor: C.kirmizi }}>
