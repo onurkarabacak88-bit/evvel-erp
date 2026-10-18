@@ -103,10 +103,10 @@ export default function YoklamaModulu({ onToast }) {
 
       {v && (
         <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 2 }}>
-          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>Şube · tablet (QR'ı yalnız kayıtlı tablet gösterir)</div>
+          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>Şube · panel bilgisayarı (QR'ı yalnız kayıtlı panel gösterir — linki şubedeki PC'de aç)</div>
           {v.subeler.map((s) => (
             <div key={s.id} style={satir}>
-              <span style={{ flex: '1 1 160px' }}><b>{s.ad}</b> <span style={{ fontSize: 12, color: s.konum ? R.not : R.kirmizi }}>{s.konum ? '📍 koordinat var' : '📍 koordinat yok (Tanımlar › Şube)'}</span></span>
+              <span style={{ flex: '1 1 160px' }}><b>{s.ad}</b> <a href={`/panel/${encodeURIComponent(s.id)}`} target="_blank" rel="noreferrer" style={{ fontSize: 12, color: 'var(--pi-accent)' }}>paneli aç ↗</a> <span style={{ fontSize: 12, color: s.konum ? R.not : R.kirmizi }}>{s.konum ? '📍 koordinat var' : '📍 koordinat yok (Tanımlar › Şube)'}</span></span>
               <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>{cihazDurum(s.tabletler)}</span>
               <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                 {s.tabletler.filter((c) => c.durum === 'onay').map((c) => (

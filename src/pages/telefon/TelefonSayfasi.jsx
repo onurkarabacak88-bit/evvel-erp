@@ -80,7 +80,11 @@ function Bagla({ davet }) {
           <b style={{ fontSize: 20 }}>{sonuc.mesaj}</b>
           {sonuc.guc === 'jeton' && <div className="tq-silik">Bu tarayıcı güçlü anahtar üretemedi; bağ zayıf (merkez görür).</div>}
           {sonuc.tur === 'telefon' && <div className="tq-not">Artık giriş / çıkış için şubedeki tabletin QR'ını okutman yeterli.</div>}
-          {sonuc.tur === 'tablet' && <div className="tq-not">Merkez onaylayınca şube paneli QR göstermeye başlar.</div>}
+          {sonuc.tur === 'tablet' && <div className="tq-not">Merkez onaylayınca şube paneli köşede QR göstermeye başlar. Paneli hep BU tarayıcıda (normal pencerede) aç.</div>}
+          {sonuc.tur === 'tablet' && sonuc.sube_id && (
+            <a className="tq-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}
+               href={`/panel/${encodeURIComponent(sonuc.sube_id)}`}>🧾 Şube panelini aç</a>
+          )}
           {sonuc.tur === 'telefon' && <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">Durumumu gör</a>}
         </div>
       ) : (

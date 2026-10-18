@@ -486,8 +486,9 @@ def cihaz_bagla(b: BaglaBody):
         else:
             cur.execute("SELECT ad FROM ey_sube WHERE id=%s", (c["sube_id"],))
         ad = dict(cur.fetchone() or {}).get("ad")
-    return {"ok": True, "cihaz_id": c["id"], "tur": c["tur"], "durum": durum, "ad": ad, "guc": guc,
-            "mesaj": (f"Bu telefon artık {ad} adına" if c["tur"] == "telefon" else f"Tablet {ad} için kaydedildi — merkez onayı bekleniyor")}
+    return {"ok": True, "cihaz_id": c["id"], "tur": c["tur"], "durum": durum, "ad": ad, "guc": guc, "sube_id": c.get("sube_id"),
+            "mesaj": (f"Bu telefon artık {ad} adına" if c["tur"] == "telefon"
+                      else f"Bu bilgisayar {ad} paneli olarak kaydedildi — merkez onayı bekleniyor")}
 
 
 @router.post("/cihaz/{cid}/onayla")
