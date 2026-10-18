@@ -66,7 +66,7 @@ Hata tek cümle: "Şubeden uzaksın (320 m)" · "QR süresi doldu — tekrar oku
 | K4 | Çıkış yaptıktan sonra aynı gün tekrar gelen kişi: telefondan ikinci giriş açılsın mı? | **Açılsın** (ikinci satır); Takvim gün bazında birleştirir |
 | K5 | Devralan "Tutmuyor" derse: devir yine tamamlansın (çıkış işlensin) ama merkeze düşsün **mü**, devir açık kalsın **mı**? | **Tamamlansın + ⚠ Bekleyen iş** (kasa kimdeyse o sorumlu; akış tıkanmaz) |
 | K6 | Eski telefon sayfasındaki diğer işler (görev listesi, avans talebi, stok sayım görevi, puan): 1 Kasım'da ne olacak? | Avans talebi → yeni telefon sayfasına **Y3'te** (Avans modülü ucu); görev listesi / sayım / puan **çıkar** (envanter kararı) |
-| K7 | Mola uzunluk eşiği (merkez sekmesinde "uzun" işareti) | 60 dk (`ey_ayar.mola_limit_dk`), ücrete etkisiz |
+| K7 | ✅ (sahip) Mola **60 dk'ya kadar** (60 dahil) → yemek hakkı KAZANILIR; **61. dakikadan itibaren** → merkezde "uzun" bildirimi + personelin telefonunda **"Bugün yemek hakkı kazanılamadı"** + **maaş hesabında o günün yemek ücreti hakkı düşer**. Sahip: "Biz gerekirse ödemesini yaparız" → merkez o gün için hakkı elle verebilir (izli). |
 
 ---
 
@@ -238,9 +238,9 @@ Ekim verisi taşınmaz (içerik kopyası yalnız şube koordinatı). Kapanış s
 | # | Karar |
 |---|---|
 | K1 | ✅ Telefon bağlama: **merkez kişiye özel tek kullanımlık link** (48 saat) üretir, WhatsApp'tan gönderilir |
-| K2 | ✅ Konum muafiyeti **kalkar**; herkes ≤150 m; zorunlu düzeltmeyi merkez yazar |
-| K3 | ✅ Koordinatsız şube: giriş **serbest** + merkez Bekleyen işler "koordinat eksik" (1 Kasım öncesi 4 şube girilir) |
+| K2 | ✅ (sahip düzeltti) Konum muafiyeti **KALIR**: yönetici olarak işaretli kişi konumsuz giriş/çıkış yapabilir (ey_personel'de işaret; eski içerik bir kez) |
+| K3 | ✅ Koordinatsız şube: giriş serbest + merkez "koordinat eksik". **4 şubenin koordinatı sistemde VAR** (eski şube kartı) → ey_sube'ye içerik olarak bir kez kopyalanır |
 | K4 | ✅ Aynı gün ikinci giriş **açılır** (ayrı satır, süreler toplanır) |
 | K5 | ✅ "Tutmuyor": devir **tamamlanır** + merkez "⚠ Devir tutmuyor" |
-| K6 | ✅ Eski telefon sayfası: **avans taşınır**; görev listesi / stok sayım görevi / puan için ayrı envanter kararı (sonra) |
-| K7 | ✅ Mola "uzun" eşiği **60 dk** (yalnız merkez işareti; ücrete etkisiz) |
+| K6 | ✅ (sahip) **Eski telefon sayfası YENİDEN KURULACAK** (yapılacak işler listesinde); **avans talebi oradan yapılır**; görev listesi / stok sayım görevi / puan o kurguda ele alınır |
+| K7 | ✅ (sahip düzeltti) Mola **60 dk'yı geçerse**: merkezde "uzun" bildirimi + **personelin telefonunda "Bugün yemek hakkı kazanılamadı"** + **maaş hesabında o günün yemek ücreti hakkı düşer** (aylık 7.000 ₺'nin o güne düşen payı; Maaş modülü bu işareti okur) |
