@@ -179,9 +179,9 @@ def _deneme_ac(sube_id: str, tur: str, gun, govde: dict) -> Optional[str]:
                         (did, str(sube_id), tur, gun, govde.get("istek_id"), govde.get("personel_id") or govde.get("devreden_id"),
                          json.dumps(govde, ensure_ascii=False, default=str)))
         return did
-    except Exception as e:  # noqa: BLE001 — deneme yazılamazsa asıl işlem yine denenir (log'da iz)
+    except Exception as e:  # noqa: BLE001 — Codex: deneme yazılamazsa işlem YAPILMAZ (iz garantisi); tablet kuyruğu tekrar dener
         log.error("panel denemesi yazılamadı (%s %s): %s", sube_id, tur, str(e)[:200])
-        return None
+        raise HTTPException(503, "Kaydedilemedi — tekrar deneyin")
 
 
 def _deneme_kapat(did: Optional[str], sonuc: str, sebep: Optional[str] = None) -> None:
@@ -195,7 +195,7 @@ def _deneme_kapat(did: Optional[str], sonuc: str, sebep: Optional[str] = None) -
 
 
 def _calistir(sube_id: str, istek_id: Optional[str], is_fn, tur: Optional[str] = None, govde: Optional[dict] = None,
-              gun=None, merkez: Optional[str] = None) -> dict:
+              gun=None, merkez: Optional[str] = None, isle_deneme: Optional[str] = None) -> dict:
     """Ortak iskelet: deneme kaydı → hazırlık → tek işlem → (deneme modunda geri al) → deneme sonucu.
     gun/merkez: yalnız merkezin 'geç kapanış' işlemi (o iş gününe; saat kuralı ve gün kilidi uygulanmaz)."""
     gun0 = gun or _bugun()
@@ -212,7 +212,7 @@ def _calistir(sube_id: str, istek_id: Optional[str], is_fn, tur: Optional[str] =
             raise HTTPException(409, "Gün değişti — bu kayıt merkeze iletildi")
     did = _deneme_ac(sube_id, tur, gun0, govde or {}) if tur else None
     try:
-        sonuc = _calistir_ic(sube_id, istek_id, is_fn, gun, merkez)
+        sonuc = _calistir_ic(sube_id, istek_id, is_fn, gun, merkez, isle_deneme)
     except HTTPException as e:
         _deneme_kapat(did, "ret" if e.status_code < 500 else "hata", str(e.detail))
         raise
@@ -223,7 +223,8 @@ def _calistir(sube_id: str, istek_id: Optional[str], is_fn, tur: Optional[str] =
     return sonuc
 
 
-def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez: Optional[str] = None) -> dict:
+def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez: Optional[str] = None,
+                 isle_deneme: Optional[str] = None) -> dict:
     """Hazırlık → tek işlem → (deneme modunda geri al). is_fn(cur, ctx) yazar ve özet döner."""
     if istek_id is not None and not re.fullmatch(r"[A-Za-z0-9-]{8,64}", istek_id):   # Codex: '#', '%', '_' ref çakışması üretmesin
         raise HTTPException(400, "İstek kimliği geçersiz")
@@ -242,6 +243,8 @@ def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez:
             cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_gun:{sube_id}:{g.isoformat()}",))
             ctx = {"gun": g, "sube": _sube(cur, sube_id), "kuru": g < _baslangic(cur), "merkez": merkez}
             sonuc = is_fn(cur, ctx)
+            if isle_deneme and not ctx["kuru"]:   # Codex: geç kapanış ile 'işlendi' işareti AYNI işlemde (yarıda kalmaz)
+                cur.execute("UPDATE ey_panel_deneme SET islendi=TRUE, isleyen=%s WHERE id=%s", (merkez, isle_deneme))
             sonuc = {"ok": True, "kuru": ctx["kuru"], **sonuc}
             if ctx["kuru"]:
                 raise _Kuru(sonuc)
@@ -383,7 +386,7 @@ class KapanisBody(BaseModel):
     istek_id: Optional[str] = None
 
 
-def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str] = None) -> dict:
+def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str] = None, isle_deneme: Optional[str] = None) -> dict:
     """Kapanış: ciro (nakit / POS / online) → Kasa kapanış beyanı; teslimler → Kasa teslim; sayım → Depo günlük sayımı
     (düşüş = kullanılan, sahip kararı); hepsi tek işlemde. Aynı gün ikinci kapanış Kasa'da reddedilir (düzeltme merkezde)."""
     _TUR = "kapanis"
@@ -425,11 +428,15 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
                                       tutar=Decimal(t["tutar"]) / 100, teslim_eden=p["ad"]), kim,
                      kaynak_ref=f"{kok}:teslim:{i}")
         # Codex BLOKER: geç kapanışta sayım BUGÜNÜN bakiyesine uygulanmaz (geçmiş gün uzlaştırılamaz) — olayda kalır, merkez görür
+        gecmis = bool(c.get("merkez")) and c["gun"] != _bugun()
         d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=kim, tur="gunluk",
-                      kaynak_ref=f"{kok}:sayim") if satir and not c.get("merkez") else None
+                      kaynak_ref=f"{kok}:sayim") if satir and not gecmis else None
+        if satir and gecmis:
+            log.warning("geç kapanış %s %s: ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)", sube_id, gun)
         return {"olay": oid, "tekrar": oid is None and bool(k.get("tekrar")), "sayilan": len(satir) if d else 0,
                 "mesaj": "Kapanış kaydedildi", "saat_engeli": engel}
-    return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"), gun=gun, merkez=merkez)
+    return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"), gun=gun, merkez=merkez,
+                     isle_deneme=isle_deneme)
 
 
 @router.post("/{sube_id}/kapanis")
@@ -621,9 +628,7 @@ def gec_kapanis(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default
         kb = KapanisBody(**govde)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Kayıtlı kapanış verisi okunamadı: {str(e)[:150]}")
-    sonuc = _kapanis_yaz(r["sube_id"], kb, gun=r["is_gunu"], merkez=kim)
-    with db() as (conn, cur):
-        cur.execute("UPDATE ey_panel_deneme SET islendi=TRUE, isleyen=%s WHERE id=%s", (kim, body.deneme_id))
+    sonuc = _kapanis_yaz(r["sube_id"], kb, gun=r["is_gunu"], merkez=kim, isle_deneme=body.deneme_id)
     return {"ok": True, "mesaj": "Geç kapanış işlendi", "sonuc": sonuc}
 
 

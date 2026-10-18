@@ -108,8 +108,8 @@ export default function SubePaneli({ subeId }) {
   const [kuyrukSay, setKuyrukSay] = useState(0);
 
   // 💾 TASLAK (D6): açık formun her değişikliği tablete — pencere kapansa / sayfa yenilense geri gelir (iş günü boyunca)
-  const tKey = (m) => `sp_taslak:${subeId}:${d?.gun || ''}:${m}`;
-  const taslakOku = (m) => { try { return JSON.parse(localStorage.getItem(tKey(m)) || 'null'); } catch { return null; } };
+  const [formGun, setFormGun] = useState(null);   // Codex: açık formun günü, açıldığı an sabitlenir
+  const tKey = (m, g) => `sp_taslak:${subeId}:${g || formGun || d?.gun || ''}:${m}`;
   const taslakSil = (m) => { try { localStorage.removeItem(tKey(m)); } catch { /* yok say */ } };
   useEffect(() => {
     if (!modal || modal === 'kapanis' || !d) return;
@@ -136,7 +136,7 @@ export default function SubePaneli({ subeId }) {
           kuyrukCikar(it.govde.istek_id);
         } catch (e) {
           if (e instanceof TypeError) break;               // hâlâ internet yok → kalsın
-          if (/tekrar dene|503|502|504/i.test(e?.message || '')) break;   // sunucu geçici → kalsın (Codex: 503'te silinmesin)
+          if (!e?.status || e.status >= 500 || e.status === 429) break;   // sunucu geçici → kalsın (Codex: 5xx'te silinmez)
           kuyrukCikar(it.govde.istek_id);
           setAnladim(`Bekleyen kayıt gönderilemedi (${it.ad || it.yol}): ${e?.message || 'hata'}`);
         }
@@ -158,15 +158,20 @@ export default function SubePaneli({ subeId }) {
   const temizle = () => { setAdet({}); setSebep(''); setSayim({}); setF({}); setIstek(yeniIstek()); };
   const ac = (m) => {
     temizle();
-    const t = m !== 'kapanis' ? taslakOku(m) : null;
-    if (t) { setAdet(t.adet || {}); setSebep(t.sebep || ''); setSayim(t.sayim || {}); setF(t.f || {}); if (t.istek) setIstek(t.istek); }
+    setFormGun(d.gun);
+    let t = null;
+    try { t = m !== 'kapanis' ? JSON.parse(localStorage.getItem(tKey(m, d.gun)) || 'null') : null; } catch { t = null; }
+    if (t) {
+      const { mAd, mTel, ...fGuvenli } = t.f || {};   // eslint-disable-line no-unused-vars — eski taslaktaki müşteri bilgisi gösterilmez
+      setAdet(t.adet || {}); setSebep(t.sebep || ''); setSayim(t.sayim || {}); setF(fGuvenli); if (t.istek) setIstek(t.istek);
+    }
     setModal(m);
   };
   const gonder = async (yol, govde, sonra) => {
     if (mesgul) return;
     if (!kisi) { setMesaj({ tur: 'hata', metin: 'Önce adını seç' }); return; }
     setMesgul(true);
-    const body = { ...govde, istek_id: istek, istemci_gunu: d.gun };
+    const body = { ...govde, istek_id: istek, istemci_gunu: formGun || d.gun };
     try {
       const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/${yol}`, { method: 'POST', body });
       setMesaj({ tur: r.kuru ? 'deneme' : 'tamam', metin: r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : (r.tekrar ? 'Bu kayıt zaten alınmıştı' : 'Kaydedildi ✓') });
@@ -349,6 +354,7 @@ export default function SubePaneli({ subeId }) {
       )}
       {modal === 'kapanis' && (
         <Kapanis d={d} kisi={kisi} mesgul={mesgul} sayim={sayim} setSayim={setSayim} kapat={() => setModal(null)} taslakAnahtar={tKey('kapanis')}
+          istek={istek} setIstek={setIstek}
           gonder={(govde) => gonder('kapanis', { personel_id: kisi, ...govde, sayim: sayimGovde(sayim) })} />
       )}
     </div>
@@ -356,14 +362,14 @@ export default function SubePaneli({ subeId }) {
 }
 
 // 🌙 Kapanış — 4 adım (eski 5 adım: ürün aç sorusu kalktı, QR mühür/saat kilidi merkeze)
-function Kapanis({ d, mesgul, sayim, setSayim, kapat, gonder, taslakAnahtar }) {
+function Kapanis({ d, mesgul, sayim, setSayim, kapat, gonder, taslakAnahtar, istek, setIstek }) {
   const ilk = (() => { try { return JSON.parse(localStorage.getItem(taslakAnahtar) || 'null'); } catch { return null; } })();
   const [adim, setAdim] = useState(ilk?.adim || 1);
   const [v, setV] = useState(ilk?.v || { nakit: '', pos: '', online: '', kor: '', birakilan: '', deg: {}, teslim: {}, pasta: '' });
-  useEffect(() => { if (ilk?.sayim) setSayim(ilk.sayim); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {   // 💾 her tuşta tablete (D6) — gönderim başarılı olunca silinir
-    try { localStorage.setItem(taslakAnahtar, JSON.stringify({ adim, v, sayim })); } catch { /* yok say */ }
-  }, [adim, v, sayim, taslakAnahtar]);
+  useEffect(() => { if (ilk?.sayim) setSayim(ilk.sayim); if (ilk?.istek) setIstek(ilk.istek); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {   // 💾 her tuşta tablete (D6) — istek kimliği dahil; gönderim başarılı olunca silinir
+    try { localStorage.setItem(taslakAnahtar, JSON.stringify({ adim, v, sayim, istek })); } catch { /* yok say */ }
+  }, [adim, v, sayim, istek, taslakAnahtar]);
   const set = (k, x) => setV((o) => ({ ...o, [k]: x }));
   const teslimler = Object.entries(v.teslim).filter(([, t]) => tutarNum(t) > 0).map(([alan, t]) => ({ alan, tutar: tutarNum(t) }));
   // bileşen DEĞİL düz fonksiyon: her tuşta yeniden kurulup odağı kaybetmesin

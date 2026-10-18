@@ -132,7 +132,9 @@ export async function api(path, opts = {}) {
     // YALNIZ okuma istekleri deftere yazılır: yazma hataları zaten kullanıcıya
     // toast/modal ile dönüyor, ikinci kez bant açmak gürültü olur.
     if (method === 'GET') _hataYaz(path, msg || res.statusText, `HTTP_${res.status}`);
-    throw new Error(msg || res.statusText || 'İstek başarısız');
+    const hata = new Error(msg || res.statusText || 'İstek başarısız');
+    hata.status = res.status;   // çağıran geçici (5xx) ile kalıcı (4xx) hatayı ayırabilsin
+    throw hata;
   }
   // Uç düzelirse kendi izini siler — bant asılı kalmaz
   if (method === 'GET' && _hatalar.has(path)) {
