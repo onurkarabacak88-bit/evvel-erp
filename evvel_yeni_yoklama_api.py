@@ -87,7 +87,8 @@ def yoklama_hazirla() -> None:
             panel_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(), devreden_ts TIMESTAMPTZ, devreden_mesafe_m INT, devreden_surum TEXT,
             devralan_ts TIMESTAMPTZ, devralan_mesafe_m INT, devralan_surum TEXT, devralan_not TEXT,
             merkez_sonuc TEXT, merkez_kim TEXT, merkez_aciklama TEXT, gorulen TEXT, olay_id TEXT,
-            istek_id TEXT UNIQUE, devret_istek_id TEXT UNIQUE, kabul_istek_id TEXT UNIQUE, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+            istek_id TEXT UNIQUE, devret_istek_id TEXT UNIQUE, kabul_istek_id TEXT UNIQUE, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            devreden_yoklama_id TEXT, istekler JSONB NOT NULL DEFAULT '{}'::jsonb)""")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_devir_gun ON ey_devir (sube_id, is_gunu)")
         try:
             with savepoint(cur, "sp_ey_devir_acik"):
@@ -292,13 +293,14 @@ def girdi_mi(cur, sube_id: str, personel_id: str, gun: date) -> bool:
 
 
 def cikis_yaz(cur, personel_id: str, tur: str, kim: Optional[str] = None, mesafe: Optional[int] = None,
-              cihaz_id: Optional[str] = None, istek_id: Optional[str] = None, sube_id: Optional[str] = None) -> Optional[str]:
+              cihaz_id: Optional[str] = None, istek_id: Optional[str] = None, sube_id: Optional[str] = None,
+              yoklama_id: Optional[str] = None) -> Optional[str]:
     """PUBLIC: açık girişi kapatır (tur: qr / devir / kapanis / merkez). sube_id verilirse yalnız o şubedeki açık giriş.
     Açık giriş yoksa sessizce None (zaten çıkmış)."""
     yoklama_hazirla()
     personel_kilidi(cur, personel_id)
-    cur.execute("SELECT id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL AND (%s::text IS NULL OR sube_id=%s) FOR UPDATE",
-                (personel_id, sube_id, sube_id))
+    cur.execute("""SELECT id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL AND (%s::text IS NULL OR sube_id=%s)
+                     AND (%s::text IS NULL OR id=%s) FOR UPDATE""", (personel_id, sube_id, sube_id, yoklama_id, yoklama_id))
     r = cur.fetchone()
     if not r:
         return None
@@ -914,11 +916,17 @@ def devir_ac(cur, sube_id: str, gun, devreden: dict, devralan: dict, sayilan_kur
     Olay YAZMAZ — 'vardiya' olayının TEK yazarı devralanın onayıdır (F5)."""
     yoklama_hazirla()
     _devir_kilit(cur, sube_id, gun)
-    cur.execute("SELECT id, surum FROM ey_devir WHERE istek_id=%s", (istek_id,))
+    surum = _devir_surum(devreden["id"], devralan["id"], sayilan_kurus, bardak)
+    # Codex: istek geçmişi silinmez — aynı istek aynı içerikle gelirse tekrar; farklı içerikle (gecikmiş eski form) 409
+    cur.execute("SELECT id, surum, istekler->>%s AS s FROM ey_devir WHERE jsonb_exists(istekler, %s)", (istek_id, istek_id))
     r = cur.fetchone()
     if r:
-        return {"devir_id": dict(r)["id"], "surum": dict(r)["surum"], "tekrar": True}
-    surum = _devir_surum(devreden["id"], devralan["id"], sayilan_kurus, bardak)
+        r = dict(r)
+        if r["s"] != surum:
+            raise HTTPException(409, "Bu devir formu eski — ekranı yenile")
+        return {"devir_id": r["id"], "surum": r["surum"], "tekrar": True}
+    cur.execute("SELECT id FROM ey_yoklama WHERE personel_id=%s AND sube_id=%s AND cikis_ts IS NULL", (devreden["id"], sube_id))
+    yk = dict(cur.fetchone() or {}).get("id")
     cur.execute("""SELECT id, durum FROM ey_devir WHERE sube_id=%s AND is_gunu=%s AND durum IN ('hazir','devreden_onayladi') FOR UPDATE""",
                 (sube_id, gun))
     a = cur.fetchone()
@@ -926,13 +934,16 @@ def devir_ac(cur, sube_id: str, gun, devreden: dict, devralan: dict, sayilan_kur
         raise HTTPException(409, "Devreden onayladı — form kilitli. Değişiklik için merkeze haber verin")
     if a:
         cur.execute("""UPDATE ey_devir SET devreden_id=%s, devralan_id=%s, sayilan_kurus=%s, bardak=%s::jsonb, surum=%s, panel_ts=NOW(),
-                              istek_id=%s WHERE id=%s""",
-                    (devreden["id"], devralan["id"], int(sayilan_kurus), json.dumps(bardak or [], ensure_ascii=False), surum, istek_id, dict(a)["id"]))
+                              istek_id=%s, devreden_yoklama_id=%s, istekler = istekler || jsonb_build_object(%s::text, %s::text) WHERE id=%s""",
+                    (devreden["id"], devralan["id"], int(sayilan_kurus), json.dumps(bardak or [], ensure_ascii=False), surum, istek_id,
+                     yk, istek_id, surum, dict(a)["id"]))
         return {"devir_id": dict(a)["id"], "surum": surum, "guncellendi": True}
     did = "dv-" + uuid.uuid4().hex[:16]
-    cur.execute("""INSERT INTO ey_devir (id, sube_id, is_gunu, devreden_id, devralan_id, sayilan_kurus, bardak, surum, istek_id)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)""",
-                (did, sube_id, gun, devreden["id"], devralan["id"], int(sayilan_kurus), json.dumps(bardak or [], ensure_ascii=False), surum, istek_id))
+    cur.execute("""INSERT INTO ey_devir (id, sube_id, is_gunu, devreden_id, devralan_id, sayilan_kurus, bardak, surum, istek_id,
+                                         devreden_yoklama_id, istekler)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s, jsonb_build_object(%s::text, %s::text))""",
+                (did, sube_id, gun, devreden["id"], devralan["id"], int(sayilan_kurus), json.dumps(bardak or [], ensure_ascii=False), surum, istek_id,
+                 yk, istek_id, surum))
     return {"devir_id": did, "surum": surum}
 
 
@@ -987,12 +998,19 @@ def _devir_olay(cur, d: dict, veri_ek: dict) -> Optional[str]:
                           "devir_id": d["id"], "surum": d["surum"], **veri_ek})
 
 
-def _devir_al(cur, did: str) -> dict:
-    cur.execute("SELECT * FROM ey_devir WHERE id=%s FOR UPDATE", (did,))
-    r = cur.fetchone()
-    if not r:
+def _devir_al(cur, did: str, kisiler: bool = True) -> dict:
+    """Codex: TEK kilit sırası — devir (şube+gün) kilidi → iki kişinin kilidi kimlik sırasıyla → satır FOR UPDATE."""
+    cur.execute("SELECT sube_id, is_gunu, devreden_id, devralan_id FROM ey_devir WHERE id=%s", (did,))
+    r0 = cur.fetchone()
+    if not r0:
         raise HTTPException(404, "Devir bulunamadı")
-    return dict(r)
+    r0 = dict(r0)
+    _devir_kilit(cur, r0["sube_id"], r0["is_gunu"])
+    if kisiler:
+        for pid in sorted({r0["devreden_id"], r0["devralan_id"]}):
+            personel_kilidi(cur, pid)
+    cur.execute("SELECT * FROM ey_devir WHERE id=%s FOR UPDATE", (did,))
+    return dict(cur.fetchone())
 
 
 @router.post("/devir/{did}/devret")
@@ -1000,11 +1018,13 @@ async def devir_devret(did: str, request: Request):
     """Devreden kendi telefonundan: 'Devrediyorum' (QR + konum, sürüme bağlı)."""
     def fn(cur, c, p, v):
         ist = _istek(v)
-        personel_kilidi(cur, p["id"])
-        cur.execute("SELECT 1 FROM ey_devir WHERE devret_istek_id=%s", (ist,))
-        if cur.fetchone():
-            return {"ok": True, "tekrar": True, "mesaj": "Devir zaten onaylandı"}
         d = _devir_al(cur, did)
+        cur.execute("SELECT id, devreden_id FROM ey_devir WHERE devret_istek_id=%s", (ist,))
+        r = cur.fetchone()
+        if r:
+            if dict(r)["id"] != did or dict(r)["devreden_id"] != p["id"]:
+                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
+            return {"ok": True, "tekrar": True, "mesaj": "Devir zaten onaylandı"}
         if d["devreden_id"] != p["id"]:
             raise HTTPException(403, "Bu devri sen devretmiyorsun")
         if d["durum"] != "hazir":
@@ -1026,18 +1046,21 @@ async def devir_kabul(did: str, request: Request):
     Aynı işlemde: vardiya olayı (tek yazar) + devredenin çıkışı + devralanın girişi (yoksa)."""
     def fn(cur, c, p, v):
         ist = _istek(v)
-        personel_kilidi(cur, p["id"])
-        cur.execute("SELECT durum FROM ey_devir WHERE kabul_istek_id=%s", (ist,))
+        d = _devir_al(cur, did)
+        cur.execute("SELECT id, devralan_id, durum FROM ey_devir WHERE kabul_istek_id=%s", (ist,))
         r = cur.fetchone()
         if r:
+            if dict(r)["id"] != did or dict(r)["devralan_id"] != p["id"]:
+                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
             return {"ok": True, "tekrar": True, "mesaj": "Devir zaten " + ("kabul edildi" if dict(r)["durum"] == "tamam" else "kaydedildi")}
-        d = _devir_al(cur, did)
         if d["devralan_id"] != p["id"]:
             raise HTTPException(403, "Bu devri sen almıyorsun")
         if d["durum"] != "devreden_onayladi":
             raise HTTPException(409, "Önce devreden kendi telefonundan onaylasın" if d["durum"] == "hazir" else "Bu devir artık onay beklemiyor")
         if str(v.get("surum") or "") != d["surum"]:
             raise HTTPException(409, "Devir formu değişti — tekrar bak")
+        if d["is_gunu"] != is_gunu():
+            raise HTTPException(409, "Bu devir önceki güne ait — merkez kapatsın")   # Codex: eski devir bugünün mesaisini kapatmasın
         tutuyor = bool(v.get("tutuyor", True))
         not_ = str(v.get("not") or "").strip()[:200]
         if not tutuyor and len(not_) < 2:
@@ -1050,8 +1073,8 @@ async def devir_kabul(did: str, request: Request):
         if a and dict(a)["sube_id"] != sube:
             raise HTTPException(409, "Önce diğer şubeden çıkış yap")
         oid = _devir_olay(cur, d, {"tutuyor": tutuyor, "not": not_ or None})
-        personel_kilidi(cur, d["devreden_id"])
-        cikis_yaz(cur, d["devreden_id"], "devir", kim=f"devir · {p['ad']}", sube_id=sube)
+        if d.get("devreden_yoklama_id"):
+            cikis_yaz(cur, d["devreden_id"], "devir", kim=f"devir · {p['ad']}", sube_id=sube, yoklama_id=d["devreden_yoklama_id"])
         if not a:   # devralan henüz girmemişti → girişi bu onayla açılır (QR + konum doğrulandı)
             cur.execute("""INSERT INTO ey_yoklama (id, sube_id, personel_id, is_gunu, giris_ts, giris_mesafe_m, giris_muaf, giris_cihaz_id, istek_id)
                            VALUES (%s,%s,%s,%s,NOW(),%s,%s,%s,%s)""",
@@ -1106,8 +1129,8 @@ def devir_merkez_kapat(did: str, b: MerkezKapatBody, x_evvel_oturum: Optional[st
         oid = None
         if b.sonuc == "kapandi":
             oid = _devir_olay(cur, d, {"merkez_istisna": True, "merkez": kim, "aciklama": b.aciklama.strip()[:200]})
-            personel_kilidi(cur, d["devreden_id"])
-            cikis_yaz(cur, d["devreden_id"], "devir", kim=f"merkez: {kim}", sube_id=d["sube_id"])
+            if d.get("devreden_yoklama_id"):   # Codex: dünkü devir bugünkü yeni girişi kapatmasın
+                cikis_yaz(cur, d["devreden_id"], "devir", kim=f"merkez: {kim}", sube_id=d["sube_id"], yoklama_id=d["devreden_yoklama_id"])
         cur.execute("""UPDATE ey_devir SET durum='merkez_kapatti', merkez_sonuc=%s, merkez_kim=%s, merkez_aciklama=%s, olay_id=COALESCE(%s, olay_id)
                         WHERE id=%s""", (b.sonuc, kim, b.aciklama.strip()[:200], oid, did))
     return {"ok": True, "mesaj": "Merkez kapattı — " + ("devir sayıldı" if b.sonuc == "kapandi" else "iptal")}
