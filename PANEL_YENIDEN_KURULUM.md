@@ -64,6 +64,7 @@ Eski AYNEN: paket kartları · kalem kalem **kör sayım** (beklenen gösterilme
 Eski AYNEN (SIPARIS_TASARIM ile): yolda bandı · merkez tek seferlik · onay bekleyen · kategori → modal · not · sabit onay bandı → ad + PIN (S3) → özet → gönder · çift sipariş uyarısı (409 → "yine de") · katalog dışı özel talep · **Takip:** son 21 gün, filtreler, 4 adımlı çizgi Talep → Tahsis → Sevk → Kabul · **Gönderilecek:** 3 adımlı tam ekran sihirbaz (Hazırlık listesi → VAR/KISMİ/YOK kalem girişi → Özet + "🚚 Yola çıkar" / "Hazırlığı kaydet"), bayat pencere kilidi. Kayıt: EY sipariş tabloları + Depo `sevk` (hayalet sevk yasak). = Sipariş kontrol kulesinin işlevi (D21).
 
 ## 10. Ürün aç
+> **Sahip (2026-10-19): "Ürün aç'ta 3–4 ürün bırakmışsın — hayır, BÜTÜN MEKANİZMA olması lazım."** Yeni panelde Ürün Aç yalnız takip='açılınca' 6 ürünü gösteriyordu (128'in 6'sı). Eski gibi: **BÜTÜN aktif katalog** kategori kartlarıyla + "Pasifleri göster" + modal (− adet +) + özet + not + onay. Kurgu sorusu (Codex+Fable): sayımla takip edilen ürün (bardak, su…) açılırsa günlük sayım düşüşüyle ÇİFT gider olmaması — açılan her ürün nasıl gidere/depoya yazılır.
 Eski: kategori kartları → modal (− adet +) · özet · not · sabit onay bandı → ad + PIN (S3) → özet → kaydet · sunucu taslağı (800 ms) + "taslağı temizle" · 45 sn çift gönderim koruması · başarıda bip + flaş · stok sayımında dondurma. **Kalkan:** Kullanımda / Bitti (§4 ②.5). **Düzelt:** taslak mesajındaki ham HTML hatası.
 
 ## 11. Fire
