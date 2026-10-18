@@ -962,8 +962,9 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
   useEffect(() => { if (gorunum) setSekme(sayfaCoz(gorunum)); }, [gorunum]);   // eslint-disable-line react-hooks/exhaustive-deps
   const git = (k) => { setSekme(k); onSekme?.(k); };
   const onCekmece = setCk;   // aşağıdaki çekmece çağrıları aynı kalır, Evvel kabuğuna değil buraya açılır
+  // Sahip (2026-10-18): tarih yalnız bu oturumda hatırlanır — ekran her açılışta BUGÜNden başlar (16 Ekim'de takılı kalmıştı)
   const [gun, setGun] = useState(() => {
-    try { return localStorage.getItem('paraIziGun') || iso(new Date()); } catch { return iso(new Date()); }
+    try { return sessionStorage.getItem('paraIziGun') || iso(new Date()); } catch { return iso(new Date()); }
   });
   const [hepsi, setHepsi] = useState(false);
   const [veri, setVeri] = useState(null);
@@ -986,7 +987,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
     } catch (e) { if (no === istekNo.current) setHata(e?.message || 'okunamadı'); }
   }, [gun, hepsi]);
   useEffect(() => { yukle(); }, [yukle]);
-  useEffect(() => { try { localStorage.setItem('paraIziGun', gun); } catch { /* yut */ } }, [gun]);
+  useEffect(() => { try { sessionStorage.setItem('paraIziGun', gun); } catch { /* yut */ } }, [gun]);
 
   const cepAd = (id) => (veri?.cepler.find((c) => c.id === id) || {}).ad || id;
   // Formu çekmeceden açınca kapanışta aynı çekmeceye geri dönülür (Codex: geldiği yere dönemiyordu).
