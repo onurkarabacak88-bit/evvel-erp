@@ -15,6 +15,37 @@
 | **📍 Şu an** | B4 — QR telefon / yoklama modülü (Y0) |
 | **↩ B bitince dönüş** | B14 (okuyucular yeni panel verisine — 1b'nin asıl işi) → A 1d/1e (sipariş tabloları + merkez "Sevk et") → C listesindeki "Bende" işleri → D "olmalı mı?" sorgulaması (⏳ olanlar) |
 
+## 🔗 İLİŞKİ HARİTASI — bölümler birbirine nasıl bağlı (sahip: "alanları birbiriyle ilişkilendir, kaybolmayalım")
+
+```
+                         ┌──────────── 1 KASIM (B16) ─────────────┐
+                         │  her şey buraya akar: panel açılır,     │
+                         │  eski sistem yazmayı bırakır, sıfırdan  │
+                         └────────────────────────────────────────┘
+   A. SİPARİŞ FAZ 1                B. YENİ ŞUBE PANELİ                 C. 17 EKİM 18 MADDE         D. "OLMALI MI?"
+   1a Katalog ✅ ──────────────►  B2 panel ürünleri katalogdan         C8 fiyatsız ürün ✅         D20 Sipariş → A
+   1b Okuyucular ──(gerektirdi)─► B (yeni panel) ── B14 ──► 1b biter   C15 panel geçişi = B        D22 Depo → B14
+   1c Ürün-aç çözücü ◄──────────── B14'te silinir                      C17 Kasım maaşı ◄── B5      D23 Ürün aç → B2 ✅
+   1e Sevk et ◄──── şart ──────── B9 "Depodan gelen" + B15             C18 Sipariş = A             D25 Fire → B3 ✅
+   1f Teslim tek işlem ◄────────── B9 "Teslim al"                      C7 toptancı açılış ◄── B13  D26 değirmen → B2 ✅
+                                   B4–B6 QR/yoklama ──────────────────►C12 Alsancak QR             D28 fiyatlar → B12
+                                   B8 telefon sayfası ◄──── D35 avans · D38 puan · D24 sayım görevi · D37 görev listesi
+                                   B10/B11 küçükler                    C14/C9 1 Kasım bakiyeleri   D36 vardiya planı → B4 (plan)
+                                   B12 fiyat ekranı ◄──── 1a fiyatlar  ──► B16                     D40 risk → KONTROL yok ✅
+                                                                                                    D44 WhatsApp → D10 ✅
+```
+
+| Bağ | Neden önemli |
+|---|---|
+| **A 1b ⇄ B** | Okuyucular (Depo/Bar/Gider/Satış/Toptancı) yeni kataloğa ancak panel yeni kimlikle yazınca geçebilir → B14 = 1b'nin bitişi |
+| **A 1e "Sevk et" ⇄ B9 "Depodan gelen"** | Codex C1: 1 Kasım'dan sonra eski sevk yeni depoya ulaşmaz → ikisi BİRLİKTE, 1 Kasım öncesi |
+| **B4–B6 QR ⇄ B5 maaş ⇄ C17 Kasım maaşı** | Yemek ücreti artık mola kaydından (K7/K8) → Kasım maaşı yeni QR kayıtlarına bağlı |
+| **B8 telefon sayfası ⇄ D35/D38/D24/D37** | Avans, puan, sayım görevi, görev listesi kararları telefon sayfası kurgusunda birlikte verilir |
+| **B12/B13 ⇄ C7, C14, C9** | Toptancı açılışı ve 1 Kasım net bakiyeler sahipten gelecek → B16 açılışının girdisi |
+| **D "olmalı mı?" ⇄ E1 söküm** | Her ÇIKAR kararı eski kodun ve gece zinciri adımının sökümüne dönüşür (D59) |
+
+**1 Kasım'a kritik yol (sıra):** B4 QR (Y0) → B5 mola → B6 devir onay → B9 teslim/depodan gelen **+ A 1e Sevk et** → B12 fiyat ekranı → B13 toptancı açılışı → B14 okuyucular (= **A 1b biter**) → B15 provalar → **B16 1 Kasım**. Sonra: A 1d sipariş tabloları → C "Bende" işleri → D sorgulaması (⏳) → E söküm → E2 yetki.
+
 ## A. ANA YOL — Sipariş Faz 1
 
 | Adım | İş | Durum |
