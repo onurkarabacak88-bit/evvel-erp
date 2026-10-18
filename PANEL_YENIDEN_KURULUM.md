@@ -131,3 +131,14 @@ Sonra: denemede ekranda dene → sahibe görüntü → yayın.
 - **S17:** yalnız AÇILIŞTA başka girişli personel onaylayabilir (kayıt onaylayan adına, olay verisinde onay_id + cihaz_id). **Kapanışı kapanışçı kendi telefonuyla onaylar** (kapanış = onu çıkış yapar); telefonu yoksa "mühürsüz gönder" + merkeze bildirim.
 - **Kasa devri 5 adım:** ürün + pasta sürüm özetine girer; Depo'ya yazmaz (ara ölçüm, yalnız olay); sürüm tek fonksiyondan.
 - **Yetkiler:** `yetki_geri_alma` ey_personel'de (Tanımlar); eski `panel_yonetici` ile karışmaz. **`yetki_teslim_alma` — sahip kararı A (2026-10-19):** yetkili personel teslim alırsa para KENDİ cebinde görünür (Kasa'da kişiye bağlı cep "X'in elinde", tür ev benzeri, yetki verilince açılır); Onur/Fethi/Fatma'ya verince Kasa "Taşı" ile aktarılır; elde bekleyen para Kasa uyarılarında (gün sayısıyla) görünür. Kasa cebi kurgusu Kasa modülünde (PATRON_CEPLERI sabitine dokunmadan, tanımlı cepler gibi) — kasa devri/kapanış basamağında yazılır.
+
+### Basamak 1 — kesin kurgu (Fable denetimi sonrası)
+- **QR'lar:** eski QR KALKAR, aynı yere yeni QR (sahip: "birbirlerini ezecek değil, kaldır yerine yenisini ekle") — tek QR, tek yol.
+- **Dünkü kapanış kartı:** dün AÇILIŞ olayı var VE dün KAPANIŞ olayı yok (eski sube_panel.py:1929 kuralı; tatil/kapalı gün ertesi çıkmaz) · günde 1, anahtar `dunKapUyari:{şube}:{gün}`.
+- **Kapı:** yalnız `!acilis_var` iken (gün ortasında herkes çıkınca kapanmaz). Panel PC'si kayıtsızsa kapı yerine tam ekran "Bu bilgisayar kayıtlı değil — merkezden bağlantı". Deneme düğmesi "Deneme: QR'sız geç" yalnız sunucu `kuru=true` iken; tercih saklanmaz (her yüklemede kapı yine görünür).
+- **Yenileme:** eski gibi 15 sn; sekme gizliyken durur, öne gelince hemen; kapı/devir 5 sn; saat 10 sn; TabletQR 30 sn.
+- **Ezmeme:** modal açıkken seçimler (kişi, devralan, alan) listeden düşse de korunur, sunucu karar verir; ANLADIM kartı açıkken yeni mesaj basılmaz; kişi seçimi yalnız "içeride" olanlar içinde geçerli (çıkış yapan sabah seçili kalmaz, localStorage'a yazılmaz).
+- **Sayı tuş takımı:** React onChange yoluyla (native setter + input olayı) yazar; inputmode numeric/decimal alanlarda açılır; time/select hariç; 8 tam + 2 ondalık.
+- **Dosya bölme:** ortak.jsx (tema, Modal, TabletQR, listeler, numpad, yardımcılar) · PanelBaglam (React context: d, gonder, ac, kapat, mesgul, yukle) · SubePaneli.jsx çerçeve · AnaSayfa.jsx · ekranlar ayrı; tek `<style>`; Kapanış taslağı davranışı taşınırken değişmez.
+- **Durum çipleri:** kaynak yokken GİZLENMEZ, "—" gösterir (0 = yanlış bilgi, gizlemek = düzen kayar); red listesi ve mesaj kutusu yerinde, içi "Henüz … yok".
+- **Kalanlar:** DENEME rozeti + "N kayıt internet bekliyor" kartı kalır (sağlamlık) · son okutanlar kalır · vardiya türü etiketi (☀️/🌤/🌙) vardiya planı (B7a) gelince · gün çizgisi boşken varsayılan saatler (07:00 / 22:30) · `/panel` şubesiz → şube seçtir · ürün aç hatırlatma bandının yeri açılır (içerik ürün aç basamağında).
