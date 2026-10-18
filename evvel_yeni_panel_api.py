@@ -128,7 +128,7 @@ def _saat_kurali(tur: str, personel: dict) -> Optional[str]:
     """Açılış / kapanış saat kuralı (iş günü saatiyle). Engelse mesaj döner."""
     n = _simdi_tr()
     hm = (n.hour, n.minute)
-    if tur == "acilis" and 2 <= n.hour and hm < ACILIS_SAAT and not personel.get("erken_acilis"):
+    if tur == "acilis" and hm < ACILIS_SAAT and not personel.get("erken_acilis"):
         return "Açılış 07:00'den önce yapılamaz"
     if tur == "kapanis" and 2 <= n.hour and hm < KAPANIS_SAAT:
         return "Kapanış 22:30'dan önce yapılamaz"
@@ -198,7 +198,19 @@ def _calistir(sube_id: str, istek_id: Optional[str], is_fn, tur: Optional[str] =
               gun=None, merkez: Optional[str] = None) -> dict:
     """Ortak iskelet: deneme kaydı → hazırlık → tek işlem → (deneme modunda geri al) → deneme sonucu.
     gun/merkez: yalnız merkezin 'geç kapanış' işlemi (o iş gününe; saat kuralı ve gün kilidi uygulanmaz)."""
-    did = _deneme_ac(sube_id, tur, gun or _bugun(), govde or {}) if tur else None
+    gun0 = gun or _bugun()
+    ig = (govde or {}).get("istemci_gunu")
+    if not merkez and ig:   # Codex: tablette kalıp gün değiştikten sonra gelen kayıt yanlış güne yazılmasın → deneme o güne, ret
+        try:
+            from datetime import date as _d
+            igd = _d.fromisoformat(str(ig)[:10])
+        except ValueError:
+            igd = gun0
+        if igd != gun0:
+            did = _deneme_ac(sube_id, tur, igd, govde or {}) if tur else None
+            _deneme_kapat(did, "ret", f"gün değişti — tablette {igd.isoformat()} günü girilmişti")
+            raise HTTPException(409, "Gün değişti — bu kayıt merkeze iletildi")
+    did = _deneme_ac(sube_id, tur, gun0, govde or {}) if tur else None
     try:
         sonuc = _calistir_ic(sube_id, istek_id, is_fn, gun, merkez)
     except HTTPException as e:
@@ -227,6 +239,7 @@ def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez:
     try:
         with db() as (conn, cur):
             g = gun or _bugun()
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_gun:{sube_id}:{g.isoformat()}",))
             ctx = {"gun": g, "sube": _sube(cur, sube_id), "kuru": g < _baslangic(cur), "merkez": merkez}
             sonuc = is_fn(cur, ctx)
             sonuc = {"ok": True, "kuru": ctx["kuru"], **sonuc}
@@ -276,6 +289,7 @@ class SayimSatir(BaseModel):
 
 
 class AcilisBody(BaseModel):
+    istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
     kasa_sayim: Decimal                      # sabah kasadaki nakit (TL)
     sayim: List[SayimSatir] = []             # sayılan ürünler (boş bırakılan SAYILMAZ)
@@ -355,6 +369,7 @@ class TeslimSatir(BaseModel):
 
 
 class KapanisBody(BaseModel):
+    istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
     nakit: Decimal
     pos: Decimal = Decimal(0)
@@ -409,8 +424,9 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
             kasa_yaz(cur, HareketBody(tur="teslim", is_gunu=gun, kaynak=f"sube:{sube_id}", hedef=t["alan"],
                                       tutar=Decimal(t["tutar"]) / 100, teslim_eden=p["ad"]), kim,
                      kaynak_ref=f"{kok}:teslim:{i}")
+        # Codex BLOKER: geç kapanışta sayım BUGÜNÜN bakiyesine uygulanmaz (geçmiş gün uzlaştırılamaz) — olayda kalır, merkez görür
         d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=kim, tur="gunluk",
-                      kaynak_ref=f"{kok}:sayim") if satir else None
+                      kaynak_ref=f"{kok}:sayim") if satir and not c.get("merkez") else None
         return {"olay": oid, "tekrar": oid is None and bool(k.get("tekrar")), "sayilan": len(satir) if d else 0,
                 "mesaj": "Kapanış kaydedildi", "saat_engeli": engel}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"), gun=gun, merkez=merkez)
@@ -422,6 +438,7 @@ def kapanis(sube_id: str, b: KapanisBody):
 
 
 class DevirBody(BaseModel):
+    istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     devreden_id: str
     devralan_id: str
     sayilan: Decimal
@@ -447,6 +464,7 @@ def kasa_devri(sube_id: str, b: DevirBody):
 
 
 class AraTeslimBody(BaseModel):
+    istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
     alan: str
     tutar: Decimal
@@ -481,6 +499,7 @@ class Kalem(BaseModel):
 
 
 class UrunAcBody(BaseModel):
+    istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
     kalemler: List[Kalem]
     istek_id: str
@@ -527,6 +546,7 @@ class IadeBilgi(BaseModel):
 
 
 class FireBody(BaseModel):
+    istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
     kalemler: List[Kalem]
     sebep: str                         # FIRE_SEBEPLERI kodu
@@ -550,7 +570,8 @@ def fire(sube_id: str, b: FireBody):
             raise HTTPException(400, "Sebebi yaz")
         iade = None
         if b.sebep == "iade":
-            if not b.iade or len((b.iade.fis_no or "").strip()) < 1 or not re.fullmatch(r"\d{1,2}:\d{2}", (b.iade.iade_saat or "").strip()):
+            m_ = re.fullmatch(r"(\d{1,2}):(\d{2})", (b.iade.iade_saat or "").strip()) if b.iade else None
+            if not b.iade or not (b.iade.fis_no or "").strip() or not m_ or int(m_.group(1)) > 23 or int(m_.group(2)) > 59:
                 raise HTTPException(400, "İadede fiş numarası ve iade saati zorunlu")
             iade = {"fis_no": b.iade.fis_no.strip()[:40], "iade_saat": b.iade.iade_saat.strip(),
                     "musteri_ad": (b.iade.musteri_ad or "").strip()[:80] or None,
@@ -584,15 +605,18 @@ def gec_kapanis(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default
     _deneme_hazirla()
     with db() as (conn, cur):
         kim = aktor(cur, x_evvel_oturum)
+        if kim in ("oturumsuz", "bilinmiyor"):   # Codex: deneme kimliğini bilen herkes saat kuralını atlayamasın
+            raise HTTPException(401, "Merkez oturumu gerekli")
         cur.execute("SELECT * FROM ey_panel_deneme WHERE id=%s FOR UPDATE", (body.deneme_id,))
         r = cur.fetchone()
         if not r:
             raise HTTPException(404, "Deneme bulunamadı")
         r = dict(r)
-        if r["tur"] != "kapanis" or r["sonuc"] not in ("ret", "hata") or r["islendi"]:
+        if r["tur"] != "kapanis" or r["sonuc"] not in ("ret", "hata", "bekliyor") or r["islendi"]:
             raise HTTPException(409, "Bu deneme işlenemez (kapanış değil, başarılı ya da zaten işlendi)")
     govde = r["govde"] if isinstance(r["govde"], dict) else json.loads(r["govde"] or "{}")
-    govde["istek_id"] = uuid.uuid4().hex
+    govde["istek_id"] = "gec-" + body.deneme_id.replace("-", "")[:32]   # sabit: yarıda kalırsa tekrar = aynı kayıt (çift yazım yok)
+    govde.pop("istemci_gunu", None)
     try:
         kb = KapanisBody(**govde)
     except Exception as e:  # noqa: BLE001
@@ -611,12 +635,14 @@ def _kapanis_isleri(cur) -> list:
     if not dict(cur.fetchone())["v"]:
         return []
     cur.execute("""SELECT DISTINCT ON (sube_id, is_gunu) id, sube_id, is_gunu, sonuc, sebep, zaman FROM ey_panel_deneme
-                    WHERE tur='kapanis' AND zaman >= NOW() - INTERVAL '7 days' AND NOT islendi AND sonuc IN ('ret','hata')
+                    WHERE tur='kapanis' AND zaman >= NOW() - INTERVAL '7 days' AND NOT islendi
+                      AND (sonuc IN ('ret','hata') OR (sonuc = 'bekliyor' AND zaman < NOW() - INTERVAL '10 minutes'))
                       AND is_gunu >= %s
                     ORDER BY sube_id, is_gunu, zaman DESC""", (_baslangic(cur),))   # deneme dönemi merkeze iş üretmez
+    satirlar = [dict(x) for x in cur.fetchall() or []]   # Codex BLOKER: subeler() imleci tüketmeden ÖNCE
     adlar = {str(s["id"]): s["ad"] for s in subeler(cur)}
     out = []
-    for r in [dict(x) for x in cur.fetchall() or []]:
+    for r in satirlar:
         kapali = any(not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"
                      for o in olaylar(cur, sube_id=r["sube_id"], bas=r["is_gunu"], son=r["is_gunu"], turler={"kapanis"}))
         if kapali:

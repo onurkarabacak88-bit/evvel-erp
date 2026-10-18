@@ -39,17 +39,6 @@ def tanim_hazirla(cur) -> None:
         id TEXT PRIMARY KEY, ad TEXT NOT NULL, pos_oran NUMERIC(6,3) NOT NULL DEFAULT 0, online_oran NUMERIC(6,3) NOT NULL DEFAULT 0,
         aktif BOOLEAN NOT NULL DEFAULT TRUE, kaynak TEXT NOT NULL DEFAULT 'evvel_yeni', degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS depo BOOLEAN NOT NULL DEFAULT FALSE")   # merkez depo (Tema) — SIPARIS_TASARIM §1
-    # 07:00 öncesi açılış izni (sahip D10: 07:00 öncesi açılış engellenir, kişiye özel izin istisnası)
-    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS erken_acilis BOOLEAN NOT NULL DEFAULT FALSE")
-    try:   # İÇERİK bir kez (köprü değil): eski personel kartındaki erken açılış izni — sonra yalnız Evvel Yeni'de değişir
-        from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
-        if ayar_oku(cur, "erken_acilis_kopya") is None:
-            with savepoint(cur, "sp_ey_erken_kopya"):
-                cur.execute("""UPDATE ey_personel e SET erken_acilis = TRUE FROM personel p
-                                WHERE p.id::text = e.id AND COALESCE(p.erken_acilis_izni, FALSE)""")
-            ayar_yaz(cur, "erken_acilis_kopya", "1", "kurulum")
-    except Exception:  # noqa: BLE001
-        log.warning("erken açılış izni kopyalanamadı", exc_info=True)
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel (
         id TEXT PRIMARY KEY, ad TEXT NOT NULL, sube_id TEXT, gorev TEXT, giris DATE,
         aktif BOOLEAN NOT NULL DEFAULT TRUE, kaynak TEXT NOT NULL DEFAULT 'evvel_yeni', degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
@@ -108,6 +97,17 @@ def tanim_hazirla(cur) -> None:
                 cur.execute(sql)
         except Exception as e:  # noqa: BLE001 — eski tablo kalktıysa kopya biter, Evvel Yeni yaşar
             log.info("evvel-yeni tanım: eski kopya atlandı (%s): %s", sp, str(e)[:120])
+    # 07:00 öncesi açılış izni (sahip D10: 07:00 öncesi açılış engellenir, kişiye özel izin istisnası)
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS erken_acilis BOOLEAN NOT NULL DEFAULT FALSE")
+    try:   # İÇERİK bir kez (köprü değil): eski personel kartındaki erken açılış izni — sonra yalnız Evvel Yeni'de değişir
+        from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
+        if ayar_oku(cur, "erken_acilis_kopya") is None:
+            with savepoint(cur, "sp_ey_erken_kopya"):
+                cur.execute("""UPDATE ey_personel e SET erken_acilis = TRUE FROM personel p
+                                WHERE p.id::text = e.id AND COALESCE(p.erken_acilis_izni, FALSE)""")
+            ayar_yaz(cur, "erken_acilis_kopya", "1", "kurulum")
+    except Exception:  # noqa: BLE001
+        log.warning("erken açılış izni kopyalanamadı", exc_info=True)
     _HAZIR = True
 
 

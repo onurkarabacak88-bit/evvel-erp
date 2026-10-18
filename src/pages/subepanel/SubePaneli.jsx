@@ -2,7 +2,7 @@
 // Sahip: personel AYNI paneli görür (eski panelin koyu renk dili, sol menü, sağda Kasa Devri / Kapanış); kalite artıyorsa revizyon
 // serbest. Uyarı / alarm personele GİTMEZ (merkez Bekleyen işler'de). Hata tek cümle: "Kaydedilemedi, tekrar deneyin".
 // POS kuralı: düğme ≥ 72px, +/− 72×72, adet 32px. Ad seçimi (PIN yetki fazında). Panel 1 Kasım'a kadar DENEME (kaydetmez).
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 
 const C = { bg: '#0b0f1a', bg1: '#111827', bg2: '#1a2236', bg3: '#222d42', cizgi: 'rgba(99,120,160,0.18)', yazi: '#f0f4ff', soluk: '#7a8ba8',
@@ -113,27 +113,35 @@ export default function SubePaneli({ subeId }) {
   const taslakSil = (m) => { try { localStorage.removeItem(tKey(m)); } catch { /* yok say */ } };
   useEffect(() => {
     if (!modal || modal === 'kapanis' || !d) return;
-    try { localStorage.setItem(tKey(modal), JSON.stringify({ adet, sebep, sayim, f })); } catch { /* yok say */ }
-  }, [modal, adet, sebep, sayim, f]);   // eslint-disable-line react-hooks/exhaustive-deps
+    // Codex: istek kimliği de taslakta (yanıt kaybolsa da tekrar = aynı kayıt); müşteri ad/tel ORTAK tablete yazılmaz
+    const { mAd, mTel, ...fGuvenli } = f;   // eslint-disable-line no-unused-vars
+    try { localStorage.setItem(tKey(modal), JSON.stringify({ adet, sebep, sayim, f: fGuvenli, istek })); } catch { /* yok say */ }
+  }, [modal, adet, sebep, sayim, f, istek]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // 🔁 KUYRUK (D6): internet yoksa gönderim tablette bekler, gelince kendiliğinden gider (istek_id → ikinci kez yazılmaz)
   const qKey = `sp_kuyruk:${subeId}`;
   const kuyrukOku = () => { try { return JSON.parse(localStorage.getItem(qKey) || '[]'); } catch { return []; } };
   const kuyrukYaz = (q) => { try { localStorage.setItem(qKey, JSON.stringify(q)); } catch { /* yok say */ } setKuyrukSay(q.length); };
+  const gonderiyor = useRef(false);
+  const kuyrukCikar = (id) => kuyrukYaz(kuyrukOku().filter((x) => x.govde.istek_id !== id));   // Codex: her seferinde TAZE okunur
   const kuyruguGonder = useCallback(async () => {
-    let q = kuyrukOku();
-    setKuyrukSay(q.length);
-    for (const it of [...q]) {
-      try {
-        await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/${it.yol}`, { method: 'POST', body: it.govde });
-        q = q.filter((x) => x.govde.istek_id !== it.govde.istek_id);
-      } catch (e) {
-        if (e instanceof TypeError) break;   // hâlâ internet yok
-        q = q.filter((x) => x.govde.istek_id !== it.govde.istek_id);
-        setAnladim(`Bekleyen kayıt gönderilemedi (${it.ad || it.yol}): ${e?.message || 'hata'}`);
+    if (gonderiyor.current) return;   // tek gönderici
+    gonderiyor.current = true;
+    try {
+      const q = kuyrukOku();
+      setKuyrukSay(q.length);
+      for (const it of q) {
+        try {
+          await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/${it.yol}`, { method: 'POST', body: it.govde });
+          kuyrukCikar(it.govde.istek_id);
+        } catch (e) {
+          if (e instanceof TypeError) break;               // hâlâ internet yok → kalsın
+          if (/tekrar dene|503|502|504/i.test(e?.message || '')) break;   // sunucu geçici → kalsın (Codex: 503'te silinmesin)
+          kuyrukCikar(it.govde.istek_id);
+          setAnladim(`Bekleyen kayıt gönderilemedi (${it.ad || it.yol}): ${e?.message || 'hata'}`);
+        }
       }
-    }
-    kuyrukYaz(q);
+    } finally { gonderiyor.current = false; }
   }, [subeId]);   // eslint-disable-line react-hooks/exhaustive-deps
   useEffect(() => {
     kuyruguGonder();
@@ -144,21 +152,21 @@ export default function SubePaneli({ subeId }) {
 
   const yukle = useCallback(() => api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/durum`)
     .then((x) => { setD(x); setHata(''); }).catch((e) => setHata(e?.message || 'Panel açılamadı')), [subeId]);
-  useEffect(() => { yukle(); }, [yukle]);
+  useEffect(() => { yukle(); const t = window.setInterval(yukle, 60000); return () => window.clearInterval(t); }, [yukle]);   // gün değişimi (02:00) ve yeni kayıtlar
   useEffect(() => { try { if (kisi) localStorage.setItem('sp_kisi:' + subeId, kisi); } catch { /* yok say */ } }, [kisi, subeId]);
 
   const temizle = () => { setAdet({}); setSebep(''); setSayim({}); setF({}); setIstek(yeniIstek()); };
   const ac = (m) => {
     temizle();
     const t = m !== 'kapanis' ? taslakOku(m) : null;
-    if (t) { setAdet(t.adet || {}); setSebep(t.sebep || ''); setSayim(t.sayim || {}); setF(t.f || {}); }
+    if (t) { setAdet(t.adet || {}); setSebep(t.sebep || ''); setSayim(t.sayim || {}); setF(t.f || {}); if (t.istek) setIstek(t.istek); }
     setModal(m);
   };
   const gonder = async (yol, govde, sonra) => {
     if (mesgul) return;
     if (!kisi) { setMesaj({ tur: 'hata', metin: 'Önce adını seç' }); return; }
     setMesgul(true);
-    const body = { ...govde, istek_id: istek };
+    const body = { ...govde, istek_id: istek, istemci_gunu: d.gun };
     try {
       const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/${yol}`, { method: 'POST', body });
       setMesaj({ tur: r.kuru ? 'deneme' : 'tamam', metin: r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : (r.tekrar ? 'Bu kayıt zaten alınmıştı' : 'Kaydedildi ✓') });
