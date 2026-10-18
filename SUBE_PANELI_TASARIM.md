@@ -180,3 +180,12 @@ Her faz yayın öncesi Codex + Fable; 23:45–00:15 deploy yok; `python scripts/
 | C5 | Fiyat geçmişi yok (`ey_toptanci_fiyat` satırı eziliyor), teslim iptali öğrenilmiş fiyatı geri almıyor | Faz 2: fiyat, teslim kaynaklı geçmiş olarak tutulur (tarih + iptal); `guncel_fiyat` oradan seçer. |
 | C6 | Yeni ürünün fiyatı arayüzden girilemiyor (Ürün fiyatları eski kataloğu listeliyor) | Faz 0 sonu: Toptancılar › Ürün fiyatları yeni katalogdan (ey_urun) listelenir. 128 ürünün başlangıç fiyatı 2026-10-18 faturalardan girildi. |
 | C7 | Sayım/hareket kilidi, sayım girdisi, kategori kilidi, KDV sınırı, ey_ayar bayrağı, eski katalog yazıcıları, manifest bağımlılıkları | **Düzeltildi ve yayında** (2026-10-18). |
+
+
+## D. ESKİ PANEL DERİN ENVANTERİ (Fable + Codex, 2026-10-18) — sahip kararları
+Kaynak: tmp/eski_panel_envanter_fable.md, tmp/eski_panel_envanter_codex.txt (85 özellik; ~26 "tasarımda yok").
+| # | Konu | Karar |
+|---|---|---|
+| D1 | KONTROL (rastgele kör kasa sayımı + aktivite pingi + kilit/bip/alarm) | ✅ **OLMASIN** (sahip; Fable + Codex: sayım hiçbir şeyle karşılaştırılmıyordu, yalnız cevap süresi ölçülüyordu; alarm kuralına aykırı). Şüphede merkez habersiz yerinde sayar. |
+| D2 | Kasa devrinde ürün sayımı | ✅ **Yalnız 3 bardak** (küçük, büyük, plastik) tek ekranda; ürün/pasta yok. Ara ölçüm gider üretmez; vardiya farkı yalnız merkezde (Codex önerisi, sahip onayı). |
+| D3 | Mesai çıkışı kaydı (QR) | ⏳ sahip kararı bekliyor |
