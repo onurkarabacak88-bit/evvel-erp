@@ -23,7 +23,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from database import db
-from evvel_yeni_cekirdek import ayar_oku, bugun as _bugun, bekleyen_is_kaydet, kurus as _kurus
+from evvel_yeni_cekirdek import ayar_oku, bekleyen_is_kaydet, is_gunu as _bugun, kurus as _kurus   # şube İŞ GÜNÜ (gece 02:00'ye kadar önceki gün)
 
 router = APIRouter(prefix="/api/evvel-yeni/panel", tags=["evvel-yeni-panel"])
 log = logging.getLogger(__name__)

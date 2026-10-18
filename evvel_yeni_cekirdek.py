@@ -36,6 +36,16 @@ def bugun() -> date:
         return date.today()
 
 
+def is_gunu() -> date:
+    """Şube İŞ GÜNÜ: gece 00:00–02:00 arası hâlâ önceki gün (kapanış son teslim 02:00 — tr_saat.is_gunu_tr).
+    Codex: yeni şube paneli takvim günü kullanıyordu; gece kapanışı ertesi güne yazılırdı."""
+    try:
+        from tr_saat import is_gunu_tr
+        return is_gunu_tr()
+    except Exception:  # noqa: BLE001
+        return bugun()
+
+
 def tr_saat(ts, gun: Optional[date] = None) -> Optional[str]:
     """TR saati "HH:MM"; kayıt verilen iş gününden FARKLI bir günde girildiyse "GG.AA HH:MM"."""
     if not ts:
@@ -190,4 +200,4 @@ def bekleyen_saglayicilar() -> List[str]:
 
 __all__ = ["bugun", "tr_saat", "tr_gun", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tl", "kilit", "aktor",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
-           "ayar_oku", "ayar_yaz"]
+           "ayar_oku", "ayar_yaz", "is_gunu"]
