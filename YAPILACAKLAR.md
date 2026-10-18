@@ -12,7 +12,7 @@
 |---|---|
 | **Ana yol** | Sipariş Faz 1 (A) → adım **1b** "okuyucular yeni kataloğa" |
 | **1b'den dalınan yan yol** | Yeni Şube Paneli (B) — çünkü eski panel eski kimlik yazıyor; okuyucuların yeni kataloğa geçmesi panelin yeni sisteme yazmasını gerektirdi |
-| **📍 Şu an** | D — "Evvel Yeni'de olmalı mı?" sorgulaması madde 21'den (sahip 18 Eki: kurguyu kaldığımız yerden bitirelim) · B4–B7 ✅ canlı |
+| **📍 Şu an** | **Panel Revizyon 1** (sahip 18 Eki: "panel kurgumu yok saymış") — SUBE_PANELI_TASARIM.md §R. Sunucu: QR onay uçları (onay-iste / onay/{id} / telefon özet+onayla) yerelde yazıldı (açılış+kapanış). **Sıradaki:** (1) PIN: ey_personel pin_salt/pin_hash + eski PIN'lerin bir kez kopyası + Tanımlar'da PIN + 5 yanlış kilit; sık işlemlere pin alanı (deneme kaydına PIN yazılmaz) (2) panel önyüzü: üstteki "Adını seç" kalkar · açılış/kapanış 5. adım QR (TabletQR ?o=) + 2 sn yoklama · sık işlemlerde giriş yapanların ad düğmeleri + PIN · devirde devreden seçimi (3) telefon: /q/{şube}/{jeton}?o= → özet + ONAYLA (4) Fable + Codex denetim → yayın. Ardından R2 (yakında kalan 5 bölüm) ve R3 (sadeleştirilenler sahibe) · D21 kararı: kule ÇIKAR, işlevi Sipariş modülüne |
 | **↩ B bitince dönüş** | B14 (okuyucular yeni panel verisine — 1b'nin asıl işi) → A 1d/1e (sipariş tabloları + merkez "Sevk et") → C listesindeki "Bende" işleri → D "olmalı mı?" sorgulaması (⏳ olanlar) |
 
 ## 🔗 İLİŞKİ HARİTASI — bölümler birbirine nasıl bağlı (sahip: "alanları birbiriyle ilişkilendir, kaybolmayalım")

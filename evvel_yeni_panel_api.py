@@ -21,8 +21,9 @@ from datetime import date, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import List, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from database import db
 from evvel_yeni_cekirdek import ayar_oku, bekleyen_is_kaydet, is_gunu as _bugun, kurus as _kurus   # şube İŞ GÜNÜ (gece 02:00'ye kadar önceki gün)
@@ -669,6 +670,206 @@ def fire(sube_id: str, b: FireBody):
 
 
 # ─────────────────────────── MERKEZ: geç kapanış (reddedilen / hata veren kapanış) ───────────────────────────
+# ─────────────────────────── R1 · İŞLEM SONUNDA QR İLE ONAY (sahip 2026-10-18 — "Adını seç" ve PIN yok) ───────────────────────────
+# Panel formu doldurur → onay isteği (para/stok YAZILMAZ) → ekranda QR (+ onay kimliği) → personel KENDİ telefonuyla okutur → ONAYLA →
+# kişi telefondan (istemciden gelmez), QR + konum yoklama modülünün PUBLIC servisleriyle doğrulanır → panelin MEVCUT yazma ucu o kişi adına
+# çalışır (tek yazar). SUBE_PANELI_TASARIM.md §R1.
+ONAY_SURE_DK = 10
+ONAY_TURLERI = {
+    "acilis": (AcilisBody, lambda s, b: acilis(s, b), "Açılış"),
+    "kapanis": (KapanisBody, lambda s, b: kapanis(s, b), "Kapanış"),
+}   # sahip (2026-10-18): sık işlemler (ürün aç, fire, ara teslim, anlık gider, teslim al) QR DEĞİL — "giriş yapmış personelin adı + PIN" (R1b)
+_ONAY_HAZIR = False
+
+
+def _onay_hazirla() -> None:
+    global _ONAY_HAZIR
+    if _ONAY_HAZIR:
+        return
+    with db() as (_c, cur):
+        cur.execute("SELECT pg_advisory_xact_lock(7012051)")
+        cur.execute("SET LOCAL lock_timeout = '3s'")
+        cur.execute("""CREATE TABLE IF NOT EXISTS ey_panel_onay (
+            id TEXT PRIMARY KEY, sube_id TEXT NOT NULL, tur TEXT NOT NULL, govde JSONB NOT NULL, ozet TEXT,
+            durum TEXT NOT NULL DEFAULT 'bekliyor', personel_id TEXT, personel_ad TEXT, mesaj TEXT, sonuc JSONB,
+            olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW(), son TIMESTAMPTZ NOT NULL, islenme TIMESTAMPTZ)""")
+    _ONAY_HAZIR = True
+
+
+def _tl_yaz(x) -> str:
+    try:
+        return f"{Decimal(str(x)):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " ₺"
+    except Exception:  # noqa: BLE001
+        return str(x)
+
+
+def _onay_ozet(cur, tur: str, g: dict) -> str:
+    """Telefonda gösterilecek tek satır özet (personel ne onayladığını görür)."""
+    def adlar(kalemler):
+        ids = [str(k.get("urun_id")) for k in kalemler or [] if k.get("urun_id")]
+        try:
+            u = _urunler(cur, ids) if ids else {}
+        except HTTPException:
+            u = {}
+        return ", ".join(f"{(u.get(str(k.get('urun_id'))) or {}).get('ad', '?')} × {k.get('adet') or k.get('sayilan')}" for k in kalemler or [])
+    if tur == "acilis":
+        return f"Kasa {_tl_yaz(g.get('kasa_sayim', 0))} · {len(g.get('sayim') or [])} ürün sayıldı" + (f" · pasta {g['pasta_toplam']}" if g.get("pasta_toplam") not in (None, "") else "")
+    if tur == "kapanis":
+        tes = " · teslim " + ", ".join(f"{str(t.get('alan', '')).split(':')[-1].capitalize()} {_tl_yaz(t.get('tutar', 0))}" for t in g.get("teslimler") or []) if g.get("teslimler") else ""
+        return f"Nakit {_tl_yaz(g.get('nakit', 0))} · POS {_tl_yaz(g.get('pos', 0))} · online {_tl_yaz(g.get('online', 0))}{tes}"
+    if tur == "ara-teslim":
+        return f"{str(g.get('alan', '')).split(':')[-1].capitalize()}'a {_tl_yaz(g.get('tutar', 0))} teslim"
+    if tur in ("urun-ac", "fire"):
+        return adlar(g.get("kalemler")) + (f" · sebep {FIRE_SEBEPLERI.get(g.get('sebep'), g.get('sebep'))}" if tur == "fire" else "")
+    return ""
+
+
+class OnayIsteBody(BaseModel):
+    tur: str
+    govde: dict
+
+
+@router.post("/{sube_id}/onay-iste")
+def onay_iste(sube_id: str, b: OnayIsteBody):
+    """Panel: form hazır → onay isteği. Biçim burada denetlenir (telefon geçersiz form görmesin); kayıt telefon onaylayınca yazılır."""
+    if _yoklama() is None:
+        raise HTTPException(400, "QR onayı kapalı — adını seçip kaydet")
+    if b.tur not in ONAY_TURLERI:
+        raise HTTPException(400, "Bu işlem QR ile onaylanmaz")
+    Body, _f, ad = ONAY_TURLERI[b.tur]
+    g = {k: v for k, v in (b.govde or {}).items() if k != "personel_id"}
+    try:
+        Body(**{**g, "personel_id": "-"})
+    except Exception as e:  # noqa: BLE001
+        raise HTTPException(400, f"Form eksik: {str(e)[:160]}")
+    _onay_hazirla()
+    oid = "on-" + uuid.uuid4().hex[:16]
+    with db() as (conn, cur):
+        _sube(cur, sube_id)
+        ozet = _onay_ozet(cur, b.tur, g)
+        cur.execute("""INSERT INTO ey_panel_onay (id, sube_id, tur, govde, ozet, son)
+                       VALUES (%s,%s,%s,%s::jsonb,%s, NOW() + (%s || ' minutes')::interval)""",
+                    (oid, str(sube_id), b.tur, json.dumps(g, ensure_ascii=False, default=str), ozet, str(ONAY_SURE_DK)))
+    return {"ok": True, "onay_id": oid, "ad": ad, "ozet": ozet, "sure_dk": ONAY_SURE_DK,
+            "mesaj": "Telefonunla ekrandaki QR'ı okut ve onayla"}
+
+
+def _onay_oku(cur, oid: str) -> dict:
+    cur.execute("SELECT *, son < NOW() AS gecti FROM ey_panel_onay WHERE id=%s", (oid,))
+    r = cur.fetchone()
+    if not r:
+        raise HTTPException(404, "Onay bulunamadı")
+    return dict(r)
+
+
+@router.get("/onay/{oid}")
+def onay_durum(oid: str):
+    """Panel 2 sn'de bir sorar: bekliyor / onaylandi / hata / iptal / sure_doldu."""
+    _onay_hazirla()
+    with db() as (conn, cur):
+        o = _onay_oku(cur, oid)
+    durum = "sure_doldu" if o["durum"] in ("bekliyor", "hata") and o["gecti"] else o["durum"]
+    return {"durum": durum, "mesaj": o["mesaj"], "kisi": o["personel_ad"], "ozet": o["ozet"], "tur": o["tur"]}
+
+
+@router.post("/onay/{oid}/iptal")
+def onay_iptal(oid: str):
+    _onay_hazirla()
+    with db() as (conn, cur):
+        cur.execute("UPDATE ey_panel_onay SET durum='iptal' WHERE id=%s AND durum IN ('bekliyor','hata') RETURNING id", (oid,))
+        if not cur.fetchone():
+            raise HTTPException(409, "Bu onay artık iptal edilemez")
+    return {"ok": True, "mesaj": "Onay iptal edildi — form duruyor"}
+
+
+@router.get("/onay/{oid}/ozet")
+async def onay_ozet_telefon(oid: str, request: Request):
+    """Telefon (imzalı): neyi onaylayacağını görür."""
+    y = _yoklama()
+    if y is None:
+        raise HTTPException(400, "QR onayı kapalı")
+    _onay_hazirla()
+
+    def _is():
+        with db() as (conn, cur):
+            c = y.cihaz_coz(cur, request.headers, "GET", request.url.path, b"", tur="telefon")
+            p = y.personel_oku(cur, c["personel_id"])
+            o = _onay_oku(cur, oid)
+            cur.execute("SELECT ad FROM ey_sube WHERE id=%s", (o["sube_id"],))
+            sube_ad = dict(cur.fetchone() or {}).get("ad")
+        return {"tur": o["tur"], "ad": ONAY_TURLERI.get(o["tur"], (None, None, o["tur"]))[2], "ozet": o["ozet"], "sube": o["sube_id"],
+                "sube_ad": sube_ad, "kisi": p["ad"], "durum": "sure_doldu" if o["durum"] in ("bekliyor", "hata") and o["gecti"] else o["durum"],
+                "mesaj": o["mesaj"]}
+    return await run_in_threadpool(_is)
+
+
+@router.post("/onay/{oid}/onayla")
+async def onay_onayla(oid: str, request: Request):
+    """Telefon (imzalı) ONAYLA: kişi telefondan, QR + konum doğrulanır → panelin mevcut yazma ucu o kişi adına çalışır."""
+    y = _yoklama()
+    if y is None:
+        raise HTTPException(400, "QR onayı kapalı")
+    _onay_hazirla()
+    ham = await request.body()
+
+    def _dogrula():
+        with db() as (conn, cur):
+            c = y.cihaz_coz(cur, request.headers, "POST", request.url.path, ham, tur="telefon")
+            try:
+                v = json.loads(ham) if ham else {}
+            except ValueError:
+                raise HTTPException(400, "İstek okunamadı")
+            p = y.personel_oku(cur, c["personel_id"])
+            cur.execute("SELECT *, son < NOW() AS gecti, islenme < NOW() - INTERVAL '2 minutes' AS takildi FROM ey_panel_onay WHERE id=%s FOR UPDATE", (oid,))
+            o = cur.fetchone()
+            if not o:
+                raise HTTPException(404, "Onay bulunamadı")
+            o = dict(o)
+            if o["durum"] == "onaylandi":
+                return {"tekrar": True, "mesaj": o["mesaj"], "kisi": o["personel_ad"]}
+            if o["durum"] == "isleniyor" and not o["takildi"]:
+                raise HTTPException(409, "Onay işleniyor — birazdan panele bak")
+            if o["durum"] not in ("bekliyor", "hata", "isleniyor"):
+                raise HTTPException(409, "Bu onay artık geçerli değil — panelden yeniden iste")
+            if o["gecti"]:
+                raise HTTPException(410, "Onayın süresi doldu — panelden yeniden iste")
+            sube = str(v.get("sube") or "")
+            if sube != o["sube_id"]:
+                raise HTTPException(409, "Bu onay başka şubenin — o şubenin QR'ını okut")
+            dilim = y.qr_dogrula(cur, sube, str(v.get("qr") or ""))
+            if dilim is None:
+                raise HTTPException(409, "QR süresi doldu — panelde QR yenilenince tekrar okut")
+            y.konum_kontrol(cur, sube, p, v.get("lat"), v.get("lng"))
+            y.qr_kullan(cur, sube, dilim, p["id"], "onay:" + oid)   # iz (aynı onayın yeniden denemesi engellenmez; tekrar onay satırıyla korunur)
+            cur.execute("UPDATE ey_panel_onay SET durum='isleniyor', personel_id=%s, personel_ad=%s, islenme=NOW() WHERE id=%s",
+                        (p["id"], p["ad"], oid))
+            return {"o": o, "p": p}
+    r = await run_in_threadpool(_dogrula)
+    if r.get("tekrar"):
+        return {"ok": True, "tekrar": True, "mesaj": r["mesaj"] or "Zaten onaylandı"}
+    o, p = r["o"], r["p"]
+    Body, fn, ad = ONAY_TURLERI[o["tur"]]
+    govde = dict(o["govde"] if isinstance(o["govde"], dict) else json.loads(o["govde"]))
+    govde["personel_id"] = p["id"]   # kimlik KAYNAKTA: telefonun sahibi
+    try:
+        sonuc = await run_in_threadpool(lambda: fn(o["sube_id"], Body(**govde)))
+        durum, mesaj, kod = "onaylandi", f"{p['ad']} adına · {sonuc.get('mesaj') or 'kaydedildi'}", None
+    except HTTPException as e:
+        sonuc, durum, mesaj, kod = None, "hata", str(e.detail), e.status_code
+    except Exception as e:  # noqa: BLE001
+        log.error("panel onay işlenemedi %s: %s", oid, str(e)[:300])
+        sonuc, durum, mesaj, kod = None, "hata", "Kaydedilemedi — tekrar dene", 503
+
+    def _kapat():
+        with db() as (conn, cur):
+            cur.execute("UPDATE ey_panel_onay SET durum=%s, mesaj=%s, sonuc=%s::jsonb WHERE id=%s",
+                        (durum, mesaj, json.dumps(sonuc or {}, ensure_ascii=False, default=str), oid))
+    await run_in_threadpool(_kapat)
+    if kod:
+        raise HTTPException(kod, mesaj)
+    return {"ok": True, "mesaj": mesaj, "kuru": bool((sonuc or {}).get("kuru"))}
+
+
 class DenemeBody(BaseModel):
     deneme_id: str
 

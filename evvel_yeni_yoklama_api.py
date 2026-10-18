@@ -262,6 +262,18 @@ def _personel(cur, pid: str) -> dict:
     return dict(r)
 
 
+def personel_oku(cur, pid: str) -> dict:
+    """PUBLIC: aktif personel (konum muafiyeti dahil) — telefon kimliğinden gelen kişi."""
+    return _personel(cur, pid)
+
+
+def qr_kullan(cur, sube_id: str, dilim: int, personel_id: str, islem: str) -> bool:
+    """PUBLIC: QR dilimi + kişi + işlem tek kullanım kaydı. Daha önce kullanıldıysa False."""
+    cur.execute("""INSERT INTO ey_qr_kullanim (sube_id, dilim, personel_id, islem) VALUES (%s,%s,%s,%s)
+                   ON CONFLICT DO NOTHING RETURNING sube_id""", (sube_id, dilim, personel_id, islem[:60]))
+    return bool(cur.fetchone())
+
+
 def bugun_girenler(cur, sube_id: str, gun: Optional[date] = None) -> list:
     """PUBLIC: şubenin iş günündeki girişleri (kişi başına son satır): ad · giriş · çıkış."""
     yoklama_hazirla()
@@ -563,12 +575,15 @@ async def qr_png(request: Request):
             c = cihaz_coz(cur, request.headers, "GET", request.url.path, b"", tur="tablet")
             return c["sube_id"], qr_jeton(cur, c["sube_id"])
     sube_id, jeton = await run_in_threadpool(_is)
+    # R1: panelin "QR ile onayla" adımı → QR onay kimliğini taşır (telefon o işlemi onaylar)
+    onay = (request.query_params.get("o") or "").strip()
+    onay = onay if onay and len(onay) <= 40 and all(ch.isalnum() or ch == "-" for ch in onay) else ""
     import io
     import os
     import qrcode
     taban = os.getenv("APP_URL", "https://evvel-erp-production.up.railway.app").rstrip("/")
     q = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=3)
-    q.add_data(f"{taban}/q/{sube_id}/{jeton}")
+    q.add_data(f"{taban}/q/{sube_id}/{jeton}" + (f"?o={onay}" if onay else ""))
     q.make(fit=True)
     buf = io.BytesIO()
     q.make_image(fill_color="black", back_color="white").save(buf, format="PNG")
