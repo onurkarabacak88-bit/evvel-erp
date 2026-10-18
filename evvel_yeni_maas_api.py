@@ -163,6 +163,39 @@ def _ucretler(cur, ay: str) -> dict:
     return {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
 
 
+def _yemek_kaynagi(cur, ay: str, ay_bas: date, ay_son: date):
+    """F4 — VAR OLAN yemek kalemi okuyucusunun KAYNAĞI: panel başlangıç ayından (1 Kasım) itibaren yoklama modülünün
+    PUBLIC yemek_ozet'i (K7/K8). Öncesi: eski formül (None). Modül kapalıysa {'kapali': True} → tam + uyarı."""
+    from evvel_yeni_cekirdek import ayar_oku
+    from evvel_yeni_moduller import DURUM
+    bas = (ayar_oku(cur, "panel_baslangic", "2026-11-01") or "2026-11-01")[:10]
+    if ay < bas[:7]:
+        return None
+    if DURUM.get("yoklama") != "yuklendi":
+        return {"kapali": True}
+    import evvel_yeni_yoklama_api as yoklama
+    return yoklama.yemek_ozet(cur, max(ay_bas, date.fromisoformat(bas)), ay_son)
+
+
+def _yemek_kalemi(k, pid: str, aylik: int, gun: int, uyari: list) -> dict:
+    """Yemek tek POZİTİF kalem (kesinti satırı yok): aylık × gün/30 × hak_gün/çalışılan_gün. Müdür tam (F1b)."""
+    tam = {"kod": "yemek", "ad": f"Yemek: aylık × {gun}/30", "tutar": _tl(aylik * gun // AY_GUN)}
+    if k is None:
+        return tam
+    if k.get("kapali"):
+        uyari.append("Yoklama modülü kapalı — yemek tam sayıldı")
+        return tam
+    if pid in k["mudur"]:
+        return {**tam, "ad": tam["ad"] + " (müdür — tam)"}
+    h = k["kisi"].get(pid) or {"calisilan_gun": 0, "hak_gun": 0, "dusen": []}
+    payda, hak = h["calisilan_gun"], h["hak_gun"]
+    if not payda:
+        uyari.append("Bu ay yoklama kaydı yok — yemek tam sayıldı")
+        return tam
+    return {"kod": "yemek", "ad": f"Yemek: aylık × {gun}/30 × {hak}/{payda} gün (mola ≤ 60 dk)",
+            "tutar": _tl(aylik * gun * hak // (AY_GUN * payda)), "dusen": h["dusen"]}
+
+
 def _gecen_gun(giris, cikis, ay_bas, ay_son, bugun):
     if ay_bas > bugun:
         return 0, True
@@ -194,6 +227,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
     eski_od = _eski_odenen(cur, ay) if eski_mod else {}
     ucret = _ucretler(cur, ay)
     oneri = _vardiya_onerisi(ay) if not eski_mod else {}
+    yemek_k = _yemek_kaynagi(cur, ay, ay_bas, ay_son) if not eski_mod else None
     # önceki aydan avans devri (yeni hesap başlangıcından itibaren zincir)
     devir_in = {}
     if not eski_mod and ay > YENI_HESAP_BASLANGIC:
@@ -263,8 +297,11 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
             kes_gun = Decimal(str(e.get("eksik_gun") or 0)) + (Decimal(str(e.get("rapor_gun") or 0)) if e.get("rapor_kesinti") else 0)
             if kes_gun:
                 kalemler.append({"kod": "eksik", "ad": f"Eksik gün {kes_gun:g} × maaş/30", "tutar": -_tl(int(kes_gun * maas / AY_GUN))})
+        yemek_dusen = []
         if u.get("yemek"):
-            kalemler.append({"kod": "yemek", "ad": f"Yemek: aylık × {gun}/30", "tutar": _tl(int(u["yemek"]) * gun // AY_GUN)})
+            yk = _yemek_kalemi(yemek_k, pid, int(u["yemek"]), gun, uyari)
+            yemek_dusen = yk.pop("dusen", [])
+            kalemler.append(yk)
         if u.get("yol"):
             kalemler.append({"kod": "yol", "ad": f"Yol: aylık × {gun}/30", "tutar": _tl(int(u["yol"]) * gun // AY_GUN)})
         if e.get("duzeltme"):
@@ -276,7 +313,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         din = devir_in.get(pid, 0)
         mahsup = min(avans + din, max(hak, 0))
         ek = {"gun": gun, "ay_acik": acik, "uyari": uyari, "avans_devir_onceki": _tl(din),
-              "yemek_hak": next((k["tutar"] for k in kalemler if k["kod"] == "yemek"), 0)}
+              "yemek_hak": next((k["tutar"] for k in kalemler if k["kod"] == "yemek"), 0), "yemek_dusen": yemek_dusen}
         satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, din, odenen, od, e, u, "evvel_yeni", ek, yari))
     satir.sort(key=lambda x: (not x["aktif"], x["ad"]))
     return satir

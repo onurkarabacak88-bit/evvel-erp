@@ -72,6 +72,14 @@ def yoklama_hazirla() -> None:
             cikis_ts TIMESTAMPTZ, cikis_tur TEXT, cikis_mesafe_m INT, cikis_cihaz_id TEXT,
             istek_id TEXT UNIQUE, cikis_istek_id TEXT UNIQUE, degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
         cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_ey_yoklama_acik ON ey_yoklama (personel_id) WHERE cikis_ts IS NULL")   # K11
+        # Yemek molası (K7/K8): kişi başı iş gününde 1; hak = süre ≤ mola_limit_dk; merkez elle hak verebilir (izli)
+        cur.execute("""CREATE TABLE IF NOT EXISTS ey_mola (
+            id TEXT PRIMARY KEY, personel_id TEXT NOT NULL, sube_id TEXT NOT NULL, is_gunu DATE NOT NULL, yoklama_id TEXT,
+            baslangic_ts TIMESTAMPTZ NOT NULL, baslangic_mesafe_m INT, bitis_ts TIMESTAMPTZ, bitis_mesafe_m INT, bitis_tur TEXT,
+            sure_dk INT, yemek_hakki BOOLEAN, hak_elle BOOLEAN NOT NULL DEFAULT FALSE, hak_veren TEXT, hak_zaman TIMESTAMPTZ,
+            hak_aciklama TEXT, gorulen TEXT, istek_id TEXT UNIQUE, bitis_istek_id TEXT UNIQUE, degistiren TEXT,
+            zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (personel_id, is_gunu))""")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_mola_gun ON ey_mola (is_gunu)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_yoklama_gun ON ey_yoklama (sube_id, is_gunu)")
         # QR sırrı: ortam değişkeni yoksa bir kez üretilir (ayar defterinde; dışarı verilmez)
         import os
@@ -233,11 +241,13 @@ def bugun_girenler(cur, sube_id: str, gun: Optional[date] = None) -> list:
     """PUBLIC: şubenin iş günündeki girişleri (kişi başına son satır): ad · giriş · çıkış."""
     yoklama_hazirla()
     g = gun or is_gunu()
-    cur.execute("""SELECT DISTINCT ON (y.personel_id) y.personel_id, p.ad, y.giris_ts, y.cikis_ts, y.cikis_tur
+    cur.execute("""SELECT DISTINCT ON (y.personel_id) y.personel_id, p.ad, y.giris_ts, y.cikis_ts, y.cikis_tur,
+                          EXISTS (SELECT 1 FROM ey_mola m WHERE m.personel_id=y.personel_id AND m.bitis_ts IS NULL) AS molada
                      FROM ey_yoklama y JOIN ey_personel p ON p.id = y.personel_id
                     WHERE y.sube_id=%s AND y.is_gunu=%s ORDER BY y.personel_id, y.giris_ts DESC""", (sube_id, g))
     out = [{"personel_id": r["personel_id"], "ad": r["ad"], "giris": _saat(r["giris_ts"]), "cikis": _saat(r["cikis_ts"]),
-            "cikis_tur": r["cikis_tur"], "acik": r["cikis_ts"] is None} for r in [dict(x) for x in cur.fetchall() or []]]
+            "cikis_tur": r["cikis_tur"], "acik": r["cikis_ts"] is None, "molada": bool(r["molada"]) and r["cikis_ts"] is None}
+           for r in [dict(x) for x in cur.fetchall() or []]]
     out.sort(key=lambda x: (not x["acik"], x["giris"] or ""))
     return out
 
@@ -275,7 +285,77 @@ def cikis_yaz(cur, personel_id: str, tur: str, kim: Optional[str] = None, mesafe
     yid = dict(r)["id"]
     cur.execute("""UPDATE ey_yoklama SET cikis_ts=NOW(), cikis_tur=%s, cikis_mesafe_m=%s, cikis_cihaz_id=%s, cikis_istek_id=%s,
                           degistiren=COALESCE(%s, degistiren) WHERE id=%s""", (tur, mesafe, cihaz_id, istek_id, kim, yid))
+    _mola_kapat(cur, personel_id, tur, kim=kim)   # D6: çıkış / devir / kapanış açık molayı da kapatır (hak o anda hesaplanır)
     return yid
+
+
+# ─────────────────────────── Yemek molası (K7 / K8) ───────────────────────────
+def mola_limit(cur) -> int:
+    try:
+        return int(ayar_oku(cur, "mola_limit_dk", "60") or 60)
+    except ValueError:
+        return 60
+
+
+def _mola_kapat(cur, personel_id: str, tur: str, ts=None, mesafe: Optional[int] = None, istek_id: Optional[str] = None,
+                kim: Optional[str] = None) -> Optional[dict]:
+    """Açık molayı bitirir: süre + yemek hakkı (≤ limit). Açık mola yoksa None."""
+    cur.execute("SELECT id, baslangic_ts FROM ey_mola WHERE personel_id=%s AND bitis_ts IS NULL FOR UPDATE", (personel_id,))
+    r = cur.fetchone()
+    if not r:
+        return None
+    r = dict(r)
+    bit = ts or datetime.now(timezone.utc)
+    sure = max(0, int((bit - r["baslangic_ts"]).total_seconds() // 60))
+    hak = sure <= mola_limit(cur)
+    cur.execute("""UPDATE ey_mola SET bitis_ts=%s, bitis_tur=%s, bitis_mesafe_m=%s, bitis_istek_id=%s, sure_dk=%s, yemek_hakki=%s,
+                          degistiren=COALESCE(%s, degistiren) WHERE id=%s""", (max(bit, r["baslangic_ts"]), tur, mesafe, istek_id, sure, hak, kim, r["id"]))
+    return {"id": r["id"], "sure_dk": sure, "yemek_hakki": hak}
+
+
+def _mola_durum(cur, personel_id: str, gun: date) -> Optional[dict]:
+    cur.execute("SELECT * FROM ey_mola WHERE personel_id=%s AND is_gunu=%s", (personel_id, gun))
+    m = cur.fetchone()
+    if not m:
+        return None
+    m = dict(m)
+    lim = mola_limit(cur)
+    if m["bitis_ts"] is None:
+        sure = max(0, int((datetime.now(timezone.utc) - m["baslangic_ts"]).total_seconds() // 60))
+        return {"durum": "suruyor", "bas": _saat(m["baslangic_ts"]), "sure_dk": sure, "limit_dk": lim, "hak_dustu": sure > lim}
+    return {"durum": "bitti", "bas": _saat(m["baslangic_ts"]), "bit": _saat(m["bitis_ts"]), "sure_dk": m["sure_dk"], "limit_dk": lim,
+            "hak_dustu": not m["yemek_hakki"] and not m["hak_elle"]}
+
+
+def yemek_ozet(cur, bas: date, son: date) -> dict:
+    """PUBLIC (Maaş yemek kalemi, F4): kişi → {calisilan_gun, hak_gun, dusen:[{gun, sure_dk}]} + müdür listesi.
+    Çalışılan gün = QR girişi ∪ panel izi (F1a). Hak gün = molası ≤ limit ya da merkezin elle verdiği gün (K7; K8: molasız gün hak yok)."""
+    yoklama_hazirla()
+    gunler: dict = {}
+    cur.execute("SELECT personel_id, is_gunu FROM ey_yoklama WHERE is_gunu BETWEEN %s AND %s", (bas, son))
+    for r in [dict(x) for x in cur.fetchall() or []]:
+        gunler.setdefault(r["personel_id"], set()).add(r["is_gunu"])
+    try:
+        from evvel_yeni_olay import olaylar
+        for o in olaylar(cur, bas=bas, son=son):
+            if (o.get("kaynak_tablo") or "") == "panel" and not o.get("iptal") and o.get("personel_id"):
+                gunler.setdefault(str(o["personel_id"]), set()).add(o["is_gunu"])
+    except Exception:  # noqa: BLE001
+        log.warning("yemek özeti: panel izi okunamadı", exc_info=True)
+    hak: dict = {}
+    dusen: dict = {}
+    cur.execute("""SELECT personel_id, is_gunu, sure_dk, yemek_hakki, hak_elle FROM ey_mola
+                    WHERE is_gunu BETWEEN %s AND %s AND bitis_ts IS NOT NULL ORDER BY is_gunu""", (bas, son))
+    for r in [dict(x) for x in cur.fetchall() or []]:
+        gunler.setdefault(r["personel_id"], set()).add(r["is_gunu"])
+        if r["yemek_hakki"] or r["hak_elle"]:
+            hak[r["personel_id"]] = hak.get(r["personel_id"], 0) + 1
+        else:
+            dusen.setdefault(r["personel_id"], []).append({"gun": r["is_gunu"].isoformat(), "sure_dk": r["sure_dk"]})
+    cur.execute("SELECT id FROM ey_personel WHERE mudur")
+    mudur = {dict(r)["id"] for r in cur.fetchall() or []}
+    return {"mudur": mudur, "kisi": {pid: {"calisilan_gun": len(g), "hak_gun": hak.get(pid, 0), "dusen": dusen.get(pid, [])}
+                                     for pid, g in gunler.items()}}
 
 
 def son_okutanlar(cur, sube_id: str, sn: int = 300) -> list:
@@ -478,11 +558,17 @@ async def ben(request: Request, sube: Optional[str] = None):
         if sube:
             cur.execute("SELECT ad FROM ey_sube WHERE id=%s", (sube,))
             sube_ad = dict(cur.fetchone() or {}).get("ad")
+        mola = _mola_durum(cur, p["id"], is_gunu())
+        burada = acik and son.get("sube_id") == sube
+        yap = ["giris"] if not acik and sube else []
+        if burada:
+            yap = (["mola_bitir"] if mola and mola["durum"] == "suruyor" else ([] if mola else ["mola_baslat"])) + ["cikis"]
         return {"kisi": p["ad"], "muaf": bool(p.get("konum_muaf")), "gun": is_gunu().isoformat(), "sube": sube, "sube_ad": sube_ad,
+                "mola": mola,
                 "acik": acik, "acik_sube": son.get("sube_id") if acik else None, "acik_sube_ad": son.get("sube_ad") if acik else None,
                 "giris": _saat(son.get("giris_ts")) if son and son.get("is_gunu") == is_gunu() else None,
                 "cikis": _saat(son.get("cikis_ts")) if son and son.get("is_gunu") == is_gunu() else None,
-                "yapabilir": (["cikis"] if acik and son.get("sube_id") == sube else (["giris"] if not acik and sube else []))}
+                "yapabilir": yap}
     return await _telefon(request, fn)
 
 
@@ -612,8 +698,168 @@ def duzelt(b: DuzeltBody, x_evvel_oturum: Optional[str] = Header(default=None)):
         ts = datetime(g.year, g.month, g.day, hh, mm, tzinfo=ZoneInfo("Europe/Istanbul"))
         if ts < r["giris_ts"]:
             raise HTTPException(400, "Çıkış girişten önce olamaz")
-        cur.execute("UPDATE ey_yoklama SET cikis_ts=%s, cikis_tur='merkez', degistiren=%s WHERE id=%s", (ts, f"merkez: {kim} — {b.aciklama.strip()[:120]}", r["id"]))
+        iz = f"merkez: {kim} — {b.aciklama.strip()[:120]}"
+        cur.execute("UPDATE ey_yoklama SET cikis_ts=%s, cikis_tur='merkez', degistiren=%s WHERE id=%s", (ts, iz, r["id"]))
+        _mola_kapat(cur, r["personel_id"], "merkez", ts=ts, kim=iz)
     return {"ok": True, "mesaj": "Çıkış saati yazıldı"}
+
+
+# ─────────────────────────── TELEFON: yemek molası (QR + konum, giriş gibi) ───────────────────────────
+@router.post("/mola-baslat")
+async def mola_baslat(request: Request):
+    def fn(cur, c, p, v):
+        ist = _istek(v)
+        personel_kilidi(cur, p["id"])
+        cur.execute("SELECT personel_id, baslangic_ts FROM ey_mola WHERE istek_id=%s", (ist,))
+        r = cur.fetchone()
+        if r:
+            if dict(r)["personel_id"] != p["id"]:
+                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
+            return {"ok": True, "tekrar": True, "mesaj": f"Mola zaten başladı · {_saat(dict(r)['baslangic_ts'])}"}
+        cur.execute("SELECT id, sube_id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL", (p["id"],))
+        a = cur.fetchone()
+        if not a:
+            raise HTTPException(409, "Önce giriş yap")
+        a = dict(a)
+        sube, k = _qr_islem(cur, c, p, v, "mola_bas")
+        if a["sube_id"] != sube:
+            raise HTTPException(409, "Girişin başka şubede — o şubenin QR'ını okut")
+        gun = is_gunu()
+        cur.execute("SELECT 1 FROM ey_mola WHERE personel_id=%s AND is_gunu=%s", (p["id"], gun))
+        if cur.fetchone():
+            raise HTTPException(409, "Bugünkü yemek molanı kullandın")
+        cur.execute("""INSERT INTO ey_mola (id, personel_id, sube_id, is_gunu, yoklama_id, baslangic_ts, baslangic_mesafe_m, istek_id)
+                       VALUES (%s,%s,%s,%s,%s,NOW(),%s,%s)""",
+                    ("ml-" + uuid.uuid4().hex[:16], p["id"], sube, gun, a["id"], k["mesafe_m"], ist))
+        return {"ok": True, "mesaj": f"Yemek molası başladı · {_saat(datetime.now(timezone.utc))}"}
+    return await _telefon(request, fn)
+
+
+@router.post("/mola-bitir")
+async def mola_bitir(request: Request):
+    def fn(cur, c, p, v):
+        ist = _istek(v)
+        personel_kilidi(cur, p["id"])
+        cur.execute("SELECT personel_id, sure_dk, yemek_hakki FROM ey_mola WHERE bitis_istek_id=%s", (ist,))
+        r = cur.fetchone()
+        if r:
+            r = dict(r)
+            if r["personel_id"] != p["id"]:
+                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
+            return {"ok": True, "tekrar": True, "hak_dustu": not r["yemek_hakki"],
+                    "mesaj": f"Mola zaten bitti · {r['sure_dk']} dk" + ("" if r["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
+        cur.execute("SELECT sube_id FROM ey_mola WHERE personel_id=%s AND bitis_ts IS NULL", (p["id"],))
+        a = cur.fetchone()
+        if not a:
+            raise HTTPException(409, "Açık molan yok")
+        sube, k = _qr_islem(cur, c, p, v, "mola_bit")
+        if dict(a)["sube_id"] != sube:
+            raise HTTPException(409, "Molan başka şubede — o şubenin QR'ını okut")
+        m = _mola_kapat(cur, p["id"], "qr", mesafe=k["mesafe_m"], istek_id=ist)
+        return {"ok": True, "hak_dustu": not m["yemek_hakki"],   # K7: tek bilgi satırı (bildirim değil)
+                "mesaj": f"Mola bitti · {m['sure_dk']} dk" + ("" if m["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
+    return await _telefon(request, fn)
+
+
+# ─────────────────────────── MERKEZ: Personel › Yemek molaları ───────────────────────────
+@router.get("/molalar")
+def molalar(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = False,
+            x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Gün gün mola: kişi · şube · başlangıç–bitiş · süre · hak (✓ / ✗ / ✓ elle). acik=1: bitmemiş + görülmemiş uzun (Bekleyen işler ölçütü)."""
+    yoklama_hazirla()
+    with db() as (conn, cur):
+        _merkez(cur, x_evvel_oturum)
+        q = """SELECT m.*, p.ad, s.ad AS sube_ad FROM ey_mola m JOIN ey_personel p ON p.id=m.personel_id
+                 LEFT JOIN ey_sube s ON s.id=m.sube_id WHERE """
+        if acik:
+            cur.execute(q + """(m.bitis_ts IS NULL AND m.is_gunu < %s) OR (m.yemek_hakki = FALSE AND NOT m.hak_elle AND m.gorulen IS NULL)
+                                ORDER BY m.is_gunu, m.baslangic_ts""", (is_gunu(),))
+        elif bas and son:
+            cur.execute(q + "m.is_gunu BETWEEN %s AND %s ORDER BY m.is_gunu, m.baslangic_ts", (bas, son))
+        else:
+            raise HTTPException(400, "bas/son ya da acik=1")
+        rows = [dict(r) for r in cur.fetchall() or []]
+        lim = mola_limit(cur)
+    bugun = is_gunu()
+
+    def _durum(r):
+        if r["bitis_ts"] is None:
+            return "suruyor" if r["is_gunu"] >= bugun else "bitmedi"
+        return {"merkez": "merkez yazdı", "qr": "bitti"}.get(r["bitis_tur"], "çıkışla kapandı")
+    return {"limit_dk": lim, "satirlar": [{
+        "id": r["id"], "gun": r["is_gunu"].isoformat(), "ad": r["ad"], "sube": r["sube_ad"], "bas": _saat(r["baslangic_ts"]),
+        "bit": _saat(r["bitis_ts"]), "sure_dk": r["sure_dk"], "durum": _durum(r), "yemek_hakki": r["yemek_hakki"],
+        "hak_elle": r["hak_elle"], "hak_veren": r["hak_veren"], "hak_aciklama": r["hak_aciklama"],
+        "hak_zaman": str(r["hak_zaman"])[:16] if r["hak_zaman"] else None, "gorulen": r["gorulen"], "mesafe": r["baslangic_mesafe_m"]}
+        for r in rows]}
+
+
+class MolaDuzeltBody(BaseModel):
+    bitis_saat: str
+    aciklama: str
+
+
+class AciklamaBody(BaseModel):
+    aciklama: Optional[str] = None
+
+
+def _saat_coz(saat: str):
+    try:
+        hh, mm = [int(x) for x in (saat or "").split(":")]
+        assert 0 <= hh <= 23 and 0 <= mm <= 59
+        return hh, mm
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "Saat SS:DD olmalı")
+
+
+@router.post("/mola/{mid}/duzelt")
+def mola_duzelt(mid: str, b: MolaDuzeltBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez: bitmemiş molaya bitiş saati yazar → süre + hak hesaplanır + iz."""
+    yoklama_hazirla()
+    hh, mm = _saat_coz(b.bitis_saat)
+    if len((b.aciklama or "").strip()) < 2:
+        raise HTTPException(400, "Açıklama yaz")
+    with db() as (conn, cur):
+        kim = _merkez(cur, x_evvel_oturum)
+        cur.execute("SELECT personel_id, is_gunu, baslangic_ts FROM ey_mola WHERE id=%s AND bitis_ts IS NULL", (mid,))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Bitmemiş mola bulunamadı")
+        r = dict(r)
+        from zoneinfo import ZoneInfo
+        g = r["is_gunu"] + (timedelta(days=1) if hh < 2 else timedelta(0))
+        ts = datetime(g.year, g.month, g.day, hh, mm, tzinfo=ZoneInfo("Europe/Istanbul"))
+        if ts < r["baslangic_ts"]:
+            raise HTTPException(400, "Bitiş başlangıçtan önce olamaz")
+        personel_kilidi(cur, r["personel_id"])
+        m = _mola_kapat(cur, r["personel_id"], "merkez", ts=ts, kim=f"merkez: {kim} — {b.aciklama.strip()[:120]}")
+    return {"ok": True, "mesaj": f"Mola bitişi yazıldı · {m['sure_dk'] if m else '?'} dk"}
+
+
+@router.post("/mola/{mid}/hak-ver")
+def mola_hak_ver(mid: str, b: AciklamaBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez: uzun moladan düşen yemek hakkını elle verir (K7 'gerekirse ödemesini yaparız') — izli."""
+    yoklama_hazirla()
+    with db() as (conn, cur):
+        kim = _merkez(cur, x_evvel_oturum)
+        cur.execute("""UPDATE ey_mola SET hak_elle=TRUE, hak_veren=%s, hak_zaman=NOW(), hak_aciklama=%s, gorulen=COALESCE(gorulen, %s)
+                        WHERE id=%s AND bitis_ts IS NOT NULL AND yemek_hakki = FALSE AND NOT hak_elle RETURNING id""",
+                    (kim, (b.aciklama or "").strip()[:200] or None, kim, mid))
+        if not cur.fetchone():
+            raise HTTPException(404, "Hakkı düşmüş mola bulunamadı")
+    return {"ok": True, "mesaj": "Yemek hakkı elle verildi"}
+
+
+@router.post("/mola/{mid}/gordum")
+def mola_gordum(mid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez: uzun molayı gördü (hak düşük kalır) → Bekleyen işlerden kalkar."""
+    yoklama_hazirla()
+    with db() as (conn, cur):
+        kim = _merkez(cur, x_evvel_oturum)
+        cur.execute("UPDATE ey_mola SET gorulen=%s WHERE id=%s AND gorulen IS NULL RETURNING id", (kim, mid))
+        if not cur.fetchone():
+            raise HTTPException(404, "Mola bulunamadı")
+    return {"ok": True, "mesaj": "Görüldü"}
 
 
 # ─────────────────────────── Bekleyen işler (grup personel; personele gitmez) ───────────────────────────
@@ -627,6 +873,19 @@ def _bekleyen(cur, baglam: dict) -> list:
         out.append({"tur": "yoklama_cikis_yok", "genel": True, "grup": "personel", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
                     "etiket": "🚪 Çıkış yok", "ad": f"{r['ad']} — {r['sube_ad'] or ''} {r['is_gunu'].strftime('%d.%m')} çıkış yapmadı",
                     "alt": "Çıkış saatini Personel › Telefonlar'dan yaz", "sayfa": "personel_telefon", "dugme": "Aç"})
+    cur.execute("""SELECT m.id, m.is_gunu, m.sure_dk, m.bitis_ts, p.ad, s.ad AS sube_ad FROM ey_mola m
+                     JOIN ey_personel p ON p.id=m.personel_id LEFT JOIN ey_sube s ON s.id=m.sube_id
+                    WHERE (m.bitis_ts IS NULL AND m.is_gunu < %s) OR (m.yemek_hakki = FALSE AND NOT m.hak_elle AND m.gorulen IS NULL)
+                    ORDER BY m.is_gunu""", (bugun,))
+    for r in [dict(x) for x in cur.fetchall() or []]:
+        if r["bitis_ts"] is None:
+            out.append({"tur": "yoklama_mola_bitmedi", "genel": True, "grup": "personel", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
+                        "etiket": "🍽 Mola bitmedi", "ad": f"{r['ad']} — {r['sube_ad'] or ''} {r['is_gunu'].strftime('%d.%m')} molası bitmedi",
+                        "alt": "Bitiş saatini Personel › Yemek molaları'ndan yaz", "sayfa": "personel_mola", "dugme": "Aç"})
+        else:
+            out.append({"tur": "yoklama_mola_uzun", "genel": True, "grup": "personel", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
+                        "etiket": "⏱ Mola uzun", "ad": f"{r['ad']} mola {r['sure_dk']} dk ({r['is_gunu'].strftime('%d.%m')}) — yemek hakkı düştü",
+                        "alt": "Gördüm ya da hakkı elle ver — Personel › Yemek molaları", "sayfa": "personel_mola", "dugme": "Aç"})
     cur.execute("""SELECT COUNT(*) AS n FROM ey_personel p WHERE p.aktif AND NOT p.mudur
                      AND NOT EXISTS (SELECT 1 FROM ey_cihaz c WHERE c.personel_id=p.id AND c.durum='aktif')""")
     n = int(dict(cur.fetchone())["n"])
