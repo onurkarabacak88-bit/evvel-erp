@@ -38,8 +38,10 @@ const YAPI = {
       { k: 'calisma_turu', ad: 'Çalışma türü', secim: 'calisma' }, { k: 'giris', ad: 'İşe giriş', tip: 'date' }, { k: 'cikis', ad: 'Ayrılış (varsa)', tip: 'date' },
       { k: 'maas', ad: 'Aylık maaş ₺ (tam zamanlı)', sayi: true, zorunluYeni: true }, { k: 'saatlik', ad: 'Saatlik ücret ₺ (yarı zamanlı)', sayi: true },
       { k: 'yemek', ad: 'Aylık yemek ₺', sayi: true }, { k: 'yol', ad: 'Aylık yol ₺', sayi: true },
-      { k: 'ucret_ay', ad: 'Ücret hangi aydan itibaren', tip: 'month', duzeltmede: true }],
-    kolon: (x) => [x.ad, `${x.sube_ad}${x.gorev ? ` · ${x.gorev}` : ''} · ${x.calisma_turu === 'yari' ? 'yarı zamanlı' : 'tam zamanlı'}${x.cikis ? ` · ayrıldı ${x.cikis}` : ''}`,
+      { k: 'ucret_ay', ad: 'Ücret hangi aydan itibaren', tip: 'month', duzeltmede: true },
+      // B7: müdür AYRI işaret değil — görev "MÜDÜR" yazılınca maaş her durumda tam (Maaş + Yoklama aynı kuralı okur)
+      { k: 'erken_acilis', ad: 'Erken açılış izni (07:00 öncesi)', secim: 'erken' }],
+    kolon: (x) => [x.ad, `${x.sube_ad}${x.gorev ? ` · ${x.gorev}` : ''} · ${x.calisma_turu === 'yari' ? 'yarı zamanlı' : 'tam zamanlı'}${x.cikis ? ` · ayrıldı ${x.cikis}` : ''}${x.erken_acilis ? ' · erken açılış izni' : ''}`,
       x.calisma_turu === 'yari' ? `saatlik ${fmt(x.saatlik)} · yemek ${fmt(x.yemek)}` : `maaş ${fmt(x.maas)} · yemek ${fmt(x.yemek)}${x.yol ? ` · yol ${fmt(x.yol)}` : ''}`, x.ucret_eski ? <Cip tur="sari">ücret eski sistemden — kontrol et</Cip> : null],
   },
   tanim_banka: {
@@ -86,6 +88,7 @@ export default function TanimModulu({ gorunum, onToast }) {
     banka_tur: [{ id: 'banka', ad: 'Banka hesabı' }, { id: 'hesap', ad: 'Geçiş hesabı (para toplanıp dağıtılan)' }],
     evet_hayir: [{ id: '', ad: '— değiştirme —' }, { id: '0', ad: 'Hayır (kira ödeniyor)' }, { id: '1', ad: 'Evet — mülk bizim' }],
     calisma: [{ id: 'tam', ad: 'Tam zamanlı (aylık maaş)' }, { id: 'yari', ad: 'Yarı zamanlı (saatlik)' }],
+    erken: [{ id: '', ad: '— değiştirme —' }, { id: '0', ad: 'Yok (07:00\'dan önce açamaz)' }, { id: '1', ad: 'Var — 07:00 öncesi açabilir' }],
   };
 
   const kaydet = async (ek = {}) => {
@@ -96,7 +99,7 @@ export default function TanimModulu({ gorunum, onToast }) {
         if (!(a.k in form) || (a.yalnizYeni && !yeni)) continue;
         if (a.sayi) { const n = sayi(form[a.k]); if (Number.isNaN(n)) throw new Error(`${a.ad}: sayı yaz`); if (n != null) body[a.k] = n; }
         else if (a.secim === 'sube') body[a.k] = form[a.k] || (yeni ? null : 'ortak');
-        else if (a.secim === 'evet_hayir') body[a.k] = form[a.k] === '1' ? true : form[a.k] === '0' ? false : null;
+        else if (a.secim === 'evet_hayir' || a.secim === 'erken') body[a.k] = form[a.k] === '1' ? true : form[a.k] === '0' ? false : null;
         else body[a.k] = form[a.k] || null;
       }
       const r = await api(`/evvel-yeni/tanim/${y.tur}${form.id ? `/${encodeURIComponent(form.id)}` : ''}`, { method: 'POST', body });

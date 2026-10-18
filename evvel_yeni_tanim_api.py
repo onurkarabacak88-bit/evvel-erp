@@ -189,7 +189,8 @@ def liste():
                              "gorev": r["gorev"], "giris": r["giris"].isoformat() if r["giris"] else None, "aktif": r["aktif"],
                              "maas": _tl(r["maas"]), "yemek": _tl(r["yemek"]), "saatlik": _tl(r["saatlik"]), "yol": _tl(r["yol"]),
                              "cikis": r["cikis"].isoformat() if r.get("cikis") else None, "calisma_turu": r.get("calisma_turu") or "tam",
-                             "ucret_eski": (r["ucret_kim"] == "eski sistem kopyası"), "kaynak": r["kaynak"]})
+                             "ucret_eski": (r["ucret_kim"] == "eski sistem kopyası"), "kaynak": r["kaynak"],
+                             "erken_acilis": bool(r.get("erken_acilis"))})
         try:
             from evvel_yeni_kira_api import kira_tanimlari
             with savepoint(cur, "sp_ey_t_kira"):
@@ -228,6 +229,7 @@ class TanimBody(BaseModel):
     ucret_ay: Optional[str] = None       # maaş/yemek değişikliği hangi aydan itibaren
     cikis: Optional[str] = None          # işten ayrılış (YYYY-AA-GG) — son maaş için
     calisma_turu: Optional[str] = None   # 'tam' | 'yari'
+    erken_acilis: Optional[bool] = None   # B7: panelde 07:00 öncesi açılış izni
     saatlik: Optional[Decimal] = None    # yarı zamanlı saatlik ücret
     yol: Optional[Decimal] = None        # aylık yol
     # kart / banka
@@ -346,9 +348,9 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                 cur.execute("""UPDATE ey_personel SET ad=COALESCE(%s,ad),
                                  sube_id=CASE WHEN %s THEN NULL ELSE COALESCE(%s,sube_id) END, gorev=COALESCE(%s,gorev),
                                  giris=COALESCE(%s,giris), cikis=COALESCE(%s,cikis), calisma_turu=COALESCE(%s,calisma_turu),
-                                 aktif=COALESCE(%s,aktif), degistiren=%s, zaman=NOW() WHERE id=%s""",
+                                 aktif=COALESCE(%s,aktif), erken_acilis=COALESCE(%s,erken_acilis), degistiren=%s, zaman=NOW() WHERE id=%s""",
                             (ad, b.sube_id == "ortak", None if b.sube_id == "ortak" else b.sube_id,
-                             (b.gorev or "").strip()[:40] or None, giris, cikis, b.calisma_turu, b.aktif, kim, tid))
+                             (b.gorev or "").strip()[:40] or None, giris, cikis, b.calisma_turu, b.aktif, b.erken_acilis, kim, tid))
             if any(x is not None for x in (b.maas, b.yemek, b.saatlik, b.yol)):
                 ay = (b.ucret_ay or (giris.isoformat() if giris else _bugun().isoformat()))[:7]
                 cur.execute("""SELECT maas, yemek, saatlik, yol FROM ey_personel_ucret WHERE personel_id=%s AND gecerli_ay <= %s

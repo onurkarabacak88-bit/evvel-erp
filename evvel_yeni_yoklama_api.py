@@ -40,6 +40,8 @@ SAAT_PAYI_SN = 120
 DAVET_SAAT = 48
 VARSAYILAN_YARICAP = 150
 _HAZIR = False
+# Müdür = görevinde MÜDÜR yazan (Maaş takvimi evvel_yeni_maas_api ile AYNI kural — ikinci kaynak açılmaz)
+MUDUR_SQL = "(upper(coalesce(gorev,'')) LIKE '%%MÜDÜR%%' OR upper(coalesce(gorev,'')) LIKE '%%MUDUR%%')"
 
 
 # ─────────────────────────── KURULUM (uygulama açılışında; ayrı işlem) ───────────────────────────
@@ -56,7 +58,7 @@ def yoklama_hazirla() -> None:
         cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION")
         cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS yaricap_m INT NOT NULL DEFAULT 150")
         cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS konum_muaf BOOLEAN NOT NULL DEFAULT FALSE")   # K2
-        cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS mudur BOOLEAN NOT NULL DEFAULT FALSE")        # F1b
+        # F1b müdür: AYRI İŞARET YOK — tek gerçek Tanımlar › Personel'deki görev ("MÜDÜR"); Maaş da aynı kuralı okur (MUDUR_SQL)
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_cihaz (
             id TEXT PRIMARY KEY, tur TEXT NOT NULL, personel_id TEXT, sube_id TEXT, acik_anahtar JSONB, jeton_hash TEXT,
             guc TEXT, etiket TEXT, durum TEXT NOT NULL DEFAULT 'davet', davet_hash TEXT UNIQUE, davet_son TIMESTAMPTZ,
@@ -251,7 +253,7 @@ def cihaz_coz(cur, basliklar, method: str, yol: str, govde: bytes, tur: Optional
 
 # ─────────────────────────── PUBLIC okuma servisleri (panel / maaş bunları çağırır) ───────────────────────────
 def _personel(cur, pid: str) -> dict:
-    cur.execute("SELECT id, ad, sube_id, aktif, konum_muaf, mudur FROM ey_personel WHERE id=%s", (pid,))
+    cur.execute(f"SELECT id, ad, sube_id, aktif, konum_muaf, {MUDUR_SQL} AS mudur FROM ey_personel WHERE id=%s", (pid,))
     r = cur.fetchone()
     if not r or not dict(r)["aktif"]:
         raise HTTPException(403, "Personel kaydı aktif değil")
@@ -378,7 +380,7 @@ def yemek_ozet(cur, bas: date, son: date) -> dict:
             hak[r["personel_id"]] = hak.get(r["personel_id"], 0) + 1
         else:
             dusen.setdefault(r["personel_id"], []).append({"gun": r["is_gunu"].isoformat(), "sure_dk": r["sure_dk"]})
-    cur.execute("SELECT id FROM ey_personel WHERE mudur")
+    cur.execute(f"SELECT id FROM ey_personel WHERE {MUDUR_SQL}")
     mudur = {dict(r)["id"] for r in cur.fetchall() or []}
     return {"mudur": mudur, "limit_dk": mola_limit(cur), "kisi": {pid: {"calisilan_gun": len(g), "hak_gun": hak.get(pid, 0), "dusen": dusen.get(pid, [])}
                                      for pid, g in gunler.items()}}
@@ -514,7 +516,7 @@ def cihazlar(x_evvel_oturum: Optional[str] = Header(default=None)):
     yoklama_hazirla()
     with db() as (conn, cur):
         _merkez(cur, x_evvel_oturum)
-        cur.execute("""SELECT p.id, p.ad, p.sube_id, s.ad AS sube_ad, p.konum_muaf, p.mudur FROM ey_personel p
+        cur.execute(f"""SELECT p.id, p.ad, p.sube_id, s.ad AS sube_ad, p.konum_muaf, {MUDUR_SQL.replace('gorev', 'p.gorev')} AS mudur FROM ey_personel p
                          LEFT JOIN ey_sube s ON s.id = p.sube_id WHERE p.aktif ORDER BY s.ad NULLS LAST, p.ad""")
         per = [dict(r) for r in cur.fetchall() or []]
         cur.execute("""SELECT id, tur, personel_id, sube_id, guc, etiket, durum, davet_son, olusturma, son_kullanim
@@ -528,6 +530,23 @@ def cihazlar(x_evvel_oturum: Optional[str] = Header(default=None)):
                 "davet_son": str(x["davet_son"])[:16] if x["davet_son"] else None}
     return {"personel": [{**p, "cihazlar": [_c(x) for x in cz if x["personel_id"] == p["id"]]} for p in per],
             "subeler": [{**s, "tabletler": [_c(x) for x in cz if x["sube_id"] == s["id"]]} for s in subeler]}
+
+
+class IsaretBody(BaseModel):
+    konum_muaf: bool
+
+
+@router.post("/personel/{pid}/konum-muaf")
+def konum_muaf_ayarla(pid: str, b: IsaretBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """B7: yönetici konum muafiyeti (K2) — Personel › Telefonlar'dan."""
+    yoklama_hazirla()
+    with db() as (conn, cur):
+        _merkez(cur, x_evvel_oturum)
+        cur.execute("UPDATE ey_personel SET konum_muaf=%s WHERE id=%s RETURNING ad", (b.konum_muaf, pid))
+        r = cur.fetchone()
+        if not r:
+            raise HTTPException(404, "Personel bulunamadı")
+    return {"ok": True, "mesaj": f"{dict(r)['ad']}: konum " + ("muaf" if b.konum_muaf else "kontrol edilir")}
 
 
 # ─────────────────────────── TABLET: QR üretimi (yalnız kayıtlı tablet) ───────────────────────────
@@ -1191,7 +1210,7 @@ def _bekleyen(cur, baglam: dict) -> list:
                         "etiket": "🔁 Devir tamamlanmadı", "ad": f"{r['sube_ad'] or ''} {r['devreden']} → {r['devralan']} · "
                                                               + ("devreden onaylamadı" if r["durum"] == "hazir" else "devralan kabul etmedi"),
                         "alt": "Kapat: iptal ya da devir sayıldı — Personel › Devirler", "sayfa": "personel_devir", "dugme": "Aç"})
-    cur.execute("""SELECT COUNT(*) AS n FROM ey_personel p WHERE p.aktif AND NOT p.mudur
+    cur.execute(f"""SELECT COUNT(*) AS n FROM ey_personel p WHERE p.aktif AND NOT {MUDUR_SQL.replace('gorev', 'p.gorev')}
                      AND NOT EXISTS (SELECT 1 FROM ey_cihaz c WHERE c.personel_id=p.id AND c.durum='aktif')""")
     n = int(dict(cur.fetchone())["n"])
     if n:
