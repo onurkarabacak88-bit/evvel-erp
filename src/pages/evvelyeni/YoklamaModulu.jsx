@@ -1,13 +1,17 @@
 // 📱 TELEFONLAR — yoklama modülünün merkez sayfası (sunucu: evvel_yeni_yoklama_api.py). Personel altında (F10: yeni menü yok).
 // Kişi → telefon var / bağlı (⚠️ zayıf bağ) / link bekliyor · "Link üret" (tek kullanımlık, BİR KEZ gösterilir, WhatsApp'tan gönderilir, K1/K9)
 // Şube → tablet yok / onay bekliyor [Onayla] / aktif · koordinat var/yok · Çıkışı yapılmamışlar (son 14 gün) → saat + açıklama ile düzelt.
+// İkinci sayfa (export YemekMolalari, dosya sonu): Personel › Yemek molaları — ay tablosu · hak ✓/✗/elle · Bitiş yaz · Gördüm · Bekleyenler.
 // Uyarılar ayrı sekme kuralı: burada bant yok; eksikler Bekleyen işler › Personel'de.
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import { bugunTR } from '../../utils/trTarih';
+import { ayTR, bugunTR } from '../../utils/trTarih';
 import { PI_CSS, R, kart, num, Dugme, Cip } from './KasaModulu';
 
-export const YOKLAMA_SAYFALAR = [{ id: 'personel_telefon', ad: 'Telefonlar', alt: 'Telefon bağla · tablet onayı · çıkış düzelt' }];
+export const YOKLAMA_SAYFALAR = [
+  { id: 'personel_telefon', ad: 'Telefonlar', alt: 'Telefon bağla · tablet onayı · çıkış düzelt' },
+  { id: 'personel_mola', ad: 'Yemek molaları', alt: 'Gün gün mola · süre · yemek hakkı ✓/✗ · elle hak' },
+];
 const alan = { padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 13.5 };
 const satir = { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${R.cizgi}`, padding: '8px 0', fontSize: 13.5 };
 
@@ -128,6 +132,155 @@ export default function YoklamaModulu({ onToast }) {
             </div>
           );
         })}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────── 🍽 YEMEK MOLALARI — Personel › Yemek molaları (B11, K7/K8) ───────────────────────────
+// Ay seçimi → /molalar?bas&son tablosu · işlemler: bitmedi → "Bitiş yaz" (saat + açıklama) · hak ✗ → "Hakkı elle ver" (izli) / "Gördüm".
+// Alt: ay özeti (kişi → mola günü · ortalama süre · hak düşen · elle verilen) · "Bekleyenler" bölümü /molalar?acik=1 (bant değil).
+const ayGunSon = (ay) => { const [y, m] = ay.split('-').map(Number); return `${ay}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
+const gunKisa = (g) => (g ? `${g.slice(8, 10)}.${g.slice(5, 7)}` : '—');
+const DURUM_AD = { suruyor: 'sürüyor', bitmedi: 'bitmedi', bitti: 'bitti', 'merkez yazdı': 'merkez yazdı', 'çıkışla kapandı': 'çıkışla kapandı' };
+
+function hakHucre(s) {
+  if (s.yemek_hakki === null || s.yemek_hakki === undefined) return <span style={{ color: R.not }}>—</span>;
+  if (s.hak_elle) return <Cip tur="yesil">✓ elle: {s.hak_veren || '?'}{s.hak_zaman ? ` · ${s.hak_zaman.slice(5, 16).replace('-', '.')}` : ''}</Cip>;
+  return s.yemek_hakki ? <Cip tur="yesil">✓</Cip> : <Cip tur="kirmizi">✗</Cip>;
+}
+
+function MolaSatir({ s, duz, setDuz, mesgul, yap, bugun }) {
+  const d = duz[s.id] || {};
+  const set = (k, x) => setDuz((o) => ({ ...o, [s.id]: { ...d, [k]: x } }));
+  const bitmedi = s.durum === 'bitmedi' || (s.durum === 'suruyor' && s.gun < bugun);
+  const hakYok = s.yemek_hakki === false && !s.hak_elle;
+  return (
+    <tr>
+      <td style={{ color: R.not }}>{gunKisa(s.gun)}</td>
+      <td><b>{s.ad}</b></td>
+      <td style={{ color: R.not }}>{s.sube || '—'}</td>
+      <td style={num}>{s.bas || '—'}</td>
+      <td style={num}>{s.bit || '—'}</td>
+      <td style={num}>{s.sure_dk ?? '—'}{s.sure_dk != null ? ' dk' : ''}</td>
+      <td><Cip tur={s.durum === 'bitmedi' ? 'kirmizi' : s.durum === 'suruyor' ? 'sari' : undefined}>{DURUM_AD[s.durum] || s.durum}</Cip>
+        {s.hak_aciklama && <span title={s.hak_aciklama} style={{ color: R.not, marginLeft: 4 }}>ⓘ</span>}</td>
+      <td>{hakHucre(s)}</td>
+      <td style={{ color: R.not, ...num }}>{s.mesafe != null ? `${s.mesafe} m` : '—'}</td>
+      <td>
+        {bitmedi && (
+          <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input type="time" value={d.saat || ''} onChange={(e) => set('saat', e.target.value)} style={alan} />
+            <input value={d.aciklama || ''} onChange={(e) => set('aciklama', e.target.value)} placeholder="açıklama (zorunlu)" style={{ ...alan, width: 160 }} />
+            <Dugme kucuk ana disabled={!d.saat || (d.aciklama || '').trim().length < 2 || mesgul[s.id]}
+              onClick={() => yap(s.id, `/evvel-yeni/yoklama/mola/${s.id}/duzelt`, { bitis_saat: d.saat, aciklama: d.aciklama.trim() })}>Bitiş yaz</Dugme>
+          </span>
+        )}
+        {!bitmedi && hakYok && (
+          <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input value={d.aciklama || ''} onChange={(e) => set('aciklama', e.target.value)} placeholder="neden (izli)" style={{ ...alan, width: 150 }} />
+            <Dugme kucuk ana disabled={mesgul[s.id]}
+              onClick={() => yap(s.id, `/evvel-yeni/yoklama/mola/${s.id}/hak-ver`, { aciklama: (d.aciklama || '').trim() })}>Hakkı elle ver</Dugme>
+            {!s.gorulen && <Dugme kucuk disabled={mesgul[s.id]} onClick={() => yap(s.id, `/evvel-yeni/yoklama/mola/${s.id}/gordum`, {})}>Gördüm</Dugme>}
+            {s.gorulen && <span style={{ fontSize: 12, color: R.not }}>görüldü: {s.gorulen}</span>}
+          </span>
+        )}
+      </td>
+    </tr>
+  );
+}
+
+const TH = ['Tarih', 'Kişi', 'Şube', 'Başlangıç', 'Bitiş', 'Süre', 'Durum', 'Yemek hakkı', 'Mesafe', ''];
+
+function MolaTablo({ satirlar, bos, ...p }) {
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', fontSize: 13.5, borderCollapse: 'collapse' }}>
+        <thead><tr>{TH.map((h, i) => <th key={i} style={{ textAlign: 'left', fontSize: 12, color: R.not, fontWeight: 700, padding: '6px 8px', borderBottom: `1px solid ${R.cizgi}` }}>{h}</th>)}</tr></thead>
+        <tbody>
+          {satirlar.map((s) => <MolaSatir key={s.id} s={s} {...p} />)}
+          {!satirlar.length && <tr><td colSpan={TH.length} style={{ color: R.not, padding: 8 }}>{bos}</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function YemekMolalari({ onToast }) {
+  const [ay, setAy] = useState(ayTR());
+  const [v, setV] = useState(null);               // { limit_dk, satirlar } — ay
+  const [acik, setAcik] = useState(null);         // bekleyenler (bitmemiş + görülmemiş uzun)
+  const [hata, setHata] = useState('');
+  const [mesgul, setMesgul] = useState({});
+  const [duz, setDuz] = useState({});             // mola id → { saat, aciklama }
+  const bugun = bugunTR();
+  const yukle = useCallback(() => {
+    api(`/evvel-yeni/yoklama/molalar?bas=${ay}-01&son=${ayGunSon(ay)}`).then((d) => { setV(d); setHata(''); })
+      .catch((e) => setHata(e?.message || 'Molalar okunamadı'));
+    api('/evvel-yeni/yoklama/molalar?acik=1').then((d) => setAcik(d?.satirlar || [])).catch(() => setAcik([]));
+  }, [ay]);
+  useEffect(() => { yukle(); }, [yukle]);
+  const yap = async (anahtar, yol, govde) => {
+    setMesgul((m) => ({ ...m, [anahtar]: true })); setHata('');
+    try { const d = await api(yol, { method: 'POST', body: govde }); onToast?.(d.mesaj); setDuz((o) => { const y = { ...o }; delete y[anahtar]; return y; }); await yukle(); }
+    catch (e) { setHata(e?.message || 'İşlenemedi'); }
+    setMesgul((m) => { const y = { ...m }; delete y[anahtar]; return y; });
+  };
+
+  // Ay özeti: kişi → mola günü · ortalama süre · hak düşen gün · elle verilen (Maaş yemek kalemiyle aynı ölçüt: bitmiş mola)
+  const ozet = Object.values((v?.satirlar || []).reduce((a, s) => {
+    const k = a[s.ad] || (a[s.ad] = { ad: s.ad, gun: 0, toplam: 0, olculen: 0, dusen: 0, elle: 0 });
+    k.gun += 1;
+    if (s.sure_dk != null) { k.toplam += s.sure_dk; k.olculen += 1; }
+    if (s.hak_elle) k.elle += 1;
+    else if (s.yemek_hakki === false) k.dusen += 1;
+    return a;
+  }, {})).sort((x, y) => x.ad.localeCompare(y.ad, 'tr'));
+  const ortak = { duz, setDuz, mesgul, yap, bugun };
+
+  return (
+    <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <style>{PI_CSS}</style>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+        <div><div className="pi-eyebrow">Evvel Yeni · Personel</div><h1 style={{ fontSize: 30 }}>Yemek molaları</h1></div>
+        <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, marginLeft: 'auto' }} />
+      </div>
+      <div style={{ fontSize: 13, color: R.metin2 }}>
+        Kişi başı iş gününde bir mola; telefondan QR ile başlar ve biter. Mola ≤ {v?.limit_dk ?? 60} dk → o günün yemek hakkı kazanılır; daha uzunsa ya da o gün mola kullanılmadıysa hak yok (K7/K8).
+        Gerekirse hakkı burada elle verirsin — kim, ne zaman, neden yazılır. Bitmeyen molaya bitiş saati yazınca süre ve hak yeniden hesaplanır.
+      </div>
+      {hata && <div style={{ color: R.kirmizi }}>{hata} <Dugme kucuk onClick={yukle}>Yeniden dene</Dugme></div>}
+      {!v && !hata && <div style={{ color: R.not }}>Hazırlanıyor…</div>}
+
+      {v && (
+        <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 6 }}>
+          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>Gün gün molalar · {ay.slice(5, 7)}.{ay.slice(0, 4)}</div>
+          <MolaTablo satirlar={v.satirlar} bos="Bu ay mola kaydı yok." {...ortak} />
+        </div>
+      )}
+
+      {v && ozet.length > 0 && (
+        <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 2 }}>
+          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>Ay özeti · kişi</div>
+          <div style={{ ...satir, borderTop: 'none', fontSize: 12, color: R.not }}>
+            <span style={{ flex: '1 1 160px' }}>Kişi</span><span style={{ width: 90 }}>Mola günü</span><span style={{ width: 110 }}>Ortalama süre</span><span style={{ width: 110 }}>Hak düşen gün</span><span style={{ width: 100 }}>Elle verilen</span>
+          </div>
+          {ozet.map((k) => (
+            <div key={k.ad} style={satir}>
+              <span style={{ flex: '1 1 160px' }}><b>{k.ad}</b></span>
+              <span style={{ width: 90, ...num }}>{k.gun}</span>
+              <span style={{ width: 110, ...num }}>{k.olculen ? `${Math.round(k.toplam / k.olculen)} dk` : '—'}</span>
+              <span style={{ width: 110, ...num, color: k.dusen ? R.kirmizi : undefined }}>{k.dusen}</span>
+              <span style={{ width: 100, ...num }}>{k.elle}</span>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 6 }}>
+        <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>⏳ Bekleyenler — bitmeyen molalar + görülmemiş uzun molalar (Bekleyen işler › Personel ile aynı liste)</div>
+        {acik === null && <div style={{ color: R.not, padding: 6 }}>Okunuyor…</div>}
+        {acik && <MolaTablo satirlar={acik} bos="Bekleyen mola yok." {...ortak} />}
       </div>
     </div>
   );

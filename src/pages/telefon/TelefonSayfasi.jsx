@@ -1,6 +1,6 @@
 // 📱 TELEFON SAYFASI — Evvel Yeni yoklama (YOKLAMA_QR_TASARIM.md §A2; sunucu: evvel_yeni_yoklama_api.py)
 // Adresler: /q/bagla/{davet} (merkezin linki → bu telefon kişinin olur) · /q/{sube}/{jeton} (paneldeki QR okutunca: tek büyük düğme
-// GİRİŞ / ÇIKIŞ) · /q (salt durum). Menüsüz tam ekran, AÇIK TuliPi teması (design_qr_personel_marka). PIN yok; uyarı personele gitmez —
+// GİRİŞ / YEMEK MOLASI BAŞLAT / MOLAYI BİTİR + sade ÇIKIŞ; K7 hak düştüyse tek bilgi satırı) · /q (salt durum). Menüsüz tam ekran, AÇIK TuliPi teması (design_qr_personel_marka). PIN yok; uyarı personele gitmez —
 // yalnız işlemin sonucu tek cümle. Düğmeler ≥ 56px. Ağ düşerse AYNI istek_id ile "Tekrar dene" (sunucu ikinci kez yazmaz).
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import tulipiLogo from '../../assets/tulipi-logo.jpg';
@@ -106,7 +106,7 @@ function QrIslem({ sube, jeton }) {
   const [mesgul, setMesgul] = useState(false);
   const [sonuc, setSonuc] = useState(null);
   const [isHata, setIsHata] = useState(null);     // { metin, tekrar }
-  const istek = useRef(yeniIstekId());           // tekrar denemede AYNI istek_id
+  const istek = useRef({});                      // işlem → istek_id (giriş / çıkış / mola ayrı); tekrar denemede AYNI
   const yukle = useCallback(() => {
     if (!bagli) return;
     setHata('');
@@ -116,29 +116,39 @@ function QrIslem({ sube, jeton }) {
   useEffect(() => { yukle(); }, [yukle]);
 
   if (!bagli) return <TanimliDegil />;
-  const islem = ben?.yapabilir?.includes('cikis') ? 'cikis' : ben?.yapabilir?.includes('giris') ? 'giris' : null;
+  const yapabilir = ben?.yapabilir || [];
+  // Büyük düğme: giriş → mola başlat / molayı bitir; ÇIKIŞ ikinci, sade düğme (§A2 "Girdi" satırı)
+  const ana = yapabilir.includes('giris') ? 'giris' : yapabilir.includes('mola_bitir') ? 'mola-bitir' : yapabilir.includes('mola_baslat') ? 'mola-baslat' : null;
+  const cikisVar = yapabilir.includes('cikis');
+  const islemVar = !!ana || cikisVar;
   const konumHazir = konum.durum !== 'bekliyor' || !!ben?.muaf;
-  const yap = async () => {
+  const yap = async (islem) => {
     if (!islem || mesgul) return;
+    if (!istek.current[islem]) istek.current[islem] = yeniIstekId();   // her işlemin KENDİ istek_id'si; tekrar denemede aynı
     setMesgul(true); setIsHata(null);
     try {
       const r = await imzaliJson('telefon', 'POST', `/api/evvel-yeni/yoklama/${islem}`,
-        { sube, qr: jeton, lat: konum.lat, lng: konum.lng, istek_id: istek.current });
-      setSonuc({ islem, mesaj: r.mesaj, saat: (r.mesaj || '').match(/\d{2}:\d{2}/)?.[0] || (r.tekrar && (islem === 'giris' ? ben.giris : ben.cikis)) || saatSimdi(), tekrar: !!r.tekrar });
+        { sube, qr: jeton, lat: konum.lat, lng: konum.lng, istek_id: istek.current[islem] });
+      const eskiSaat = islem === 'giris' ? ben.giris : islem === 'cikis' ? ben.cikis : islem === 'mola-baslat' ? ben.mola?.bas : ben.mola?.bit;
+      setSonuc({ islem, mesaj: r.mesaj, hak_dustu: !!r.hak_dustu, saat: (r.mesaj || '').match(/\d{2}:\d{2}/)?.[0] || (r.tekrar && eskiSaat) || saatSimdi(), tekrar: !!r.tekrar });
     } catch (e) {
-      if (e instanceof TypeError) setIsHata({ metin: 'İnternet yok — bağlantı gelince tekrar dene', tekrar: true });
-      else setIsHata({ metin: e?.message || 'Kaydedilemedi', tekrar: e?.status >= 500 || e?.status === 429 });
+      if (e instanceof TypeError) setIsHata({ islem, metin: 'İnternet yok — bağlantı gelince tekrar dene', tekrar: true });
+      else setIsHata({ islem, metin: e?.message || 'Kaydedilemedi', tekrar: e?.status >= 500 || e?.status === 429 });
     }
     setMesgul(false);
   };
+  const baslik = { giris: 'Giriş', cikis: 'Çıkış', 'mola-baslat': 'Mola başladı', 'mola-bitir': 'Mola bitti' };
+  const etiket = { giris: '✅ GİRİŞ YAP', cikis: '🚪 ÇIKIŞ YAP', 'mola-baslat': '🍽 YEMEK MOLASI BAŞLAT', 'mola-bitir': '🍽 MOLAYI BİTİR' };
+  const dugmeYazi = (islem) => (mesgul ? 'Gönderiliyor…' : isHata?.tekrar && isHata.islem === islem ? '🔁 TEKRAR DENE' : etiket[islem]);
   return (
     <>
       <Marka alt={ben?.sube_ad ? `${ben.sube_ad} · ${gunYazi(ben.gun)}` : 'Yoklama'} />
       {sonuc ? (
         <div className="tq-kart" style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 72, color: T.yesil, lineHeight: 1 }}>✓</div>
-          <b style={{ fontSize: 26 }}>{sonuc.islem === 'giris' ? 'Giriş' : 'Çıkış'} {sonuc.saat}</b>
+          <b style={{ fontSize: 26 }}>{baslik[sonuc.islem]} {sonuc.saat}</b>
           <div className="tq-not">{sonuc.mesaj}</div>
+          {sonuc.hak_dustu && <div className="tq-not">Bugün yemek hakkı kazanılamadı</div>}
           <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">Durumumu gör</a>
         </div>
       ) : (
@@ -152,14 +162,20 @@ function QrIslem({ sube, jeton }) {
               {!ben.muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksan, background: 'none', border: 'none', padding: 0, fontWeight: 700, minHeight: 44 }}>tekrar dene</button></>}
             </div>
             {(ben.giris || ben.cikis) && <div className="tq-silik">Bugün: giriş {ben.giris || '—'} · çıkış {ben.cikis || '—'}</div>}
+            <MolaSatiri mola={ben.mola} />
             {ben.acik && ben.acik_sube && ben.acik_sube !== sube && <div style={{ color: T.kirmizi, fontWeight: 700 }}>Önce {ben.acik_sube_ad || 'diğer şube'}'den çıkış yap</div>}
             {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
-            {islem && (
-              <button className={'tq-btn ' + (islem === 'giris' ? 'tq-yesil' : 'tq-ana')} disabled={mesgul || !konumHazir} onClick={yap}>
-                {mesgul ? 'Gönderiliyor…' : isHata?.tekrar ? '🔁 TEKRAR DENE' : islem === 'giris' ? '✅ GİRİŞ YAP' : '🚪 ÇIKIŞ YAP'}
+            {ana && (
+              <button className={'tq-btn ' + (ana === 'giris' ? 'tq-yesil' : 'tq-ana')} disabled={mesgul || !konumHazir} onClick={() => yap(ana)}>
+                {dugmeYazi(ana)}
               </button>
             )}
-            {!islem && !ben.acik && <div className="tq-silik">Bu QR ile yapılacak işlem yok.</div>}
+            {cikisVar && (
+              <button className={'tq-btn ' + (ana ? 'tq-kucuk' : 'tq-ana')} disabled={mesgul || !konumHazir} onClick={() => yap('cikis')}>
+                {dugmeYazi('cikis')}
+              </button>
+            )}
+            {!islemVar && !ben.acik && <div className="tq-silik">Bu QR ile yapılacak işlem yok.</div>}
           </>)}
         </div>
       )}
@@ -191,9 +207,24 @@ function Durum() {
           <div className="tq-silik">{gunYazi(ben.gun)}</div>
           <div style={{ fontSize: 18 }}>Giriş: <b>{ben.giris || '—'}</b> · Çıkış: <b>{ben.cikis || '—'}</b></div>
           {ben.acik && <div style={{ color: T.yesil, fontWeight: 700 }}>İçeridesin{ben.acik_sube_ad ? ` · ${ben.acik_sube_ad}` : ''}</div>}
-          <div className="tq-not">Giriş / çıkış için şubedeki tabletin QR'ını okut.</div>
+          <MolaSatiri mola={ben.mola} />
+          <div className="tq-not">Giriş / çıkış / yemek molası için şubedeki tabletin QR'ını okut.</div>
         </>)}
       </div>
+    </>
+  );
+}
+
+// ── Yemek molası satırı (K7): sürüyor → "Mola 12:30'dan beri · 18 dk"; bitti → "Mola 12:30–13:05 · 35 dk";
+//    hak düştüyse altında TEK bilgi satırı (kırmızı değil, bildirim değil) ──
+function MolaSatiri({ mola }) {
+  if (!mola) return null;
+  return (
+    <>
+      <div style={{ fontSize: 17 }}>
+        🍽 {mola.durum === 'suruyor' ? <>Mola <b>{mola.bas}</b>'dan beri · <b>{mola.sure_dk} dk</b></> : <>Mola {mola.bas}–{mola.bit || '—'} · <b>{mola.sure_dk ?? '—'} dk</b></>}
+      </div>
+      {mola.hak_dustu && <div className="tq-not">Bugün yemek hakkı kazanılamadı</div>}
     </>
   );
 }

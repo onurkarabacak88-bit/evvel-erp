@@ -120,8 +120,15 @@ export default function MaasModulu({ onToast, onSekme }) {
             {(r.uyari || []).map((u) => <div key={u} style={{ color: R.kirmizi, fontWeight: 600 }}>⚠ {u}</div>)}
             <div>
               {r.kalemler.map((k) => (
-                <div key={k.kod + k.ad} style={{ display: 'flex', justifyContent: 'space-between', padding: '6px 0', borderBottom: '1px solid var(--pi-line)', fontSize: 14 }}>
-                  <span>{k.ad}</span><b style={{ ...num, color: k.tutar < 0 ? R.kirmizi : R.krem }}>{fmt(k.tutar)}</b>
+                <div key={k.kod + k.ad} style={{ padding: '6px 0', borderBottom: '1px solid var(--pi-line)', fontSize: 14 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                    <span>{k.ad}</span><b style={{ ...num, color: k.tutar < 0 ? R.kirmizi : R.krem }}>{fmt(k.tutar)}</b>
+                  </div>
+                  {k.kod === 'yemek' && (r.yemek_dusen || []).length > 0 && (   // K7: hak düşen günler (yoklama › Yemek molaları'ndan)
+                    <div style={{ fontSize: 12, color: R.not, marginTop: 2 }}>
+                      Yemek hakkı düşen günler: {r.yemek_dusen.map((d) => `${(d.gun || '').slice(8, 10)}.${(d.gun || '').slice(5, 7)} (${d.sure_dk ?? '?'} dk)`).join(', ')}
+                    </div>
+                  )}
                 </div>
               ))}
               <div style={{ display: 'flex', justifyContent: 'space-between', padding: '8px 0', fontWeight: 700 }}><span>Hak ediş</span><span style={num}>{tl(r.hak_edis)}</span></div>

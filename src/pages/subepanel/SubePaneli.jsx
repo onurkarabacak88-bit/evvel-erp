@@ -298,7 +298,7 @@ export default function SubePaneli({ subeId }) {
                 <div key={g.personel_id} style={{ display: 'flex', gap: 10, padding: '8px 0', borderTop: `1px solid ${C.cizgi}`, opacity: g.acik ? 1 : 0.6 }}>
                   <b style={{ flex: 1 }}>{g.ad}</b>
                   <span style={{ color: C.soluk }}>giriş {g.giris || '—'}</span>
-                  <span style={{ color: g.cikis ? C.yesil : C.soluk, width: 110, textAlign: 'right' }}>{g.cikis ? `çıkış ${g.cikis} ✓` : 'içeride'}</span>
+                  <span style={{ color: g.cikis ? C.yesil : C.soluk, width: 110, textAlign: 'right' }}>{g.cikis ? `çıkış ${g.cikis} ✓` : g.molada ? '🍽 molada' : 'içeride'}</span>
                 </div>
               ))}
               {yok.son_okutanlar.length > 0 && (
@@ -307,7 +307,7 @@ export default function SubePaneli({ subeId }) {
                   {yok.son_okutanlar.map((o, i) => (
                     <div key={i} style={{ display: 'flex', gap: 10, padding: '4px 0', fontSize: 14 }}>
                       <span style={{ color: C.soluk, width: 48 }}>{o.saat}</span><b style={{ flex: 1 }}>{o.ad}</b>
-                      <span style={{ color: o.islem === 'giris' ? C.yesil : C.sari }}>{o.islem === 'giris' ? 'giriş' : 'çıkış'}</span>
+                      <span style={{ color: o.islem === 'giris' ? C.yesil : C.sari }}>{{ giris: 'giriş', cikis: 'çıkış', mola_bas: '🍽 mola', mola_bit: '🍽 mola bitti' }[o.islem] || o.islem}</span>
                     </div>
                   ))}
                 </div>

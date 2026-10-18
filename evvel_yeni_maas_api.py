@@ -19,7 +19,7 @@ Ortak karar (sahip + Codex + Claude):
 import json
 import logging
 from datetime import date, timedelta
-from decimal import Decimal
+from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -192,8 +192,9 @@ def _yemek_kalemi(k, pid: str, aylik: int, gun: int, uyari: list) -> dict:
     if not payda:
         uyari.append("Bu ay yoklama kaydı yok — yemek tam sayıldı")
         return tam
-    return {"kod": "yemek", "ad": f"Yemek: aylık × {gun}/30 × {hak}/{payda} gün (mola ≤ 60 dk)",
-            "tutar": _tl(aylik * gun * hak // (AY_GUN * payda)), "dusen": h["dusen"]}
+    kurus = (Decimal(aylik) * gun * hak / (AY_GUN * payda)).quantize(Decimal(1), rounding=ROUND_HALF_UP)   # Codex: kesme değil yuvarlama
+    return {"kod": "yemek", "ad": f"Yemek: aylık × {gun}/30 × {hak}/{payda} gün (mola ≤ {k.get('limit_dk', 60)} dk)",
+            "tutar": _tl(int(kurus)), "dusen": h["dusen"]}
 
 
 def _gecen_gun(giris, cikis, ay_bas, ay_son, bugun):
