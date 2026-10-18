@@ -12,7 +12,7 @@
 |---|---|
 | **Ana yol** | Sipariş Faz 1 (A) → adım **1b** "okuyucular yeni kataloğa" |
 | **1b'den dalınan yan yol** | Yeni Şube Paneli (B) — çünkü eski panel eski kimlik yazıyor; okuyucuların yeni kataloğa geçmesi panelin yeni sisteme yazmasını gerektirdi |
-| **📍 Şu an** | B6 — kasa devri çift onay (sunucu yazıldı, önyüz + Codex denetimi sürüyor) · B5 ✅ canlı 18 Eki |
+| **📍 Şu an** | D — "Evvel Yeni'de olmalı mı?" sorgulaması madde 21'den (sahip 18 Eki: kurguyu kaldığımız yerden bitirelim) · B4–B7 ✅ canlı |
 | **↩ B bitince dönüş** | B14 (okuyucular yeni panel verisine — 1b'nin asıl işi) → A 1d/1e (sipariş tabloları + merkez "Sevk et") → C listesindeki "Bende" işleri → D "olmalı mı?" sorgulaması (⏳ olanlar) |
 
 ## 🔗 İLİŞKİ HARİTASI — bölümler birbirine nasıl bağlı (sahip: "alanları birbiriyle ilişkilendir, kaybolmayalım")
@@ -66,8 +66,8 @@
 | B3 | Sahip kararları D2/D6/D7/D9/D10 + kapanış kaybolmasın (deneme kaydı + geç kapanış) | ✅ yayında — son düzeltme Codex'e tekrar gösterilecek |
 | B4 | **QR telefon / yoklama modülü** Y0 (yerleşim denetimi F1–F10: 5 mevcut okuyucunun KAYNAĞI değişir, ikinci okuyucu yok): şube koordinatı + telefon bağlama linki + giriş/çıkış + dönen QR + panel QR kapısı + "Bugün girenler" | ✅ **canlı 18 Eki** (24722c4; Codex 2 tur). Sahibe kalan: Personel › Telefonlar'dan 12 personele + 3 tablete link üret (1 Kasım'dan önce) |
 | B5 | Y1: yemek molası + merkez "Yemek molaları" sekmesi + 61. dk / molasız gün hak yok + maaş yemek kalemi + merkez elle hak verir | ✅ canlı 18 Eki (b9eceb4; Codex 3 tur) |
-| B6 | Y2: kasa devri çift onay (iki telefon) · "tutmuyor" → merkez | 🟡 sunucu ✅ (1a3ab18 yerel) · önyüz Fable · Codex denetimi |
-| B7 | Konum muafiyeti (yönetici) + erken açılış izni + **müdür (maaş her türlü tam)** — Tanımlar › Personel'de işaret | ⏳ |
+| B6 | Y2: kasa devri çift onay (iki telefon) · "tutmuyor" → merkez | ✅ canlı 18 Eki (f3f5e7d; Codex 3 tur) · Satış › Devir defteri yeni olayı B14'te okuyacak |
+| B7 | Konum muafiyeti (yönetici) + erken açılış izni + **müdür (maaş her türlü tam)** — Tanımlar › Personel'de işaret | ✅ canlı 18 Eki — müdür = görev "MÜDÜR" (tek kaynak, Maaş ile aynı); erken açılış Tanımlar'da; konum muaf Telefonlar'da |
 | B7a | **Vardiya planı Evvel Yeni'de** (VARDIYA_PLANI_TASARIM.md; V1–V10 Fable önerileri onaylı) — V0 24–26 Ekim, V1 27–29 Ekim, V2 Kasım 1. hafta | ⏳ tasarım ✅ |
 | B8 | **Telefon sayfası yeniden kurulacak** (avans talebi buradan; puan + geri bildirim buraya) | ⏳ |
 | B9 | Panel faz 2: Teslim al (+ fatura çek QR, eksik geldi) · Depodan gelen · Anlık gider (fiş var/yok) · Not/Mesaj | ⏳ |
@@ -84,16 +84,16 @@
 
 | # | İş | Kimde | Durum |
 |---|---|---|---|
-| 1 | Tema 15 Ekim 9.000 ₺ — teslim kaydı olmadan çıkmış; kim aldı? | Sahip | ⏳ cevap bekliyor |
-| 2 | Dükkân farkları (Tema, Alsancak 5.565 ₺) teslim mi? Söylenmezse sabah sayımı "başlangıç farkı" kapattı | Sahip | ⏳ kontrol edilecek |
+| 1 | Tema 15 Ekim 9.000 ₺ — teslim kaydı olmadan çıkmış; kim aldı? | Sahip | ✅ Onur'da (18 Eki işlendi) |
+| 2 | Dükkân farkları (Tema, Alsancak 5.565 ₺) teslim mi? Söylenmezse sabah sayımı "başlangıç farkı" kapattı | Sahip | ✅ eski defter farkı (18 Eki) |
 | 3 | Panel çift yazım ölçümü (yeni alana doğru yazılıyor mu) | Ben | ⏳ ölçülecek |
 | 4 | İlk panel teslimi: "fatura geldi mi" + toptancı borcu kontrolü | Ben | ⏳ ölçülecek |
-| 5 | Kartlar: kullanılabilir limit, yeni ekstre tutarı, son ödeme | Sahip | ⏳ |
+| 5 | Kartlar: kullanılabilir limit, yeni ekstre tutarı, son ödeme | Sahip | 🟡 Garanti 7015 ✅ (16.10 ekstresi + Ekim harcamaları); diğer kartlar ⏳ |
 | 6 | Kiralar: Zafer kirası, artış ayları, Tema Ağustos 180.000 | Sahip | 🟡 Ekim kiraları işlendi; diğerleri ⏳ |
 | 7 | Toptancılar: vade günü ve açılış borcu | Sahip | ⏳ (1 Kasım net bakiyeyle) |
 | 8 | Ürün fiyatı olmayan 1 ürün | — | ✅ yeni katalogda 128/128 fiyatlı |
-| 9 | Bankalar: Eylül ekstreleri; Merve'nin VakıfBank ekstresi | Sahip | ⏳ |
-| 10 | Zafer 13 Ekim gerçek POS rakamı | Sahip | ⏳ |
+| 9 | Bankalar: Eylül ekstreleri; Merve'nin VakıfBank ekstresi | Sahip | ✅ 18 Eki: 4 şube bankası + Enpara (geçiş) ekstreye eşitlendi; küçük farklar ay sonu mutabakatında |
+| 10 | Zafer 13 Ekim gerçek POS rakamı | Sahip | ✅ 11.685 (banka) — kapanış düzeltildi |
 | 11 | Köyceğiz online komisyonu %0 doğru mu | Sahip | ⏳ |
 | 12 | Alsancak paneli ve QR'ı kullanacak mı | Sahip | ⏳ (1 Kasım'da yeni panel) |
 | 13 | 9 Ekim "2 paket sigara" 240 ₺ Onur'a yazılı — doğru mu | Sahip | ⏳ |
