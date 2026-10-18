@@ -11,8 +11,11 @@ Kural:
 Bu dosya eski sisteme YAZMAZ.
 """
 
+import hashlib
 import logging
+import math
 import re
+import secrets
 import uuid
 from datetime import date
 from decimal import Decimal
@@ -108,7 +111,72 @@ def tanim_hazirla(cur) -> None:
             ayar_yaz(cur, "erken_acilis_kopya", "1", "kurulum")
     except Exception:  # noqa: BLE001
         log.warning("erken açılış izni kopyalanamadı", exc_info=True)
+    # 🔐 PANEL PIN (sahip 2026-10-19: sık işlemler = ad + PIN; eski panelle AYNI biçim sha256(salt:pin) — personel yeniden PIN almaz)
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS pin_salt TEXT")
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS pin_hash TEXT")
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS yetki_geri_alma BOOLEAN NOT NULL DEFAULT FALSE")   # S9
+    # yanlış deneme sayacı AYRI tabloda (Fable: ey_personel izi kirlenmesin; ayrı bağlantıda yazılır)
+    cur.execute("""CREATE TABLE IF NOT EXISTS ey_pin_deneme (
+        personel_id TEXT PRIMARY KEY, yanlis INT NOT NULL DEFAULT 0, kilit_bitis TIMESTAMPTZ, son TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    try:   # İÇERİK bir kez (köprü değil): eski personel PIN'leri — yalnız PIN'i olmayan satıra (merkezin yeni verdiği ezilmez)
+        from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
+        if ayar_oku(cur, "pin_kopya") is None:
+            with savepoint(cur, "sp_ey_pin_kopya"):
+                cur.execute("""UPDATE ey_personel e SET pin_salt = p.panel_pin_salt, pin_hash = p.panel_pin_hash FROM personel p
+                                WHERE p.id::text = e.id AND e.pin_hash IS NULL
+                                  AND TRIM(COALESCE(p.panel_pin_hash, '')) <> '' AND TRIM(COALESCE(p.panel_pin_salt, '')) <> ''""")
+            ayar_yaz(cur, "pin_kopya", "1", "kurulum")
+    except Exception:  # noqa: BLE001
+        log.warning("panel PIN'leri kopyalanamadı", exc_info=True)
     _HAZIR = True
+
+
+PIN_YANLIS_LIMIT = 5
+PIN_KILIT_DK = 15
+
+
+def _pin_hash(salt: str, pin: str) -> str:
+    return hashlib.sha256(f"{salt}:{pin}".encode()).hexdigest()
+
+
+def pin_dogrula(cur, personel_id: str, pin: Optional[str]) -> None:
+    """PUBLIC (panel): 4 haneli PIN doğru değilse HTTPException. Yanlış sayacı AYRI bağlantıda atomik yazılır
+    (asıl işlem geri alınsa / deneme modu olsa da sayılır). 5 yanlış → 15 dk kilit. PIN hiçbir yere yazılmaz."""
+    p = (pin or "").strip()
+    if not (len(p) == 4 and p.isdigit()):
+        raise HTTPException(400, "PIN 4 haneli olmalı")
+    cur.execute("SELECT pin_salt, pin_hash FROM ey_personel WHERE id=%s", (personel_id,))
+    r = dict(cur.fetchone() or {})
+    if not (r.get("pin_hash") or "").strip() or not (r.get("pin_salt") or "").strip():
+        raise HTTPException(400, "Bu personelin PIN'i tanımlı değil — merkez Tanımlar › Personel'den versin")
+    sonuc = None
+    with db() as (_c, k):
+        k.execute("""SELECT yanlis, kilit_bitis > NOW() AS kilitli, EXTRACT(EPOCH FROM (kilit_bitis - NOW())) AS kalan
+                       FROM ey_pin_deneme WHERE personel_id=%s FOR UPDATE""", (personel_id,))
+        d = dict(k.fetchone() or {})
+        if d.get("kilitli"):
+            sonuc = ("kilit", max(1, math.ceil(float(d.get("kalan") or 60) / 60)))
+        elif secrets.compare_digest(_pin_hash(r["pin_salt"], p), r["pin_hash"]):
+            k.execute("DELETE FROM ey_pin_deneme WHERE personel_id=%s", (personel_id,))
+        else:
+            k.execute("""INSERT INTO ey_pin_deneme (personel_id, yanlis, son) VALUES (%s, 1, NOW())
+                         ON CONFLICT (personel_id) DO UPDATE SET son=NOW(),
+                           yanlis = CASE WHEN ey_pin_deneme.kilit_bitis IS NOT NULL AND ey_pin_deneme.kilit_bitis <= NOW() THEN 1
+                                         ELSE ey_pin_deneme.yanlis + 1 END,
+                           kilit_bitis = CASE WHEN ey_pin_deneme.kilit_bitis IS NOT NULL AND ey_pin_deneme.kilit_bitis <= NOW() THEN NULL
+                                              ELSE ey_pin_deneme.kilit_bitis END
+                         RETURNING yanlis""", (personel_id,))
+            n = int(dict(k.fetchone())["yanlis"])
+            if n >= PIN_YANLIS_LIMIT:
+                k.execute("UPDATE ey_pin_deneme SET yanlis=0, kilit_bitis = NOW() + (%s || ' minutes')::interval WHERE personel_id=%s",
+                          (str(PIN_KILIT_DK), personel_id))
+                sonuc = ("kilit", PIN_KILIT_DK)
+            else:
+                sonuc = ("yanlis", PIN_YANLIS_LIMIT - n)
+    if sonuc and sonuc[0] == "kilit":
+        raise HTTPException(429, f"PIN kilitli — yaklaşık {sonuc[1]} dakika sonra dene")
+    if sonuc:
+        raise HTTPException(403, f"PIN yanlış — {sonuc[1]} hakkın kaldı")
 
 
 # ── OKUMA YARDIMCILARI (öbür modüller bunları kullanır) ──
@@ -190,7 +258,8 @@ def liste():
                              "maas": _tl(r["maas"]), "yemek": _tl(r["yemek"]), "saatlik": _tl(r["saatlik"]), "yol": _tl(r["yol"]),
                              "cikis": r["cikis"].isoformat() if r.get("cikis") else None, "calisma_turu": r.get("calisma_turu") or "tam",
                              "ucret_eski": (r["ucret_kim"] == "eski sistem kopyası"), "kaynak": r["kaynak"],
-                             "erken_acilis": bool(r.get("erken_acilis"))})
+                             "erken_acilis": bool(r.get("erken_acilis")), "pin_var": bool((r.get("pin_hash") or "").strip()),
+                             "yetki_geri_alma": bool(r.get("yetki_geri_alma"))})
         try:
             from evvel_yeni_kira_api import kira_tanimlari
             with savepoint(cur, "sp_ey_t_kira"):
@@ -230,6 +299,8 @@ class TanimBody(BaseModel):
     cikis: Optional[str] = None          # işten ayrılış (YYYY-AA-GG) — son maaş için
     calisma_turu: Optional[str] = None   # 'tam' | 'yari'
     erken_acilis: Optional[bool] = None   # B7: panelde 07:00 öncesi açılış izni
+    pin: Optional[str] = None             # panel PIN'i (4 hane) — yalnız değiştirmek için; asla geri dönmez
+    yetki_geri_alma: Optional[bool] = None   # S9: hatalı teslimi geri alabilir
     saatlik: Optional[Decimal] = None    # yarı zamanlı saatlik ücret
     yol: Optional[Decimal] = None        # aylık yol
     # kart / banka
@@ -348,9 +419,19 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                 cur.execute("""UPDATE ey_personel SET ad=COALESCE(%s,ad),
                                  sube_id=CASE WHEN %s THEN NULL ELSE COALESCE(%s,sube_id) END, gorev=COALESCE(%s,gorev),
                                  giris=COALESCE(%s,giris), cikis=COALESCE(%s,cikis), calisma_turu=COALESCE(%s,calisma_turu),
-                                 aktif=COALESCE(%s,aktif), erken_acilis=COALESCE(%s,erken_acilis), degistiren=%s, zaman=NOW() WHERE id=%s""",
+                                 aktif=COALESCE(%s,aktif), erken_acilis=COALESCE(%s,erken_acilis),
+                                 yetki_geri_alma=COALESCE(%s,yetki_geri_alma), degistiren=%s, zaman=NOW() WHERE id=%s""",
                             (ad, b.sube_id == "ortak", None if b.sube_id == "ortak" else b.sube_id,
-                             (b.gorev or "").strip()[:40] or None, giris, cikis, b.calisma_turu, b.aktif, b.erken_acilis, kim, tid))
+                             (b.gorev or "").strip()[:40] or None, giris, cikis, b.calisma_turu, b.aktif, b.erken_acilis,
+                             b.yetki_geri_alma, kim, tid))
+            if b.pin is not None and str(b.pin).strip():
+                yp = str(b.pin).strip()
+                if not (len(yp) == 4 and yp.isdigit()):
+                    raise HTTPException(400, "PIN 4 haneli rakam olmalı")
+                tuz = secrets.token_hex(8)
+                cur.execute("UPDATE ey_personel SET pin_salt=%s, pin_hash=%s, degistiren=%s, zaman=NOW() WHERE id=%s",
+                            (tuz, _pin_hash(tuz, yp), kim, tid))
+                cur.execute("DELETE FROM ey_pin_deneme WHERE personel_id=%s", (tid,))
             if any(x is not None for x in (b.maas, b.yemek, b.saatlik, b.yol)):
                 ay = (b.ucret_ay or (giris.isoformat() if giris else _bugun().isoformat()))[:7]
                 cur.execute("""SELECT maas, yemek, saatlik, yol FROM ey_personel_ucret WHERE personel_id=%s AND gecerli_ay <= %s
