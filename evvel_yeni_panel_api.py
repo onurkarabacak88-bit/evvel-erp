@@ -210,7 +210,7 @@ def _calistir(sube_id: str, istek_id: Optional[str], is_fn, tur: Optional[str] =
             did = _deneme_ac(sube_id, tur, igd, govde or {}) if tur else None
             _deneme_kapat(did, "ret", f"gün değişti — tablette {igd.isoformat()} günü girilmişti")
             raise HTTPException(409, "Gün değişti — bu kayıt merkeze iletildi")
-    did = _deneme_ac(sube_id, tur, gun0, govde or {}) if tur else None
+    did = _deneme_ac(sube_id, tur, gun0, govde or {}) if tur and not merkez else None   # Fable: merkez koşusu yeni deneme açmaz
     try:
         sonuc = _calistir_ic(sube_id, istek_id, is_fn, gun, merkez, isle_deneme)
     except HTTPException as e:
@@ -433,8 +433,10 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
                       kaynak_ref=f"{kok}:sayim") if satir and not gecmis else None
         if satir and gecmis:
             log.warning("geç kapanış %s %s: ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)", sube_id, gun)
+            cur.execute("""UPDATE ey_sube_olay SET veri = veri || '{"sayim_uygulanmadi": true}'::jsonb WHERE id=%s""", (oid,)) if oid else None
         return {"olay": oid, "tekrar": oid is None and bool(k.get("tekrar")), "sayilan": len(satir) if d else 0,
-                "mesaj": "Kapanış kaydedildi", "saat_engeli": engel}
+                "mesaj": "Kapanış kaydedildi" + (" — ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)" if satir and gecmis else ""),
+                "saat_engeli": engel}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"), gun=gun, merkez=merkez,
                      isle_deneme=isle_deneme)
 
