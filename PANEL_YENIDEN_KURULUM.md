@@ -134,7 +134,7 @@ Sonra: denemede ekranda dene → sahibe görüntü → yayın.
 
 ### Basamak 1 — kesin kurgu (Fable denetimi sonrası)
 - **QR'lar:** eski QR KALKAR, aynı yere yeni QR (sahip: "birbirlerini ezecek değil, kaldır yerine yenisini ekle") — tek QR, tek yol.
-- **Dünkü kapanış kartı:** dün AÇILIŞ olayı var VE dün KAPANIŞ olayı yok (eski sube_panel.py:1929 kuralı; tatil/kapalı gün ertesi çıkmaz) · günde 1, anahtar `dunKapUyari:{şube}:{gün}`.
+- **Dünkü kapanış kartı: KALKTI** (sahip 2026-10-19: "Bunu panel söylemesine gerek yok, kaldır bence") — merkez Bekleyen işler'de "Kapanış YOK" zaten görünür. (4. istisna)
 - **Kapı:** yalnız `!acilis_var` iken (gün ortasında herkes çıkınca kapanmaz). Panel PC'si kayıtsızsa kapı yerine tam ekran "Bu bilgisayar kayıtlı değil — merkezden bağlantı". Deneme düğmesi "Deneme: QR'sız geç" yalnız sunucu `kuru=true` iken; tercih saklanmaz (her yüklemede kapı yine görünür).
 - **Yenileme:** eski gibi 15 sn; sekme gizliyken durur, öne gelince hemen; kapı/devir 5 sn; saat 10 sn; TabletQR 30 sn.
 - **Ezmeme:** modal açıkken seçimler (kişi, devralan, alan) listeden düşse de korunur, sunucu karar verir; ANLADIM kartı açıkken yeni mesaj basılmaz; kişi seçimi yalnız "içeride" olanlar içinde geçerli (çıkış yapan sabah seçili kalmaz, localStorage'a yazılmaz).
