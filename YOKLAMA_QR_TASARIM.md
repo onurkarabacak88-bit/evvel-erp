@@ -328,3 +328,11 @@ Kural (sahip): yeni modül yeni okuyucu kurmaz; bu bilgiyi BUGÜN okuyan EY okuy
 | F8 | maas `_vardiya_onerisi` (:88-103) → gorev_api.vardiya_takip (saat önerisi) | eski | karar — sahip (plan kaynağı yok) |
 | F9 | Bekleyen işler personel grubu (KasaModulu IS_GRUPLARI 'Avans talepleri') | avans | aynı grup: "Avans · Yoklama" — yeni grup açılmaz |
 | F10 | Merkez görünümleri | — | MEVCUT Personel modülüne iki sayfa: "Yemek molaları", "Telefonlar" — yeni modül/menü yok |
+
+### F — sahip kararları (2026-10-18)
+| # | Karar |
+|---|---|
+| F1a | ✅ **Panel izi AYNEN devam**: QR okutmamış ama panelde açılış / kapanış / teslim / işlem yapmış kişi "çalıştı" sayılır (sahip: "mesaisini çalışana ücret ödememek olmaz"). Yeni dönemde iz kaynağı ey_sube_olay (panel kayıtları, personel_id). |
+| F1b | ✅ **Müdürler istisna**: müdür olarak işaretli personelin maaşı QR / iz olmadan **her türlü** tam hesaplanır (ey_personel'de işaret; Tanımlar › Personel). |
+| F2/F8 | ✅ **Vardiya planı Evvel Yeni'ye düzgünce kurulacak — Fable'a sorularak** ("olmalı mı" madde 36 → TAŞI): zamanında/geç, mesai saati önerisi plandan. |
+| F7 | ✅ Kapanışçı = **kapanışı gönderen** esas; devirdeki kapanış sorumlusu yanında, farklıysa işaret. |

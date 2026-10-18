@@ -67,7 +67,8 @@
 | B4 | **QR telefon / yoklama modülü** Y0 (yerleşim denetimi F1–F10: 5 mevcut okuyucunun KAYNAĞI değişir, ikinci okuyucu yok): şube koordinatı + telefon bağlama linki + giriş/çıkış + dönen QR + panel QR kapısı + "Bugün girenler" | 🟡 **📍 yazılıyor** |
 | B5 | Y1: yemek molası + merkez "Yemek molaları" sekmesi + 61. dk / molasız gün hak yok + maaş yemek kalemi + merkez elle hak verir | ⏳ |
 | B6 | Y2: kasa devri çift onay (iki telefon) · "tutmuyor" → merkez | ⏳ |
-| B7 | Konum muafiyeti (yönetici) + erken açılış izni — Tanımlar › Personel'de işaret | ⏳ |
+| B7 | Konum muafiyeti (yönetici) + erken açılış izni + **müdür (maaş her türlü tam)** — Tanımlar › Personel'de işaret | ⏳ |
+| B7a | **Vardiya planı Evvel Yeni'de** (Fable tasarımı; zamanında/geç + mesai önerisi; "olmalı mı" 36 = TAŞI) | ⏳ Fable'a soruluyor |
 | B8 | **Telefon sayfası yeniden kurulacak** (avans talebi buradan; puan + geri bildirim buraya) | ⏳ |
 | B9 | Panel faz 2: Teslim al (+ fatura çek QR, eksik geldi) · Depodan gelen · Anlık gider (fiş var/yok) · Not/Mesaj | ⏳ |
 | B10 | Panel küçükler (sahip: "sen bitir"): büyük sayı tuş takımı · ürün aç notu · ara teslim açıklaması · online = nakit+POS kontrolü | ⏳ |
@@ -126,7 +127,7 @@
 | 33 | Stok tahmin & kayıp | ⏳ sorulacak (öneri: Ç) |
 | 34 | Personel, maaş, bordro | 🟡 EY Personel; yemek kuralı değişti (B5) |
 | 35 | Avans | ✅ TAŞINDI (EY Avans); talep yeni telefon sayfasından (B8) |
-| 36 | Vardiya planlama | ⏳ sorulacak |
+| 36 | Vardiya planlama | ✅ sahip: TAŞI — düzgün kurulsun, Fable'a sorularak (B7a) |
 | 37 | Görev & QR yoklama | ✅ panelde verildi: YENİDEN KURULUYOR (B4–B6); görev listesi ⏳ (B8) |
 | 38 | Personel puan defteri | 🟡 panelde verildi: telefon sayfasına (B8) — kurgu ⏳ |
 | 39 | Kimlik birleştirme | ⏳ sorulacak (öneri: Ç → Tanımlar) |
