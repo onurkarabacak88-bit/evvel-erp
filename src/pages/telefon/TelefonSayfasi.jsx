@@ -53,7 +53,7 @@ export default function TelefonSayfasi({ mod, davet, sube, jeton }) {
     <div className="tq">
       <style>{CSS}</style>
       {mod === 'bagla' && <Bagla davet={davet} />}
-      {mod === 'qr' && <QrIslem sube={sube} jeton={jeton} />}
+      {mod === 'qr' && (onayKimligi() ? <OnayIslem sube={sube} jeton={jeton} onay={onayKimligi()} /> : <QrIslem sube={sube} jeton={jeton} />)}
       {mod === 'durum' && <Durum />}
     </div>
   );
@@ -216,6 +216,96 @@ function QrIslem({ sube, jeton }) {
               </button>
             )}
             {!islemVar && !ben.acik && <div className="tq-silik">Bu QR ile yapılacak işlem yok.</div>}
+          </>)}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── /q/{sube}/{jeton}?o={onay}: panelde açılış / kapanış formu doldu → "QR ile onayla" (PANEL_YENIDEN_KURULUM R1) ──
+// Kişi telefondan tanınır (PIN yok); önce bu şubede girişi yoksa GİRİŞ YAP (aynı QR), sonra özet + ONAYLA.
+const onayKimligi = () => {
+  try { const o = new window.URLSearchParams(window.location.search).get('o') || ''; return /^[A-Za-z0-9-]{1,40}$/.test(o) ? o : ''; } catch { return ''; }
+};
+const TUR_IKON = { acilis: '☀️', kapanis: '🌙' };
+
+function OnayIslem({ sube, jeton, onay }) {
+  const bagli = !!cihazId('telefon');
+  const [ozet, setOzet] = useState(null);
+  const [ben, setBen] = useState(null);
+  const [hata, setHata] = useState('');
+  const [konum, konumAl] = useKonum(bagli);
+  const [mesgul, setMesgul] = useState(false);
+  const [sonuc, setSonuc] = useState(null);
+  const [isHata, setIsHata] = useState(null);
+  const istek = useRef({});
+  const yukle = useCallback(() => {
+    if (!bagli) return;
+    setHata('');
+    Promise.all([
+      imzaliJson('telefon', 'GET', `/api/evvel-yeni/panel/onay/${encodeURIComponent(onay)}/ozet`),
+      imzaliJson('telefon', 'GET', `/api/evvel-yeni/yoklama/ben?sube=${encodeURIComponent(sube)}`),
+    ]).then(([o, b]) => { setOzet(o); setBen(b); })
+      .catch((e) => setHata(e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || 'Okunamadı')));
+  }, [bagli, onay, sube]);
+  useEffect(() => { yukle(); }, [yukle]);
+  if (!bagli) return <TanimliDegil />;
+
+  const konumHazir = konum.durum !== 'bekliyor' || !!ben?.muaf;
+  const girisGerek = (ben?.yapabilir || []).includes('giris');
+  const gecerli = ozet && (ozet.durum === 'bekliyor' || ozet.durum === 'hata');
+  const yap = async (islem) => {
+    if (mesgul) return;
+    if (!istek.current[islem]) istek.current[islem] = yeniIstekId();   // tekrar denemede AYNI kimlik
+    setMesgul(true); setIsHata(null);
+    const yol = islem === 'giris' ? '/api/evvel-yeni/yoklama/giris' : `/api/evvel-yeni/panel/onay/${encodeURIComponent(onay)}/onayla`;
+    try {
+      const r = await imzaliJson('telefon', 'POST', yol, { sube, qr: jeton, lat: konum.lat, lng: konum.lng, istek_id: istek.current[islem] });
+      if (islem === 'giris') { yukle(); }
+      else setSonuc({ mesaj: r.mesaj, kuru: !!r.kuru });
+    } catch (e) {
+      if (e instanceof TypeError) setIsHata({ islem, metin: 'İnternet yok — bağlantı gelince tekrar dene', tekrar: true });
+      else {
+        setIsHata({ islem, metin: e?.message || 'Onaylanamadı', tekrar: e?.status >= 500 || e?.status === 429 });
+        if (e?.status === 400 && /giriş/i.test(e?.message || '')) yukle();   // "Önce telefonundan QR ile giriş yap" → GİRİŞ düğmesi
+      }
+    }
+    setMesgul(false);
+  };
+  const yazi = (islem, varsayilan) => (mesgul ? 'Gönderiliyor…' : isHata?.tekrar && isHata.islem === islem ? '🔁 TEKRAR DENE' : varsayilan);
+
+  return (
+    <>
+      <Marka alt={ozet?.sube_ad ? `${ozet.sube_ad} · onay` : 'Onay'} />
+      {sonuc ? (
+        <div className="tq-kart" style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 72, color: T.yesil, lineHeight: 1 }}>✓</div>
+          <b style={{ fontSize: 24 }}>{ozet?.ad || 'İşlem'} onaylandı · {saatSimdi()}</b>
+          <div className="tq-not">{sonuc.mesaj}</div>
+          <div className="tq-silik">Panel birkaç saniye içinde kendiliğinden geçer.</div>
+        </div>
+      ) : (
+        <div className="tq-kart">
+          {hata && <><div style={{ color: T.kirmizi, fontWeight: 700 }}>{hata}</div><button className="tq-btn tq-kucuk" onClick={yukle}>Tekrar dene</button></>}
+          {!hata && !ozet && <div className="tq-not">Hazırlanıyor…</div>}
+          {ozet && (<>
+            <div style={{ fontSize: 22, fontWeight: 800 }}>{TUR_IKON[ozet.tur] || '✔'} {ozet.ad} · {ozet.sube_ad}</div>
+            <div style={{ background: T.yuzey, border: `1px solid ${T.kenar}`, borderRadius: 12, padding: 12, fontSize: 17 }}>{ozet.ozet || '—'}</div>
+            <div className="tq-not">Onaylayan: <b>👤 {ozet.kisi}</b> · {ben?.muaf ? 'konum: yönetici (muaf)' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
+              {!ben?.muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksan, background: 'none', border: 'none', padding: 0, fontWeight: 700, minHeight: 44 }}>tekrar dene</button></>}
+            </div>
+            {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
+            {!gecerli && <div style={{ color: T.kirmizi, fontWeight: 700 }}>
+              {ozet.durum === 'onaylandi' ? `Bu işlem zaten onaylandı${ozet.mesaj ? ' — ' + ozet.mesaj : ''}` : ozet.durum === 'sure_doldu' ? 'Onayın süresi doldu — panelden yeniden iste' : 'Bu onay artık geçerli değil — panelden yeniden iste'}
+            </div>}
+            {gecerli && girisGerek && (<>
+              <div className="tq-not">Önce bu şubeye girişini yap — sonra onaylarsın (aynı QR yeter).</div>
+              <button className="tq-btn tq-yesil" disabled={mesgul || !konumHazir} onClick={() => yap('giris')}>{yazi('giris', '✅ GİRİŞ YAP')}</button>
+            </>)}
+            {gecerli && !girisGerek && (
+              <button className="tq-btn tq-ana" disabled={mesgul || !konumHazir} onClick={() => yap('onayla')}>{yazi('onayla', `✅ ONAYLA — ${ozet.ad || ''}`)}</button>
+            )}
           </>)}
         </div>
       )}
