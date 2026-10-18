@@ -100,3 +100,9 @@ Hata: kasa devrinde pasta 0 · ürün aç taslak düğmesi ham HTML · süt doğ
 **Basamak 0 (ön koşul):** katalog panel_sayim tam · PIN göçü + 5 yanlış kilidi · telefon onay sayfası · şube PC kayıtları + telefon bağlama.
 **Merkez basamakları:** "Sevk et" (C1 bloker) · merkez mesaj gönderme · 31 Ekim açık sevklerin kapatılması · /donem + açılış sayımı · eski uçların kesimi · 28–30 Ekim prova.
 **Sıra önerisi (Fable):** Depodan gelen kasa devrinin hemen ardına; sipariş "eski akış" kararına bağlı; X raporu/Puanım/geri bildirim 1 Kasım sonrası.
+
+## SAHİP KARARLARI — şablon soruları (2026-10-19)
+| # | Karar |
+|---|---|
+| S9 (soru 11) | **Hatalı teslimi geri alma** yalnız merkezin YETKİ verdiği personel: Tanımlar › Personel'de "teslim geri alabilir" yetkisi. Yetkisi olmayan düğmeyi görmez / sunucu reddeder. (Sabit "Merve Karabacak" kalkar.) Sahip: "Hatalı teslime personel, yetkisi olmayan, merkez tarafından atanmamış müdahale edemesin." |
+| S10 (soru 13) | **Kasa teslim alıcısı:** Onur · Fethi · Fatma + merkezin "teslim alabilir" yetkisi tanımladığı personel. Sahip: "13'te de bu üçü ve yetki tanımlanırsa personel." |
