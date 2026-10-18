@@ -1,7 +1,8 @@
 // 📱 TELEFONLAR — yoklama modülünün merkez sayfası (sunucu: evvel_yeni_yoklama_api.py). Personel altında (F10: yeni menü yok).
 // Kişi → telefon var / bağlı (⚠️ zayıf bağ) / link bekliyor · "Link üret" (tek kullanımlık, BİR KEZ gösterilir, WhatsApp'tan gönderilir, K1/K9)
 // Şube → tablet yok / onay bekliyor [Onayla] / aktif · koordinat var/yok · Çıkışı yapılmamışlar (son 14 gün) → saat + açıklama ile düzelt.
-// İkinci sayfa (export YemekMolalari, dosya sonu): Personel › Yemek molaları — ay tablosu · hak ✓/✗/elle · Bitiş yaz · Gördüm · Bekleyenler.
+// İkinci sayfa (export YemekMolalari): Personel › Yemek molaları — ay tablosu · hak ✓/✗/elle · Bitiş yaz · Gördüm · Bekleyenler.
+// Üçüncü sayfa (export Devirler, dosya sonu): Personel › Devirler — kasa devri çift onay (B6/D5) ay tablosu · Bekleyenler: İptal / Devir sayıldı / Gördüm.
 // Uyarılar ayrı sekme kuralı: burada bant yok; eksikler Bekleyen işler › Personel'de.
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
@@ -11,6 +12,7 @@ import { PI_CSS, R, kart, num, Dugme, Cip } from './KasaModulu';
 export const YOKLAMA_SAYFALAR = [
   { id: 'personel_telefon', ad: 'Telefonlar', alt: 'Telefon bağla · tablet onayı · çıkış düzelt' },
   { id: 'personel_mola', ad: 'Yemek molaları', alt: 'Gün gün mola · süre · yemek hakkı ✓/✗ · elle hak' },
+  { id: 'personel_devir', ad: 'Devirler', alt: 'Kasa devri çift onay · tutmuyor notları · tamamlanmayanı kapat' },
 ];
 const alan = { padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 13.5 };
 const satir = { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${R.cizgi}`, padding: '8px 0', fontSize: 13.5 };
@@ -84,6 +86,10 @@ export default function YoklamaModulu({ onToast }) {
               <span style={{ display: 'flex', gap: 4, alignItems: 'center' }}>{cihazDurum(p.cihazlar)}</span>
               <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                 <Dugme kucuk ana={!p.cihazlar.some((c) => c.durum === 'aktif')} disabled={mesgul['p:' + p.id]} onClick={() => linkUret('p:' + p.id, { personel_id: p.id })}>Link üret</Dugme>
+                {/* B7: yönetici konum muafiyeti (K2) */}
+                <Dugme kucuk disabled={mesgul['m:' + p.id]} onClick={() => yap('m:' + p.id, `/evvel-yeni/yoklama/personel/${p.id}/konum-muaf`, { konum_muaf: !p.konum_muaf })}>
+                  {p.konum_muaf ? 'Konum kontrol edilsin' : 'Konumdan muaf tut'}
+                </Dugme>
                 {p.cihazlar.map((c) => (
                   <Dugme key={c.id} kucuk disabled={mesgul[c.id]} title={c.son_kullanim ? `son kullanım ${c.son_kullanim}` : ''} onClick={() => iptal(c, p.ad)}>
                     İptal{c.etiket ? ` (${c.etiket})` : ''}
@@ -282,6 +288,121 @@ export function YemekMolalari({ onToast }) {
         <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>⏳ Bekleyenler — bitmeyen molalar + görülmemiş uzun molalar (Bekleyen işler › Personel ile aynı liste)</div>
         {acik === null && <div style={{ color: R.not, padding: 6 }}>Okunuyor…</div>}
         {acik && <MolaTablo satirlar={acik} bos="Bekleyen mola yok." {...ortak} />}
+      </div>
+    </div>
+  );
+}
+
+// ─────────────────────────── 💵 DEVİRLER — Personel › Devirler (B6, D5/K5, §B8 durum makinesi) ───────────────────────────
+// Ay seçimi → /devirler?bas&son tablosu (tarih · şube · devreden → devralan · sayılan · bardak · saatler · durum çipi · not).
+// "Bekleyenler" /devirler?acik=1: tamamlanmamış (hazir / devreden_onayladi, gün geçti ya da 2 saat) → "İptal" / "Devir sayıldı" (açıklama zorunlu,
+// merkez-kapat); görülmemiş "tutmuyor" → "Gördüm". "Merkez kapattı" satırı AYRI çip — asla kişi onayı gibi görünmez (D5).
+const tlYazi = (x) => (Number(x || 0)).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
+const bardakOzet = (b) => (b || []).map((x) => `${String(x.ad || '').replace(/^bardak\s*/i, '') || 'bardak'} ${x.sayilan}`).join(' / ');
+
+function devirCip(s) {
+  if (s.durum === 'hazir') return <Cip tur="sari">⏳ devreden bekleniyor</Cip>;
+  if (s.durum === 'devreden_onayladi') return <Cip tur="sari">⏳ devralan bekleniyor</Cip>;
+  if (s.durum === 'tamam') return <Cip tur="yesil">✓ tamam</Cip>;
+  if (s.durum === 'tutmuyor') return <Cip tur="kirmizi">⚠ tutmuyor</Cip>;
+  if (s.durum === 'merkez_kapatti') return <Cip tur="bakir">🏢 merkez kapattı · {s.merkez_sonuc === 'kapandi' ? 'devir sayıldı' : 'iptal'}</Cip>;
+  if (s.durum === 'iptal') return <Cip>iptal (panel)</Cip>;
+  return <Cip>{s.durum}</Cip>;
+}
+
+function DevirSatir({ s, duz, setDuz, mesgul, yap }) {
+  const d = duz[s.id] || {};
+  const set = (k, x) => setDuz((o) => ({ ...o, [s.id]: { ...d, [k]: x } }));
+  const acikDevir = s.durum === 'hazir' || s.durum === 'devreden_onayladi';
+  const kapat = (sonuc) => yap(s.id, `/evvel-yeni/yoklama/devir/${s.id}/merkez-kapat`, { sonuc, aciklama: (d.aciklama || '').trim() });
+  return (
+    <tr>
+      <td style={{ color: R.not }}>{gunKisa(s.gun)}</td>
+      <td style={{ color: R.not }}>{s.sube || '—'}</td>
+      <td><b>{s.devreden || '?'}</b> → <b>{s.devralan || '?'}</b></td>
+      <td style={num}>{tlYazi(s.sayilan)}</td>
+      <td style={{ color: R.metin2 }}>{s.bardak?.length ? bardakOzet(s.bardak) : '—'}</td>
+      <td style={{ ...num, color: R.not }} title="form · devretti · kabul">{s.panel || '—'} · {s.devreden_saat || '—'} · {s.devralan_saat || '—'}</td>
+      <td>{devirCip(s)}</td>
+      <td style={{ color: s.durum === 'tutmuyor' ? R.kirmizi : R.metin2, maxWidth: 220 }}>{s.not || '—'}</td>
+      <td>
+        {acikDevir && (
+          <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <input value={d.aciklama || ''} onChange={(e) => set('aciklama', e.target.value)} placeholder="açıklama (zorunlu)" style={{ ...alan, width: 170 }} />
+            <Dugme kucuk disabled={(d.aciklama || '').trim().length < 2 || mesgul[s.id]} onClick={() => kapat('iptal')}>İptal</Dugme>
+            <Dugme kucuk ana disabled={(d.aciklama || '').trim().length < 2 || mesgul[s.id]} title="Devir sayılır: vardiya olayı 'merkez istisna' + devredenin çıkışı; kişi onayı yerine GEÇMEZ"
+              onClick={() => kapat('kapandi')}>Devir sayıldı</Dugme>
+          </span>
+        )}
+        {s.durum === 'tutmuyor' && !s.gorulen && <Dugme kucuk ana disabled={mesgul[s.id]} onClick={() => yap(s.id, `/evvel-yeni/yoklama/devir/${s.id}/gorundu`, {})}>Gördüm</Dugme>}
+        {s.durum === 'tutmuyor' && s.gorulen && <span style={{ fontSize: 12, color: R.not }}>görüldü: {s.gorulen}</span>}
+      </td>
+    </tr>
+  );
+}
+
+const DEVIR_TH = ['Tarih', 'Şube', 'Devreden → Devralan', 'Sayılan', 'Bardak', 'Form · devretti · kabul', 'Durum', 'Not', ''];
+
+function DevirTablo({ satirlar, bos, ...p }) {
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', fontSize: 13.5, borderCollapse: 'collapse' }}>
+        <thead><tr>{DEVIR_TH.map((h, i) => <th key={i} style={{ textAlign: 'left', fontSize: 12, color: R.not, fontWeight: 700, padding: '6px 8px', borderBottom: `1px solid ${R.cizgi}` }}>{h}</th>)}</tr></thead>
+        <tbody>
+          {satirlar.map((s) => <DevirSatir key={s.id} s={s} {...p} />)}
+          {!satirlar.length && <tr><td colSpan={DEVIR_TH.length} style={{ color: R.not, padding: 8 }}>{bos}</td></tr>}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+export function Devirler({ onToast }) {
+  const [ay, setAy] = useState(ayTR());
+  const [v, setV] = useState(null);               // { satirlar } — ay
+  const [acik, setAcik] = useState(null);         // bekleyenler (tamamlanmamış + görülmemiş tutmuyor)
+  const [hata, setHata] = useState('');
+  const [mesgul, setMesgul] = useState({});
+  const [duz, setDuz] = useState({});             // devir id → { aciklama }
+  const yukle = useCallback(() => {
+    api(`/evvel-yeni/yoklama/devirler?bas=${ay}-01&son=${ayGunSon(ay)}`).then((d) => { setV(d); setHata(''); })
+      .catch((e) => setHata(e?.message || 'Devirler okunamadı'));
+    api('/evvel-yeni/yoklama/devirler?acik=1').then((d) => setAcik(d?.satirlar || [])).catch(() => setAcik([]));
+  }, [ay]);
+  useEffect(() => { yukle(); }, [yukle]);
+  const yap = async (anahtar, yol, govde) => {
+    setMesgul((m) => ({ ...m, [anahtar]: true })); setHata('');
+    try { const d = await api(yol, { method: 'POST', body: govde }); onToast?.(d.mesaj); setDuz((o) => { const y = { ...o }; delete y[anahtar]; return y; }); await yukle(); }
+    catch (e) { setHata(e?.message || 'İşlenemedi'); }
+    setMesgul((m) => { const y = { ...m }; delete y[anahtar]; return y; });
+  };
+  const ortak = { duz, setDuz, mesgul, yap };
+
+  return (
+    <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <style>{PI_CSS}</style>
+      <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
+        <div><div className="pi-eyebrow">Evvel Yeni · Personel</div><h1 style={{ fontSize: 30 }}>Devirler</h1></div>
+        <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, marginLeft: 'auto' }} />
+      </div>
+      <div style={{ fontSize: 13, color: R.metin2 }}>
+        Kasa devri panelde sayılır, onaylar kişilerin kendi telefonunda: devreden "Devrediyorum", devralan "Kabul ediyorum" ya da "Tutmuyor" + not (devir yine tamamlanır, not burada görünür).
+        Onayı gelmeyen devri burada kapatırsın — "iptal" iz bırakmaz, "devir sayıldı" vardiya kaydını merkez istisnası olarak yazar; ikisi de kişi onayı yerine geçmez, satırda "merkez kapattı" yazar.
+      </div>
+      {hata && <div style={{ color: R.kirmizi }}>{hata} <Dugme kucuk onClick={yukle}>Yeniden dene</Dugme></div>}
+      {!v && !hata && <div style={{ color: R.not }}>Hazırlanıyor…</div>}
+
+      {v && (
+        <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 6 }}>
+          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>Gün gün devirler · {ay.slice(5, 7)}.{ay.slice(0, 4)}</div>
+          <DevirTablo satirlar={v.satirlar || []} bos="Bu ay devir kaydı yok." {...ortak} />
+        </div>
+      )}
+
+      <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 6 }}>
+        <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>⏳ Bekleyenler — tamamlanmamış devirler + görülmemiş "tutmuyor" (Bekleyen işler › Personel ile aynı liste)</div>
+        {acik === null && <div style={{ color: R.not, padding: 6 }}>Okunuyor…</div>}
+        {acik && <DevirTablo satirlar={acik} bos="Bekleyen devir yok." {...ortak} />}
       </div>
     </div>
   );

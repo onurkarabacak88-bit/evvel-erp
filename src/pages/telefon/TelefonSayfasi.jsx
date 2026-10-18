@@ -106,7 +106,9 @@ function QrIslem({ sube, jeton }) {
   const [mesgul, setMesgul] = useState(false);
   const [sonuc, setSonuc] = useState(null);
   const [isHata, setIsHata] = useState(null);     // { metin, tekrar }
-  const istek = useRef({});                      // işlem → istek_id (giriş / çıkış / mola ayrı); tekrar denemede AYNI
+  const [tutmuyorAc, setTutmuyorAc] = useState(false);   // devralan "Tutmuyor" → kısa not alanı (K5: devir yine tamamlanır)
+  const [notYazi, setNotYazi] = useState('');
+  const istek = useRef({});                      // işlem → istek_id (giriş / çıkış / mola / devret / kabul ayrı); tekrar denemede AYNI
   const yukle = useCallback(() => {
     if (!bagli) return;
     setHata('');
@@ -120,25 +122,37 @@ function QrIslem({ sube, jeton }) {
   // Büyük düğme: giriş → mola başlat / molayı bitir; ÇIKIŞ ikinci, sade düğme (§A2 "Girdi" satırı)
   const ana = yapabilir.includes('giris') ? 'giris' : yapabilir.includes('mola_bitir') ? 'mola-bitir' : yapabilir.includes('mola_baslat') ? 'mola-baslat' : null;
   const cikisVar = yapabilir.includes('cikis');
-  const islemVar = !!ana || cikisVar;
+  // 💵 Kasa devri (§A2 devir satırları, §B8): devreden → DEVREDİYORUM · devralan → KABUL EDİYORUM / Tutmuyor (+ not). Onay sürüme bağlı.
+  const devir = ben?.devir || null;
+  const devret = !!devir && devir.rol === 'devreden' && yapabilir.includes('devret');
+  const kabul = !!devir && devir.rol === 'devralan' && yapabilir.includes('kabul');
+  const devirVar = devret || kabul;
+  const islemVar = !!ana || cikisVar || devirVar;
   const konumHazir = konum.durum !== 'bekliyor' || !!ben?.muaf;
-  const yap = async (islem) => {
+  // islem: giris | cikis | mola-baslat | mola-bitir | devret | kabul · ek: kabulde { tutuyor, not }
+  const yap = async (islem, ek) => {
     if (!islem || mesgul) return;
     if (!istek.current[islem]) istek.current[islem] = yeniIstekId();   // her işlemin KENDİ istek_id'si; tekrar denemede aynı
     setMesgul(true); setIsHata(null);
+    const devirIslem = islem === 'devret' || islem === 'kabul';
+    const yol = devirIslem ? `/api/evvel-yeni/yoklama/devir/${encodeURIComponent(devir.id)}/${islem}` : `/api/evvel-yeni/yoklama/${islem}`;
     try {
-      const r = await imzaliJson('telefon', 'POST', `/api/evvel-yeni/yoklama/${islem}`,
-        { sube, qr: jeton, lat: konum.lat, lng: konum.lng, istek_id: istek.current[islem] });
-      const eskiSaat = islem === 'giris' ? ben.giris : islem === 'cikis' ? ben.cikis : islem === 'mola-baslat' ? ben.mola?.bas : ben.mola?.bit;
-      setSonuc({ islem, mesaj: r.mesaj, hak_dustu: !!r.hak_dustu, saat: (r.mesaj || '').match(/\d{2}:\d{2}/)?.[0] || (r.tekrar && eskiSaat) || saatSimdi(), tekrar: !!r.tekrar });
+      const r = await imzaliJson('telefon', 'POST', yol,
+        { sube, qr: jeton, lat: konum.lat, lng: konum.lng, istek_id: istek.current[islem], ...(devirIslem ? { surum: devir.surum } : {}), ...(ek || {}) });
+      const eskiSaat = islem === 'giris' ? ben.giris : islem === 'cikis' ? ben.cikis : islem === 'mola-baslat' ? ben.mola?.bas : islem === 'mola-bitir' ? ben.mola?.bit : null;
+      const gosterim = islem === 'kabul' && ek && ek.tutuyor === false ? 'tutmuyor' : islem;
+      setSonuc({ islem: gosterim, mesaj: r.mesaj, hak_dustu: !!r.hak_dustu, saat: (r.mesaj || '').match(/\d{2}:\d{2}/)?.[0] || (r.tekrar && eskiSaat) || saatSimdi(), tekrar: !!r.tekrar });
     } catch (e) {
       if (e instanceof TypeError) setIsHata({ islem, metin: 'İnternet yok — bağlantı gelince tekrar dene', tekrar: true });
-      else setIsHata({ islem, metin: e?.message || 'Kaydedilemedi', tekrar: e?.status >= 500 || e?.status === 429 });
+      else {
+        setIsHata({ islem, metin: e?.message || 'Kaydedilemedi', tekrar: e?.status >= 500 || e?.status === 429 });
+        if (devirIslem && e?.status === 409) { istek.current[islem] = null; yukle(); }   // "Devir formu değişti — tekrar bak" → /ben yenilenir, yeni sürüm gelir
+      }
     }
     setMesgul(false);
   };
-  const baslik = { giris: 'Giriş', cikis: 'Çıkış', 'mola-baslat': 'Mola başladı', 'mola-bitir': 'Mola bitti' };
-  const etiket = { giris: '✅ GİRİŞ YAP', cikis: '🚪 ÇIKIŞ YAP', 'mola-baslat': '🍽 YEMEK MOLASI BAŞLAT', 'mola-bitir': '🍽 MOLAYI BİTİR' };
+  const baslik = { giris: 'Giriş', cikis: 'Çıkış', 'mola-baslat': 'Mola başladı', 'mola-bitir': 'Mola bitti', devret: 'Devrettin', kabul: 'Devir tamam', tutmuyor: 'Devir kaydedildi' };
+  const etiket = { giris: '✅ GİRİŞ YAP', cikis: '🚪 ÇIKIŞ YAP', 'mola-baslat': '🍽 YEMEK MOLASI BAŞLAT', 'mola-bitir': '🍽 MOLAYI BİTİR', devret: '🔁 DEVREDİYORUM', kabul: '✅ KABUL EDİYORUM' };
   const dugmeYazi = (islem) => (mesgul ? 'Gönderiliyor…' : isHata?.tekrar && isHata.islem === islem ? '🔁 TEKRAR DENE' : etiket[islem]);
   return (
     <>
@@ -165,13 +179,32 @@ function QrIslem({ sube, jeton }) {
             <MolaSatiri mola={ben.mola} />
             {ben.acik && ben.acik_sube && ben.acik_sube !== sube && <div style={{ color: T.kirmizi, fontWeight: 700 }}>Önce {ben.acik_sube_ad || 'diğer şube'}'den çıkış yap</div>}
             {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
+            {devirVar && (<>
+              <DevirKarti devir={devir} />
+              {devret && (
+                <button className="tq-btn tq-ana" disabled={mesgul || !konumHazir} onClick={() => yap('devret')}>{dugmeYazi('devret')}</button>
+              )}
+              {kabul && !tutmuyorAc && (<>
+                <button className="tq-btn tq-yesil" disabled={mesgul || !konumHazir} onClick={() => yap('kabul', { tutuyor: true })}>{dugmeYazi('kabul')}</button>
+                <button className="tq-btn tq-kucuk" disabled={mesgul} onClick={() => setTutmuyorAc(true)}>Tutmuyor</button>
+              </>)}
+              {kabul && tutmuyorAc && (<>
+                <div className="tq-not">Tutmayan neyse kısaca yaz (zorunlu) — devir yine sende kalır, notun merkeze gider.</div>
+                <input value={notYazi} onChange={(e) => setNotYazi(e.target.value.slice(0, 200))} placeholder="ör. çekmecede 1.180 ₺" autoFocus
+                  style={{ minHeight: 56, borderRadius: 12, border: `1px solid ${T.kenar}`, background: T.yuzey, color: T.metin, font: 'inherit', fontSize: 18, padding: '10px 14px', width: '100%' }} />
+                <button className="tq-btn tq-ana" disabled={mesgul || !konumHazir || notYazi.trim().length < 2} onClick={() => yap('kabul', { tutuyor: false, not: notYazi.trim() })}>
+                  {mesgul ? 'Gönderiliyor…' : isHata?.tekrar && isHata.islem === 'kabul' ? '🔁 TEKRAR DENE' : '⚠ TUTMUYOR — GÖNDER'}
+                </button>
+                <button className="tq-btn tq-kucuk" disabled={mesgul} onClick={() => setTutmuyorAc(false)}>Vazgeç</button>
+              </>)}
+            </>)}
             {ana && (
-              <button className={'tq-btn ' + (ana === 'giris' ? 'tq-yesil' : 'tq-ana')} disabled={mesgul || !konumHazir} onClick={() => yap(ana)}>
+              <button className={'tq-btn ' + (devirVar ? 'tq-kucuk' : ana === 'giris' ? 'tq-yesil' : 'tq-ana')} disabled={mesgul || !konumHazir} onClick={() => yap(ana)}>
                 {dugmeYazi(ana)}
               </button>
             )}
             {cikisVar && (
-              <button className={'tq-btn ' + (ana ? 'tq-kucuk' : 'tq-ana')} disabled={mesgul || !konumHazir} onClick={() => yap('cikis')}>
+              <button className={'tq-btn ' + (ana || devirVar ? 'tq-kucuk' : 'tq-ana')} disabled={mesgul || !konumHazir} onClick={() => yap('cikis')}>
                 {dugmeYazi('cikis')}
               </button>
             )}
@@ -212,6 +245,22 @@ function Durum() {
         </>)}
       </div>
     </>
+  );
+}
+
+// ── Kasa devri kartı (§A2): "Kasa: 1.250 ₺ · bardak küçük 40 / büyük 30 / plastik 20 → Mehmet"; devralanda "girişin bununla açılır" ──
+const tlYazi = (x) => (Number(x || 0)).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
+const bardakOzet = (b) => (b || []).map((x) => `${String(x.ad || '').replace(/^bardak\s*/i, '') || 'bardak'} ${x.sayilan}`).join(' / ');
+function DevirKarti({ devir }) {
+  const devralan = devir.rol === 'devralan';
+  return (
+    <div style={{ background: T.yuzey, border: `1px solid ${T.kenar}`, borderRadius: 12, padding: '12px 14px', display: 'grid', gap: 4 }}>
+      <div className="tq-silik">{devralan ? `${devir.devreden} sana devrediyor${devir.devreden_saat ? ` · ${devir.devreden_saat}` : ''}` : 'Kasa devri'}</div>
+      <div style={{ fontSize: 18, fontWeight: 800 }}>
+        Kasa: {tlYazi(devir.sayilan)}{devir.bardak?.length ? <> · bardak {bardakOzet(devir.bardak)}</> : null}{!devralan && <> → {devir.devralan}</>}
+      </div>
+      {devralan && devir.giris_acilir && <div className="tq-not">Girişin bununla açılır.</div>}
+    </div>
   );
 }
 

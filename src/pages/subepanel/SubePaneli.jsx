@@ -136,9 +136,12 @@ export default function SubePaneli({ subeId }) {
   // 📱 Yoklama (QR telefon): tablet bu tarayıcıda kayıtlıysa köşede küçük QR (dokununca büyür); kapı açıkken büyük QR
   const [qrBuyuk, setQrBuyuk] = useState(false);
   const tabletVar = !!cihazId('tablet');
-  const yok = d?.yoklama || { var: false, qr_gerekli: false, girenler: [], son_okutanlar: [], tablet_kayitli: false };
+  const yok = d?.yoklama || { var: false, qr_gerekli: false, girenler: [], son_okutanlar: [], tablet_kayitli: false, devir: null, kapanis_sorumlusu: null, devralan_adaylari: [] };
   const qrKapi = yok.qr_gerekli && tabletVar && !(yok.girenler || []).some((g) => g.acik);   // kimse içeride değil → tam QR
   const qrGorunur = tabletVar && (qrBuyuk || qrKapi);
+  // 💵 Kasa devri çift onay (D5, §B8): panel formu kurar (hazir) → devreden telefonundan 'Devrediyorum' → devralan 'Kabul ediyorum' / 'Tutmuyor'
+  const devir = yok.var ? yok.devir : null;
+  const devirBekliyor = !!devir && (devir.durum === 'hazir' || devir.durum === 'devreden_onayladi');
 
   // 💾 TASLAK (D6): açık formun her değişikliği tablete — pencere kapansa / sayfa yenilense geri gelir (iş günü boyunca)
   const [formGun, setFormGun] = useState(null);   // Codex: açık formun günü, açıldığı an sabitlenir
@@ -185,7 +188,7 @@ export default function SubePaneli({ subeId }) {
 
   const yukle = useCallback(() => api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/durum`)
     .then((x) => { setD(x); setHata(''); }).catch((e) => setHata(e?.message || 'Panel açılamadı')), [subeId]);
-  useEffect(() => { yukle(); const t = window.setInterval(yukle, qrGorunur ? 5000 : 60000); return () => window.clearInterval(t); }, [yukle, qrGorunur]);   // gün değişimi (02:00) ve yeni kayıtlar; QR görünürken 5 sn (giriş düşünce kapansın)
+  useEffect(() => { yukle(); const t = window.setInterval(yukle, qrGorunur || devirBekliyor ? 5000 : 60000); return () => window.clearInterval(t); }, [yukle, qrGorunur, devirBekliyor]);   // gün değişimi (02:00) ve yeni kayıtlar; QR görünürken / devir beklerken 5 sn (telefon onayı düşünce görünsün)
   useEffect(() => { try { if (kisi) localStorage.setItem('sp_kisi:' + subeId, kisi); } catch { /* yok say */ } }, [kisi, subeId]);
 
   const temizle = () => { setAdet({}); setSebep(''); setSayim({}); setF({}); setIstek(yeniIstek()); };
@@ -207,7 +210,8 @@ export default function SubePaneli({ subeId }) {
     const body = { ...govde, istek_id: istek, istemci_gunu: formGun || d.gun };
     try {
       const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/${yol}`, { method: 'POST', body });
-      setMesaj({ tur: r.kuru ? 'deneme' : 'tamam', metin: r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : (r.tekrar ? 'Bu kayıt zaten alınmıştı' : 'Kaydedildi ✓') });
+      // devir (yoklama açıkken): sunucu "Devir hazır — X telefonundan 'Devrediyorum'…" der; olay yazılmaz, onaylar telefonda (D5)
+      setMesaj({ tur: r.kuru ? 'deneme' : 'tamam', metin: r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : r.devir_id && r.mesaj ? r.mesaj : (r.tekrar ? 'Bu kayıt zaten alınmıştı' : 'Kaydedildi ✓') });
       taslakSil(modal); setModal(null); temizle(); sonra?.(); yukle();
     } catch (e) {
       if (e instanceof TypeError) {   // internet yok → kuyruğa (aynı istek_id: sonra ikinci kez yazılmaz)
@@ -217,6 +221,19 @@ export default function SubePaneli({ subeId }) {
       } else {
         setAnladim(e?.message && e.message.length < 160 ? e.message : 'Kaydedilemedi — tekrar deneyin');
       }
+    }
+    setMesgul(false);
+  };
+
+  // Devri iptal: yalnız devreden henüz onaylamadıysa (hazir); onayladıysa form kilitli → merkez kapatır
+  const devirIptal = async () => {
+    if (mesgul) return;
+    setMesgul(true);
+    try {
+      const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/devir-iptal`, { method: 'POST', body: {} });
+      setMesaj({ tur: 'tamam', metin: r.mesaj || 'Devir iptal edildi' }); yukle();
+    } catch (e) {
+      setMesaj({ tur: 'hata', metin: e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || 'İptal edilemedi') });
     }
     setMesgul(false);
   };
@@ -233,6 +250,10 @@ export default function SubePaneli({ subeId }) {
   const kisiAd = d.personel.find((p) => p.id === kisi)?.ad;
   const kapali = !!d.kapanis_var;   // D7: kapanıştan sonra yalnız Ana / Depodan gelen / Sipariş takip
   const bardaklar = d.sayilan.flatMap((g) => g.urunler).filter((u) => /bardak/i.test(u.ad));
+  // Devralan adayları: yoklama açıkken bugün girenler + henüz girmemiş aktif personel (kabulüyle girişi açılır); yoklama yoksa mevcut liste
+  const devralanAdaylari = (yok.var && Array.isArray(yok.devralan_adaylari) ? yok.devralan_adaylari : d.personel.map((p) => ({ ...p, girdi: true })))
+    .filter((p) => p.id !== kisi);
+  const devirKilitli = !!devir && devir.durum === 'devreden_onayladi';   // §B8: devreden onayladı → form kilitli (değişiklik = merkez-kapat)
 
   const MENU = [
     ['ana', '🏠', 'Ana Sayfa'], ['ac', '📦', 'Ürün Aç'], ['fire', '🗑️', 'Fire'], ['araTeslim', '💵', 'Ara Teslim'],
@@ -284,8 +305,9 @@ export default function SubePaneli({ subeId }) {
           </div>
           {yok.var && (
             <div className="sp-kart" style={{ display: 'grid', gap: 8 }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}><b>📱 Bugün girenler</b>
-                {!tabletVar && <span style={{ color: C.soluk, fontSize: 13 }}>· Tablet kayıtlı değil — merkezden link</span>}</div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}><b>📱 Bugün girenler</b>
+                {!tabletVar && <span style={{ color: C.soluk, fontSize: 13 }}>· Tablet kayıtlı değil — merkezden link</span>}
+                {yok.kapanis_sorumlusu?.ad && <span style={{ marginLeft: 'auto', color: C.yesil, fontWeight: 700 }}>🌙 Kapanış sorumlusu: {yok.kapanis_sorumlusu.ad}</span>}</div>
               {yok.girenler.length === 0 && !qrKapi && <div style={{ color: C.soluk }}>{yok.qr_gerekli ? 'Önce telefonundan QR ile giriş yap' : 'Henüz QR ile giren yok.'}</div>}
               {qrKapi && (
                 <div style={{ display: 'grid', justifyItems: 'center', gap: 10, padding: 8 }}>
@@ -334,6 +356,7 @@ export default function SubePaneli({ subeId }) {
             <button className="sp-btn sp-ana" disabled={kapali} onClick={() => ac('devir')}>💵 Kasa Devri</button>
             <button className="sp-btn sp-mor" disabled={d.kapanis_var} onClick={() => ac('kapanis')}>{d.kapanis_var ? '🌙 Kapanış yapıldı' : '🌙 Kapanışı Başlat'}</button>
           </div>
+          {devir && <DevirDurum devir={devir} mesgul={mesgul} iptal={devirIptal} />}
         </div>
       </div>
 
@@ -417,17 +440,21 @@ export default function SubePaneli({ subeId }) {
       )}
       {modal === 'devir' && (
         <Modal baslik="💵 Kasa Devri" kapat={() => setModal(null)}>
+          {devir && <DevirDurum devir={devir} mesgul={mesgul} iptal={devirIptal} />}
+          {yok.var && <div style={{ color: C.soluk, fontSize: 13 }}>Para + bardak sayılır, "Devri başlat" denir; sonra devreden kendi telefonundan "Devrediyorum", devralan "Kabul ediyorum" der (tablette PIN yok).</div>}
           <div style={{ color: C.soluk }}>Devreden: <b style={{ color: C.yazi }}>{kisiAd || '— üstten adını seç —'}</b></div>
           <label style={{ display: 'grid', gap: 6 }}><b>Devralan</b>
             <select className="sp-in" style={{ fontSize: 18 }} value={f.devralan || ''} onChange={(e) => setF({ ...f, devralan: e.target.value })}>
-              <option value="">— seç —</option>{d.personel.filter((p) => p.id !== kisi).map((p) => <option key={p.id} value={p.id}>{p.ad}</option>)}
+              <option value="">— seç —</option>{devralanAdaylari.map((p) => <option key={p.id} value={p.id}>{p.girdi ? p.ad : `${p.ad} (girmedi — kabulle girişi açılır)`}</option>)}
             </select></label>
           <label style={{ display: 'grid', gap: 6 }}><b>Kasada sayılan</b>
             <input className="sp-in" inputMode="decimal" value={f.sayilan ?? ''} onChange={(e) => setF({ ...f, sayilan: tutar(e.target.value) })} placeholder="0,00" /></label>
           <b>Bardak sayımı</b>
           <SayimListesi gruplar={[{ kategori: '', urunler: bardaklar }]} sayim={sayim} setSayim={setSayim} />
-          <button className="sp-btn sp-yesil" disabled={mesgul || !f.devralan || f.sayilan === undefined || f.sayilan === ''}
-            onClick={() => gonder('devir', { devreden_id: kisi, devralan_id: f.devralan, sayilan: tutarNum(f.sayilan), bardak: sayimGovde(sayim) })}>✔ Devri Kaydet</button>
+          <button className="sp-btn sp-yesil" disabled={mesgul || devirKilitli || !f.devralan || f.sayilan === undefined || f.sayilan === ''}
+            onClick={() => gonder('devir', { devreden_id: kisi, devralan_id: f.devralan, sayilan: tutarNum(f.sayilan), bardak: sayimGovde(sayim) })}>
+            {yok.var ? (devir?.durum === 'hazir' ? '✔ Devri Güncelle' : '✔ Devri Başlat') : '✔ Devri Kaydet'}</button>
+          {devirKilitli && <div style={{ color: C.soluk, fontSize: 13 }}>Devreden onayladı — form kilitli; değişiklik için merkeze haber ver.</div>}
         </Modal>
       )}
       {modal === 'kapanis' && (
@@ -435,6 +462,29 @@ export default function SubePaneli({ subeId }) {
           istek={istek} setIstek={setIstek}
           gonder={(govde) => gonder('kapanis', { personel_id: kisi, ...govde, sayim: sayimGovde(sayim) })} />
       )}
+    </div>
+  );
+}
+
+// 💵 Devir durum kartı (§A3 "devreden onaylasın → devralan kabul etsin → ✓"; §B8): bugünün son devri. 'hazir' iken panel iptal edebilir;
+//    'tutmuyor' da tamamlanmış devirdir (K5) — not merkeze gider; 'merkez_kapatti' kişi onayı DEĞİL, ayrı yazılır (D5 Codex).
+const bardakOzet = (b) => (b || []).map((x) => `${String(x.ad || '').replace(/^bardak\s*/i, '') || 'bardak'} ${x.sayilan}`).join(' / ');
+function DevirDurum({ devir, mesgul, iptal }) {
+  const m = {
+    hazir: { renk: C.sari, ikon: '⏳', metin: `Devreden onayı bekleniyor (${devir.devreden}) — kendi telefonundan QR okutup "Devrediyorum" desin` },
+    devreden_onayladi: { renk: C.sari, ikon: '⏳', metin: `Devralan onayı bekleniyor (${devir.devralan}) — kendi telefonundan QR okutup "Kabul ediyorum" desin` },
+    tamam: { renk: C.yesil, ikon: '✓', metin: `Devir tamam${devir.devralan_saat ? ` · ${devir.devralan_saat}` : ''} — kasa ${devir.devralan}'de` },
+    tutmuyor: { renk: C.kirmizi, ikon: '⚠', metin: `Tutmuyor: ${devir.not || '—'} — devir kaydedildi, merkez görür; kasa ${devir.devralan}'de` },
+    merkez_kapatti: { renk: C.soluk, ikon: '🏢', metin: `Merkez kapattı (${devir.merkez_sonuc === 'kapandi' ? 'devir sayıldı' : 'iptal'}) — kişi onayı değil` },
+  }[devir.durum] || { renk: C.soluk, ikon: '•', metin: devir.durum };
+  return (
+    <div className="sp-kart" style={{ display: 'grid', gap: 8, borderColor: m.renk }}>
+      <div style={{ color: m.renk, fontWeight: 700 }}>{m.ikon} {m.metin}</div>
+      <div style={{ color: C.soluk, fontSize: 14 }}>
+        {devir.devreden} → {devir.devralan} · kasa <b style={{ color: C.yazi }}>{tl(devir.sayilan)}</b>{devir.bardak?.length ? ` · bardak ${bardakOzet(devir.bardak)}` : ''}
+        {devir.panel ? ` · form ${devir.panel}` : ''}{devir.devreden_saat ? ` · devretti ${devir.devreden_saat}` : ''}
+      </div>
+      {devir.durum === 'hazir' && <button className="sp-btn" style={{ minHeight: 56 }} disabled={mesgul} onClick={iptal}>✕ Devri iptal et</button>}
     </div>
   );
 }
