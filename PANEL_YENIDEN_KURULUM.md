@@ -92,3 +92,11 @@ Hata: kasa devrinde pasta 0 · ürün aç taslak düğmesi ham HTML · süt doğ
 
 ## Kurulum sırası (her basamak: Codex+Fable kurgu → kod → DENEMEDE ekranda dene → sahibe görüntü → yayın)
 1. Çerçeve + kapı (QR giriş) + ana sayfa iskeleti · 2. Açılış sihirbazı (5. adım QR onay) · 3. Kapanış (5. adım QR mühür) · 4. Kasa devri · 5. Ürün aç · 6. Fire · 7. Ara teslim · 8. Tedarikçiden teslim al · 9. Depodan gelen · 10. Sipariş ver/takip/gönderilecek · 11. Anlık gider · 12. Merkez notu / mesajlar · 13. Geri bildirim / Puanım / X raporu.
+
+## DENETİM 1 (2026-10-19) — Fable (tam) + Codex (kota doldu, 3 ayrıntı işlendi)
+**Çelişkiler (eski panel ↔ sahibin önceki yeni panel kararları) → sahibe soruldu:** kasa devrinde ürün/pasta (eski 5 adım ↔ D2 "yalnız 3 bardak") · kapanışta açık mesai listesi + "mesaisini kapat" (↔ D3 yönetici kapatma yok) · geri al işletme onayı tablette PIN (↔ D5a kimlik telefonda) · KONTROL ekranı (↔ D1 "olmasın") · dünkü kapanış eksik kartı (↔ "personele uyarı yok") · kapanış teslim alıcısı (↔ A4-2 yalnız Onur/Fethi/Fatma).
+**Kaynak yok / köprü riski:** sipariş tabloları + merkez Yönlendirme/Hazırlık EY'de yok (1 Kasım'a sığmayabilir) · X raporu OCR, Puanım, geri bildirim, merkez→şube mesaj yazarı EY'de yok · Depo'da şube kabul ucu yok (yalnız merkez kabul) · PIN doğrulama hiç yok.
+**Atlananlar (eklenecek):** sipariş modunda eksik kategori + açıklama zorunlu · depodan gelen fazla/eksik/hasarlı/2 gün merkez kabul · ana sayfada son okutanlar + mola hak kuralı · ürün aç bandı pencereleri 12:00–12:59 / 16:00–16:59 / 20:00–20:59 · sağ panel sekmeleri kullanımda · deneme: panel kuru + yoklama gerçek (kapanış→çıkış kuru modda yazılmaz).
+**Basamak 0 (ön koşul):** katalog panel_sayim tam · PIN göçü + 5 yanlış kilidi · telefon onay sayfası · şube PC kayıtları + telefon bağlama.
+**Merkez basamakları:** "Sevk et" (C1 bloker) · merkez mesaj gönderme · 31 Ekim açık sevklerin kapatılması · /donem + açılış sayımı · eski uçların kesimi · 28–30 Ekim prova.
+**Sıra önerisi (Fable):** Depodan gelen kasa devrinin hemen ardına; sipariş "eski akış" kararına bağlı; X raporu/Puanım/geri bildirim 1 Kasım sonrası.
