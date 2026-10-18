@@ -91,6 +91,8 @@ def yoklama_hazirla() -> None:
             merkez_sonuc TEXT, merkez_kim TEXT, merkez_aciklama TEXT, gorulen TEXT, olay_id TEXT,
             istek_id TEXT UNIQUE, devret_istek_id TEXT UNIQUE, kabul_istek_id TEXT UNIQUE, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(),
             devreden_yoklama_id TEXT, istekler JSONB NOT NULL DEFAULT '{}'::jsonb)""")
+        cur.execute("ALTER TABLE ey_devir ADD COLUMN IF NOT EXISTS devreden_yoklama_id TEXT")
+        cur.execute("ALTER TABLE ey_devir ADD COLUMN IF NOT EXISTS istekler JSONB NOT NULL DEFAULT '{}'::jsonb")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_devir_gun ON ey_devir (sube_id, is_gunu)")
         try:
             with savepoint(cur, "sp_ey_devir_acik"):
@@ -930,7 +932,8 @@ def _devir_kilit(cur, sube_id: str, gun) -> None:
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_devir:{sube_id}:{gun}",))
 
 
-def devir_ac(cur, sube_id: str, gun, devreden: dict, devralan: dict, sayilan_kurus: int, bardak: list, istek_id: str) -> dict:
+def devir_ac(cur, sube_id: str, gun, devreden: dict, devralan: dict, sayilan_kurus: int, bardak: list, istek_id: str,
+             giris_zorunlu: bool = False) -> dict:
     """PUBLIC (panel): şube+günün açık devrini kurar ya da (yalnız 'hazir'ken) günceller → yeni sürüm.
     Olay YAZMAZ — 'vardiya' olayının TEK yazarı devralanın onayıdır (F5)."""
     yoklama_hazirla()
@@ -941,11 +944,14 @@ def devir_ac(cur, sube_id: str, gun, devreden: dict, devralan: dict, sayilan_kur
     r = cur.fetchone()
     if r:
         r = dict(r)
-        if r["s"] != surum:
+        if r["s"] != surum or r["surum"] != surum:   # Codex: tarihsel eşleşme yetmez — güncel form da aynı olmalı
             raise HTTPException(409, "Bu devir formu eski — ekranı yenile")
         return {"devir_id": r["id"], "surum": r["surum"], "tekrar": True}
+    personel_kilidi(cur, devreden["id"])   # kilit sırası: devir → kişi (telefon uçlarıyla aynı)
     cur.execute("SELECT id FROM ey_yoklama WHERE personel_id=%s AND sube_id=%s AND cikis_ts IS NULL", (devreden["id"], sube_id))
     yk = dict(cur.fetchone() or {}).get("id")
+    if giris_zorunlu and not yk:
+        raise HTTPException(409, "Devreden şu an girişli değil — önce telefonundan QR ile giriş yapsın")
     cur.execute("""SELECT id, durum FROM ey_devir WHERE sube_id=%s AND is_gunu=%s AND durum IN ('hazir','devreden_onayladi') FOR UPDATE""",
                 (sube_id, gun))
     a = cur.fetchone()
@@ -1025,8 +1031,10 @@ def _devir_al(cur, did: str, kisiler: bool = True) -> dict:
         raise HTTPException(404, "Devir bulunamadı")
     r0 = dict(r0)
     _devir_kilit(cur, r0["sube_id"], r0["is_gunu"])
-    if kisiler:
-        for pid in sorted({r0["devreden_id"], r0["devralan_id"]}):
+    if kisiler:   # Codex: devir kilidi altında kişiler değişemez → yeniden oku, sonra sıralı kilitle
+        cur.execute("SELECT devreden_id, devralan_id FROM ey_devir WHERE id=%s", (did,))
+        r1 = dict(cur.fetchone())
+        for pid in sorted({r1["devreden_id"], r1["devralan_id"]}):
             personel_kilidi(cur, pid)
     cur.execute("SELECT * FROM ey_devir WHERE id=%s FOR UPDATE", (did,))
     return dict(cur.fetchone())

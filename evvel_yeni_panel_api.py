@@ -513,7 +513,7 @@ def kasa_devri(sube_id: str, b: DevirBody):
             if bardak:
                 ad = _urunler(cur, [x["urun_id"] for x in bardak], takip="sayim")
                 bardak = [{**x, "ad": ad[x["urun_id"]]["ad"]} for x in bardak]
-            r = y.devir_ac(cur, str(sube_id), c["gun"], a, v, k, bardak, b.istek_id)
+            r = y.devir_ac(cur, str(sube_id), c["gun"], a, v, k, bardak, b.istek_id, giris_zorunlu=_qr_gerekli(cur))
             return {**r, "tekrar": bool(r.get("tekrar")),
                     "mesaj": f"Devir hazır — {a['ad']} telefonundan 'Devrediyorum', sonra {v['ad']} 'Kabul ediyorum' desin"}
         oid = _olay(cur, sube_id=sube_id, tur="vardiya", is_gunu=c["gun"], kok=f"panel:vardiya:{sube_id}:{b.istek_id}",

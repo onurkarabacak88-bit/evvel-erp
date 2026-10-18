@@ -132,13 +132,16 @@ function QrIslem({ sube, jeton }) {
   // islem: giris | cikis | mola-baslat | mola-bitir | devret | kabul · ek: kabulde { tutuyor, not }
   const yap = async (islem, ek) => {
     if (!islem || mesgul) return;
-    if (!istek.current[islem]) istek.current[islem] = yeniIstekId();   // her işlemin KENDİ istek_id'si; tekrar denemede aynı
+    // her işlemin KENDİ istek_id'si; tekrar denemede aynı. Codex: kabul ile 'tutmuyor' AYRI kimlik → biri sunucuda tamamlandıysa
+    // diğeri 409 alır (karar sessizce değişmez)
+    const anahtar = islem === 'kabul' && ek && ek.tutuyor === false ? 'kabul-tutmuyor' : islem;
+    if (!istek.current[anahtar]) istek.current[anahtar] = yeniIstekId();
     setMesgul(true); setIsHata(null);
     const devirIslem = islem === 'devret' || islem === 'kabul';
     const yol = devirIslem ? `/api/evvel-yeni/yoklama/devir/${encodeURIComponent(devir.id)}/${islem}` : `/api/evvel-yeni/yoklama/${islem}`;
     try {
       const r = await imzaliJson('telefon', 'POST', yol,
-        { sube, qr: jeton, lat: konum.lat, lng: konum.lng, istek_id: istek.current[islem], ...(devirIslem ? { surum: devir.surum } : {}), ...(ek || {}) });
+        { sube, qr: jeton, lat: konum.lat, lng: konum.lng, istek_id: istek.current[anahtar], ...(devirIslem ? { surum: devir.surum } : {}), ...(ek || {}) });
       const eskiSaat = islem === 'giris' ? ben.giris : islem === 'cikis' ? ben.cikis : islem === 'mola-baslat' ? ben.mola?.bas : islem === 'mola-bitir' ? ben.mola?.bit : null;
       const gosterim = islem === 'kabul' && ek && ek.tutuyor === false ? 'tutmuyor' : islem;
       setSonuc({ islem: gosterim, mesaj: r.mesaj, hak_dustu: !!r.hak_dustu, saat: (r.mesaj || '').match(/\d{2}:\d{2}/)?.[0] || (r.tekrar && eskiSaat) || saatSimdi(), tekrar: !!r.tekrar });

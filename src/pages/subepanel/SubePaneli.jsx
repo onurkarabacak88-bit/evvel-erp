@@ -219,6 +219,8 @@ export default function SubePaneli({ subeId }) {
         setMesaj({ tur: 'deneme', metin: 'İnternet yok — kayıt tablette bekliyor, bağlantı gelince kendiliğinden gönderilecek' });
         taslakSil(modal); setModal(null); temizle();
       } else {
+        // Codex: devir formu sunucudakinden eskiyse (409) aynı kimlikle tekrar gönderim hep reddedilir → yeni kimlik + güncel durum
+        if (e?.status === 409 && yol === 'devir') { setIstek(yeniIstek()); yukle(); }
         setAnladim(e?.message && e.message.length < 160 ? e.message : 'Kaydedilemedi — tekrar deneyin');
       }
     }

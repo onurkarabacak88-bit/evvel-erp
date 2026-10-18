@@ -340,10 +340,10 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                 if b.maas is None:
                     raise HTTPException(400, "Maaşı yaz (0 olabilir)")
                 tid = "ey-" + uuid.uuid4().hex[:12]
-                cur.execute("""INSERT INTO ey_personel (id, ad, sube_id, gorev, giris, cikis, calisma_turu, degistiren)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                cur.execute("""INSERT INTO ey_personel (id, ad, sube_id, gorev, giris, cikis, calisma_turu, erken_acilis, degistiren)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                             (tid, ad, None if b.sube_id in (None, "", "ortak") else b.sube_id, (b.gorev or "").strip()[:40] or None, giris,
-                             cikis, b.calisma_turu or "tam", kim))
+                             cikis, b.calisma_turu or "tam", bool(b.erken_acilis), kim))
             else:
                 cur.execute("""UPDATE ey_personel SET ad=COALESCE(%s,ad),
                                  sube_id=CASE WHEN %s THEN NULL ELSE COALESCE(%s,sube_id) END, gorev=COALESCE(%s,gorev),

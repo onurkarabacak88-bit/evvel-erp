@@ -373,7 +373,7 @@ export function Devirler({ onToast }) {
   const yap = async (anahtar, yol, govde) => {
     setMesgul((m) => ({ ...m, [anahtar]: true })); setHata('');
     try { const d = await api(yol, { method: 'POST', body: govde }); onToast?.(d.mesaj); setDuz((o) => { const y = { ...o }; delete y[anahtar]; return y; }); await yukle(); }
-    catch (e) { setHata(e?.message || 'İşlenemedi'); }
+    catch (e) { setHata(e?.message || 'İşlenemedi'); if (e?.status === 409) yukle(); }   // Codex: durum değiştiyse liste tazelensin
     setMesgul((m) => { const y = { ...m }; delete y[anahtar]; return y; });
   };
   const ortak = { duz, setDuz, mesgul, yap };
