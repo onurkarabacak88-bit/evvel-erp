@@ -64,7 +64,7 @@
 | B1 | Faz 0 altyapı: ey_ayar, şube depo işareti, Depo/Toptancı/Kasa PUBLIC servisleri | ✅ |
 | B2 | Faz 1: açılış · kapanış · kasa devri · ara teslim · ürün aç · fire (deneme modunda yayında) | ✅ |
 | B3 | Sahip kararları D2/D6/D7/D9/D10 + kapanış kaybolmasın (deneme kaydı + geç kapanış) | ✅ yayında — son düzeltme Codex'e tekrar gösterilecek |
-| B4 | **QR telefon / yoklama modülü** Y0: şube koordinatı + telefon bağlama linki + giriş/çıkış + dönen QR + panel QR kapısı + "Bugün girenler" | 🟡 **📍 yazılıyor** |
+| B4 | **QR telefon / yoklama modülü** Y0 (yerleşim denetimi F1–F10: 5 mevcut okuyucunun KAYNAĞI değişir, ikinci okuyucu yok): şube koordinatı + telefon bağlama linki + giriş/çıkış + dönen QR + panel QR kapısı + "Bugün girenler" | 🟡 **📍 yazılıyor** |
 | B5 | Y1: yemek molası + merkez "Yemek molaları" sekmesi + 61. dk / molasız gün hak yok + maaş yemek kalemi + merkez elle hak verir | ⏳ |
 | B6 | Y2: kasa devri çift onay (iki telefon) · "tutmuyor" → merkez | ⏳ |
 | B7 | Konum muafiyeti (yönetici) + erken açılış izni — Tanımlar › Personel'de işaret | ⏳ |

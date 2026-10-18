@@ -312,3 +312,19 @@ Bekleyen: **K8–K11** (§A5).
 | K9 | ✅ Telefon bağlama **uzaktan da olur** — merkezin linkini açmak yeterli (şubede tablet QR şartı YOK) |
 | K10 | ✅ Şube Wi-Fi/IP **kullanılmaz** — yalnız konum |
 | K11 | ✅ Aynı anda iki şubede girişli olunamaz — önce çıkış; aynı gün ikinci şubeye giriş serbest |
+
+## F. YERLEŞİM DENETİMİ (2026-10-18) — "var olan okumadan devam": KAYNAK DEĞİŞİMLERİ (ikinci okuyucu YOK)
+Kural (sahip): yeni modül yeni okuyucu kurmaz; bu bilgiyi BUGÜN okuyan EY okuyucusunun KAYNAĞI değişir (donem_baslangic'tan sonrası yeni, öncesi eski — salt okunur).
+
+| # | Mevcut okuyucu (EY) | Bugün okuduğu | Yeni kaynağı |
+|---|---|---|---|
+| F1 | evvel_yeni_maas_api `personel_takvim` (:418-497) + MaasModulu Takvim | eski gorev_yoklama + "panel izi" (sube_operasyon_event / kasa_teslim) | `yoklama.gun_yoklama` (+ panel izi kararı — sahip) |
+| F2 | maas `gunluk_yoklama` (:622-657) | gorev_yoklama + vardiya_atama (plan) | `gun_yoklama`; plan sütunu karar — sahip |
+| F3 | maas `takvim_karar` "ayrıldı → son QR günü" (:608) | gorev_yoklama MAX(tarih) | `son_giris_gunu` |
+| F4 | maas `hesapla` yemek kalemi (:266-295) | düz `aylık × gün/30` | `yemek_hak_gunleri` (K7/K8); ödeme kalemi `yemek_hak`'ı okur → dokunulmaz |
+| F5 | panel `/devir` (evvel_yeni_panel_api :458) | — (tek imza olay `vardiya` YAZAR) | `yoklama.devir_ac`; olay `vardiya` yalnız devir tamam/tutmuyor anında (TEK yazar) |
+| F6 | satis `devir_defteri` (:233, :424-489) + `_kasa_mutabakat` vardiya (:199-224) | eski kapanis_kayit / sube_operasyon_event CIKIS | `devir_durum` / olay `vardiya` |
+| F7 | bar `kapanisci/acilisci` (:254-257) + satis aksam.kim (:435-495) | eski event personel_ad / ciro_taslak | `kapanis_sorumlusu` + kapanış olayının personel_ad'ı |
+| F8 | maas `_vardiya_onerisi` (:88-103) → gorev_api.vardiya_takip (saat önerisi) | eski | karar — sahip (plan kaynağı yok) |
+| F9 | Bekleyen işler personel grubu (KasaModulu IS_GRUPLARI 'Avans talepleri') | avans | aynı grup: "Avans · Yoklama" — yeni grup açılmaz |
+| F10 | Merkez görünümleri | — | MEVCUT Personel modülüne iki sayfa: "Yemek molaları", "Telefonlar" — yeni modül/menü yok |
