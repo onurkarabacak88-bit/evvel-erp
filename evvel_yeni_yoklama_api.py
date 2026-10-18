@@ -254,6 +254,13 @@ def personel_kilidi(cur, personel_id: str) -> None:
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_yoklama:" + str(personel_id),))
 
 
+def girdi_mi(cur, sube_id: str, personel_id: str, gun: date) -> bool:
+    """PUBLIC: kişi o iş gününde bu şubeye QR'la girmiş mi (açık ya da kapanmış). Kapanış tekrarı / geç kapanış için (K11)."""
+    yoklama_hazirla()
+    cur.execute("SELECT 1 FROM ey_yoklama WHERE personel_id=%s AND sube_id=%s AND is_gunu=%s LIMIT 1", (personel_id, sube_id, gun))
+    return bool(cur.fetchone())
+
+
 def cikis_yaz(cur, personel_id: str, tur: str, kim: Optional[str] = None, mesafe: Optional[int] = None,
               cihaz_id: Optional[str] = None, istek_id: Optional[str] = None, sube_id: Optional[str] = None) -> Optional[str]:
     """PUBLIC: açık girişi kapatır (tur: qr / devir / kapanis / merkez). sube_id verilirse yalnız o şubedeki açık giriş.

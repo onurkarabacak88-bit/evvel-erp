@@ -71,7 +71,7 @@ def _qr_gerekli(cur) -> bool:
     return _yoklama() is not None and _bugun() >= _baslangic(cur)
 
 
-def _personel(cur, sube_id: str, pid: Optional[str], kapi: bool = True) -> dict:
+def _personel(cur, sube_id: str, pid: Optional[str], kapi: bool = True, gun=None) -> dict:
     """Ad seçimi (sahip: yetki fazına kadar PIN yok). Her kayıt personel kimliği taşır."""
     from evvel_yeni_tanim_api import secim_listeleri
     if not pid:
@@ -80,7 +80,9 @@ def _personel(cur, sube_id: str, pid: Optional[str], kapi: bool = True) -> dict:
     if not p:
         raise HTTPException(400, "Personel bulunamadı")
     y = _yoklama()
-    burada = y is not None and _qr_gerekli(cur) and y.acik_mi(cur, sube_id, str(p["id"]))   # K11: QR'la bu şubeye girmiş
+    burada = y is not None and _qr_gerekli(cur) and (
+        y.acik_mi(cur, sube_id, str(p["id"])) if kapi
+        else y.girdi_mi(cur, sube_id, str(p["id"]), gun or _bugun()))   # K11: QR'la bu şubeye girmiş (kapanış: o gün girmiş)
     if str(p.get("sube_id") or "") != str(sube_id) and not burada:   # Codex: başka şubenin personeli bu şubeye yazamasın
         raise HTTPException(400, "Bu şubenin personeli değilsin — adını listeden seç")
     if kapi and y is not None and _qr_gerekli(cur) and not y.acik_mi(cur, sube_id, str(p["id"])):   # K: panel ad listesi = bugün girenler
@@ -421,7 +423,7 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
     def is_(cur, c):
         from evvel_yeni_depo_api import sayim_yaz
         from evvel_yeni_kasa_api import HareketBody, kasa_yaz
-        p = _personel(cur, sube_id, b.personel_id, kapi=False)   # QR kapısı aşağıda: tekrar gönderim ve merkez geç kapanış geçer
+        p = _personel(cur, sube_id, b.personel_id, kapi=False, gun=c["gun"])   # QR kapısı aşağıda: tekrar gönderim ve merkez geç kapanış geçer
         engel = None if c.get("merkez") else _saat_kurali("kapanis", p)
         if engel and not c["kuru"]:
             raise HTTPException(409, engel)
