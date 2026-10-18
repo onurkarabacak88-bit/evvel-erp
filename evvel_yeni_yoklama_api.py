@@ -80,7 +80,11 @@ def yoklama_hazirla() -> None:
             hak_aciklama TEXT, gorulen TEXT, istek_id TEXT UNIQUE, bitis_istek_id TEXT UNIQUE, degistiren TEXT,
             zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), UNIQUE (personel_id, is_gunu))""")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_mola_gun ON ey_mola (is_gunu)")
-        cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_ey_mola_acik ON ey_mola (personel_id) WHERE bitis_ts IS NULL")   # Codex: 02:00 sonrası ikinci açık mola yok
+        try:
+            with savepoint(cur, "sp_ey_mola_acik"):
+                cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_ey_mola_acik ON ey_mola (personel_id) WHERE bitis_ts IS NULL")   # Codex: 02:00 sonrası ikinci açık mola yok
+        except Exception:  # noqa: BLE001
+            log.warning("ux_ey_mola_acik kurulamadı (açık mola çakışması) — uygulama kontrolü korur", exc_info=True)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_yoklama_gun ON ey_yoklama (sube_id, is_gunu)")
         # QR sırrı: ortam değişkeni yoksa bir kez üretilir (ayar defterinde; dışarı verilmez)
         import os
@@ -306,9 +310,9 @@ def _mola_kapat(cur, personel_id: str, tur: str, ts=None, mesafe: Optional[int] 
     if not r:
         return None
     r = dict(r)
-    bit = ts or datetime.now(timezone.utc)
-    if bit < r["baslangic_ts"]:
+    if ts is not None and ts < r["baslangic_ts"]:
         raise HTTPException(400, f"Saat molanın başlangıcından ({_saat(r['baslangic_ts'])}) önce olamaz")   # Codex: sahte hak üretmesin
+    bit = ts if ts is not None else max(datetime.now(timezone.utc), r["baslangic_ts"])   # Codex 2: saat kayması kapanışı geri aldırmasın
     sn = (bit - r["baslangic_ts"]).total_seconds()
     sure = int(sn // 60)
     hak = sn <= mola_limit(cur) * 60   # Codex: 60 dk 59 sn hak değil
@@ -750,14 +754,14 @@ async def mola_bitir(request: Request):
     def fn(cur, c, p, v):
         ist = _istek(v)
         personel_kilidi(cur, p["id"])
-        cur.execute("SELECT personel_id, sure_dk, yemek_hakki FROM ey_mola WHERE bitis_istek_id=%s", (ist,))
+        cur.execute("SELECT personel_id, sure_dk, yemek_hakki, bitis_ts FROM ey_mola WHERE bitis_istek_id=%s", (ist,))
         r = cur.fetchone()
         if r:
             r = dict(r)
             if r["personel_id"] != p["id"]:
                 raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
             return {"ok": True, "tekrar": True, "hak_dustu": not r["yemek_hakki"],
-                    "mesaj": f"Mola zaten bitti · {r['sure_dk']} dk" + ("" if r["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
+                    "mesaj": f"Mola zaten bitti · {_saat(r['bitis_ts'])} · {r['sure_dk']} dk" + ("" if r["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
         cur.execute("SELECT sube_id FROM ey_mola WHERE personel_id=%s AND bitis_ts IS NULL", (p["id"],))
         a = cur.fetchone()
         if not a:
@@ -767,7 +771,7 @@ async def mola_bitir(request: Request):
             raise HTTPException(409, "Molan başka şubede — o şubenin QR'ını okut")
         m = _mola_kapat(cur, p["id"], "qr", mesafe=k["mesafe_m"], istek_id=ist)
         return {"ok": True, "hak_dustu": not m["yemek_hakki"],   # K7: tek bilgi satırı (bildirim değil)
-                "mesaj": f"Mola bitti · {m['sure_dk']} dk" + ("" if m["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
+                "mesaj": f"Mola bitti · {_saat(datetime.now(timezone.utc))} · {m['sure_dk']} dk" + ("" if m["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
     return await _telefon(request, fn)
 
 
@@ -798,7 +802,7 @@ def molalar(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = F
             return "suruyor" if r["is_gunu"] >= bugun else "bitmedi"
         return {"merkez": "merkez yazdı", "qr": "bitti"}.get(r["bitis_tur"], "çıkışla kapandı")
     return {"limit_dk": lim, "satirlar": [{
-        "id": r["id"], "gun": r["is_gunu"].isoformat(), "ad": r["ad"], "sube": r["sube_ad"], "bas": _saat(r["baslangic_ts"]),
+        "id": r["id"], "personel_id": r["personel_id"], "gun": r["is_gunu"].isoformat(), "ad": r["ad"], "sube": r["sube_ad"], "bas": _saat(r["baslangic_ts"]),
         "bit": _saat(r["bitis_ts"]), "sure_dk": r["sure_dk"], "durum": _durum(r), "yemek_hakki": r["yemek_hakki"],
         "hak_elle": r["hak_elle"], "hak_veren": r["hak_veren"], "hak_aciklama": r["hak_aciklama"],
         "hak_zaman": str(r["hak_zaman"])[:16] if r["hak_zaman"] else None, "gorulen": r["gorulen"], "mesafe": r["baslangic_mesafe_m"]}

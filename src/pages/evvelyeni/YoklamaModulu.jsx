@@ -229,7 +229,8 @@ export function YemekMolalari({ onToast }) {
 
   // Ay özeti: kişi → mola günü · ortalama süre · hak düşen gün · elle verilen (Maaş yemek kalemiyle aynı ölçüt: bitmiş mola)
   const ozet = Object.values((v?.satirlar || []).reduce((a, s) => {
-    const k = a[s.ad] || (a[s.ad] = { ad: s.ad, gun: 0, toplam: 0, olculen: 0, dusen: 0, elle: 0 });
+    const kim = s.personel_id || s.ad;   // Codex: aynı adlı iki kişi birleşmesin
+    const k = a[kim] || (a[kim] = { ad: s.ad, gun: 0, toplam: 0, olculen: 0, dusen: 0, elle: 0 });
     k.gun += 1;
     if (s.sure_dk != null) { k.toplam += s.sure_dk; k.olculen += 1; }
     if (s.hak_elle) k.elle += 1;
