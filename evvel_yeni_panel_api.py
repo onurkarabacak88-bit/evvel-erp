@@ -91,6 +91,12 @@ def _personel(cur, sube_id: str, pid: Optional[str], kapi: bool = True, gun=None
     return {"id": str(p["id"]), "ad": p["ad"], "erken_acilis": bool(p.get("erken_acilis"))}
 
 
+def _pin(cur, p: dict, pin: Optional[str]) -> None:
+    """Sık işlem (ürün aç, fire, ara teslim…): QR ile girmiş kişi + kendi 4 haneli PIN'i (sahip R1b). Doğrulama Tanımlar'da."""
+    from evvel_yeni_tanim_api import pin_dogrula
+    pin_dogrula(cur, p["id"], pin)
+
+
 def _tam(v, ad: str) -> int:
     """Tam sayı adet (kesir / eksi yok)."""
     if isinstance(v, bool) or v in (None, ""):
@@ -220,7 +226,8 @@ def _calistir(sube_id: str, istek_id: Optional[str], is_fn, tur: Optional[str] =
     """Ortak iskelet: deneme kaydı → hazırlık → tek işlem → (deneme modunda geri al) → deneme sonucu.
     gun/merkez: yalnız merkezin 'geç kapanış' işlemi (o iş gününe; saat kuralı ve gün kilidi uygulanmaz)."""
     gun0 = gun or _bugun()
-    ig = (govde or {}).get("istemci_gunu")
+    govde = {k: v for k, v in (govde or {}).items() if k != "pin"}   # PIN asla saklanmaz
+    ig = govde.get("istemci_gunu")
     if not merkez and ig:   # Codex: tablette kalıp gün değiştikten sonra gelen kayıt yanlış güne yazılmasın → deneme o güne, ret
         try:
             from datetime import date as _d
@@ -315,6 +322,9 @@ def panel_durum(sube_id: str):
                         for k in kat],
             "acilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "acilinca"]} for k in kat],
             "bugun": bugunku, "yoklama": yok,
+            # gün çizgisi (eski ana sayfa ①): AÇILIŞ · KAPANIŞ — kim, saat (KONTROL noktası yok: sahip istisnası 10)
+            "gun_cizgisi": {t: next(({"kim": o["kim"], "saat": o["zaman"]} for o in bugunku if o["tur"] == t and not o["iptal"]), None)
+                            for t in ("acilis", "kapanis")},
             "acilis_var": any(o["tur"] == "acilis" and not o["iptal"] for o in bugunku),
             "kapanis_var": any(o["tur"] == "kapanis" and not o["iptal"] for o in bugunku),
             "fire_sebepleri": [{"kod": k, "ad": v} for k, v in FIRE_SEBEPLERI.items()],
@@ -378,7 +388,27 @@ def _sayim_satirlari(cur, sayim: List[SayimSatir]) -> list:
     return satir
 
 
+def _onay_sart(sube_id: str, ad: str, tur: str, govde: dict) -> None:
+    """Canlıda (QR kapısı açık) açılış / kapanış panelden DOĞRUDAN yazılamaz — telefon onayı (R1) zorunlu. Deneme döneminde serbest."""
+    with db() as (_c, cur):
+        if _bugun() < _baslangic(cur):
+            return   # deneme dönemi
+        if _yoklama() is None:   # Codex: yoklama yüklenemedi diye onay şartı kalkmasın
+            kod, msg = 503, f"{ad} şu an kaydedilemiyor — QR sistemi çalışmıyor, merkeze haber ver"
+        else:
+            kod, msg = 409, f"{ad} telefonla onaylanır — ekrandaki 'QR ile onayla' düğmesini kullan"
+    # Fable: reddedilen gün kaydı kaybolmasın → deneme defterine 'ret' (merkez Bekleyen işler / geç kapanış görür); PIN asla
+    did = _deneme_ac(sube_id, tur, _bugun(), {k: v for k, v in govde.items() if k != "pin"})
+    _deneme_kapat(did, "ret" if kod == 409 else "hata", msg)
+    raise HTTPException(kod, msg)
+
+
 @router.post("/{sube_id}/acilis")
+def acilis_uc(sube_id: str, b: AcilisBody):
+    _onay_sart(sube_id, "Açılış", "acilis", b.model_dump(mode="json"))
+    return acilis(sube_id, b)
+
+
 def acilis(sube_id: str, b: AcilisBody):
     """Açılış: kasadaki nakit + sayılan ürünler. Kasa sabah sayımı (gün−1'e) Kasa'nın kendi takvimiyle sonra yazılır
     (geç gelen kayıtlar kilide takılmasın — mevcut kural); burada ham olay + Depo günlük sayımı."""
@@ -484,6 +514,11 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
 
 
 @router.post("/{sube_id}/kapanis")
+def kapanis_uc(sube_id: str, b: KapanisBody):
+    _onay_sart(sube_id, "Kapanış", "kapanis", b.model_dump(mode="json"))   # telefonu olmayan → "mühürsüz gönder" kendi basamağında (Basamak 3) ayrı uçla gelir
+    return kapanis(sube_id, b)
+
+
 def kapanis(sube_id: str, b: KapanisBody):
     return _kapanis_yaz(sube_id, b)
 
@@ -543,6 +578,7 @@ def kasa_devri_iptal(sube_id: str, b: DevirIptalBody):
 class AraTeslimBody(BaseModel):
     istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
+    pin: Optional[str] = None          # 4 hane — doğrulanır, hiçbir yere yazılmaz
     alan: str
     tutar: Decimal
     istek_id: str
@@ -556,6 +592,7 @@ def ara_teslim(sube_id: str, b: AraTeslimBody):
         from evvel_yeni_kasa_api import HareketBody, kasa_yaz
         _gun_acik_mi(cur, c, sube_id)
         p = _personel(cur, sube_id, b.personel_id)
+        _pin(cur, p, b.pin)
         if b.alan not in TESLIM_ALANLAR:
             raise HTTPException(400, "Teslim alan: Onur / Fethi / Fatma")
         k = _tl(b.tutar, "Tutar")
@@ -578,6 +615,7 @@ class Kalem(BaseModel):
 class UrunAcBody(BaseModel):
     istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
+    pin: Optional[str] = None          # 4 hane — doğrulanır, hiçbir yere yazılmaz
     kalemler: List[Kalem]
     istek_id: str
 
@@ -604,6 +642,7 @@ def urun_ac(sube_id: str, b: UrunAcBody):
         from evvel_yeni_depo_api import hareket_yaz
         _gun_acik_mi(cur, c, sube_id)
         p = _personel(cur, sube_id, b.personel_id)
+        _pin(cur, p, b.pin)
         k = _kalemler(cur, b.kalemler, takip="acilinca")
         kok = f"panel:ac:{sube_id}:{b.istek_id}"
         oid = _olay(cur, sube_id=sube_id, tur="urun_ac", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
@@ -625,6 +664,7 @@ class IadeBilgi(BaseModel):
 class FireBody(BaseModel):
     istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
+    pin: Optional[str] = None          # 4 hane — doğrulanır, hiçbir yere yazılmaz
     kalemler: List[Kalem]
     sebep: str                         # FIRE_SEBEPLERI kodu
     aciklama: Optional[str] = None     # 'diger' için zorunlu
@@ -640,6 +680,7 @@ def fire(sube_id: str, b: FireBody):
         from evvel_yeni_depo_api import hareket_yaz
         _gun_acik_mi(cur, c, sube_id)
         p = _personel(cur, sube_id, b.personel_id)
+        _pin(cur, p, b.pin)
         if b.sebep not in FIRE_SEBEPLERI:
             raise HTTPException(400, "Fire sebebini seç")
         aciklama = (b.aciklama or "").strip()[:200]
@@ -737,9 +778,8 @@ def onay_iste(sube_id: str, b: OnayIsteBody):
     if b.tur not in ONAY_TURLERI:
         raise HTTPException(400, "Bu işlem QR ile onaylanmaz")
     Body, _f, ad = ONAY_TURLERI[b.tur]
-    g = {k: v for k, v in (b.govde or {}).items() if k != "personel_id"}
     try:
-        Body(**{**g, "personel_id": "-"})
+        g = Body(**{**(b.govde or {}), "personel_id": "-"}).model_dump(mode="json", exclude={"personel_id", "pin"})
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Form eksik: {str(e)[:160]}")
     _onay_hazirla()

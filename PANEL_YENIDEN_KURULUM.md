@@ -142,3 +142,8 @@ Sonra: denemede ekranda dene → sahibe görüntü → yayın.
 - **Dosya bölme:** ortak.jsx (tema, Modal, TabletQR, listeler, numpad, yardımcılar) · PanelBaglam (React context: d, gonder, ac, kapat, mesgul, yukle) · SubePaneli.jsx çerçeve · AnaSayfa.jsx · ekranlar ayrı; tek `<style>`; Kapanış taslağı davranışı taşınırken değişmez.
 - **Durum çipleri:** kaynak yokken GİZLENMEZ, "—" gösterir (0 = yanlış bilgi, gizlemek = düzen kayar); red listesi ve mesaj kutusu yerinde, içi "Henüz … yok".
 - **Kalanlar:** DENEME rozeti + "N kayıt internet bekliyor" kartı kalır (sağlamlık) · son okutanlar kalır · vardiya türü etiketi (☀️/🌤/🌙) vardiya planı (B7a) gelince · gün çizgisi boşken varsayılan saatler (07:00 / 22:30) · `/panel` şubesiz → şube seçtir · ürün aç hatırlatma bandının yeri açılır (içerik ürün aç basamağında).
+
+### Basamak 1 — uygulama notu (2026-10-19)
+- Çerçeve yazıldı: `ortak.jsx` (tema, Modal, TabletQR, listeler, sayı tuş takımı) · `AnaSayfa.jsx` (eski §4 sırası) · `SubePaneli.jsx` (üst bar, sol menü, sağ kartlar, alt bar, açılış öncesi QR kapısı, 15 sn yenileme).
+- Üst bardaki "Adını seç" KALKTI. Sahip (2026-10-19): **kişi / PIN seçilen her yerde YALNIZ QR ile girmiş (şu an içeride) personelin adı** — tüm personel yedeği yok; tek kişi içerideyse kendiliğinden seçili.
+- Codex B0 düzeltmeleri: `_onay_sart` — canlıda (1 Kasım sonrası) açılış/kapanış panelden doğrudan yazılamaz, YALNIZ telefon onayıyla. ⚠️ Bu yüzden Basamak 2 (açılış sihirbazı + QR onay) ve Basamak 3 (kapanış + QR mühür + mühürsüz gönder ucu) **1 Kasım'dan önce** bitmeli. Onay isteği yalnız doğrulanmış form alanlarını saklar (pin asla). PIN sayacı yarışı kapatıldı.

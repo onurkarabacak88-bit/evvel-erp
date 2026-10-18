@@ -151,6 +151,8 @@ def pin_dogrula(cur, personel_id: str, pin: Optional[str]) -> None:
         raise HTTPException(400, "Bu personelin PIN'i tanımlı değil — merkez Tanımlar › Personel'den versin")
     sonuc = None
     with db() as (_c, k):
+        k.execute("INSERT INTO ey_pin_deneme (personel_id, yanlis, son) VALUES (%s, 0, NOW()) ON CONFLICT (personel_id) DO NOTHING",
+                  (personel_id,))   # Codex: satır önce var olsun → FOR UPDATE her denemeyi sıraya koyar
         k.execute("""SELECT yanlis, kilit_bitis > NOW() AS kilitli, EXTRACT(EPOCH FROM (kilit_bitis - NOW())) AS kalan
                        FROM ey_pin_deneme WHERE personel_id=%s FOR UPDATE""", (personel_id,))
         d = dict(k.fetchone() or {})
