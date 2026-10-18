@@ -12,7 +12,7 @@
 |---|---|
 | **Ana yol** | Sipariş Faz 1 (A) → adım **1b** "okuyucular yeni kataloğa" |
 | **1b'den dalınan yan yol** | Yeni Şube Paneli (B) — çünkü eski panel eski kimlik yazıyor; okuyucuların yeni kataloğa geçmesi panelin yeni sisteme yazmasını gerektirdi |
-| **📍 Şu an** | B5 — yemek molası + Personel › Yemek molaları + maaş yemek kalemi (B4 Y0 ✅ canlı) |
+| **📍 Şu an** | B6 — kasa devri çift onay (sunucu yazıldı, önyüz + Codex denetimi sürüyor) · B5 ✅ canlı 18 Eki |
 | **↩ B bitince dönüş** | B14 (okuyucular yeni panel verisine — 1b'nin asıl işi) → A 1d/1e (sipariş tabloları + merkez "Sevk et") → C listesindeki "Bende" işleri → D "olmalı mı?" sorgulaması (⏳ olanlar) |
 
 ## 🔗 İLİŞKİ HARİTASI — bölümler birbirine nasıl bağlı (sahip: "alanları birbiriyle ilişkilendir, kaybolmayalım")
@@ -65,8 +65,8 @@
 | B2 | Faz 1: açılış · kapanış · kasa devri · ara teslim · ürün aç · fire (deneme modunda yayında) | ✅ |
 | B3 | Sahip kararları D2/D6/D7/D9/D10 + kapanış kaybolmasın (deneme kaydı + geç kapanış) | ✅ yayında — son düzeltme Codex'e tekrar gösterilecek |
 | B4 | **QR telefon / yoklama modülü** Y0 (yerleşim denetimi F1–F10: 5 mevcut okuyucunun KAYNAĞI değişir, ikinci okuyucu yok): şube koordinatı + telefon bağlama linki + giriş/çıkış + dönen QR + panel QR kapısı + "Bugün girenler" | ✅ **canlı 18 Eki** (24722c4; Codex 2 tur). Sahibe kalan: Personel › Telefonlar'dan 12 personele + 3 tablete link üret (1 Kasım'dan önce) |
-| B5 | Y1: yemek molası + merkez "Yemek molaları" sekmesi + 61. dk / molasız gün hak yok + maaş yemek kalemi + merkez elle hak verir | ⏳ |
-| B6 | Y2: kasa devri çift onay (iki telefon) · "tutmuyor" → merkez | ⏳ |
+| B5 | Y1: yemek molası + merkez "Yemek molaları" sekmesi + 61. dk / molasız gün hak yok + maaş yemek kalemi + merkez elle hak verir | ✅ canlı 18 Eki (b9eceb4; Codex 3 tur) |
+| B6 | Y2: kasa devri çift onay (iki telefon) · "tutmuyor" → merkez | 🟡 sunucu ✅ (1a3ab18 yerel) · önyüz Fable · Codex denetimi |
 | B7 | Konum muafiyeti (yönetici) + erken açılış izni + **müdür (maaş her türlü tam)** — Tanımlar › Personel'de işaret | ⏳ |
 | B7a | **Vardiya planı Evvel Yeni'de** (VARDIYA_PLANI_TASARIM.md; V1–V10 Fable önerileri onaylı) — V0 24–26 Ekim, V1 27–29 Ekim, V2 Kasım 1. hafta | ⏳ tasarım ✅ |
 | B8 | **Telefon sayfası yeniden kurulacak** (avans talebi buradan; puan + geri bildirim buraya) | ⏳ |
