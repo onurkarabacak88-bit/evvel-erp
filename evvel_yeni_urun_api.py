@@ -12,6 +12,8 @@ kopyalayıp oradan tekrar bağlayıp Evvel'in ilk versiyonu gibi olmasın."
       YA DA 1 fatura birimi = fatura_ici sayım birimi (Z peçete: 1 koli = 12 paket). Maliyet çevrimi TEK yerde: birim_maliyet().
   · TAKİP (sahip 2026-10-18: "kapak sayımı önemli değil ama bardak günlük sayılır"; "ürün aç sistemi olduğu için her açtığı pakette maliyet var"):
       'sayim' = düzenli sayılır · 'acilinca' = sayılmaz, gideri ürün açılınca (ürün aç) yazılır — sayım listesine çıkmaz.
+  · PANEL SAYIMI (sahip 2026-10-18: "açılış listesi eskiden ne varsa onun gösterilmesi"): panel_sayim = şube açılış/kapanışında
+      sayılan ürün (eski panel: bardaklar, su, süt, Redbull, soda, cookie, pastalar). Diğer 'sayim' ürünleri depo sayımında.
   · KDV ürün kartında. FİYAT katalogda değil.
   · PUBLIC servis: urun_haritasi(cur) · katalog(cur) · urun_bilgi(cur, idler) · urun_ad(cur, id) · urun_olustur(cur, …).
 """
@@ -34,7 +36,7 @@ BIRIMLER = ("adet", "paket", "kutu", "şişe", "rulo")      # sayım birimi (tam
 FATURA_BIRIMLER = ("adet", "paket", "kutu", "koli", "şişe", "rulo")
 TAKIPLER = ("sayim", "acilinca")
 KDV_ORANLARI = (Decimal("0"), Decimal("0.01"), Decimal("0.10"), Decimal("0.20"))
-SURUM = 4
+SURUM = 5
 _HAZIR = False
 
 
@@ -66,6 +68,8 @@ def _hazirla():
             cur.execute("ALTER TABLE ey_urun ADD COLUMN IF NOT EXISTS fatura_ici INT")   # 1 fatura birimi = N sayım birimi
         if s < 4:      # takip biçimi
             cur.execute("ALTER TABLE ey_urun ADD COLUMN IF NOT EXISTS takip TEXT NOT NULL DEFAULT 'sayim'")
+        if s < 5:      # açılış / kapanışta sayılır
+            cur.execute("ALTER TABLE ey_urun ADD COLUMN IF NOT EXISTS panel_sayim BOOLEAN NOT NULL DEFAULT FALSE")
         if s < SURUM:
             cur.execute("INSERT INTO ey_urun_surum (surum) VALUES (%s)", (SURUM,))
     _HAZIR = True
@@ -161,7 +165,7 @@ def katalog(cur, hepsi: bool = False) -> List[dict]:
             "id": u["id"], "ad": u["ad"], "birim": u["birim"], "birim_teyit": u["birim_teyit"], "koli_ici": u.get("koli_ici"),
             "kdv_oran": float(u["kdv_oran"]) if u.get("kdv_oran") is not None else None, "aktif": u["aktif"],
             "fatura_birim": u.get("fatura_birim") or u["birim"], "sayim_ici": u.get("sayim_ici"), "fatura_ici": u.get("fatura_ici"),
-            "takip": u.get("takip") or "sayim"})
+            "takip": u.get("takip") or "sayim", "panel_sayim": bool(u.get("panel_sayim"))})
     return [{"id": k["id"], "ad": k["ad"], "emoji": k.get("emoji"), "aktif": k["aktif"], "urunler": by_k.get(k["id"], [])} for k in kats]
 
 
@@ -171,7 +175,7 @@ def urun_bilgi(cur, idler) -> Dict[str, dict]:
     idler = [str(i) for i in (idler or []) if i]
     if not idler:
         return {}
-    cur.execute("SELECT id, ad, birim, koli_ici, kdv_oran, aktif, fatura_birim, sayim_ici, fatura_ici, takip FROM ey_urun WHERE id = ANY(%s)", (idler,))
+    cur.execute("SELECT id, ad, birim, koli_ici, kdv_oran, aktif, fatura_birim, sayim_ici, fatura_ici, takip, panel_sayim FROM ey_urun WHERE id = ANY(%s)", (idler,))
     return {dict(r)["id"]: {**dict(r), "kdv_oran": float(dict(r)["kdv_oran"]) if dict(r)["kdv_oran"] is not None else None,
                             "fatura_birim": dict(r)["fatura_birim"] or dict(r)["birim"]}
             for r in cur.fetchall() or []}
@@ -334,6 +338,7 @@ class UrunBody(BaseModel):
     sayim_ici: Optional[int] = None        # 1 sayım birimi = N fatura adedi (peçete 1 paket = 50 adet)
     fatura_ici: Optional[int] = None       # 1 fatura birimi = N sayım birimi (Z peçete 1 koli = 12 paket)
     takip: str = "sayim"                   # sayim · acilinca
+    panel_sayim: Optional[bool] = None     # açılış / kapanışta sayılır — boş = değiştirme (eski istemciler sıfırlamasın)
 
 
 def _dogrula(b: UrunBody) -> None:
@@ -357,6 +362,8 @@ def urun_ekle(b: UrunBody, x_evvel_oturum: Optional[str] = Header(default=None))
         kim = _aktor(cur, x_evvel_oturum)
         r = urun_olustur(cur, b.kategori_id, b.ad, kim, koli_ici=b.koli_ici, kdv_oran=b.kdv_oran, aktif=b.aktif, birim=b.birim,
                          fatura_birim=b.fatura_birim, sayim_ici=b.sayim_ici, fatura_ici=b.fatura_ici, takip=b.takip)
+        if b.panel_sayim:
+            cur.execute("UPDATE ey_urun SET panel_sayim=TRUE WHERE id=%s", (r["id"],))
     return {"ok": True, "id": r["id"], "mesaj": f"{r['ad']} eklendi"}
 
 
@@ -376,7 +383,8 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
         if not cur.fetchone():
             raise HTTPException(400, "Kategori seç")
         yeni = {"ad": " ".join(b.ad.split())[:120], "kategori_id": b.kategori_id, "birim": b.birim, "koli_ici": b.koli_ici,
-                "kdv_oran": b.kdv_oran, "aktif": b.aktif, "fatura_birim": b.fatura_birim, "sayim_ici": b.sayim_ici, "fatura_ici": b.fatura_ici, "takip": b.takip}
+                "kdv_oran": b.kdv_oran, "aktif": b.aktif, "fatura_birim": b.fatura_birim, "sayim_ici": b.sayim_ici, "fatura_ici": b.fatura_ici, "takip": b.takip,
+                "panel_sayim": bool(e.get("panel_sayim")) if b.panel_sayim is None else bool(b.panel_sayim)}
 
         def _es(a, b_):
             if a is None or b_ is None:
@@ -392,8 +400,9 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
         if not degisen and e["birim_teyit"]:
             return {"ok": True, "mesaj": "Değişiklik yok"}
         cur.execute("""UPDATE ey_urun SET ad=%s, kategori_id=%s, birim=%s, birim_teyit=TRUE, koli_ici=%s, kdv_oran=%s, aktif=%s,
-                              fatura_birim=%s, sayim_ici=%s, fatura_ici=%s, takip=%s WHERE id=%s""",
-                    (yeni["ad"], b.kategori_id, b.birim, b.koli_ici, b.kdv_oran, b.aktif, b.fatura_birim, b.sayim_ici, b.fatura_ici, b.takip, uid))
+                              fatura_birim=%s, sayim_ici=%s, fatura_ici=%s, takip=%s, panel_sayim=%s WHERE id=%s""",
+                    (yeni["ad"], b.kategori_id, b.birim, b.koli_ici, b.kdv_oran, b.aktif, b.fatura_birim, b.sayim_ici, b.fatura_ici, b.takip,
+                     yeni["panel_sayim"], uid))
         for k in degisen + ([] if e["birim_teyit"] else ["birim_teyit"]):
             cur.execute("INSERT INTO ey_urun_iz (id, urun_id, alan, eski, yeni, kim) VALUES (%s,%s,%s,%s,%s,%s)",
                         (str(uuid.uuid4()), uid, k, None if e.get(k) is None else str(e.get(k)),

@@ -33,7 +33,7 @@ export default function UrunModulu({ onToast }) {
         fatura_birim: farkli ? form.fatura_birim : null,
         sayim_ici: farkli && form.fatura_birim !== 'koli' && form.yon === 'sayim' && form.cevrim ? Number(form.cevrim) : null,
         fatura_ici: farkli && form.fatura_birim !== 'koli' && form.yon === 'fatura' && form.cevrim ? Number(form.cevrim) : null,
-        takip: form.takip || 'sayim' };
+        takip: form.takip || 'sayim', panel_sayim: !!form.panel_sayim };
       const r = await api(form.id ? `/evvel-yeni/urun/${form.id}` : '/evvel-yeni/urun', { method: 'POST', body: govde });
       onToast?.(r.mesaj); setForm(null); yukle();
     } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
@@ -78,10 +78,11 @@ export default function UrunModulu({ onToast }) {
               <span style={{ flex: '0 1 300px', minWidth: 160, color: R.metin2 }}><b>{u.birim}</b>{u.koli_ici ? <> · koli = <b style={num}>{u.koli_ici}</b> {u.birim}</> : ''}
                 {u.sayim_ici ? <> · 1 {u.birim} = {u.sayim_ici} {u.fatura_birim}</> : u.fatura_ici && u.fatura_birim !== 'koli' ? <> · faturada 1 {u.fatura_birim} = {u.fatura_ici} {u.birim}</> : u.fatura_birim === 'koli' && u.fatura_birim !== u.birim ? ' · faturada koli' : ''}</span>
               {u.takip === 'acilinca' && <Cip>sayılmaz · açılınca gider</Cip>}
+              {u.panel_sayim && <Cip tur="yesil">açılış / kapanışta sayılır</Cip>}
               <span style={{ width: 70, color: R.metin2 }}>{u.kdv_oran != null ? `KDV %${Math.round(u.kdv_oran * 100)}` : '—'}</span>
               {!u.aktif ? <Cip>pasif</Cip> : !u.birim_teyit ? <Cip tur="sari">birim teyit edilmedi</Cip> : <Cip tur="yesil">teyitli</Cip>}
               <Dugme kucuk onClick={() => setForm({ id: u.id, ad: u.ad, kategori_id: u.kategori_id, koliyle: !!u.koli_ici, koli_ici: u.koli_ici ? String(u.koli_ici) : '', kdv_oran: u.kdv_oran != null ? Number(u.kdv_oran).toFixed(2) : '', aktif: u.aktif, teyit: u.birim_teyit,
-                birim: u.birim || 'adet', fatura_birim: u.fatura_birim || u.birim || 'adet', yon: u.fatura_ici ? 'fatura' : 'sayim', cevrim: String(u.sayim_ici || u.fatura_ici || ''), takip: u.takip || 'sayim' })}>Düzelt</Dugme>
+                birim: u.birim || 'adet', fatura_birim: u.fatura_birim || u.birim || 'adet', yon: u.fatura_ici ? 'fatura' : 'sayim', cevrim: String(u.sayim_ici || u.fatura_ici || ''), takip: u.takip || 'sayim', panel_sayim: !!u.panel_sayim })}>Düzelt</Dugme>
               <Dugme kucuk onClick={() => izAc(u)}>İz</Dugme>
             </div>
           ))}
@@ -111,6 +112,7 @@ export default function UrunModulu({ onToast }) {
             <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Nasıl takip edilir?<select style={alan} value={form.takip} onChange={(e) => setForm((f) => ({ ...f, takip: e.target.value }))}>
               <option value="sayim">Sayılır</option>
               <option value="acilinca">Sayılmaz — gideri ürün açılınca yazılır</option></select></label>
+            {form.takip !== 'acilinca' && <label style={{ fontSize: 13 }}><input type="checkbox" checked={!!form.panel_sayim} onChange={(e) => setForm((f) => ({ ...f, panel_sayim: e.target.checked }))} /> Şube açılış / kapanışında sayılır (panel listesi)</label>}
             <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>KDV<select style={alan} value={form.kdv_oran} onChange={(e) => setForm((f) => ({ ...f, kdv_oran: e.target.value }))}>
               {KDVLER.map(([d, a]) => <option key={d} value={d}>{a}</option>)}</select></label>
             {form.id && <label style={{ fontSize: 13 }}><input type="checkbox" checked={!form.aktif} onChange={(e) => setForm((f) => ({ ...f, aktif: !e.target.checked }))} /> Artık kullanılmıyor (pasif — geçmişi korunur)</label>}

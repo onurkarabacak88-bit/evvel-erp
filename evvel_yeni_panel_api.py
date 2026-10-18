@@ -100,6 +100,8 @@ def _urunler(cur, idler: List[str], takip: Optional[str] = None) -> dict:
             raise HTTPException(400, "Ürün bulunamadı — listeyi yenileyin")
         if takip and (b[i].get("takip") or "sayim") != takip:
             raise HTTPException(400, f"{b[i]['ad']}: bu listede yok — listeyi yenileyin")
+        if takip == "sayim" and not b[i].get("panel_sayim"):
+            raise HTTPException(400, f"{b[i]['ad']}: sayım listesinde yok — listeyi yenileyin")
     return b
 
 
@@ -150,7 +152,8 @@ def panel_durum(sube_id: str):
         return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici")}
     return {"sube": {"id": s["id"], "ad": s["ad"]}, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
             "personel": per, "teslim_alanlar": [{"id": c, "ad": c.split(":")[1].capitalize()} for c in TESLIM_ALANLAR],
-            "sayilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "sayim"]} for k in kat],
+            "sayilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "sayim" and x.get("panel_sayim")]}
+                        for k in kat],
             "acilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "acilinca"]} for k in kat],
             "bugun": bugunku,
             "acilis_var": any(o["tur"] == "acilis" and not o["iptal"] for o in bugunku),
@@ -181,6 +184,17 @@ def _olay(cur, **kw) -> Optional[str]:
     if vardi and oid is not None:
         raise HTTPException(409, "Bu kayıt zaten yapıldı — değiştirmek için merkeze haber verin")
     return oid
+
+
+def _degirmen(d: Optional[dict]) -> Optional[dict]:
+    """Eski paneldeki 4 sayaç: Bugünkü çekim · Doz I · Doz II · Doz III (boş bırakılan yazılmaz)."""
+    if not d:
+        return None
+    out = {}
+    for k, ad in (("gunluk", "Bugünkü çekim"), ("doz1", "Doz I"), ("doz2", "Doz II"), ("doz3", "Doz III")):
+        if d.get(k) not in (None, ""):
+            out[k] = _tam(d[k], ad)
+    return out or None
 
 
 def _sayim_satirlari(cur, sayim: List[SayimSatir]) -> list:
@@ -222,7 +236,7 @@ class KapanisBody(BaseModel):
     kor_sayim: Optional[Decimal] = None      # kasada sayılan (sağlama — Kasa'ya SAYIM yazılmaz, mevcut karar)
     teslimler: List[TeslimSatir] = []
     birakilan: Optional[Decimal] = None      # kasada bırakılan
-    degirmen: Optional[Decimal] = None       # değirmen sayacı (sahip: kalır)
+    degirmen: Optional[dict] = None          # değirmen sayaçları (sahip: kalır) — {gunluk, doz1, doz2, doz3} (eski panelle aynı 4 alan)
     sayim: List[SayimSatir] = []
     istek_id: Optional[str] = None
 
@@ -251,7 +265,7 @@ def kapanis(sube_id: str, b: KapanisBody):
                        veri={"nakit": nakit, "pos": pos, "online": onl, "teslimler": tes, "sayim": satir,
                              "kor_sayim": None if b.kor_sayim is None else _tl(b.kor_sayim, "Kör sayım"),
                              "birakilan": None if b.birakilan is None else _tl(b.birakilan, "Bırakılan"),
-                             "degirmen": None if b.degirmen is None else _tam(b.degirmen, "Değirmen sayacı"),
+                             "degirmen": _degirmen(b.degirmen),
                              "istek_id": b.istek_id})
         kim = f"{KIM} · {p['ad']}"
         k = kasa_yaz(cur, HareketBody(tur="kapanis", is_gunu=gun, cep=f"sube:{sube_id}", tutar=Decimal(nakit) / 100,

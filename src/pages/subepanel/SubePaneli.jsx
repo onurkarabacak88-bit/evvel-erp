@@ -263,7 +263,7 @@ export default function SubePaneli({ subeId }) {
 // 🌙 Kapanış — 4 adım (eski 5 adım: ürün aç sorusu kalktı, QR mühür/saat kilidi merkeze)
 function Kapanis({ d, mesgul, sayim, setSayim, kapat, gonder }) {
   const [adim, setAdim] = useState(1);
-  const [v, setV] = useState({ nakit: '', pos: '', online: '', kor: '', birakilan: '', degirmen: '', teslim: {} });
+  const [v, setV] = useState({ nakit: '', pos: '', online: '', kor: '', birakilan: '', deg: {}, teslim: {} });
   const set = (k, x) => setV((o) => ({ ...o, [k]: x }));
   const teslimler = Object.entries(v.teslim).filter(([, t]) => tutarNum(t) > 0).map(([alan, t]) => ({ alan, tutar: tutarNum(t) }));
   // bileşen DEĞİL düz fonksiyon: her tuşta yeniden kurulup odağı kaybetmesin
@@ -288,13 +288,18 @@ function Kapanis({ d, mesgul, sayim, setSayim, kapat, gonder }) {
               onChange={(e) => set('teslim', { ...v.teslim, [a.id]: tutar(e.target.value) })} /></label>
         ))}
         {alan("birakilan", "Kasada bırakılan")}
-        <label style={{ display: 'grid', gap: 6 }}><b>Değirmen sayacı</b>
-          <input className="sp-in" inputMode="numeric" value={v.degirmen} onChange={(e) => set('degirmen', sayi(e.target.value))} /></label>
+        <b>Değirmen</b>
+        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8 }}>
+          {[['gunluk', 'Bugünkü Çekim', 'sağ üst'], ['doz1', 'Doz I (toplam)', 'sayaç'], ['doz2', 'Doz II (toplam)', 'sayaç'], ['doz3', 'Doz III', 'Helios']].map(([k, ad, ph]) => (
+            <label key={k} style={{ display: 'grid', gap: 4 }}><span style={{ color: C.soluk }}>{ad}</span>
+              <input className="sp-in" inputMode="numeric" placeholder={ph} value={v.deg[k] ?? ''} onChange={(e) => set('deg', { ...v.deg, [k]: sayi(e.target.value) })} /></label>
+          ))}
+        </div>
         <div style={{ display: 'flex', gap: 8 }}><button className="sp-btn" onClick={() => setAdim(1)}>← Geri</button>
           <button className="sp-btn sp-ana" style={{ flex: 1 }} onClick={() => setAdim(3)}>Sayıma Geç →</button></div>
       </>)}
       {adim === 3 && (<>
-        <div><b>Sayım</b> <span style={{ color: C.soluk }}>— bardak, peçete… saydıklarını yaz</span></div>
+        <div><b>Ürün sayımı</b> <span style={{ color: C.soluk }}>— bardak, su, süt, Redbull, soda, cookie, pasta</span></div>
         <SayimListesi gruplar={d.sayilan} sayim={sayim} setSayim={setSayim} />
         <div style={{ display: 'flex', gap: 8 }}><button className="sp-btn" onClick={() => setAdim(2)}>← Geri</button>
           <button className="sp-btn sp-ana" style={{ flex: 1 }} onClick={() => setAdim(4)}>Özete Geç →</button></div>
@@ -310,7 +315,7 @@ function Kapanis({ d, mesgul, sayim, setSayim, kapat, gonder }) {
           <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul}
             onClick={() => gonder({ nakit: tutarNum(v.nakit), pos: tutarNum(v.pos), online: tutarNum(v.online), teslimler,
               kor_sayim: v.kor === '' ? null : tutarNum(v.kor), birakilan: v.birakilan === '' ? null : tutarNum(v.birakilan),
-              degirmen: v.degirmen === '' ? null : Number(v.degirmen) })}>✔ Kapanışı Gönder</button></div>
+              degirmen: Object.values(v.deg).some((x) => x !== '') ? v.deg : null })}>✔ Kapanışı Gönder</button></div>
       </>)}
     </Modal>
   );
