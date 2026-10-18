@@ -1,7 +1,7 @@
-# 📱 EVVEL YENİ · YOKLAMA / QR TELEFON — Tasarım (kod yazılmadı)
+# 📱 EVVEL YENİ · YOKLAMA / QR TELEFON — Tasarım (kod yazılmadı) · Sürüm 2
 
-> Fable · 2026-10-18 · Bağlayıcı kararlar: `SUBE_PANELI_TASARIM.md` §D (D3, D4, D5, D5a, D8). Eski sistem incelendi: `gorev_api.py` (pin-giris :289, yemek :682-768, mesai-cikis :779, devir :852-1260, mühür :1498-1590, oto-kapat :1400-1495), `personel_panel_auth.py`, `src/pages/GorevGiris.jsx`, `GorevPersonelSayfasi.jsx`, `sube_panel.html` (:5556-5660, :13949-14083). EY tarafı: `evvel_yeni_moduller.py`, `evvel_yeni_cekirdek.py`, `evvel_yeni_panel_api.py`, `evvel_yeni_maas_api.py` (:418-475 takvim, :622-710 günlük yoklama), `evvel_yeni_tanim_api.py`, `evvel_yeni_olay.py`.
-> Kural: sıfırdan, EY içinde, **yeni tak-çıkar modül `yoklama`**; eski `gorev_yoklama` / `kasa_devir_onay` / `yemek_molasi` / `personel_panel_auth` tablolarına köprü YOK. Uyarı personele gitmez. Giriş kapısı / yetki EN SONDA — ama telefon kimliği şimdi lazım (aşağıda çözüldü).
+> Fable · 2026-10-18 (S2: sahip kararları K1–K7 işlendi + Codex bulguları çözüldü, §D). Bağlayıcı kararlar: `SUBE_PANELI_TASARIM.md` §D (D3, D4, D5, D5a, D8) + bu dosya §C. Eski sistem incelendi: `gorev_api.py` (pin-giris :289, yemek :682-768, mesai-cikis :779, devir :852-1260, mühür :1498-1590, oto-kapat :1400-1495), `personel_panel_auth.py`, `src/pages/GorevGiris.jsx`, `GorevPersonelSayfasi.jsx`, `sube_panel.html`. EY tarafı: `evvel_yeni_moduller.py` (`DURUM` :62), `evvel_yeni_cekirdek.py` (`is_gunu` :39, `bekleyen_is_kaydet` :180), `evvel_yeni_panel_api.py`, `evvel_yeni_maas_api.py` (yemek :266, `_gecen_gun` :166, takvim :418, günlük yoklama :622), `evvel_yeni_tanim_api.py` (eski kopya örüntüsü :60-106, `erken_acilis` :101).
+> Kural: sıfırdan, EY içinde, **yeni tak-çıkar modül `yoklama`**; eski `gorev_yoklama` / `kasa_devir_onay` / `yemek_molasi` / `personel_panel_auth` / `vardiya_atama` tablolarına köprü YOK (içerik kopyası bir kez: şube koordinatı, yönetici işareti). Uyarı personele gitmez (tek istisna K7: "yemek hakkı kazanılamadı" bilgi satırı). Giriş kapısı / yetki EN SONDA — ama telefon ve tablet kimliği şimdi lazım (B4).
 
 ---
 
@@ -11,62 +11,63 @@
 
 | Konu | Eski (gorev_api) | Yeni (EY `yoklama` modülü) | Kazanç |
 |---|---|---|---|
-| Telefon kimliği | Telefonda ad seç + **4 haneli PIN** (merkezde PIN tanımı, 5 yanlış → 15 dk kilit) | **Telefon bir kez kişiye bağlanır** (merkez bağlantı linki gönderir → telefon "Ayşe'nin telefonu" olur). Sonra hiç yazı yazılmaz: QR okut → düğmeye bas | PIN yok, PIN yönetimi yok, kimse kimsenin şifresini görmez; yetki fazında aynı bağ "kişi oturumu" olur |
-| QR | Şube başına **sabit** QR (ekran görüntüsü her yerden açar) | **Dönen QR**: her 60 sn değişir, 2 dk sonra ölür, şubeye bağlı; ekran görüntüsü işe yaramaz | "Evden QR okutma" kapanır |
-| Konum | ≤150 m (yönetici muaf) | ≤150 m aynen (ey_sube koordinatı); muafiyet yok, düzeltme merkezde | Aynı güvence, daha az istisna |
-| Giriş | PIN + konum → `gorev_yoklama` | QR + konum → `ey_yoklama` | Panelin ad listesi = bugün girenler (D4) |
-| Çıkış | Telefondan "Mesai çıkışı" ya da 60 dk sonra **otomatik kapanıyordu** | Telefondan QR çıkış; **kasa devri = devredenin çıkışı, kapanış = kapanışçının çıkışı** (otomatik). Otomatik kapatma YOK → çıkışsız kişi merkez Bekleyen işler'e düşer, merkez saati yazar (D3) | Yoklama gerçek; uydurma çıkış saati yok |
-| Yemek molası | Telefondan başlat/bitir, konumlu, günde 1, **ücret hakkı** hesaplıyordu | Aynı akış (`ey_mola`); **ücrete etkisi YOK** (aylık 7.000 ₺ sabit kuralı). Merkezde **Personel › Yemek molaları** sekmesi; bitmeyen mola → Bekleyen işler (D8) | Mola = bilgi, ceza değil |
-| Kasa devri | Panelde form → sabahçı telefondan onay → akşamcı telefondan kabul (PIN'li) | Panelde **para + 3 bardak** → devreden kendi telefonundan **"Devrediyorum"** → devralan kendi telefonundan **"Kabul ediyorum" / "Tutmuyor"**; iki onayla devir tamam, devredenin çıkışı, devralan kapanış sorumlusu (D5) | Tablette PIN yok; iki imza telefonda |
-| Kapanış mührü | QR mühür + "mühürsüz gönder" + yönetici "mesaisini kapat" | **Yok.** Kapanış kaydı = kapanışçının çıkışı; diğer açık kalanlar → Bekleyen işler | Kapanış 1 adım kısalır |
+| Telefon kimliği | Telefonda ad seç + **4 haneli PIN** (5 yanlış → 15 dk kilit) | **Telefon bir kez kişiye bağlanır**: merkez link üretir (K1) → personel linki **şubede, tabletteki QR'ı okutarak** açar → telefon "Ayşe'nin telefonu" olur. Sonra yazı yok: QR okut → düğme | PIN yok; kopyalanamayan cihaz anahtarı (B4); yetki fazında aynı bağ oturum olur |
+| QR | Şube başına **sabit** QR | **Dönen QR**: 60 sn'de bir değişir, **60–120 sn** geçerli, şubeye bağlı, yalnız **kayıtlı şube tableti** üretebilir | Ekran görüntüsü / uzaktan QR çekme kapanır |
+| Konum | ≤150 m (yönetici muaf) | ≤150 m (ey_sube koordinatı; **4 şube eski karttan bir kez kopyalanır**, K3); **yönetici işaretli kişi muaf** (K2, eski işaret bir kez kopyalanır) | Aynı güvence; mesafe her kayda yazılır, merkez görür |
+| Giriş | PIN + konum → `gorev_yoklama` | QR + konum → `ey_yoklama`; kişinin aynı anda **tek açık** girişi olur | Panelin ad listesi = bugün girenler (D4) |
+| Çıkış | Telefondan ya da 60 dk sonra **otomatik** | Telefondan QR çıkış; **kasa devri = devredenin çıkışı, kapanış = kapanışçının çıkışı**. Otomatik YOK → çıkışsız kişi merkez Bekleyen işler'de **çözülene kadar** kalır (D3) | Uydurma çıkış saati yok |
+| Yemek molası | Telefondan başlat/bitir, günde 1, ücret hakkı | Aynı akış (`ey_mola`), **kişi başı iş gününde 1**. **K7:** ≤60 dk → yemek hakkı kazanılır; 61. dk'dan itibaren merkezde "uzun" + telefonda "Bugün yemek hakkı kazanılamadı" + o günün yemek hakkı maaşta düşer; merkez gerekirse elle hak verir (izli). Çıkış/devir/kapanış açık molayı da kapatır | Kural tek yerde; bordroda kesinti satırı değil, hak doğan gün sayısı |
+| Kasa devri | Panelde form → telefon onayları (PIN'li) | Panelde **para + 3 bardak** → devreden telefondan **"Devrediyorum"** → devralan telefondan **"Kabul ediyorum" / "Tutmuyor"** (ikisi de devri tamamlar, K5); onay **formun o anki sürümüne** bağlı; devralan henüz girmediyse kabul = girişi | İki imza telefonda; sürüm değişirse onay geçersiz |
+| Kapanış mührü | QR mühür + "mühürsüz gönder" | **Yok.** Kapanış = kapanışçının çıkışı; açık kalanlar → Bekleyen işler | 1 adım kısalır |
+| Eski telefon sayfası | giriş/çıkış/mola/devir + görev listesi/avans/sayım/puan | **K6:** yoklama işleri 1 Kasım'da sunucuda kapanır (410); sayfa görev/avans/sayım/puan için **yeniden kurulacak** (ayrı iş), avans talebi oradan | Yoklama tek yerde, diğer işler kendi kurgusunda |
 
 ### A2. Telefon ekranı (tek sayfa, duruma göre tek büyük düğme)
 
 | Durum | Telefonda görünen | Düğme |
 |---|---|---|
 | Telefon bağlı değil | "Bu telefon tanımlı değil — merkezden bağlantı iste" | — |
-| QR okuttu, bugün giriş yok | "Zafer · 18 Ekim · Ayşe · konum ✓" | **GİRİŞ YAP** |
+| Bağlantı linki açıldı | "Ayşe'nin telefonu olarak bağlanacak — tabletteki QR'ı okut" | **QR OKUT → BAĞLA** |
+| QR okuttu, açık giriş yok | "Zafer · 18 Ekim · Ayşe · konum ✓" (muaf: "konum: yönetici") | **GİRİŞ YAP** |
 | Girdi | "Giriş 08:02" | **Yemek molası başlat** · **Çıkış yap** |
 | Molada | "Mola 12:30'dan beri · 18 dk" | **Molayı bitir** |
+| Mola 60 dk'yı geçti | "Mola 74 dk — Bugün yemek hakkı kazanılamadı" (K7, tek satır) | **Molayı bitir** |
 | Devir bekliyor, ben devredenim | "Kasa: 1.250 ₺ · bardak 40/30/20 → Mehmet" | **DEVREDİYORUM** |
-| Devreden onayladı, ben devralanım | aynı kart | **KABUL EDİYORUM** · **Tutmuyor** |
+| Devreden onayladı, ben devralanım | aynı kart (+ "girişin bununla açılır" henüz girmediyse) | **KABUL EDİYORUM** · **Tutmuyor** |
 | Çıktı | "Çıkış 17:05 kaydedildi. İyi akşamlar." | — |
 
-Hata tek cümle: "Şubeden uzaksın (320 m)" · "QR süresi doldu — tekrar okut" · "Konum izni gerekli". Başka uyarı yok.
+Hata tek cümle: "Şubeden uzaksın (320 m)" · "QR süresi doldu — tekrar okut" · "Konum izni gerekli" · "Devir formu değişti — tekrar bak". Başka uyarı yok.
 
 ### A3. Panel ve merkez ne görür
 
 | Yer | Ne |
 |---|---|
-| Panel açılışı | Bugün QR girişi yoksa **tam ekran QR** (her 30 sn yenilenir). Giriş düşünce kapanır. Ad listesi = bugün girmiş ve çıkmamış kişiler; girmeyen kayıt yapamaz (sunucu da reddeder) |
-| Panel ana sayfa | **"Bugün girenler"** kartı: ad · giriş saati · çıkış ✓ / molada 🍽 · köşede küçük QR (büyüt) · **Yemek Molası** düğmesi (QR büyütür) |
-| Panel kasa devri | Para + 3 bardak + devralan → "Devri başlat" → QR + "devreden telefondan onaylasın" → "devralan kabul etsin" → ✓ |
-| Merkez Personel › Takvim / Günlük yoklama | 1 Kasım'dan `ey_yoklama` okur (Ekim eski tablodan, salt okunur) |
-| Merkez Personel › **Yemek molaları** (yeni) | gün gün kim · şube · başlangıç–bitiş · süre · bitirilmedi; "bitiş saati yaz" |
-| Merkez Personel › **Telefonlar** (yeni, küçük) | kişi → bağlı telefon var/yok · "Bağlantı linki üret" · "Telefonu iptal et" |
-| Bekleyen işler | 🚪 Çıkış yok (dün) · 🍽 Mola bitmedi · 🔁 Devir tamamlanmadı · ⚠ Devir "tutmuyor" · 📱 Telefonu bağlı olmayan personel · 📍 Koordinatı olmayan şube |
+| Panel açılışı | Bugün QR girişi yoksa **tam ekran QR** (30 sn'de yenilenir; yalnız kayıtlı tablet alır). Giriş düşünce kapanır. Ad listesi = bugün girmiş ve çıkmamış kişiler |
+| Panel ana sayfa | **"Bugün girenler"** kartı: ad · giriş · çıkış ✓ / molada 🍽 · altında **"Son okutanlar"** (son 2 dk: ad + kaç sn önce) · köşede küçük QR (büyüt) |
+| Panel kasa devri | Para + 3 bardak + devralan (bugün girenler **+ henüz girmemiş aktif personel**, işaretli) → "Devri başlat" → "devreden onaylasın" → "devralan kabul etsin" → ✓ |
+| Merkez Personel › Takvim / Günlük yoklama | 1 Kasım'dan `ey_yoklama`; Ekim eski tablodan salt okunur. Plan sütunu EY'de plan kaynağı gelene kadar "—" (eski `vardiya_atama` okunmaz) |
+| Merkez Personel › **Yemek molaları** (yeni) | gün gün kim · şube · başlangıç–bitiş · süre · **hak ✓/✗** · "bitiş saati yaz" · "**hakkı elle ver**" (izli) |
+| Merkez Personel › **Cihazlar** (yeni, küçük) | kişi → telefon var/yok/zayıf bağ · "Bağlantı linki üret" · "İptal et"; şube → tablet kayıtlı/değil |
+| Bekleyen işler | 🚪 Çıkış yok · 🍽 Mola bitmedi · ⏱ Mola uzun (hak düştü) · 🔁 Devir tamamlanmadı · ⚠ Devir "tutmuyor" · 📱 Telefonu bağlı olmayan personel · 📟 Tableti kayıtsız şube · 📍 Koordinatı olmayan şube — **çözülene kadar kalır** |
 
 ### A4. Takvim
 
 | Faz | İş | Hedef |
 |---|---|---|
-| Y0 | Şube koordinatı · telefon bağlama · giriş/çıkış · dönen QR · panel QR kapısı + Bugün girenler | 23 Ekim |
-| Y1 | Yemek molası + merkez sekmesi · kapanış→çıkış · Bekleyen işler sinyalleri · merkez düzeltme | 27 Ekim |
-| Y2 | Kasa devri çift onay (telefon) + olay `vardiya` + kapanış sorumlusu | 30 Ekim |
-| Y3 | **1 Kasım**: Maaş/Takvim/Günlük yoklama yeni tablodan; eski telefon sayfası "yeni sisteme geçildi" | 1 Kasım |
-| Önce | 25–31 Ekim: her personelin telefonu bağlanır (WhatsApp'tan link, elle) — 1 Kasım'da Bekleyen işler'de "telefon yok" satırı KALMAMALI | 31 Ekim |
+| Y0 | Şube koordinatı + yönetici işareti kopyası · tablet kaydı · telefon bağlama (cihaz anahtarı) · giriş/çıkış · dönen QR · panel QR kapısı + Bugün girenler + Son okutanlar | 23 Ekim |
+| Y1 | Yemek molası + K7 hak kuralı + merkez sekmesi · kapanış→çıkış · Bekleyen işler · merkez düzeltme uçları | 27 Ekim |
+| Y2 | Kasa devri çift onay (sürümlü) + olay `vardiya` + kapanış sorumlusu | 30 Ekim |
+| Prova | 28–30 Ekim: Zafer'de gerçek tablet + 3 gerçek telefonla tam gün (giriş, mola, devir, kapanış, 02:00 sınırı) | 30 Ekim |
+| Y3 | **1 Kasım 02:00**: eski yoklama yazım uçları sunucuda kapanır; Maaş/Takvim/Günlük yoklama yeni tablodan; geri dönüş anahtarı hazır | 1 Kasım |
+| Önce | 25–31 Ekim: her personel şubede telefonunu bağlar; 4 tablet kayıtlı; Bekleyen işler'de 📱📟📍 = 0 | 31 Ekim |
 
-### A5. Sahibin vereceği kararlar
+### A5. Sahibin vereceği YENİ kararlar (K1–K7 §C'de kararlaştı)
 
 | # | Soru | Öneri |
 |---|---|---|
-| K1 | Telefon bağlama: merkez link üretir (WhatsApp'tan elle gönderir) **mi**, personel telefonda adını seçip merkez Bekleyen işler'den onaylar **mı**? | **Merkez link** (15-20 kişi, bir kez; sahte ad seçimi olmaz) |
-| K2 | Konum muafiyeti (eski "yönetici muaf") kalsın mı? | **Kalmasın**; sahip/merkez şubede değilse zaten panel kullanmaz; düzeltme merkezden |
-| K3 | Şubenin koordinatı yoksa giriş serbest mi, engel mi? | **Serbest + Bekleyen iş "koordinat yok"** (ilk gün şube kilitlenmesin) |
-| K4 | Çıkış yaptıktan sonra aynı gün tekrar gelen kişi: telefondan ikinci giriş açılsın mı? | **Açılsın** (ikinci satır); Takvim gün bazında birleştirir |
-| K5 | Devralan "Tutmuyor" derse: devir yine tamamlansın (çıkış işlensin) ama merkeze düşsün **mü**, devir açık kalsın **mı**? | **Tamamlansın + ⚠ Bekleyen iş** (kasa kimdeyse o sorumlu; akış tıkanmaz) |
-| K6 | Eski telefon sayfasındaki diğer işler (görev listesi, avans talebi, stok sayım görevi, puan): 1 Kasım'da ne olacak? | Avans talebi → yeni telefon sayfasına **Y3'te** (Avans modülü ucu); görev listesi / sayım / puan **çıkar** (envanter kararı) |
-| K7 | ✅ (sahip) Mola **60 dk'ya kadar** (60 dahil) → yemek hakkı KAZANILIR; **61. dakikadan itibaren** → merkezde "uzun" bildirimi + personelin telefonunda **"Bugün yemek hakkı kazanılamadı"** + **maaş hesabında o günün yemek ücreti hakkı düşer**. Sahip: "Biz gerekirse ödemesini yaparız" → merkez o gün için hakkı elle verebilir (izli). |
+| K8 | O gün **hiç mola başlatmayan** kişi: yemek hakkı kazanılır mı? (K7 yalnız "60 dk'yı geçen" molayı düşürür) | **Kazanılır** (ihlal yok; eski "molaya zamanında girmeyen" kesintisi EY'ye taşınmaz) |
+| K9 | Telefon bağlama **şubede, tabletteki QR'la** yapılır (kendi telefonu + fiziksel varlık kanıtı). Uzaktan bağlama istisnası olsun mu? | **Olmasın**; 25–31 Ekim'de herkes şubede bağlar |
+| K10 | Şube Wi-Fi çıkış IP'si ikinci sinyal olarak tanımlansın mı (eşleşmeyen kayıt engellenmez, merkez görür)? | **Tanımlansın** (Tanımlar › Şube'ye tek alan; 4 şube, 10 dk) |
+| K11 | Aynı anda iki şubede açık giriş **olmaz** (önce çıkış, sonra diğer şubede giriş). Takvim yine "iki şube" gösterir. Uygun mu? | **Uygun** (Codex: tek açık giriş kuralı) |
 
 ---
 
@@ -76,161 +77,201 @@ Hata tek cümle: "Şubeden uzaksın (320 m)" · "QR süresi doldu — tekrar oku
 
 | Mekanizma | Eski gerçek | Yeniye taşınan niyet |
 |---|---|---|
-| Kimlik | `personel.panel_pin_hash/salt`; `dogrula_personel_panel_pin`; kilit tablosu `panel_pin_guvenlik`; telefon oturumu `localStorage gorev_oturum_{sube}` (gün sonu düşer). Cihaz jetonu YOK | Kimlik = **cihaz bağı** (`ey_cihaz`), gün sonu düşmez; PIN tablosu hiç kurulmaz |
-| QR | `/api/gorev/qr/{sube}` → `{APP_URL}/gorev-giris/{sube}` sabit PNG; rotasyon/anti-screenshot YOK | HMAC'li 60 sn dilim jetonu |
-| Konum | `subeler.lat/lng/konum_radius_m` (150), haversine `_haversine_m`; `panel_yonetici` muaf; mola sabit 150 m | `ey_sube.lat/lng/yaricap_m`; tek `konum_kontrol` servisi, muafiyet yok (K2) |
-| Giriş | `gorev_yoklama` UNIQUE(tarih, sube, personel, vardiya_tip); vardiya tipi plan+saat kuralıyla; `vardiya_disi`; "çıkış unuttun" uyarısı | `ey_yoklama` (vardiya tipi YOK — Takvim plan×QR'ı zaten eşleştiriyor); uyarı yok |
-| Çıkış | `mesai-cikis` (manuel/kasa_devri/kapalis) + `otomatik_mesai_kapat` (plan bitiş+60 dk; tek kişi korumalı) + risk sinyali | QR / devir / kapanış / merkez; otomatik YOK (D3) |
-| Mola | `yemek_molasi` 1/gün, `ucret_hakki = süre ≤ limit` | `ey_mola` 1/yoklama; süre bilgi; ücret kuralı dokunulmaz |
-| Devir | `kasa_devir_onay` durumlar: form_kaydedildi → bekliyor (devreden_ts) → onaylandi (kabul_eden_id); `subeler.aktif_kapanis_sorumlusu`; `kasa_devir_adim1_kaydet` yan etkisi | `ey_devir` hazir → devreden_onayladi → tamam / tutmuyor / iptal; sorumlu `ey_devir`'den okunur; tamamda olay `vardiya` |
-| Mühür | `kapanis-bekleyen` 3 sn yoklama, override | Yok |
+| Kimlik | `personel.panel_pin_hash/salt`; kilit `panel_pin_guvenlik`; `localStorage gorev_oturum_{sube}`; cihaz jetonu YOK | Kimlik = **cihaz anahtarı** (`ey_cihaz`, B4); PIN tablosu kurulmaz |
+| QR | `/api/gorev/qr/{sube}` sabit PNG, herkese açık | HMAC'li 60 sn dilim jetonu; yalnız kayıtlı tablet alır (B5) |
+| Konum | `subeler.lat/lng/konum_radius_m`, haversine; `personel.panel_yonetici` muaf | `ey_sube.lat/lng/yaricap_m` (bir kez kopya); `ey_personel.konum_muaf` (bir kez kopya, K2) |
+| Giriş | `gorev_yoklama` UNIQUE(tarih, sube, personel, vardiya_tip); vardiya tipi; "çıkış unuttun" | `ey_yoklama`, kişi başına **tek açık** satır (kısmi UNIQUE); vardiya tipi yok; uyarı yok |
+| Çıkış | manuel/kasa_devri/kapanış + `otomatik_mesai_kapat` | QR / devir / kapanış / merkez; otomatik YOK (D3) |
+| Mola | `yemek_molasi` 1/gün, `ucret_hakki = süre ≤ limit` | `ey_mola` 1/kişi/iş günü; `yemek_hakki` = süre ≤ `mola_limit_dk` (K7); merkez elle hak (izli) |
+| Devir | `kasa_devir_onay` form → bekliyor → onaylandi; `subeler.aktif_kapanis_sorumlusu` | `ey_devir` hazir → devreden_onayladi → tamam / tutmuyor / iptal / merkez_kapatti; sürümlü onay; sorumlu `ey_devir`'den |
+| Mühür | `kapanis-bekleyen`, override | Yok |
+| Vardiya planı | `vardiya_atama` × QR | EY'de plan kaynağı yok → Günlük yoklama plansız çalışır; plan EY `vardiya` modülü gelince eklenir (ayrı madde) |
 
 ### B2. Modül: `yoklama` (tak-çıkar)
 
-- Manifest satırı: `{"kod":"yoklama","ad":"Yoklama","ikon":"📱","sektor":"genel","gerekir":["tanim","olay"],"menu":False,"aciklama":"telefon QR giriş/çıkış, yemek molası, kasa devri onayı; Personel sekmeleri buradan okur"}`. `panel` manifesti `gerekir` += `"yoklama"`. `maas` yoklamayı **gerektirmez**: PUBLIC servis import'u try içinde; modül kapalıysa Takvim "yoklama modülü kapalı" der.
-- Dosya `evvel_yeni_yoklama_api.py`, `router prefix=/api/evvel-yeni/yoklama`; kurulum `yoklama_hazirla()` (uygulama açılışında, `lock_timeout 3s`, DDL panel işleminde değil — Codex kuralı).
-- Ön yüz: telefon `src/pages/telefon/TelefonSayfasi.jsx` adres **`/q/{sube_id}/{token}`** (QR) ve `/q` (QR'sız: salt durum). Panel kabuğu `src/pages/subepanel/` içine QR kapısı + Bugün girenler + devir adımları. Merkez: `MaasModulu.jsx`'e `YemekMolalari`, `Telefonlar` görünümleri (`MAAS_SAYFALAR` iki satır).
-- PUBLIC servisler (alt çizgisiz; panel/maaş yalnız bunları çağırır):
+- Manifest: `{"kod":"yoklama","ad":"Yoklama","ikon":"📱","sektor":"genel","gerekir":["tanim","olay"],"menu":False,"aciklama":"telefon QR giriş/çıkış, yemek molası + hak, kasa devri onayı, cihaz kaydı; Personel sekmeleri buradan okur"}`. `panel` manifesti `gerekir` += `"yoklama"`. `maas` yoklamayı **gerektirmez**: `evvel_yeni_moduller.DURUM.get("yoklama") == "yuklendi"` ise PUBLIC servisi çağırır; değilse eski formül + "yoklama modülü kapalı" uyarısı (try/import ile değil — kapalı modül `DURUM`'da `kapali`/`eksik:` görünür).
+- Dosya `evvel_yeni_yoklama_api.py`, `router prefix=/api/evvel-yeni/yoklama`; `yoklama_hazirla()` uygulama açılışında (`lock_timeout 3s`, DDL panel işleminde değil).
+- Ön yüz: telefon `src/pages/telefon/TelefonSayfasi.jsx` — `/q/{sube_id}/{token}` (QR), `/q` (salt durum), `/q/bagla/{davet}`. Panel kabuğu `src/pages/subepanel/`: QR kapısı + Bugün girenler + Son okutanlar + devir adımları + tablet kaydı ekranı. Merkez: `MaasModulu.jsx`'e `YemekMolalari`, `Cihazlar` görünümleri.
+- PUBLIC servisler (panel/maaş yalnız bunları çağırır):
 
 | Servis | Ne yapar |
 |---|---|
-| `qr_jeton(sube_id, dilim=None) -> str` · `qr_dogrula(sube_id, tok) -> bool` | HMAC jeton üret/doğrula (B5) |
-| `konum_kontrol(cur, sube_id, lat, lng) -> int|None` | mesafe m; dışarıdaysa 403 `sube_disinda|…`; koordinat yoksa None (K3) |
-| `bugun_girenler(cur, sube_id, gun) -> [{personel_id, ad, giris, cikis, molada}]` | panel kartı + ad listesi |
-| `acik_mi(cur, sube_id, personel_id, gun) -> bool` | panel `_personel` kapısı: girmiş ve çıkmamış |
-| `cikis_yaz(cur, sube_id, personel_id, gun, tur, mesafe=None, kim=None)` | devir/kapanış/merkez çıkışı; zaten çıkmışsa sessiz |
-| `devir_ac(cur, sube_id, gun, devreden_id, devralan_id, sayilan_kurus, bardak:dict, istek_id) -> devir_id` | panel formu; açık `hazir` varsa günceller |
-| `devir_durum(cur, sube_id, gun) -> dict|None` | panel 5 sn yoklar |
-| `kapanis_sorumlusu(cur, sube_id, gun) -> personel_id|None` | son `tamam` devrin devralanı |
-| `gun_yoklama(cur, bas, son) -> [rows]` · `molalar(cur, bas, son) -> [rows]` | Maaş Takvim / Günlük yoklama / Yemek molaları |
-| `cihaz_coz(cur, jeton) -> {personel_id, ad, cihaz_id}` | telefon uçlarının kimlik kapısı (403 `cihaz_yok`) |
+| `qr_jeton(sube_id, dilim=None)` · `qr_dogrula(sube_id, tok) -> dilim|None` | HMAC jeton (B5) |
+| `konum_kontrol(cur, sube_id, personel_id, lat, lng) -> {mesafe_m, muaf, ip_disi}` | 403 dışarıdaysa; muaf kişi/koordinatsız şube → mesafe None |
+| `bugun_girenler(cur, sube_id, gun)` · `son_okutanlar(cur, sube_id, sn=120)` | panel kartı + ad listesi |
+| `acik_mi(cur, sube_id, personel_id)` | panel `_personel` kapısı |
+| `cikis_yaz(cur, personel_id, tur, ts=None, mesafe=None, kim=None)` | açık satırı kapatır; **açık molayı da kapatır** (aynı tur); zaten çıkmışsa sessiz |
+| `devir_ac(cur, sube_id, gun, devreden_id, devralan_id, sayilan_kurus, bardak, istek_id) -> {devir_id, surum}` | `hazir` varsa günceller, `surum` yeniler |
+| `devir_durum(cur, sube_id, gun)` · `kapanis_sorumlusu(cur, sube_id, gun)` | sorumlu = son `tamam` **veya `tutmuyor`** devrin devralanı |
+| `gun_yoklama(cur, bas, son)` · `molalar(cur, bas, son)` · `son_giris_gunu(cur, pid)` | Takvim / Günlük yoklama / Yemek molaları |
+| `yemek_hak_gunleri(cur, personel_id, ay) -> {calisilan_gun, hak_gun, dusen:[{gun, sure_dk, elle_verildi}]}` | **Maaş yemek kalemi** (B9) |
+| `cihaz_coz(request) -> {cihaz_id, personel_id|None, sube_id|None, tur}` | imzalı istek kapısı (B4); 403 `cihaz_yok` |
 
-### B3. Veri modeli (yeni, minimal; hepsi `ey_` ön ekli, eski tabloya FK yok)
+### B3. Veri modeli (hepsi `ey_` ön ekli; eski tabloya FK yok)
 
 | Tablo | Sütunlar | Kurallar |
 |---|---|---|
-| `ey_sube` (+3 sütun) | `lat NUMERIC(9,6)`, `lng NUMERIC(9,6)`, `yaricap_m INT DEFAULT 150` | Tanımlar › Şube kartına girilir. **Tek seferlik kopya**: `tanim_hazirla` kopya örüntüsüyle `subeler.lat/lng/konum_radius_m` → yalnız boş olanlara (köprü değil, içerik kopyası) |
-| `ey_cihaz` | `id TEXT PK`, `personel_id`, `jeton_hash TEXT UNIQUE` (sha256), `etiket` ("Ayşe'nin telefonu · Safari"), `durum` (davet/aktif/iptal), `davet_son TIMESTAMPTZ`, `olusturma`, `son_kullanim`, `olusturan`, `iptal_zaman` | Davet: `durum='davet'`, jeton = davet jetonu (tek kullanım, 48 saat). Bağlanınca **yeni** uzun jeton üretilir, davet jetonu silinir. Kişi başına birden çok aktif cihaz olabilir (yedek telefon) |
-| `ey_yoklama` | `id`, `sube_id`, `personel_id`, `is_gunu DATE`, `giris_ts`, `giris_mesafe_m INT`, `giris_cihaz_id`, `cikis_ts`, `cikis_tur` (qr/devir/kapanis/merkez), `cikis_mesafe_m`, `cikis_cihaz_id`, `degistiren`, `zaman` | `UNIQUE(sube_id, personel_id, is_gunu, giris_ts)`; aynı gün **açık** kayıt varken ikinci giriş → aynı kaydı döner (idempotent); çıkmışsa K4'e göre yeni satır. İndeks `(sube_id, is_gunu)` |
-| `ey_mola` | `id`, `yoklama_id UNIQUE`, `baslangic_ts`, `baslangic_mesafe_m`, `bitis_ts`, `bitis_mesafe_m`, `bitis_tur` (qr/merkez), `sure_dk INT`, `degistiren`, `zaman` | 1 mola / yoklama satırı (günde 1); giriş yoksa 403 |
-| `ey_devir` | `id`, `sube_id`, `is_gunu`, `devreden_id`, `devralan_id`, `sayilan_kurus BIGINT`, `bardak JSONB {kucuk,buyuk,plastik}`, `durum` (hazir/devreden_onayladi/tamam/tutmuyor/iptal), `panel_ts`, `devreden_ts`, `devreden_mesafe_m`, `devralan_ts`, `devralan_mesafe_m`, `devralan_not`, `olay_id`, `istek_id`, `zaman` | Şube+gün için aynı anda tek açık (hazir/devreden_onayladi) devir; önceki `tamam` ise yenisi açılabilir (3 vardiya). `tamam`/`tutmuyor` anında olay `vardiya` yazılır (`olay_id`) |
-| `ey_ayar` | `mola_limit_dk` (60), `qr_dilim_sn` (60) | mevcut ayar defteri |
+| `ey_sube` (+4) | `lat`, `lng`, `yaricap_m INT DEFAULT 150`, `ip_listesi TEXT[]` (K10) | Tanımlar › Şube kartı. **Bir kez kopya** (`tanim_hazirla` örüntüsü, ayar `sube_konum_kopya`): `subeler.lat/lng/konum_radius_m` → yalnız boş olanlara (K3) |
+| `ey_personel` (+1) | `konum_muaf BOOLEAN DEFAULT FALSE` | `ALTER … IF NOT EXISTS` (erken_acilis örüntüsü :101); ayar `konum_muaf_kopya` ile `personel.panel_yonetici=TRUE` → bir kez (K2). Tanımlar › Personel'de kutu |
+| `ey_cihaz` | `id TEXT PK`, `tur` (telefon/tablet), `personel_id`, `sube_id`, `acik_anahtar JSONB` (P-256 JWK), `jeton_hash TEXT` (yalnız zayıf bağ), `guc` (anahtar/jeton), `etiket`, `durum` (davet/aktif/iptal), `davet_hash`, `davet_son`, `bagla_mesafe_m`, `bagla_qr_dilim`, `olusturma`, `son_kullanim`, `olusturan`, `iptal_zaman` | Telefon: `personel_id`; tablet: `sube_id`. Kişi başına birden çok aktif olabilir |
+| `ey_cihaz_nonce` | `cihaz_id`, `nonce TEXT`, `zaman` — PK(cihaz_id, nonce) | tekrar-oynatma kilidi; 10 dk'dan eskiler silinir |
+| `ey_qr_kullanim` | `sube_id`, `dilim BIGINT`, `personel_id`, `islem`, `zaman` — **UNIQUE(sube_id, dilim, personel_id, islem)** | aynı jetonla aynı kişi aynı işlemi iki kez yapamaz; "son okutanlar" buradan |
+| `ey_yoklama` | `id`, `sube_id`, `personel_id`, `is_gunu`, `giris_ts`, `giris_mesafe_m`, `giris_muaf`, `giris_ip_disi`, `giris_cihaz_id`, `cikis_ts`, `cikis_tur` (qr/devir/kapanis/merkez), `cikis_mesafe_m`, `cikis_cihaz_id`, `istek_id UNIQUE`, `degistiren`, `zaman` | **Kısmi UNIQUE `(personel_id) WHERE cikis_ts IS NULL`** → kişinin tek açık girişi (K11). Giriş: `SELECT … FOR UPDATE` açık satır varsa onu döner; çıkmışsa K4 yeni satır. İndeks `(sube_id, is_gunu)` |
+| `ey_mola` | `id`, `personel_id`, `is_gunu`, `yoklama_id`, `baslangic_ts`, `baslangic_mesafe_m`, `bitis_ts`, `bitis_mesafe_m`, `bitis_tur` (qr/devir/kapanis/merkez), `sure_dk`, `yemek_hakki BOOLEAN` (bitişte: `sure_dk <= mola_limit_dk`), `hak_elle BOOLEAN DEFAULT FALSE`, `hak_veren`, `hak_zaman`, `hak_aciklama`, `istek_id UNIQUE`, `degistiren`, `zaman` | **UNIQUE(personel_id, is_gunu)** → kişi başı iş gününde 1 (K4 ikinci giriş ikinci mola açmaz). Merkez "hakkı elle ver": `hak_elle=TRUE` + iz `ey_sube_olay` tur=`yemek_hak_elle` |
+| `ey_devir` | `id`, `sube_id`, `is_gunu`, `devreden_id`, `devralan_id`, `sayilan_kurus`, `bardak JSONB`, `surum TEXT` (sha256: devreden·devralan·sayilan·bardak), `durum` (hazir/devreden_onayladi/tamam/tutmuyor/iptal/**merkez_kapatti**), `panel_ts`, `devreden_ts`, `devreden_mesafe_m`, `devreden_surum`, `devralan_ts`, `devralan_mesafe_m`, `devralan_surum`, `devralan_not`, `merkez_sonuc`, `merkez_kim`, `merkez_aciklama`, `olay_id`, `istek_id UNIQUE`, `zaman` | **Kısmi UNIQUE `(sube_id, is_gunu) WHERE durum IN ('hazir','devreden_onayladi')`** → tek açık devir. Her geçiş `FOR UPDATE`. `tamam`/`tutmuyor` anında olay `vardiya` |
+| `ey_ayar` | `mola_limit_dk` (60), `qr_dilim_sn` (60), `donem_baslangic` (2026-11-01), `yoklama_kesim` (eski uçlar kapalı mı) | mevcut ayar defteri |
 
-Silme yok; düzeltme = ilgili sütun + `degistiren='merkez: <ad>'` (çıkış/mola bitişi için ayrıca `ey_sube_olay` tur=`yoklama_duzeltme` izi, kok `yoklama:duzelt:{id}`).
+Silme yok; düzeltme = sütun + `degistiren='merkez: <ad>'` + `ey_sube_olay` tur=`yoklama_duzeltme`, kok `yoklama:duzelt:{id}`. Telefonun **her yazan ucu** `istek_id` taşır (UUID, telefonda üretilir, yanıt gelene kadar saklanır); aynı `istek_id` → önceki sonuç döner.
 
-### B4. Telefon kimliği (PIN'siz) ve yetki fazına uyumu
+### B4. Cihaz kimliği (PIN'siz, kopyalanamaz) ve yetki fazına uyumu
 
-1. **Bağlama** (K1 öneri): Merkez Personel › Telefonlar › "Bağlantı linki üret" → `POST /yoklama/cihaz/davet {personel_id}` → `{APP_URL}/q/bagla/{davet_jetonu}` (48 saat, tek kullanım). Merkez linki WhatsApp'tan elle gönderir (sistem mesaj atmaz). Personel linki telefonunda açar → "Bu telefonu Ayşe'ye bağla" → `POST /yoklama/cihaz-bagla {davet}` → sunucu 32 baytlık rastgele jeton üretir, hash'ini `ey_cihaz`'a yazar, düz jetonu **bir kez** döner; telefon `localStorage['ey_cihaz']`'a koyar. Sayfa "Ana ekrana ekle" ipucu gösterir (iOS Safari localStorage kalıcı; "ana ekrana ekle" ile ayrı kap olduğundan bağlama o kaptan yapılmalı — tek cümle ipucu).
-2. **Her telefon isteği** `X-Evvel-Cihaz: <jeton>` başlığı taşır. `cihaz_coz` hash'leyip `ey_cihaz` (aktif, personel aktif) bulur; `son_kullanim` günceller. Yoksa 403 `cihaz_yok|Bu telefon tanımlı değil`. `personel_id` gövdede **gönderilmez**, cihazdan çözülür (eski CEP-001 dersi: istemci beyanı yazılmaz).
-3. **Kaybolan telefon**: merkez "iptal et" (`durum='iptal'`); yeni telefon = yeni davet. Tarayıcı verisi silinirse aynı şey (davet yenilenir).
-4. **Yetki fazına geçiş**: `ey_cihaz` zaten "kişi + cihaz" kimliğidir. Giriş kapısı gelince (a) merkez ekranları da aynı jetonu `X-Evvel-Cihaz` ya da oturum çerezi olarak kabul eder, (b) `ey_personel.rol` eklenir, (c) panel uçları `sube_id + personel_id` taşıdığından süzme sunucuda rol tablosuna bağlanır. PIN/şifre hiç gerekmez; sahip isterse yalnız merkez rolleri için ek şifre eklenir. Bugün hiçbir uç bu hazırlığı beklemez.
-5. **Tablet** kimlik taşımaz (şube = URL). Panel uçları şimdilik açık (mevcut durum); yetki fazında tablet de "şube cihazı" olarak `ey_cihaz` (personel_id NULL, sube_id) ile bağlanır — aynı tablo, yeni satır türü.
+1. **Anahtar**: Telefon/tablet ilk açılışta WebCrypto ile **ECDSA P-256, `extractable:false`** anahtar çifti üretir, IndexedDB'de saklar (anahtar tarayıcıdan dışarı çıkarılamaz → localStorage kopyalama saldırısı kapanır). Açık anahtar sunucuya gider.
+2. **Bağlama (K1 + K9)**: Merkez Personel › Cihazlar › "Bağlantı linki üret" → `POST /yoklama/cihaz/davet {personel_id | sube_id}` → `{APP_URL}/q/bagla/{davet}` (48 saat, tek kullanım), WhatsApp'tan elle gönderilir. Personel linki **şubede** açar → sayfa "tabletteki QR'ı okut" der → `POST /yoklama/cihaz-bagla {davet, acik_anahtar, qr, lat, lng, etiket}`: sunucu davet ✓ + **QR ✓ (B5) + konum ✓** → `ey_cihaz` aktif (`bagla_mesafe_m`, `bagla_qr_dilim` yazılır). Linki açmak tek başına kanıt değil; **tabletin önünde olmak** kanıt. Tablet kaydı aynı yol: merkez `sube_id` için davet üretir, tablette açılır, QR adımı yerine merkez onayı (Bekleyen iş `tablet_onay`, "Bu tablet Zafer'in mi?" → Onayla).
+3. **Her istek imzalı**: başlıklar `X-Evvel-Cihaz: {cihaz_id}`, `X-Evvel-Zaman: {unix}`, `X-Evvel-Nonce: {uuid}`, `X-Evvel-Imza: base64(ECDSA(cihaz_id|zaman|nonce|METHOD|path|sha256(gövde)))`. Sunucu: cihaz aktif ✓, `|zaman − now| ≤ 120 sn`, nonce `ey_cihaz_nonce`'a ilk kez giriyor ✓, imza açık anahtarla ✓ → `cihaz_coz`. `personel_id` gövdede gönderilmez. İmza yardımcıları tek dosya `src/lib/cihazImza.js` (telefon + tablet + ileride merkez).
+4. **Geri düşüş (`guc='jeton'`)**: WebCrypto/IndexedDB yoksa (çok eski iOS) 32 baytlık rastgele jeton (sha256 hash sunucuda, düz jeton localStorage). Cihazlar listesinde "zayıf bağ" etiketi; merkez bilir. Varsayılan değil, istisna.
+5. **İptal / yeniden davet**: merkez "İptal et" (`durum='iptal'`, anahtar artık geçersiz); yeni telefon / tarayıcı verisi silindi = yeni davet (şubede, QR'la). Kaybolan telefon 1 dk'da ölü.
+6. **Tablet** artık kimlik taşır (`tur='tablet'`, `sube_id`): QR üretim ucu yalnız imzalı tablet isteğine açılır (B5). Diğer panel uçları şimdilik açık (mevcut durum); yetki fazında aynı imza panele de şart koşulur — aynı tablo, aynı kütüphane, yeni kod yok.
+7. **Yetki fazı**: `ey_cihaz` = "kişi + cihaz" kimliği. Giriş kapısı gelince merkez ekranları da aynı imzayı kabul eder, `ey_personel.rol` eklenir, panel uçları role bağlanır. PIN/şifre gerekmez.
 
-### B5. QR jeton düzeni (dönen, şubeye bağlı, kısa ömürlü)
+### B5. QR jeton düzeni (dönen, şubeye bağlı, 60–120 sn)
 
-- `dilim = int(time.time() // qr_dilim_sn)` (60 sn). `jeton = base32(hmac_sha256(GIZ, f"{sube_id}:{dilim}"))[:10]` (50 bit). `GIZ` = env `EVVEL_QR_GIZ` (yoksa `ADMIN_SIFRE`'den türetilmiş sabit; üretimde ayrı değer önerilir).
-- Doğrulama: `dilim` ve `dilim-1` kabul (en fazla 120 sn). Jeton **sunucu saatiyle** üretilir/doğrulanır; tablet saati önemsiz.
-- QR içeriği: `{APP_URL}/q/{sube_id}/{jeton}`. Panel `GET /panel/{sube}/qr.png?t=` 30 sn'de bir yeniler (sunucu `qrcode` kütüphanesi mevcut); `GET /panel/{sube}/qr` `{url, kalan_sn}` da döner (yazıyla gösterim gerekmez).
-- Telefon sayfası açılınca jetonu URL'den alır; işlem anında gövdede gönderir (`qr`). Sunucu: cihaz ✓ → QR ✓ → konum ✓ → iş. QR süresi dolduysa 409 `qr_eski|QR süresi doldu — tekrar okut`. Telefon sayfası salt-okur durumu QR'sız da gösterir; **yazan dört düğme QR ister**.
-- Ekran görüntüsü / WhatsApp'tan paylaşılan QR: 2 dk içinde ve şube içinde olmak gerekir → anlamsız. Tablet çevrimdışıysa QR yenilenemez → telefonda "QR süresi doldu" (çevrimdışı kuyruk yoklamada YOK; sunucu olmadan kimlik doğrulanamaz).
+- `dilim = int(sunucu_zamani // qr_dilim_sn)`; `jeton = base32(hmac_sha256(GIZ, f"{sube_id}:{dilim}"))[:10]`. `GIZ` = env `EVVEL_QR_GIZ` (yoksa `ADMIN_SIFRE`'den türetilir; üretimde ayrı değer).
+- Doğrulama `dilim` ve `dilim-1` → **ömür 60–120 sn** (dilim başında okutulan 120 sn'ye yakın, sonunda 60 sn'ye yakın yaşar). Üretim ve doğrulama **sunucu saatiyle**; tablet/telefon saati önemsiz. Sınır testi: dilim sonunda okutulup 59 sn sonra gönderilen ✓, 121 sn sonra 409.
+- **Üretim ucu kapalı**: `GET /panel/{sube}/qr.png` ve `/qr` yalnız o şubeye kayıtlı tabletin imzalı isteğine cevap verir (B4.3); başka istek 403 `tablet_degil`. Uzaktan "güncel QR'ı çek" kapanır.
+- QR içeriği `{APP_URL}/q/{sube_id}/{jeton}`. Panel 30 sn'de bir yeniler. Telefon işlemde `qr`'ı gövdede gönderir; sunucu sırası: cihaz imzası ✓ → QR ✓ → `ey_qr_kullanim` (aynı kişi + aynı dilim + aynı işlem ikinci kez → 409 `qr_kullanildi`) → konum ✓ → iş.
+- **Kalan risk (dürüst)**: 60–120 sn içinde QR fotoğrafı WhatsApp'tan gönderilip konum taklidiyle (Chrome DevTools, sahte GPS uygulaması) uzaktan giriş **yazılabilir**. Ucuz ek kontroller: (1) jeton + kişi + işlem tek kullanım; (2) panelde **"Son okutanlar"** canlı listesi — şubedeki ekip yabancı adı anında görür; (3) K10 şube IP'si tanımlıysa eşleşmeyen istek `ip_disi=TRUE` damgalı (engel değil, merkez görür; Takvim hücresinde 📶 işareti); (4) merkez Günlük yoklama'da mesafe + ip_disi + cihaz görünür. Tam kanıt (NFC/BLE) kurulmaz — sadelik.
+- Tablet çevrimdışıysa QR yenilenmez → telefonda "QR süresi doldu" (yoklamada çevrimdışı kuyruk YOK; kimlik sunucusuz doğrulanmaz).
 
 ### B6. Konum kontrolü
 
-- `konum_kontrol`: `ey_sube.lat/lng` yoksa → None (K3; Bekleyen iş `sube_konum_yok`). Varsa `lat/lng` zorunlu (403 `konum_gerekli`), haversine > `yaricap_m` → 403 `sube_disinda|Şubeden uzaksın ({m} m)`. Mesafe her kayda yazılır (giriş/çıkış/mola/devir onayı) — merkez görür, personel görmez.
-- Telefon: `navigator.geolocation.getCurrentPosition({enableHighAccuracy:true, timeout:10000, maximumAge:30000})` sayfa açılınca arka planda; düğme konum gelene kadar "konum alınıyor…" durumunda, 10 sn sonra "Konum izni gerekli" tek cümle + tekrar dene. HTTPS şart (var).
-- Muafiyet yok (K2). Merkez düzeltme uçları konum istemez (yönetim oturumu `x_evvel_oturum`).
+- `konum_kontrol`: `ey_personel.konum_muaf` → mesafe hesaplanmaz, `muaf=TRUE` damgası (K2; lat/lng geldiyse yine kaydedilir). Şube `lat/lng` yoksa → None + Bekleyen iş `sube_konum_yok` (K3; 4 şube kopyalandığı için 1 Kasım'da görünmemeli). Varsa `lat/lng` zorunlu (403 `konum_gerekli`), haversine > `yaricap_m` → 403 `sube_disinda|Şubeden uzaksın ({m} m)`. `ip_listesi` doluysa istemci IP karşılaştırılır → `ip_disi`. Mesafe/muaf/ip_disi her kayda yazılır — merkez görür, personel görmez.
+- Telefon: `getCurrentPosition({enableHighAccuracy:true, timeout:10000, maximumAge:30000})` sayfa açılınca; 10 sn sonra "Konum izni gerekli" + tekrar dene. Muaf kişide konum beklenmez. HTTPS şart (var).
+- Merkez düzeltme uçları konum istemez (`x_evvel_oturum`).
 
-### B7. Telefon uçları (hepsi `X-Evvel-Cihaz` ister; `istek_id` ile tekrar yazılmaz)
+### B7. Telefon uçları (hepsi imzalı, B4.3; yazanlar `istek_id` + `qr` taşır)
 
 | Uç | Gövde | Yaptığı |
 |---|---|---|
-| `GET /yoklama/ben?sube=&qr=` | — | `{kisi, sube, gun, konum_gerekli, giris, cikis, mola, devir, yapabilir:[giris|cikis|mola_baslat|mola_bitir|devret|kabul]}` — ekran bundan çizilir |
-| `POST /yoklama/giris` | `{sube, qr, lat, lng, istek_id}` | `ey_yoklama` satırı; açık satır varsa onu döner |
-| `POST /yoklama/cikis` | aynı | açık satıra `cikis_ts`, `cikis_tur='qr'`; açık mola varsa **mola da kapanır** (bitis_tur='qr') |
-| `POST /yoklama/mola-baslat` · `/mola-bitir` | aynı | `ey_mola`; giriş yoksa 403 "Önce giriş yap"; ikinci mola 409 |
-| `POST /yoklama/devir/{id}/devret` | `{sube, qr, lat, lng}` | yalnız `devreden_id` = cihaz kişisi; `hazir → devreden_onayladi` |
-| `POST /yoklama/devir/{id}/kabul` | `{sube, qr, lat, lng, tutuyor: bool, not}` | yalnız `devralan_id`; `tutuyor` → `tamam`, değilse `tutmuyor` (K5: ikisi de kapanır). Tamam/tutmuyor anında: olay `vardiya` (`kok=panel:vardiya:{sube}:{devir_id}`, veri={devreden, devralan, sayilan, bardak, tutuyor, not}) + `cikis_yaz(devreden, tur='devir')` + devralan `acik_mi` değilse **devralan için giriş satırı açılır** (eski `devir-giris` niyeti: akşamcı devirle gelir) |
-| `POST /yoklama/cihaz-bagla` | `{davet}` (başlıksız) | davet jetonu → aktif cihaz; düz jeton bir kez döner |
+| `GET /yoklama/ben?sube=&qr=` | — | `{kisi, sube, gun, konum_gerekli, muaf, giris, cikis, mola:{…, hak_dustu}, devir:{…, surum}, yapabilir:[…]}` |
+| `POST /yoklama/giris` | `{sube, qr, lat, lng, istek_id}` | açık satır `FOR UPDATE`; varsa onu döner; yoksa yeni (K4). Başka şubede açık → 409 `baska_subede_acik|Önce {şube}'den çıkış yap` (K11) |
+| `POST /yoklama/cikis` | aynı | `cikis_yaz(tur='qr')`; açık mola bitis_tur='qr' ile kapanır, hak hesaplanır |
+| `POST /yoklama/mola-baslat` · `/mola-bitir` | aynı | giriş yoksa 403; aynı iş gününde ikinci → 409 `mola_var`; bitişte `sure_dk`, `yemek_hakki`; `> limit` → yanıt `hak_dustu:true` (telefon tek satır gösterir, K7) |
+| `POST /yoklama/devir/{id}/devret` | `{sube, qr, lat, lng, istek_id, surum}` | yalnız `devreden_id`; `surum` ≠ kayıt → 409 `devir_degisti`; `hazir → devreden_onayladi` (`devreden_surum`) |
+| `POST /yoklama/devir/{id}/kabul` | `{…, surum, tutuyor, not}` | yalnız `devralan_id`; `surum` ≠ → 409; `tutuyor` → `tamam`, değilse `tutmuyor` (K5). Aynı işlemde: olay `vardiya` (`kok=panel:vardiya:{sube}:{devir_id}`, veri={devreden, devralan, sayilan, bardak, tutuyor, not, surum}) + `cikis_yaz(devreden,'devir')` + devralan açık değilse **giriş satırı açılır** (QR+konum zaten doğrulandı) |
+| `POST /yoklama/cihaz-bagla` | `{davet, acik_anahtar, qr, lat, lng, etiket}` (imzasız; davet tek kullanım) | B4.2 |
 
-Panel uçları (tablet; `evvel_yeni_panel_api.py`): `GET /{sube}/durum` += `qr_gerekli` (bugün giren yok), `bugun_girenler`, `devir`, `kapanis_sorumlusu`; `personel` listesi = `acik_mi` olanlar. `POST /{sube}/devir` → artık olay yazmaz, `devir_ac` çağırır (`hazir`). `POST /{sube}/devir-iptal` yalnız `hazir` durumunda. `kapanis` → yazımdan sonra `cikis_yaz(kapanışçı, tur='kapanis')` aynı işlemde. `_personel` → `acik_mi` değilse 400 "Önce telefonundan QR ile giriş yap". Panel yalnız QR kapısı açıkken ve devir beklerken 5 sn yoklar (başka canlı yenileme yok — mevcut sadelik).
+Panel uçları (`evvel_yeni_panel_api.py`): `GET /{sube}/durum` += `qr_gerekli`, `bugun_girenler`, `son_okutanlar`, `devir`, `kapanis_sorumlusu`, `tablet_kayitli`; `personel` listesi = `acik_mi`. `GET /{sube}/qr(.png)` yalnız tablet imzasıyla. `POST /{sube}/devir` → `devir_ac` (`hazir`; `surum` döner); devralan listesi bugün girenler + girmemiş aktif personel. `POST /{sube}/devir-iptal` yalnız `hazir`. `kapanis` → `cikis_yaz(kapanışçı,'kapanis')` aynı işlemde (açık molası da kapanır). `_personel` → `acik_mi` değilse 400. Panel yalnız QR kapısı/devir beklerken 5 sn yoklar.
 
-Merkez uçları (`x_evvel_oturum`): `GET /yoklama/gunler?bas&son`, `GET /yoklama/molalar?bas&son`, `POST /yoklama/duzelt {yoklama_id|mola_id, cikis_saat|bitis_saat, aciklama}`, `GET /yoklama/cihazlar`, `POST /yoklama/cihaz/davet`, `POST /yoklama/cihaz/{id}/iptal`, `GET /yoklama/devirler?bas&son`.
+Merkez uçları (`x_evvel_oturum`) — Bekleyen işler'deki **her düğmenin ucu** burada:
+
+| Uç | İş |
+|---|---|
+| `GET /yoklama/gunler?bas&son` · `GET /yoklama/molalar?bas&son` · `GET /yoklama/devirler?bas&son` · `GET /yoklama/cihazlar` | okuma |
+| `POST /yoklama/duzelt {yoklama_id, cikis_saat, aciklama}` | çıkış yaz (tur merkez) + açık mola aynı saatte kapanır + iz |
+| `POST /yoklama/mola/{id}/duzelt {bitis_saat, aciklama}` | bitiş yaz + hak hesaplanır + iz |
+| `POST /yoklama/mola/{id}/hak-ver {aciklama}` | `hak_elle=TRUE` (K7 "ödemesini yaparız") + iz |
+| `POST /yoklama/devir/{id}/merkez-kapat {sonuc: iptal|kapandi, aciklama}` | `durum='merkez_kapatti'`, `merkez_sonuc`; `kapandi` ise olay `vardiya` veri `merkez_istisna=TRUE` + devreden çıkışı; ekranda **"merkez kapattı"** — asla kişi onayı gibi görünmez |
+| `POST /yoklama/devir/{id}/gorundu` | ⚠ tutmuyor satırı kapanır (`ey_sube_olay` tur=`yoklama_gorundu`) |
+| `POST /yoklama/cihaz/davet {personel_id|sube_id}` · `POST /yoklama/cihaz/{id}/iptal` · `POST /yoklama/cihaz/{id}/onayla` (tablet) | cihaz yönetimi |
 
 ### B8. Devir durum makinesi
 
 ```
-panel "Devri başlat" ──► hazir ──(devreden telefon: devret)──► devreden_onayladi ──(devralan: kabul tutuyor)──► tamam
-                           │                                          │                                        └► olay vardiya + devreden çıkış + devralan giriş(yoksa) + sorumlu=devralan
-                           │(panel iptal)                             └──(devralan: tutmuyor + not)──► tutmuyor  (aynı yan etkiler + ⚠ Bekleyen iş)
-                           ▼
-                         iptal
+panel "Devri başlat" ──► hazir (surum v1) ──(devreden: devret, surum=v1)──► devreden_onayladi ──(devralan: kabul tutuyor, surum=v1)──► tamam
+      │  panel formu değişir → surum v2 (hazir'da)          │ form kilitli                                                └► olay vardiya + devreden çıkış + devralan giriş(yoksa) + sorumlu=devralan
+      │(panel iptal, yalnız hazir)                           └──(devralan: tutmuyor + not, surum=v1)──► tutmuyor  (aynı yan etkiler + sorumlu=devralan + ⚠ Bekleyen iş)
+      ▼                                                      └──(merkez: merkez-kapat)──► merkez_kapatti (istisna; iptal → yan etki yok · kapandi → olay vardiya merkez_istisna + devreden çıkışı)
+    iptal
 ```
-- `hazir` açıkken panel formu yeniden gönderirse aynı kayıt güncellenir; `devreden_onayladi` sonrası form kilitli (panel soluk; değişiklik = iptal → yeniden; iptali yalnız merkez yapar).
-- Devreden/devralan = bugün girmiş kişiler; aynı kişi olamaz; devralan açık değilse (henüz QR girişi yok) **izin verilir** — kabulle giriş açılır (akşamcı gelir gelmez devir alır).
-- Gün sonu (`is_gunu` değişti) hâlâ `hazir`/`devreden_onayladi` → Bekleyen iş `devir_tamamlanmadi`; merkez "iptal" ya da "tamam say".
+- `surum` = formun özeti; telefon `ben`'den aldığı `surum`'u onayla geri gönderir; tutmazsa 409 "Devir formu değişti — tekrar bak" (yarış kapanır). `devreden_onayladi` sonrası form kilitli; değişiklik = merkez-kapat(iptal) → yeniden.
+- Devreden = bugün girmiş; devralan = bugün girmiş **veya** henüz girmemiş aktif personel (kabulle girişi açılır); aynı kişi olamaz.
+- `kapanis_sorumlusu` = şube+gün son `tamam`/`tutmuyor`/`merkez_kapatti(kapandi)` devrin devralanı.
+- Gün sonu hâlâ `hazir`/`devreden_onayladi` → Bekleyen iş `devir_tamamlanmadi` (merkez-kapat).
 
 ### B9. Maaş / Personel modülü nasıl okur
 
-- `personel_takvim` (`:418`) ve `gunluk_yoklama` (`:622`) kaynak seçimi: `gun >= ey_ayar.donem_baslangic (2026-11-01)` → `yoklama.gun_yoklama` (PUBLIC, try/import; modül yoksa boş + "yoklama modülü kapalı"); öncesi → eski `gorev_yoklama` okuyucusu (salt okunur, Aralık sökümünde silinir). Ad eşleme (`ey_ids`/`yabanci`) yeni kaynakta gerekmez: `ey_yoklama.personel_id` zaten `ey_personel`.
-- Yemek ücreti: `aylık yemek × gün/30` **değişmez** (`:266`). `ey_mola` yalnız Yemek molaları sekmesi + Takvim gün hücresinde "🍽 42 dk" bilgi.
-- `takvim_karar` "ayrıldı → son QR günü" (`:608`): `MAX(is_gunu) FROM ey_yoklama` (PUBLIC `son_giris_gunu(cur, pid)`), 1 Kasım öncesi eski tablo.
-- Vardiya planı (`vardiya_atama`) eski sistemde kalıyor (ayrı madde); Günlük yoklama plan×QR eşlemesi aynen, yalnız QR kaynağı değişir.
+- Kaynak seçimi `personel_takvim` (:418) ve `gunluk_yoklama` (:622): `gun >= ey_ayar.donem_baslangic` → `DURUM["yoklama"]=="yuklendi"` ise `yoklama.gun_yoklama`; değilse boş + "yoklama modülü kapalı". Öncesi → eski `gorev_yoklama` okuyucusu (salt okunur, Aralık sökümünde silinir). Yeni kaynakta ad eşleme (`ey_ids`/`yabanci`) gerekmez.
+- **Vardiya planı okunmaz** (`vardiya_atama` sorgusu :644 kaldırılır): Günlük yoklama durumları `girdi / girmedi(aktif personel) / çıkış yok`; "zamanında/geç" plan EY'ye gelince (ayrı madde) eklenir.
+- **Yemek kalemi (K7)** — `:266` değişir, tek POZİTİF kalem kalır (kesinti satırı YOK — yemek kuralı belleği):
+  ```
+  gun            = _gecen_gun(…)                       # dönem oranı aynen (ay ortası giren/ayrılan tam almaz)
+  h              = yemek_hak_gunleri(cur, pid, ay)     # calisilan_gun = DISTINCT is_gunu FROM ey_yoklama (giriş var)
+  payda          = h.calisilan_gun                     # kişiye/aya özel payda (plan yok → QR ile çalışılan gün)
+  hak_gun        = payda − |dusen| (dusen: mola.yemek_hakki=FALSE AND hak_elle=FALSE; K8: molasız gün hak kazanır)
+  yemek          = aylik × gun/30 × hak_gun/payda      # payda 0 → aylik × gun/30 (tam hak, kaynak 'yoklama_yok')
+  kalem ad       = "Yemek: aylık × 26/30 × 24/25 gün"  # kanıt: ek.yemek_dusen = [{gun, sure_dk}] (Takvim hücresinde 🍽✗)
+  ```
+  Bir gün hak düşünce etki = `aylik × gun/30 / payda` (7.000/25 = 280 ₺). `yemek_hak` alanı ve öneri bölüşümü (:288) aynen. Onaylı ay dondurulmuş kalemlerden okur (:270) → sonradan "hakkı elle ver" onaylı ayı değiştirmez; merkez onayı kaldırıp yeniden onaylar (mevcut akış).
+- Modül kapalıysa: `yemek = aylik × gun/30` + uyarı "yoklama modülü kapalı — yemek tam sayıldı".
+- `takvim_karar` "ayrıldı → son QR günü" (:608): `son_giris_gunu(cur, pid)`; 1 Kasım öncesi eski tablo.
 
-### B10. Bekleyen işler sağlayıcısı (`bekleyen_is_kaydet("yoklama", …)`, grup `personel`)
+### B10. Bekleyen işler sağlayıcısı (`bekleyen_is_kaydet("yoklama", …)`, grup `personel`) — **çözülene kadar kalır**
 
-| tur | Koşul | Satır / düğme |
+| tur | Koşul | Satır / düğme → uç |
 |---|---|---|
-| `yoklama_cikis_yok` | dün (ve önceki 7 gün) giriş var, `cikis_ts` NULL | "🚪 Ayşe — Zafer 17.10 çıkış yok" → "Çıkış saati yaz" |
-| `mola_bitmedi` | `bitis_ts` NULL, gün geçti | "🍽 Mola bitmedi" → "Bitiş saati yaz" |
-| `devir_tamamlanmadi` | `hazir`/`devreden_onayladi`, gün geçti ya da 2 saat | "🔁 Devir tamamlanmadı" → "İptal" / "Tamam say" |
-| `devir_tutmuyor` | `durum='tutmuyor'`, merkez görmedi | "⚠ Devir tutmuyor: Mehmet — 'çekmecede 1.180 ₺'" → "Gördüm" (olay `yoklama_gorundu`) |
-| `cihaz_yok` | aktif personelin aktif cihazı yok | "📱 Telefonu bağlı değil" → "Bağlantı linki üret" |
+| `yoklama_cikis_yok` | `cikis_ts` NULL ve `is_gunu` < bugün (tarih sınırı yok) | "🚪 Ayşe — Zafer 17.10 çıkış yok" → "Çıkış saati yaz" → `duzelt` |
+| `mola_bitmedi` | `bitis_ts` NULL, iş günü geçti | "🍽 Mola bitmedi" → "Bitiş saati yaz" → `mola/{id}/duzelt` |
+| `mola_uzun` | `yemek_hakki=FALSE`, `hak_elle=FALSE`, merkez görmedi | "⏱ Ayşe mola 74 dk — yemek hakkı düştü" → "Gördüm" / "Hakkı elle ver" → `hak-ver` |
+| `devir_tamamlanmadi` | `hazir`/`devreden_onayladi`, gün geçti ya da 2 saat | "🔁 Devir tamamlanmadı" → "Kapat (iptal / kapandı say)" → `merkez-kapat` |
+| `devir_tutmuyor` | `durum='tutmuyor'`, görülmedi | "⚠ Devir tutmuyor: Mehmet — 'çekmecede 1.180 ₺'" → "Gördüm" → `gorundu` |
+| `cihaz_yok` | aktif personelin aktif telefonu yok | "📱 Telefonu bağlı değil" → "Bağlantı linki üret" → `cihaz/davet` |
+| `tablet_yok` / `tablet_onay` | aktif şubenin aktif tableti yok / davet onay bekliyor | "📟 Tablet kayıtsız" → davet · "Bu tablet Zafer'in mi?" → `cihaz/{id}/onayla` |
 | `sube_konum_yok` | aktif şube lat/lng NULL | "📍 Koordinat yok" → Tanımlar › Şube |
 
-Hiçbiri panele/telefona gitmez.
+Hiçbiri panele/telefona gitmez (K7 bilgi satırı telefonda `ben` cevabından çizilir, bildirim değil).
 
 ### B11. Merkez "Yemek molaları" sekmesi (Personel › Yemek molaları)
 
-- Üst: tarih aralığı (bugün / 7 gün / ay), şube süzgeci, "yalnız bitmeyen" kutusu.
-- Tablo: Tarih · Kişi · Şube · Başlangıç · Bitiş · Süre · Durum (bitti / sürüyor / **bitmedi** / merkez yazdı) · Mesafe (başl./bitiş, m) · Düzelt.
-- Alt özet (ay): kişi → mola günü sayısı, ortalama süre, `> mola_limit_dk` sayısı (yalnız bilgi).
-- Ücretle ilgili hiçbir sütun yok (sahip kuralı).
+- Üst: tarih aralığı, şube, "yalnız bitmeyen", "yalnız hakkı düşen".
+- Tablo: Tarih · Kişi · Şube · Başlangıç · Bitiş · Süre · Durum (bitti / sürüyor / bitmedi / merkez yazdı / çıkışla kapandı) · **Yemek hakkı** (✓ / ✗ / ✓ elle: kim, ne zaman) · Mesafe · Düzelt / Hakkı ver.
+- Alt özet (ay): kişi → çalışılan gün, mola günü, ortalama süre, hak düşen gün, elle verilen (Maaş kalemiyle aynı sayılar — `yemek_hak_gunleri`).
 
-### B12. 1 Kasım geçişi
+### B12. 1 Kasım geçişi (sunucu kesimi + prova + geri dönüş)
 
-| Ne | Ekim (deneme) | 1 Kasım | Aralık |
+| Ne | Ekim (deneme) | 1 Kasım 02:00 | Aralık |
 |---|---|---|---|
-| Yoklama yazımı | `yoklama` modülü **gerçek yazar** (para değil; deneme verisi faydalı); panel kuru modda kalır | aynı | — |
-| Telefon sayfası | eski `/gorev-giris/{sube}` eski panelle sürer; yeni `/q/...` yeni panelle | eski sayfa tek ekran: "Yeni sisteme geçildi — paneldeki QR'ı okut" | eski sayfa + `gorev_api` yoklama/mola/devir uçları sökülür |
-| Maaş okuma | eski `gorev_yoklama` | `donem_baslangic`'tan yeni | eski okuyucu silinir |
-| Tablolar | eski tablolara dokunulmaz | yazılmaz | arşiv/sökümde kalkar |
-| Kesim şartı | — | 31 Ekim 23:59: tüm aktif personel `ey_cihaz` aktif; 4 şube koordinatlı; Bekleyen işler'de `cihaz_yok`/`sube_konum_yok` = 0 | — |
+| Yoklama yazımı | `yoklama` modülü gerçek yazar (deneme verisi faydalı); eski sistem de yazar | yalnız yeni | — |
+| Eski uçlar (`gorev_api`: pin-giris, mesai-cikis, yemek, devir*, mühür, qr) | açık | **sunucuda kapalı**: `ey_ayar.yoklama_kesim` dolu → 410 `yeni_sisteme_gecildi` (sayfa kapatmak yetmez; API de kapanır) | sökülür |
+| Eski telefon sayfası | sürer | yoklama/mola/devir düğmeleri "Yeni sisteme geçildi — paneldeki QR'ı okut" + `/q` köprüsü; sayfa K6 kurgusunda yeniden kurulur (görev/avans/sayım/puan) | — |
+| Maaş okuma | eski `gorev_yoklama` | `donem_baslangic`'tan yeni (yemek K7 kuralıyla) | eski okuyucu silinir |
+| 02:00 sınırı | — | Kesim `is_gunu` değişiminde: 31 Ekim iş günü (02:00'ye kadar) eski sistemde biter; 31 Ekim gecesi eski sistemde açık kalanlar eski oto-kapat ile **son kez** kapanır; 1 Kasım 02:00 sonrası ilk giriş yeni tabloya. Her yerde `cekirdek.is_gunu()` | — |
+| **Geri dönüş** | — | `yoklama_kesim` ayarı silinir → eski uçlar 1 dk'da açılır, Maaş `donem_baslangic` ileri alınır; yeni tablo durur, veri kaybı yok. Karar penceresi: 1–3 Kasım | — |
 
-Ekim verisi taşınmaz (içerik kopyası yalnız şube koordinatı). Kapanış saatinde (23:45–00:15) yayın yok; her faz Codex + Fable + `kapi_kontrol.py`.
+**Kabul listesi (31 Ekim 23:00, kesim öncesi; biri eksikse kesim ertelenir):**
+- [ ] 4 şube `ey_sube.lat/lng` dolu (kopya + Tanımlar'da göz kontrolü) → `sube_konum_yok` = 0
+- [ ] Tüm aktif personel `ey_cihaz` aktif, `guc='anahtar'` (zayıf bağ listesi sahibe gösterilir) → `cihaz_yok` = 0
+- [ ] 4 tablet kayıtlı ve onaylı → `tablet_yok` = 0; her tablette QR 30 sn'de yenileniyor
+- [ ] Prova (28–30 Ekim, Zafer, gerçek cihazlar): giriş · 200 m dışı 403 · 3 dk önceki QR 409 · aynı QR ikinci işlem 409 · mola 61 dk → telefonda satır + Bekleyen iş · devir çift onay + sürüm değişikliği 409 · kapanış → çıkış · 02:00 sonrası giriş doğru güne
+- [ ] `kapi_kontrol.py` + Codex + Fable; yayın 23:45–00:15 dışında (kesim ayarı 1 Kasım 02:05'te elle açılır)
+
+Ekim verisi taşınmaz (içerik kopyası yalnız şube koordinatı + yönetici işareti).
 
 ### B13. Riskler
 
 | Risk | Karşılık |
 |---|---|
-| GPS kapalı mekânda 50-150 m sapar | 150 m yarıçap (eski tecrübe); mesafe kaydedilir, merkez görür; engel yalnız gerçekten uzaksa |
-| iOS Safari konum izni "bir kez" → her açılışta sorar | sayfa "Ana ekrana ekle" ipucu; izin "web sitesini kullanırken" seçilirse kalıcı |
-| localStorage silinir → cihaz bağı kopar | davet linki yenilenir (merkez 10 sn); Bekleyen iş `cihaz_yok` görünür kılar |
-| Telefon ödünç verilir | kimlik = telefon; QR + konum + merkez düzeltme; (yetki fazında istenirse merkez rolleri için şifre) |
-| Tablet/sunucu saat farkı | jeton sunucu saatiyle; tablet 30 sn'de bir yeni PNG çeker |
-| Devreden onaylamadan gider | devir `hazir` kalır → Bekleyen iş; panel akışı kilitlenmez (kapanış devir şartı değil) |
-| Kapanışçı listede değil (QR girişi yapmadı) | sunucu 400; kişi QR okutur (10 sn), sonra kapanır |
-| Aynı anda iki şubede giriş | ayrı satırlar; Takvim "iki şube" gösterir (sahip bunu istemişti) |
-| 02:00 iş günü sınırı | her yerde `cekirdek.is_gunu()`; 01:30 girişi önceki güne |
-| `olay_yaz` 503 | devir tamam/tutmuyor tek işlem: olay yazılamazsa durum da değişmez, telefon "tekrar dene" |
+| GPS kapalı mekânda 50-150 m sapar | 150 m yarıçap; mesafe kaydedilir; engel yalnız gerçekten uzaksa |
+| QR fotoğrafı + sahte konum (60–120 sn) | B5 kalan risk: tek kullanım + Son okutanlar + ip_disi damgası + merkez görür; tam engel yok, **kabul edilen risk** |
+| localStorage/jeton kopyalama | Cihaz anahtarı dışarı çıkarılamaz (B4.1); zayıf bağ yalnız istisna ve etiketli |
+| iOS Safari konum izni her açılışta | "Ana ekrana ekle" ipucu; IndexedDB ana ekran kabında ayrı → bağlama o kaptan yapılır (tek cümle ipucu) |
+| Tarayıcı verisi silinir → bağ kopar | yeni davet, şubede QR'la (K9); Bekleyen iş `cihaz_yok` |
+| Telefon ödünç verilir | kimlik = telefon; QR + konum + Son okutanlar + merkez düzeltme |
+| Tablet/sunucu saat farkı | jeton sunucu saatiyle; imza zaman payı ±120 sn; tablet 30 sn'de yeni PNG |
+| Devreden onaylamadan gider | `hazir` kalır → Bekleyen iş → merkez-kapat; kapanış devir şartı değil |
+| Kapanışçı QR girişi yapmadı | sunucu 400; kişi QR okutur, sonra kapanır |
+| Aynı anda iki şubede giriş | kısmi UNIQUE engeller (K11): önce çıkış |
+| 02:00 iş günü sınırı | `cekirdek.is_gunu()`; 01:30 girişi önceki güne; kesim 02:00'de |
+| `olay_yaz` 503 | devir tamam/tutmuyor tek işlem; olay yazılamazsa durum değişmez, telefon "tekrar dene" (aynı `istek_id`) |
+| Yemek paydası küçük (3 gün çalışan, 1 ihlal) | sahip bilinen açık madde (yemek kuralı belleği); merkez elle hak verebilir |
 
 ### B14. Boyut / kabul
 
 | Faz | Boyut | Kabul ölçütü |
 |---|---|---|
-| Y0 | ~450 py + ~450 jsx | bağlı telefon QR okutup giriş yapar; 200 m dışından 403; 3 dk önceki QR 409; panel QR kapısı girişle kapanır; ad listesi = girenler; girmeyen kayıt → 400 |
-| Y1 | ~250 py + ~350 jsx | mola başlat/bitir; ikinci mola 409; kapanış → kapanışçı `cikis_tur='kapanis'`; ertesi gün Bekleyen işler 4 satır doğru; merkez düzeltme iz bırakır |
-| Y2 | ~300 py + ~350 jsx | devir: devreden onayı yalnız devreden cihazından; kabul yalnız devralan; tamamda 1 olay `vardiya` + devreden çıkış + sorumlu devralan; "tutmuyor" Bekleyen iş |
-| Y3 | ~80 py | Takvim/Günlük yoklama 1 Kasım'dan yeni tablodan; eski telefon sayfası kapalı; 31 Ekim ↔ 1 Kasım kişi sayıları tutarlı |
+| Y0 | ~600 py + ~600 jsx (imza kütüphanesi dahil) | şubede QR'la bağlanan telefon giriş yapar; kopyalanan localStorage ile ikinci cihaz 403; 200 m dışı 403 (muaf kişi geçer); 3 dk önceki QR 409; aynı QR ikinci giriş 409; kayıtsız tablet QR alamaz; panel QR kapısı girişle kapanır; Son okutanlar 2 sn içinde |
+| Y1 | ~300 py + ~350 jsx | mola başlat/bitir; aynı iş günü ikinci mola 409; 61 dk → `yemek_hakki=FALSE` + telefon satırı + Bekleyen iş; çıkış/kapanış açık molayı kapatır; merkez "hakkı ver" izli; Maaş kalemi `24/25` doğru |
+| Y2 | ~350 py + ~350 jsx | devir: onay yalnız doğru cihazdan; sürüm değişince 409; tamam/tutmuyor → 1 olay + devreden çıkış + sorumlu devralan (tutmuyor dahil); merkez-kapat ekranda "merkez kapattı" |
+| Y3 | ~120 py | eski uçlar 410; geri dönüş anahtarı denendi; Takvim/Günlük yoklama 1 Kasım'dan yeni; 31 Ekim ↔ 1 Kasım kişi sayıları tutarlı |
 
 ---
 
@@ -244,3 +285,30 @@ Ekim verisi taşınmaz (içerik kopyası yalnız şube koordinatı). Kapanış s
 | K5 | ✅ "Tutmuyor": devir **tamamlanır** + merkez "⚠ Devir tutmuyor" |
 | K6 | ✅ (sahip) **Eski telefon sayfası YENİDEN KURULACAK** (yapılacak işler listesinde); **avans talebi oradan yapılır**; görev listesi / stok sayım görevi / puan o kurguda ele alınır |
 | K7 | ✅ (sahip düzeltti) Mola **60 dk'yı geçerse**: merkezde "uzun" bildirimi + **personelin telefonunda "Bugün yemek hakkı kazanılamadı"** + **maaş hesabında o günün yemek ücreti hakkı düşer** (aylık 7.000 ₺'nin o güne düşen payı; Maaş modülü bu işareti okur) |
+
+Bekleyen: **K8–K11** (§A5).
+
+---
+
+## D. CODEX BULGULARI → ÇÖZÜM (`tmp/codex_panelA_out.txt` §2)
+
+| # | Codex bulgusu | Çözüm (bölüm) |
+|---|---|---|
+| D1 BLOKER | QR üretim uçları açık; uzaktan QR alınabilir; fotoğraf + sahte konum | QR ucu yalnız **kayıtlı tabletin imzalı isteğine** (B4.6, B5); jeton+kişi+işlem tek kullanım (`ey_qr_kullanim`); panel **Son okutanlar**; K10 şube IP `ip_disi` damgası; kalan risk açıkça kabul (B5, B13) |
+| D2 BLOKER | localStorage jetonu kopyalanır; davet linki "kendi telefonu" kanıtı değil | **Cihaza bağlı anahtar** (WebCrypto P-256, çıkarılamaz, IndexedDB; sunucuda açık anahtar; her istek nonce+zaman imzalı, tekrar-oynatma kilidi); zayıf-bağ istisnası etiketli; iptal/yeniden davet; bağlama **şubede tablet QR + konumla** (B4) |
+| D3 | Zaman damgalı UNIQUE iki açık girişi engellemez; devir onayında `istek_id` yok; form↔onay yarışı | Kısmi UNIQUE `(personel_id) WHERE cikis_ts IS NULL`; `FOR UPDATE`; her telefon yazımında `istek_id UNIQUE` (devret/kabul dahil); devir `surum` özeti — onay sürüme bağlı, değişince 409 (B3, B7, B8) |
+| D4 | Sorumlu yalnız `tamam`'dan; K5 `tutmuyor` dışarıda; girmemiş devralan seçilemiyor | `kapanis_sorumlusu` = `tamam` **veya** `tutmuyor` (veya merkez kapandı); devralan listesi = girenler + girmemiş aktif; **kabul = giriş** (B2, B7, B8) |
+| D5 | Merkez "Tamam say" kişi onayı yerine geçer | Ayrı durum `merkez_kapatti` + `merkez_sonuc/kim/aciklama`; olay verisi `merkez_istisna=TRUE`; ekranda "merkez kapattı" (B7, B8) |
+| D6 | Mola/yoklama satırı → K4 ile günde iki mola; çıkışın molayı kapatması tanımsız | `ey_mola` UNIQUE(personel_id, is_gunu); `cikis_yaz` (qr/devir/kapanış/merkez) açık molayı aynı anda kapatır, süre+hak o anda hesaplanır (B2, B3, B7) |
+| D7 | Canlı `vardiya_atama` bağı köprü; `try/import` kapalı modülü algılamaz | `vardiya_atama` okunmaz, plan sütunu EY plan kaynağı gelene kadar "—"; modül denetimi `moduller.DURUM["yoklama"]=="yuklendi"` (B1, B2, B9) |
+| D8 | Çıkışsız kayıt 7 gün sonra kaybolur; bazı merkez düğmelerinin ucu yok | Bekleyen işler çözülene kadar kalır (tarih sınırı yok); her düğme → tanımlı uç tablosu (B7 merkez, B10) |
+| D9 | 1 Kasım: sayfa kapatmak API yazımını durdurmaz; 02:00, gece açık kayıtlar, geri dönüş, K6 eksik | `ey_ayar.yoklama_kesim` → eski yazım uçları 410; kesim 02:00 `is_gunu` sınırında; eski oto-kapat son kez; geri dönüş anahtarı + pencere; gerçek cihaz provası 28–30 Ekim; kabul listesi (koordinat, telefon, tablet) (A4, B12) |
+| D10 KÜÇÜK | Ömür "2 dk" değil 60–120 sn; saat eşitlemesi | Metin 60–120 sn; sınır testi (59 sn ✓ / 121 sn ✗); üretim+doğrulama+imza zamanı **sunucu saati** (B5) |
+
+## E. SAHİP KARARLARI — 2. tur (2026-10-18)
+| # | Karar |
+|---|---|
+| K8 | ✅ **Molasız gün yemek hakkı KAZANILMAZ** — hak yalnız mola kullanılan (≤60 dk) günlerde; 61. dk'dan itibaren de yok (merkez elle verebilir, izli) |
+| K9 | ✅ Telefon bağlama **uzaktan da olur** — merkezin linkini açmak yeterli (şubede tablet QR şartı YOK) |
+| K10 | ✅ Şube Wi-Fi/IP **kullanılmaz** — yalnız konum |
+| K11 | ✅ Aynı anda iki şubede girişli olunamaz — önce çıkış; aynı gün ikinci şubeye giriş serbest |
