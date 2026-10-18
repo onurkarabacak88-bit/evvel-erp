@@ -308,7 +308,7 @@ Bekleyen: **K8–K11** (§A5).
 ## E. SAHİP KARARLARI — 2. tur (2026-10-18)
 | # | Karar |
 |---|---|
-| K8 | ✅ **Molasız gün yemek hakkı KAZANILMAZ** — hak yalnız mola kullanılan (≤60 dk) günlerde; 61. dk'dan itibaren de yok (merkez elle verebilir, izli) |
+| K8 | ✅ (maaş etkisi sahip onaylı 2026-10-18: 1 Kasım'dan yemek ücreti = yalnız mola kullanılan ≤60 dk günler) **Molasız gün yemek hakkı KAZANILMAZ** — hak yalnız mola kullanılan (≤60 dk) günlerde; 61. dk'dan itibaren de yok (merkez elle verebilir, izli) |
 | K9 | ✅ Telefon bağlama **uzaktan da olur** — merkezin linkini açmak yeterli (şubede tablet QR şartı YOK) |
 | K10 | ✅ Şube Wi-Fi/IP **kullanılmaz** — yalnız konum |
 | K11 | ✅ Aynı anda iki şubede girişli olunamaz — önce çıkış; aynı gün ikinci şubeye giriş serbest |
