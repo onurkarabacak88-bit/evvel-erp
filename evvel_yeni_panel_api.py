@@ -156,7 +156,8 @@ def _saat_kurali(tur: str, personel: dict) -> Optional[str]:
     n = _simdi_tr()
     hm = (n.hour, n.minute)
     if tur == "acilis" and hm < ACILIS_SAAT and not personel.get("erken_acilis"):
-        return "Açılış 07:00'den önce yapılamaz"
+        return ("Açılış onayı yalnızca 07:00 ve sonrasında yapılabilir (Türkiye saati). "
+                "Bu personelin erken açılış izni yok — izin merkezden verilir.")
     if tur == "kapanis" and 2 <= n.hour and hm < KAPANIS_SAAT:
         return "Kapanış 22:30'dan önce yapılamaz"
     return None
@@ -351,8 +352,11 @@ def _olay(cur, **kw) -> Optional[str]:
     düzeltme personelde değil merkezde). Kök kilidi altında (eşzamanlı iki gönderim aynı sürümü alamasın)."""
     from evvel_yeni_olay import olay_yaz
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_panel_kok:" + kw["kok"],))
-    cur.execute("SELECT 1 FROM ey_sube_olay WHERE kok=%s LIMIT 1", (kw["kok"],))
-    vardi = bool(cur.fetchone())
+    cur.execute("""SELECT (SELECT MAX(olay_zamani) FROM ey_sube_olay WHERE kok=%s AND tur<>'iptal') AS son,
+                          (SELECT MAX(olay_zamani) FROM ey_sube_olay WHERE hedef_kok=%s AND tur='iptal') AS iptal""",
+                (kw["kok"], kw["kok"]))
+    r = dict(cur.fetchone() or {})
+    vardi = r.get("son") is not None and not (r.get("iptal") is not None and r["iptal"] >= r["son"])   # Fable: iptal edilen gün yeniden açılabilsin
     oid = olay_yaz(cur, **kw)
     if vardi and oid is not None:
         raise HTTPException(409, "Bu kayıt zaten yapıldı — değiştirmek için merkeze haber verin")
@@ -386,6 +390,25 @@ def _sayim_satirlari(cur, sayim: List[SayimSatir]) -> list:
     if satir:
         _urunler(cur, [x["urun_id"] for x in satir], takip="sayim")
     return satir
+
+
+def _acilis_tam(cur, b: "AcilisBody") -> None:
+    """Eski sihirbaz: her alan dolu (boş → 'X adedini girin'), 0 yazılabilir. Liste = katalogda panelde sayılan ürünler (S5)."""
+    from evvel_yeni_urun_api import katalog
+    gerek = {str(x["id"]): x["ad"] for k in katalog(cur) for x in k["urunler"] if x.get("takip") == "sayim" and x.get("panel_sayim")}
+    gelen = {}
+    for x in b.sayim:
+        if x.urun_id in gelen:
+            raise HTTPException(400, "Aynı ürün iki kez sayılmış — formu yenile")
+        gelen[x.urun_id] = x.sayilan
+    for uid, ad in gerek.items():
+        if gelen.get(uid) is None:
+            raise HTTPException(400, f"{ad} adedini girin")
+    if b.pasta_toplam is None:
+        raise HTTPException(400, "Pasta adedini girin")
+    _tam(b.pasta_toplam, "Pasta")
+    if not b.istemci_gunu:
+        raise HTTPException(400, "Form günü yok — sayfayı yenile")
 
 
 def _onay_sart(sube_id: str, ad: str, tur: str, govde: dict) -> None:
@@ -422,6 +445,7 @@ def acilis(sube_id: str, b: AcilisBody):
     def is_(cur, c):
         from evvel_yeni_depo_api import sayim_yaz
         p = _personel(cur, sube_id, b.personel_id)
+        _acilis_tam(cur, b)
         engel = _saat_kurali("acilis", p)
         if engel and not c["kuru"]:
             raise HTTPException(409, engel)
@@ -758,9 +782,10 @@ def _onay_ozet(cur, tur: str, g: dict) -> str:
             u = _urunler(cur, ids) if ids else {}
         except HTTPException:
             u = {}
-        return ", ".join(f"{(u.get(str(k.get('urun_id'))) or {}).get('ad', '?')} × {k.get('adet') or k.get('sayilan')}" for k in kalemler or [])
-    if tur == "acilis":
-        return f"Kasa {_tl_yaz(g.get('kasa_sayim', 0))} · {len(g.get('sayim') or [])} ürün sayıldı" + (f" · pasta {g['pasta_toplam']}" if g.get("pasta_toplam") not in (None, "") else "")
+        return ", ".join(f"{(u.get(str(k.get('urun_id'))) or {}).get('ad', '?')} × {k.get('adet') if k.get('adet') is not None else k.get('sayilan')}" for k in kalemler or [])
+    if tur == "acilis":   # Codex: telefonda her kalemin adı ve sayısı (kişi neyi onayladığını görsün)
+        return (f"Kasa {_tl_yaz(g.get('kasa_sayim', 0))} · " + adlar(g.get("sayim"))
+                + (f" · pasta {g['pasta_toplam']}" if g.get("pasta_toplam") not in (None, "") else ""))
     if tur == "kapanis":
         tes = " · teslim " + ", ".join(f"{str(t.get('alan', '')).split(':')[-1].capitalize()} {_tl_yaz(t.get('tutar', 0))}" for t in g.get("teslimler") or []) if g.get("teslimler") else ""
         return f"Nakit {_tl_yaz(g.get('nakit', 0))} · POS {_tl_yaz(g.get('pos', 0))} · online {_tl_yaz(g.get('online', 0))}{tes}"
@@ -792,7 +817,11 @@ def onay_iste(sube_id: str, b: OnayIsteBody):
     oid = "on-" + uuid.uuid4().hex[:16]
     with db() as (conn, cur):
         _sube(cur, sube_id)
+        if b.tur == "acilis":
+            _acilis_tam(cur, Body(**{**g, "personel_id": "-"}))
         ozet = _onay_ozet(cur, b.tur, g)
+        cur.execute("""UPDATE ey_panel_onay SET durum='iptal', mesaj='yerine yeni onay istendi'
+                       WHERE sube_id=%s AND tur=%s AND durum IN ('bekliyor','hata')""", (str(sube_id), b.tur))
         cur.execute("""INSERT INTO ey_panel_onay (id, sube_id, tur, govde, ozet, son)
                        VALUES (%s,%s,%s,%s::jsonb,%s, NOW() + (%s || ' minutes')::interval)""",
                     (oid, str(sube_id), b.tur, json.dumps(g, ensure_ascii=False, default=str), ozet, str(ONAY_SURE_DK)))
@@ -815,7 +844,9 @@ def onay_durum(oid: str):
     with db() as (conn, cur):
         o = _onay_oku(cur, oid)
     durum = "sure_doldu" if o["durum"] in ("bekliyor", "hata") and o["gecti"] else o["durum"]
-    return {"durum": durum, "mesaj": o["mesaj"], "kisi": o["personel_ad"], "ozet": o["ozet"], "tur": o["tur"]}
+    sonuc = o.get("sonuc") if isinstance(o.get("sonuc"), dict) else {}
+    return {"durum": durum, "mesaj": o["mesaj"], "kisi": o["personel_ad"], "ozet": o["ozet"], "tur": o["tur"],
+            "kuru": bool((sonuc or {}).get("kuru"))}
 
 
 @router.post("/onay/{oid}/iptal")

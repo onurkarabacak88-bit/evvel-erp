@@ -112,6 +112,7 @@ export function TabletQR({ boyut, onClick, onay }) {
   useEffect(() => {
     let canli = true;
     let onceki = '';
+    setSrc(''); setHata('');   // Codex: başka onayın QR'ı bir an bile görünmesin
     const yol = '/api/evvel-yeni/yoklama/qr.png' + (onay ? `?o=${encodeURIComponent(onay)}` : '');
     const cek = () => imzaliFetch('tablet', 'GET', yol)
       .then(async (r) => {
@@ -128,7 +129,8 @@ export function TabletQR({ boyut, onClick, onay }) {
   }, [onay]);
   return (
     <div onClick={onClick} style={{ width: boyut, height: boyut, background: '#fff', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: onClick ? 'pointer' : 'default', overflow: 'hidden' }}>
-      {src ? <img src={src} alt="QR" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
+      {src && hata ? <span style={{ color: '#b91c1c', fontSize: boyut > 200 ? 16 : 11, textAlign: 'center', padding: 6, fontWeight: 700 }}>{hata} — QR yenilenemedi</span>
+        : src ? <img src={src} alt="QR" style={{ width: '100%', height: '100%', objectFit: 'contain' }} />
         : <span style={{ color: '#333', fontSize: boyut > 200 ? 16 : 11, textAlign: 'center', padding: 6 }}>{hata || 'QR…'}</span>}
     </div>
   );

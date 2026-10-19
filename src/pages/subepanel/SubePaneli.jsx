@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { cihazId } from '../../utils/cihazImza';
+import AcilisSihirbazi from './AcilisSihirbazi';
 import AnaSayfa from './AnaSayfa';
 import { AdetListesi, C, CSS, kalemGovde, Modal, SayimListesi, SayiTusTakimi, sayi, sayimGovde, TabletQR, tl, tutar, tutarNum, yeniIstek } from './ortak';
 
@@ -80,6 +81,12 @@ export default function SubePaneli({ subeId }) {
   const yukle = useCallback(() => api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/durum`)
     .then((x) => { setD(x); setHata(''); }).catch((e) => setHata(e?.message || 'Panel açılamadı')), [subeId]);
   const [kapiGecildi, setKapiGecildi] = useState(false);   // yalnız DENEME'de "QR'sız geç" (saklanmaz — her yüklemede kapı yine görünür)
+  const [sihirbazElle, setSihirbazElle] = useState(false);
+  const [denemeKapandi, setDenemeKapandi] = useState(false);
+  const [sihirbazBasari, setSihirbazBasari] = useState(false);   // başarı ekranı 1,9 sn tam görünsün (açılış düşünce erken kapanmasın)   // yalnız DENEME: kapat / deneme açılışı sonrası tekrar açılmasın (saklanmaz)
+  const iceride = (yok.girenler || []).some((g) => g.acik);
+  const sihirbazAcik = sihirbazBasari || !!d && !d.acilis_var && !d.kapanis_var && !(d.kuru && denemeKapandi)
+    && (sihirbazElle || iceride || (d.kuru && kapiGecildi));
   const kapiAcik = !!d && yok.var && !d.acilis_var && !d.kapanis_var && !(d.kuru && kapiGecildi) && !(yok.girenler || []).some((g) => g.acik);
   useEffect(() => {   // eski panel: 15 sn (POLL_MS), sekme gizliyken durur, öne gelince hemen çeker; kapı / QR / devir beklerken 5 sn
     yukle();
@@ -95,6 +102,7 @@ export default function SubePaneli({ subeId }) {
 
   const temizle = () => { setAdet({}); setSebep(''); setSayim({}); setF({}); setPin(''); setIstek(yeniIstek()); };
   const ac = (m) => {
+    if (m === 'acilis') { setDenemeKapandi(false); setSihirbazElle(true); return; }
     temizle();
     const adaylar = (yok.girenler || []).filter((g) => g.acik).map((g) => g.personel_id);
     setKisi(adaylar.length === 1 ? adaylar[0] : '');
@@ -319,20 +327,11 @@ export default function SubePaneli({ subeId }) {
         </div>
       )}
       {/* ── MODALLAR ── */}
-      {modal === 'acilis' && (
-        <Modal baslik="☀️ Açılış" kapat={() => setModal(null)} genis>
-          {kimSec()}
-          <label style={{ display: 'grid', gap: 6 }}><b>Kasadaki para (sayılan nakit)</b>
-            <input className="sp-in" inputMode="decimal" value={f.kasa ?? ''} onChange={(e) => setF({ ...f, kasa: tutar(e.target.value) })} placeholder="0,00" /></label>
-          <div><b>Sayım</b> <span style={{ color: C.soluk }}>— saydığın ürünleri yaz, boş bırakılan sayılmaz</span></div>
-          <SayimListesi gruplar={d.sayilan} sayim={sayim} setSayim={setSayim} />
-          <label className="sp-kart" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8 }}>
-            <span style={{ flex: 1 }}><b>🍰 Pasta</b><div style={{ color: C.soluk, fontSize: 13 }}>toplam kaç adet?</div></span>
-            <input className="sp-in" style={{ width: 110, textAlign: 'center' }} inputMode="numeric" value={f.pasta ?? ''} onChange={(e) => setF({ ...f, pasta: sayi(e.target.value) })} /></label>
-          <button className="sp-btn sp-yesil" disabled={mesgul || f.kasa === undefined || f.kasa === ''}
-            onClick={() => gonder('acilis', { personel_id: kisi, kasa_sayim: tutarNum(f.kasa), sayim: sayimGovde(sayim),
-              pasta_toplam: f.pasta === undefined || f.pasta === '' ? null : Number(f.pasta) })}>✔ Açılışı Kaydet</button>
-        </Modal>
+      {sihirbazAcik && (sihirbazBasari || !kapiAcik) && (
+        <AcilisSihirbazi key={d.gun} d={d} subeId={subeId} tabletVar={tabletVar} kapatilabilir={!!d.kuru}
+          kapat={() => { setSihirbazElle(false); setDenemeKapandi(true); }}
+          basladi={() => setSihirbazBasari(true)}
+          bitti={() => { setSihirbazBasari(false); setSihirbazElle(false); if (d.kuru) setDenemeKapandi(true); yukle(); }} />
       )}
       {(modal === 'ac' || modal === 'fire') && (
         <Modal baslik={modal === 'ac' ? '📦 Ürün Aç' : '🗑️ Fire'} kapat={() => setModal(null)} genis>
