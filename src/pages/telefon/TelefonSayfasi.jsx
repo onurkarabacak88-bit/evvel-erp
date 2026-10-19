@@ -370,7 +370,7 @@ function MolaSatiri({ mola }) {
       <div style={{ fontSize: 17 }}>
         🍽 {mola.durum === 'suruyor' ? <>Mola <b>{mola.bas}</b>'dan beri · <b>{mola.sure_dk} dk</b></> : <>Mola {mola.bas}–{mola.bit || '—'} · <b>{mola.sure_dk ?? '—'} dk</b></>}
       </div>
-      {mola.hak_dustu && <div className="tq-not">Bugün yemek hakkı kazanılamadı</div>}
+      {mola.hak_dustu && <div className="tq-not">{mola.otomatik ? `Mola ${mola.sure_dk ?? 61} dakikayı geçti — sistem kapattı, yemek hakkını kaybettin` : 'Bugün yemek hakkı kazanılamadı'}</div>}
     </>
   );
 }

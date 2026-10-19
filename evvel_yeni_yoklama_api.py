@@ -301,11 +301,13 @@ def acik_mi(cur, sube_id: str, personel_id: str) -> bool:
 def gece_kapat(cur) -> int:
     """PUBLIC: geçmiş iş gününden açık kalan girişleri ve molaları kapatır (tür 'gece_otomatik'). Çıkış saati bilinmediği için
     giriş anı yazılır (süre uydurulmaz; ileride vardiya planı gelince oradan alınabilir). Maaşa etkisi YOK: maaş yoklamadan yalnız
-    "çalışılan gün" (giriş olan gün) ve mola süresini (yemek hakkı) okur; çıkış saatini okumaz. Bitirilmemiş mola: hak VERİLİR
-    (personel düğmeye basmayı unuttu diye yemek kesilmez — sahip kararıyla değiştirilebilir)."""
+    "çalışılan gün" (giriş olan gün) ve mola süresini (yemek hakkı) okur; çıkış saatini okumaz. Bitirilmemiş mola: yemek hakkı YOK
+    (sahip 2026-10-19); Bekleyen işler'e düşmez (gorulen='gece_otomatik')."""
     g = is_gunu()
+    sinir = mola_limit(cur) + 1   # sahip: mola limit+1 (61.) dakikada sistem kapatır, yemek hakkı yok
     cur.execute("""SELECT EXISTS (SELECT 1 FROM ey_yoklama WHERE cikis_ts IS NULL AND is_gunu < %s)
-                       OR EXISTS (SELECT 1 FROM ey_mola WHERE bitis_ts IS NULL AND is_gunu < %s) AS var""", (g, g))
+                       OR EXISTS (SELECT 1 FROM ey_mola WHERE bitis_ts IS NULL AND (is_gunu < %s
+                                  OR baslangic_ts < NOW() - (%s || ' minutes')::interval)) AS var""", (g, g, str(sinir)))
     if not dict(cur.fetchone() or {}).get("var"):
         return 0
     # Codex: AYRI kısa işlem + SKIP LOCKED → çağıranın işleminde satır kilidi kalmaz (kişi kilidiyle ters sıra / deadlock yok);
@@ -314,8 +316,13 @@ def gece_kapat(cur) -> int:
         k.execute("""UPDATE ey_yoklama SET cikis_ts=giris_ts, cikis_tur='gece_otomatik' WHERE id IN (
                        SELECT id FROM ey_yoklama WHERE cikis_ts IS NULL AND is_gunu < %s FOR UPDATE SKIP LOCKED) RETURNING id""", (g,))
         n = len(k.fetchall() or [])
-        k.execute("""UPDATE ey_mola SET bitis_ts=baslangic_ts, bitis_tur='gece_otomatik', sure_dk=0, yemek_hakki=TRUE WHERE id IN (
+        k.execute("""UPDATE ey_mola SET bitis_ts=baslangic_ts, bitis_tur='gece_otomatik', sure_dk=0, yemek_hakki=FALSE, gorulen='gece_otomatik' WHERE id IN (
                        SELECT id FROM ey_mola WHERE bitis_ts IS NULL AND is_gunu < %s FOR UPDATE SKIP LOCKED)""", (g,))
+        # sahip (2026-10-19): bugünkü mola 61. dakikaya ulaştı → sistem kapatır (bitiş = başlangıç + 61 dk), "yemek hakkını kaybettin"
+        k.execute("""UPDATE ey_mola SET bitis_ts=baslangic_ts + (%s || ' minutes')::interval, bitis_tur='otomatik_limit', sure_dk=%s,
+                            yemek_hakki=FALSE, gorulen='otomatik_limit' WHERE id IN (
+                       SELECT id FROM ey_mola WHERE bitis_ts IS NULL AND baslangic_ts < NOW() - (%s || ' minutes')::interval
+                       FOR UPDATE SKIP LOCKED)""", (str(sinir), sinir, str(sinir)))
     return n
 
 
@@ -359,6 +366,14 @@ def mola_limit(cur) -> int:
         return 60
 
 
+def mola_en_az(cur) -> int:
+    """Sahip (2026-10-19): mola en az bu kadar dakika sürmeden personel tarafından BİTİRİLEMEZ (varsayılan 45)."""
+    try:
+        return int(ayar_oku(cur, "mola_en_az_dk", "45") or 45)
+    except ValueError:
+        return 45
+
+
 def _mola_kapat(cur, personel_id: str, tur: str, ts=None, mesafe: Optional[int] = None, istek_id: Optional[str] = None,
                 kim: Optional[str] = None) -> Optional[dict]:
     """Açık molayı bitirir: süre + yemek hakkı (≤ limit). Açık mola yoksa None."""
@@ -367,10 +382,16 @@ def _mola_kapat(cur, personel_id: str, tur: str, ts=None, mesafe: Optional[int] 
     if not r:
         return None
     r = dict(r)
-    if ts is None and r["is_gunu"] < is_gunu():   # Codex: geçmiş günün unutulan molası her yoldan GECE kuralıyla kapanır (hak verilir)
-        cur.execute("""UPDATE ey_mola SET bitis_ts=baslangic_ts, bitis_tur='gece_otomatik', sure_dk=0, yemek_hakki=TRUE,
-                              bitis_istek_id=%s, degistiren=COALESCE(%s, degistiren) WHERE id=%s""", (istek_id, kim, r["id"]))
-        return {"id": r["id"], "sure_dk": 0, "yemek_hakki": True}
+    if ts is None and r["is_gunu"] < is_gunu():   # Codex: geçmiş günün unutulan molası her yoldan GECE kuralıyla kapanır (sahip: hak YOK)
+        cur.execute("""UPDATE ey_mola SET bitis_ts=baslangic_ts, bitis_tur='gece_otomatik', sure_dk=0, yemek_hakki=FALSE,
+                              gorulen='gece_otomatik', bitis_istek_id=%s, degistiren=COALESCE(%s, degistiren) WHERE id=%s""", (istek_id, kim, r["id"]))
+        return {"id": r["id"], "sure_dk": 0, "yemek_hakki": False}
+    sinir = mola_limit(cur) + 1
+    if ts is None and (datetime.now(timezone.utc) - r["baslangic_ts"]).total_seconds() >= sinir * 60:   # sahip: 61. dk kuralı
+        cur.execute("""UPDATE ey_mola SET bitis_ts=baslangic_ts + (%s || ' minutes')::interval, bitis_tur='otomatik_limit', sure_dk=%s,
+                              yemek_hakki=FALSE, gorulen='otomatik_limit', bitis_istek_id=%s, degistiren=COALESCE(%s, degistiren)
+                        WHERE id=%s""", (str(sinir), sinir, istek_id, kim, r["id"]))
+        return {"id": r["id"], "sure_dk": sinir, "yemek_hakki": False}
     if ts is not None and ts < r["baslangic_ts"]:
         raise HTTPException(400, f"Saat molanın başlangıcından ({_saat(r['baslangic_ts'])}) önce olamaz")   # Codex: sahte hak üretmesin
     bit = ts if ts is not None else max(datetime.now(timezone.utc), r["baslangic_ts"])   # Codex 2: saat kayması kapanışı geri aldırmasın
@@ -394,7 +415,8 @@ def _mola_durum(cur, personel_id: str, gun: date) -> Optional[dict]:
         sn = max(0, (datetime.now(timezone.utc) - m["baslangic_ts"]).total_seconds())
         return {"durum": "suruyor", "bas": _saat(m["baslangic_ts"]), "sure_dk": int(sn // 60), "limit_dk": lim, "hak_dustu": sn > lim * 60}
     return {"durum": "bitti", "bas": _saat(m["baslangic_ts"]), "bit": _saat(m["bitis_ts"]), "sure_dk": m["sure_dk"], "limit_dk": lim,
-            "hak_dustu": not m["yemek_hakki"] and not m["hak_elle"]}
+            "hak_dustu": not m["yemek_hakki"] and not m["hak_elle"],
+            "otomatik": m.get("bitis_tur") in ("otomatik_limit", "gece_otomatik")}
 
 
 def yemek_ozet(cur, bas: date, son: date) -> dict:
@@ -879,10 +901,15 @@ async def mola_bitir(request: Request):
                 raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
             return {"ok": True, "tekrar": True, "hak_dustu": not r["yemek_hakki"],
                     "mesaj": f"Mola zaten bitti · {_saat(r['bitis_ts'])} · {r['sure_dk']} dk" + ("" if r["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
-        cur.execute("SELECT sube_id FROM ey_mola WHERE personel_id=%s AND bitis_ts IS NULL", (p["id"],))
+        cur.execute("SELECT sube_id, baslangic_ts, NOW() - baslangic_ts AS gecen FROM ey_mola WHERE personel_id=%s AND bitis_ts IS NULL", (p["id"],))
         a = cur.fetchone()
         if not a:
             raise HTTPException(409, "Açık molan yok")
+        en_az = mola_en_az(cur)
+        gecen_dk = int(dict(a)["gecen"].total_seconds() // 60)
+        if gecen_dk < en_az:   # sahip: 45 dk'dan önce mola bitirilemez (QR harcanmadan önce reddedilir)
+            raise HTTPException(409, f"Mola {en_az} dakikadan önce bitirilemez — {en_az - gecen_dk} dk kaldı "
+                                     f"(başlangıç {_saat(dict(a)['baslangic_ts'])})")
         sube, k = _qr_islem(cur, c, p, v, "mola_bit")
         if dict(a)["sube_id"] != sube:
             raise HTTPException(409, "Molan başka şubede — o şubenin QR'ını okut")
