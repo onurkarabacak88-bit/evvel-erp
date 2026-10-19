@@ -89,28 +89,7 @@ def _sayim(meta, alan: str) -> Optional[dict]:
     return out
 
 
-def _urun_ac_parcala(aciklama: str):
-    raw = aciklama or ""
-    for on in ("URUN_AC_JSON:", "URUN_KULLANIMA_AL_JSON:"):
-        if raw.startswith(on):
-            raw = raw[len(on):]
-            break
-    else:
-        return []
-    try:
-        obj = json.loads(raw.split(" | ", 1)[0].strip())
-    except Exception:  # noqa: BLE001
-        return []
-    out = []
-    for it in (obj.get("kalemler") or []) if isinstance(obj, dict) else []:
-        if isinstance(it, dict):
-            try:
-                adet = max(0, int(it.get("adet") or 0))
-            except (TypeError, ValueError):
-                adet = 0
-            if adet:
-                out.append((str(it.get("urun_id") or "").strip(), str(it.get("urun_ad") or ""), adet))
-    return out
+from evvel_yeni_kopru import urun_ac_parcala as _urun_ac_parcala   # köprü tek yerde (kesimde dosya silinir)
 
 
 def _stok_ekle_parcala(aciklama: str):
@@ -296,3 +275,8 @@ def _saat(ts):
         return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%d.%m %H:%M")
     except Exception:  # noqa: BLE001
         return None
+
+
+# ── AÇIK KAPILAR (sök-tak): başka modüller iç '_' fonksiyonu değil BU adları kullanır — içerik aynı, kapı tek ──
+kod_anahtar = _kod_anahtar
+anahtar_ad = _anahtar_ad

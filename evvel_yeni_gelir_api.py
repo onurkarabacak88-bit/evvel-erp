@@ -17,7 +17,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from database import db
-from evvel_yeni_kasa_api import (DIS_TURLERI, KIRA_CEPLERI, _baslangic, _hazirla, _oranlar, _yukle)
+from evvel_yeni_kasa_api import (DIS_TURLERI, KIRA_CEPLERI, kasa_baslangic as _baslangic, kasa_hazirla as _hazirla, pos_oranlari as _oranlar, kasa_kayitlari as _yukle)
 from evvel_yeni_cekirdek import bugun as _bugun, tl_sayi as _tl_sayi
 
 router = APIRouter(prefix="/api/evvel-yeni/gelir", tags=["evvel-yeni-gelir"])
@@ -144,3 +144,8 @@ def gelir_ozet(ay: Optional[str] = None):
         "diger_gelirler": [{"ad": k, "tutar": _tl_sayi(v)} for k, v in diger.items()],
         "gelir_sayilmayanlar": [{"ad": k, "tutar": _tl_sayi(v)} for k, v in sayilmaz.items()],
     }
+
+
+# ── AÇIK KAPILAR (sök-tak): başka modüller iç '_' fonksiyonu değil BU adları kullanır — içerik aynı, kapı tek ──
+ay_sinirlari = _ay_sinirlari
+kapanis_kanallari = _kapanis_kanallari

@@ -153,6 +153,7 @@
 | 59 | Gece zinciri | her ÇIKAR kararında ilgili gece adımı sökülür |
 
 ## F. İLERİDE YAPILACAKLAR (sahip erteledi — unutulmasın)
+- 🧩 **Ödeme ↔ Kasa iç bağı** (sök-tak, 2026-10-19): evvel_yeni_odeme_api Kasa'nın iç fonksiyonlarını (_hareket_dto, _bakiye, _eksi_denetle, _etki, _kilit_denetle, _olaylar…) doğrudan kullanıyor — aynı para defteri alanı; ileride Kasa'da açık 'ödeme yazma' kapısına çevrilecek. Diğer modüller (gelir, gider, kart, kira, maaş, satış, tanım, toptancı) açık kapılara geçti.
 - 🧪 **Reçete** (F26, sahip 2026-10-19 "şimdi bağlanmasın, ileride"): EY'de yeni reçete modülü — Ürün Aç olaylarını (`ey_sube_olay urun_ac`, sayım ürünleri dahil) + satışı ey_urun kimliğiyle karşılaştırır; eski `recete_api` 1 Kasım'da donar.
 
 ## E. KESİM / YETKİ

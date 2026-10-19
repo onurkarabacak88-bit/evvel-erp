@@ -37,7 +37,7 @@ MODULLER: List[dict] = [
      "aciklama": "kredi tanımı + kredi takvimi (borç = taksit; ödeme Ödeme'den)"},
     {"kod": "kart", "ad": "Kartlar", "ikon": "💳", "sektor": "genel", "gerekir": ["kasa", "odeme"], "aciklama": "kullanılabilir limit, son ödeme"},
     {"kod": "toptanci", "ad": "Toptancılar", "ikon": "🚚", "sektor": "genel", "gerekir": ["kasa", "tanim", "urun"], "aciklama": "borç = açılış + alım − ödeme"},
-    {"kod": "depo", "ad": "Depo", "ikon": "📦", "sektor": "genel", "gerekir": ["gider", "tanim"], "aciklama": "ürün nerede — tek hareket defteri"},
+    {"kod": "depo", "ad": "Depo", "ikon": "📦", "sektor": "genel", "gerekir": ["tanim", "urun"], "aciklama": "ürün nerede — tek hareket defteri"},
     {"kod": "panel", "ad": "Şube paneli", "ikon": "🧾", "sektor": "genel", "gerekir": ["olay", "kasa", "tanim", "urun", "depo"],
      "menu": False, "aciklama": "şube personelinin ekranı (açılış, kapanış, ürün aç, fire…) — Evvel Yeni defterlerine yazar; 1 Kasım'a kadar deneme"},
     {"kod": "yoklama", "ad": "Yoklama · QR telefon", "ikon": "📱", "sektor": "genel", "gerekir": ["tanim", "olay"], "menu": False,

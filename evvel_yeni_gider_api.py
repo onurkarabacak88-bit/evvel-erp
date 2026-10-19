@@ -30,9 +30,9 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_kasa_api import _hazirla, _oranlar, _yukle
+from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, pos_oranlari as _oranlar, kasa_kayitlari as _yukle
 from evvel_yeni_cekirdek import aktor as _aktor, kilit as _kilit, kurus as _kurus, tl_sayi as _tl_sayi
-from evvel_yeni_gelir_api import _ay_sinirlari, _kapanis_kanallari
+from evvel_yeni_gelir_api import ay_sinirlari as _ay_sinirlari, kapanis_kanallari as _kapanis_kanallari
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/evvel-yeni/gider", tags=["evvel-yeni-gider"])
@@ -125,32 +125,7 @@ def _mal_satirlari(cur, bas: date, son: date, depo: str):
     return satir
 
 
-def _urun_ac_parcala(aciklama: str):
-    """URUN_AC / URUN_KULLANIMA_AL JSON'undan (urun_id, ad, adet) — bozuk metin sessizce atlanır."""
-    raw = (aciklama or "")
-    for on in ("URUN_AC_JSON:", "URUN_KULLANIMA_AL_JSON:"):
-        if raw.startswith(on):
-            raw = raw[len(on):]
-            break
-    else:
-        return []
-    raw = raw.split(" | ", 1)[0].strip()
-    try:
-        obj = json.loads(raw)
-    except Exception:  # noqa: BLE001
-        return []
-    out = []
-    for it in (obj.get("kalemler") or []) if isinstance(obj, dict) else []:
-        if not isinstance(it, dict):
-            continue
-        uid = str(it.get("urun_id") or "").strip()
-        try:
-            adet = max(0, int(it.get("adet") or 0))
-        except (TypeError, ValueError):
-            adet = 0
-        if uid and adet:
-            out.append((uid, str(it.get("urun_ad") or "").strip(), adet))
-    return out
+from evvel_yeni_kopru import urun_ac_parcala as _urun_ac_parcala   # köprü tek yerde (kesimde dosya silinir)
 
 
 def _tuketim_satirlari(cur, bas: date, son: date):
@@ -171,6 +146,8 @@ def _tuketim_satirlari(cur, bas: date, son: date):
             for r in ham:
                 r = dict(r)
                 for uid, ad, adet in _urun_ac_parcala(r["aciklama"]):
+                    if not uid:
+                        continue
                     k = (str(r["sube_id"]), r["tarih"], uid)
                     if k in top:
                         top[k][1] += adet
@@ -413,3 +390,7 @@ def siniflandir(body: SinifBody, x_evvel_oturum: Optional[str] = Header(default=
                        ON CONFLICT (kaynak_ref) DO UPDATE SET tur=EXCLUDED.tur, kimin=EXCLUDED.kimin, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
                     (body.kaynak_ref, body.tur, (body.kimin or ("Patron" if body.tur == "cekis" else None)), kim))
     return {"ok": True}
+
+
+# ── AÇIK KAPILAR (sök-tak): başka modüller iç '_' fonksiyonu değil BU adları kullanır — içerik aynı, kapı tek ──
+sinif_tablosu = _sinif_tablosu

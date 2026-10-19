@@ -48,7 +48,7 @@ def _ay_onceki(ay: str) -> str:
 def _gunluk(ay: str) -> dict:
     """{(sube_id, gun): {bardak, ciro, nakit, neden}} — bar sayımı + kasa kapanışı, iki ay."""
     from evvel_yeni_bar_api import bar_ozet
-    from evvel_yeni_kasa_api import _hazirla, _yukle
+    from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
     out = {}
     for a in (_ay_onceki(_ay_onceki(ay)), _ay_onceki(ay), ay):
         try:
@@ -295,8 +295,8 @@ def satis_gun(gun: Optional[str] = None):
     satıştan kaynaklı fireyi de görmeli"). Şube şube: kalem kalem sabah · giren · akşam · KULLANILAN · FİRE · SATILAN,
     fire listesi (sebep), ciro, bardaktan BEKLENEN ciro → SATIŞTAN AÇIK, kör kasa sayımı → KASA AÇIĞI."""
     import json as _json
-    from evvel_yeni_bar_api import bar_ozet, _kod_anahtar, _anahtar_ad, KALEMLER
-    from evvel_yeni_kasa_api import _hazirla, _yukle
+    from evvel_yeni_bar_api import bar_ozet, kod_anahtar as _kod_anahtar, anahtar_ad as _anahtar_ad, KALEMLER
+    from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
     from evvel_yeni_cekirdek import bugun as _bugun
     g_ = (gun or (_bugun() - timedelta(days=1)).isoformat())[:10]
     ay = g_[:7]
@@ -454,7 +454,7 @@ def devir_defteri(ay: Optional[str] = None):
     # Fable: yönetimin Kasa'ya ELLE girdiği teslimler (panelde yok) devir defterinde "kime"de görünmüyordu
     elle_tes = {}
     try:
-        from evvel_yeni_kasa_api import _hazirla as _kh, _yukle as _ky
+        from evvel_yeni_kasa_api import kasa_hazirla as _kh, kasa_kayitlari as _ky
         _kh()
         with db() as (conn2, cur2):
             _, C2, kayit2, _ = _ky(cur2, tum_donemler=True)

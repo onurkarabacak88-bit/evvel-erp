@@ -2183,3 +2183,10 @@ def kapanis_uyari_gordum(body: DenemeBody, x_evvel_oturum: Optional[str] = Heade
 
 # 🧩 Kasa'nın kendi bekleyen işi: reddedilen / uyarılı panel kapanışları (Zafer 16 Ekim dersi)
 bekleyen_is_kaydet("kapanis", lambda cur, b: _kapanis_deneme_isleri(cur, b["C"]))
+
+
+# ── AÇIK KAPILAR (sök-tak): başka modüller iç '_' fonksiyonu değil BU adları kullanır — içerik aynı, kapı tek ──
+# kasa_hazirla zaten PUBLIC (yukarıda) — tekrar ad tanımlanmaz
+kasa_kayitlari = _yukle
+pos_oranlari = _oranlar
+kasa_baslangic = _baslangic

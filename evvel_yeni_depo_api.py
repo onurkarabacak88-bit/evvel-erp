@@ -269,7 +269,7 @@ def senkron(cur) -> dict:
     # 3) ÜRÜN AÇ — tüketim
     try:
         with savepoint(cur, "sp_dp_ac"):
-            from evvel_yeni_gider_api import _urun_ac_parcala
+            from evvel_yeni_kopru import urun_ac_parcala as _urun_ac_parcala   # Fable: depo artık Gider'e bağlı değil
             cur.execute("""SELECT id, sube_id::text AS sid, tarih, olay_ts, aciklama, etiket FROM operasyon_defter
                             WHERE etiket IN ('URUN_AC','URUN_KULLANIMA_AL') AND tarih >= %s
                               AND NOT (etiket='URUN_AC' AND aciklama LIKE '%%[BİTTİ]%%')""", (BASLANGIC,))

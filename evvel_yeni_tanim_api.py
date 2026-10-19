@@ -239,7 +239,7 @@ def _slug(ad: str) -> str:
 @router.get("/liste")
 def liste():
     """Bütün tanımlar tek seferde (aktif + pasif)."""
-    from evvel_yeni_kasa_api import _hazirla
+    from evvel_yeni_kasa_api import kasa_hazirla as _hazirla
     from evvel_yeni_cekirdek import bugun as _bugun
     _hazirla()
     ay = _bugun().strftime("%Y-%m")

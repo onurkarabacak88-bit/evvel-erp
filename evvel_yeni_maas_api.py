@@ -106,7 +106,7 @@ def _vardiya_onerisi(ay: str) -> dict:
 
 def _odemeler(cur) -> dict:
     """(personel_id, ait_ay) → {kalem: kuruş} — Evvel Yeni ödeme formu + şubenin elden avansı (iptaller hariç)."""
-    from evvel_yeni_kasa_api import _yukle
+    from evvel_yeni_kasa_api import kasa_kayitlari as _yukle
     _, _, kayit, _ = _yukle(cur, tum_donemler=True)
     out = {}
     for h in kayit:

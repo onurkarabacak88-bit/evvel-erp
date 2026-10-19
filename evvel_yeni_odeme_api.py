@@ -518,7 +518,7 @@ def patron_ata(body: PatronAtaBody, x_evvel_oturum: Optional[str] = Header(defau
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
         if body.kaynak == "cekis":
-            from evvel_yeni_gider_api import _sinif_tablosu
+            from evvel_yeni_gider_api import sinif_tablosu as _sinif_tablosu
             _sinif_tablosu(cur)
             cur.execute("""INSERT INTO ey_gider_sinif (kaynak_ref, tur, kimin, degistiren) VALUES (%s,%s,%s,%s)
                            ON CONFLICT (kaynak_ref) DO UPDATE SET tur=EXCLUDED.tur, kimin=EXCLUDED.kimin, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
