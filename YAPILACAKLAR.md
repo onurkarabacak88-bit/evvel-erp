@@ -152,6 +152,9 @@
 | 58 | Veritabanı & ortak yardımcılar | KALIR |
 | 59 | Gece zinciri | her ÇIKAR kararında ilgili gece adımı sökülür |
 
+## F. İLERİDE YAPILACAKLAR (sahip erteledi — unutulmasın)
+- 🧪 **Reçete** (F26, sahip 2026-10-19 "şimdi bağlanmasın, ileride"): EY'de yeni reçete modülü — Ürün Aç olaylarını (`ey_sube_olay urun_ac`, sayım ürünleri dahil) + satışı ey_urun kimliğiyle karşılaştırır; eski `recete_api` 1 Kasım'da donar.
+
 ## E. KESİM / YETKİ
 
 | # | İş |

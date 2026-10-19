@@ -77,7 +77,7 @@
 |---|---|---|---|---|
 | F14 | Kiralık mülk defteri (kiracı, sözleşme, tahsilat) | 0 (Eyl) | TULİPİ'den ayrı defter — Evvel Yeni'ye ayrı "Mülk" modülü mü, şimdilik eskide mi kalsın? | |
 | F18 | Vergi & KDV | 0 | Şimdi mi, sonra mı? | |
-| F26 | Reçete (+değirmen sayacı) | 53 | Ürün maliyeti için gerekli — taşınsın mı? | |
+| F26 | Reçete (+değirmen sayacı) | 53 | Ürün maliyeti için gerekli — taşınsın mı? | **İLERİDE** (2026-10-19: şimdi bağlanmaz, eski sistemle durur; ileride EY'ye yeni depo defteri + ey_urun kimliğiyle kurulacak) |
 | F38 | Personel puan defteri | 107 | Kullanıyor musunuz? | |
 | F46 | TV menü | 0 (Ağu) | Ayrı ürün — Evvel Yeni dışında kalsın mı? | |
 | F47 | Ev / dükkân tasarımı | 0 (Haz) | Çıkar mı? | |
@@ -116,3 +116,4 @@
 | 17 | Eski "Para Nerede" şelalesi ÇIKAR | Kasa → Kasam (tek defter) |
 | 18 | Eski vergi/KDV ekranları ÇIKAR | Vergi muhasebecide. Ödeme'ye "Vergi" konusu (şube/ortak, tür, ait ay). Ürün KDV oranları ürün kataloğu taşınırken EY ürün tanımına (KESIM 13) |
 | 19 | Eski onay kuyruğu ÇIKAR | Bekleyen işler (5 alt sekme) yerini aldı; kasa farkı eşiği 20 ₺ (altı Bekleyen işler'e düşmez, Açık farklar'da). Eski 337 bekleyen onaya DOKUNULMADI (EY okumuyor; reddet yan etkili) — eski sistemle kalkar |
+| 20 | Reçete (F26) ŞİMDİ BAĞLANMAZ — İLERİDE YAPILACAKLAR | 2026-10-19 sahip: "Reçete şuan için bağlanmasın ama ileride yapılacaklar arasına koyulsun." 1 Kasım'da eski reçete kontrolü donar ('ürün aç kaydı yok' der); ileride EY Ürün Aç olaylarını (sayım ürünleri dahil) ey_urun kimliğiyle okuyan yeni reçete modülü |
