@@ -638,8 +638,9 @@ def _kalemler(cur, kalemler: List[Kalem], takip: Optional[str] = None, pasif_olu
 @router.post("/{sube_id}/urun-ac")
 def urun_ac(sube_id: str, b: UrunAcBody):
     """Ürün aç — BÜTÜN katalog (sahip: "bütün mekanizma", Basamak 5). Sahip (2026-10-19): açılış/kapanışta YALNIZ tezgah sayılır.
-    takip='acilinca' → Depo 'ac' depo:şube → dışarı:tuketim (= gider) · panelde sayılan (panel_sayim: bardak/süt/su…) → depo:şube →
-    bar:şube (taşıma; tüketimi bar sayım farkı) · yalnız dönem sayımlı → yalnız olay. Eksi stok ENGELLENMEZ (merkeze iş)."""
+    Panelde sayılan (panel_sayim: bardak/süt/su…) → depo:şube → bar:şube (taşıma; tüketimi bar sayım farkı) · diğer HER ürün
+    (açılınca biten ya da depoda dönem sayımlı: kahve, şurup, toz…) → depo:şube → dışarı:tuketim (= gider; eski panel kuralı,
+    Fable 2026-10-19). Eksi stok ENGELLENMEZ (merkeze iş)."""
     _TUR = "urun_ac"
     def is_(cur, c):
         from evvel_yeni_depo_api import hareket_yaz
@@ -653,12 +654,10 @@ def urun_ac(sube_id: str, b: UrunAcBody):
         for i, x in enumerate(k):
             if oid is None:   # tekrar gönderim
                 continue
-            if x["takip"] == "acilinca":   # açılınca biten (şurup, kapak…) → gider
-                hedef = "dışarı:tuketim"
-            elif x["panel_sayim"]:          # tezgahta sayılan (bardak, süt, su…) → bara taşınır; tüketimi bar sayım farkı verir
+            if x["panel_sayim"]:   # tezgahta sayılan (bardak, süt, su…) → bara TAŞINIR; tüketimi bar sayım farkı verir (çift gider yok)
                 hedef = f"bar:{sube_id}"
-            else:                           # yalnız dönem sayımıyla izlenen → yalnız iz (tüketimi depo sayım farkı verir)
-                continue
+            else:                  # diğer her şey (kahve, şurup, toz, kapak, temizlik…) açılınca GİDER — eski panel kuralı;
+                hedef = "dışarı:tuketim"   # merkez depo sayımındaki fark ayrıca 'kayıp/fazla' görünür (gidere karışmaz)
             hareket_yaz(cur, kaynak_ref=f"{kok}:{i}", tur="ac", urun_id=x["urun_id"], urun_ad=x["ad"], adet=x["adet"],
                         kaynak=f"depo:{sube_id}", hedef=hedef, kim=f"{KIM} · {p['ad']}", bag=kok, gun=c["gun"])
         return {"olay": oid, "tekrar": oid is None, "mesaj": f"{len(k)} kalem · {sum(x['adet'] for x in k)} adet açıldı"}

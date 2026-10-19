@@ -96,6 +96,15 @@ def _ey_urun_dogrula(cur, idler) -> dict:
     return b
 
 
+def _simdi_tr():
+    """Hareket saati — Türkiye saati (Fable: container UTC; dilimsiz datetime.now() 3 saat erken yazıyordu)."""
+    try:
+        from tr_saat import dt_now_tr
+        return dt_now_tr()
+    except Exception:  # noqa: BLE001
+        return datetime.now()
+
+
 def _n(x) -> str:
     return " ".join(str(x or "").replace("İ", "i").replace("I", "ı").lower().split())
 
@@ -364,7 +373,7 @@ def hareket_yaz(cur, *, kaynak_ref: str, tur: str, urun_id: str, adet: int, kayn
     b = _ey_urun_dogrula(cur, [urun_id])   # Fable: yeni evrene yalnız ey_urun kimliği
     _konum_kilidi(cur, kaynak, hedef)   # Codex: sayımla eşzamanlı hareket fark hesabını bozmasın
     return _yaz(cur, [(kaynak_ref, tur, str(urun_id), urun_ad or b[str(urun_id)]["ad"], adet, kaynak, hedef, gun or _bugun(),
-                       datetime.now(), kim, aciklama, bag)], yeni=True) == 1
+                       _simdi_tr(), kim, aciklama, bag)], yeni=True) == 1
 
 
 def urun_hareketi_var(cur, urun_id: str) -> bool:
@@ -442,7 +451,7 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
                 ht = "acilis_sayim" if tur == "acilis" else "sayim"
                 kaynak, hedef = ("dışarı:sayim", konum) if f_ > 0 else (konum, "dışarı:sayim")
                 acik = ("Açılış sayımı" if tur == "acilis" else "Sayım") + f" — defter {onceki}, sayılan {say}"
-            rows.append((f"sayim:{sid}:{uid}", ht, uid, uad, abs(f_), kaynak, hedef, gun, datetime.now(), kim, acik, sid))
+            rows.append((f"sayim:{sid}:{uid}", ht, uid, uad, abs(f_), kaynak, hedef, gun, _simdi_tr(), kim, acik, sid))
     if not kayit:
         raise HTTPException(400, "Hiç ürün sayılmadı")
     ilk = False
@@ -648,7 +657,7 @@ def merkez_kabul(yid: str, body: KabulBody, x_evvel_oturum: Optional[str] = Head
         if cur.fetchone():
             raise HTTPException(409, "Şube bu sevki zaten kabul etmiş")
         n = _yaz(cur, [(f"yolda:{yid}:merkez_kabul", "kabul", sv["urun_id"], sv["urun_ad"], sv["adet"], "yolda", f"depo:{dict(h)['hedef']}",
-                        _bugun(), datetime.now(), kim, "Merkez adına kabul (şube kabul ederse onun adedi geçer)"
+                        _bugun(), _simdi_tr(), kim, "Merkez adına kabul (şube kabul ederse onun adedi geçer)"
                         + (f" · {body.sebep}" if body.sebep else ""), yid)], yeni=bool(dict(sv).get("yeni")))   # Fable: sevkin evreni
     if not n:
         raise HTTPException(409, "Bu sevk zaten merkez adına kabul edilmiş")
@@ -683,13 +692,13 @@ def fark_coz(yid: str, body: FarkCozBody, x_evvel_oturum: Optional[str] = Header
             if kalan <= 0:
                 raise HTTPException(400, "Yolda kalan eksik yok")
             row = (f"yolda:{yid}:coz:{body.karar}:{uuid.uuid4().hex[:6]}", "kayip" if body.karar == "kayip" else "iade_geri", u, ua, kalan, "yolda",
-                   "dışarı:kayip" if body.karar == "kayip" else (sev or {}).get("kaynak"), _bugun(), datetime.now(), kim,
+                   "dışarı:kayip" if body.karar == "kayip" else (sev or {}).get("kaynak"), _bugun(), _simdi_tr(), kim,
                    ("Eksik geldi → KAYIP" if body.karar == "kayip" else "Eksik geldi → kaynağa geri") + ek, yid)
         elif body.karar in ("fazla_onay", "fazla_ret"):
             if fazla <= 0 or not hedef:
                 raise HTTPException(400, "Askıda fazla yok")
             row = (f"yolda:{yid}:coz:{body.karar}:{uuid.uuid4().hex[:6]}", body.karar, u, ua, fazla, "askida",
-                   hedef if body.karar == "fazla_onay" else "dışarı:bilinmeyen", _bugun(), datetime.now(), kim,
+                   hedef if body.karar == "fazla_onay" else "dışarı:bilinmeyen", _bugun(), _simdi_tr(), kim,
                    ("Fazla kabul ONAYLANDI → şube stoğuna" if body.karar == "fazla_onay" else "Fazla kabul REDDEDİLDİ (birim hatası)") + ek, yid)
         else:
             raise HTTPException(400, "karar: kayip | iade | fazla_onay | fazla_ret")

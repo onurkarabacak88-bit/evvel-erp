@@ -132,10 +132,11 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
     (olay saati) + pasta sevk kabulü (Depo defteri, yeni evren). Sahip (2026-10-19): açılış/kapanışta YALNIZ tezgah sayılır."""
     from evvel_yeni_olay import olaylar
     from evvel_yeni_urun_api import katalog
-    kat = katalog(cur)
+    kat = katalog(cur, hepsi=True)   # Fable: sayımı yapılmış ürün sonradan pasife alınırsa kalem kaybolmasın
     sayilan = [(str(u["id"]), u["ad"]) for k in kat for u in k["urunler"] if u.get("panel_sayim")]
     sayilan_id = {i for i, _ in sayilan}
-    pasta_id = {str(u["id"]) for k in kat if "pasta" in (k["ad"] or "").lower() for u in k["urunler"] if str(u["id"]) not in sayilan_id}
+    pasta_id = {str(u["id"]) for k in kat for u in k["urunler"] if str(u["id"]) not in sayilan_id
+                and ("pasta" in (k["ad"] or "").lower() or any(w in (u["ad"] or "").lower() for w in _PASTA_IZ))}
     kalemler = sayilan + [("pasta", "Pasta (toplam)")]
     kodlar = [k for k, _ in kalemler]
     # Satış kontrolü bardakları anlam anahtarıyla arar (bardak_kucuk/buyuk/plastik) — ürün adından TEK eşleştiriciyle

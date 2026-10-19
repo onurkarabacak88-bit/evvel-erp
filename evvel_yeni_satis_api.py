@@ -59,6 +59,10 @@ def _gunluk(ay: str) -> dict:
         for s in b["subeler"]:
             for g in s["gunler"]:
                 k = {(x.get("anahtar") or x["kod"]): x for x in g["kalemler"]}   # yeni dönem: kod=ürün kimliği, anahtar=anlam
+                if any(c not in k for c in BARDAKLAR):   # Fable: yeni dönemde bardak kalemi katalogda yoksa 500 olmasın
+                    out[(s["sube_id"], g["gun"])] = {"bardak": 0, "neden": "bardak kalemi katalogda yok (panelde sayılır işaretli değil)",
+                                                     "sayim_var": bool(g.get("acilis_var") or g.get("kapanis_var")), "bardak_kalem": {}}
+                    continue
                 nets = [k[c]["net_eksilme"] for c in BARDAKLAR]
                 neden = None
                 if g["durum"] in ("kapanis_yok", "acilis_yok"):
