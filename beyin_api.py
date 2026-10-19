@@ -1890,7 +1890,9 @@ def gece_sentez() -> None:
             pass
         # KONUŞMA KATMANI: sentez frenlerden geçtiyse sahibe seslen
         try:
-            if sonuc and sonuc.get("ok") and (sonuc.get("cevap") or "").strip():
+            from evvel_yeni_cekirdek import eski_panel_zinciri_acik
+            # 🔌 1 Kasım: anlatı eski panel duyularından beslenir — yeni panelde sahibe WhatsApp'la gitmez (tek anahtar)
+            if sonuc and sonuc.get("ok") and (sonuc.get("cevap") or "").strip() and eski_panel_zinciri_acik():
                 vk = sonuc.get("veri_kalite") or {}
                 mesaj = (
                     "🧠 *EVVEL BEYNİ — GECE GÖZLEM GÜNLÜĞÜ*\n"

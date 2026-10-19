@@ -580,6 +580,8 @@ def _akilli_denetim_telafi(gun_sayisi: int = 3, gecikme_sn: int = 90):
     ⚠️ KALKIŞI BEKLETMEZ: ayrı thread + `gecikme_sn` gecikme. Uygulama önce
     istek karşılamaya başlar, DB havuzu açılışta dövülmez.
     """
+    if not _eski_panel_zinciri_acik():   # 🔌 1 Kasım: eski panel tablolarından KAPANIS_YOK kararı üretmesin (tek anahtar)
+        return
     import time as _time
     try:
         _time.sleep(max(gecikme_sn, 5))
@@ -687,20 +689,16 @@ def _gece_isi_bitir(is_adi: str, tarih, sonuc: str = "ok") -> None:
 
 
 def _eski_panel_zinciri_acik() -> bool:
-    """🔌 TEK ANAHTAR (Fable F7, 1 Kasım listesi madde 3): yeni şube paneli canlıya geçince (iş günü ≥ panel_baslangic) ESKİ panel
-    tablolarına (sube_operasyon_event, gorev_yoklama, sube_fire_bildirim, kasa_teslim, ciro_taslak, operasyon_defter) bakan gece
-    halkaları SUSAR — boşalan tablolardan sahte "kapanış girilmedi / açık / eksik" üretmesinler (WhatsApp günlük özet dahil).
-    SİLİNMEZ: ey_ayar 'eski_gece_zinciri' = 'acik' yazılırsa geri açılır; söküm 1 hafta canary sonra (E1 kesim listesi).
-    Emin olunamazsa (hata) eski davranış: açık."""
+    """🔌 TEK ANAHTAR (Fable F7, 1 Kasım listesi madde 3) — kuralın kendisi evvel_yeni_cekirdek.eski_panel_zinciri_acik (beyin de onu okur).
+    Yeni şube paneli canlıya geçince (iş günü ≥ panel_baslangic) ESKİ panel tablolarına (sube_operasyon_event, gorev_yoklama,
+    sube_fire_bildirim, kasa_teslim, ciro_taslak, operasyon_defter) bakan halkalar SUSAR — sahte "kapanış girilmedi / eksik" üretmesinler.
+    SİLİNMEZ: ey_ayar 'eski_gece_zinciri' = 'acik' ile geri açılır."""
     try:
-        from evvel_yeni_cekirdek import ayar_oku, is_gunu, panel_baslangic
-        with db() as (_c, cur):
-            if (ayar_oku(cur, "eski_gece_zinciri", "") or "").strip() == "acik":
-                return True
-            return is_gunu() < panel_baslangic(cur)
+        from evvel_yeni_cekirdek import eski_panel_zinciri_acik
     except Exception as e:  # noqa: BLE001
-        logger.warning(f"🔌 eski gece zinciri anahtarı okunamadı (açık sayıldı): {e}")
+        logger.warning(f"🔌 eski panel zinciri anahtarı yüklenemedi (açık sayıldı): {e}")
         return True
+    return eski_panel_zinciri_acik()
 
 
 def _gece_yarisi_scheduler():
@@ -1331,6 +1329,8 @@ def _gece_yarisi_scheduler():
                     _bekle2 = (hedef - dt_now_tr_naive()).total_seconds()
                     if _bekle2 > 0:
                         _time.sleep(_bekle2)
+                    if not _eski_panel_zinciri_acik():   # 🔌 Codex #3: 02:30'da YENİDEN bak (00:30'da iş günü hâlâ dündü)
+                        raise RuntimeError("eski panel zinciri kapalı — atlandı")
                     from sube_operasyon import ensure_events_tum_subeler
                     with db() as (conn, cur):
                         _ne = ensure_events_tum_subeler(cur)
@@ -1452,7 +1452,7 @@ def _kapanis_hatirlatma_scheduler():
         try:
             from tr_saat import dt_now_tr
             _su = dt_now_tr()
-            if 11 <= _su.hour < 13 and _EKSIK_CIRO_EMNIYET.get("gun") != _su.date().isoformat():
+            if 11 <= _su.hour < 13 and _EKSIK_CIRO_EMNIYET.get("gun") != _su.date().isoformat() and _eski_panel_zinciri_acik():   # 🔌 tek anahtar
                 from ciro_taslak_api import eksik_gun_ciro_tara, EksikGunTaraBody
                 _er = eksik_gun_ciro_tara(EksikGunTaraBody(gun_sayisi=3, uygula=True))
                 _EKSIK_CIRO_EMNIYET["gun"] = _su.date().isoformat()
@@ -1690,6 +1690,8 @@ def startup():
     # is_gunu_tr() startup anında doğru iş gününü döndürür.
     try:
         from sube_operasyon import ensure_events_tum_subeler
+        if not _eski_panel_zinciri_acik():   # 🔌 1 Kasım: eski panel event satırı açılmaz (tek anahtar)
+            raise RuntimeError("eski panel zinciri kapalı — atlandı")
         with db() as (conn, cur):
             _n = ensure_events_tum_subeler(cur)
             conn.commit()

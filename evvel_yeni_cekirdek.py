@@ -173,6 +173,20 @@ def panel_baslangic(cur) -> date:
         return date(2026, 11, 1)
 
 
+def eski_panel_zinciri_acik() -> bool:
+    """PUBLIC 🔌 TEK ANAHTAR: eski panel tablolarına bakan gece/gündüz işleri (main.py halkaları, beyin gece WhatsApp'ı) çalışsın mı?
+    İş günü < panel_baslangic → açık. ey_ayar 'eski_gece_zinciri'='acik' → zorla açık (geri dönüş, silinmez).
+    Ayar okunamazsa (Codex #8) sabit 1 Kasım'a göre karar verir — hata yüzünden kesimden sonra eski uyarı üretilmez."""
+    try:
+        with db() as (_c, cur):
+            if (ayar_oku(cur, "eski_gece_zinciri", "") or "").strip() == "acik":
+                return True
+            return is_gunu() < panel_baslangic(cur)
+    except Exception as e:  # noqa: BLE001
+        log.warning("🔌 eski panel zinciri anahtarı okunamadı (sabit 1 Kasım'a göre): %s", str(e)[:150])
+        return is_gunu() < date(2026, 11, 1)
+
+
 def yeni_donem(cur) -> bool:
     """PUBLIC: panel_baslangic (1 Kasım) geldi mi — okuyucular bundan sonra YALNIZ Evvel Yeni kaynaklarını (yeni katalog
     kimliği) okur; öncesi geçiş (eski aktarım). Tek kural, tek yer (Fable altyapı denetimi)."""
