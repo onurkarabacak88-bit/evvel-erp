@@ -893,14 +893,14 @@ async def mola_baslat(request: Request):
         if not a:
             raise HTTPException(409, "Önce giriş yap")
         a = dict(a)
-        sube, k = _qr_islem(cur, c, p, v, "mola_bas")
-        if a["sube_id"] != sube:
-            raise HTTPException(409, "Girişin başka şubede — o şubenin QR'ını okut")
         gun = is_gunu()
         cur.execute("SELECT is_gunu, bitis_ts FROM ey_mola WHERE personel_id=%s AND (is_gunu=%s OR bitis_ts IS NULL) LIMIT 1", (p["id"], gun))
         r = cur.fetchone()
-        if r:
+        if r:   # Fable: QR harcanmadan ÖNCE (yoksa yeniden okutma gerekirdi)
             raise HTTPException(409, "Molan zaten sürüyor — önce bitir" if dict(r)["bitis_ts"] is None else "Bugünkü yemek molanı kullandın")
+        sube, k = _qr_islem(cur, c, p, v, "mola_bas")
+        if a["sube_id"] != sube:
+            raise HTTPException(409, "Girişin başka şubede — o şubenin QR'ını okut")
         cur.execute("""INSERT INTO ey_mola (id, personel_id, sube_id, is_gunu, yoklama_id, baslangic_ts, baslangic_mesafe_m, istek_id)
                        VALUES (%s,%s,%s,%s,%s,NOW(),%s,%s)""",
                     ("ml-" + uuid.uuid4().hex[:16], p["id"], sube, gun, a["id"], k["mesafe_m"], ist))

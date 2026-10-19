@@ -7,9 +7,10 @@ import { api } from '../../utils/api';
 import { cihazId } from '../../utils/cihazImza';
 import AcilisSihirbazi from './AcilisSihirbazi';
 import AnaSayfa from './AnaSayfa';
+import KapanisSihirbazi from './KapanisSihirbazi';
 import KasaDevri, { DEVIR_ACIK, devirEtiket } from './KasaDevri';
 import UrunAc from './UrunAc';
-import { AdetListesi, C, CSS, kalemGovde, Modal, SayimListesi, SayiTusTakimi, sayi, sayimGovde, TabletQR, tl, tutar, tutarNum, yeniIstek } from './ortak';
+import { AdetListesi, C, CSS, kalemGovde, Modal, SayiTusTakimi, TabletQR, tutar, tutarNum, yeniIstek } from './ortak';
 
 export default function SubePaneli({ subeId }) {
   const [d, setD] = useState(null);
@@ -408,82 +409,10 @@ export default function SubePaneli({ subeId }) {
         <KasaDevri devir={devir} tabletVar={tabletVar} kapali={kapali} kapat={() => setModal(null)} yukle={yukle} iptal={devirIptal} mesgulDis={mesgul} />
       )}
       {modal === 'kapanis' && (
-        <Kapanis d={d} kimSec={kimSec} mesgul={mesgul} sayim={sayim} setSayim={setSayim} kapat={() => setModal(null)} taslakAnahtar={tKey('kapanis')}
-          istek={istek} setIstek={setIstek}
-          gonder={(govde) => gonder('kapanis', { personel_id: kisi, ...govde, sayim: sayimGovde(sayim) })} />
+        <KapanisSihirbazi key={d.gun} d={d} subeId={subeId} tabletVar={tabletVar} kapat={() => setModal(null)}
+          urunAcaGit={() => { setModal(null); setSekme('ac'); }}
+          bitti={async () => { setModal(null); await yukle(); }} />
       )}
     </div>
-  );
-}
-
-// 🌙 Kapanış — 4 adım (eski 5 adım: ürün aç sorusu kalktı, QR mühür/saat kilidi merkeze)
-function Kapanis({ d, kimSec, mesgul, sayim, setSayim, kapat, gonder, taslakAnahtar, istek, setIstek }) {
-  const ilk = (() => { try { return JSON.parse(localStorage.getItem(taslakAnahtar) || 'null'); } catch { return null; } })();
-  const [adim, setAdim] = useState(ilk?.adim || 1);
-  const [v, setV] = useState(ilk?.v || { nakit: '', pos: '', online: '', kor: '', birakilan: '', deg: {}, teslim: {}, pasta: '' });
-  useEffect(() => { if (ilk?.sayim) setSayim(ilk.sayim); if (ilk?.istek) setIstek(ilk.istek); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => {   // 💾 her tuşta tablete (D6) — istek kimliği dahil; gönderim başarılı olunca silinir
-    try { localStorage.setItem(taslakAnahtar, JSON.stringify({ adim, v, sayim, istek })); } catch { /* yok say */ }
-  }, [adim, v, sayim, istek, taslakAnahtar]);
-  const set = (k, x) => setV((o) => ({ ...o, [k]: x }));
-  const teslimler = Object.entries(v.teslim).filter(([, t]) => tutarNum(t) > 0).map(([alan, t]) => ({ alan, tutar: tutarNum(t) }));
-  // bileşen DEĞİL düz fonksiyon: her tuşta yeniden kurulup odağı kaybetmesin
-  const alan = (k, ad, ipucu) => (
-    <label key={k} style={{ display: 'grid', gap: 6 }}><b>{ad}</b>{ipucu && <span style={{ color: C.soluk, fontSize: 13 }}>{ipucu}</span>}
-      <input className="sp-in" inputMode="decimal" value={v[k]} onChange={(e) => set(k, tutar(e.target.value))} placeholder="0,00" /></label>
-  );
-  return (
-    <Modal baslik={`🌙 Kapanış — adım ${adim} / 4`} kapat={kapat} genis={adim === 3}>
-      {adim === 1 && (<>
-        {kimSec('Kapanışı yapan')}
-        {alan("nakit", "Nakit satış", "X raporundaki nakit")}
-        {alan("pos", "POS (kart)")}
-        {alan("online", "Online")}
-        <button className="sp-btn sp-ana" disabled={v.nakit === '' && v.pos === ''} onClick={() => setAdim(2)}>Kasa ve Teslime Geç →</button>
-      </>)}
-      {adim === 2 && (<>
-        {alan("kor", "Kasada saydığın para", "teslimden önce, kasadaki nakit")}
-        <b>Teslim (varsa)</b>
-        {d.teslim_alanlar.map((a) => (
-          <label key={a.id} style={{ display: 'flex', alignItems: 'center', gap: 10 }}><span style={{ width: 90, fontWeight: 700 }}>{a.ad}</span>
-            <input className="sp-in" inputMode="decimal" value={v.teslim[a.id] ?? ''} placeholder="0,00"
-              onChange={(e) => set('teslim', { ...v.teslim, [a.id]: tutar(e.target.value) })} /></label>
-        ))}
-        {alan("birakilan", "Kasada bırakılan")}
-        <b>Değirmen</b>
-        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2,1fr)', gap: 8 }}>
-          {[['gunluk', 'Bugünkü Çekim', 'sağ üst'], ['doz1', 'Doz I (toplam)', 'sayaç'], ['doz2', 'Doz II (toplam)', 'sayaç'], ['doz3', 'Doz III', 'Helios']].map(([k, ad, ph]) => (
-            <label key={k} style={{ display: 'grid', gap: 4 }}><span style={{ color: C.soluk }}>{ad}</span>
-              <input className="sp-in" inputMode="numeric" placeholder={ph} value={v.deg[k] ?? ''} onChange={(e) => set('deg', { ...v.deg, [k]: sayi(e.target.value) })} /></label>
-          ))}
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}><button className="sp-btn" onClick={() => setAdim(1)}>← Geri</button>
-          <button className="sp-btn sp-ana" style={{ flex: 1 }} onClick={() => setAdim(3)}>Sayıma Geç →</button></div>
-      </>)}
-      {adim === 3 && (<>
-        <div><b>Ürün sayımı</b> <span style={{ color: C.soluk }}>— bardak, su, süt, Redbull, soda, cookie</span></div>
-        <SayimListesi gruplar={d.sayilan} sayim={sayim} setSayim={setSayim} />
-        <label className="sp-kart" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8 }}>
-          <span style={{ flex: 1 }}><b>🍰 Pasta</b><div style={{ color: C.soluk, fontSize: 13 }}>toplam kaç adet?</div></span>
-          <input className="sp-in" style={{ width: 110, textAlign: 'center' }} inputMode="numeric" value={v.pasta} onChange={(e) => set('pasta', sayi(e.target.value))} /></label>
-        <div style={{ display: 'flex', gap: 8 }}><button className="sp-btn" onClick={() => setAdim(2)}>← Geri</button>
-          <button className="sp-btn sp-ana" style={{ flex: 1 }} onClick={() => setAdim(4)}>Özete Geç →</button></div>
-      </>)}
-      {adim === 4 && (<>
-        {kimSec('Kapanışı yapan')}
-        <div className="sp-kart" style={{ display: 'grid', gap: 6 }}>
-          <div>Nakit: <b>{tl(tutarNum(v.nakit))}</b> · POS: <b>{tl(tutarNum(v.pos))}</b> · Online: <b>{tl(tutarNum(v.online))}</b></div>
-          <div>Kasada sayılan: <b>{tl(tutarNum(v.kor))}</b> · Bırakılan: <b>{tl(tutarNum(v.birakilan))}</b></div>
-          <div>Teslim: {teslimler.length ? teslimler.map((t) => `${t.alan.split(':')[1]} ${tl(t.tutar)}`).join(' · ') : '—'}</div>
-          <div>Sayılan ürün: <b>{Object.values(sayim).filter((x) => x !== '').length}</b> · Pasta: <b>{v.pasta === '' ? '—' : v.pasta}</b></div>
-        </div>
-        <div style={{ display: 'flex', gap: 8 }}><button className="sp-btn" onClick={() => setAdim(3)}>← Geri</button>
-          <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul}
-            onClick={() => gonder({ nakit: tutarNum(v.nakit), pos: tutarNum(v.pos), online: tutarNum(v.online), teslimler,
-              kor_sayim: v.kor === '' ? null : tutarNum(v.kor), birakilan: v.birakilan === '' ? null : tutarNum(v.birakilan),
-              degirmen: Object.values(v.deg).some((x) => x !== '') ? v.deg : null,
-              pasta_toplam: v.pasta === '' ? null : Number(v.pasta) })}>✔ Kapanışı Gönder</button></div>
-      </>)}
-    </Modal>
   );
 }

@@ -172,6 +172,7 @@ function QrIslem({ sube, jeton }) {
           <b style={{ fontSize: 26 }}>{baslik[sonuc.islem]} {sonuc.saat}</b>
           <div className="tq-not">{sonuc.mesaj}</div>
           {sonuc.hak_dustu && <div className="tq-not">Bugün yemek hakkı kazanılamadı</div>}
+          {sonuc.islem === 'giris' && <div className="tq-not">🍽 Yemek molasına çıkarken paneldeki QR'ı <b>tekrar okut</b> → "Yemek molası başlat".</div>}
           <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">Durumumu gör</a>
         </div>
       ) : (
@@ -262,11 +263,13 @@ function OnayIslem({ sube, jeton, onay }) {
     if (mesgul) return;
     if (!istek.current[islem]) istek.current[islem] = yeniIstekId();   // tekrar denemede AYNI kimlik
     setMesgul(true); setIsHata(null);
-    const yol = islem === 'giris' ? '/api/evvel-yeni/yoklama/giris' : `/api/evvel-yeni/panel/onay/${encodeURIComponent(onay)}/onayla`;
+    // sahip (19 Eki): kapanış QR'ını okutan İKİNCİ kişi "Sadece çıkış yap" (aynı QR; kapanışçı olmaz)
+    const yol = islem === 'giris' ? '/api/evvel-yeni/yoklama/giris' : islem === 'cikis' ? '/api/evvel-yeni/yoklama/cikis'
+      : `/api/evvel-yeni/panel/onay/${encodeURIComponent(onay)}/onayla`;
     try {
       const r = await imzaliJson('telefon', 'POST', yol, { sube, qr: jeton, lat: konum.lat, lng: konum.lng, istek_id: istek.current[islem] });
       if (islem === 'giris') { setGirisMesaj(`✅ ${r.mesaj || 'Giriş kaydedildi'} — şimdi aşağıdan ONAYLA`); yukle(); }
-      else setSonuc({ mesaj: r.mesaj, kuru: !!r.kuru });
+      else setSonuc({ mesaj: r.mesaj, kuru: !!r.kuru, cikis: islem === 'cikis' });
     } catch (e) {
       if (e instanceof TypeError) setIsHata({ islem, metin: 'İnternet yok — bağlantı gelince tekrar dene', tekrar: true });
       else {
@@ -284,9 +287,9 @@ function OnayIslem({ sube, jeton, onay }) {
       {sonuc ? (
         <div className="tq-kart" style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 72, color: T.yesil, lineHeight: 1 }}>✓</div>
-          <b style={{ fontSize: 24 }}>{ozet?.ad || 'İşlem'} onaylandı · {saatSimdi()}</b>
+          <b style={{ fontSize: 24 }}>{sonuc.cikis ? 'Çıkış yapıldı' : `${ozet?.ad || 'İşlem'} onaylandı`} · {saatSimdi()}</b>
           <div className="tq-not">{sonuc.mesaj}</div>
-          <div className="tq-silik">Panel birkaç saniye içinde kendiliğinden geçer.</div>
+          {!sonuc.cikis && <div className="tq-silik">Panel birkaç saniye içinde kendiliğinden geçer.</div>}
         </div>
       ) : (
         <div className="tq-kart">
@@ -308,8 +311,13 @@ function OnayIslem({ sube, jeton, onay }) {
               <button className="tq-btn tq-yesil" disabled={mesgul || !konumHazir} onClick={() => yap('giris')}>{yazi('giris', '✅ GİRİŞ YAP')}</button>
             </>)}
             {gecerli && !girisGerek && (
-              <button className="tq-btn tq-ana" disabled={mesgul || !konumHazir} onClick={() => yap('onayla')}>{yazi('onayla', `✅ ONAYLA — ${ozet.ad || ''}`)}</button>
+              <button className="tq-btn tq-ana" disabled={mesgul || !konumHazir} onClick={() => yap('onayla')}>
+                {yazi('onayla', ozet.tur === 'kapanis' ? `✅ ONAYLA — kapanışçı olarak ${ozet.kisi || 'SEN'} kaydedileceksin` : `✅ ONAYLA — ${ozet.ad || ''}`)}</button>
             )}
+            {gecerli && !girisGerek && ozet.tur === 'kapanis' && (ben?.yapabilir || []).includes('cikis') && (<>
+              <div className="tq-not">Kapanışı sen yapmıyorsan onaylama — yalnız çıkışını yap:</div>
+              <button className="tq-btn tq-kucuk" disabled={mesgul || !konumHazir} onClick={() => yap('cikis')}>{yazi('cikis', '🚪 Sadece çıkış yap')}</button>
+            </>)}
           </>)}
         </div>
       )}
@@ -342,6 +350,7 @@ function Durum() {
           <div style={{ fontSize: 18 }}>Giriş: <b>{ben.giris || '—'}</b> · Çıkış: <b>{ben.cikis || '—'}</b></div>
           {ben.acik && <div style={{ color: T.yesil, fontWeight: 700 }}>İçeridesin{ben.acik_sube_ad ? ` · ${ben.acik_sube_ad}` : ''}</div>}
           <MolaSatiri mola={ben.mola} />
+          {ben.acik && !ben.mola && <div className="tq-not">🍽 Yemek molası: henüz başlamadı — başlatmak için paneldeki QR'ı okut.</div>}
           <div className="tq-not">Giriş / çıkış / yemek molası için şubedeki tabletin QR'ını okut.</div>
         </>)}
       </div>

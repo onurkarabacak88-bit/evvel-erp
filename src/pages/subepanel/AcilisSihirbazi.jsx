@@ -8,7 +8,7 @@ import { C, sayi, TabletQR, tl, tutar, tutarNum, yeniIstek } from './ortak';
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
 const BASLIK = ['', 'Kasa Sayımı', 'Bardak Stoku', 'Ürün Stoku', 'Pasta Stoku', 'QR ile Onay'];
 
-const CSS_AW = `
+export const CSS_AW = `
 @keyframes awSagdan{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:translateX(0)}}
 @keyframes awSoldan{from{opacity:0;transform:translateX(-24px)}to{opacity:1;transform:translateX(0)}}
 @keyframes awPop{0%{transform:scale(.55);opacity:0}65%{transform:scale(1.08)}100%{transform:scale(1);opacity:1}}
@@ -44,7 +44,7 @@ const CSS_AW = `
 `;
 
 // Bugünün saat dakikası "07:00" ile karşılaştırma (Türkiye saati — panel PC'si TR'de; asıl karar sunucuda)
-const trSaat = (t) => t.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' });
+export const trSaat = (t) => t.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' });
 const saatOnce = (hhmm) => {
   const [h, m] = String(hhmm || '07:00').split(':').map(Number);
   const [sh, sm] = trSaat(new Date()).split(':').map(Number);

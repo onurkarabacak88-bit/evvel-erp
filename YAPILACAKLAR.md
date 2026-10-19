@@ -13,7 +13,47 @@
 | **Ana yol** | Sipariş Faz 1 (A) → adım **1b** "okuyucular yeni kataloğa" |
 | **1b'den dalınan yan yol** | Yeni Şube Paneli (B) — çünkü eski panel eski kimlik yazıyor; okuyucuların yeni kataloğa geçmesi panelin yeni sisteme yazmasını gerektirdi |
 | **📍 Şu an** | **PANEL BAŞTAN KURULUYOR** (sahip 19 Eki: "paneli baştan sona kuralım gerekirse"). Yöntem: (1) eski panel (sube_panel.html) ekran ekran envanteri = ESAS ŞABLON → (2) sahibe sunulur; değişiklik yalnız sahibin kararları (R1 açılış/kapanış sonda QR · R1b sık işlem ad+PIN · bar/pasta kararları) → (3) ekran ekran yeniden kurulum (görünüş/akış eski panel gibi, kayıt Evvel Yeni defterlerine) → (4) her ekran Fable+Codex denetim → yayın. Mevcut yeni panel deneme modunda kalır; şubeler eski panelde. ✅ Basamak 0 (PIN, yetki_geri_alma, telefon onay ekranı) + ✅ Basamak 1 (çerçeve, QR kapısı, tuş takımı, yalnız QR girişli isim + sık işlem PIN) YAYINDA 19 Eki (227d957, Codex 3 tur temiz + Fable). ✅ Basamak 2 açılış sihirbazı (5 adım + QR onay) YAYINDA, Tema'da sahiple denendi 19 Eki. Yoklama: çıkışsız gece kapanır, mola ≥45 dk / 61. dk otomatik kapanır (hak yok), QR'la giren her personel her şubede. 🔧 **ŞU AN: ALTYAPI BİTİRME (Fable 19 Eki denetimi, sahip: 'alt yapıyı bitirip bağlamaya geçelim')** — sıra: 1 Depo tek kimlik (yalnız ey_urun; /ozet + /sayim yeni katalog; eski-id kesim/dışlama; senkron panel_baslangic'e kadar) · 2 sayim_yaz gün parametresi + kapanış sayım kaynak_ref sürüme bağlı · 3 tarihli fiyat geçmişi + guncel_fiyat(gun) + yeni katalog fiyat ekranı + sözleşme (kuruş, KDV dahil, sayım birimi) · 4 manifest: depo gerekir [tanim,urun], gider/bar→depo yumuşak bağ, iç fonksiyon importları PUBLIC · 5 birim kilidi + UNIQUE(kok,surum) + sema_surumu=2 + indeksler · 6 panel Tedarikçiden teslim al (faz 2). SONRA ⚠️ 1 KASIM ÖNCESİ ŞART: **Gider modülü yeni Depo defterini okumuyor** (evvel_yeni_gider_api._tuketim_satirlari eski operasyon_defter okuyor) → ey_stok_hareket dışarı:tuketim ('ac' + 'tuketim') okuyucusu, depo'ya yumuşak bağ. ⚠️ 1 KASIM ÖNCESİ ŞART (Fable bağlantı denetimi): yeni evrende kabul/giriş/sevk yazan yok → **Tedarikçiden teslim al (giriş) + Depodan gelen / merkez Sevk et (sevk→kabul)** basamakları yoksa depo bakiyesi eksiye kayar, sevk bedeli ve pasta girişi sıfır. Fire de yeni olaya bağlanmalı (Satış günlük döküm). ⏭ SIRADA Basamak 3 kapanış + QR mühür + mühürsüz gönder — ⚠️ İKİSİ 1 KASIM'DAN ÖNCE ŞART (canlıda açılış/kapanış yalnız telefon onayıyla). Önizleme: launch.json 'panel-onizle' (canlıya yalnız GET) |
+| **📍 ŞU AN (19 Eki akşam)** | ✅ Basamak 0·1·2·4·5 + altyapı + Gider/Bar bağlantısı YAYINDA (aefe2c7). Eski↔yeni panel tam karşılaştırması yapıldı (aşağıda "1 KASIM ÖNCESİ TAM LİSTE"). 🔧 **ŞİMDİ: Basamak 3 KAPANIŞ** — Codex + Fable iki sisteme (eski kapanış + yeni panel) bakarak kurgu; kapanışçı netleşsin, iki kişi varsa biri kapanışı tamamlarken diğeri QR ile çıkış · + mola başlat QR kontrolü |
 | **↩ B bitince dönüş** | B14 (okuyucular yeni panel verisine — 1b'nin asıl işi) → A 1d/1e (sipariş tabloları + merkez "Sevk et") → C listesindeki "Bende" işleri → D "olmalı mı?" sorgulaması (⏳ olanlar) |
+
+## 🧭 1 KASIM ÖNCESİ TAM LİSTE (eski ↔ yeni panel karşılaştırması, 2026-10-19)
+> Kaynak: eski panel envanteri (sube_panel.html/py + yazdığı tablolar + okuyanlar + 30 gün kullanım) × yeni panel envanteri. "Donar" = 1 Kasım'da eski panel kapanınca okuyucu hata vermez, sessizce boş/eski veri gösterir.
+
+| Sıra | İş | Tür | Ayrıntı |
+|---|---|---|---|
+| 1 | 🔴 **Kapanış** (Basamak 3) | Panel | 5 adım + QR mühür + mühürsüz gönder + EKSİK VAR + "ürün aç kaydı yok"; canlıda bunsuz kapanış YAZILAMAZ (`_onay_sart`) |
+| 2 | 🔴 **Maaş › takvim + günlük yoklama** yeni deftere | Okuyucu | evvel_yeni_maas_api `gorev_yoklama`/`sube_operasyon_event`/`kasa_teslim` okuyor (KAPISIZ) → Kasım'da herkes "izinli" görünür |
+| 3 | 🔴 **Eski gece zinciri TEK ANAHTARLA susturulur** (Fable F7: silme değil, `eski_gece_zinciri=kapali`; silme 1 hafta sonra) | Söküm | **WhatsApp GÜNLÜK ÖZET** (main.py:1280 → whatsapp_bildirim.py:873 her gece 4 şube için YANLIŞ "kapanış girilmedi") · truth/kontrol/duyu/puan/risk/haftalık fire/otomatik_mesai_kapat/eksik_gun_ciro/ensure_events · `kapanis_hatirlatma_tara` aslında kendiliğinden susar (Fable F5: eski ACILIS alanına bağlı) ama anahtara dahil |
+| 3b | 🟠 **Bakış/Genel + Ops kapanış kartları** (GenelModulu.jsx:608,641 `/ops/kapanis-takip`, OpsModulu → operasyon_merkez_api eski tablolar) yeni kapanış olayından okusun; EkipModulu (/api/gorev), GorevPersonelSayfasi (eski QR sayfası — B16'da kapanır), vardiya_v2, rapor_cache gunluk_ozet → söküm/ileride | Okuyucu | Fable F4 |
+| 4 | 🟠 **Satış** › günlük döküm fire + kasa mutabakatı + devir defteri yeni deftere | Okuyucu | satis:204-249, 313, 420-460 KAPISIZ (sube_fire_bildirim, sube_operasyon_event, anlik_giderler, kasa_teslim, kapanis_kayit, ciro_taslak) |
+| 5 | 🟠 **Merkez Sevk et → Depodan gelen → Teslim al** + **Tedarikçiden teslim al** | Panel + merkez | yeni defterde kabul/giriş yazan yok → depo eksiye, pasta + sevk bedeli sıfır |
+| 6 | 🟠 **Merkez notu** | Yeni altyapı | 220 not/30 gün; EY'de yazan da okuyan da yok |
+| 7 | 🟠 **Anlık gider** | Yeni altyapı | Kasa `_dukkan_giderleri_aktar` + Fiş kontrol `_eski_panel_kart_giderleri` + Satış eski `anlik_giderler` okuyor |
+| 8 | 🟡 **Fire sihirbazı** (3 adım, yanlış ürün dalı) + **Ara teslim** açıklama + yetkili alıcı | Panel | şu an eski basit modal |
+| 9 | 🟠 **Ara sayım** (sahip 19 Eki): günde 1, rastgele saat, yalnız kasa KÖR, panel kilit 15 dk, telefon QR onay, yapılmazsa Bekleyen işler; Kasa'nın mevcut sayım/fark motoru | Panel + Kasa | PANEL_YENIDEN_KURULUM.md "SAHİP KARARLARI 2026-10-19 akşam" |
+| — | ⚪ Sipariş ver/takip/gönderilecek + katalog dışı özel talep · merkez mesajları · Puanım/geri bildirim/X raporu · değirmen→reçete | Kasım 1. hafta / ileride | sahip kararları S11-14/15, F26 |
+
+**Ayrıntı bulgular (atlanmasın — her biri kendi işine bağlı):**
+| # | Bulgu | Bağlı iş |
+|---|---|---|
+| a | 🍰 **Pasta**: Bar yeni dönemde pasta girişini `ey_stok_hareket tur=kabul` (depo:şube) bekliyor → Depodan gelen/Sevk et yokken bara giren pasta 0 → pasta "net eksilme" yanlış/eksiye düşer | 5 |
+| b | 🍰 Pasta kategorisi: pasta ürünü kategori adında "pasta" yoksa ad içinden (_PASTA_IZ) tanınıyor — katalogda pasta ürünleri tek kategoride toplanmalı (tek gerçek) | 5 |
+| c | 🍰 Kasa devrinde pasta (eski hata: 0 gidiyordu) — yeni devirde 5 adımda var; Satış devir defteri yeni devri okumadığı için görünmez | 4 |
+| d | 🔥 **Gider yeni okuyucusu FIRE'ı almıyor** (yalnız `dışarı:tuketim`); fire `dışarı:fire/ikram/personel`e gidiyor → fire maliyeti gidere girmiyor mu? eski kuralla karşılaştır | 8 |
+| e | Kasa sabah sayımı `_panel_sayimlari` eski `sube_operasyon_event` dalını da okuyor (kasa:1878-1898) — 1 Kasım sonrası söküm | 3 |
+| f | Ara teslim → Satış kasa mutabakatı eski `kasa_teslim` okuyor | 4 |
+| g | Ana sayfa çipleri (Bekleyen sipariş, Stok uyarısı, Merkez mesajı) + "Son teslim/kabul" kutusu: `/durum` hiç veri döndürmüyor (hep "—") | 5 / 6 |
+| h | Toast + masaüstü bildirimi kodda YOK — **bip sesi İPTAL (sahip 19 Eki)** | 8 |
+| i | "Hatalı teslimi geri al" (`yetki_geri_alma`) yetkisi var, ekranı yok | 5 |
+| j | "🔒 Stok sayımı sürüyor — Ürün Aç kapalı" bandı: EY'de sayım kilidi kaynağı yok | 5 |
+| k | Değirmen sayacı yeni panelde yalnız olay verisinde; `degirmen_sayac` okuyucuları (reçete, MaliyetModulu, DuyuPaneli) donar | ileride (F26) |
+| l | Toptancılar fiyat/tahmin kısmen eski `siparis_urun`/`urun_alis_fiyat` okuyor | 5 |
+| n | Kasa `_panel_sayimlari` yeni panelden yalnız AÇILIŞ okuyor; kapanış kör sayımı Kasa'ya yazılmıyor (mevcut karar — bilerek) | not |
+| m | Ürün Aç → eski `recete_api` + `stok_bar_uyum` "ürün aç kaydı yok" yanlış sonucu verir | 3 (söküm) |
+
+> Fable sıra önerisi: 1 → 2 → 3 (+3b) → 4 → 5 → 7 → 6 → 8 → 9.
+
+**Güvende (kapılı):** Bar, Gider, Depo (senkron +2 günde durur), Maaş yemek kalemi, Kasa köprüleri (eski panel yazmayınca durur). **Ölü (taşınmaz):** X raporu foto okuma (0 kayıt), eski /ciro (410), merkez mesajı (son 25 Ağu), merkez-durum, cikis-baslat, kalem-ekle, siparis-yoklama, urun-stok-ekle, panel-pin-dogrula.
 
 ## 🔗 İLİŞKİ HARİTASI — bölümler birbirine nasıl bağlı (sahip: "alanları birbiriyle ilişkilendir, kaybolmayalım")
 

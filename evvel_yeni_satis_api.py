@@ -183,7 +183,77 @@ def satis_kontrol(ay: Optional[str] = None):
                    "toplanmaz. Sebep fire, ikram, kayıt dışı satış ya da sayım hatası olabilir — kimseye suç yazılmaz."}
 
 
-def _kasa_mutabakat(cur, gun: str) -> dict:
+def kasa_mutabakat(cur, gun: str, evren: Optional[str] = None) -> dict:
+    """PUBLIC (tek kapı): şube → kasa mutabakatı. Yeni dönemde (panel_baslangic) yeni panelin olay defterinden, öncesinde eski
+    panel tablolarından toplar; HESAP tek (mutabakat_hesapla) — kapanış uyarısı da aynı hesabı kullanır (sahip: "tekrar yazma")."""
+    from evvel_yeni_cekirdek import yeni_donem
+    yeni = (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur)
+    out = _mut_veri_yeni(cur, gun) if yeni else _mut_veri_eski(cur, gun)
+    for x in out.values():
+        mutabakat_hesapla(x)
+    return out
+
+
+def _mut_veri_yeni(cur, gun: str) -> dict:
+    """YENİ DÖNEM toplayıcısı — yeni şube panelinin olay defteri (ey_sube_olay, kaynak 'panel'; kuruş → ₺):
+    açılış kasa_sayim · kapanış nakit / kor_sayim / teslimler / birakilan · gün içi 'teslim' (ara teslim) · dünün kapanış bırakılanı.
+    Nakit gider: yeni panelde anlık gider defteri HENÜZ YOK (1 Kasım listesi madde 7) → boş + 'gider_kaynak_yok'."""
+    from datetime import date as _date
+    from evvel_yeni_olay import olaylar
+    g = _date.fromisoformat(gun)
+    dun = g - timedelta(days=1)
+    out = {}
+    for o in olaylar(cur, bas=dun, son=g, turler={"acilis", "kapanis", "teslim"}):
+        if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel":
+            continue
+        v = o["veri"] if isinstance(o["veri"], dict) else __import__("json").loads(o["veri"] or "{}")
+        x = out.setdefault(str(o["sube_id"]), mut_bos())
+        x["gider_kaynak_yok"] = True
+        x["kor_ara_dahil"] = False   # yeni kapanış: kör sayım ara teslim GİTTİKTEN sonra çekmecede kalan → ara düşülmez
+        tl = lambda k: None if k is None else int(k) / 100  # noqa: E731
+        if o["is_gunu"] == dun:
+            if o["tur"] == "kapanis":
+                x["dun_devir"] = tl(v.get("birakilan"))
+            continue
+        if o["tur"] == "acilis":
+            x["acilis"] = tl(v.get("kasa_sayim"))
+        elif o["tur"] == "kapanis":
+            x["z_nakit"] = tl(v.get("nakit"))
+            x["kor_sayim"] = tl(v.get("kor_sayim"))
+            x["teslim"] = sum(int(t.get("tutar") or 0) for t in v.get("teslimler") or []) / 100
+            x["devir"] = tl(v.get("birakilan"))
+        elif o["tur"] == "teslim":
+            x["ara_teslimler"].append({"tutar": tl(v.get("tutar")) or 0.0, "alan": v.get("alan"), "eden": o.get("personel_ad")})
+    return out
+
+
+def mut_bos() -> dict:
+    return {"acilis": None, "z_nakit": None, "giderler": [], "ara_teslimler": [], "teslim": None,
+            "devir": None, "kor_sayim": None, "dun_devir": None, "vardiya": [], "eski_fark": None}
+
+
+def mutabakat_hesapla(x: dict) -> dict:
+    """PUBLIC — TEK HESAP (Satış günlük döküm + yeni panel kapanış uyarısı):
+         fark = sabah sayılan + nakit satış − nakit gider − ara teslim − gün sonu teslim − bırakılan  (0 olmalı)
+         kör sağlama = kör sayım − teslim (− ara, eski panelde) ↔ bırakılan · sabah farkı = bu sabah − dün bırakılan."""
+    gid = round(sum(y["tutar"] for y in x.get("giderler") or []), 2)
+    ara = round(sum(y["tutar"] for y in x.get("ara_teslimler") or []), 2)
+    x["gider_toplam"], x["ara_toplam"] = gid, ara
+    tam = x.get("acilis") is not None and x.get("z_nakit") is not None and x.get("devir") is not None
+    x["fark"] = round(x["acilis"] + x["z_nakit"] - gid - ara - (x.get("teslim") or 0) - x["devir"], 2) if tam else None
+    x["eksik"] = None if tam else ("sabah kasa sayımı yok" if x.get("acilis") is None else
+                                   "kapanış (nakit satış / devir) yok" if x.get("z_nakit") is None or x.get("devir") is None else None)
+    x["sabah_fark"] = round(x["acilis"] - x["dun_devir"], 2) if (x.get("acilis") is not None and x.get("dun_devir") is not None) else None
+    tes = (x.get("teslim") or 0) + (ara if x.get("kor_ara_dahil", True) else 0)
+    x["kor_kalan"] = round(x["kor_sayim"] - tes, 2) if x.get("kor_sayim") is not None else None
+    x["kor_fark"] = round(x["kor_kalan"] - x["devir"], 2) if (x["kor_kalan"] is not None and x.get("devir") is not None) else None
+    # Sayılan, bırakılan tutara eşit ve teslim varsa: sayım teslimden SONRA yapılmış — sağlama yapılamaz (sahte açık gösterme)
+    x["kor_belirsiz"] = bool(x.get("kor_sayim") is not None and tes > 0 and (
+        (x.get("devir") is not None and abs(x["kor_sayim"] - x["devir"]) < 1) or x["kor_sayim"] < tes))
+    return x
+
+
+def _mut_veri_eski(cur, gun: str) -> dict:
     """💵 KASA AÇIĞI — eski Evvel'in kapanış mutabakatı (sube_operasyon.py:1255), Evvel Yeni'de PARÇALARINDAN yeniden:
          sabah kasada sayılan + girilen nakit satış − nakit giderler − ara teslim − gün sonu teslim − kasada bırakılan (devir) = 0
        Sıfır değilse PARASAL AÇIK (+) ya da FAZLA (−). Ek sağlamalar (sahip: "personeller kasaları devrederek sağlama yapıyor"):
@@ -198,8 +268,7 @@ def _kasa_mutabakat(cur, gun: str) -> dict:
     out = {}
 
     def sube(sid):
-        return out.setdefault(str(sid), {"acilis": None, "z_nakit": None, "giderler": [], "ara_teslimler": [], "teslim": None,
-                                         "devir": None, "kor_sayim": None, "dun_devir": None, "vardiya": [], "eski_fark": None})
+        return out.setdefault(str(sid), mut_bos())
     cur.execute("""SELECT sube_id::text AS sid, tarih::text AS t, tip, kasa_sayim, teslim, devir, cevap_ts, meta, personel_saat
                      FROM sube_operasyon_event
                     WHERE tarih IN (%s, %s) AND durum='tamamlandi' AND tip IN ('ACILIS','KAPANIS','CIKIS')
@@ -256,22 +325,7 @@ def _kasa_mutabakat(cur, gun: str) -> dict:
     for r in ara_rows:
         r = dict(r)
         sube(r["sid"])["ara_teslimler"].append({"tutar": float(r["tutar"] or 0), "alan": r.get("teslim_alan_ad"), "eden": r.get("teslim_eden_ad")})
-    for x in out.values():
-        gid = round(sum(y["tutar"] for y in x["giderler"]), 2)
-        ara = round(sum(y["tutar"] for y in x["ara_teslimler"]), 2)
-        x["gider_toplam"], x["ara_toplam"] = gid, ara
-        tam = x["acilis"] is not None and x["z_nakit"] is not None and x["devir"] is not None
-        x["fark"] = round(x["acilis"] + x["z_nakit"] - gid - ara - (x["teslim"] or 0) - x["devir"], 2) if tam else None
-        x["eksik"] = None if tam else ("sabah kasa sayımı yok" if x["acilis"] is None else
-                                       "kapanış (nakit satış / devir) yok" if x["z_nakit"] is None or x["devir"] is None else None)
-        x["sabah_fark"] = round(x["acilis"] - x["dun_devir"], 2) if (x["acilis"] is not None and x["dun_devir"] is not None) else None
-        tes = (x["teslim"] or 0) + ara
-        x["kor_kalan"] = round(x["kor_sayim"] - tes, 2) if x["kor_sayim"] is not None else None
-        x["kor_fark"] = round(x["kor_kalan"] - x["devir"], 2) if (x["kor_kalan"] is not None and x["devir"] is not None) else None
-        # Sayılan, bırakılan tutara eşit ve teslim varsa: sayım teslimden SONRA yapılmış — sağlama yapılamaz (sahte açık gösterme)
-        x["kor_belirsiz"] = bool(x["kor_sayim"] is not None and tes > 0 and (
-            (x["devir"] is not None and abs(x["kor_sayim"] - x["devir"]) < 1) or x["kor_sayim"] < tes))
-    return out
+    return out   # hesap: mutabakat_hesapla (kasa_mutabakat çağırır)
 
 
 _URUN_AD = {}
@@ -329,7 +383,7 @@ def satis_gun(gun: Optional[str] = None):
             log.warning("satış günlük: fire okunamadı: %s", str(e)[:150])
     try:
         with db() as (conn, cur):
-            mut = _kasa_mutabakat(cur, g_)
+            mut = kasa_mutabakat(cur, g_)
     except Exception as e:  # noqa: BLE001
         log.warning("satış günlük: kasa mutabakatı okunamadı: %s", str(e)[:150])
         mut = {}

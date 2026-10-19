@@ -113,6 +113,31 @@ Hata: kasa devrinde pasta 0 · ürün aç taslak düğmesi ham HTML · süt doğ
 | S10 (soru 13) | **Kasa teslim alıcısı:** Onur · Fethi · Fatma + merkezin "teslim alabilir" yetkisi tanımladığı personel. Sahip: "13'te de bu üçü ve yetki tanımlanırsa personel." |
 | S11 (sahip "önerin +", 2026-10-19) | 1 bip + uyarı kutucukları KALIR · 2 ürün aç hatırlatma bandı KALIR (12/16/20 pencereleri) · 3 eksik ürünler + stok uyarısı + red listesi KALIR · 4 Kullanımda/Bitti KALKAR (açılınca gider) · 5 kapanış "ürün aç kaydı yok" + "EKSİK VAR" kartı KALIR · 6 mühürsüz gönder KALIR + merkeze bildirim · 8 **kasa devri = eski 5 adım: kasa · bardak · ürün · pasta · onay** (sahip düzeltti: "Hayır, 5 sayılsın" — D2 "yalnız 3 bardak" kararının yerine; sunucudaki "devirde yalnız bardak" kuralı değişir; eski hata: pasta 0 gidiyordu → düzeltilir) · 9 "mesaisini kapat" KALKAR (çıkışsız → merkez Bekleyen işler) · 10 KONTROL ekranı YOK (D1) · 12 "dünkü kapanış yapılmadı" kartı KALIR · 14 1 Kasım öncesi Depodan gelen + merkez Sevk et; Sipariş ver/takip/gönderilecek Kasım 1. hafta · 15 X raporu / Puanım / geri bildirim 1 Kasım sonrası · 16 PIN eski sistemden bir kez kopya + 5 yanlış kilit · 17 telefonu olmayan → başka girişli personel kendi telefonuyla onaylar + merkeze bildirim |
 
+## BASAMAK 3 — KAPANIŞ: Fable denetimi (2026-10-19; Codex kotası dolu — açılınca aynı istem)
+Taslak: scratchpad kapanis_kurgu_taslak.md. Bulgular:
+- **F1 🔴** Kapanış QR'ı (`?o=`) okutan herkes OnayIslem'e düşer: ÇIKIŞ düğmesi yok, yanlışlıkla ONAYLA'ya basan kapanışçı olur → OnayIslem'e "🚪 Sadece çıkış yap" + ONAYLA metninde "kapanışçı olarak {ad} kaydedilecek".
+- **F2 🔴 fonksiyon kaybı:** online = nakit+POS ise RED (eski sube_operasyon:1267) yok · kör sayım ve bırakılan ZORUNLU değil · açık devir varken kapanış uyarısı yok · kasa farkı/uyarılı kapanış merkeze gitmiyor (olay `uyarilar[]` + Bekleyen işler "⚠ Uyarılı kapanış") · açılışsız kapanış uyarısı yok · ciro eskiden merkez onayına düşüyordu (ciro_taslak) — **sahibe soru**.
+- **F3 🔴** Mühürsüz: PIN + içeride yetmez → ayrı uç `/kapanis-muhursuz`, `_onay_sart` muhursuz dalı (deneme kaydı), saat kuralı, kişinin aktif telefonu varsa kırmızı etiket, olay `muhursuz=true`, çıkış `kapanis_muhursuz`, Bekleyen işler "Mühürsüz kapanış — X".
+- **S2** kapanışçı = okutan DOĞRU (eskide de "açık yoklaması olan herkes"); sorumlu≠kapatan → engel yok, olay + bilgi satırı.
+- **S3** iki kişi: mühür ENGELLENMEZ (gece_kapat var, kilitlenme maliyeti yüksek); diğerinin /cikis'i yarışmaz; kapanıştan sonra QR görünür ve /cikis gün kilidine takılmaz ✓; olay verisine `iceride_kalanlar[]`.
+- **Mola** kırık YOK; pürüz: mola-baslat'ta QR "bugün kullandın" kontrolünden önce harcanıyor → sıra değişir. Sahip gözlemi: giriş sonrası ekranda mola için "QR'ı tekrar okut" ipucu yok → eklenir.
+
+### BASAMAK 3 — SAHİP KARARLARI (2026-10-19 akşam, Fable sonrası)
+- **Ciro doğrudan Kasa'ya** (eski "merkez ciro onayı" YOK); uyarılı kapanış merkezde "⚠ Kapanış uyarılı — Gördüm".
+- **Mühürsüz gönder YOK** (S11-6 kararının yerine): telefonu olmayan kapanışçı → içerideki BAŞKA personel kendi telefonuyla onaylar (kapanışçı o olur); kimse yoksa **"📨 Merkeze gönder"** (ad + PIN) → kayıt yazılmaz, ey_panel_deneme'ye girilen rakamlarla düşer → merkez Bekleyen işler'den tek tıkla **geç kapanış** (VAR OLAN yol, yeni kod yok).
+- **Telefonda "🚪 Sadece çıkış yap"** düğmesi (kapanış onay ekranında); ONAYLA metni "kapanışçı olarak {ad} kaydedilecek".
+- **Online koruması KALIR**: online>0 ∧ nakit>0 ∧ POS>0 ∧ online = nakit+POS → RED "Online satış yoksa 0 bırak".
+- **Var mı kontrolü (sahibe gösterildi):** kör sayım sağlaması + kasa farkı = Satış `_kasa_mutabakat` (eski tablolardan) → yeni deftere çevrilip TEK servis, kapanış uyarısı ondan; uyarılı kapanış + Gördüm = Kasa `kapanis_uyarili` satırı yeniden kullanılır; onay, içeride kalanlar, sorumlu, devir durumu, cikis_yaz, olay tekrar koruması VAR.
+
+### SAHİP KARARLARI — 2026-10-19 akşam
+- **BİP SESİ YOK** (S11-1'in "bip" kısmı İPTAL). Uyarı kutucukları/bildirim yazısı kalır, ses çalınmaz.
+- **ARA SAYIM (istisna 10'un yerine sade KONTROL):** günde BİR kez, açılıştan sonra RASTGELE saatte panel ara sayım ister.
+  - Sayılan: **yalnız kasa, KÖR** (çekmecedeki nakit; beklenen ekranda gösterilmez) — sistem beklenenle karşılaştırır, fark kaydedilir.
+  - Ekrana gelince **panel KİLİTLENİR, 15 dk süre**; yapılmazsa "yapılmadı" kaydedilir → merkez Bekleyen işler.
+  - Onay: **telefonla QR** (açılış gibi; sayan kişi kendi telefonuyla okutur, kimlik telefondan).
+  - Sistem kaydeder: istenme saati, yapılma saati, sayan, sayılan, beklenen, fark (olay defteri + Kasa'da kasa sayımı — "önce var mı" kontrolü: Kasa'nın mevcut `sayim` türü/fark motoru kullanılacak, yeni tablo açılmadan).
+  - Eski örnek: sube_operasyon.py KONTROL (rastgele gecikme + cevap penceresi, kasa sayımı + PIN). Sıra: Kapanış'tan sonra.
+
 ## BASAMAK 0 — kurgu (Claude) → Codex + Fable
 1. **PIN** (tanim modülü — personel tanımı): ey_personel `pin_salt`, `pin_hash`, `pin_yanlis`, `pin_kilit_bitis` · eski `personel.panel_pin_salt/hash` BİR KEZ kopya (aynı sha256(salt:pin) biçimi — personel yeniden PIN almaz) · Tanımlar › Personel'de "PIN (4 hane) — değiştirmek için yaz" · PUBLIC `pin_dogrula(cur, pid, pin)`: 5 yanlış → 15 dk kilit (eski panel_pin_limitleri) · PIN asla düz yazı saklanmaz/loglanmaz/deneme kaydına girmez.
 2. **Yetkiler** (S9, S10): ey_personel `yetki_teslim_alma`, `yetki_geri_alma` (Tanımlar › Personel, evet/hayır). Teslim alıcı listesi = Onur/Fethi/Fatma + yetki_teslim_alma; geri al = yetki_geri_alma.
