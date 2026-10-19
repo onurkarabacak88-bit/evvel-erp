@@ -837,6 +837,65 @@ def _modul_acik(kod: str) -> bool:
     return DURUM.get(kod) == "yuklendi"
 
 
+# ─────────────── BASAMAK 5 S3 · DEPODAN GELEN — TESLİM AL (PANEL_YENIDEN_KURULUM.md §6 + "Basamak 5", sahip P3) ───────────────
+# Kalem kalem KÖR sayım (panel beklenen adedi hiç görmez) → Depo PUBLIC kabul_yaz (0 gerçek; hasarlı/fazla askıda; merkez karar).
+# Gün kapalıyken de AÇIK (D7: sevk kabulü kapanıştan sonra gelebilir). Paketin bekleyen BÜTÜN kalemleri tek seferde sayılır.
+class DepoKabulSatir(BaseModel):
+    bag: str
+    sayilan: int
+    hasarli: int = 0
+
+
+class DepoKabulBody(BaseModel):
+    istemci_gunu: Optional[str] = None
+    personel_id: str
+    pin: Optional[str] = None          # 4 hane — doğrulanır, hiçbir yere yazılmaz
+    parti_id: str
+    satirlar: List[DepoKabulSatir]
+    istek_id: str
+
+
+@router.post("/{sube_id}/depodan-kabul")
+def depodan_kabul(sube_id: str, b: DepoKabulBody):
+    _TUR = "depo_kabul"
+    if not _modul_acik("depo"):
+        raise HTTPException(503, "Depo modülü kapalı — paket şu an kabul edilemiyor, merkeze haber ver")
+
+    def is_(cur, c):
+        from evvel_yeni_depo_api import kabul_yaz, yoldakiler
+        p = _personel(cur, sube_id, b.personel_id)
+        _pin(cur, p, b.pin)
+        bek = next((x for x in yoldakiler(cur, str(sube_id)) if x["parti_id"] == b.parti_id), None)
+        kok = f"panel:depo_kabul:{sube_id}:{b.istek_id}"
+        if bek is None:   # tekrar gönderim (aynı istek) ya da başka yerden kabul edildi / merkez geri aldı
+            cur.execute("SELECT 1 FROM ey_sube_olay WHERE kok=%s LIMIT 1", (kok,))
+            if cur.fetchone():
+                return {"tekrar": True, "mesaj": "Bu paket zaten kabul edilmişti ✓"}
+            raise HTTPException(409, "Bu paket artık bekleyenlerde yok — sayfayı yenile")
+        gerek = {k["bag"]: k["ad"] for k in bek["kalemler"]}
+        gelen = {x.bag: x for x in b.satirlar}
+        if set(gelen) != set(gerek) or len(gelen) != len(b.satirlar):
+            raise HTTPException(400, "Paketin bütün ürünleri sayılmalı — sayfayı yenile")
+        for x in b.satirlar:
+            if x.sayilan < 0 or x.hasarli < 0 or x.sayilan > 99999 or x.hasarli > 99999:
+                raise HTTPException(400, "Sayılar 0 ya da daha büyük olmalı")
+        kim = f"{KIM} · {p['ad']}"
+        oid = _olay(cur, sube_id=sube_id, tur="depo_kabul", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
+                    personel_id=p["id"], personel_ad=p["ad"],
+                    veri={"parti_id": b.parti_id, "nereden": bek["nereden"], "istek_id": b.istek_id,
+                          "satirlar": [{"bag": x.bag, "ad": gerek[x.bag], "sayilan": x.sayilan, "hasarli": x.hasarli} for x in b.satirlar]})
+        if oid is None:
+            return {"tekrar": True, "mesaj": "Bu paket zaten kabul edilmişti ✓"}
+        fark = False
+        for x in sorted(b.satirlar, key=lambda z: z.bag):
+            r = kabul_yaz(cur, bag=x.bag, sayilan=x.sayilan, hasarli=x.hasarli, kim=kim, gun=c["gun"], beklenen_hedef=str(sube_id))
+            fark = fark or bool(r.get("eksik") or r.get("fazla") or r.get("hasar"))
+        # KÖR kalır: personele rakam söylenmez (beklenen sızmasın) — yalnız "merkeze iletildi"
+        return {"olay": oid, "tekrar": False,
+                "mesaj": f"{len(b.satirlar)} ürün kabul edildi ✓" + (" · Sayımda fark var — merkeze iletildi" if fark else "")}
+    return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
+
+
 # ─────────────── BASAMAK 8 · TEDARİKÇİDEN TESLİM AL (sahip onayı 2026-10-19; PANEL_YENIDEN_KURULUM.md "BASAMAK 8") ───────────────
 # TEK teslim kapısı (Tema = merkez depo da). Var olan Toptancı kurgusu ESAS: teslim_yaz (TEK KAYIT = TESLİM, borç teslimde) +
 # Depo 'giris' (dışarı:toptanci → depo:şube) TEK işlemde. Toptancı kendiliğinden açılmaz; fiyat şube tutarından öğrenilmez (E5).

@@ -10,6 +10,7 @@ import AnaSayfa from './AnaSayfa';
 import KapanisSihirbazi from './KapanisSihirbazi';
 import KasaDevri, { DEVIR_ACIK, devirEtiket } from './KasaDevri';
 import TedarikciTeslim from './TedarikciTeslim';
+import DepodanGelen from './DepodanGelen';
 import UrunAc from './UrunAc';
 import { AdetListesi, C, CSS, kalemGovde, Modal, SayiTusTakimi, TabletQR, tutar, tutarNum, yeniIstek } from './ortak';
 
@@ -123,6 +124,7 @@ export default function SubePaneli({ subeId }) {
     if (m === 'acilis') { setDenemeKapandi(false); setSihirbazElle(true); return; }
     if (m === 'ac') { setSekme('ac'); return; }   // Basamak 5: Ürün Aç eski panel gibi orta alanda SEKME
     if (m === 'teslim') { sekmeyeGec('teslim'); return; }   // Basamak 8: Tedarikçiden teslim al (orta alanda sekme)
+    if (m === 'depo') { sekmeyeGec('depo'); return; }       // Basamak 5 S3: Depodan gelen (orta alanda sekme; gün kapalıyken de açık)
     if (m === 'kapanis') {   // Codex: gece yarısından sonra sayfa yenilense de dünün GÖNDERİLMEMİŞ kapanışı kaybolmasın
       const dun = new Date(new Date(d.gun + 'T12:00').getTime() - 864e5).toISOString().slice(0, 10);
       let var_ = false;
@@ -235,7 +237,7 @@ export default function SubePaneli({ subeId }) {
   const SOL = [
     { b: 'STOK İŞLEMLERİ' },
     { k: 'teslim', i: '📦', ad: 'Tedarikçiden Gelen — Teslim Al' },
-    { k: 'depo', i: '🚚', ad: 'Depodan Gelen — Teslim Al', yakinda: true, acikKapali: true },
+    { k: 'depo', i: '🚚', ad: 'Depodan Gelen — Teslim Al', acikKapali: true, rozet: (d.depo_yolda || []).length },
     { k: 'siparis', i: '🛒', ad: 'Sipariş Ver', yakinda: true },
     { k: 'siparisTakip', i: '📊', ad: 'Sipariş Takip', yakinda: true, acikKapali: true },
     { k: 'ac', i: '🔓', ad: 'Ürün Aç' },
@@ -282,13 +284,17 @@ export default function SubePaneli({ subeId }) {
             <button key={m.k} className={'sp-sol' + (m.k === sekme ? ' akt' : '')} disabled={m.kapanisKarti ? (kapali && !dunTaslak) : kapali && !m.acikKapali && ['ac', 'teslim', 'fire', 'araTeslim', 'devir'].includes(m.k)} title={m.yakinda ? 'Kendi basamağında açılacak' : ''}
               onClick={() => (m.yakinda ? yakinda(`${m.ad} — kendi basamağında açılacak`) : ac(m.k))}>
               <span style={{ fontSize: 18, width: 24 }}>{m.i}</span><span style={{ flex: 1 }}>{m.ad}</span>{m.yakinda && <small style={{ opacity: 0.7 }}>yakında</small>}
+              {m.rozet > 0 && <span className="sp-rozet" style={{ background: C.yesil }} title={`${m.rozet} paket kabul bekliyor`}>{m.rozet}</span>}
               {m.k === 'ac' && acSecim > 0 && <span className="sp-rozet" style={{ background: C.sari }} title={`${acSecim} kalem seçili — PIN onayı bekleniyor`}>{acSecim}</span>}
             </button>
           )))}
         </div>
 
         {/* ORTA: ANA SAYFA */}
-        {sekme === 'teslim' ? (
+        {sekme === 'depo' ? (
+          <DepodanGelen key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari}
+            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+        ) : sekme === 'teslim' ? (
           <TedarikciTeslim key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} tabletVar={tabletVar}
             bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
         ) : sekme === 'ac' ? (
