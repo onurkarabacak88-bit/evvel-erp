@@ -92,6 +92,7 @@ export async function cihazBagla(davet, etiket) {
   if (anahtar && kayitli) { await idbYaz(`anahtar:${tur}`, anahtar); try { await idbSil('anahtar:_yeni'); } catch { /* yok */ } }
   else lsYaz(jetonAnahtari(tur), jeton);
   lsYaz(kimlikAnahtari(tur), d.cihaz_id);
+  try { window.navigator.storage?.persist?.(); } catch { /* yok */ }   // tarayıcı yer açarken bağlantıyı silmesin
   return d;
 }
 

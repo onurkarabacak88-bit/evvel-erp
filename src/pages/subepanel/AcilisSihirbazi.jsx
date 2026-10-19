@@ -93,14 +93,17 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
     if (bos) { setHata(`${bos.ad} adedini girin`); return false; }
     return true;
   };
+  const ebeveyn = useRef({ bitti, basladi }); ebeveyn.current = { bitti, basladi };
+  const basariOldu = useRef(false);
   const basariGoster = useCallback((mesaj) => {
+    if (basariOldu.current) return;   // tek sefer (StrictMode / iki yol)
+    basariOldu.current = true;
     if (mesaj) setBasariMesaj(mesaj);
     try { localStorage.removeItem(anahtar); } catch { /* yok say */ }
-    setBasari((o) => {
-      if (!o) { basladi?.(); window.setTimeout(() => bitti(), 1900); }   // eski: ~1,9 sn başarı ekranı (panel bu sürede sihirbazı kapatmaz)
-      return true;
-    });
-  }, [anahtar, bitti, basladi]);
+    setBasari(true);
+    ebeveyn.current.basladi?.();
+    window.setTimeout(() => ebeveyn.current.bitti(), 1900);   // eski: ~1,9 sn başarı ekranı (panel bu sürede sihirbazı kapatmaz)
+  }, [anahtar]);
 
   const onayIste = async () => {
     if (mesgul) return;
@@ -122,12 +125,14 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
       setOnay(null); return true;
     } catch (e) {
       if (e instanceof TypeError) { setHata('İnternet yok — onay iptal edilemedi, bağlantı gelince tekrar dene'); return false; }
-      try {   // 409: o an telefonda onaylanmış / işleniyor olabilir → gerçek durumu sor
+      try {   // o an telefonda onaylanmış / işleniyor olabilir → gerçek durumu sor
         const r = await api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}`);
-        if (r.durum === 'onaylandi') { basariGoster(); return false; }
-        if (r.durum === 'isleniyor') { setOnay({ id: o.id, durum: 'isleniyor', mesaj: '' }); setHata('Onay telefondan işleniyor — bekle'); return false; }
-      } catch { /* aşağıda */ }
-      setOnay(null); return true;   // süresi dolmuş / iptal → zaten geçersiz
+        if (r.durum === 'onaylandi') { basariGoster(r.kuru ? r.mesaj : ''); return false; }
+        if (r.durum === 'iptal' || r.durum === 'sure_doldu') { setOnay(null); return true; }   // yalnız doğrulanmış geçersizlikte
+        setOnay({ id: o.id, durum: r.durum, mesaj: r.mesaj || '' });
+      } catch { /* belirsiz */ }
+      setHata('Onay iptal edilemedi — QR hâlâ geçerli olabilir; birazdan yeniden dene');   // Codex: belirsizlikte geri dönülmez
+      return false;
     }
   };
 
@@ -175,6 +180,7 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
     setMesgul(true); setHata('');
     try {
       const kisi = (d.yoklama?.girenler || []).find((g) => g.acik)?.personel_id || d.personel[0]?.id;
+      if (!kisi) { setHata('İçeride kimse yok — deneme kaydı için önce biri QR ile girsin'); setMesgul(false); return; }
       await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/acilis`, { method: 'POST', body: { ...govde(), personel_id: kisi } });
       basariGoster();
     } catch (e) { setHata(e?.message || 'Kaydedilemedi'); }

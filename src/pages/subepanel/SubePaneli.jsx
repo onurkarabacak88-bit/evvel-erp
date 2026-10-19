@@ -87,6 +87,12 @@ export default function SubePaneli({ subeId }) {
   const iceride = (yok.girenler || []).some((g) => g.acik);
   const sihirbazAcik = sihirbazBasari || !!d && !d.acilis_var && !d.kapanis_var && !(d.kuru && denemeKapandi)
     && (sihirbazElle || iceride || (d.kuru && kapiGecildi));
+  const sihirbazOnceki = useRef(false);
+  useEffect(() => {
+    if (d?.acilis_var && sihirbazOnceki.current) setSihirbazBasari(true);   // Codex: açık sihirbaz açılış gelince hemen kaybolmasın
+    sihirbazOnceki.current = !!(sihirbazAcik && d && !d.acilis_var);   // yalnız geçişte bir kez (sonra false)
+  });
+  useEffect(() => { if (tabletVar) { try { window.navigator.storage?.persist?.(); } catch { /* yok */ } } }, [tabletVar]);   // bağ silinmesin
   const kapiAcik = !!d && yok.var && !d.acilis_var && !d.kapanis_var && !(d.kuru && kapiGecildi) && !(yok.girenler || []).some((g) => g.acik);
   useEffect(() => {   // eski panel: 15 sn (POLL_MS), sekme gizliyken durur, öne gelince hemen çeker; kapı / QR / devir beklerken 5 sn
     yukle();
@@ -295,7 +301,19 @@ export default function SubePaneli({ subeId }) {
             </>) : (<>
               <div style={{ fontSize: 40 }}>🖥️</div>
               <b style={{ fontSize: 22 }}>Bu bilgisayar kayıtlı değil</b>
-              <div style={{ color: C.soluk }}>QR bu bilgisayarda çıkmıyor. Merkez Personel › Telefonlar'dan bu şube için bağlantı linki üretsin; link BU tarayıcıda açılınca QR gelir.</div>
+              {yok.tablet_kayitli ? (
+                <div style={{ color: C.soluk, display: 'grid', gap: 8, textAlign: 'left' }}>
+                  <div style={{ color: C.sari, fontWeight: 700 }}>Bu şubenin bağlı bir panel bilgisayarı VAR — ama bu tarayıcı onu tanımıyor.</div>
+                  <div>Bağlantı bir kez yapılır ve <b>bağlandığı tarayıcıda</b> durur. Kontrol et:</div>
+                  <div>• Dün bağladığın <b>aynı tarayıcı</b> mı (Chrome / Edge)? Aynı kullanıcı profili mi?</div>
+                  <div>• <b>Gizli pencere</b> değil mi? (gizli pencere kapanınca bağlantıyı unutur)</div>
+                  <div>• Adres aynı mı: <b>{window.location.host}</b></div>
+                  <div>• Tarayıcıda "kapatınca verileri temizle" açık mı?</div>
+                  <div>Hiçbiri değilse merkez yeni bağlantı linki üretsin (eskisi kendiliğinden geçersiz olur).</div>
+                </div>
+              ) : (
+                <div style={{ color: C.soluk }}>QR bu bilgisayarda çıkmıyor. Merkez Personel › Telefonlar'dan bu şube için bağlantı linki üretsin; link BU tarayıcıda açılınca QR gelir.</div>
+              )}
             </>)}
             {d.kuru && <button className="sp-btn" style={{ width: '100%' }} onClick={() => setKapiGecildi(true)}>Deneme: QR'sız geç</button>}
           </div>
@@ -331,7 +349,7 @@ export default function SubePaneli({ subeId }) {
         <AcilisSihirbazi key={d.gun} d={d} subeId={subeId} tabletVar={tabletVar} kapatilabilir={!!d.kuru}
           kapat={() => { setSihirbazElle(false); setDenemeKapandi(true); }}
           basladi={() => setSihirbazBasari(true)}
-          bitti={() => { setSihirbazBasari(false); setSihirbazElle(false); if (d.kuru) setDenemeKapandi(true); yukle(); }} />
+          bitti={async () => { setSihirbazElle(false); if (d.kuru) setDenemeKapandi(true); await yukle(); setSihirbazBasari(false); }} />
       )}
       {(modal === 'ac' || modal === 'fire') && (
         <Modal baslik={modal === 'ac' ? '📦 Ürün Aç' : '🗑️ Fire'} kapat={() => setModal(null)} genis>

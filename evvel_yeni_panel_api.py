@@ -356,7 +356,10 @@ def _olay(cur, **kw) -> Optional[str]:
                           (SELECT MAX(olay_zamani) FROM ey_sube_olay WHERE hedef_kok=%s AND tur='iptal') AS iptal""",
                 (kw["kok"], kw["kok"]))
     r = dict(cur.fetchone() or {})
-    vardi = r.get("son") is not None and not (r.get("iptal") is not None and r["iptal"] >= r["son"])   # Fable: iptal edilen gün yeniden açılabilsin
+    iptalli = r.get("son") is not None and r.get("iptal") is not None and r["iptal"] >= r["son"]
+    vardi = r.get("son") is not None and not iptalli   # Fable: iptal edilen gün yeniden açılabilsin
+    if iptalli:   # Codex: aynı içerik iptal edilmiş eski sürümle "tekrar" sayılmasın → yeni sürüm
+        kw["veri"] = {**(kw.get("veri") or {}), "iptal_sonrasi": str(r["iptal"])}
     oid = olay_yaz(cur, **kw)
     if vardi and oid is not None:
         raise HTTPException(409, "Bu kayıt zaten yapıldı — değiştirmek için merkeze haber verin")
@@ -407,6 +410,8 @@ def _acilis_tam(cur, b: "AcilisBody") -> None:
     if b.pasta_toplam is None:
         raise HTTPException(400, "Pasta adedini girin")
     _tam(b.pasta_toplam, "Pasta")
+    _tl(b.kasa_sayim, "Kasadaki para")
+    _sayim_satirlari(cur, b.sayim)
     if not b.istemci_gunu:
         raise HTTPException(400, "Form günü yok — sayfayı yenile")
 
@@ -457,7 +462,7 @@ def acilis(sube_id: str, b: AcilisBody):
                        veri={"kasa_sayim": kasa, "sayim": satir, "istek_id": b.istek_id,
                              "pasta_toplam": None if b.pasta_toplam is None else _tam(b.pasta_toplam, "Pasta")})
         d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=f"{KIM} · {p['ad']}", tur="gunluk",
-                      kaynak_ref=f"{kok}:sayim") if satir else None
+                      kaynak_ref=f"{kok}:sayim:{oid}") if satir and oid else None   # Codex: sürüme bağlı (iptal sonrası yeni sayım)
         return {"olay": oid, "tekrar": oid is None, "sayilan": len(satir) if d else 0, "mesaj": "Açılış kaydedildi", "saat_engeli": engel}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
@@ -805,7 +810,7 @@ class OnayIsteBody(BaseModel):
 def onay_iste(sube_id: str, b: OnayIsteBody):
     """Panel: form hazır → onay isteği. Biçim burada denetlenir (telefon geçersiz form görmesin); kayıt telefon onaylayınca yazılır."""
     if _yoklama() is None:
-        raise HTTPException(400, "QR onayı kapalı — adını seçip kaydet")
+        raise HTTPException(503, "QR sistemi çalışmıyor — merkeze haber ver")
     if b.tur not in ONAY_TURLERI:
         raise HTTPException(400, "Bu işlem QR ile onaylanmaz")
     Body, _f, ad = ONAY_TURLERI[b.tur]
@@ -817,6 +822,11 @@ def onay_iste(sube_id: str, b: OnayIsteBody):
     oid = "on-" + uuid.uuid4().hex[:16]
     with db() as (conn, cur):
         _sube(cur, sube_id)
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_onay:{sube_id}:{b.tur}",))   # Codex: tek sıra
+        cur.execute("""SELECT 1 FROM ey_panel_onay WHERE sube_id=%s AND tur=%s AND durum='isleniyor'
+                       AND islenme > NOW() - INTERVAL '2 minutes' LIMIT 1""", (str(sube_id), b.tur))
+        if cur.fetchone():
+            raise HTTPException(409, "Önceki onay şu an telefondan işleniyor — birkaç saniye bekle")
         if b.tur == "acilis":
             _acilis_tam(cur, Body(**{**g, "personel_id": "-"}))
         ozet = _onay_ozet(cur, b.tur, g)
@@ -897,6 +907,10 @@ async def onay_onayla(oid: str, request: Request):
             except ValueError:
                 raise HTTPException(400, "İstek okunamadı")
             p = y.personel_oku(cur, c["personel_id"])
+            cur.execute("SELECT sube_id, tur FROM ey_panel_onay WHERE id=%s", (oid,))
+            _sk = cur.fetchone()
+            if _sk:   # onay-iste ile aynı sıra kilidi (yeni QR istenirken eski onay işlenmeye başlayamaz)
+                cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_onay:{_sk['sube_id']}:{_sk['tur']}",))
             cur.execute("SELECT *, son < NOW() AS gecti, islenme < NOW() - INTERVAL '2 minutes' AS takildi FROM ey_panel_onay WHERE id=%s FOR UPDATE", (oid,))
             o = cur.fetchone()
             if not o:

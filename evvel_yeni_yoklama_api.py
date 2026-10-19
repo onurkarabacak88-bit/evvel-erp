@@ -450,6 +450,13 @@ def cihaz_davet(b: DavetBody, x_evvel_oturum: Optional[str] = Header(default=Non
                 raise HTTPException(404, "Şube bulunamadı")
             ad = dict(r)["ad"]
         cid = "cz-" + uuid.uuid4().hex[:16]
+        # sahip (2026-10-19): yeniden link üretilince ÖNCEKİ kullanılmamış link geçersiz olur (tek geçerli link)
+        if b.personel_id:
+            cur.execute("UPDATE ey_cihaz SET durum='iptal', iptal_zaman=NOW(), davet_hash=NULL WHERE tur='telefon' AND personel_id=%s AND durum='davet'",
+                        (b.personel_id,))
+        else:
+            cur.execute("UPDATE ey_cihaz SET durum='iptal', iptal_zaman=NOW(), davet_hash=NULL WHERE tur='tablet' AND sube_id=%s AND durum='davet'",
+                        (b.sube_id,))
         cur.execute("""INSERT INTO ey_cihaz (id, tur, personel_id, sube_id, etiket, durum, davet_hash, davet_son, olusturan)
                        VALUES (%s,%s,%s,%s,%s,'davet',%s, NOW() + (%s || ' hours')::interval, %s)""",
                     (cid, "telefon" if b.personel_id else "tablet", b.personel_id, b.sube_id, (b.etiket or "")[:60] or None,
@@ -493,6 +500,9 @@ def cihaz_bagla(b: BaglaBody):
         cur.execute("""UPDATE ey_cihaz SET acik_anahtar=%s::jsonb, jeton_hash=%s, guc=%s, durum=%s, davet_hash=NULL,
                               etiket=COALESCE(etiket, %s) WHERE id=%s""",
                     (anahtar, jh, guc, durum, (b.etiket or "")[:60] or None, c["id"]))
+        if c["tur"] == "telefon" and c["personel_id"]:   # sahip: yeni telefon devreye girince eskisi iptal
+            cur.execute("""UPDATE ey_cihaz SET durum='iptal', iptal_zaman=NOW(), davet_hash=NULL
+                           WHERE tur='telefon' AND personel_id=%s AND id<>%s AND durum IN ('aktif','onay','davet')""", (c["personel_id"], c["id"]))
         if c["personel_id"]:
             cur.execute("SELECT ad FROM ey_personel WHERE id=%s", (c["personel_id"],))
         else:
@@ -508,10 +518,14 @@ def cihaz_onayla(cid: str, x_evvel_oturum: Optional[str] = Header(default=None))
     yoklama_hazirla()
     with db() as (conn, cur):
         _merkez(cur, x_evvel_oturum)
-        cur.execute("UPDATE ey_cihaz SET durum='aktif' WHERE id=%s AND durum='onay' AND tur='tablet' RETURNING id", (cid,))
-        if not cur.fetchone():
+        cur.execute("UPDATE ey_cihaz SET durum='aktif' WHERE id=%s AND durum='onay' AND tur='tablet' RETURNING id, sube_id", (cid,))
+        r = cur.fetchone()
+        if not r:
             raise HTTPException(404, "Onay bekleyen tablet bulunamadı")
-    return {"ok": True, "mesaj": "Tablet onaylandı"}
+        cur.execute("""UPDATE ey_cihaz SET durum='iptal', iptal_zaman=NOW(), davet_hash=NULL
+                       WHERE tur='tablet' AND sube_id=%s AND id<>%s AND durum IN ('aktif','onay')""", (dict(r)["sube_id"], cid))
+        eski = cur.rowcount
+    return {"ok": True, "mesaj": "Panel bilgisayarı onaylandı" + (f" — eski {eski} bağlantı iptal edildi" if eski else "")}
 
 
 @router.post("/cihaz/{cid}/iptal")
