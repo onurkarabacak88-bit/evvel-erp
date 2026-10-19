@@ -17,6 +17,7 @@ export default function SubePaneli({ subeId }) {
   const [kisi, setKisi] = useState('');
   const [sekme, setSekme] = useState('ana');
   const [acSecim, setAcSecim] = useState(0);   // Ürün Aç: onaylanmamış seçim sayısı (sol menü rozeti, eski solUrunAcBadge)
+  useEffect(() => { setAcSecim(0); }, [d?.gun]);   // Fable: gün değişince rozet donmasın
   const [modal, setModal] = useState(null);
   const [mesaj, setMesaj] = useState(null);
   const [mesgul, setMesgul] = useState(false);
@@ -264,7 +265,7 @@ export default function SubePaneli({ subeId }) {
 
         {/* ORTA: ANA SAYFA */}
         {sekme === 'ac' ? (
-          <UrunAc d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} secimBildir={setAcSecim}
+          <UrunAc key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} secimBildir={setAcSecim}
             bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
         ) : (
           <AnaSayfa d={d} yok={yok} tabletVar={tabletVar} kapali={kapali} ac={ac} setQrBuyuk={setQrBuyuk} setMolaQr={setMolaQr} bilgi={yakinda} />

@@ -68,7 +68,9 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
       else {
         setHata(e?.message || 'Kaydedilemedi');
         if (e?.status === 403 || e?.status === 429) { setPin(''); setOnay(1); }   // yanlış / kilitli PIN
-        if (e?.status === 409 && /zaten/i.test(e?.message || '')) setIstek(yeniIstek());
+        if (e?.status === 409 && /zaten/i.test(e?.message || '')) {   // Fable: yanıtı kaybolmuş ilk gönderim yazılmış → başarılı say (yeni kimlik = çift kayıt olurdu)
+          setOnay(0); setPin(''); setKisi(''); temizle(); bitti('Bu kayıt zaten alınmıştı ✓', false);
+        }
       }
     }
     setMesgul(false);
@@ -181,7 +183,8 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
             <button className="sp-btn sp-ana" disabled={!kisi || pin.length !== 4} onClick={() => { setHata(''); setOnay(2); }}>Devam → özet</button>
           </>)}
           {onay === 2 && (<>
-            <div style={{ color: C.soluk }}>Açan: <b style={{ color: C.yazi }}>{kisiAd}</b></div>
+            <div style={{ color: C.soluk }}>Açan: <b style={{ color: C.yazi }}>{kisiAd || '—'}</b></div>
+            {!kisiAd && <div style={{ color: C.sari, fontWeight: 700 }}>Seçili kişi çıkış yapmış — geri dönüp adını yeniden seç</div>}
             <div style={{ fontSize: 22, fontWeight: 900, color: C.yesil }}>{kalem} kalem · {toplam} adet</div>
             <div style={{ display: 'grid', gap: 4, maxHeight: '40vh', overflow: 'auto' }}>
               {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{n}</b></div>)}
@@ -190,7 +193,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
             {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="sp-btn" disabled={mesgul} onClick={() => setOnay(1)}>« Geri</button>
-              <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul} onClick={kaydet}>{mesgul ? 'Gönderiliyor…' : '✔ Kaydet'}</button>
+              <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul || !kisiAd} onClick={kaydet}>{mesgul ? 'Gönderiliyor…' : '✔ Kaydet'}</button>
             </div>
           </>)}
         </Modal>
