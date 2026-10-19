@@ -870,6 +870,8 @@ def teslim_al(sube_id: str, b: TeslimAlBody):
             tutar = None
         if b.fatura_geldi and not tutar:
             raise HTTPException(400, "Fatura geldiyse faturadaki TOPLAM tutarı yaz")
+        if b.fatura_geldi and not (b.fatura_no or "").strip():
+            raise HTTPException(400, "Fatura geldiyse fatura numarasını yaz")
         ozet = hashlib.sha1(json.dumps(sorted((x["urun_id"], x["adet"]) for x in k)).encode()).hexdigest()[:16] + ":" + str(t["id"])
         if not c["kuru"]:   # Fable: "kaydedildi mi?" deyip yeni istekle ikinci basış → 3 dk aynı içerik kilidi (eski SUBE-004)
             cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_teslim_al:{sube_id}",))

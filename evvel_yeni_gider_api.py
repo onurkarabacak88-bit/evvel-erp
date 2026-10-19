@@ -232,7 +232,7 @@ def _yeni_kesin_gunler(cur, bas: date, son: date) -> set:
 
 def _yeni_hareketler(cur, bas: date, son: date, turler: tuple, hedef_kosul: str) -> list:
     """Depo defteri (yeni evren) — hareket satırları. hedef_kosul: SQL parçası (sabit, kullanıcı girdisi değil)."""
-    cur.execute(f"""SELECT tur, urun_id, urun_ad, adet, kaynak, hedef, is_gunu FROM ey_stok_hareket
+    cur.execute(f"""SELECT tur, urun_id, urun_ad, adet, kaynak, hedef, is_gunu, bag FROM ey_stok_hareket
                      WHERE yeni AND NOT iptal AND tur = ANY(%s) AND is_gunu BETWEEN %s AND %s AND {hedef_kosul}""",
                 (list(turler), bas, son))
     return [dict(x) for x in cur.fetchall() or []]
@@ -267,7 +267,14 @@ def _mal_satirlari_yeni(cur, bas: date, son: date, depo: str) -> list:
         return []
     fiyat = _yeni_fiyatci(cur)
     satir = []
+    iptal_teslim = set()
+    if _modul_acik("toptanci"):   # Codex: teslimi iptal edilip stoğu sayımla kalan giriş sevk bedelinde sayılmasın
+        cur.execute("SELECT kaynak_ref FROM ey_toptanci_teslim WHERE iptal AND kaynak_ref LIKE 'panel:teslim:%%' AND tarih BETWEEN %s AND %s",
+                    (bas, son))
+        iptal_teslim = {dict(r)["kaynak_ref"] for r in cur.fetchall() or []}
     for h in _yeni_hareketler(cur, bas, son, ("kabul", "giris"), "hedef LIKE 'depo:%%'"):
+        if h.get("bag") in iptal_teslim:
+            continue
         sid = h["hedef"].split(":", 1)[1]
         if h["tur"] == "kabul" and h["kaynak"] != "yolda":
             continue

@@ -282,6 +282,10 @@ def teslim_yaz(cur, *, kaynak_ref: str, toptanci_id: str, toptanci_ad: str, sube
 def panel_teslim_yaz(cur, *, defter_id, sube_id, toptanci_id, toptanci_ad, kalemler, fatura_geldi, fatura_tutar, fatura_no, teslim_alan) -> None:
     """sube_panel /urun-sevk kancası — kendi SAVEPOINT'inde; hata teslimi (stok) BOZMAZ, iz bırakır."""
     try:
+        from evvel_yeni_cekirdek import bugun as _bg, panel_baslangic as _pb
+        if _bg() >= _pb(cur):   # Codex: yeni panel canlıyken TEK teslim kapısı yeni panel — eski köprü borç yazmaz
+            log.warning("eski panel teslimi yeni dönemde geldi — Evvel Yeni borcuna YAZILMADI (defter=%s)", defter_id)
+            return
         with savepoint(cur, "sp_ey_top_panel"):
             from evvel_yeni_cekirdek import bugun as _b
             teslim_yaz(cur, kaynak_ref=f"urun_sevk:{defter_id}", toptanci_id=str(toptanci_id), toptanci_ad=toptanci_ad,
@@ -536,6 +540,12 @@ def teslim_iptal(tid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Head
     _hazirla()
     with db() as (conn, cur):
         toptanci_hazirla(cur)
+        cur.execute("SELECT kaynak_ref FROM ey_toptanci_teslim WHERE id=%s", (tid,))
+        r0 = cur.fetchone()
+        if r0 and (dict(r0)["kaynak_ref"] or "").startswith("panel:teslim:"):
+            from evvel_yeni_moduller import DURUM
+            if DURUM.get("depo") != "yuklendi":   # Codex: borç düşüp stok kalmasın — önce Depo açılmalı
+                raise HTTPException(409, "Depo modülü kapalı — bu teslimin depo girişi de geri alınmalı; önce Depo'yu aç")
         cur.execute("UPDATE ey_toptanci_teslim SET iptal=TRUE, iptal_sebep=%s WHERE id=%s AND NOT iptal RETURNING id, kaynak_ref",
                     (f"{body.sebep.strip()[:150]} · {_aktor(cur, x_evvel_oturum)}", tid))
         r = cur.fetchone()
@@ -543,15 +553,11 @@ def teslim_iptal(tid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Head
             raise HTTPException(404, "Teslim bulunamadı ya da zaten iptal")
         ek = ""
         ref = dict(r)["kaynak_ref"] or ""
-        if ref.startswith("panel:teslim:"):   # yeni panel teslimi: depo girişi de geri alınır (tak-çıkar: Depo kapalıysa atlanır)
-            from evvel_yeni_moduller import DURUM
-            if DURUM.get("depo") == "yuklendi":
-                from evvel_yeni_depo_api import hareket_iptal
-                d = hareket_iptal(cur, bag=ref, sebep=f"toptancı teslimi iptal · {body.sebep.strip()[:100]}")
-                ek = (" · stok sayımla kesinleştiği için depo girişi GERİ ALINMADI (yalnız borç)" if d["sayimli"]
-                      else f" · depo girişi geri alındı ({d['iptal']} kalem)")
-            else:
-                ek = " · Depo modülü kapalı — depo girişi geri alınmadı"
+        if ref.startswith("panel:teslim:"):   # yeni panel teslimi: depo girişi de geri alınır (Depo açık — yukarıda denetlendi)
+            from evvel_yeni_depo_api import hareket_iptal
+            d = hareket_iptal(cur, bag=ref, sebep=f"toptancı teslimi iptal · {body.sebep.strip()[:100]}")
+            ek = f" · depo girişi geri alındı ({d['iptal']} kalem)" + (
+                f" · sonradan SAYILAN {', '.join(d['kalan'])} geri alınmadı (stok sayımla kesinleşti)" if d["kalan"] else "")
     return {"ok": True, "mesaj": "Teslim iptal edildi — borçtan düştü" + ek}
 
 

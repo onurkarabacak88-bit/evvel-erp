@@ -142,8 +142,8 @@ def _depo_sube(cur) -> str:
 def _yaz(cur, rows: List[tuple], yeni: bool = False) -> int:
     n = 0
     for r in rows:
-        cur.execute("""INSERT INTO ey_stok_hareket (id, kaynak_ref, tur, urun_id, urun_ad, adet, kaynak, hedef, is_gunu, olay_zaman, kim, aciklama, bag, yeni)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (kaynak_ref) DO NOTHING""",
+        cur.execute("""INSERT INTO ey_stok_hareket (id, kaynak_ref, tur, urun_id, urun_ad, adet, kaynak, hedef, is_gunu, olay_zaman, kim, aciklama, bag, yeni, zaman)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s, clock_timestamp()) ON CONFLICT (kaynak_ref) DO NOTHING""",
                     ("sh-" + uuid.uuid4().hex[:16],) + r + (yeni,))
         n += cur.rowcount
     return n
@@ -377,22 +377,28 @@ def hareket_yaz(cur, *, kaynak_ref: str, tur: str, urun_id: str, adet: int, kayn
 
 
 def hareket_iptal(cur, *, bag: str, sebep: str) -> dict:
-    """PUBLIC: bir işlemin (bag) bütün hareketlerini iptal eder (iz kalır). Fable S3: hareketin şube konumunda hareketten SONRA
-    sayım yapılmışsa stok sayımla kesinleşmiştir → HİÇBİRİ iptal edilmez ({'iptal': 0, 'sayimli': True}); çağıran yalnız borcu düşer."""
+    """PUBLIC: bir işlemin (bag) hareketlerini iptal eder (iz kalır). Fable S3 + Codex: ÜRÜN BAZINDA — o ürün o konumda hareketten
+    SONRA sayıldıysa (sıra = kilit altındaki clock_timestamp) o satır kalır (stok sayımla kesinleşti); diğerleri iptal edilir.
+    Dönüş {'iptal': n, 'sayimli': bool, 'kalan': [ad…]}."""
     depo_hazirla(cur)
-    cur.execute("SELECT id, kaynak, hedef, zaman FROM ey_stok_hareket WHERE bag=%s AND NOT iptal AND yeni", (bag,))
-    rows = [dict(x) for x in cur.fetchall() or []]
-    if not rows:
-        return {"iptal": 0, "sayimli": False}
-    konumlar = {k for r in rows for k in (r["kaynak"], r["hedef"]) if k.startswith("depo:") or k.startswith("bar:")}
-    _konum_kilidi(cur, *konumlar)
-    ilk = min(r["zaman"] for r in rows)
-    cur.execute("SELECT 1 FROM ey_stok_sayim WHERE yeni AND konum = ANY(%s) AND zaman >= %s LIMIT 1", (list(konumlar), ilk))
-    if cur.fetchone():
-        return {"iptal": 0, "sayimli": True}
-    cur.execute("UPDATE ey_stok_hareket SET iptal=TRUE, iptal_sebep=%s WHERE bag=%s AND NOT iptal AND yeni",
-                ((sebep or "iptal")[:200], bag))
-    return {"iptal": cur.rowcount, "sayimli": False}
+    cur.execute("SELECT kaynak, hedef FROM ey_stok_hareket WHERE bag=%s AND NOT iptal AND yeni", (bag,))
+    k0 = [dict(x) for x in cur.fetchall() or []]
+    if not k0:
+        return {"iptal": 0, "sayimli": False, "kalan": []}
+    _konum_kilidi(cur, *{k for r in k0 for k in (r["kaynak"], r["hedef"]) if k.startswith("depo:") or k.startswith("bar:")})
+    cur.execute("SELECT id, urun_id, urun_ad, kaynak, hedef, zaman FROM ey_stok_hareket WHERE bag=%s AND NOT iptal AND yeni FOR UPDATE", (bag,))
+    rows = [dict(x) for x in cur.fetchall() or []]   # Codex: kilit ALTINDA yeniden oku
+    n, kalan = 0, []
+    for r in rows:
+        kon = [k for k in (r["kaynak"], r["hedef"]) if k.startswith("depo:") or k.startswith("bar:")]
+        cur.execute("""SELECT 1 FROM ey_stok_sayim WHERE yeni AND konum = ANY(%s) AND zaman > %s
+                         AND satirlar @> %s::jsonb LIMIT 1""", (kon, r["zaman"], json.dumps([{"urun_id": str(r["urun_id"])}])))
+        if cur.fetchone():   # bu ürün o konumda sonradan SAYILDI → stok kesinleşti, satır kalır
+            kalan.append(r["urun_ad"] or r["urun_id"])
+            continue
+        cur.execute("UPDATE ey_stok_hareket SET iptal=TRUE, iptal_sebep=%s WHERE id=%s", ((sebep or "iptal")[:200], r["id"]))
+        n += 1
+    return {"iptal": n, "sayimli": bool(kalan), "kalan": kalan}
 
 
 def urun_hareketi_var(cur, urun_id: str) -> bool:
@@ -477,7 +483,7 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
     if not eski_evren and tur == "sayim":   # Fable: yeni evrende konumun İLK merkez sayımı = açılış sayımı (panel günlük sayımı değil)
         cur.execute("SELECT 1 FROM ey_stok_sayim WHERE konum=%s AND yeni LIMIT 1", (konum,))
         ilk = cur.fetchone() is None
-    cur.execute("INSERT INTO ey_stok_sayim (id, konum, is_gunu, kim, acilis, satirlar, yeni) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s)",
+    cur.execute("INSERT INTO ey_stok_sayim (id, konum, is_gunu, kim, acilis, satirlar, yeni, zaman) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s, clock_timestamp())",
                 (sid, konum, gun, kim, tur == "acilis" or ilk, json.dumps(kayit, ensure_ascii=False), not eski_evren))
     _yaz(cur, rows, yeni=not eski_evren)
     return {"sayim_id": sid, "tekrar": False, "kayit": kayit, "farklar": [k for k in kayit if k["fark"]]}
