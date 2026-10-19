@@ -290,10 +290,25 @@ def bugun_girenler(cur, sube_id: str, gun: Optional[date] = None) -> list:
 
 
 def acik_mi(cur, sube_id: str, personel_id: str) -> bool:
-    """PUBLIC: kişinin bu şubede açık (çıkış yapılmamış) girişi var mı (panel ad listesi / kapısı)."""
+    """PUBLIC: kişinin bu şubede BUGÜN açık (çıkış yapılmamış) girişi var mı (panel ad listesi / kapısı). Dünün açığı sayılmaz."""
     yoklama_hazirla()
-    cur.execute("SELECT 1 FROM ey_yoklama WHERE personel_id=%s AND sube_id=%s AND cikis_ts IS NULL", (personel_id, sube_id))
+    cur.execute("SELECT 1 FROM ey_yoklama WHERE personel_id=%s AND sube_id=%s AND cikis_ts IS NULL AND is_gunu >= %s",
+                (personel_id, sube_id, is_gunu()))
     return bool(cur.fetchone())
+
+
+def eski_acik_kapat(cur, personel_id: str) -> int:
+    """Geçmiş iş gününden açık kalan giriş (çıkış yapılmamış) → 'cikissiz' işaretlenir: kişi bugün yeniden GİRİŞ yapabilir;
+    kayıt merkez Bekleyen işler'de "Çıkış yok" olarak KALIR (çıkış saatini merkez yazar). Süre uydurulmaz: çıkış = giriş anı
+    (0 saat) — merkez gerçek saati yazana dek. Açık kalmış molası da 0 dk kapanır (hak üretmez)."""
+    cur.execute("""UPDATE ey_yoklama SET cikis_ts=giris_ts, cikis_tur='cikissiz'
+                   WHERE personel_id=%s AND cikis_ts IS NULL AND is_gunu < %s RETURNING id""", (personel_id, is_gunu()))
+    n = len(cur.fetchall() or [])
+    cur.execute("SELECT baslangic_ts FROM ey_mola WHERE personel_id=%s AND bitis_ts IS NULL AND is_gunu < %s", (personel_id, is_gunu()))
+    m = cur.fetchone()
+    if m:
+        _mola_kapat(cur, personel_id, "cikissiz", ts=dict(m)["baslangic_ts"])
+    return n
 
 
 def personel_kilidi(cur, personel_id: str) -> None:
@@ -624,6 +639,8 @@ async def _telefon(request: Request, fn):
         with db() as (conn, cur):
             c = cihaz_coz(cur, request.headers, request.method, request.url.path, govde, tur="telefon")
             p = _personel(cur, c["personel_id"])
+            personel_kilidi(cur, p["id"])
+            eski_acik_kapat(cur, p["id"])   # sahip: dünkü girişi kapanmamış kişi bugün "Giriş yap" görsün
             try:
                 veri = json.loads(govde) if govde else {}
             except ValueError:
@@ -751,7 +768,7 @@ def gunler(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = Fa
         _merkez(cur, x_evvel_oturum)
         if acik:
             cur.execute("""SELECT y.*, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
-                             LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE y.cikis_ts IS NULL AND y.is_gunu < %s
+                             LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE (y.cikis_ts IS NULL OR y.cikis_tur='cikissiz') AND y.is_gunu < %s
                             ORDER BY y.is_gunu, y.giris_ts""", (is_gunu(),))
         elif bas and son:
             cur.execute("""SELECT y.*, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
@@ -789,7 +806,7 @@ def duzelt(b: DuzeltBody, x_evvel_oturum: Optional[str] = Header(default=None)):
             personel_kilidi(cur, dict(k0)["personel_id"])   # Codex: telefondan mola başlatma ile yarışmasın
         cur.execute("SELECT * FROM ey_yoklama WHERE id=%s FOR UPDATE", (b.yoklama_id,))
         r = cur.fetchone()
-        if not r or dict(r)["cikis_ts"] is not None:
+        if not r or (dict(r)["cikis_ts"] is not None and dict(r).get("cikis_tur") != "cikissiz"):
             raise HTTPException(404, "Açık giriş bulunamadı")
         r = dict(r)
         from zoneinfo import ZoneInfo
@@ -1221,7 +1238,8 @@ def _bekleyen(cur, baglam: dict) -> list:
     out = []
     bugun = is_gunu()
     cur.execute("""SELECT y.id, y.is_gunu, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
-                     LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE y.cikis_ts IS NULL AND y.is_gunu < %s ORDER BY y.is_gunu""", (bugun,))
+                     LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE (y.cikis_ts IS NULL OR y.cikis_tur='cikissiz') AND y.is_gunu < %s
+                    ORDER BY y.is_gunu""", (bugun,))
     for r in [dict(x) for x in cur.fetchall() or []]:
         out.append({"tur": "yoklama_cikis_yok", "genel": True, "grup": "personel", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
                     "etiket": "🚪 Çıkış yok", "ad": f"{r['ad']} — {r['sube_ad'] or ''} {r['is_gunu'].strftime('%d.%m')} çıkış yapmadı",
