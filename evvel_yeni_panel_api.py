@@ -121,12 +121,12 @@ def _tl(v, ad: str) -> int:
     return k
 
 
-def _urunler(cur, idler: List[str], takip: Optional[str] = None) -> dict:
-    """takip verilirse ürün o takip türünde olmalı (Codex: sayım = 'sayim', ürün aç = 'acilinca')."""
+def _urunler(cur, idler: List[str], takip: Optional[str] = None, pasif_olur: bool = False) -> dict:
+    """takip verilirse ürün o takip türünde olmalı (Codex: sayım = 'sayim'). pasif_olur: Ürün Aç "Pasifleri göster" (eski panel)."""
     from evvel_yeni_urun_api import urun_bilgi
     b = urun_bilgi(cur, idler)
     for i in idler:
-        if i not in b or not b[i]["aktif"]:
+        if i not in b or (not b[i]["aktif"] and not pasif_olur):
             raise HTTPException(400, "Ürün bulunamadı — listeyi yenileyin")
         if takip and (b[i].get("takip") or "sayim") != takip:
             raise HTTPException(400, f"{b[i]['ad']}: bu listede yok — listeyi yenileyin")
@@ -297,6 +297,7 @@ def panel_durum(sube_id: str):
         per = [{"id": str(p["id"]), "ad": p["ad"]} for p in secim_listeleri(cur)["personel"]
                if p["aktif"] and str(p.get("sube_id") or "") == str(sube_id)]
         kat = katalog(cur)
+        kat_hepsi = katalog(cur, hepsi=True)
         bugunku = [{"id": o["id"], "tur": o["tur"], "zaman": str(o["olay_zamani"])[11:16], "kim": o.get("personel_ad"),
                     "iptal": o.get("iptal", False)}
                    for o in olaylar(cur, sube_id=sube_id, bas=gun, son=gun) if (o.get("kaynak_tablo") or "") == "panel"]
@@ -320,6 +321,10 @@ def panel_durum(sube_id: str):
             "sayilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "sayim" and x.get("panel_sayim")]}
                         for k in kat],
             "acilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "acilinca"]} for k in kat],
+            # Basamak 5 Ürün Aç: BÜTÜN katalog (aktif kategoriler; ürünlerde aktif bayrağı — "Pasifleri göster")
+            "ac_katalog": [{"id": str(k.get("id")), "kategori": k["ad"], "emoji": k.get("emoji"),
+                            "urunler": [{**_u(x), "takip": x.get("takip") or "sayim", "aktif": bool(x.get("aktif", True))} for x in k["urunler"]]}
+                           for k in kat_hepsi if k.get("aktif", True)],
             "bugun": bugunku, "yoklama": yok,
             # gün çizgisi (eski ana sayfa ①): AÇILIŞ · KAPANIŞ — kim, saat (KONTROL noktası yok: sahip istisnası 10)
             "gun_cizgisi": {t: next(({"kim": o["kim"], "saat": o["zaman"]} for o in bugunku if o["tur"] == t and not o["iptal"]), None)
@@ -608,39 +613,44 @@ class UrunAcBody(BaseModel):
     pin: Optional[str] = None          # 4 hane — doğrulanır, hiçbir yere yazılmaz
     kalemler: List[Kalem]
     istek_id: str
+    aciklama: Optional[str] = None     # eski panel "Not (isteğe bağlı)"
 
 
-def _kalemler(cur, kalemler: List[Kalem], takip: Optional[str] = None) -> list:
+def _kalemler(cur, kalemler: List[Kalem], takip: Optional[str] = None, pasif_olur: bool = False) -> list:
     k = [{"urun_id": x.urun_id, "adet": _tam(x.adet, "Adet")} for x in kalemler]
     k = [x for x in k if x["adet"] > 0]
     if not k:
         raise HTTPException(400, "En az bir ürün seç")
     if len({x["urun_id"] for x in k}) != len(k):
         raise HTTPException(400, "Aynı ürün iki kez seçildi")
-    b = _urunler(cur, [x["urun_id"] for x in k], takip=takip)
+    b = _urunler(cur, [x["urun_id"] for x in k], takip=takip, pasif_olur=pasif_olur)
     for x in k:
         x["ad"] = b[x["urun_id"]]["ad"]
+        x["takip"] = b[x["urun_id"]].get("takip") or "sayim"
     return k
 
 
 @router.post("/{sube_id}/urun-ac")
 def urun_ac(sube_id: str, b: UrunAcBody):
-    """Ürün aç (yalnız 'açılınca gider' ürünler): Depo 'ac' depo:şube → dışarı:tuketim. Fiyat yazılmaz (Gider okurken hesaplar).
-    Eksi stok ENGELLENMEZ — merkeze iş düşer (personele uyarı yok)."""
+    """Ürün aç — BÜTÜN katalog (sahip: "bütün mekanizma", Basamak 5). ÇİFT GİDER kuralı: takip='acilinca' ürün → Depo 'ac'
+    (depo:şube → dışarı:tuketim = gider); takip='sayim' ürün → YALNIZ olay (iz) — tüketimi sayım farkı verir (açınca defterden
+    düşüp bar sayımında 'fazla' dönmesin). Fiyat yazılmaz. Eksi stok ENGELLENMEZ — merkeze iş düşer (personele uyarı yok)."""
     _TUR = "urun_ac"
     def is_(cur, c):
         from evvel_yeni_depo_api import hareket_yaz
         _gun_acik_mi(cur, c, sube_id)
         p = _personel(cur, sube_id, b.personel_id)
         _pin(cur, p, b.pin)
-        k = _kalemler(cur, b.kalemler, takip="acilinca")
+        k = _kalemler(cur, b.kalemler, pasif_olur=True)
         kok = f"panel:ac:{sube_id}:{b.istek_id}"
         oid = _olay(cur, sube_id=sube_id, tur="urun_ac", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
-                       personel_id=p["id"], personel_ad=p["ad"], veri={"kalemler": k})
+                       personel_id=p["id"], personel_ad=p["ad"], veri={"kalemler": k, "aciklama": (b.aciklama or "").strip()[:200] or None})
         for i, x in enumerate(k):
+            if oid is None or x["takip"] != "acilinca":   # tekrar gönderim / sayımla izlenen ürün: yalnız iz (tüketim şişmez)
+                continue
             hareket_yaz(cur, kaynak_ref=f"{kok}:{i}", tur="ac", urun_id=x["urun_id"], urun_ad=x["ad"], adet=x["adet"],
                         kaynak=f"depo:{sube_id}", hedef="dışarı:tuketim", kim=f"{KIM} · {p['ad']}", bag=kok, gun=c["gun"])
-        return {"olay": oid, "tekrar": oid is None, "mesaj": f"{len(k)} ürün açıldı"}
+        return {"olay": oid, "tekrar": oid is None, "mesaj": f"{len(k)} kalem · {sum(x['adet'] for x in k)} adet açıldı"}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
 

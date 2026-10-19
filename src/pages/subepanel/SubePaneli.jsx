@@ -8,6 +8,7 @@ import { cihazId } from '../../utils/cihazImza';
 import AcilisSihirbazi from './AcilisSihirbazi';
 import AnaSayfa from './AnaSayfa';
 import KasaDevri, { DEVIR_ACIK, devirEtiket } from './KasaDevri';
+import UrunAc from './UrunAc';
 import { AdetListesi, C, CSS, kalemGovde, Modal, SayimListesi, SayiTusTakimi, sayi, sayimGovde, TabletQR, tl, tutar, tutarNum, yeniIstek } from './ortak';
 
 export default function SubePaneli({ subeId }) {
@@ -15,6 +16,7 @@ export default function SubePaneli({ subeId }) {
   const [hata, setHata] = useState('');
   const [kisi, setKisi] = useState('');
   const [sekme, setSekme] = useState('ana');
+  const [acSecim, setAcSecim] = useState(0);   // Ürün Aç: onaylanmamış seçim sayısı (sol menü rozeti, eski solUrunAcBadge)
   const [modal, setModal] = useState(null);
   const [mesaj, setMesaj] = useState(null);
   const [mesgul, setMesgul] = useState(false);
@@ -110,6 +112,7 @@ export default function SubePaneli({ subeId }) {
   const temizle = () => { setAdet({}); setSebep(''); setSayim({}); setF({}); setPin(''); setIstek(yeniIstek()); };
   const ac = (m) => {
     if (m === 'acilis') { setDenemeKapandi(false); setSihirbazElle(true); return; }
+    if (m === 'ac') { setSekme('ac'); return; }   // Basamak 5: Ürün Aç eski panel gibi orta alanda SEKME
     temizle();
     const adaylar = (yok.girenler || []).filter((g) => g.acik).map((g) => g.personel_id);
     setKisi(adaylar.length === 1 ? adaylar[0] : '');
@@ -251,15 +254,21 @@ export default function SubePaneli({ subeId }) {
         <div className="sp-sol-kolon">
           <button className={'sp-sol' + (sekme === 'ana' ? ' akt' : '')} onClick={() => setSekme('ana')}><span style={{ fontSize: 18, width: 24 }}>🏠</span>Ana Sayfa</button>
           {SOL.map((m, i) => (m.b ? <div key={i} className="sp-sol-baslik">{m.b}</div> : (
-            <button key={m.k} className="sp-sol" disabled={m.kapanisKarti ? kapali : kapali && !m.acikKapali && ['ac', 'fire', 'araTeslim', 'devir'].includes(m.k)} title={m.yakinda ? 'Kendi basamağında açılacak' : ''}
+            <button key={m.k} className={'sp-sol' + (m.k === sekme ? ' akt' : '')} disabled={m.kapanisKarti ? kapali : kapali && !m.acikKapali && ['ac', 'fire', 'araTeslim', 'devir'].includes(m.k)} title={m.yakinda ? 'Kendi basamağında açılacak' : ''}
               onClick={() => (m.yakinda ? yakinda(`${m.ad} — kendi basamağında açılacak`) : ac(m.k))}>
               <span style={{ fontSize: 18, width: 24 }}>{m.i}</span><span style={{ flex: 1 }}>{m.ad}</span>{m.yakinda && <small style={{ opacity: 0.7 }}>yakında</small>}
+              {m.k === 'ac' && acSecim > 0 && <span className="sp-rozet" style={{ background: C.sari }} title={`${acSecim} kalem seçili — PIN onayı bekleniyor`}>{acSecim}</span>}
             </button>
           )))}
         </div>
 
         {/* ORTA: ANA SAYFA */}
-        <AnaSayfa d={d} yok={yok} tabletVar={tabletVar} kapali={kapali} ac={ac} setQrBuyuk={setQrBuyuk} setMolaQr={setMolaQr} bilgi={yakinda} />
+        {sekme === 'ac' ? (
+          <UrunAc d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} secimBildir={setAcSecim}
+            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+        ) : (
+          <AnaSayfa d={d} yok={yok} tabletVar={tabletVar} kapali={kapali} ac={ac} setQrBuyuk={setQrBuyuk} setMolaQr={setMolaQr} bilgi={yakinda} />
+        )}
 
         {/* SAĞ: GÜN SONU kartları (eski: 💵 Kasa Devri · 🌙 Günü Kapat, durum çipleriyle) */}
         <div className="sp-sag-kolon" style={{ display: 'grid', gap: 10, alignContent: 'start' }}>

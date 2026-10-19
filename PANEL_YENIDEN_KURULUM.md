@@ -179,3 +179,14 @@ Eski panel karşılaştırması (Fable, sube_panel.html 13048–13231): eski 5 a
 - **Süreler:** `baslatildi` 30 dk'da sessiz düşer · `dolduruluyor` 15 dk dolarsa telefon taslağı kalır, tekrar okutur · `devreden_onayladi` 2 saatte Bekleyen işler (mevcut).
 - **Güvenlik:** kimlik telefondan; devir uçlarında konum mesafesi her zaman yazılır; şube koordinatsızsa devir 409; ürün katalog dışı / eksi / kesir → 400; devralan ≠ devreden sunucuda.
 - **Tek yol:** panel devir formu, DevirBody, devralan_adaylari, "yoklama yoksa doğrudan vardiya olayı" dalı KALKAR.
+
+## BASAMAK 5 — ÜRÜN AÇ (kurgu, Claude 2026-10-19) → Fable (Codex kotası 15:21'de açılınca)
+Eski: sube_panel.html tab-ac (5363–5395), renderStokForms('ac') (11479–11560), acKatalogKartBlockHTML / acStokKatalogRowsHTML (10070–10120), wireStokBtn, stokPinModal.
+- **Yer:** eski gibi orta alanda SEKME (modal değil). Sol menü / hızlı kart "Ürün Aç" → sekme.
+- **Görünüş AYNEN:** hero "🔓 Ürün Aç — Aktif Kullanıma Al · Depodan bara/sahaya çıkan ürünleri sayın" · yapışkan onay çubuğu (seçim varken: "N kalem · M adet" + **Seçimleri Onayla**) · kategori kartları (renk tonları, seçili sayısı rozeti, "X aktif · Dokun → liste") · "Pasifleri göster" · kategoriye dokununca pencere: satır satır ad + − adet + · "Tamam" · seçim özeti · Not (isteğe bağlı).
+- **Onay:** Seçimleri Onayla → pencere: **yalnız QR ile girmiş (içeride) personelin adı + 4 haneli PIN** (S3) → özet → Kaydet. Başarıda bip + yeşil flaş, form temizlenir.
+- **Katalog:** BÜTÜN aktif ürünler (sahip: "bütün mekanizma"), pasifler "Pasifleri göster" ile.
+- **ÇİFT GİDER kuralı (soru):** `takip='acilinca'` ürün → Depo 'ac' hareketi (depo:şube → dışarı:tüketim = gider). `takip='sayim'` ürün (bardak, su… günlük/dönem sayımıyla izlenen) → YALNIZ olay (iz) yazılır, Depo hareketi YAZILMAZ — tüketimi sayım farkı verir (aksi hâlde açınca defterden düşer, bar sayımında geri "fazla" çıkar → gürültü). Ürün açılınca Kullanımda/Bitti YOK (istisna 4).
+- **Taslak:** her tuşta tablete (iş gününe bağlı); sayfa yenilense de seçimler kalır; "Taslağı temizle".
+- **Çift gönderim:** istek kimliği (mevcut) + düğme kilidi.
+- **Kalan:** "stok sayımı sürüyor — Ürün Aç kapalı" bandı (EY'de sayım kilidi kaynağı yok → kaynak gelince) · ürün aç hatırlatma bandı (Basamak 1'de var) · kapanışta "ürün aç kaydı yok" sorusu (Basamak 3).
