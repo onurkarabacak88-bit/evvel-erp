@@ -887,7 +887,7 @@ def depodan_kabul(sube_id: str, b: DepoKabulBody):
         if oid is None:
             return {"tekrar": True, "mesaj": "Bu paket zaten kabul edilmişti ✓"}
         fark = False
-        for x in sorted(b.satirlar, key=lambda z: z.bag):
+        for x in sorted(b.satirlar, key=lambda z: int(z.bag.rsplit(":", 1)[1])):   # Fable S3 #1: kalem İNDEKS sırası (sevk_iptal ile aynı)
             r = kabul_yaz(cur, bag=x.bag, sayilan=x.sayilan, hasarli=x.hasarli, kim=kim, gun=c["gun"], beklenen_hedef=str(sube_id))
             fark = fark or bool(r.get("eksik") or r.get("fazla") or r.get("hasar"))
         # KÖR kalır: personele rakam söylenmez (beklenen sızmasın) — yalnız "merkeze iletildi"

@@ -320,7 +320,7 @@ function SevkEt({ onToast }) {
         })}
       </div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>
-        <input placeholder="Not (isteğe bağlı)" value={notu} maxLength={300} onChange={(e) => setNotu(e.target.value)} style={{ ...alan, flex: 1, minWidth: 200 }} />
+        <input placeholder="Not (isteğe bağlı) — adet YAZMA, şube görür (kör sayım)" value={notu} maxLength={300} onChange={(e) => setNotu(e.target.value)} style={{ ...alan, flex: 1, minWidth: 200 }} />
         <Dugme ana onClick={gonder} disabled={mesgul || !hedef || !secili.length}>{mesgul ? 'Gönderiliyor…' : '🚚 Yola çıkar'}</Dugme>
       </div>
       {sonuc && <div style={{ ...kart, padding: 12, borderLeft: `5px solid ${sonuc.kuru ? R.amber : sonuc.eksi?.length ? R.kirmizi : R.yesil}`, fontSize: 13.5 }}>{sonuc.mesaj}</div>}

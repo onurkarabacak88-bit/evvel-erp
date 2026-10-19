@@ -60,6 +60,7 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
       else {
         setHata(e?.message || 'Kaydedilemedi');
         if (e?.status === 403 || e?.status === 429) { setPin(''); setOnay(1); }
+        if (e?.status === 409) { setOnay(0); setPin(''); bitti(e?.message || 'Sayfa yenilendi', false); }   // Fable: gün değişti / paket düştü → yenile (taslak durur)
       }
     }
     setMesgul(false);

@@ -1021,7 +1021,7 @@ def sevk_iptal(cur, *, parti_id: str, kim: str, sebep: str) -> dict:
     if p["iptal"]:
         return {"tekrar": True, "kalan": []}
     _konum_kilidi(cur, f"depo:{p['kaynak']}", f"depo:{p['hedef']}")
-    baglar = [f"sevk:{parti_id}:{i}" for i in range(len(p["kalemler"] or []))]
+    baglar = [f"sevk:{parti_id}:{i}" for i in range(len(p["kalemler"] or []))]   # İNDEKS sırası (panel kabulü de böyle kilitler)
     for bg in baglar:
         _bag_kilidi(cur, bg)
     cur.execute("""SELECT 1 FROM ey_stok_hareket WHERE bag = ANY(%s) AND NOT iptal AND tur <> 'sevk' LIMIT 1""", (baglar,))

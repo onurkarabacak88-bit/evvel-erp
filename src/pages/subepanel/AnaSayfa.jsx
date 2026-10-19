@@ -5,7 +5,7 @@
 import React from 'react';
 import { C, TabletQR } from './ortak';
 
-const TUR_AD = { acilis: 'Açılış', kapanis: 'Kapanış', urun_ac: 'Ürün açıldı', fire: 'Fire', teslim: 'Ara teslim', vardiya: 'Kasa devri' };
+const TUR_AD = { acilis: 'Açılış', kapanis: 'Kapanış', urun_ac: 'Ürün açıldı', fire: 'Fire', teslim: 'Ara teslim', vardiya: 'Kasa devri', teslim_al: 'Tedarikçi teslimi', depo_kabul: 'Depodan gelen kabul' };
 
 function GunNoktasi({ ad, veri, varsayilan, son }) {
   const tamam = !!veri;
