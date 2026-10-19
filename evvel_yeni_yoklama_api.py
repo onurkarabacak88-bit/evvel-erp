@@ -369,7 +369,7 @@ def _mola_kapat(cur, personel_id: str, tur: str, ts=None, mesafe: Optional[int] 
     r = dict(r)
     if ts is None and r["is_gunu"] < is_gunu():   # Codex: geçmiş günün unutulan molası her yoldan GECE kuralıyla kapanır (hak verilir)
         cur.execute("""UPDATE ey_mola SET bitis_ts=baslangic_ts, bitis_tur='gece_otomatik', sure_dk=0, yemek_hakki=TRUE,
-                              degistiren=COALESCE(%s, degistiren) WHERE id=%s""", (kim, r["id"]))
+                              bitis_istek_id=%s, degistiren=COALESCE(%s, degistiren) WHERE id=%s""", (istek_id, kim, r["id"]))
         return {"id": r["id"], "sure_dk": 0, "yemek_hakki": True}
     if ts is not None and ts < r["baslangic_ts"]:
         raise HTTPException(400, f"Saat molanın başlangıcından ({_saat(r['baslangic_ts'])}) önce olamaz")   # Codex: sahte hak üretmesin
