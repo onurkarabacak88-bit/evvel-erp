@@ -70,7 +70,7 @@ SENKRON_ARALIK_SN = 600                  # eski sistemden otomatik köprü — e
 # Sahip (2026-10-17, envanter madde 3-b): "teslim girildiği AN alınmış sayılsın; yalnız 'almadım' denirse açılsın" → 0 gün
 # (köprü en geç 10 dk'da bir çeker ve aynı işlemde kabul eder). "Almadım/eksikti" = 7 gün içinde Düzelt.
 OTOMATIK_KABUL_GUN = 0
-FARK_ESIK_KURUS = 2000      # 20 ₺ — altındaki farklar iş çıkarmaz (sahip, envanter 19)
+FARK_ESIK_KURUS = 2000      # 20 ₺ — (eski: Bekleyen işler eşiği; 2026-10-20'den beri fark yalnız Açık farklar'da)
 DUZELTME_SURESI_GUN = 7
 ACIK = "__acik"                          # açık fark kovası (cep değil)
 YOLDA = "__yolda"                        # teslim edildi, "aldım" bekleniyor (cep değil)
@@ -615,10 +615,8 @@ def _isler(kayitlar: List[dict], C: dict, fl: List[dict]) -> List[dict]:
             out.append({"tur": "teslim", "id": h["id"], "tarih": h["is_gunu"], "kaynak": h["kaynak"], "hedef": h["hedef"],
                         "ad": f"{C.get(h['kaynak'], {}).get('ad')} → {C.get(h['hedef'], {}).get('ad')}",
                         "hedef_kisa": C.get(h["hedef"], {}).get("kisa"), "tutar": _tl_sayi(h["tutar"]), "eski_sistem": bool(h.get("kaynak_ref"))})
-    for x in fl:
-        # Sahip (2026-10-17, envanter 19): 20 ₺ altındaki kasa farkı Bekleyen işler'e DÜŞMEZ — Açık farklar'da görünür
-        if not x["coz"] and abs(int(x["f"])) >= FARK_ESIK_KURUS:
-            out.append({"tur": "fark", "id": x["id"], "tarih": x["tarih"], "ad": x["ad"], "f": _tl_sayi(x["f"])})
+    # Sahip (2026-10-20): kasa farkının TEK EVİ "Açık farklar" — Bekleyen işler'e fark satırı DÜŞMEZ (aynı fark 3 yerde görünüyordu);
+    # Kasam'daki kırmızı "Açık farklar" kartı uyarır, çözüm orada. (fl parametresi geriye uyum için duruyor)
     out.extend(_eksik_kapanislar(kayitlar, C))
     out.sort(key=lambda x: x["tarih"])
     return out

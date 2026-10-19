@@ -578,8 +578,7 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
             elif m.get("kor_fark") is not None and abs(m["kor_fark"]) >= 1:
                 ku.append(f"Kör sayım tutmuyor: sayılan {m['kor_sayim']:,.2f} − teslim {m['teslim'] or 0:,.2f} = {m['kor_kalan']:,.2f}, "
                          f"bırakılan {m['devir']:,.2f} ₺ (fark {m['kor_fark']:+,.2f} ₺)")
-            if m.get("fark") is not None and abs(m["fark"]) >= 1 and not m.get("gider_kaynak_yok"):
-                ku.append(f"Kasa farkı {m['fark']:+,.2f} ₺ (sabah + nakit satış − gider − teslim − bırakılan)")
+            # Kasa farkı burada YAZILMAZ (sahip 2026-10-20: tek evi Kasa › Açık farklar — tekrar etmesin)
         except Exception:  # noqa: BLE001 — uyarı kapanışı ASLA durdurmaz
             log.warning("kapanış uyarısı: kasa sağlaması okunamadı", exc_info=True)
     y = _yoklama()
