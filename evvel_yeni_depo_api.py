@@ -530,7 +530,8 @@ def depo_ozet(evren: Optional[str] = None):
         B = _bakiyeler(cur, yeni=yeni)
         if yeni:
             from evvel_yeni_urun_api import katalog as _ey_katalog
-            katalog = [{"kid": str(k["id"]), "kat": k["ad"], "emoji": k.get("emoji"), "id": str(u["id"]), "ad": u["ad"]}
+            katalog = [{"kid": str(k["id"]), "kat": k["ad"], "emoji": k.get("emoji"), "id": str(u["id"]), "ad": u["ad"],
+                        "takip": u.get("takip"), "koli_ici": u.get("koli_ici"), "birim": u.get("birim")}   # Sevk et: pasta süzgeci + koli
                        for k in _ey_katalog(cur) for u in k["urunler"]]
         else:
             cur.execute("""SELECT k.id::text AS kid, k.ad AS kat, k.emoji, k.sira AS ks, u.id::text AS id, u.ad, u.sira
@@ -559,7 +560,8 @@ def depo_ozet(evren: Optional[str] = None):
     for u in katalog:
         goruldu.add(u["id"])
         kat_ad[u["kid"]] = f"{u['emoji'] or ''} {u['kat']}".strip()
-        satirlar.append({"urun_id": u["id"], "ad": u["ad"], "kategori": kat_ad[u["kid"]]})
+        satirlar.append({"urun_id": u["id"], "ad": u["ad"], "kategori": kat_ad[u["kid"]], "takip": u.get("takip"), "koli_ici": u.get("koli_ici"),
+                         "birim": u.get("birim")})
     for uid, uad in hareketli.items():   # katalogda olmayan ama hareketi olan (eski kod) — kaybolmasın
         if uid not in goruldu:
             satirlar.append({"urun_id": uid, "ad": uad or uid, "kategori": "❔ Katalogda eşleşmeyen"})
