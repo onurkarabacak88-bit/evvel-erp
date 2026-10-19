@@ -235,6 +235,7 @@ function SevkEt({ onToast }) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [liste, setListe] = useState(null);
+  const [deneme, setDeneme] = useState(false);
   const [hedef, setHedef] = useState('');
   const [ara, setAra] = useState('');
   const [adet, setAdet] = useState({});    // urun_id → {koli, tek}
@@ -244,7 +245,7 @@ function SevkEt({ onToast }) {
   const [sonuc, setSonuc] = useState(null);
   const yukle = useCallback(async () => {
     try { setV(await api('/evvel-yeni/depo/ozet?evren=yeni')); setHata(null); } catch (e) { setHata(e?.message || 'okunamadı'); }
-    try { setListe((await api('/evvel-yeni/depo/sevkler')).partiler); } catch { setListe([]); }
+    try { const l = await api('/evvel-yeni/depo/sevkler'); setListe(l.partiler); setDeneme(!!l.deneme); } catch { setListe([]); }
   }, []);
   useEffect(() => { yukle(); }, [yukle]);
   const urunler = useMemo(() => (v?.satirlar || []).filter((u) => u.takip !== 'gununde' && u.kategori !== '❔ Katalogda eşleşmeyen'), [v]);
@@ -285,7 +286,7 @@ function SevkEt({ onToast }) {
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <style>{PI_CSS}</style>
       <div><div className="pi-eyebrow">Evvel Yeni · Depo</div><h1 style={{ fontSize: 30 }}>Sevk et</h1></div>
-      {v.varsayilan_evren !== 'yeni' && <div style={{ ...kart, padding: '8px 12px', fontSize: 13, borderLeft: `5px solid ${R.amber}` }}>
+      {deneme && <div style={{ ...kart, padding: '8px 12px', fontSize: 13, borderLeft: `5px solid ${R.amber}` }}>
         🧪 <b>DENEME</b> — 1 Kasım'a kadar gönderilen paket KAYDEDİLMEZ (gerçek sevk eski sistemden). Ekranı denemek için kullanabilirsin.</div>}
       <div style={{ fontSize: 12.5, color: R.not }}>{merkez?.ad || 'Merkez depo'} → şube. Şube, paneldeki <b>Depodan gelen</b>'de adetleri GÖRMEDEN sayıp kabul eder;
         eksik / fazla / hasarlı gelen <b>Sevk farkları</b>'na düşer. Depoda görünmeyen ürün de gönderilebilir (uyarı verir). 🍰 Pasta burada yok — pastane şubeye doğrudan getirir.</div>

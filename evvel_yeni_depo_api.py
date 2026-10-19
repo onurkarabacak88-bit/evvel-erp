@@ -893,8 +893,8 @@ def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], ki
     top = {}
     for x in kalemler or []:
         a = x.get("adet") if isinstance(x, dict) else None
-        if not isinstance(a, int) or isinstance(a, bool) or a <= 0:
-            raise HTTPException(400, "Adet 1 ya da daha fazla tam sayı olmalı")
+        if not isinstance(a, int) or isinstance(a, bool) or a <= 0 or a > 99999:   # Codex 2.tur: kabul üst sınırıyla aynı
+            raise HTTPException(400, "Adet 1 – 99.999 arası tam sayı olmalı")
         u = str(x.get("urun_id") or "").strip()
         if not u:
             raise HTTPException(400, "Ürün seçilmemiş kalem var — listeyi yenile")
@@ -979,6 +979,13 @@ def kabul_yaz(cur, *, bag: str, sayilan: int, hasarli: int = 0, kim: str, gun: O
         raise HTTPException(409, "Merkez bu kalemi kapattı — düzeltme merkezde")
     g = gun or _is_gunu()
     ts = _simdi_tr()
+    cur.execute("SELECT zaman FROM ey_stok_hareket WHERE kaynak_ref=%s AND NOT iptal", (f"{bag}:merkez_kabul",))
+    mk = cur.fetchone()
+    if mk:   # Codex 2.tur: merkez adına kabulden SONRA şube deposu bu ürünle sayıldıysa stok kesinleşti — şube adedi geçmez
+        cur.execute("""SELECT 1 FROM ey_stok_sayim WHERE yeni AND konum=%s AND zaman > %s AND satirlar @> %s::jsonb LIMIT 1""",
+                    (f"depo:{hedef}", dict(mk)["zaman"], json.dumps([{"urun_id": str(sv["urun_id"])}])))
+        if cur.fetchone():
+            raise HTTPException(409, "Merkez bu ürünü adına kabul etti ve depo sayıldı — fark varsa merkez çözer")
     cur.execute("""UPDATE ey_stok_hareket SET iptal=TRUE, iptal_sebep='şube kendisi kabul etti (onun adedi geçer)'
                     WHERE kaynak_ref=%s AND NOT iptal""", (f"{bag}:merkez_kabul",))
     if cur.rowcount:   # merkez adına kabulün gününde tüketimi de geri alınır
@@ -1122,8 +1129,10 @@ def sevkler(gun_sayisi: int = 14):
     """Merkez: son paketler (başlık + kalem durumları) — Sevk et ekranının alt listesi."""
     with db() as (conn, cur):
         _sevk_hazirla(cur)
+        from evvel_yeni_cekirdek import panel_baslangic
+        deneme = _is_gunu() < panel_baslangic(cur)   # Codex 2.tur: ekran bandı kayıt kapısıyla AYNI sınır (iş günü)
         if not _var_tablo(cur, "ey_sevk_parti"):
-            return {"partiler": []}
+            return {"partiler": [], "deneme": deneme}
         cur.execute("""SELECT id, kaynak, hedef, kim, notu, is_gunu, kalemler, iptal, iptal_sebep, zaman FROM ey_sevk_parti
                         WHERE zaman > NOW() - make_interval(days => %s) ORDER BY zaman DESC LIMIT 200""", (max(1, min(gun_sayisi, 90)),))
         ps = [dict(r) for r in cur.fetchall() or []]
@@ -1146,7 +1155,7 @@ def sevkler(gun_sayisi: int = 14):
         out.append({"id": p["id"], "nereden": ad.get(p["kaynak"], p["kaynak"]), "nereye": ad.get(p["hedef"], p["hedef"]), "kim": p["kim"],
                     "not": p["notu"], "gun": p["is_gunu"].isoformat(), "zaman": p["zaman"].isoformat(), "durum": durum,
                     "iptal_sebep": p["iptal_sebep"], "kalemler": kal})
-    return {"partiler": out}
+    return {"partiler": out, "deneme": deneme}
 
 
 @router.post("/senkron")
