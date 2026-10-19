@@ -60,21 +60,38 @@ def toptanci_hazirla(cur) -> None:
             k.execute("SET LOCAL lock_timeout = '3s'")
             k.execute("SELECT pg_advisory_xact_lock(7012071)")
             _toptanci_ddl(k)
-    except Exception:  # noqa: BLE001 — çağıranın açık işlemi tabloyu tutuyorsa (kilit bekleme) ve tablolar ZATEN varsa devam
+    except Exception:  # noqa: BLE001 — kilit beklemesi vb.: ANA tablolar varsa ekran AÇIK kalır (bayrak kapalı → sonra yine denenir)
+        log.warning("toptancı hazırlığı ayrı işlemde yapılamadı — ana tablolar varsa devam", exc_info=True)
         if cur is not None:
-            cur.execute("SELECT to_regclass('ey_toptanci_belge') IS NOT NULL AND to_regclass('ey_urun_fiyat_gecmis') IS NOT NULL AS v")
-            if dict(cur.fetchone() or {}).get("v"):
+            cur.execute("SELECT to_regclass('ey_toptanci_belge') IS NOT NULL AS b, to_regclass('ey_toptanci_teslim') IS NOT NULL AS t")
+            v = dict(cur.fetchone() or {})
+            if v.get("b"):
                 _HAZIR = True
                 return
+            if v.get("t"):
+                return   # canlı 503 dersi (2026-10-19): belge tablosu yoksa yalnız belge uçları düşer, Toptancılar AÇIK
         log.error("toptancı tabloları hazırlanamadı", exc_info=True)
         raise HTTPException(503, "Toptancı tabloları hazırlanamadı — birazdan tekrar dene")
     _HAZIR = True
 
 
+def _kolon_var(cur, tablo: str, kolon: str) -> bool:
+    cur.execute("SELECT 1 FROM information_schema.columns WHERE table_name=%s AND column_name=%s", (tablo, kolon))
+    return cur.fetchone() is not None
+
+
+def _var(cur, ad: str) -> bool:
+    cur.execute("SELECT to_regclass(%s) IS NOT NULL AS v", (ad,))
+    return bool(dict(cur.fetchone())["v"])
+
+
 def _toptanci_ddl(cur) -> None:
-    from evvel_yeni_tanim_api import tanim_hazirla
-    tanim_hazirla(cur)
-    cur.execute("ALTER TABLE ey_toptanci ADD COLUMN IF NOT EXISTS vade_gun INT")
+    """Yalnız EKSİK olanı kurar — var olan tabloya ALTER / INDEX kilidi istenmez (canlı 503 dersi, 2026-10-19)."""
+    if not _var(cur, "ey_toptanci"):
+        from evvel_yeni_tanim_api import tanim_hazirla
+        tanim_hazirla(cur)
+    if not _kolon_var(cur, "ey_toptanci", "vade_gun"):
+        cur.execute("ALTER TABLE ey_toptanci ADD COLUMN IF NOT EXISTS vade_gun INT")
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_toptanci_teslim (
         id TEXT PRIMARY KEY, kaynak_ref TEXT UNIQUE, toptanci_id TEXT NOT NULL, toptanci_ad TEXT,
         sube_id TEXT, tarih DATE NOT NULL, kalemler JSONB NOT NULL DEFAULT '[]'::jsonb,
@@ -94,15 +111,18 @@ def _toptanci_ddl(cur) -> None:
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_urun_fiyat_gecmis (
         id TEXT PRIMARY KEY, urun_id TEXT NOT NULL, tur TEXT NOT NULL, toptanci_id TEXT, birim BIGINT, tarih DATE NOT NULL,
         kaynak TEXT, girilen TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_fiyat_g ON ey_urun_fiyat_gecmis (urun_id, tur, tarih DESC, zaman DESC)")
+    if not _var(cur, "idx_ey_fiyat_g"):
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_fiyat_g ON ey_urun_fiyat_gecmis (urun_id, tur, tarih DESC, zaman DESC)")
     # E1 (sahip onayı 2026-10-19): fatura belgesi TESLİMİN EKİ — ayrı fatura nesnesi / OCR / eşleştirme YOK (eski hastalık).
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_toptanci_belge (
         id TEXT PRIMARY KEY, teslim_id TEXT NOT NULL, sayfa INT NOT NULL, mime TEXT NOT NULL, boyut INT NOT NULL, veri BYTEA NOT NULL,
         sha256 TEXT NOT NULL, yukleyen TEXT, kaynak TEXT NOT NULL, iptal BOOLEAN NOT NULL DEFAULT FALSE, iptal_kim TEXT, iptal_zaman TIMESTAMPTZ,
         zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
-    cur.execute("ALTER TABLE ey_toptanci_belge ADD COLUMN IF NOT EXISTS iptal_kim TEXT")
-    cur.execute("ALTER TABLE ey_toptanci_belge ADD COLUMN IF NOT EXISTS iptal_zaman TIMESTAMPTZ")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_top_belge ON ey_toptanci_belge (teslim_id) WHERE NOT iptal")
+    for k_, t_ in (("iptal_kim", "TEXT"), ("iptal_zaman", "TIMESTAMPTZ")):
+        if not _kolon_var(cur, "ey_toptanci_belge", k_):
+            cur.execute(f"ALTER TABLE ey_toptanci_belge ADD COLUMN IF NOT EXISTS {k_} {t_}")
+    if not _var(cur, "idx_ey_top_belge"):
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_top_belge ON ey_toptanci_belge (teslim_id) WHERE NOT iptal")
     from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
     if not ayar_oku(cur, "fiyat_gecmis_kopya"):   # bir kez: bugünkü fiyatlar 1 Ekim'den geçerli ilk satır olur
         cur.execute("""INSERT INTO ey_urun_fiyat_gecmis (id, urun_id, tur, birim, tarih, kaynak, girilen)
