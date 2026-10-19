@@ -1078,13 +1078,16 @@ def _gece_yarisi_scheduler():
             if _eski_panel_zinciri_acik():   # 🔌 1 Kasım (sahip A): ön hesap reçete/değirmen + bağ defteri eski ciro okur
                 _halka("agir_onhesap", lambda: __import__("duyu_gorunumler").gece_agir_onhesap())
                 _halka("bag_defteri", lambda: __import__("duyu_gorunumler").bag_defteri_hesapla())
-            _halka("ozsorgu", lambda: __import__("beyin_api").gece_ozsorgu())
+            if _eski_panel_zinciri_acik():   # 🔌 sahip 20 Eki: "beyin yeni Evvel'de olmasın" — eski duyulardan beslenir
+                _halka("ozsorgu", lambda: __import__("beyin_api").gece_ozsorgu())
             logger.info("⏰ Scheduler: öz-sorgu zinciri tamamlandı")
 
             # EVVEL BEYNİ gece öz-anlatısı (L3) — ZİNCİRİN SONU (Codex zarf kararı:
             # anlatıcı, gecenin tüm olayları doğduktan sonra ve EN SON konuşur).
             # Arşive yazar + sabah WhatsApp mesajı (çerçeveli); hata-yutar.
             try:
+                if not _eski_panel_zinciri_acik():   # 🔌 sahip 20 Eki: beyin yeni Evvel'e TAŞINMAZ
+                    raise RuntimeError("eski zincir kapalı — beyin susturuldu")
                 from beyin_api import gece_sentez
                 gece_sentez()
                 logger.info("⏰ Scheduler: Evvel Beyni gece sentezi tamamlandı (zincir sonu)")
