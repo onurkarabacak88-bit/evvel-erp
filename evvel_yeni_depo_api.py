@@ -454,6 +454,9 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
     gun = gun or _bugun()
     if not eski_evren:
         _b = _ey_urun_dogrula(cur, [x.get("urun_id") for x in satirlar if x.get("sayilan") not in (None, "")])
+        _p = [v["ad"] for v in _b.values() if (v.get("takip") or "sayim") == "gununde"]
+        if _p:   # sahip P1: pasta girişte tüketildi — sayılırsa hayali stok doğar
+            raise HTTPException(400, f"Gününde tüketilen ürün (pasta) sayılmaz: {', '.join(_p[:3])}")
         if ad_coz is None:
             def ad_coz(u):   # noqa: E306
                 return (_b.get(str(u)) or {}).get("ad")
@@ -513,7 +516,7 @@ def _konumlar(cur) -> list:
     for s in sorted(_ey_subeler(cur), key=lambda x: (x["id"] != depo, x["ad"])):   # tezgah (açılış/kapanış sayımının yeri)
         out.append({"id": f"bar:{s['id']}", "ad": s["ad"] + " · bar", "merkez": False, "sube_id": s["id"], "bar": True})
     out.append({"id": "yolda", "ad": "Yolda", "merkez": False, "sube_id": None})
-    out.append({"id": "askida", "ad": "Askıda (fazla kabul)", "merkez": False, "sube_id": None})
+    out.append({"id": "askida", "ad": "Askıda (fazla / hasarlı)", "merkez": False, "sube_id": None})
     return out
 
 
@@ -704,6 +707,10 @@ def merkez_kabul(yid: str, body: KabulBody, x_evvel_oturum: Optional[str] = Head
             raise HTTPException(404, "Sevkin hedef şubesi bulunamadı")
         _konum_kilidi(cur, f"depo:{hedef_sube}")   # Fable F2: konum kilidi ÖNCE, sevk kilidi SONRA (her uçta aynı sıra)
         _bag_kilidi(cur, yid)
+        if _parti_id(yid):
+            cur.execute("SELECT iptal FROM ey_sevk_parti WHERE id=%s", (_parti_id(yid),))
+            if dict(cur.fetchone() or {"iptal": True})["iptal"]:
+                raise HTTPException(409, "Bu paket geri alınmış")
         cur.execute("SELECT * FROM ey_stok_hareket WHERE kaynak_ref=%s AND NOT iptal", (f"{on}:sevk",))
         sv = cur.fetchone()
         if not sv:
@@ -713,11 +720,11 @@ def merkez_kabul(yid: str, body: KabulBody, x_evvel_oturum: Optional[str] = Head
         if cur.fetchone():
             raise HTTPException(409, "Şube bu sevki zaten kabul etmiş")
         n = _yaz(cur, [(f"{on}:merkez_kabul", "kabul", sv["urun_id"], sv["urun_ad"], sv["adet"], "yolda", f"depo:{hedef_sube}",
-                        _bugun(), _simdi_tr(), kim, "Merkez adına kabul (şube kabul ederse onun adedi geçer)"
+                        _is_gunu(), _simdi_tr(), kim, "Merkez adına kabul (şube kabul ederse onun adedi geçer)"
                         + (f" · {body.sebep}" if body.sebep else ""), yid)], yeni=bool(dict(sv).get("yeni")))   # Fable: sevkin evreni
         if n and sv.get("yeni"):
             _gununde_tuket(cur, _urun_bilgi1(cur, sv["urun_id"]), kaynak_ref=f"{on}:merkez_kabul", urun_id=sv["urun_id"], urun_ad=sv["urun_ad"],
-                           adet=int(sv["adet"]), konum=f"depo:{hedef_sube}", kim=kim, bag=yid, gun=_bugun())
+                           adet=int(sv["adet"]), konum=f"depo:{hedef_sube}", kim=kim, bag=yid, gun=_is_gunu())
     if not n:
         raise HTTPException(409, "Bu sevk zaten merkez adına kabul edilmiş")
     return {"ok": True, "mesaj": "Merkez adına kabul edildi"}
@@ -752,23 +759,25 @@ def fark_coz(yid: str, body: FarkCozBody, x_evvel_oturum: Optional[str] = Header
         u, ua = hs[0]["urun_id"], hs[0]["urun_ad"]
         ek = f" · {body.not_}" if body.not_ else ""
         if body.karar in ("kayip", "iade"):
+            if not any(h["tur"] == "kabul" for h in hs):   # Codex S1 #4: önce kabul (şube ya da merkez adına) — sonra kalan eksik kapanır
+                raise HTTPException(400, "Önce kabul edilmeli (şube ya da merkez adına) — sonra eksik kapatılır")
             kalan = sevk - kab - coz
             if kalan <= 0:
                 raise HTTPException(400, "Yolda kalan eksik yok")
             row = (f"{on}:coz:{body.karar}:{uuid.uuid4().hex[:6]}", "kayip" if body.karar == "kayip" else "iade_geri", u, ua, kalan, "yolda",
-                   "dışarı:kayip" if body.karar == "kayip" else (sev or {}).get("kaynak"), _bugun(), _simdi_tr(), kim,
+                   "dışarı:kayip" if body.karar == "kayip" else (sev or {}).get("kaynak"), _is_gunu(), _simdi_tr(), kim,
                    ("Eksik geldi → KAYIP" if body.karar == "kayip" else "Eksik geldi → kaynağa geri") + ek, yid)
         elif body.karar in ("fazla_onay", "fazla_ret"):
             if fazla <= 0 or not hedef:
                 raise HTTPException(400, "Askıda fazla yok")
             row = (f"{on}:coz:{body.karar}:{uuid.uuid4().hex[:6]}", body.karar, u, ua, fazla, "askida",
-                   hedef if body.karar == "fazla_onay" else "dışarı:bilinmeyen", _bugun(), _simdi_tr(), kim,
+                   hedef if body.karar == "fazla_onay" else "dışarı:bilinmeyen", _is_gunu(), _simdi_tr(), kim,
                    ("Fazla kabul ONAYLANDI → şube stoğuna" if body.karar == "fazla_onay" else "Fazla kabul REDDEDİLDİ (birim hatası)") + ek, yid)
         elif body.karar in ("hasar_fire", "hasar_iade"):   # sahip P3: hasarlı gelen askıda → merkez karar verir
             if hasar <= 0:
                 raise HTTPException(400, "Askıda hasarlı yok")
             row = (f"{on}:coz:{body.karar}:{uuid.uuid4().hex[:6]}", body.karar, u, ua, hasar, "askida",
-                   "dışarı:fire" if body.karar == "hasar_fire" else (sev or {}).get("kaynak"), _bugun(), _simdi_tr(), kim,
+                   "dışarı:fire" if body.karar == "hasar_fire" else (sev or {}).get("kaynak"), _is_gunu(), _simdi_tr(), kim,
                    ("Hasarlı geldi → FİRE" if body.karar == "hasar_fire" else "Hasarlı geldi → kaynağa geri") + ek, yid)
         else:
             raise HTTPException(400, "karar: kayip | iade | fazla_onay | fazla_ret | hasar_fire | hasar_iade")
@@ -777,7 +786,7 @@ def fark_coz(yid: str, body: FarkCozBody, x_evvel_oturum: Optional[str] = Header
         _yaz(cur, [row], yeni=bool(hs[0].get("yeni")))   # Fable: çözüm sevkin evreninde (aksi hâlde yeni evrende sevk hep 'yolda')
         if body.karar == "fazla_onay" and hs[0].get("yeni"):
             _gununde_tuket(cur, _urun_bilgi1(cur, u), kaynak_ref=row[0], urun_id=u, urun_ad=ua, adet=fazla, konum=hedef, kim=kim, bag=yid,
-                           gun=_bugun())
+                           gun=_is_gunu())
     return {"ok": True, "mesaj": "Fark çözüldü"}
 
 
@@ -785,14 +794,9 @@ def fark_coz(yid: str, body: FarkCozBody, x_evvel_oturum: Optional[str] = Header
 # Başlık = Depo'nun KENDİ küçük tablosu `ey_sevk_parti` (merkez sevki bir şube olayı değil; Sipariş sonra parti_id'ye bağlanır).
 # Satırlar = mevcut ey_stok_hareket: her ÜRÜN ayrı satır, bag = sevk:{parti}:{i} (/yolda, fark çöz, merkez kabul tek-ürün varsayar).
 # Ref ailesi `sevk:` — eski köprünün `yolda:` ailesinden ayrı (Codex #4 / Fable F1: köprü iptali yeni satıra dokunmasın).
-_SEVK_HAZIR = False
-
-
 def _sevk_hazirla(cur) -> None:
-    """Çağıranın işleminde, savepoint + lock_timeout; YALNIZ eksikse kurar (19 Eki dersi: ayrı bağlantıda DDL yok)."""
-    global _SEVK_HAZIR
-    if _SEVK_HAZIR:
-        return
+    """Çağıranın işleminde, savepoint + lock_timeout; YALNIZ eksikse kurar (19 Eki dersi: ayrı bağlantıda DDL yok).
+    Codex S1 #2: süreç bayrağı TUTULMAZ — aynı işlemde kurulup 4xx ile geri alınan tablo bayrağı yalan söyletirdi; her çağrı to_regclass."""
     depo_hazirla(cur)
     cur.execute("SELECT to_regclass('ey_sevk_parti') IS NOT NULL AS v")
     if not dict(cur.fetchone() or {}).get("v"):
@@ -808,8 +812,6 @@ def _sevk_hazirla(cur) -> None:
         except Exception:  # noqa: BLE001
             log.warning("sevk partisi tablosu kurulamadı", exc_info=True)
             raise HTTPException(503, "Depo hazırlanıyor — birkaç saniye sonra tekrar dene")
-        return   # bayrak ancak bir SONRAKİ çağrıda nesne görülünce açılır
-    _SEVK_HAZIR = True
 
 
 def _var_tablo(cur, ad: str) -> bool:
@@ -884,11 +886,13 @@ def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], ki
         raise HTTPException(400, "istek_id gerekli")
     top = {}
     for x in kalemler or []:
-        a = x.get("adet")
+        a = x.get("adet") if isinstance(x, dict) else None
         if not isinstance(a, int) or isinstance(a, bool) or a <= 0:
             raise HTTPException(400, "Adet 1 ya da daha fazla tam sayı olmalı")
-        top[str(x.get("urun_id") or "")] = top.get(str(x.get("urun_id") or ""), 0) + a
-    top.pop("", None)
+        u = str(x.get("urun_id") or "").strip()
+        if not u:
+            raise HTTPException(400, "Ürün seçilmemiş kalem var — listeyi yenile")
+        top[u] = top.get(u, 0) + a
     if not top:
         raise HTTPException(400, "En az bir ürün seç")
     if len(top) > 80:
@@ -906,7 +910,7 @@ def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], ki
     if r:
         r = dict(r)
         ayni = r["kaynak"] == kaynak_sube and r["hedef"] == hedef_sube and \
-            [(k["urun_id"], k["adet"]) for k in (r["kalemler"] or [])] == [(k["urun_id"], k["adet"]) for k in ozet]
+            sorted((k["urun_id"], k["adet"]) for k in (r["kalemler"] or [])) == sorted((k["urun_id"], k["adet"]) for k in ozet)
         if not ayni:
             raise HTTPException(409, "Bu istek başka içerikle zaten gönderilmiş — sayfayı yenile")
         return {"parti_id": r["id"], "tekrar": True, "kalem": len(ozet), "eksi": []}
@@ -952,16 +956,21 @@ def kabul_yaz(cur, *, bag: str, sayilan: int, hasarli: int = 0, kim: str, gun: O
         raise HTTPException(404, "Sevk satırı bulunamadı")
     sv = dict(sv)
     S = int(sv["adet"])
-    cur.execute("SELECT adet, aciklama FROM ey_stok_hareket WHERE kaynak_ref=%s AND NOT iptal", (f"{bag}:kabul",))
-    onceki = cur.fetchone()
-    if onceki:
-        o = dict(onceki)
-        if (o.get("aciklama") or "").endswith(f"[sayılan {sayilan} · hasarlı {hasarli}]"):
-            return {"tekrar": True, "kabul": int(o["adet"])}
-        raise HTTPException(409, "Bu ürün zaten kabul edildi — düzeltme merkezde (fark çöz)")
-    h = min(hasarli, S)
+    h = min(hasarli, S)            # sevkten karşılanan hasarlı
+    hf = hasarli - h               # sevki aşan hasarlı → yine HASAR (askıda; sağlam fazlaya karışmaz)
     kab = min(sayilan, S - h)
-    fazla = (sayilan - kab) + (hasarli - h)
+    fazla = sayilan - kab          # yalnız SAĞLAM fazla
+    sonuc = {"kabul": kab, "eksik": max(0, S - kab - h), "hasar": h + hf, "fazla": fazla}
+    cur.execute("""SELECT kaynak_ref, adet FROM ey_stok_hareket WHERE kaynak_ref = ANY(%s) AND NOT iptal""",
+                ([f"{bag}:kabul", f"{bag}:hasar", f"{bag}:hasar_fazla", f"{bag}:fazla"],))
+    var = {dict(r)["kaynak_ref"]: int(dict(r)["adet"]) for r in cur.fetchall() or []}
+    if f"{bag}:kabul" in var:   # tekrar mı? adetlerden türet (açıklama metnine bakılmaz)
+        if (var[f"{bag}:kabul"], var.get(f"{bag}:hasar", 0) + var.get(f"{bag}:hasar_fazla", 0), var.get(f"{bag}:fazla", 0)) == (kab, h + hf, fazla):
+            return {"tekrar": True, **sonuc}
+        raise HTTPException(409, "Bu ürün zaten kabul edildi — düzeltme merkezde (fark çöz)")
+    cur.execute("SELECT 1 FROM ey_stok_hareket WHERE bag=%s AND NOT iptal AND tur IN ('kayip','iade_geri') LIMIT 1", (bag,))
+    if cur.fetchone():
+        raise HTTPException(409, "Merkez bu kalemi kapattı — düzeltme merkezde")
     g = gun or _is_gunu()
     ts = _simdi_tr()
     cur.execute("""UPDATE ey_stok_hareket SET iptal=TRUE, iptal_sebep='şube kendisi kabul etti (onun adedi geçer)'
@@ -974,6 +983,9 @@ def kabul_yaz(cur, *, bag: str, sayilan: int, hasarli: int = 0, kim: str, gun: O
     if h:
         satir.append((f"{bag}:hasar", "hasar", sv["urun_id"], sv["urun_ad"], h, "yolda", "askida", g, ts, kim,
                       "Hasarlı geldi — merkez karar verecek (fire / iade)", bag))
+    if hf:
+        satir.append((f"{bag}:hasar_fazla", "hasar", sv["urun_id"], sv["urun_ad"], hf, "dışarı:bilinmeyen", "askida", g, ts, kim,
+                      f"Sevkten fazla HASARLI geldi ({hf}) — merkez karar verecek", bag))
     if fazla:
         satir.append((f"{bag}:fazla", "fazla_kabul", sv["urun_id"], sv["urun_ad"], fazla, "dışarı:bilinmeyen", "askida", g, ts, kim,
                       f"Sevkten fazla geldi ({fazla}) — merkez doğrular", bag))
@@ -981,7 +993,7 @@ def kabul_yaz(cur, *, bag: str, sayilan: int, hasarli: int = 0, kim: str, gun: O
     if kab:
         _gununde_tuket(cur, _urun_bilgi1(cur, sv["urun_id"]), kaynak_ref=f"{bag}:kabul", urun_id=sv["urun_id"], urun_ad=sv["urun_ad"],
                        adet=kab, konum=f"depo:{hedef}", kim=kim, bag=bag, gun=g)
-    return {"tekrar": False, "kabul": kab, "eksik": max(0, S - kab - h), "hasar": h, "fazla": fazla}
+    return {"tekrar": False, **sonuc}
 
 
 def sevk_iptal(cur, *, parti_id: str, kim: str, sebep: str) -> dict:
@@ -1003,15 +1015,23 @@ def sevk_iptal(cur, *, parti_id: str, kim: str, sebep: str) -> dict:
     if cur.fetchone():
         raise HTTPException(409, "Şube bu paketi (bir kısmını) kabul etmiş — geri alınamaz; farkı Sevk farkları'ndan çöz")
     kalan = []
-    for bg in baglar:
-        kalan += hareket_iptal(cur, bag=bg, sebep=f"sevk geri alındı · {kim} · {sebep}"[:200])["kalan"]
+    try:
+        with savepoint(cur, "sp_sevk_iptal"):
+            for bg in baglar:
+                kalan += hareket_iptal(cur, bag=bg, sebep=f"sevk geri alındı · {kim} · {sebep}"[:200])["kalan"]
+            if kalan:
+                raise _Kuru()
+    except _Kuru:
+        raise HTTPException(409, f"Merkez depoda sonradan sayılmış: {', '.join(kalan[:5])} — geri alınamaz; şube kabul eder ya da "
+                                 "Sevk farkları'ndan kayıp / kaynağa geri çöz")
     cur.execute("UPDATE ey_sevk_parti SET iptal=TRUE, iptal_kim=%s, iptal_zaman=NOW(), iptal_sebep=%s WHERE id=%s",
                 (kim, (sebep or "")[:200], parti_id))
-    return {"tekrar": False, "kalan": kalan}
+    return {"tekrar": False, "kalan": []}
 
 
 def yoldakiler(cur, hedef_sube: str) -> list:
     """PUBLIC (panel Depodan gelen): bu şubeye gelen, şubenin henüz KENDİSİ kabul etmediği paketler. ADET DÖNMEZ (kör sayım).
+    30 günden eski kabul edilmemiş paket panelden düşer (Fable #9) — merkez Yoldakiler'den kapatır.
     Merkez adına kabul edilmiş kalem de listede kalır (şube sayınca onun adedi geçer). Yeni evren (1 Kasım öncesi deneme sevkleri dahil)."""
     if not _var_tablo(cur, "ey_sevk_parti"):
         return []
@@ -1056,7 +1076,8 @@ def sevk_et(body: SevkBody, x_evvel_oturum: Optional[str] = Header(default=None)
         if kim in ("oturumsuz", "bilinmiyor"):
             raise HTTPException(401, "Merkez oturumu gerekli")
         kaynak = body.kaynak or _depo_sube(cur)
-        kuru = not evren_yeni(cur)
+        from evvel_yeni_cekirdek import panel_baslangic
+        kuru = _is_gunu() < panel_baslangic(cur)   # panelle AYNI sınır (iş günü)
         sonuc = {}
         try:
             with savepoint(cur, "sp_sevk_et"):

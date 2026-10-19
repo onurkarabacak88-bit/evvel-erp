@@ -232,7 +232,7 @@ def _yeni_kesin_gunler(cur, bas: date, son: date) -> set:
 
 def _yeni_hareketler(cur, bas: date, son: date, turler: tuple, hedef_kosul: str) -> list:
     """Depo defteri (yeni evren) — hareket satırları. hedef_kosul: SQL parçası (sabit, kullanıcı girdisi değil)."""
-    cur.execute(f"""SELECT tur, urun_id, urun_ad, adet, kaynak, hedef, is_gunu, bag FROM ey_stok_hareket
+    cur.execute(f"""SELECT tur, urun_id, urun_ad, adet, kaynak, hedef, is_gunu, bag, kaynak_ref FROM ey_stok_hareket
                      WHERE yeni AND NOT iptal AND tur = ANY(%s) AND is_gunu BETWEEN %s AND %s AND {hedef_kosul}""",
                 (list(turler), bas, son))
     return [dict(x) for x in cur.fetchall() or []]
@@ -249,14 +249,15 @@ def _tuketim_satirlari_yeni(cur, bas: date, son: date) -> list:
     top = {}
     for h in _yeni_hareketler(cur, bas, son, ("ac", "tuketim"), "hedef = 'dışarı:tuketim' AND (kaynak LIKE 'depo:%%' OR kaynak LIKE 'bar:%%')"):
         sid = h["kaynak"].split(":", 1)[1]
-        k = (sid, h["is_gunu"], h["urun_id"], h["tur"])
+        k = (sid, h["is_gunu"], h["urun_id"], "gununde" if (h.get("kaynak_ref") or "").endswith(":gununde") else h["tur"])
         top.setdefault(k, [h["urun_ad"], 0])[1] += int(h["adet"])
     satir = []
     for (sid, gun, uid, tur), (ad, adet) in top.items():
         f = fiyat(uid, gun)
         satir.append({"sube_id": sid, "gun": gun, "kalem_kodu": uid, "ad": ad or uid, "adet": adet,
                       "birim_kurus": f["kurus"] if f else None, "fk": f["kaynak"] if f else None, "fiyat_tarihi": f.get("tarih") if f else None,
-                      "kaynak": "ürün aç" if tur == "ac" else "günlük sayım (kullanılan)", "gun_kesin": (sid, gun) in kesin})
+                      "kaynak": {"ac": "ürün aç", "gununde": "gününde tüketilir (pasta — girişte)"}.get(tur, "günlük sayım (kullanılan)"),
+                      "gun_kesin": (sid, gun) in kesin})
     return satir
 
 

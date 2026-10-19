@@ -1508,6 +1508,16 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
       </div>
     );
   }
+  if (x.tur === 'depo_eksi') {   // sahip P2: sevk eksiye yazılabilir → depo sayımıyla düzelir (kayıt saklanmaz, türetilir)
+    const git = () => { window.history.pushState({}, '', '/evvel-yeni/depo_nerede'); window.dispatchEvent(new window.PopStateEvent('popstate')); };
+    return (
+      <div style={{ ...satir, border: `1px solid ${alfa(R.kirmizi, 55)}` }}>
+        <Cip tur="kirmizi">📦 Stok eksi</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b><div style={{ fontSize: 11.5, color: R.not }}>Depoda olmayan mal çıkmış görünüyor — kayıt eksik olabilir; sayımla düzelt</div></div>
+        <Dugme kucuk onClick={git}>Depo</Dugme>
+      </div>
+    );
+  }
   if (x.tur === 'toptanci_vade' || x.tur === 'toptanci_tutar') {
     const git = () => { window.history.pushState({}, '', '/evvel-yeni/toptancilar'); window.dispatchEvent(new window.PopStateEvent('popstate')); };
     return (

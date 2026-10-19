@@ -362,7 +362,7 @@ def urun_ekle(b: UrunBody, x_evvel_oturum: Optional[str] = Header(default=None))
         kim = _aktor(cur, x_evvel_oturum)
         r = urun_olustur(cur, b.kategori_id, b.ad, kim, koli_ici=b.koli_ici, kdv_oran=b.kdv_oran, aktif=b.aktif, birim=b.birim,
                          fatura_birim=b.fatura_birim, sayim_ici=b.sayim_ici, fatura_ici=b.fatura_ici, takip=b.takip)
-        if b.panel_sayim:
+        if b.panel_sayim and b.takip == "sayim":
             cur.execute("UPDATE ey_urun SET panel_sayim=TRUE WHERE id=%s", (r["id"],))
     return {"ok": True, "id": r["id"], "mesaj": f"{r['ad']} eklendi"}
 
@@ -384,7 +384,7 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
             raise HTTPException(400, "Kategori seç")
         yeni = {"ad": " ".join(b.ad.split())[:120], "kategori_id": b.kategori_id, "birim": b.birim, "koli_ici": b.koli_ici,
                 "kdv_oran": b.kdv_oran, "aktif": b.aktif, "fatura_birim": b.fatura_birim, "sayim_ici": b.sayim_ici, "fatura_ici": b.fatura_ici, "takip": b.takip,
-                "panel_sayim": bool(e.get("panel_sayim")) if b.panel_sayim is None else bool(b.panel_sayim)}
+                "panel_sayim": b.takip == "sayim" and (bool(e.get("panel_sayim")) if b.panel_sayim is None else bool(b.panel_sayim))}
 
         def _es(a, b_):
             if a is None or b_ is None:

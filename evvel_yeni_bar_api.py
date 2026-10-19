@@ -133,11 +133,13 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
     from evvel_yeni_olay import olaylar
     from evvel_yeni_urun_api import katalog
     kat = katalog(cur, hepsi=True)   # Fable: sayımı yapılmış ürün sonradan pasife alınırsa kalem kaybolmasın
-    sayilan = [(str(u["id"]), u["ad"]) for k in kat for u in k["urunler"] if u.get("panel_sayim")]
+    sayilan = [(str(u["id"]), u["ad"]) for k in kat for u in k["urunler"] if u.get("panel_sayim") and (u.get("takip") or "sayim") == "sayim"]
     sayilan_id = {i for i, _ in sayilan}
-    pasta_id = {str(u["id"]) for k in kat for u in k["urunler"] if str(u["id"]) not in sayilan_id
-                and (u.get("takip") == "gununde"   # sahip P1 (20 Eki): katalogdaki 'gününde tüketilir' TEK GERÇEK; ad tahmini geçiş için
-                     or "pasta" in (k["ad"] or "").lower() or any(w in (u["ad"] or "").lower() for w in _PASTA_IZ))}
+    # sahip P1 (20 Eki): katalogdaki 'gününde tüketilir' TEK GERÇEK; katalogda hiç işaretli yoksa (geçiş) eski ad tahmini
+    pasta_id = {str(u["id"]) for k in kat for u in k["urunler"] if u.get("takip") == "gununde"}
+    if not pasta_id:
+        pasta_id = {str(u["id"]) for k in kat for u in k["urunler"] if str(u["id"]) not in sayilan_id
+                    and ("pasta" in (k["ad"] or "").lower() or any(w in (u["ad"] or "").lower() for w in _PASTA_IZ))}
     kalemler = sayilan + [("pasta", "Pasta (toplam)")]
     kodlar = [k for k, _ in kalemler]
     # Satış kontrolü bardakları anlam anahtarıyla arar (bardak_kucuk/buyuk/plastik) — ürün adından TEK eşleştiriciyle
@@ -162,7 +164,7 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
             from evvel_yeni_moduller import DURUM
             if DURUM.get("depo") == "yuklendi":
                 # Fable #7 / sahip P1: şubeye DOĞRUDAN gelen pasta (Tedarikçiden teslim al = giris) da bara girer
-                cur.execute("""SELECT hedef, olay_zaman, is_gunu, adet FROM ey_stok_hareket WHERE yeni AND NOT iptal AND tur IN ('kabul','giris')
+                cur.execute("""SELECT hedef, olay_zaman, is_gunu, adet FROM ey_stok_hareket WHERE yeni AND NOT iptal AND tur IN ('kabul','giris','fazla_onay')
                                 AND urun_id = ANY(%s) AND is_gunu BETWEEN %s AND %s AND hedef LIKE 'depo:%%'""",
                             (list(pasta_id), bas, son + timedelta(days=1)))
                 for h in [dict(x) for x in cur.fetchall() or []]:
