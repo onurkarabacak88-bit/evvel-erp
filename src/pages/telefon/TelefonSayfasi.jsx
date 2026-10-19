@@ -239,6 +239,7 @@ function OnayIslem({ sube, jeton, onay }) {
   const [mesgul, setMesgul] = useState(false);
   const [sonuc, setSonuc] = useState(null);
   const [isHata, setIsHata] = useState(null);
+  const [girisMesaj, setGirisMesaj] = useState('');   // sahip: giriş yapınca telefonda açıkça "giriş kaydedildi" görünsün
   const istek = useRef({});
   const yukle = useCallback(() => {
     if (!bagli) return;
@@ -262,7 +263,7 @@ function OnayIslem({ sube, jeton, onay }) {
     const yol = islem === 'giris' ? '/api/evvel-yeni/yoklama/giris' : `/api/evvel-yeni/panel/onay/${encodeURIComponent(onay)}/onayla`;
     try {
       const r = await imzaliJson('telefon', 'POST', yol, { sube, qr: jeton, lat: konum.lat, lng: konum.lng, istek_id: istek.current[islem] });
-      if (islem === 'giris') { yukle(); }
+      if (islem === 'giris') { setGirisMesaj(`✅ ${r.mesaj || 'Giriş kaydedildi'} — şimdi aşağıdan ONAYLA`); yukle(); }
       else setSonuc({ mesaj: r.mesaj, kuru: !!r.kuru });
     } catch (e) {
       if (e instanceof TypeError) setIsHata({ islem, metin: 'İnternet yok — bağlantı gelince tekrar dene', tekrar: true });
@@ -295,6 +296,7 @@ function OnayIslem({ sube, jeton, onay }) {
             <div className="tq-not">Onaylayan: <b>👤 {ozet.kisi}</b> · {ben?.muaf ? 'konum: yönetici (muaf)' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
               {!ben?.muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksan, background: 'none', border: 'none', padding: 0, fontWeight: 700, minHeight: 44 }}>tekrar dene</button></>}
             </div>
+            {girisMesaj && <div style={{ color: T.yesil, fontWeight: 700 }}>{girisMesaj}</div>}
             {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
             {!gecerli && <div style={{ color: T.kirmizi, fontWeight: 700 }}>
               {ozet.durum === 'onaylandi' ? `Bu işlem zaten onaylandı${ozet.mesaj ? ' — ' + ozet.mesaj : ''}` : ozet.durum === 'sure_doldu' ? 'Onayın süresi doldu — panelden yeniden iste' : 'Bu onay artık geçerli değil — panelden yeniden iste'}
