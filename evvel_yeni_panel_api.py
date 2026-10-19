@@ -257,6 +257,8 @@ def _calistir(sube_id: str, istek_id: Optional[str], is_fn, tur: Optional[str] =
     mu = sonuc.pop("merkez_uyarilari", None)   # sahip: kasa uyarısı panele / telefona GİTMEZ — yalnız merkez kaydına
     mu = sonuc.get("uyarilar") if mu is None else mu
     _deneme_kapat(did, "deneme" if sonuc.get("kuru") else ("ok_uyarili" if mu else "ok"), uyarilar=mu)
+    if merkez and isle_deneme and mu and not sonuc.get("kuru"):   # Codex P2-3: geç kapanış uyarısı Bekleyen işler'e
+        _deneme_kapat(isle_deneme, "ok_uyarili", f"geç kapanış merkezde işlendi · {merkez}", uyarilar=mu)
     return sonuc
 
 
@@ -578,8 +580,10 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
     y = _yoklama()
     if y is not None:
         try:
-            dv = y.devir_durum(cur, str(sube_id), gun)
-            if dv and dv.get("durum") in ("baslatildi", "dolduruluyor", "devreden_onayladi"):
+            cur.execute("""SELECT 1 FROM ey_devir WHERE sube_id=%s AND is_gunu=%s AND (durum='devreden_onayladi'
+                             OR (durum IN ('baslatildi','dolduruluyor') AND COALESCE(ustlen_ts, panel_ts) > NOW() - INTERVAL '30 minutes'))
+                           LIMIT 1""", (str(sube_id), gun))   # Codex P2-5: salt okuma (UPDATE'li devir_durum kilit almasın)
+            if cur.fetchone():
                 u.append("Kasa devri tamamlanmadı")
             s = y.kapanis_sorumlusu(cur, str(sube_id), gun)
             if s:
@@ -617,7 +621,19 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
             k = _tl(t.tutar, "Teslim")
             if k:
                 tes.append({"alan": t.alan, "tutar": k})
-        satir = _sayim_satirlari(cur, b.sayim)
+        dusen = []
+        try:
+            satir = _sayim_satirlari(cur, b.sayim)
+        except HTTPException:
+            if not c.get("merkez"):
+                raise
+            from evvel_yeni_urun_api import urun_bilgi   # merkez geç kapanış: personelin o gün saydığı ürün sonradan değiştiyse
+            bil = urun_bilgi(cur, [x.urun_id for x in b.sayim])
+            satir = [{"urun_id": x.urun_id, "sayilan": _tam(x.sayilan, "Sayım")} for x in b.sayim
+                     if x.sayilan is not None and x.urun_id in bil and (bil[x.urun_id].get("takip") or "sayim") == "sayim"
+                     and bil[x.urun_id].get("panel_sayim")]
+            dusen = [(bil.get(x.urun_id) or {}).get("ad") or x.urun_id for x in b.sayim
+                     if x.sayilan is not None and x.urun_id not in {s_["urun_id"] for s_ in satir}]
         kok = f"panel:kapanis:{sube_id}:{gun}"
         oid = _olay(cur, sube_id=sube_id, tur="kapanis", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(nakit) / 100,
@@ -648,8 +664,13 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
             log.warning("geç kapanış %s %s: ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)", sube_id, gun)
             cur.execute("""UPDATE ey_sube_olay SET veri = veri || '{"sayim_uygulanmadi": true}'::jsonb WHERE id=%s""", (oid,)) if oid else None
         uyarilar, merkez_uyarilari = [], []
+        y0 = _yoklama()
+        if y0 is not None and not c["kuru"] and not c.get("merkez") and oid is not None:
+            y0.personel_kilidi(cur, p["id"])   # Codex P2-5: devir telefonuyla aynı sıra (kişi → devir) — kilitlenme yok
         if oid is not None:   # yeni yazım: uyarılar + sorumlu + içeride kalanlar (değişken bilgi → tekrar korumasının DIŞINDA, sonradan eklenir)
             uyarilar, ek = _kapanis_uyarilari(cur, sube_id, c["gun"], p, b)
+            if dusen:
+                uyarilar.append("Geç kapanış: sayımdaki " + ", ".join(dusen) + " artık sayım listesinde değil — uygulanmadı")
             merkez_uyarilari = ek["kasa_uyarilari"] + uyarilar   # merkez HEPSİNİ görür; panel kasa uyarısını GÖRMEZ
             cur.execute("UPDATE ey_sube_olay SET veri = veri || %s::jsonb WHERE id=%s",
                         (json.dumps({"uyarilar": uyarilar, **ek}, ensure_ascii=False, default=str), oid))
@@ -682,6 +703,16 @@ def _kapanis_merkeze(sube_id: str, b: KapanisBody) -> dict:
         p = _personel(cur, sube_id, b.personel_id)   # QR'la girmiş (içeride)
         _pin(cur, p, b.pin)
         _kapanis_tam(cur, b)
+        _onay_hazirla()
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_onay:{sube_id}:kapanis",))   # onay ile aynı sıra
+        cur.execute("""SELECT 1 FROM ey_panel_onay WHERE sube_id=%s AND tur='kapanis' AND durum='isleniyor'
+                       AND islenme > NOW() - INTERVAL '2 minutes' LIMIT 1""", (str(sube_id),))
+        if cur.fetchone():
+            raise HTTPException(409, "Kapanış şu an telefondan onaylanıyor — birkaç saniye bekle")
+        if _gun_kapali(cur, sube_id, _bugun()):
+            raise HTTPException(409, "Bugünün kapanışı zaten yapıldı")
+        cur.execute("""UPDATE ey_panel_onay SET durum='iptal', mesaj='merkeze gönderildi' WHERE sube_id=%s AND tur='kapanis'
+                       AND durum IN ('bekliyor','hata')""", (str(sube_id),))   # açık QR onayı kalmasın
         if not b.istemci_gunu:
             raise HTTPException(400, "Form günü yok — sayfayı yenile")
     gun = _bugun()

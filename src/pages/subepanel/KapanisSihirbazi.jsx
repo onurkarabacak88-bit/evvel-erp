@@ -20,7 +20,8 @@ const kapanisErken = (hhmm) => {
   return sh >= 2 && sh * 60 + sm < h * 60 + (m || 0);
 };
 
-export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, urunAcaGit }) {
+export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, urunAcaGit, gun: formGunu }) {
+  const gun = formGunu || d.gun;   // Codex P1: formun iş günü AÇILDIĞI an sabit — 02:00'de yeniden kurulup rakamlar silinmez
   const urunler = d.sayilan.flatMap((g) => g.urunler);
   const bardakMi = (u) => /bardak/i.test(u.ad) && !/kapa[kğ]|çanta|tutucu/i.test(u.ad);
   const bardaklar = urunler.filter(bardakMi);
@@ -28,14 +29,16 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   const urunAcVar = d.bugun.some((o) => o.tur === 'urun_ac' && !o.iptal);
   const yok = d.yoklama || {};
   const iceride = (yok.girenler || []).filter((g) => g.acik);
-  const anahtar = `sp_taslak:${subeId}:${d.gun}:kapanis_sihirbaz`;   // iş gününe bağlı (eski: 18 saat)
+  const anahtar = `sp_taslak:${subeId}:${gun}:kapanis_sihirbaz`;   // iş gününe bağlı (eski: 18 saat)
   const ilk = (() => { try { return JSON.parse(localStorage.getItem(anahtar) || 'null'); } catch { return null; } })();
-  useEffect(() => {   // eski günlerin taslakları birikmesin
+  useEffect(() => {   // eski günlerin taslakları birikmesin — DÜNÜNKÜ silinmez (gece yarısı gönderilmemiş kapanış kurtarılır)
     try {
-      Object.keys(localStorage).filter((k) => k.startsWith(`sp_taslak:${subeId}:`) && k.endsWith(':kapanis_sihirbaz') && k !== anahtar)
+      const dun = new Date(new Date(gun + 'T12:00').getTime() - 864e5).toISOString().slice(0, 10);
+      Object.keys(localStorage).filter((k) => k.startsWith(`sp_taslak:${subeId}:`) && k.endsWith(':kapanis_sihirbaz') && k !== anahtar
+        && (k.split(':')[2] || '') < dun)
         .forEach((k) => localStorage.removeItem(k));
     } catch { /* yok say */ }
-  }, [anahtar, subeId]);
+  }, [anahtar, subeId, gun]);
   const [adim, setAdim] = useState(ilk?.adim || 1);
   const [yon, setYon] = useState('ileri');
   const [v, setV] = useState(ilk?.v || { nakit: '', pos: '', online: '', kor: '', birakilan: '', teslim: {}, deg: {}, pasta: '', xrapor: false, urunAcYok: false });
@@ -59,7 +62,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   const git = (n) => { setHata(''); setYon(n > adim ? 'ileri' : 'geri'); setAdim(n); };
   const teslimler = Object.entries(v.teslim || {}).filter(([, t]) => tutarNum(t) > 0).map(([alan, t]) => ({ alan, tutar: tutarNum(t) }));
   const govde = () => ({
-    istemci_gunu: d.gun, istek_id: istek, nakit: tutarNum(v.nakit), pos: tutarNum(v.pos), online: tutarNum(v.online), teslimler,
+    istemci_gunu: gun, istek_id: istek, nakit: tutarNum(v.nakit), pos: tutarNum(v.pos), online: tutarNum(v.online), teslimler,
     kor_sayim: tutarNum(v.kor), birakilan: tutarNum(v.birakilan), x_rapor: !!v.xrapor, urun_ac_yok: !urunAcVar && !!v.urunAcYok,
     degirmen: Object.values(v.deg || {}).some((x) => x !== '') ? v.deg : null, pasta_toplam: Number(v.pasta),
     sayim: urunler.map((u) => ({ urun_id: u.id, sayilan: Number(sayim[u.id]) })),
@@ -129,7 +132,14 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
     const t = window.setInterval(sor, 2000);
     return () => { canli = false; window.clearInterval(t); };
   }, [onay?.id, onay?.durum]);   // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => { if (d.kapanis_var && !sonuc) sonucGoster({ tur: 'tamam', uyarilar: [] }); }, [d.kapanis_var]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {   // başka yoldan kapandıysa — Codex P2-7: açık onay varsa uyarıları ONDAN al (EKSİK VAR yutulmasın)
+    if (!d.kapanis_var || sonuc || d.gun !== gun) return;
+    const o = onayRef.current;
+    if (!o?.id) { sonucGoster({ tur: 'tamam', uyarilar: [] }); return; }
+    api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}`)
+      .then((r) => (r.durum === 'onaylandi' ? bittiSonuc(r, r.kisi) : sonucGoster({ tur: 'tamam', uyarilar: [] })))
+      .catch(() => sonucGoster({ tur: 'tamam', uyarilar: [] }));
+  }, [d.kapanis_var]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const ileri = () => {
     setHata('');
@@ -173,6 +183,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   };
   const merkezeGonder = async () => {   // sahip: mühürsüz YOK — telefonsuz kapanışçı merkeze gönderir (merkez geç kapanış işler)
     if (mesgul) return;
+    if (onay?.durum === 'isleniyor') { setHata('Kapanış şu an telefondan onaylanıyor — birkaç saniye bekle'); return; }
     if (!mKisi) { setHata('Adını seç'); return; }
     if (!/^\d{4}$/.test(mPin)) { setHata('4 haneli PIN\'ini gir'); return; }
     setMesgul(true); setHata('');

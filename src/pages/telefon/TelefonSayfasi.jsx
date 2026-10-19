@@ -314,7 +314,7 @@ function OnayIslem({ sube, jeton, onay }) {
               <button className="tq-btn tq-ana" disabled={mesgul || !konumHazir} onClick={() => yap('onayla')}>
                 {yazi('onayla', ozet.tur === 'kapanis' ? `✅ ONAYLA — kapanışçı olarak ${ozet.kisi || 'SEN'} kaydedileceksin` : `✅ ONAYLA — ${ozet.ad || ''}`)}</button>
             )}
-            {gecerli && !girisGerek && ozet.tur === 'kapanis' && (ben?.yapabilir || []).includes('cikis') && (<>
+            {!girisGerek && ozet.tur === 'kapanis' && (ben?.yapabilir || []).includes('cikis') && (<>
               <div className="tq-not">Kapanışı sen yapmıyorsan onaylama — yalnız çıkışını yap:</div>
               <button className="tq-btn tq-kucuk" disabled={mesgul || !konumHazir} onClick={() => { if (window.confirm('Kapanışı SEN yapmıyorsun — yalnız çıkışın yazılsın mı?')) yap('cikis'); }}>{yazi('cikis', '🚪 Sadece çıkış yap')}</button>
             </>)}

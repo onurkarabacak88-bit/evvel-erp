@@ -410,7 +410,7 @@ export default function SubePaneli({ subeId }) {
         <KasaDevri devir={devir} tabletVar={tabletVar} kapali={kapali} kapat={() => setModal(null)} yukle={yukle} iptal={devirIptal} mesgulDis={mesgul} />
       )}
       {modal === 'kapanis' && (
-        <KapanisSihirbazi key={d.gun} d={d} subeId={subeId} tabletVar={tabletVar} kapat={() => setModal(null)}
+        <KapanisSihirbazi key={formGun || d.gun} gun={formGun || d.gun} d={d} subeId={subeId} tabletVar={tabletVar} kapat={() => setModal(null)}
           urunAcaGit={() => { setModal(null); setSekme('ac'); }}
           bitti={async () => { setModal(null); await yukle(); }} />
       )}
