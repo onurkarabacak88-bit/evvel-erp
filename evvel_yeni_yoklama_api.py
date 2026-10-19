@@ -304,11 +304,18 @@ def gece_kapat(cur) -> int:
     "çalışılan gün" (giriş olan gün) ve mola süresini (yemek hakkı) okur; çıkış saatini okumaz. Bitirilmemiş mola: hak VERİLİR
     (personel düğmeye basmayı unuttu diye yemek kesilmez — sahip kararıyla değiştirilebilir)."""
     g = is_gunu()
-    cur.execute("""UPDATE ey_yoklama SET cikis_ts=giris_ts, cikis_tur='gece_otomatik'
-                   WHERE cikis_ts IS NULL AND is_gunu < %s RETURNING id""", (g,))
-    n = len(cur.fetchall() or [])
-    cur.execute("""UPDATE ey_mola SET bitis_ts=baslangic_ts, bitis_tur='gece_otomatik', sure_dk=0, yemek_hakki=TRUE
-                   WHERE bitis_ts IS NULL AND is_gunu < %s""", (g,))
+    cur.execute("""SELECT EXISTS (SELECT 1 FROM ey_yoklama WHERE cikis_ts IS NULL AND is_gunu < %s)
+                       OR EXISTS (SELECT 1 FROM ey_mola WHERE bitis_ts IS NULL AND is_gunu < %s) AS var""", (g, g))
+    if not dict(cur.fetchone() or {}).get("var"):
+        return 0
+    # Codex: AYRI kısa işlem + SKIP LOCKED → çağıranın işleminde satır kilidi kalmaz (kişi kilidiyle ters sıra / deadlock yok);
+    # o an başka işlemin tuttuğu satır bir sonraki bakışta kapanır
+    with db() as (_c, k):
+        k.execute("""UPDATE ey_yoklama SET cikis_ts=giris_ts, cikis_tur='gece_otomatik' WHERE id IN (
+                       SELECT id FROM ey_yoklama WHERE cikis_ts IS NULL AND is_gunu < %s FOR UPDATE SKIP LOCKED) RETURNING id""", (g,))
+        n = len(k.fetchall() or [])
+        k.execute("""UPDATE ey_mola SET bitis_ts=baslangic_ts, bitis_tur='gece_otomatik', sure_dk=0, yemek_hakki=TRUE WHERE id IN (
+                       SELECT id FROM ey_mola WHERE bitis_ts IS NULL AND is_gunu < %s FOR UPDATE SKIP LOCKED)""", (g,))
     return n
 
 
@@ -330,6 +337,7 @@ def cikis_yaz(cur, personel_id: str, tur: str, kim: Optional[str] = None, mesafe
     """PUBLIC: açık girişi kapatır (tur: qr / devir / kapanis / merkez). sube_id verilirse yalnız o şubedeki açık giriş.
     Açık giriş yoksa sessizce None (zaten çıkmış)."""
     yoklama_hazirla()
+    gece_kapat(cur)   # Codex: geçmiş günün unutulan molası bu yoldan uzun süreyle kapanmasın (önce gece kuralı)
     personel_kilidi(cur, personel_id)
     cur.execute("""SELECT id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL AND (%s::text IS NULL OR sube_id=%s)
                      AND (%s::text IS NULL OR id=%s) FOR UPDATE""", (personel_id, sube_id, sube_id, yoklama_id, yoklama_id))
