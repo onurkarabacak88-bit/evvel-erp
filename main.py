@@ -808,15 +808,16 @@ def _gece_yarisi_scheduler():
             except Exception as e:
                 logger.warning(f"⏰ Scheduler anomali kontrol hatası: {e}")
 
-            try:
-                with db() as (conn, cur):
-                    eksik_kullanim_kontrol(cur)
-                    sk = tum_subeler_skor_guncelle(cur)
-                    conn.commit()
-                if sk:
-                    logger.info(f"⏰ Scheduler: eksik kullanım + şube skor güncellendi ({len(sk)} şube)")
-            except Exception as e:
-                logger.warning(f"⏰ Scheduler stok davranış / skor hatası: {e}")
+            if _eski_panel_zinciri_acik():   # 🔌 1 Kasım (sahip A, 20 Eki): eski depo/sipariş davranış uyarısı + şube skoru
+                try:
+                    with db() as (conn, cur):
+                        eksik_kullanim_kontrol(cur)
+                        sk = tum_subeler_skor_guncelle(cur)
+                        conn.commit()
+                    if sk:
+                        logger.info(f"⏰ Scheduler: eksik kullanım + şube skor güncellendi ({len(sk)} şube)")
+                except Exception as e:
+                    logger.warning(f"⏰ Scheduler stok davranış / skor hatası: {e}")
 
             # ── BORDRO GECE SENKRONU (2026-08-07, denetim bulgusu) ──────────────
             # ÖNCE: bordro yalnız ELLE tetikleniyordu ("Vardiya verisini maaşa aktar").
@@ -961,30 +962,33 @@ def _gece_yarisi_scheduler():
 
             # FAZ 2 duyuları (2026-07-06): açıklama yoğunluğu + kapanış-sonrası/backdate +
             # ödeme karması — dünün ham kesitleri omurgaya; her biri kendi hatasını yutar.
-            try:
-                from duyu_faz2 import gece_faz2_calistir
-                gece_faz2_calistir()
-                logger.info("⏰ Scheduler: FAZ 2 duyu taraması tamamlandı")
-            except Exception as e:
-                logger.warning(f"⏰ Scheduler FAZ 2 duyu hatası: {e}")
+            if _eski_panel_zinciri_acik():   # 🔌 1 Kasım (sahip A, 20 Eki): FAZ 2 duyuları eski panel olaylarını okur
+                try:
+                    from duyu_faz2 import gece_faz2_calistir
+                    gece_faz2_calistir()
+                    logger.info("⏰ Scheduler: FAZ 2 duyu taraması tamamlandı")
+                except Exception as e:
+                    logger.warning(f"⏰ Scheduler FAZ 2 duyu hatası: {e}")
 
             # FAZ 3 sinapsları (2026-07-06): kase + zincir + kompozit — duyuların ürettiği
             # olaylardan SONRA koşar ki kompozit o gecenin olaylarını da görsün.
-            try:
-                from duyu_sinaps import gece_sinaps_calistir
-                gece_sinaps_calistir()
-                logger.info("⏰ Scheduler: FAZ 3 sinaps taraması tamamlandı")
-            except Exception as e:
-                logger.warning(f"⏰ Scheduler FAZ 3 sinaps hatası: {e}")
+            if _eski_panel_zinciri_acik():   # 🔌 1 Kasım (sahip A, 20 Eki): sinaps eski panel olaylarını okur
+                try:
+                    from duyu_sinaps import gece_sinaps_calistir
+                    gece_sinaps_calistir()
+                    logger.info("⏰ Scheduler: FAZ 3 sinaps taraması tamamlandı")
+                except Exception as e:
+                    logger.warning(f"⏰ Scheduler FAZ 3 sinaps hatası: {e}")
 
             # FAZ 4 ön-kurulum (2026-07-06): etiket köprüsü (insan kararları → öğretmen
             # defteri) + operasyon ritmi (şube-dilim kesiti). Motor hâlâ UYUYOR.
-            try:
-                from duyu_uyanis import gece_uyanis_calistir
-                gece_uyanis_calistir()
-                logger.info("⏰ Scheduler: FAZ 4 uyanış hazırlığı tamamlandı")
-            except Exception as e:
-                logger.warning(f"⏰ Scheduler FAZ 4 uyanış hatası: {e}")
+            if _eski_panel_zinciri_acik():   # 🔌 1 Kasım (sahip A, 20 Eki): operasyon ritmi eski event tablosunu okur
+                try:
+                    from duyu_uyanis import gece_uyanis_calistir
+                    gece_uyanis_calistir()
+                    logger.info("⏰ Scheduler: FAZ 4 uyanış hazırlığı tamamlandı")
+                except Exception as e:
+                    logger.warning(f"⏰ Scheduler FAZ 4 uyanış hatası: {e}")
 
             # 5-YZ tamamlama (2026-07-06): örüntü duyuları — sayım-çevresi + fatura
             # örüntüsü + ters zincir + ürün sessiz sıfırlanması.
@@ -997,12 +1001,13 @@ def _gece_yarisi_scheduler():
 
             # Özgün kurgu duyuları (2026-07-06): vardiya plan-gerçek kesiti (fiyat izi ve
             # bildirim iletim olay-güdümlü, kancalardan beslenir).
-            try:
-                from duyu_ozgun import gece_ozgun_calistir
-                gece_ozgun_calistir()
-                logger.info("⏰ Scheduler: özgün duyular taraması tamamlandı")
-            except Exception as e:
-                logger.warning(f"⏰ Scheduler özgün duyular hatası: {e}")
+            if _eski_panel_zinciri_acik():   # 🔌 1 Kasım (sahip A, 20 Eki): vardiya plan–gerçek eski açılış/kapanışı okur
+                try:
+                    from duyu_ozgun import gece_ozgun_calistir
+                    gece_ozgun_calistir()
+                    logger.info("⏰ Scheduler: özgün duyular taraması tamamlandı")
+                except Exception as e:
+                    logger.warning(f"⏰ Scheduler özgün duyular hatası: {e}")
 
             # Konuşma izleri (2026-07-07, Codex çaprazlı): motor bulgu kesiti (kaba+D+2
             # gecikmeli) + söz→aksiyon adayı. Rapor izi gönderim kancasından beslenir.
@@ -1070,8 +1075,9 @@ def _gece_yarisi_scheduler():
             _halka("fiyat_bandi", lambda: __import__("fatura_api").gece_fiyat_bandi_izleme())
             if _eski_panel_zinciri_acik():   # 🔌 eski panel olay / uyarı / not okur
                 _halka("personel_puan", lambda: __import__("personel_puan_api").gece_personel_puan_tara())
-            _halka("agir_onhesap", lambda: __import__("duyu_gorunumler").gece_agir_onhesap())
-            _halka("bag_defteri", lambda: __import__("duyu_gorunumler").bag_defteri_hesapla())
+            if _eski_panel_zinciri_acik():   # 🔌 1 Kasım (sahip A): ön hesap reçete/değirmen + bağ defteri eski ciro okur
+                _halka("agir_onhesap", lambda: __import__("duyu_gorunumler").gece_agir_onhesap())
+                _halka("bag_defteri", lambda: __import__("duyu_gorunumler").bag_defteri_hesapla())
             _halka("ozsorgu", lambda: __import__("beyin_api").gece_ozsorgu())
             logger.info("⏰ Scheduler: öz-sorgu zinciri tamamlandı")
 
@@ -1108,40 +1114,41 @@ def _gece_yarisi_scheduler():
                     logger.warning(f"⏰ Scheduler haftalık fire hatası: {e}")
 
             # ── RAPOR CACHE — gecelik özet batch (defensive) ──
-            try:
-                from rapor_cache import (
-                    gunluk_ozet_topla_tum_subeler, aylik_food_cost_hesapla,
-                    batch_log_basla, batch_log_bitir,
-                )
-                import time as _tm
-                _t0 = _tm.time()
-                dun = bugun - timedelta(days=1)
-                bid = None
-                with db() as (conn, cur):
-                    bid = batch_log_basla(cur, 'gunluk_ozet',
-                                          {'tarih': str(dun), 'sebep': 'gece_scheduler'})
-                    conn.commit()
-                with db() as (conn, cur):
-                    sayac_dun = gunluk_ozet_topla_tum_subeler(cur, dun)
-                    sayac_bugun = gunluk_ozet_topla_tum_subeler(cur, bugun)
-                    conn.commit()
-                # Aylık food cost — bu ay + ay başında geçen ay
-                ym_bu = bugun.strftime("%Y-%m")
-                with db() as (conn, cur):
-                    aylik_food_cost_hesapla(cur, ym_bu)
-                    if bugun.day <= 3:
-                        ym_oncesi = (bugun.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
-                        aylik_food_cost_hesapla(cur, ym_oncesi)
-                    conn.commit()
-                with db() as (conn, cur):
-                    batch_log_bitir(cur, bid,
-                                    islenen=sayac_dun + sayac_bugun,
-                                    sure_ms=int((_tm.time() - _t0) * 1000),
-                                    detay={'dun': sayac_dun, 'bugun': sayac_bugun, 'ym': ym_bu})
-                    conn.commit()
-                logger.info(f"⏰ Rapor cache: dün={sayac_dun} bugün={sayac_bugun} aylık={ym_bu}")
-            except Exception as e:
-                logger.warning(f"⏰ Scheduler rapor cache hatası: {e}")
+            if _eski_panel_zinciri_acik():   # 🔌 1 Kasım (sahip A, 20 Eki): eski taslak/teslim/event'ten günlük özet + aylık food cost
+                try:
+                    from rapor_cache import (
+                        gunluk_ozet_topla_tum_subeler, aylik_food_cost_hesapla,
+                        batch_log_basla, batch_log_bitir,
+                    )
+                    import time as _tm
+                    _t0 = _tm.time()
+                    dun = bugun - timedelta(days=1)
+                    bid = None
+                    with db() as (conn, cur):
+                        bid = batch_log_basla(cur, 'gunluk_ozet',
+                                              {'tarih': str(dun), 'sebep': 'gece_scheduler'})
+                        conn.commit()
+                    with db() as (conn, cur):
+                        sayac_dun = gunluk_ozet_topla_tum_subeler(cur, dun)
+                        sayac_bugun = gunluk_ozet_topla_tum_subeler(cur, bugun)
+                        conn.commit()
+                    # Aylık food cost — bu ay + ay başında geçen ay
+                    ym_bu = bugun.strftime("%Y-%m")
+                    with db() as (conn, cur):
+                        aylik_food_cost_hesapla(cur, ym_bu)
+                        if bugun.day <= 3:
+                            ym_oncesi = (bugun.replace(day=1) - timedelta(days=1)).strftime("%Y-%m")
+                            aylik_food_cost_hesapla(cur, ym_oncesi)
+                        conn.commit()
+                    with db() as (conn, cur):
+                        batch_log_bitir(cur, bid,
+                                        islenen=sayac_dun + sayac_bugun,
+                                        sure_ms=int((_tm.time() - _t0) * 1000),
+                                        detay={'dun': sayac_dun, 'bugun': sayac_bugun, 'ym': ym_bu})
+                        conn.commit()
+                    logger.info(f"⏰ Rapor cache: dün={sayac_dun} bugün={sayac_bugun} aylık={ym_bu}")
+                except Exception as e:
+                    logger.warning(f"⏰ Scheduler rapor cache hatası: {e}")
 
             # ── GÜNLÜK FOOD COST (sube_food_cost_gun) — gece hesabı ──
             # 🐞 FIX (2026-08-03, canlı denetim "Food cost —" + "Fire 0" vakası):
@@ -1149,15 +1156,16 @@ def _gece_yarisi_scheduler():
             # koşusu yoktu, tablo hep boş kalıyordu → Marj Özeti food cost "—",
             # fire 0 gösteriyordu. Dünün tamamlanmış günü her gece hesaplanır
             # (idempotent: UNIQUE(sube_id,tarih) upsert). Hata-yutar.
-            try:
-                from operasyon_merkez_api import _food_cost_hesapla_gun
-                dun_fc = bugun - timedelta(days=1)
-                with db() as (conn, cur):
-                    fc_satir = _food_cost_hesapla_gun(cur, str(dun_fc), None)
-                    conn.commit()
-                logger.info(f"⏰ Günlük food cost: {str(dun_fc)} — {len(fc_satir or [])} şube")
-            except Exception as e:
-                logger.warning(f"⏰ Scheduler günlük food cost hatası: {e}")
+            if _eski_panel_zinciri_acik():   # 🔌 1 Kasım (sahip A, 20 Eki): günlük food cost eski event/operasyon_defter/ciro okur
+                try:
+                    from operasyon_merkez_api import _food_cost_hesapla_gun
+                    dun_fc = bugun - timedelta(days=1)
+                    with db() as (conn, cur):
+                        fc_satir = _food_cost_hesapla_gun(cur, str(dun_fc), None)
+                        conn.commit()
+                    logger.info(f"⏰ Günlük food cost: {str(dun_fc)} — {len(fc_satir or [])} şube")
+                except Exception as e:
+                    logger.warning(f"⏰ Scheduler günlük food cost hatası: {e}")
 
             # ── AKILLI DENETİM MOTORU — gece 00:30, WhatsApp özetinden ÖNCE ──
             # Şubeler kapanışı 00:00–00:30 arası tamamlar, o yüzden 30 dk bekle.
