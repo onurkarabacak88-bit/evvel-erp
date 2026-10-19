@@ -208,7 +208,8 @@ function Yoldakiler({ onToast, mod }) {
                   {x.hasar > 0 ? <>{x.hasar} adet HASARLI geldi — ASKIDA
                     <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>
                       <Dugme kucuk onClick={() => coz(x, 'hasar_fire', `${x.urun}: ${x.hasar} hasarlı adet FİRE yazılsın mı?`)}>Fire yaz</Dugme>
-                      <Dugme kucuk onClick={() => coz(x, 'hasar_iade', `${x.urun}: ${x.hasar} hasarlı adet ${x.nereden} deposuna GERİ dönsün mü?`)}>Kaynağa geri</Dugme></div></>
+                      <Dugme kucuk onClick={() => coz(x, 'hasar_iade', `${x.urun}: ${x.hasar} hasarlı adet ${x.nereden} deposuna GERİ dönsün mü?`)}>Kaynağa geri</Dugme></div>
+                    {x.fazla > 0 && <div style={{ fontSize: 11.5, color: R.not, marginTop: 4 }}>+{x.fazla} sağlam fazla da var — hasarı çözünce görünür</div>}</>
                   : x.fazla > 0 ? <>+{x.fazla} fazla geldi — ASKIDA (birim karışmış olabilir)
                     <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>
                       <Dugme kucuk onClick={() => coz(x, 'fazla_onay', `${x.urun}: ${x.fazla} adet fazla GERÇEKTEN geldi mi? Şube stoğuna eklensin mi?`)}>Gerçekten geldi</Dugme>
@@ -359,7 +360,7 @@ function DepoSayim({ onToast }) {
   if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>{hata}</div></div>;
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Ürünler okunuyor…</div></div>;
   const k = v.konumlar.find((x) => x.id === konum);
-  const urunler = v.satirlar;   // Codex: katalogda eşleşmeyen (eski kodlu) ürünler de sayılabilsin
+  const urunler = v.satirlar.filter((u) => u.takip !== 'gununde');   // Codex: eşleşmeyen (eski kodlu) de sayılır · Fable: pasta sayılmaz
   const kaydet = async () => {
     const satirlar = Object.entries(deger).filter(([, d]) => String(d).trim() !== '').map(([urun_id, d]) => ({ urun_id, sayilan: Number(String(d).replace(',', '.')) }));
     if (!satirlar.length) { onToast?.('En az bir ürün say'); return; }

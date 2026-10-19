@@ -783,7 +783,13 @@ def fark_coz(yid: str, body: FarkCozBody, x_evvel_oturum: Optional[str] = Header
             raise HTTPException(400, "karar: kayip | iade | fazla_onay | fazla_ret | hasar_fire | hasar_iade")
         if not row[6]:
             raise HTTPException(400, "Sevkin kaynağı bulunamadı")
-        _yaz(cur, [row], yeni=bool(hs[0].get("yeni")))   # Fable: çözüm sevkin evreninde (aksi hâlde yeni evrende sevk hep 'yolda')
+        satirlar = [row]
+        if body.karar == "hasar_iade":   # Fable 2.tur #1: sevki AŞAN hasarlı kaynaktan hiç çıkmadı → o kısım kaynağa değil dışarıya
+            hy = sum(h["adet"] for h in hs if h["tur"] == "hasar" and h["kaynak"] == "yolda")
+            once = sum(h["adet"] for h in hs if h["tur"] in ("hasar_fire", "hasar_iade"))
+            kp = max(0, min(hasar, hy - once))
+            satirlar = ([row[:4] + (kp,) + row[5:]] if kp else []) +                 ([(row[0] + ":fazla", row[1], u, ua, hasar - kp, "askida", "dışarı:bilinmeyen") + row[7:]] if hasar - kp else [])
+        _yaz(cur, satirlar, yeni=bool(hs[0].get("yeni")))   # Fable: çözüm sevkin evreninde (aksi hâlde yeni evrende sevk hep 'yolda')
         if body.karar == "fazla_onay" and hs[0].get("yeni"):
             _gununde_tuket(cur, _urun_bilgi1(cur, u), kaynak_ref=row[0], urun_id=u, urun_ad=ua, adet=fazla, konum=hedef, kim=kim, bag=yid,
                            gun=_is_gunu())
