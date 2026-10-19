@@ -274,7 +274,7 @@ def teslim_yaz(cur, *, kaynak_ref: str, toptanci_id: str, toptanci_ad: str, sube
                  fatura_geldi, kesin_tutar, (fatura_no or "").strip()[:40] or None, kesin_kaynak if kesin_tutar else None,
                  teslim_alan, (aciklama or "").strip()[:300] or None))
     r = cur.fetchone()
-    if r and kesin_tutar:
+    if r and kesin_tutar and kesin_kaynak != "şube":   # sahip (2026-10-19, E5): fiyat YALNIZ merkez kesinleştirince öğrenilir
         _fiyat_ogren(cur, {"toptanci_id": toptanci_id, "kalemler": satir, "kesin_tutar": kesin_tutar, "tahmini": tahmini}, gun)
     return dict(r)["id"] if r else None
 
@@ -536,11 +536,23 @@ def teslim_iptal(tid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Head
     _hazirla()
     with db() as (conn, cur):
         toptanci_hazirla(cur)
-        cur.execute("UPDATE ey_toptanci_teslim SET iptal=TRUE, iptal_sebep=%s WHERE id=%s AND NOT iptal RETURNING id",
+        cur.execute("UPDATE ey_toptanci_teslim SET iptal=TRUE, iptal_sebep=%s WHERE id=%s AND NOT iptal RETURNING id, kaynak_ref",
                     (f"{body.sebep.strip()[:150]} · {_aktor(cur, x_evvel_oturum)}", tid))
-        if not cur.fetchone():
+        r = cur.fetchone()
+        if not r:
             raise HTTPException(404, "Teslim bulunamadı ya da zaten iptal")
-    return {"ok": True, "mesaj": "Teslim iptal edildi — borçtan düştü"}
+        ek = ""
+        ref = dict(r)["kaynak_ref"] or ""
+        if ref.startswith("panel:teslim:"):   # yeni panel teslimi: depo girişi de geri alınır (tak-çıkar: Depo kapalıysa atlanır)
+            from evvel_yeni_moduller import DURUM
+            if DURUM.get("depo") == "yuklendi":
+                from evvel_yeni_depo_api import hareket_iptal
+                d = hareket_iptal(cur, bag=ref, sebep=f"toptancı teslimi iptal · {body.sebep.strip()[:100]}")
+                ek = (" · stok sayımla kesinleştiği için depo girişi GERİ ALINMADI (yalnız borç)" if d["sayimli"]
+                      else f" · depo girişi geri alındı ({d['iptal']} kalem)")
+            else:
+                ek = " · Depo modülü kapalı — depo girişi geri alınmadı"
+    return {"ok": True, "mesaj": "Teslim iptal edildi — borçtan düştü" + ek}
 
 
 

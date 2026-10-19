@@ -376,6 +376,25 @@ def hareket_yaz(cur, *, kaynak_ref: str, tur: str, urun_id: str, adet: int, kayn
                        _simdi_tr(), kim, aciklama, bag)], yeni=True) == 1
 
 
+def hareket_iptal(cur, *, bag: str, sebep: str) -> dict:
+    """PUBLIC: bir işlemin (bag) bütün hareketlerini iptal eder (iz kalır). Fable S3: hareketin şube konumunda hareketten SONRA
+    sayım yapılmışsa stok sayımla kesinleşmiştir → HİÇBİRİ iptal edilmez ({'iptal': 0, 'sayimli': True}); çağıran yalnız borcu düşer."""
+    depo_hazirla(cur)
+    cur.execute("SELECT id, kaynak, hedef, zaman FROM ey_stok_hareket WHERE bag=%s AND NOT iptal AND yeni", (bag,))
+    rows = [dict(x) for x in cur.fetchall() or []]
+    if not rows:
+        return {"iptal": 0, "sayimli": False}
+    konumlar = {k for r in rows for k in (r["kaynak"], r["hedef"]) if k.startswith("depo:") or k.startswith("bar:")}
+    _konum_kilidi(cur, *konumlar)
+    ilk = min(r["zaman"] for r in rows)
+    cur.execute("SELECT 1 FROM ey_stok_sayim WHERE yeni AND konum = ANY(%s) AND zaman >= %s LIMIT 1", (list(konumlar), ilk))
+    if cur.fetchone():
+        return {"iptal": 0, "sayimli": True}
+    cur.execute("UPDATE ey_stok_hareket SET iptal=TRUE, iptal_sebep=%s WHERE bag=%s AND NOT iptal AND yeni",
+                ((sebep or "iptal")[:200], bag))
+    return {"iptal": cur.rowcount, "sayimli": False}
+
+
 def urun_hareketi_var(cur, urun_id: str) -> bool:
     """PUBLIC: ürünün YENİ evrende (ey_urun kimliğiyle) stok hareketi var mı — Ürün kataloğu birim kilidi bunu sorar."""
     depo_hazirla(cur)

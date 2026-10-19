@@ -276,6 +276,9 @@ def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez:
     with db() as (_c, hc):   # Codex: tablo hazırlıkları ANA işlemin dışında (deneme geri alınca hazır bayrağı yalan kalmasın)
         _katalog_hazir(hc)
         depo_hazirla(hc)
+        if _modul_acik("toptanci"):   # Fable: Toptancı tabloları da ana işlemin DIŞINDA (deneme geri alınca hazır bayrağı yalan kalmasın)
+            from evvel_yeni_toptanci_api import toptanci_hazirla
+            toptanci_hazirla(hc)
     try:
         with db() as (conn, cur):
             g = gun or _bugun()
@@ -306,6 +309,7 @@ def panel_durum(sube_id: str):
         per = [{"id": str(p["id"]), "ad": p["ad"]} for p in secim_listeleri(cur)["personel"]
                if p["aktif"] and str(p.get("sube_id") or "") == str(sube_id)]
         kat_hepsi = katalog(cur, hepsi=True)   # Fable: tek sorgu — aktif liste bundan süzülür
+        toptancilar = [{"id": str(t["id"]), "ad": t["ad"], "kategori": t.get("kategori")} for t in secim_listeleri(cur).get("toptancilar") or []]
         kat = [{**k, "urunler": [x for x in k["urunler"] if x.get("aktif", True)]} for k in kat_hepsi if k.get("aktif", True)]
         bugunku = [{"id": o["id"], "tur": o["tur"], "zaman": str(o["olay_zamani"])[11:16], "kim": o.get("personel_ad"),
                     "iptal": o.get("iptal", False)}
@@ -342,6 +346,7 @@ def panel_durum(sube_id: str):
             "kapanis_var": any(o["tur"] == "kapanis" and not o["iptal"] for o in bugunku),
             "kapanis_merkezde": _merkezde_mi(sube_id, gun),   # Fable B5: telefonsuz merkeze gönderildi (panel aynı geceyi yeniden doldurmasın)
             "fire_sebepleri": [{"kod": k, "ad": v} for k, v in FIRE_SEBEPLERI.items()],
+            "toptancilar": toptancilar, "toptanci_acik": _modul_acik("toptanci"),   # Basamak 8: Tedarikçiden teslim al (yumuşak bağ)
             "saat": {"acilis": "%02d:%02d" % ACILIS_SAAT, "kapanis": "%02d:%02d" % KAPANIS_SAAT}}
 
 
@@ -816,6 +821,83 @@ def _kalemler(cur, kalemler: List[Kalem], takip: Optional[str] = None, pasif_olu
         x["takip"] = b[x["urun_id"]].get("takip") or "sayim"
         x["panel_sayim"] = bool(b[x["urun_id"]].get("panel_sayim"))
     return k
+
+
+def _modul_acik(kod: str) -> bool:
+    from evvel_yeni_moduller import DURUM
+    return DURUM.get(kod) == "yuklendi"
+
+
+# ─────────────── BASAMAK 8 · TEDARİKÇİDEN TESLİM AL (sahip onayı 2026-10-19; PANEL_YENIDEN_KURULUM.md "BASAMAK 8") ───────────────
+# TEK teslim kapısı (Tema = merkez depo da). Var olan Toptancı kurgusu ESAS: teslim_yaz (TEK KAYIT = TESLİM, borç teslimde) +
+# Depo 'giris' (dışarı:toptanci → depo:şube) TEK işlemde. Toptancı kendiliğinden açılmaz; fiyat şube tutarından öğrenilmez (E5).
+class TeslimAlBody(BaseModel):
+    istemci_gunu: Optional[str] = None
+    personel_id: str
+    pin: Optional[str] = None          # 4 hane — doğrulanır, hiçbir yere yazılmaz
+    toptanci_id: str
+    kalemler: List[Kalem]
+    fatura_geldi: Optional[bool] = None   # zorunlu soru (eski "🧾 FATURA GELDİ Mİ?")
+    tutar: Optional[Decimal] = None       # EVET → faturadaki TOPLAM (zorunlu) · HAYIR → kâğıtta yazıyorsa
+    fatura_no: Optional[str] = None
+    aciklama: Optional[str] = None
+    koli: Optional[dict] = None           # yalnız iz: {urun_id: {koli, koli_ici, tek}} (hesap ekranda)
+    istek_id: str
+
+
+@router.post("/{sube_id}/teslim-al")
+def teslim_al(sube_id: str, b: TeslimAlBody):
+    _TUR = "teslim_al"
+    if not _modul_acik("toptanci"):
+        raise HTTPException(503, "Toptancılar modülü kapalı — teslim şu an alınamıyor, merkeze haber ver")
+    def is_(cur, c):
+        import hashlib
+        from evvel_yeni_depo_api import hareket_yaz
+        from evvel_yeni_toptanci_api import teslim_yaz
+        _gun_acik_mi(cur, c, sube_id)   # eski: gün kapalıyken teslim alınmaz (merkez girer)
+        p = _personel(cur, sube_id, b.personel_id)
+        _pin(cur, p, b.pin)
+        cur.execute("SELECT id, ad FROM ey_toptanci WHERE id=%s AND aktif", (str(b.toptanci_id),))
+        t = cur.fetchone()
+        if not t:   # Fable: panel toptancı AÇMAZ (çift kimlik — eski hastalık)
+            raise HTTPException(400, "Toptancı listede yok — merkeze haber ver")
+        t = dict(t)
+        k = _kalemler(cur, b.kalemler, pasif_olur=True)
+        if b.fatura_geldi is None:
+            raise HTTPException(400, "🧾 Fatura geldi mi? — EVET ya da HAYIR seç")
+        tutar = _tl(b.tutar, "Tutar") if b.tutar not in (None, "") else None
+        if tutar == 0:
+            tutar = None
+        if b.fatura_geldi and not tutar:
+            raise HTTPException(400, "Fatura geldiyse faturadaki TOPLAM tutarı yaz")
+        ozet = hashlib.sha1(json.dumps(sorted((x["urun_id"], x["adet"]) for x in k)).encode()).hexdigest()[:16] + ":" + str(t["id"])
+        if not c["kuru"]:   # Fable: "kaydedildi mi?" deyip yeni istekle ikinci basış → 3 dk aynı içerik kilidi (eski SUBE-004)
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_teslim_al:{sube_id}",))
+            cur.execute("""SELECT 1 FROM ey_sube_olay WHERE sube_id=%s AND tur='teslim_al' AND veri->>'ozet'=%s
+                             AND olay_zamani > NOW() - INTERVAL '3 minutes' AND veri->>'istek_id' <> %s LIMIT 1""",
+                        (str(sube_id), ozet, b.istek_id))
+            if cur.fetchone():
+                raise HTTPException(409, "Bu teslim az önce kaydedildi — tekrar gönderme. Gerçekten ikinci teslimse 3 dk sonra dene.")
+        kok = f"panel:teslim:{sube_id}:{b.istek_id}"
+        kalem_veri = [{"urun_id": x["urun_id"], "ad": x["ad"], "adet": x["adet"]} for x in k]
+        oid = _olay(cur, sube_id=sube_id, tur="teslim_al", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
+                    personel_id=p["id"], personel_ad=p["ad"], tutar=(Decimal(tutar) / 100 if tutar else None),
+                    veri={"toptanci_id": t["id"], "toptanci_ad": t["ad"], "kalemler": kalem_veri, "fatura_geldi": bool(b.fatura_geldi),
+                          "tutar": tutar, "fatura_no": (b.fatura_no or "").strip()[:40] or None, "aciklama": (b.aciklama or "").strip()[:300] or None,
+                          "koli": b.koli or None, "ozet": ozet, "istek_id": b.istek_id})
+        tid = None
+        if oid is not None:
+            tid = teslim_yaz(cur, kaynak_ref=kok, toptanci_id=t["id"], toptanci_ad=t["ad"], sube_id=str(sube_id), gun=c["gun"],
+                             kalemler=[{"urun_id": x["urun_id"], "urun_ad": x["ad"], "adet": x["adet"]} for x in k],
+                             fatura_geldi=bool(b.fatura_geldi), kesin_tutar=tutar, fatura_no=b.fatura_no, teslim_alan=p["ad"],
+                             aciklama=b.aciklama, kesin_kaynak="şube")
+            for i, x in enumerate(k):
+                hareket_yaz(cur, kaynak_ref=f"{kok}:{i}", tur="giris", urun_id=x["urun_id"], urun_ad=x["ad"], adet=x["adet"],
+                            kaynak="dışarı:toptanci", hedef=f"depo:{sube_id}", kim=f"{KIM} · {p['ad']}", bag=kok, gun=c["gun"],
+                            aciklama=f"{t['ad']} teslimi")
+        return {"olay": oid, "teslim_id": tid, "tekrar": oid is None, "toptanci": t["ad"],
+                "mesaj": f"✅ {t['ad']} teslimi kaydedildi — {len(k)} kalem / {sum(x['adet'] for x in k)} adet"}
+    return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
 
 @router.post("/{sube_id}/urun-ac")

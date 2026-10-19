@@ -44,11 +44,9 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   const art = (id, dlt) => { setKoli((o) => { const x = { ...o }; delete x[id]; return x; }); setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(99999, (o[id] || 0) + dlt)) })); };
   const koliYaz = (u, alan, deger) => {   // "2 koli × 12 + 3" → adet (sayım birimi); sunucuya yalnız adet gider
     const n = Number(String(deger).replace(/\D/g, '') || 0);
-    setKoli((o) => {
-      const x = { ...(o[u.id] || { koli: 0, tek: 0 }), [alan]: n };
-      degis(u.id, x.koli * Number(u.koli_ici || 0) + x.tek);
-      return { ...o, [u.id]: x };
-    });
+    const x = { ...(koli[u.id] || { koli: 0, tek: 0 }), [alan]: n };
+    setKoli((o) => ({ ...o, [u.id]: x }));
+    degis(u.id, x.koli * Number(u.koli_ici || 0) + x.tek);
   };
   const temizle = () => {
     setAdet({}); setKoli({}); setToptanci(''); setFatura(null); setFtTutar(''); setFtNo(''); setNot(''); setIstek(yeniIstek());

@@ -8,14 +8,6 @@ import { C, Modal, yeniIstek } from './ortak';
 
 const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 
-const bip = () => {
-  try {
-    const A = window.AudioContext || window.webkitAudioContext;
-    const a = new A(); const o = a.createOscillator(); const g = a.createGain();
-    o.frequency.value = 880; g.gain.value = 0.08; o.connect(g); g.connect(a.destination); o.start(); o.stop(a.currentTime + 0.18);
-  } catch { /* ses yok */ }
-};
-
 export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir }) {
   const anahtar = `sp_taslak:${subeId}:${d.gun}:urun_ac`;
   const ilk = useMemo(() => { try { return JSON.parse(localStorage.getItem(anahtar) || 'null'); } catch { return null; } }, [anahtar]);
@@ -93,7 +85,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
         personel_id: kisi, pin, istek_id: istek, istemci_gunu: d.gun, aciklama: not.trim() || null,
         kalemler: secili.map(([urun_id, n]) => ({ urun_id, adet: n })) } });
       try { localStorage.setItem(sonKisiAnahtar, kisi); } catch { /* yok */ }
-      bip(); setFlas(true); window.setTimeout(() => setFlas(false), 2000);
+      setFlas(true); window.setTimeout(() => setFlas(false), 2000);   // sahip (19 Eki): bip sesi YOK
       setOnay(0); setPin(''); setKisi('');
       temizle();
       bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : `✅ Ürün Aç tamamlandı — ${kalem} kalem / ${toplam} adet`, !!r.kuru);

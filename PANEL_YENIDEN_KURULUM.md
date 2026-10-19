@@ -223,3 +223,14 @@ Eski: sube_panel.html tab-ac (5363–5395), renderStokForms('ac') (11479–11560
 - Gider (yeni dönem): mal = dışarı:tüketim hareketleri (ac + bar tüketimi) × fiyat_bilgi (KDV dahil, eklenmez); sevk bedeli = şubenin kabulü + toptancıdan doğrudan giriş; gün kesin = panel kapanış olayı. Depo kapalıysa boş + depo_kapali.
 - Bar (yeni dönem): olay defteri (açılış/kapanış sayim + pasta_toplam, ürün aç olay saati) + pasta kabulü; kalemler = panel_sayim ürünleri + pasta; her kalemde `anahtar` (bardak_kucuk/buyuk/plastik…) → Satış kontrolü değişmeden çalışır.
 - ⏳ Kalan: Satış günlük dökümünde FİRE hâlâ eski sube_fire_bildirim'den → Fire basamağında yeni olaya bağlanacak.
+
+## BASAMAK 8 — TEDARİKÇİDEN TESLİM AL + TOPTANCI MEKANİZMASI (sahip onayı 2026-10-19)
+**Var olan kurgu ESAS** (evvel_yeni_toptanci_api.py 16 Ekim: TEK KAYIT = TESLİM · borç teslimde · tahmini/kesin · fatura aynı kayda · ödeme Ödeme formundan) — hiçbir parçası yeniden kurgulanmaz. Eski sürümün kök hatası: fatura teslimden AYRI kayıt doğdu → eşleştirme motoru üstüne motor (Fable teşhisi). Sahibin hedefi: **📒 Toptancı Kitabı** — toptancı seç → borç · son teslim · teslimler sırayla · her teslimin faturası (foto/PDF) sayfa sayfa.
+- **E4** Panel "Tedarikçiden teslim al" (TEK teslim kapısı; Tema = merkez depo da bu ekranla; süt/kahve/pasta doğrudan gelen şubeler de): kategori → ürün (− adet +, koli yardımcısı yalnız ekranda) · toptancı (ey_toptanci, kendiliğinden AÇILMAZ) · fatura geldi mi (EVET → tutar + no zorunlu; HAYIR → kâğıtta tutar varsa) · not · QR girişli kişi + PIN · gün kapalıysa yok · 3 dk aynı içerik kilidi · tek işlem: olay `teslim_al` + `teslim_yaz` + Depo `giris` (dışarı:toptanci → depo:şube). Sipariş modu + eksik bildirimi sipariş basamağıyla (ertelendi).
+- **E5** Fiyat öğrenme yalnız merkez kesinleştirince (şube tutarından öğrenme yok).
+- **E1** `ey_toptanci_belge` (teslime bağlı foto/PDF, küçültülmüş, BYTEA; OCR/eşleştirme YOK) — şube teslim sonrası QR → telefon; merkez PDF ekle.
+- **E2** Eksik belge rozeti (fatura geldi ∧ belge yok) + 7 gün Bekleyen işler.
+- **E3** Toptancılar ekranında kitap (sayfa çevirici) + "Belge ekle".
+- Toplu fatura: yeni yapı YOK (Fable kararı) — merkez her teslime payını yazar, aynı fatura_no birden çok teslime; %30 sapma yanlış yazımı yakalar. Merkez /teslim ucu kalemsiz kalır (istisnalar). Merkez iptalinde depo girişi: konumda sonraki sayım varsa geri alınmaz (yalnız borç) — Depo PUBLIC hareket_iptal (E4 ile).
+- Fatura fotoğrafı ölçümü: eski panelden son 30 günde 0; tedarikci_fatura 89 kayıt / 30 günde 2.
+
