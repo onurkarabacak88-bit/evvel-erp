@@ -43,10 +43,10 @@ export const tutarNum = (s) => (s === '' || s == null ? 0 : Number(String(s).rep
 export const sayimGovde = (sayim) => Object.entries(sayim).filter(([, v]) => v !== '' && v != null).map(([urun_id, v]) => ({ urun_id, sayilan: Number(v) }));
 export const kalemGovde = (adet) => Object.entries(adet).filter(([, n]) => n > 0).map(([urun_id, n]) => ({ urun_id, adet: n }));
 
-export function Modal({ baslik, kapat, children, genis }) {
+export function Modal({ baslik, kapat, children, genis, genislik }) {
   return (
     <div onClick={kapat || undefined} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
-      <div onClick={(e) => e.stopPropagation()} className="sp-kart" style={{ width: genis ? 'min(980px,100%)' : 'min(560px,100%)', maxHeight: '92vh', overflow: 'auto', display: 'grid', gap: 12 }}>
+      <div onClick={(e) => e.stopPropagation()} className="sp-kart" style={{ width: genislik ? `min(${genislik}px,100%)` : genis ? 'min(980px,100%)' : 'min(560px,100%)', maxHeight: '92vh', overflow: 'auto', display: 'grid', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><b style={{ fontSize: 20, flex: 1 }}>{baslik}</b>
           {kapat && <button className="sp-btn" style={{ minHeight: 48, padding: '4px 14px' }} onClick={kapat}>✕</button>}</div>
         {children}

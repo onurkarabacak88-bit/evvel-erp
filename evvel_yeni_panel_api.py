@@ -737,6 +737,75 @@ def _onay_hazirla() -> None:
     _ONAY_HAZIR = True
 
 
+# ─────────────── PANEL TASLAĞI (eski /urun-ac/taslak — sahip: "fonksiyon kaybı istemiyorum") ───────────────
+# Seçimler SUNUCUDA da durur: tarayıcı verisi silinse / panel başka PC'ye taşınsa yarım iş geri gelir. PIN ASLA yazılmaz.
+TASLAK_TURLERI = {"urun_ac"}
+_TASLAK_HAZIR = False
+
+
+def _taslak_hazirla() -> None:
+    global _TASLAK_HAZIR
+    if _TASLAK_HAZIR:
+        return
+    with db() as (_c, cur):
+        cur.execute("SELECT pg_advisory_xact_lock(7012052)")
+        cur.execute("SET LOCAL lock_timeout = '3s'")
+        cur.execute("""CREATE TABLE IF NOT EXISTS ey_panel_taslak (
+            sube_id TEXT NOT NULL, tur TEXT NOT NULL, is_gunu DATE NOT NULL, veri JSONB NOT NULL, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+            PRIMARY KEY (sube_id, tur, is_gunu))""")
+    _TASLAK_HAZIR = True
+
+
+class TaslakBody(BaseModel):
+    gun: str
+    veri: dict
+
+
+def _taslak_gun(gun: str):
+    try:
+        return date.fromisoformat(str(gun)[:10])
+    except ValueError:
+        raise HTTPException(400, "Gün geçersiz")
+
+
+@router.get("/{sube_id}/taslak/{tur}")
+def taslak_oku(sube_id: str, tur: str, gun: str):
+    if tur not in TASLAK_TURLERI:
+        raise HTTPException(404, "Taslak yok")
+    _taslak_hazirla()
+    with db() as (conn, cur):
+        cur.execute("SELECT veri FROM ey_panel_taslak WHERE sube_id=%s AND tur=%s AND is_gunu=%s", (sube_id, tur, _taslak_gun(gun)))
+        r = cur.fetchone()
+    return {"veri": dict(r)["veri"] if r else None}
+
+
+@router.post("/{sube_id}/taslak/{tur}")
+def taslak_yaz(sube_id: str, tur: str, b: TaslakBody):
+    if tur not in TASLAK_TURLERI:
+        raise HTTPException(404, "Taslak yok")
+    v = {k: x for k, x in (b.veri or {}).items() if k != "pin"}   # PIN asla
+    ham = json.dumps(v, ensure_ascii=False, default=str)
+    if len(ham) > 50000:
+        raise HTTPException(400, "Taslak çok büyük")
+    _taslak_hazirla()
+    with db() as (conn, cur):
+        _sube(cur, sube_id)
+        cur.execute("""INSERT INTO ey_panel_taslak (sube_id, tur, is_gunu, veri) VALUES (%s,%s,%s,%s::jsonb)
+                       ON CONFLICT (sube_id, tur, is_gunu) DO UPDATE SET veri=EXCLUDED.veri, zaman=NOW()""",
+                    (sube_id, tur, _taslak_gun(b.gun), ham))
+    return {"ok": True}
+
+
+@router.delete("/{sube_id}/taslak/{tur}")
+def taslak_sil(sube_id: str, tur: str, gun: str):
+    if tur not in TASLAK_TURLERI:
+        raise HTTPException(404, "Taslak yok")
+    _taslak_hazirla()
+    with db() as (conn, cur):
+        cur.execute("DELETE FROM ey_panel_taslak WHERE sube_id=%s AND tur=%s AND is_gunu=%s", (sube_id, tur, _taslak_gun(gun)))
+    return {"ok": True}
+
+
 def _tl_yaz(x) -> str:
     try:
         return f"{Decimal(str(x)):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " ₺"

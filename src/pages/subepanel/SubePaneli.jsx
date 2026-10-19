@@ -18,6 +18,12 @@ export default function SubePaneli({ subeId }) {
   const [sekme, setSekme] = useState('ana');
   const [acSecim, setAcSecim] = useState(0);   // Ürün Aç: onaylanmamış seçim sayısı (sol menü rozeti, eski solUrunAcBadge)
   useEffect(() => { setAcSecim(0); }, [d?.gun]);   // Fable: gün değişince rozet donmasın
+  const sekmeyeGec = (x) => {   // eski panel: Ürün Aç'ta onaylanmamış seçim varken başka sekmeye geçmeden sor
+    if (sekme === 'ac' && x !== 'ac' && acSecim > 0
+      && !window.confirm(`Ürün Aç sekmesinde ${acSecim} kalem seçili. Onaylamadan çıkarsan seçimler kalır ama işlem gönderilmez. Devam etmek istiyor musun?`)) return false;
+    setSekme(x);
+    return true;
+  };
   const [modal, setModal] = useState(null);
   const [mesaj, setMesaj] = useState(null);
   const [mesgul, setMesgul] = useState(false);
@@ -253,7 +259,7 @@ export default function SubePaneli({ subeId }) {
       <div className="sp-govde">
         {/* SOL MENÜ — eski sıra ve başlıklar */}
         <div className="sp-sol-kolon">
-          <button className={'sp-sol' + (sekme === 'ana' ? ' akt' : '')} onClick={() => setSekme('ana')}><span style={{ fontSize: 18, width: 24 }}>🏠</span>Ana Sayfa</button>
+          <button className={'sp-sol' + (sekme === 'ana' ? ' akt' : '')} onClick={() => sekmeyeGec('ana')}><span style={{ fontSize: 18, width: 24 }}>🏠</span>Ana Sayfa</button>
           {SOL.map((m, i) => (m.b ? <div key={i} className="sp-sol-baslik">{m.b}</div> : (
             <button key={m.k} className={'sp-sol' + (m.k === sekme ? ' akt' : '')} disabled={m.kapanisKarti ? kapali : kapali && !m.acikKapali && ['ac', 'fire', 'araTeslim', 'devir'].includes(m.k)} title={m.yakinda ? 'Kendi basamağında açılacak' : ''}
               onClick={() => (m.yakinda ? yakinda(`${m.ad} — kendi basamağında açılacak`) : ac(m.k))}>
@@ -287,7 +293,7 @@ export default function SubePaneli({ subeId }) {
 
       {/* ALT BAR (eski 58px): Ana · Gider · Not · Mesaj */}
       <div className="sp-alt">
-        <button onClick={() => setSekme('ana')} style={sekme === 'ana' ? { color: C.mavi } : undefined}><span style={{ fontSize: 20, display: 'block' }}>🏠</span><span style={{ fontSize: 11 }}>Ana</span></button>
+        <button onClick={() => sekmeyeGec('ana')} style={sekme === 'ana' ? { color: C.mavi } : undefined}><span style={{ fontSize: 20, display: 'block' }}>🏠</span><span style={{ fontSize: 11 }}>Ana</span></button>
         <button onClick={() => yakinda('Anlık gider ekranı kendi basamağında açılacak')}><span style={{ fontSize: 20, display: 'block' }}>💸</span><span style={{ fontSize: 11 }}>Gider</span></button>
         <button onClick={() => yakinda('Merkez notu ekranı kendi basamağında açılacak')}><span style={{ fontSize: 20, display: 'block' }}>📝</span><span style={{ fontSize: 11 }}>Not</span></button>
         <button onClick={() => yakinda('Mesajlar kendi basamağında açılacak')}><span style={{ fontSize: 20, display: 'block' }}>📩</span><span style={{ fontSize: 11 }}>Mesaj</span></button>

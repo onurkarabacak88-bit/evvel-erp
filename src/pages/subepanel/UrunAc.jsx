@@ -2,7 +2,7 @@
 // Orta alanda SEKME: hero · yapışkan onay çubuğu · kategori kartları (rozet) · "Pasifleri göster" · kategori penceresi (− adet +) ·
 // seçim özeti · not → "Seçimleri Onayla" → 1) yalnız QR ile girmiş personel + PIN  2) özet → Kaydet. Bütün katalog (sahip).
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { C, Modal, yeniIstek } from './ortak';
 
@@ -32,6 +32,27 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   const [mesaj, setMesaj] = useState(ilk && Object.keys(ilk.adet || {}).length ? 'taslak' : '');
   const [flas, setFlas] = useState(false);
   useEffect(() => { try { localStorage.setItem(anahtar, JSON.stringify({ adet, not, istek })); } catch { /* yok say */ } }, [adet, not, istek, anahtar]);
+  const taslakYol = `/evvel-yeni/panel/${encodeURIComponent(subeId)}/taslak/urun_ac`;
+  const sunucuHazir = useRef(false);
+  useEffect(() => {   // sahip: fonksiyon kaybı yok — eski panel taslağı sunucuda tutuyordu (başka PC / silinen tarayıcı)
+    let canli = true;
+    if (ilk && Object.keys(ilk.adet || {}).length) { sunucuHazir.current = true; return undefined; }
+    api(`${taslakYol}?gun=${encodeURIComponent(d.gun)}`).then((r) => {
+      if (!canli) return;
+      const v = r?.veri;
+      if (v && Object.keys(v.adet || {}).length) { setAdet(v.adet); setNot(v.not || ''); if (v.istek) setIstek(v.istek); setMesaj('taslak'); }
+    }).catch(() => { /* taslak yok / internet yok — sessiz */ }).finally(() => { sunucuHazir.current = true; });
+    return () => { canli = false; };
+  }, []);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!sunucuHazir.current) return undefined;
+    const t = window.setTimeout(() => {
+      const bos = !Object.values(adet).some((n) => n > 0);
+      (bos ? api(`${taslakYol}?gun=${encodeURIComponent(d.gun)}`, { method: 'DELETE' })
+        : api(taslakYol, { method: 'POST', body: { gun: d.gun, veri: { adet, not, istek } } })).catch(() => { /* sessiz */ });
+    }, 800);
+    return () => window.clearTimeout(t);
+  }, [adet, not, istek]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const katalog = d.ac_katalog || [];
   const urunMap = useMemo(() => Object.fromEntries(katalog.flatMap((k) => k.urunler.map((u) => [u.id, { ...u, kategori: k.kategori }]))), [katalog]);
@@ -46,10 +67,22 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
     return () => window.removeEventListener('beforeunload', u);
   }, [kalem]);
 
+  const sonKisiAnahtar = `sp_urunac_kisi:${subeId}`;
+  const onayAc = () => {
+    setHata('');
+    let son = '';
+    try { son = localStorage.getItem(sonKisiAnahtar) || ''; } catch { son = ''; }
+    if (!kisi && son && adaylar.some((p) => p.id === son)) setKisi(son);
+    setOnay(1);
+  };
   const katSecili = (k) => k.urunler.filter((u) => (adet[u.id] || 0) > 0).length;
   const degis = (id, n) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(9999, n)) }));
   const art = (id, dlt) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(9999, (o[id] || 0) + dlt)) }));   // hızlı dokunuşta kaybolmasın
-  const temizle = () => { setAdet({}); setNot(''); setIstek(yeniIstek()); setMesaj(''); try { localStorage.removeItem(anahtar); } catch { /* yok */ } };
+  const temizle = () => {
+    setAdet({}); setNot(''); setIstek(yeniIstek()); setMesaj('');
+    try { localStorage.removeItem(anahtar); } catch { /* yok */ }
+    api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/taslak/urun_ac?gun=${encodeURIComponent(d.gun)}`, { method: 'DELETE' }).catch(() => { /* sessiz */ });
+  };
 
   const kaydet = async () => {
     if (mesgul) return;
@@ -59,6 +92,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
       const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/urun-ac`, { method: 'POST', body: {
         personel_id: kisi, pin, istek_id: istek, istemci_gunu: d.gun, aciklama: not.trim() || null,
         kalemler: secili.map(([urun_id, n]) => ({ urun_id, adet: n })) } });
+      try { localStorage.setItem(sonKisiAnahtar, kisi); } catch { /* yok */ }
       bip(); setFlas(true); window.setTimeout(() => setFlas(false), 2000);
       setOnay(0); setPin(''); setKisi('');
       temizle();
@@ -90,19 +124,19 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
           </div>
           <div style={{ color: C.soluk, fontSize: 13 }}>Özeti kontrol edin; <b>Seçimleri Onayla</b> ile önce personel + PIN, ardından kalem listesi özeti açılır.</div>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ flex: 1, fontWeight: 700 }}>{kalem} kalem · {toplam} adet</span>
-            <button className="sp-btn sp-yesil" disabled={kapali || mesgul} onClick={() => { setHata(''); setOnay(1); }}>Seçimleri Onayla ({kalem} kalem)</button>
+            <span style={{ flex: 1, fontWeight: 700 }}>Seçili ürün: {kalem} kalem · toplam {toplam} adet</span>
+            <button className="sp-btn sp-yesil" disabled={kapali || mesgul} onClick={onayAc}>Seçimleri Onayla ({kalem} kalem)</button>
           </div>
         </div>
       )}
       {/* hero */}
-      <div className="sp-kart" style={{ display: 'flex', gap: 12, alignItems: 'center', background: 'linear-gradient(135deg,rgba(30,58,138,.55),rgba(59,130,246,.3))' }}>
+      <div className="sp-kart" style={{ display: 'flex', gap: 12, alignItems: 'center', background: 'linear-gradient(135deg,rgba(6,78,59,.75),rgba(16,185,129,.3))', borderColor: 'rgba(34,197,94,.35)' }}>
         <span style={{ fontSize: 28 }}>🔓</span>
-        <div><b style={{ fontSize: 18 }}>Ürün Aç — Aktif Kullanıma Al</b>
+        <div><b style={{ fontSize: 18, color: '#86efac' }}>Ürün Aç — Aktif Kullanıma Al</b>
           <div style={{ color: C.soluk, fontSize: 13 }}>Depodan bara/sahaya çıkan ürünleri sayın · Personel + PIN onayda istenir</div></div>
       </div>
       {kapali && <div className="sp-kart" style={{ color: C.soluk, fontWeight: 700 }}>🔒 Gün kapandı — Ürün Aç yapılamaz</div>}
-      {mesaj === 'taslak' && (
+      {mesaj === 'taslak' && kalem > 0 && (
         <div className="sp-kart" style={{ borderColor: C.sari, color: C.sari, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ flex: 1 }}>🔄 {kalem} kalem yüklendi. Üstteki «Seçimleri Onayla» ile personel + PIN girerek gönderin.</span>
           <button className="sp-btn" style={{ minHeight: 40, padding: '4px 12px' }} onClick={temizle}>✕ Taslağı temizle</button>
@@ -115,7 +149,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
           const aktifN = k.urunler.filter((u) => u.aktif).length;
           return (
             <button key={k.id} type="button" onClick={() => setAcikKat(k.id)} disabled={kapali}
-              style={{ position: 'relative', minHeight: 96, borderRadius: 14, border: n ? `2px solid ${C.yesil}` : '1px solid transparent', background: TONLAR[i % 4],
+              style={{ position: 'relative', minHeight: 96, borderRadius: 14, opacity: kapali ? 0.45 : 1, border: n ? `2px solid ${C.yesil}` : '1px solid transparent', background: TONLAR[i % 4],
                 color: '#fff', textAlign: 'left', padding: 12, cursor: 'pointer', display: 'grid', gap: 4, font: 'inherit' }}>
               {n > 0 && <span style={{ position: 'absolute', top: 8, right: 8, background: C.yesil, color: '#05210f', borderRadius: 999, minWidth: 24, padding: '2px 7px', fontWeight: 900, fontSize: 13, textAlign: 'center' }}>{n}</span>}
               <span style={{ fontSize: 22 }}>{k.emoji || '📦'}</span>
@@ -141,7 +175,9 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
 
       {/* kategori penceresi: − adet + */}
       {k0 && (
-        <Modal baslik={`${k0.emoji || '📦'} ${k0.kategori}`} kapat={() => setAcikKat(null)} genis>
+        <Modal baslik={`${k0.emoji || '📦'} ${k0.kategori}`} kapat={() => setAcikKat(null)} genislik={640}>
+          <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', color: C.soluk, fontSize: 13, justifySelf: 'end' }}>
+            <input type="checkbox" checked={pasif} onChange={(e) => setPasif(e.target.checked)} /> Pasifleri göster</label>
           {[['Aktif ürünler', k0.urunler.filter((u) => u.aktif)], ...(pasif ? [['Pasif ürünler', k0.urunler.filter((u) => !u.aktif)]] : [])].map(([baslik, liste]) => (
             <div key={baslik} style={{ display: 'grid', gap: 6 }}>
               <b style={{ color: C.soluk, fontSize: 12 }}>{baslik.toUpperCase()}</b>
@@ -150,11 +186,11 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
                 const n = adet[u.id] || 0;
                 return (
                   <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 6, borderRadius: 10, background: n ? 'rgba(34,197,94,.1)' : C.bg2, opacity: u.aktif ? 1 : 0.6 }}>
-                    <span style={{ flex: 1, fontWeight: 600 }}>{u.ad}{!u.aktif && ' 🚫'} <span style={{ color: C.soluk, fontSize: 12 }}>{u.birim}</span></span>
-                    <button type="button" className="sp-btn" style={{ minHeight: 52, width: 56, padding: 0, fontSize: 24 }} onClick={() => art(u.id, -1)}>−</button>
-                    <input className="sp-in" style={{ width: 80, textAlign: 'center', fontSize: 20, fontWeight: 800 }} inputMode="numeric" value={n || ''} placeholder="0"
+                    <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad}{!u.aktif && ' 🚫'} <span style={{ color: C.soluk, fontSize: 12, fontWeight: 500 }}>{u.birim}</span></span>
+                    <button type="button" className="sp-pm" onClick={() => art(u.id, -1)}>−</button>
+                    <input className="sp-in" style={{ width: 90, textAlign: 'center', fontSize: 32, fontWeight: 800, padding: '4px 6px' }} inputMode="numeric" value={n || ''} placeholder="0"
                       onChange={(e) => degis(u.id, Number(e.target.value.replace(/\D/g, '') || 0))} />
-                    <button type="button" className="sp-btn" style={{ minHeight: 52, width: 56, padding: 0, fontSize: 24 }} onClick={() => art(u.id, 1)}>+</button>
+                    <button type="button" className="sp-pm" onClick={() => art(u.id, 1)}>+</button>
                   </div>
                 );
               })}
@@ -166,7 +202,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
 
       {/* onay: 1) kişi + PIN  2) özet → kaydet */}
       {onay > 0 && (
-        <Modal baslik={onay === 1 ? '🔐 Personel ve PIN' : '✅ Ürün açımını onayla'} kapat={() => { setOnay(0); setPin(''); }}>
+        <Modal baslik={onay === 1 ? '🔓 Ürün Aç onayı' : `🔓 ${toplam} adet ürün açılacak`} kapat={() => { setOnay(0); setPin(''); }}>
           {onay === 1 && (<>
             <b>Kim açıyor?</b>
             {adaylar.length === 0 ? <div style={{ color: C.sari, fontWeight: 700 }}>İçeride kimse yok — önce telefonundan QR ile giriş yap.</div> : (
@@ -177,7 +213,8 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
             {kisi && (
               <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}><b>🔑 PIN</b>
                 <input className="sp-in" style={{ width: 140, textAlign: 'center', letterSpacing: 8 }} type="password" inputMode="numeric" data-pin="1" autoComplete="off"
-                  maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="••••" /></label>
+                  maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="••••"
+                  onKeyDown={(e) => { if (e.key === 'Enter' && kisi && pin.length === 4) { e.preventDefault(); setHata(''); setOnay(2); } }} /></label>
             )}
             {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
             <button className="sp-btn sp-ana" disabled={!kisi || pin.length !== 4} onClick={() => { setHata(''); setOnay(2); }}>Devam → özet</button>
@@ -193,7 +230,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
             {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
             <div style={{ display: 'flex', gap: 8 }}>
               <button className="sp-btn" disabled={mesgul} onClick={() => setOnay(1)}>« Geri</button>
-              <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul || !kisiAd} onClick={kaydet}>{mesgul ? 'Gönderiliyor…' : '✔ Kaydet'}</button>
+              <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul || !kisiAd} onClick={kaydet}>{mesgul ? 'Gönderiliyor…' : '✓ Onayla'}</button>
             </div>
           </>)}
         </Modal>
