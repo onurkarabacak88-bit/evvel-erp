@@ -1480,9 +1480,9 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
   if (x.tur === 'kapanis_red') {
     return (
       <div style={{ ...satir, border: `2px solid ${R.kirmizi}` }}>
-        <Cip tur="kirmizi">❌ Kapanış REDDEDİLDİ</Cip>
+        <Cip tur="kirmizi">{x.merkeze ? '📨 Kapanış merkeze gönderildi' : '❌ Kapanış REDDEDİLDİ'}</Cip>
         <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)} · {x.saat}
-          <div style={{ fontSize: 11.5, color: R.kirmizi }}>Sebep: {x.sebep}</div>
+          <div style={{ fontSize: 11.5, color: R.kirmizi }}>{x.merkeze ? '' : 'Sebep: '}{x.sebep}</div>
           <div style={{ fontSize: 11.5, color: R.not }}>Personelin girdiği veri kayıtlı — geç kapanış olarak işlenebilir</div></div>
         <Dugme ana kucuk onClick={() => onGecKapanis?.(x)}>Geç kapanış olarak işle</Dugme>
       </div>

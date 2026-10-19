@@ -338,8 +338,32 @@ def panel_durum(sube_id: str):
                             for t in ("acilis", "kapanis")},
             "acilis_var": any(o["tur"] == "acilis" and not o["iptal"] for o in bugunku),
             "kapanis_var": any(o["tur"] == "kapanis" and not o["iptal"] for o in bugunku),
+            "kapanis_merkezde": _merkezde_mi(sube_id, gun),   # Fable B5: telefonsuz merkeze gönderildi (panel aynı geceyi yeniden doldurmasın)
             "fire_sebepleri": [{"kod": k, "ad": v} for k, v in FIRE_SEBEPLERI.items()],
             "saat": {"acilis": "%02d:%02d" % ACILIS_SAAT, "kapanis": "%02d:%02d" % KAPANIS_SAAT}}
+
+
+def _merkezde_mi(sube_id: str, gun) -> Optional[str]:
+    """Bugün telefonsuz 'Merkeze gönder' yapıldı ve henüz işlenmedi mi → gönderim saati (yoksa None)."""
+    try:
+        with db() as (_c, cur):
+            cur.execute("SELECT to_regclass('ey_panel_deneme') IS NOT NULL AS v")
+            if not dict(cur.fetchone())["v"]:
+                return None
+            cur.execute("""SELECT zaman FROM ey_panel_deneme WHERE sube_id=%s AND is_gunu=%s AND tur='kapanis' AND sonuc='ret'
+                             AND sebep LIKE 'Telefonsuz%%' AND NOT islendi ORDER BY zaman DESC LIMIT 1""", (str(sube_id), gun))
+            r = cur.fetchone()
+            return _saat_tr(dict(r)["zaman"]) if r else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _saat_tr(ts) -> Optional[str]:
+    from zoneinfo import ZoneInfo
+    try:
+        return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%H:%M")
+    except Exception:  # noqa: BLE001
+        return None
 
 
 # ─────────────────────────── YAZMA ───────────────────────────
@@ -491,7 +515,7 @@ class KapanisBody(BaseModel):
     pin: Optional[str] = None                # yalnız "Merkeze gönder" — doğrulanır, hiçbir yere yazılmaz
 
 
-def _kapanis_tam(cur, b: "KapanisBody") -> None:
+def _kapanis_tam(cur, b: "KapanisBody", merkez: bool = False) -> None:
     """Eski kapanış korumaları (sube_operasyon.py KAPANIS 1267-1333, sube_panel.html kapNext1 — Fable F2, fonksiyon kaybı yok):
     en az bir ciro · online = nakit+POS → RED (çift sayım) · çekmecedeki TÜM para (kör) ZORUNLU · bırakılan ZORUNLU ·
     tezgah sayımı her kalem (0 yazılabilir) + pasta ZORUNLU (açılışla aynı liste)."""
@@ -501,6 +525,8 @@ def _kapanis_tam(cur, b: "KapanisBody") -> None:
         raise HTTPException(400, "En az bir ciro tutarı girin")
     if o > 0 and n > 0 and p_ > 0 and abs(o - (n + p_)) < 50:
         raise HTTPException(400, "Online alanı nakit+POS toplamına eşit olamaz. Online satış yoksa 0 bırakın.")
+    if merkez:   # Fable B3: merkez geç kapanışı — personelin o gün girdiği veri ESAS; katalog sonradan değiştiyse / eski kayıtsa tıkanmaz
+        return
     if b.kor_sayim is None:
         raise HTTPException(400, "Çekmecedeki TÜM parayı sayıp girin (teslim etmeden önce, kör sayım)")
     _tl(b.kor_sayim, "Çekmecedeki para")
@@ -578,7 +604,7 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
         from evvel_yeni_depo_api import sayim_yaz
         from evvel_yeni_kasa_api import HareketBody, kasa_yaz
         p = _personel(cur, sube_id, b.personel_id, kapi=False, gun=c["gun"])   # QR kapısı aşağıda: tekrar gönderim ve merkez geç kapanış geçer
-        _kapanis_tam(cur, b)
+        _kapanis_tam(cur, b, merkez=bool(c.get("merkez")))
         engel = None if c.get("merkez") else _saat_kurali("kapanis", p)
         if engel and not c["kuru"]:
             raise HTTPException(409, engel)
@@ -1186,7 +1212,8 @@ def _kapanis_isleri(cur) -> list:
                      for o in olaylar(cur, sube_id=r["sube_id"], bas=r["is_gunu"], son=r["is_gunu"], turler={"kapanis"}))
         if kapali:
             continue
-        out.append({"tur": "kapanis_red", "grup": "kasa", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
+        out.append({"tur": "kapanis_red", "merkeze": (r.get("sebep") or "").startswith("Telefonsuz"),
+                    "grup": "kasa", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
                     "ad": adlar.get(str(r["sube_id"]), r["sube_id"]), "sebep": r.get("sebep") or "sonuç alınamadı",
                     "saat": str(r["zaman"])[5:16].replace("-", ".").replace(" ", " "), "islem": "/evvel-yeni/panel/gec-kapanis"})
     cur.execute("""SELECT id, sube_id, is_gunu, uyarilar, zaman FROM ey_panel_deneme

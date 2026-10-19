@@ -284,10 +284,11 @@ export default function SubePaneli({ subeId }) {
             <b style={{ fontSize: 16 }}>💵 Kasa Devri</b><span style={{ color: C.soluk, fontSize: 12 }}>Vardiya nakit teslim & devir</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: devirEtiket(devir).renk }}>{devirEtiket(devir).metin}</span>
           </button>
-          <button className="sp-kart" disabled={d.kapanis_var} onClick={() => ac('kapanis')} style={{ textAlign: 'left', cursor: d.kapanis_var ? 'default' : 'pointer', minHeight: 78, opacity: d.kapanis_var ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4,
+          <button className="sp-kart" disabled={d.kapanis_var} onClick={() => { if (d.kapanis_merkezde && !window.confirm(`Bu günün kapanışı ${d.kapanis_merkezde}'de merkeze gönderildi; merkez işleyecek. Yine de yeniden doldurmak istiyor musun?`)) return; ac('kapanis'); }} style={{ textAlign: 'left', cursor: d.kapanis_var ? 'default' : 'pointer', minHeight: 78, opacity: d.kapanis_var ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4,
             background: 'linear-gradient(135deg,rgba(76,29,149,.5),rgba(124,58,237,.35))' }}>
             <b style={{ fontSize: 16 }}>🌙 Günü Kapat</b><span style={{ color: C.soluk, fontSize: 12 }}>Ciro, stok & kapanış protokolü</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: d.kapanis_var ? C.yesil : C.soluk }}>{d.kapanis_var ? '🔒 Mühürlendi' : '● 5 adım'}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: d.kapanis_var ? C.yesil : d.kapanis_merkezde ? C.mavi : C.soluk }}>
+              {d.kapanis_var ? '🔒 Mühürlendi' : d.kapanis_merkezde ? `📨 Merkeze gönderildi · ${d.kapanis_merkezde}` : '● 5 adım'}</span>
           </button>
         </div>
       </div>

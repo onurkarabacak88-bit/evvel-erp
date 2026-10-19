@@ -186,8 +186,10 @@ def satis_kontrol(ay: Optional[str] = None):
 def kasa_mutabakat(cur, gun: str, evren: Optional[str] = None) -> dict:
     """PUBLIC (tek kapı): şube → kasa mutabakatı. Yeni dönemde (panel_baslangic) yeni panelin olay defterinden, öncesinde eski
     panel tablolarından toplar; HESAP tek (mutabakat_hesapla) — kapanış uyarısı da aynı hesabı kullanır (sahip: "tekrar yazma")."""
-    from evvel_yeni_cekirdek import yeni_donem
-    yeni = (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur)
+    from datetime import date as _date
+    from evvel_yeni_cekirdek import panel_baslangic
+    # Fable B2: evren bakılan GÜNE göre (1 Kasım sonrası eski bir güne bakınca eski panel verisi okunur)
+    yeni = (evren == "yeni") if evren in ("yeni", "eski") else _date.fromisoformat(gun[:10]) >= panel_baslangic(cur)
     out = _mut_veri_yeni(cur, gun) if yeni else _mut_veri_eski(cur, gun)
     for x in out.values():
         mutabakat_hesapla(x)
@@ -239,9 +241,10 @@ def mutabakat_hesapla(x: dict) -> dict:
     gid = round(sum(y["tutar"] for y in x.get("giderler") or []), 2)
     ara = round(sum(y["tutar"] for y in x.get("ara_teslimler") or []), 2)
     x["gider_toplam"], x["ara_toplam"] = gid, ara
-    tam = x.get("acilis") is not None and x.get("z_nakit") is not None and x.get("devir") is not None
+    tam = x.get("acilis") is not None and x.get("z_nakit") is not None and x.get("devir") is not None and not x.get("gider_kaynak_yok")
     x["fark"] = round(x["acilis"] + x["z_nakit"] - gid - ara - (x.get("teslim") or 0) - x["devir"], 2) if tam else None
-    x["eksik"] = None if tam else ("sabah kasa sayımı yok" if x.get("acilis") is None else
+    x["eksik"] = None if tam else ("nakit gider defteri henüz yok — kasa farkı hesaplanmaz (anlık gider basamağı)" if x.get("gider_kaynak_yok") else
+                                   "sabah kasa sayımı yok" if x.get("acilis") is None else
                                    "kapanış (nakit satış / devir) yok" if x.get("z_nakit") is None or x.get("devir") is None else None)
     x["sabah_fark"] = round(x["acilis"] - x["dun_devir"], 2) if (x.get("acilis") is not None and x.get("dun_devir") is not None) else None
     tes = (x.get("teslim") or 0) + (ara if x.get("kor_ara_dahil", True) else 0)
