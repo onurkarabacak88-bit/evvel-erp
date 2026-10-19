@@ -254,8 +254,9 @@ def _calistir(sube_id: str, istek_id: Optional[str], is_fn, tur: Optional[str] =
     except Exception as e:  # noqa: BLE001
         _deneme_kapat(did, "hata", str(e)[:300])
         raise
-    _deneme_kapat(did, "deneme" if sonuc.get("kuru") else ("ok_uyarili" if sonuc.get("uyarilar") else "ok"),
-                  uyarilar=sonuc.get("uyarilar"))
+    mu = sonuc.pop("merkez_uyarilari", None)   # sahip: kasa uyarısı panele / telefona GİTMEZ — yalnız merkez kaydına
+    mu = sonuc.get("uyarilar") if mu is None else mu
+    _deneme_kapat(did, "deneme" if sonuc.get("kuru") else ("ok_uyarili" if mu else "ok"), uyarilar=mu)
     return sonuc
 
 
@@ -522,10 +523,12 @@ def _kapanis_tam(cur, b: "KapanisBody") -> None:
 
 def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tuple:
     """EKSİK VAR (sarı kart) + merkez "⚠ Kapanış uyarılı". Kapanışı ENGELLEMEZ. Kasa sağlaması YENİDEN YAZILMAZ — Satış'ın tek
-    hesabı (kasa_mutabakat, yeni evren; bu işlemde yazılan kapanış dahil). Dönüş: (uyarılar, ek veri: sorumlu / içeride kalanlar)."""
+    hesabı (kasa_mutabakat, yeni evren; bu işlemde yazılan kapanış dahil). Dönüş: (uyarılar, ek veri: sorumlu / içeride kalanlar,
+    kasa_uyarilari). SAHİP (2026-10-19): KASA UYARISI PANELE VERİLMEZ (kör sayım — personel tuttu mu bilmez) → ek["kasa_uyarilari"]
+    yalnız merkeze (olay + Bekleyen işler)."""
     from evvel_yeni_moduller import DURUM
     from evvel_yeni_olay import olaylar
-    u, ek = [], {}
+    u, ek, ku = [], {}, []
     bugun = [o for o in olaylar(cur, sube_id=sube_id, bas=gun, son=gun) if not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"]
     if not any(o["tur"] == "acilis" for o in bugun):
         u.append("Bugün açılış kaydı yok")
@@ -538,12 +541,12 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
             from evvel_yeni_satis_api import kasa_mutabakat
             m = kasa_mutabakat(cur, gun.isoformat(), evren="yeni").get(str(sube_id)) or {}
             if m.get("kor_belirsiz"):
-                u.append("Kör sayım teslimden SONRA yapılmış görünüyor — sağlama yapılamadı")
+                ku.append("Kör sayım teslimden SONRA yapılmış görünüyor — sağlama yapılamadı")
             elif m.get("kor_fark") is not None and abs(m["kor_fark"]) >= 1:
-                u.append(f"Kör sayım tutmuyor: sayılan {m['kor_sayim']:,.2f} − teslim {m['teslim'] or 0:,.2f} = {m['kor_kalan']:,.2f}, "
+                ku.append(f"Kör sayım tutmuyor: sayılan {m['kor_sayim']:,.2f} − teslim {m['teslim'] or 0:,.2f} = {m['kor_kalan']:,.2f}, "
                          f"bırakılan {m['devir']:,.2f} ₺ (fark {m['kor_fark']:+,.2f} ₺)")
             if m.get("fark") is not None and abs(m["fark"]) >= 1 and not m.get("gider_kaynak_yok"):
-                u.append(f"Kasa farkı {m['fark']:+,.2f} ₺ (sabah + nakit satış − gider − teslim − bırakılan)")
+                ku.append(f"Kasa farkı {m['fark']:+,.2f} ₺ (sabah + nakit satış − gider − teslim − bırakılan)")
         except Exception:  # noqa: BLE001 — uyarı kapanışı ASLA durdurmaz
             log.warning("kapanış uyarısı: kasa sağlaması okunamadı", exc_info=True)
     y = _yoklama()
@@ -563,6 +566,7 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
                 u.append("Kapanışta içeride kalan: " + ", ".join(kalan) + " (QR ile çıkış yapmazsa gece otomatik kapanır)")
         except Exception:  # noqa: BLE001
             log.warning("kapanış uyarısı: yoklama okunamadı", exc_info=True)
+    ek["kasa_uyarilari"] = ku
     return u, ek
 
 
@@ -617,9 +621,10 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
         if satir and gecmis:
             log.warning("geç kapanış %s %s: ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)", sube_id, gun)
             cur.execute("""UPDATE ey_sube_olay SET veri = veri || '{"sayim_uygulanmadi": true}'::jsonb WHERE id=%s""", (oid,)) if oid else None
-        uyarilar = []
+        uyarilar, merkez_uyarilari = [], []
         if oid is not None:   # yeni yazım: uyarılar + sorumlu + içeride kalanlar (değişken bilgi → tekrar korumasının DIŞINDA, sonradan eklenir)
             uyarilar, ek = _kapanis_uyarilari(cur, sube_id, c["gun"], p, b)
+            merkez_uyarilari = ek["kasa_uyarilari"] + uyarilar   # merkez HEPSİNİ görür; panel kasa uyarısını GÖRMEZ
             cur.execute("UPDATE ey_sube_olay SET veri = veri || %s::jsonb WHERE id=%s",
                         (json.dumps({"uyarilar": uyarilar, **ek}, ensure_ascii=False, default=str), oid))
         y = _yoklama()
@@ -630,7 +635,7 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
             y.cikis_yaz(cur, p["id"], "kapanis", kim=kim, sube_id=str(sube_id))   # tasarım: kapanış = kapanışçının çıkışı
         return {"olay": oid, "tekrar": oid is None and bool(k.get("tekrar")), "sayilan": len(satir) if d else 0,
                 "mesaj": "Kapanış kaydedildi" + (" — ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)" if satir and gecmis else ""),
-                "saat_engeli": engel, "uyarilar": uyarilar, "kapanisci": p["ad"]}
+                "saat_engeli": engel, "uyarilar": uyarilar, "merkez_uyarilari": merkez_uyarilari, "kapanisci": p["ad"]}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"), gun=gun, merkez=merkez,
                      isle_deneme=isle_deneme)
 

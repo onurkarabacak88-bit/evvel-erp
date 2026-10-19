@@ -2,7 +2,7 @@
 // 1 X raporu ciro + KÖR çekmece + teslim + bırakılan · 2 bardak · 3 ürün (+ "Ürün Aç kaydı yok" sorusu) · 4 değirmen + pasta ·
 // 5 ☑ X raporu + 📱 QR ile mühür. Sahip kararları (2026-10-19): kapanışçı = QR'ı okutan telefonun sahibi · ikinci kişi aynı QR'la
 // "Sadece çıkış yap" · mühürsüz gönder YOK → telefonsuz "📨 Merkeze gönder" (merkez geç kapanış) · ciro doğrudan Kasa'ya ·
-// online = nakit+POS koruması · uyarılı kapanış → sarı "EKSİK VAR" + merkez "⚠ Kapanış uyarılı". Kasa sağlaması sunucuda
+// online = nakit+POS koruması · KASA UYARISI PANELDE YOK (sahip: kör sayım; yalnız merkez) · uyarılı kapanış → sarı "EKSİK VAR" + merkez "⚠ Kapanış uyarılı". Kasa sağlaması sunucuda
 // Satış'ın TEK hesabıyla (kasa_mutabakat). Tak-çıkar: yalnız props; sunucu uçları panel modülünde.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
@@ -58,7 +58,6 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   const set = (k, x) => setV((o) => ({ ...o, [k]: x }));
   const git = (n) => { setHata(''); setYon(n > adim ? 'ileri' : 'geri'); setAdim(n); };
   const teslimler = Object.entries(v.teslim || {}).filter(([, t]) => tutarNum(t) > 0).map(([alan, t]) => ({ alan, tutar: tutarNum(t) }));
-  const teslimTop = teslimler.reduce((a, t) => a + t.tutar, 0);
   const govde = () => ({
     istemci_gunu: d.gun, istek_id: istek, nakit: tutarNum(v.nakit), pos: tutarNum(v.pos), online: tutarNum(v.online), teslimler,
     kor_sayim: tutarNum(v.kor), birakilan: tutarNum(v.birakilan), x_rapor: !!v.xrapor, urun_ac_yok: !urunAcVar && !!v.urunAcYok,
@@ -314,11 +313,10 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
                 <label style={{ display: 'flex', alignItems: 'center', gap: 10, alignSelf: 'stretch', fontWeight: 700, minHeight: 44 }}>
                   <input type="checkbox" checked={!!v.xrapor} onChange={(e) => set('xrapor', e.target.checked)} style={{ width: 22, height: 22 }} />
                   X raporu yazıcıdan çıktı alındı ve gönderildi</label>
-                {(!d.acilis_var || devirAcik || Math.abs(tutarNum(v.kor) - teslimTop - tutarNum(v.birakilan)) >= 1) && (
+                {(!d.acilis_var || devirAcik) && (
                   <div style={{ alignSelf: 'stretch', textAlign: 'left', padding: 10, borderRadius: 8, background: 'rgba(245,158,11,.12)', color: C.sari, fontSize: 13, display: 'grid', gap: 3 }}>
                     {!d.acilis_var && <div>⚠ Bugün açılış kaydı yok</div>}
                     {devirAcik && <div>⚠ Kasa devri tamamlanmadı</div>}
-                    {Math.abs(tutarNum(v.kor) - teslimTop - tutarNum(v.birakilan)) >= 1 && <div>⚠ Çekmece − teslim ≠ bırakılan — rakamları kontrol et</div>}
                   </div>
                 )}
                 {/* İçeride kalanlar: kapanışçı DIŞINDAKİLER aynı QR'la "Sadece çıkış yap" (sahip 19 Eki) */}

@@ -126,6 +126,7 @@ Taslak: scratchpad kapanis_kurgu_taslak.md. Bulgular:
 - **Ciro doğrudan Kasa'ya** (eski "merkez ciro onayı" YOK); uyarılı kapanış merkezde "⚠ Kapanış uyarılı — Gördüm".
 - **Mühürsüz gönder YOK** (S11-6 kararının yerine): telefonu olmayan kapanışçı → içerideki BAŞKA personel kendi telefonuyla onaylar (kapanışçı o olur); kimse yoksa **"📨 Merkeze gönder"** (ad + PIN) → kayıt yazılmaz, ey_panel_deneme'ye girilen rakamlarla düşer → merkez Bekleyen işler'den tek tıkla **geç kapanış** (VAR OLAN yol, yeni kod yok).
 - **Telefonda "🚪 Sadece çıkış yap"** düğmesi (kapanış onay ekranında); ONAYLA metni "kapanışçı olarak {ad} kaydedilecek".
+- **KASA UYARISI PANELE VERİLMEZ** (sahip 19 Eki: kör sayım — personel tuttu mu bilmez): kör sağlama / kasa farkı yalnız merkez (olay `kasa_uyarilari` + Bekleyen işler "⚠ Kapanış uyarılı"); panel EKSİK VAR kartında yalnız kasa DIŞI uyarılar (açılış yok, devir bitmedi, ürün aç yok, X raporu, içeride kalan, sorumlu farkı).
 - **Online koruması KALIR**: online>0 ∧ nakit>0 ∧ POS>0 ∧ online = nakit+POS → RED "Online satış yoksa 0 bırak".
 - **Var mı kontrolü (sahibe gösterildi):** kör sayım sağlaması + kasa farkı = Satış `_kasa_mutabakat` (eski tablolardan) → yeni deftere çevrilip TEK servis, kapanış uyarısı ondan; uyarılı kapanış + Gördüm = Kasa `kapanis_uyarili` satırı yeniden kullanılır; onay, içeride kalanlar, sorumlu, devir durumu, cikis_yaz, olay tekrar koruması VAR.
 
