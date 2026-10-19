@@ -892,6 +892,9 @@ def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], ki
     if len(top) > 80:
         raise HTTPException(400, "Bir pakette en çok 80 ürün")
     b = _ey_urun_dogrula(cur, list(top))
+    pasta = [b[u]["ad"] for u in top if (b[u].get("takip") or "sayim") == "gununde"]
+    if pasta:   # sahip (20 Eki): pastane her şubeye DOĞRUDAN getirir — pasta sevk edilmez (girişte tüketildi; çift gider olmasın)
+        raise HTTPException(400, f"Pasta sevk edilmez — pastane şubeye doğrudan getirir: {', '.join(pasta[:3])}")
     sira = sorted(top.items(), key=lambda kv: b[kv[0]]["ad"])
     ozet = [{"urun_id": u, "ad": b[u]["ad"], "adet": a} for u, a in sira]
     _konum_kilidi(cur, f"depo:{kaynak_sube}")
