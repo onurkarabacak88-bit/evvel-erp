@@ -585,7 +585,7 @@ def _belge_coz(veri: str, mime: Optional[str]) -> tuple:
     if not ham:
         raise HTTPException(400, "Dosya boş")
     if len(ham) > BELGE_MAX[mime]:
-        raise HTTPException(400, f"Dosya çok büyük (en çok {BELGE_MAX[mime] // 1_000_000 or 1} MB)")
+        raise HTTPException(400, "Dosya çok büyük (fotoğraf en çok 0,9 MB · PDF en çok 3,5 MB)")
     imza = {b"\xff\xd8\xff": "image/jpeg", b"\x89PNG": "image/png", b"%PDF": "application/pdf", b"RIFF": "image/webp"}
     if not any(ham.startswith(k) and (m == mime) for k, m in imza.items()) or (mime == "image/webp" and ham[8:12] != b"WEBP"):
         raise HTTPException(400, "Dosya türü içeriğiyle uyuşmuyor")

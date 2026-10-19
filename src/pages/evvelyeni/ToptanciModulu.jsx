@@ -34,6 +34,7 @@ const belgeBlob = async (id) => {   // sayfa ham bayt (img / PDF) — oturum ba�
   return URL.createObjectURL(await r.blob());
 };
 const dosyaOku = (f) => new Promise((coz, red) => {   // PDF olduğu gibi; fotoğraf 1600 px JPEG'e küçültülür (telefondaki gibi)
+  if (f.type === 'application/pdf' && f.size > 3_500_000) { red(new Error('PDF en çok 3,5 MB olabilir')); return; }
   if (f.type === 'application/pdf') {
     const fr = new window.FileReader();
     fr.onload = () => coz({ veri: fr.result, mime: 'application/pdf' });
@@ -67,7 +68,8 @@ function BelgeKitap({ h, t, onKapat, onToast, yenile }) {
   useEffect(() => { liste(); }, [liste]);
   const s = sayfalar && sayfalar[i];
   useEffect(() => {
-    if (!s) { setUrl(null); return undefined; }
+    setUrl(null);   // Fable: eski (iptal edilmiş) adres bir an kırık görünmesin
+    if (!s) return undefined;
     let canli = true; let u = null;
     belgeBlob(s.id).then((x) => { u = x; if (canli) setUrl(x); else URL.revokeObjectURL(x); }).catch((e) => onToast?.(e.message));
     return () => { canli = false; if (u) URL.revokeObjectURL(u); };
@@ -348,7 +350,7 @@ export default function ToptanciModulu({ onToast }) {
                           <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                             {h.tur === 'teslim' && !h.iptal && <span style={{ display: 'inline-flex', gap: 4 }}>
                               {h.kesin_kaynak === 'şube' && h.kesin != null && (   // E5: şubenin tutarı merkez onaylayınca kesinleşir + fiyat öğrenilir
-                                <Dugme kucuk ana onClick={() => { if (window.confirm(`Şubenin yazdığı ${fmt(h.kesin)} ₺ doğru mu? Onaylarsan ürün fiyatları bu tutardan öğrenilir.`)) gonder(`/evvel-yeni/toptanci/teslim/${h.id}/tutar`, { tutar: h.kesin, fatura_geldi: h.fatura_geldi !== false, fatura_no: h.fatura_no || null, sebep: 'şube tutarı merkezce onaylandı' }); }}>✔ Onayla</Dugme>
+                                <Dugme kucuk ana disabled={mesgul} onClick={() => { if (window.confirm(`Şubenin yazdığı ${fmt(h.kesin)} ₺ doğru mu? Onaylarsan ürün fiyatları bu tutardan öğrenilir.`)) gonder(`/evvel-yeni/toptanci/teslim/${h.id}/tutar`, { tutar: h.kesin, fatura_geldi: h.fatura_geldi !== false, fatura_no: h.fatura_no || null, sebep: 'şube tutarı merkezce onaylandı' }); }}>✔ Onayla</Dugme>
                               )}
                               <Dugme kucuk ana={h.durum !== 'kesin'} onClick={() => setTutarForm({ h, tutar: h.kesin != null ? String(h.kesin) : '', fatura_no: h.fatura_no || '', sebep: '' })}>{h.durum === 'kesin' ? 'Düzelt' : 'Tutar gir'}</Dugme>
                               <Dugme kucuk onClick={() => { const s = window.prompt('Bu teslim neden iptal ediliyor?'); if (s) gonder(`/evvel-yeni/toptanci/teslim/${h.id}/iptal`, { sebep: s }); }}>İptal</Dugme>
