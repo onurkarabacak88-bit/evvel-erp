@@ -234,3 +234,17 @@ Eski: sube_panel.html tab-ac (5363–5395), renderStokForms('ac') (11479–11560
 - Toplu fatura: yeni yapı YOK (Fable kararı) — merkez her teslime payını yazar, aynı fatura_no birden çok teslime; %30 sapma yanlış yazımı yakalar. Merkez /teslim ucu kalemsiz kalır (istisnalar). Merkez iptalinde depo girişi: konumda sonraki sayım varsa geri alınmaz (yalnız borç) — Depo PUBLIC hareket_iptal (E4 ile).
 - Fatura fotoğrafı ölçümü: eski panelden son 30 günde 0; tedarikci_fatura 89 kayıt / 30 günde 2.
 
+
+## Basamak 5 — Sevk et ⇄ Depodan gelen (+ pasta, sipariş) · 20 Eki
+**Var mı (ben + Fable + Codex ayrı ayrı):** tek stok defteri, fark çöz, sevk bedeli (Gider), Bar pasta okuyucusu VAR · sevk yazma / yoldakiler / merkez adına kabul KISMİ (hedefi eski `stok_yolda`'dan okuyor) · şube kabulü, 0 kabul, hasarlı, panel listesi, merkez Sevk et ekranı, panel Depodan gelen ekranı, EY sipariş YOK. **Yeni stok defteri kurulmaz.**
+
+**Sahip kararları (20 Eki):** P1 pasta **pastaneden alınır** (üretim yok; Tema'ya ya da şubeye doğrudan Tedarikçiden teslim al) · P2 stok görünmüyorsa sevk **yazılır + merkeze uyarı** (engellenmez) · P3 kabulde **"hasarlı" kutusu** → merkez Depo'da fire/iade kararı · P4 **Sipariş ver/takip + Gönderilecek de 1 Kasım'dan ÖNCE**.
+
+**Bulgular (Fable F / Codex C):** 1 F+C hedef şube yok (merkez kabul 404) · 2 F+C şube kabulü + 0 kabul yazılamıyor · 3 F evren kapısı (deneme sevki görünmez; 1 Kasım'da eski açık sevkler listeden düşer) · 4 C köprü `yolda:%` yeni sevki iptal edebilir · 5 C merkez kabul/fark çöz eşzamanlı çift yazım · 6 F+C bag paket başına olursa ürün karışır · 7 F+C Bar yalnız `kabul` sayar (doğrudan gelen pasta girmez) · 8 F pasta depoda birikir görünür · 9 F kabul sonrası sevk iptali stoğu bozar · 10 F+C "stok eksiye düştü" işi yok · 11 C depo takvim günü ↔ panel iş günü (00–02) · 12 C panel Tema'nın depo olduğunu bilmiyor · 13 F talepsiz sevk siparişe bağlanabilir kalmalı · 14 C belge satırları eskimiş.
+
+**Mekanizma (kurulacak sıra):**
+- **S1 Depo servisi** (evvel_yeni_depo_api, PUBLIC): küçük başlık `ey_sevk_parti` (kaynak, hedef, kim, zaman, istek_id, not, iptal) · `sevk_yaz` → her ÜRÜN ayrı satır `bag = sevk:{parti}:{i}`, ref ailesi `sevk:` (köprünün `yolda:` ailesinden ayrı — #4) · `kabul_yaz(bag, sayilan, hasarli)` 0 da yazılır; fazla → askıda; hasarlı → askıda tür `hasar`; ikinci farklı kabul 409 · `/yolda` hedefi başlıktan + `evren` parametresi (#3) · merkez kabul başlıktan (#1) · kabul/fark çöz parti kilidiyle (#5) · kabul varsa sevk iptali 409 (#9) · "kaynak eksi" Bekleyen işi (#10, P2) · gün = iş günü (#11) · 1 Kasım öncesi DENEME.
+- **S2 Merkez "Sevk et"** — Depo modülüne sekme (hedef şube + katalog + adet + koli yardımcısı + not).
+- **S3 Panel "Depodan gelen"** — paket kartları, kalem kalem KÖR sayım (beklenen gösterilmez), hasarlı kutusu, kişi + PIN, gün kapalıyken de açık.
+- **S4 Pasta** — Bar doğrudan gelen pastayı (`giris` dışarı:toptanci→depo:şube) da sayar (#7, P1); pasta depo bakiyesi kuralı (#8).
+- **S5 Sipariş ver / takip / Gönderilecek** (P4) — SIPARIS_TASARIM tabloları; "Yola çıkar" S1 `sevk_yaz`'ı çağırır (#13). Ayrı "var mı" ile.
