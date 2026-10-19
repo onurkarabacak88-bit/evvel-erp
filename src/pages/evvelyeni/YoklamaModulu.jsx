@@ -39,7 +39,13 @@ export default function YoklamaModulu({ onToast }) {
       .then((d) => setAcik(d?.satirlar || []))
       .catch(() => setAcik([]));
   }, [bugun]);
-  useEffect(() => { yukle(); }, [yukle]);
+  useEffect(() => {   // sahip: cihaz bağlanınca merkez sayfası yenilemeden görsün — 10 sn'de bir (sekme açıkken), öne gelince hemen
+    yukle();
+    const t = window.setInterval(() => { if (!document.hidden) yukle(); }, 10000);
+    const gor = () => { if (!document.hidden) yukle(); };
+    document.addEventListener('visibilitychange', gor);
+    return () => { window.clearInterval(t); document.removeEventListener('visibilitychange', gor); };
+  }, [yukle]);
 
   const yap = async (anahtar, yol, govde, sonra) => {
     setMesgul((m) => ({ ...m, [anahtar]: true })); setHata('');
