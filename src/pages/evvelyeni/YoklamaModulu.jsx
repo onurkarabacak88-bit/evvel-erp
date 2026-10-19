@@ -50,6 +50,9 @@ export default function YoklamaModulu({ onToast }) {
   const linkUret = (anahtar, govde) => yap(anahtar, '/evvel-yeni/yoklama/cihaz/davet', govde,
     (d) => setLink({ ad: d.ad, url: `${window.location.origin}${d.yol}`, mesaj: d.mesaj }));
   const kopyala = async (t) => { try { await navigator.clipboard.writeText(t); onToast?.('Kopyalandı'); } catch { onToast?.('Kopyalanamadı — linki elle seç'); } };
+  // her satır ne: bağlı cihaz (son kullanım) / onay bekleyen / kullanılmamış link (son geçerlilik) — iki "İptal" karışmasın
+  const cihazNe = (c) => (c.durum === 'aktif' ? `bağlı${c.son_kullanim ? ' · son ' + c.son_kullanim.slice(5, 16).replace('T', ' ') : ' · hiç kullanılmadı'}`
+    : c.durum === 'onay' ? 'onay bekleyen' : `kullanılmamış link${c.davet_son ? ' · ' + c.davet_son.slice(5, 16).replace('T', ' ') + "'e kadar" : ''}`);
   const iptal = (c, ad) => { if (window.confirm(`${ad} cihazı iptal edilsin mi? Bu telefon/tablet bir daha çalışmaz.`)) yap(c.id, `/evvel-yeni/yoklama/cihaz/${c.id}/iptal`, {}); };
 
   return (
@@ -92,7 +95,7 @@ export default function YoklamaModulu({ onToast }) {
                 </Dugme>
                 {p.cihazlar.map((c) => (
                   <Dugme key={c.id} kucuk disabled={mesgul[c.id]} title={c.son_kullanim ? `son kullanım ${c.son_kullanim}` : ''} onClick={() => iptal(c, p.ad)}>
-                    İptal{c.etiket ? ` (${c.etiket})` : ''}
+                    İptal · {cihazNe(c)}{c.etiket ? ` (${c.etiket})` : ''}
                   </Dugme>
                 ))}
               </span>
@@ -113,7 +116,7 @@ export default function YoklamaModulu({ onToast }) {
                   <Dugme key={c.id} kucuk ana disabled={mesgul[c.id]} onClick={() => yap(c.id, `/evvel-yeni/yoklama/cihaz/${c.id}/onayla`, {})}>Onayla{c.etiket ? ` (${c.etiket})` : ''}</Dugme>
                 ))}
                 <Dugme kucuk ana={!s.tabletler.length} disabled={mesgul['s:' + s.id]} onClick={() => linkUret('s:' + s.id, { sube_id: s.id })}>Link üret</Dugme>
-                {s.tabletler.map((c) => <Dugme key={c.id} kucuk disabled={mesgul[c.id]} onClick={() => iptal(c, s.ad + ' tableti')}>İptal</Dugme>)}
+                {s.tabletler.map((c) => <Dugme key={c.id} kucuk disabled={mesgul[c.id]} onClick={() => iptal(c, s.ad + ' tableti')}>İptal · {cihazNe(c)}</Dugme>)}
               </span>
             </div>
           ))}
