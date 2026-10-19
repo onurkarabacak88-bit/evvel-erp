@@ -48,6 +48,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
 
   const katSecili = (k) => k.urunler.filter((u) => (adet[u.id] || 0) > 0).length;
   const degis = (id, n) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(9999, n)) }));
+  const art = (id, dlt) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(9999, (o[id] || 0) + dlt)) }));   // hızlı dokunuşta kaybolmasın
   const temizle = () => { setAdet({}); setNot(''); setIstek(yeniIstek()); setMesaj(''); try { localStorage.removeItem(anahtar); } catch { /* yok */ } };
 
   const kaydet = async () => {
@@ -148,10 +149,10 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
                 return (
                   <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 6, borderRadius: 10, background: n ? 'rgba(34,197,94,.1)' : C.bg2, opacity: u.aktif ? 1 : 0.6 }}>
                     <span style={{ flex: 1, fontWeight: 600 }}>{u.ad}{!u.aktif && ' 🚫'} <span style={{ color: C.soluk, fontSize: 12 }}>{u.birim}</span></span>
-                    <button type="button" className="sp-btn" style={{ minHeight: 52, width: 56, padding: 0, fontSize: 24 }} onClick={() => degis(u.id, n - 1)}>−</button>
+                    <button type="button" className="sp-btn" style={{ minHeight: 52, width: 56, padding: 0, fontSize: 24 }} onClick={() => art(u.id, -1)}>−</button>
                     <input className="sp-in" style={{ width: 80, textAlign: 'center', fontSize: 20, fontWeight: 800 }} inputMode="numeric" value={n || ''} placeholder="0"
                       onChange={(e) => degis(u.id, Number(e.target.value.replace(/\D/g, '') || 0))} />
-                    <button type="button" className="sp-btn" style={{ minHeight: 52, width: 56, padding: 0, fontSize: 24 }} onClick={() => degis(u.id, n + 1)}>+</button>
+                    <button type="button" className="sp-btn" style={{ minHeight: 52, width: 56, padding: 0, fontSize: 24 }} onClick={() => art(u.id, 1)}>+</button>
                   </div>
                 );
               })}
