@@ -30,7 +30,14 @@ function useOzet() {
   const [evren, setEvrenS] = useState(evrenOku);
   const setEvren = (x) => { try { localStorage.setItem('ey_depo_evren', x); } catch { /* yok */ } setEvrenS(x); setV(null); };
   const yukle = useCallback(async () => {
-    try { setV(await api('/evvel-yeni/depo/ozet' + (evren ? `?evren=${evren}` : ''))); setHata(null); } catch (e) { setHata(e?.message || 'okunamadı'); }
+    try {
+      const r = await api('/evvel-yeni/depo/ozet' + (evren ? `?evren=${evren}` : ''));
+      if (r.varsayilan_evren === 'yeni' && evren) {   // Fable: 1 Kasım'dan sonra eski seçim yapışık kalmasın
+        try { localStorage.removeItem('ey_depo_evren'); } catch { /* yok */ }
+        setEvrenS(''); return;
+      }
+      setV(r); setHata(null);
+    } catch (e) { setHata(e?.message || 'okunamadı'); }
   }, [evren]);
   useEffect(() => { yukle(); }, [yukle]);
   return [v, hata, yukle, setEvren];
@@ -44,7 +51,7 @@ function EvrenSecimi({ v, setEvren }) {
       <span style={{ color: R.not }}>Katalog:</span>
       <b style={{ color: yeni ? R.yesil : R.not }}>{yeni ? '🆕 Yeni katalog (Evvel Yeni ürün kimlikleri)' : '🔁 Geçiş — eski sistemden aktarılan kayıtlar'}</b>
       <span style={{ flex: 1 }} />
-      <Dugme kucuk onClick={() => setEvren(yeni ? 'eski' : 'yeni')}>{yeni ? 'Geçiş görünümüne dön' : 'Yeni kataloğa geç (1 Kasım açılış sayımı)'}</Dugme>
+      {v.varsayilan_evren !== 'yeni' && <Dugme kucuk onClick={() => setEvren(yeni ? 'eski' : 'yeni')}>{yeni ? 'Geçiş görünümüne dön' : 'Yeni kataloğa geç (1 Kasım açılış sayımı)'}</Dugme>}
     </div>
   );
 }

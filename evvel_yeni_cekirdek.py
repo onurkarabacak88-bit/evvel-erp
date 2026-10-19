@@ -165,14 +165,18 @@ def ayar_oku(cur, anahtar: str, varsayilan: Optional[str] = None) -> Optional[st
     return dict(r)["deger"] if r else varsayilan
 
 
+def panel_baslangic(cur) -> date:
+    """PUBLIC: yeni panelin gerçek kayda geçtiği gün (ey_ayar 'panel_baslangic', varsayılan 1 Kasım) — TEK yerde ayrıştırılır."""
+    try:
+        return date.fromisoformat((ayar_oku(cur, "panel_baslangic", "2026-11-01") or "2026-11-01")[:10])
+    except ValueError:
+        return date(2026, 11, 1)
+
+
 def yeni_donem(cur) -> bool:
     """PUBLIC: panel_baslangic (1 Kasım) geldi mi — okuyucular bundan sonra YALNIZ Evvel Yeni kaynaklarını (yeni katalog
     kimliği) okur; öncesi geçiş (eski aktarım). Tek kural, tek yer (Fable altyapı denetimi)."""
-    try:
-        bas = date.fromisoformat((ayar_oku(cur, "panel_baslangic", "2026-11-01") or "2026-11-01")[:10])
-    except ValueError:
-        bas = date(2026, 11, 1)
-    return bugun() >= bas
+    return bugun() >= panel_baslangic(cur)
 
 
 def ayar_yaz(cur, anahtar: str, deger: Optional[str], kim: str) -> None:
