@@ -190,3 +190,4 @@ Eski: sube_panel.html tab-ac (5363–5395), renderStokForms('ac') (11479–11560
 - **Taslak:** her tuşta tablete (iş gününe bağlı); sayfa yenilense de seçimler kalır; "Taslağı temizle".
 - **Çift gönderim:** istek kimliği (mevcut) + düğme kilidi.
 - **Kalan:** "stok sayımı sürüyor — Ürün Aç kapalı" bandı (EY'de sayım kilidi kaynağı yok → kaynak gelince) · ürün aç hatırlatma bandı (Basamak 1'de var) · kapanışta "ürün aç kaydı yok" sorusu (Basamak 3).
+- **Basamak 5 tasarım denetimi (Fable, 2026-10-19) uygulandı:** (A) işlev kaybı geri — sekmeden çıkış uyarısı, taslak sunucuda (ey_panel_taslak), pencerede "Pasifleri göster", son açan kişi hatırlanır, PIN'de Enter · (B) eski tasarım — 72 px −/+, 640 px pencere, yeşil hero, eski metinler. ⏳ "🔒 Stok sayımı sürüyor — Ürün Aç kapalı" bandı: EY'de sayım kilidi kaynağı gelince (kuyruk).
