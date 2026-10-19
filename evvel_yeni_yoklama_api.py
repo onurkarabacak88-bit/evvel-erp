@@ -362,11 +362,15 @@ def mola_limit(cur) -> int:
 def _mola_kapat(cur, personel_id: str, tur: str, ts=None, mesafe: Optional[int] = None, istek_id: Optional[str] = None,
                 kim: Optional[str] = None) -> Optional[dict]:
     """Açık molayı bitirir: süre + yemek hakkı (≤ limit). Açık mola yoksa None."""
-    cur.execute("SELECT id, baslangic_ts FROM ey_mola WHERE personel_id=%s AND bitis_ts IS NULL FOR UPDATE", (personel_id,))
+    cur.execute("SELECT id, baslangic_ts, is_gunu FROM ey_mola WHERE personel_id=%s AND bitis_ts IS NULL FOR UPDATE", (personel_id,))
     r = cur.fetchone()
     if not r:
         return None
     r = dict(r)
+    if ts is None and r["is_gunu"] < is_gunu():   # Codex: geçmiş günün unutulan molası her yoldan GECE kuralıyla kapanır (hak verilir)
+        cur.execute("""UPDATE ey_mola SET bitis_ts=baslangic_ts, bitis_tur='gece_otomatik', sure_dk=0, yemek_hakki=TRUE,
+                              degistiren=COALESCE(%s, degistiren) WHERE id=%s""", (kim, r["id"]))
+        return {"id": r["id"], "sure_dk": 0, "yemek_hakki": True}
     if ts is not None and ts < r["baslangic_ts"]:
         raise HTTPException(400, f"Saat molanın başlangıcından ({_saat(r['baslangic_ts'])}) önce olamaz")   # Codex: sahte hak üretmesin
     bit = ts if ts is not None else max(datetime.now(timezone.utc), r["baslangic_ts"])   # Codex 2: saat kayması kapanışı geri aldırmasın
