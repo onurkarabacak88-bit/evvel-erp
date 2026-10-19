@@ -50,29 +50,26 @@ def _kdv_kesir(oran) -> Decimal:
 
 
 def toptanci_hazirla(cur) -> None:
-    """Tablolar AYRI kısa işlemde (Fable E1 #1: çağıranın işlemi hata verip geri alınırsa tablo yok + bayrak açık kalıyordu);
-    lock_timeout 3 sn (göç kuralı: init_db dışında, ensure_* + lock_timeout). `cur` yalnız geriye uyum için."""
+    """Canlı 503 dersi (2026-10-19): ayrı bağlantı (havuz dolu / kilit) düşüyordu → hazırlık ÇAĞIRANIN işleminde, SAVEPOINT +
+    kısa lock_timeout ile ve yalnız EKSİK olanı kurar. Bayrak ancak bir SONRAKİ çağrıda nesneler (işlenmiş) görülünce açılır —
+    çağıranın işlemi geri alınsa da 'tablo yok + bayrak açık' kalmaz (Fable E1 #1)."""
     global _HAZIR
     if _HAZIR:
         return
+    cur.execute("""SELECT to_regclass('ey_toptanci_belge') IS NOT NULL AND to_regclass('idx_ey_top_belge') IS NOT NULL
+                          AND to_regclass('ey_urun_fiyat_gecmis') IS NOT NULL AND to_regclass('ey_toptanci_teslim') IS NOT NULL AS v""")
+    if dict(cur.fetchone() or {}).get("v") and _kolon_var(cur, "ey_toptanci_belge", "iptal_zaman") and _kolon_var(cur, "ey_toptanci", "vade_gun"):
+        _HAZIR = True
+        return
     try:
-        with db() as (_c, k):
-            k.execute("SET LOCAL lock_timeout = '3s'")
-            k.execute("SELECT pg_advisory_xact_lock(7012071)")
-            _toptanci_ddl(k)
-    except Exception:  # noqa: BLE001 — kilit beklemesi vb.: ANA tablolar varsa ekran AÇIK kalır (bayrak kapalı → sonra yine denenir)
-        log.warning("toptancı hazırlığı ayrı işlemde yapılamadı — ana tablolar varsa devam", exc_info=True)
-        if cur is not None:
-            cur.execute("SELECT to_regclass('ey_toptanci_belge') IS NOT NULL AS b, to_regclass('ey_toptanci_teslim') IS NOT NULL AS t")
-            v = dict(cur.fetchone() or {})
-            if v.get("b"):
-                _HAZIR = True
-                return
-            if v.get("t"):
-                return   # canlı 503 dersi (2026-10-19): belge tablosu yoksa yalnız belge uçları düşer, Toptancılar AÇIK
-        log.error("toptancı tabloları hazırlanamadı", exc_info=True)
-        raise HTTPException(503, "Toptancı tabloları hazırlanamadı — birazdan tekrar dene")
-    _HAZIR = True
+        with savepoint(cur, "sp_ey_toptanci_hazirla"):
+            cur.execute("SET LOCAL lock_timeout = '3s'")
+            _toptanci_ddl(cur)
+            cur.execute("SET LOCAL lock_timeout = DEFAULT")
+    except Exception:  # noqa: BLE001 — kilit beklemesi vb.: ana tablolar varsa ekran AÇIK kalır, sonraki istek yine dener
+        log.warning("toptancı hazırlığı yapılamadı — ana tablolar varsa devam", exc_info=True)
+        if not _var(cur, "ey_toptanci_teslim"):
+            raise HTTPException(503, "Toptancı tabloları hazırlanamadı — birazdan tekrar dene")
 
 
 def _kolon_var(cur, tablo: str, kolon: str) -> bool:
@@ -356,8 +353,10 @@ def _hesap(cur, bugun: date):
     toptanci_hazirla(cur)
     cur.execute("SELECT id, ad, kategori, telefon, acilis_bakiye, aktif, vade_gun FROM ey_toptanci ORDER BY ad")
     tlar = [dict(r) for r in cur.fetchall() or []]
-    cur.execute("SELECT teslim_id, COUNT(*) AS n FROM ey_toptanci_belge WHERE NOT iptal GROUP BY teslim_id")
-    belge_say = {dict(r)["teslim_id"]: int(dict(r)["n"]) for r in cur.fetchall() or []}
+    belge_say = {}
+    if _var(cur, "ey_toptanci_belge"):   # canlı 503 dersi: belge tablosu henüz yoksa Toptancılar yine AÇILIR
+        cur.execute("SELECT teslim_id, COUNT(*) AS n FROM ey_toptanci_belge WHERE NOT iptal GROUP BY teslim_id")
+        belge_say = {dict(r)["teslim_id"]: int(dict(r)["n"]) for r in cur.fetchall() or []}
     cur.execute("SELECT * FROM ey_toptanci_teslim ORDER BY tarih, zaman")
     teslimler = [dict(r) for r in cur.fetchall() or []]
     bilinen = {t["id"] for t in tlar}
