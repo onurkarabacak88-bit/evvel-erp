@@ -7,6 +7,7 @@ import { api } from '../../utils/api';
 import { cihazId } from '../../utils/cihazImza';
 import AcilisSihirbazi from './AcilisSihirbazi';
 import AnaSayfa from './AnaSayfa';
+import KasaDevri, { DEVIR_ACIK, devirEtiket } from './KasaDevri';
 import { AdetListesi, C, CSS, kalemGovde, Modal, SayimListesi, SayiTusTakimi, sayi, sayimGovde, TabletQR, tl, tutar, tutarNum, yeniIstek } from './ortak';
 
 export default function SubePaneli({ subeId }) {
@@ -29,11 +30,11 @@ export default function SubePaneli({ subeId }) {
   // 📱 Yoklama (QR telefon): tablet bu tarayıcıda kayıtlıysa köşede küçük QR (dokununca büyür); kapı açıkken büyük QR
   const [qrBuyuk, setQrBuyuk] = useState(false);
   const tabletVar = !!cihazId('tablet');
-  const yok = d?.yoklama || { var: false, qr_gerekli: false, girenler: [], son_okutanlar: [], tablet_kayitli: false, devir: null, kapanis_sorumlusu: null, devralan_adaylari: [] };
+  const yok = d?.yoklama || { var: false, qr_gerekli: false, girenler: [], son_okutanlar: [], tablet_kayitli: false, devir: null, kapanis_sorumlusu: null };
   const qrGorunur = tabletVar && qrBuyuk;
   // 💵 Kasa devri çift onay (D5, §B8): panel formu kurar (hazir) → devreden telefonundan 'Devrediyorum' → devralan 'Kabul ediyorum' / 'Tutmuyor'
   const devir = yok.var ? yok.devir : null;
-  const devirBekliyor = !!devir && (devir.durum === 'hazir' || devir.durum === 'devreden_onayladi');
+  const devirBekliyor = !!devir && DEVIR_ACIK.includes(devir.durum);
 
   // 💾 TASLAK (D6): açık formun her değişikliği tablete — pencere kapansa / sayfa yenilense geri gelir (iş günü boyunca)
   const [formGun, setFormGun] = useState(null);   // Codex: açık formun günü, açıldığı an sabitlenir
@@ -195,11 +196,6 @@ export default function SubePaneli({ subeId }) {
     </div>
   );
   const kapali = !!d.kapanis_var;   // D7: kapanıştan sonra yalnız Ana / Depodan gelen / Sipariş takip
-  const bardaklar = d.sayilan.flatMap((g) => g.urunler).filter((u) => /bardak/i.test(u.ad));
-  // Devralan adayları: yoklama açıkken bugün girenler + henüz girmemiş aktif personel (kabulüyle girişi açılır); yoklama yoksa mevcut liste
-  const devralanAdaylari = (yok.var && Array.isArray(yok.devralan_adaylari) ? yok.devralan_adaylari : d.personel.map((p) => ({ ...p, girdi: true })))
-    .filter((p) => p.id !== kisi);
-  const devirKilitli = !!devir && devir.durum === 'devreden_onayladi';   // §B8: devreden onayladı → form kilitli (değişiklik = merkez-kapat)
 
   const yakinda = (m) => setMesaj({ tur: 'deneme', metin: m });
   // Ürün Aç hatırlatma bandı (eski: 12:00–12:59 · 16:00–16:59 · 20:00–20:59, o gün ürün aç kaydı yoksa; 4 saat susturulur)
@@ -269,14 +265,13 @@ export default function SubePaneli({ subeId }) {
         <div className="sp-sag-kolon" style={{ display: 'grid', gap: 10, alignContent: 'start' }}>
           <button className="sp-kart" disabled={kapali} onClick={() => ac('devir')} style={{ textAlign: 'left', cursor: kapali ? 'default' : 'pointer', minHeight: 78, opacity: kapali ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4 }}>
             <b style={{ fontSize: 16 }}>💵 Kasa Devri</b><span style={{ color: C.soluk, fontSize: 12 }}>Vardiya nakit teslim & devir</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: devir ? (devirBekliyor ? C.sari : C.yesil) : C.soluk }}>{devir ? (devirBekliyor ? '⏳ Onay bekleniyor' : '✓ Tamamlandı') : '● Bekliyor'}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: devirEtiket(devir).renk }}>{devirEtiket(devir).metin}</span>
           </button>
           <button className="sp-kart" disabled={d.kapanis_var} onClick={() => ac('kapanis')} style={{ textAlign: 'left', cursor: d.kapanis_var ? 'default' : 'pointer', minHeight: 78, opacity: d.kapanis_var ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4,
             background: 'linear-gradient(135deg,rgba(76,29,149,.5),rgba(124,58,237,.35))' }}>
             <b style={{ fontSize: 16 }}>🌙 Günü Kapat</b><span style={{ color: C.soluk, fontSize: 12 }}>Ciro, stok & kapanış protokolü</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: d.kapanis_var ? C.yesil : C.soluk }}>{d.kapanis_var ? '🔒 Mühürlendi' : '● 5 adım'}</span>
           </button>
-          {devir && <DevirDurum devir={devir} mesgul={mesgul} iptal={devirIptal} />}
         </div>
       </div>
 
@@ -394,52 +389,13 @@ export default function SubePaneli({ subeId }) {
         </Modal>
       )}
       {modal === 'devir' && (
-        <Modal baslik="💵 Kasa Devri" kapat={() => setModal(null)}>
-          {devir && <DevirDurum devir={devir} mesgul={mesgul} iptal={devirIptal} />}
-          {yok.var && <div style={{ color: C.soluk, fontSize: 13 }}>Para + bardak sayılır, "Devri başlat" denir; sonra devreden kendi telefonundan "Devrediyorum", devralan "Kabul ediyorum" der (tablette PIN yok).</div>}
-          {kimSec('Devreden')}
-          <label style={{ display: 'grid', gap: 6 }}><b>Devralan</b>
-            <select className="sp-in" style={{ fontSize: 18 }} value={f.devralan || ''} onChange={(e) => setF({ ...f, devralan: e.target.value })}>
-              <option value="">— seç —</option>{devralanAdaylari.map((p) => <option key={p.id} value={p.id}>{p.girdi ? p.ad : `${p.ad} (girmedi — kabulle girişi açılır)`}</option>)}
-            </select></label>
-          <label style={{ display: 'grid', gap: 6 }}><b>Kasada sayılan</b>
-            <input className="sp-in" inputMode="decimal" value={f.sayilan ?? ''} onChange={(e) => setF({ ...f, sayilan: tutar(e.target.value) })} placeholder="0,00" /></label>
-          <b>Bardak sayımı</b>
-          <SayimListesi gruplar={[{ kategori: '', urunler: bardaklar }]} sayim={sayim} setSayim={setSayim} />
-          <button className="sp-btn sp-yesil" disabled={mesgul || devirKilitli || !f.devralan || f.sayilan === undefined || f.sayilan === ''}
-            onClick={() => gonder('devir', { devreden_id: kisi, devralan_id: f.devralan, sayilan: tutarNum(f.sayilan), bardak: sayimGovde(sayim) })}>
-            {yok.var ? (devir?.durum === 'hazir' ? '✔ Devri Güncelle' : '✔ Devri Başlat') : '✔ Devri Kaydet'}</button>
-          {devirKilitli && <div style={{ color: C.soluk, fontSize: 13 }}>Devreden onayladı — form kilitli; değişiklik için merkeze haber ver.</div>}
-        </Modal>
+        <KasaDevri devir={devir} tabletVar={tabletVar} kapali={kapali} kapat={() => setModal(null)} yukle={yukle} iptal={devirIptal} mesgulDis={mesgul} />
       )}
       {modal === 'kapanis' && (
         <Kapanis d={d} kimSec={kimSec} mesgul={mesgul} sayim={sayim} setSayim={setSayim} kapat={() => setModal(null)} taslakAnahtar={tKey('kapanis')}
           istek={istek} setIstek={setIstek}
           gonder={(govde) => gonder('kapanis', { personel_id: kisi, ...govde, sayim: sayimGovde(sayim) })} />
       )}
-    </div>
-  );
-}
-
-// 💵 Devir durum kartı (§A3 "devreden onaylasın → devralan kabul etsin → ✓"; §B8): bugünün son devri. 'hazir' iken panel iptal edebilir;
-//    'tutmuyor' da tamamlanmış devirdir (K5) — not merkeze gider; 'merkez_kapatti' kişi onayı DEĞİL, ayrı yazılır (D5 Codex).
-const bardakOzet = (b) => (b || []).map((x) => `${String(x.ad || '').replace(/^bardak\s*/i, '') || 'bardak'} ${x.sayilan}`).join(' / ');
-function DevirDurum({ devir, mesgul, iptal }) {
-  const m = {
-    hazir: { renk: C.sari, ikon: '⏳', metin: `Devreden onayı bekleniyor (${devir.devreden}) — kendi telefonundan QR okutup "Devrediyorum" desin` },
-    devreden_onayladi: { renk: C.sari, ikon: '⏳', metin: `Devralan onayı bekleniyor (${devir.devralan}) — kendi telefonundan QR okutup "Kabul ediyorum" desin` },
-    tamam: { renk: C.yesil, ikon: '✓', metin: `Devir tamam${devir.devralan_saat ? ` · ${devir.devralan_saat}` : ''} — kasa ${devir.devralan}'de` },
-    tutmuyor: { renk: C.kirmizi, ikon: '⚠', metin: `Tutmuyor: ${devir.not || '—'} — devir kaydedildi, merkez görür; kasa ${devir.devralan}'de` },
-    merkez_kapatti: { renk: C.soluk, ikon: '🏢', metin: `Merkez kapattı (${devir.merkez_sonuc === 'kapandi' ? 'devir sayıldı' : 'iptal'}) — kişi onayı değil` },
-  }[devir.durum] || { renk: C.soluk, ikon: '•', metin: devir.durum };
-  return (
-    <div className="sp-kart" style={{ display: 'grid', gap: 8, borderColor: m.renk }}>
-      <div style={{ color: m.renk, fontWeight: 700 }}>{m.ikon} {m.metin}</div>
-      <div style={{ color: C.soluk, fontSize: 14 }}>
-        {devir.devreden} → {devir.devralan} · kasa <b style={{ color: C.yazi }}>{tl(devir.sayilan)}</b>{devir.bardak?.length ? ` · bardak ${bardakOzet(devir.bardak)}` : ''}
-        {devir.panel ? ` · form ${devir.panel}` : ''}{devir.devreden_saat ? ` · devretti ${devir.devreden_saat}` : ''}
-      </div>
-      {devir.durum === 'hazir' && <button className="sp-btn" style={{ minHeight: 56 }} disabled={mesgul} onClick={iptal}>✕ Devri iptal et</button>}
     </div>
   );
 }

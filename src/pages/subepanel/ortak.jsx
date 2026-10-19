@@ -106,14 +106,14 @@ export function SayimListesi({ gruplar, sayim, setSayim }) {
 // 📱 Dönen QR (YOKLAMA_QR_TASARIM.md §B5) — eski panelin sabit QR'ının YERİNE (sahip: "kaldır yerine yenisini ekle").
 // Yalnız bu tarayıcıda KAYITLI panel PC'sinin imzalı isteğine PNG döner; jeton 60 sn dilimli → 30 sn'de bir yenilenir.
 // onay: açılış/kapanış "QR ile onayla" adımında onay kimliği QR'a eklenir (telefon o işlemi onaylar).
-export function TabletQR({ boyut, onClick, onay }) {
+export function TabletQR({ boyut, onClick, onay, devir }) {
   const [src, setSrc] = useState('');
   const [hata, setHata] = useState('');
   useEffect(() => {
     let canli = true;
     let onceki = '';
     setSrc(''); setHata('');   // Codex: başka onayın QR'ı bir an bile görünmesin
-    const yol = '/api/evvel-yeni/yoklama/qr.png' + (onay ? `?o=${encodeURIComponent(onay)}` : '');
+    const yol = '/api/evvel-yeni/yoklama/qr.png' + (onay ? `?o=${encodeURIComponent(onay)}` : devir ? `?dv=${encodeURIComponent(devir)}` : '');
     const cek = () => imzaliFetch('tablet', 'GET', yol)
       .then(async (r) => {
         if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(typeof d.detail === 'string' ? d.detail : 'QR alınamadı'); }
@@ -126,7 +126,7 @@ export function TabletQR({ boyut, onClick, onay }) {
     const gor = () => { if (!document.hidden) cek(); };
     document.addEventListener('visibilitychange', gor);
     return () => { canli = false; window.clearInterval(t); document.removeEventListener('visibilitychange', gor); if (onceki) URL.revokeObjectURL(onceki); };
-  }, [onay]);
+  }, [onay, devir]);
   return (
     <div onClick={onClick} style={{ width: boyut, height: boyut, background: '#fff', borderRadius: 12, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: onClick ? 'pointer' : 'default', overflow: 'hidden' }}>
       {src && hata ? <span style={{ color: '#b91c1c', fontSize: boyut > 200 ? 16 : 11, textAlign: 'center', padding: 6, fontWeight: 700 }}>{hata} — QR yenilenemedi</span>

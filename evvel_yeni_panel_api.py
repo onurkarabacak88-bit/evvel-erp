@@ -311,9 +311,6 @@ def panel_durum(sube_id: str):
             yok["tablet_kayitli"] = bool(cur.fetchone())
             yok["devir"] = y.devir_durum(cur, str(sube_id), gun)
             yok["kapanis_sorumlusu"] = y.kapanis_sorumlusu(cur, str(sube_id), gun)
-            giren = {g["personel_id"] for g in yok["girenler"] if g["acik"]}
-            yok["devralan_adaylari"] = ([{"id": g["personel_id"], "ad": g["ad"], "girdi": True} for g in yok["girenler"] if g["acik"]]
-                                        + [{"id": x["id"], "ad": x["ad"], "girdi": False} for x in per if x["id"] not in giren])
             if yok["qr_gerekli"]:   # ad listesi = bu şubede QR'la girmiş olanlar (K11: başka şubenin personeli dahil)
                 per = [{"id": g["personel_id"], "ad": g["ad"]} for g in yok["girenler"] if g["acik"]]
     def _u(x):
@@ -376,17 +373,6 @@ def _degirmen(d: Optional[dict]) -> Optional[dict]:
         if d.get(k) not in (None, ""):
             out[k] = _tam(d[k], ad)
     return out or None
-
-
-def _bardak_satirlari(cur, sayim: List[SayimSatir]) -> list:
-    """Devir bardak sayımı — yalnız olaya yazılır (Depo'ya hareket YAZMAZ: ara ölçüm gider üretmez)."""
-    satir = [{"urun_id": x.urun_id, "sayilan": _tam(x.sayilan, "Bardak")} for x in sayim if x.sayilan is not None]
-    if satir:
-        b = _urunler(cur, [x["urun_id"] for x in satir], takip="sayim")
-        for x in satir:
-            if "bardak" not in (b[x["urun_id"]]["ad"] or "").lower():
-                raise HTTPException(400, "Devirde yalnız bardak sayılır")
-    return satir
 
 
 def _sayim_satirlari(cur, sayim: List[SayimSatir]) -> list:
@@ -559,44 +545,8 @@ def kapanis(sube_id: str, b: KapanisBody):
     return _kapanis_yaz(sube_id, b)
 
 
-class DevirBody(BaseModel):
-    istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
-    devreden_id: str
-    devralan_id: str
-    sayilan: Decimal
-    bardak: List[SayimSatir] = []    # sahip D2: devirde yalnız 3 bardak (küçük / büyük / plastik) — gider üretmez, merkez görür
-    istek_id: str
-
-
-@router.post("/{sube_id}/devir")
-def kasa_devri(sube_id: str, b: DevirBody):
-    """Vardiya kasa devri — yalnız ham olay (para el değiştirmez, aynı dükkân kasası)."""
-    _TUR = "devir"
-    def is_(cur, c):
-        _gun_acik_mi(cur, c, sube_id)
-        y = _yoklama()
-        # devralan henüz girmemiş olabilir (kabulüyle girişi açılır) → kapı yalnız devredende
-        a, v = _personel(cur, sube_id, b.devreden_id), _personel(cur, sube_id, b.devralan_id, kapi=y is None)
-        if a["id"] == v["id"]:
-            raise HTTPException(400, "Devreden ve devralan aynı kişi olamaz")
-        k = _tl(b.sayilan, "Sayılan")
-        if y is not None:   # D5: onaylar kişilerin KENDİ telefonunda; vardiya olayını devralanın onayı yazar (tek yazar)
-            bardak = _bardak_satirlari(cur, b.bardak)
-            if bardak:
-                ad = _urunler(cur, [x["urun_id"] for x in bardak], takip="sayim")
-                bardak = [{**x, "ad": ad[x["urun_id"]]["ad"]} for x in bardak]
-            if c["kuru"]:   # sahip (2026-10-19): denemede telefon onayları denenebilsin → devir satırı AYRI işlemde kalıcı
-                with db() as (_c2, k2):   # (para / olay yazmaz; 'vardiya' olayı 1 Kasım öncesi yazılmaz — yoklama _devir_olay)
-                    r = y.devir_ac(k2, str(sube_id), c["gun"], a, v, k, bardak, b.istek_id, giris_zorunlu=False)
-            else:
-                r = y.devir_ac(cur, str(sube_id), c["gun"], a, v, k, bardak, b.istek_id, giris_zorunlu=_qr_gerekli(cur))
-            return {**r, "tekrar": bool(r.get("tekrar")),
-                    "mesaj": f"Devir hazır — {a['ad']} telefonundan 'Devrediyorum', sonra {v['ad']} 'Kabul ediyorum' desin"}
-        oid = _olay(cur, sube_id=sube_id, tur="vardiya", is_gunu=c["gun"], kok=f"panel:vardiya:{sube_id}:{b.istek_id}",
-                       kaynak_tablo="panel", personel_id=a["id"], personel_ad=a["ad"], tutar=Decimal(k) / 100,
-                       veri={"devreden": a, "devralan": v, "sayilan": k, "bardak": _bardak_satirlari(cur, b.bardak)})
-        return {"olay": oid, "tekrar": oid is None, "mesaj": "Kasa devri kaydedildi"}
-    return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
+# Kasa devri (Basamak 4, sahip 2026-10-19): panel YALNIZ başlatır (yoklama /devir-baslat, kayıtlı PC imzası) ve gösterir;
+# devreden formu kendi telefonunda doldurur. Eski panel formu (DevirBody) ve 'yoklama yoksa doğrudan vardiya olayı' dalı KALDIRILDI (tek yol).
 
 
 class DevirIptalBody(BaseModel):
