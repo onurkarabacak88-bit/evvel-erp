@@ -585,6 +585,8 @@ def _akilli_denetim_telafi(gun_sayisi: int = 3, gecikme_sn: int = 90):
     import time as _time
     try:
         _time.sleep(max(gecikme_sn, 5))
+        if not _eski_panel_zinciri_acik():   # Codex 2.tur: bekleme sırasında kesim olmuş olabilir — yeniden bak
+            return
         from tr_saat import bugun_tr as _bugun_tr
         import truth_motor as _tm
 
@@ -695,10 +697,15 @@ def _eski_panel_zinciri_acik() -> bool:
     SİLİNMEZ: ey_ayar 'eski_gece_zinciri' = 'acik' ile geri açılır."""
     try:
         from evvel_yeni_cekirdek import eski_panel_zinciri_acik
-    except Exception as e:  # noqa: BLE001
-        logger.warning(f"🔌 eski panel zinciri anahtarı yüklenemedi (açık sayıldı): {e}")
-        return True
+    except Exception as e:  # noqa: BLE001 — Codex 2.tur: çekirdek yüklenemezse de sabit 1 Kasım (kesimden sonra açılmasın)
+        logger.warning(f"🔌 eski panel zinciri anahtarı yüklenemedi (sabit 1 Kasım'a göre): {e}")
+        from tr_saat import is_gunu_tr
+        return is_gunu_tr() < date(2026, 11, 1)
     return eski_panel_zinciri_acik()
+
+
+class _ZincirKapali(Exception):
+    """Tek anahtar kapalı — halka bilerek atlandı (hata değil)."""
 
 
 def _gece_yarisi_scheduler():
@@ -943,7 +950,8 @@ def _gece_yarisi_scheduler():
             # belirgin aşan duyular için DURUM-GEÇİŞİ meta olayı (spam yok); hata-yutar.
             try:
                 from duyu_omurga import gece_saglik_degerlendir
-                gece_saglik_degerlendir()
+                if _eski_panel_zinciri_acik():   # 🔌 Codex 2.tur: susturulan duyuların nabzını beklemesin (sahte "ritmini aştı")
+                    gece_saglik_degerlendir()
                 logger.info("⏰ Scheduler: duyu sağlık değerlendirmesi tamamlandı")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler duyu sağlık hatası: {e}")
@@ -1087,10 +1095,12 @@ def _gece_yarisi_scheduler():
             # Arşive yazar + sabah WhatsApp mesajı (çerçeveli); hata-yutar.
             try:
                 if not _eski_panel_zinciri_acik():   # 🔌 sahip 20 Eki: beyin yeni Evvel'e TAŞINMAZ
-                    raise RuntimeError("eski zincir kapalı — beyin susturuldu")
+                    raise _ZincirKapali()
                 from beyin_api import gece_sentez
                 gece_sentez()
                 logger.info("⏰ Scheduler: Evvel Beyni gece sentezi tamamlandı (zincir sonu)")
+            except _ZincirKapali:
+                logger.info("🔌 eski panel zinciri kapalı — halka atlandı")
             except Exception as e:
                 logger.warning(f"⏰ Scheduler beyin sentez hatası: {e}")
 
@@ -1341,12 +1351,14 @@ def _gece_yarisi_scheduler():
                     if _bekle2 > 0:
                         _time.sleep(_bekle2)
                     if not _eski_panel_zinciri_acik():   # 🔌 Codex #3: 02:30'da YENİDEN bak (00:30'da iş günü hâlâ dündü)
-                        raise RuntimeError("eski panel zinciri kapalı — atlandı")
+                        raise _ZincirKapali()
                     from sube_operasyon import ensure_events_tum_subeler
                     with db() as (conn, cur):
                         _ne = ensure_events_tum_subeler(cur)
                         conn.commit()
                     logger.info(f"⏰ Scheduler: operasyon event satırları oluşturuldu — {_ne} şube")
+                except _ZincirKapali:
+                    logger.info("🔌 eski panel zinciri kapalı — halka atlandı")
                 except Exception as e:
                     logger.warning(f"⏰ Scheduler operasyon event hatası: {e}")
 
@@ -1702,11 +1714,13 @@ def startup():
     try:
         from sube_operasyon import ensure_events_tum_subeler
         if not _eski_panel_zinciri_acik():   # 🔌 1 Kasım: eski panel event satırı açılmaz (tek anahtar)
-            raise RuntimeError("eski panel zinciri kapalı — atlandı")
+            raise _ZincirKapali()
         with db() as (conn, cur):
             _n = ensure_events_tum_subeler(cur)
             conn.commit()
         logger.info(f"✅ Operasyon event satırları garanti edildi: {_n} şube")
+    except _ZincirKapali:
+        logger.info("🔌 eski panel zinciri kapalı — halka atlandı")
     except Exception as e:
         logger.warning(f"Operasyon event ensure (startup) hatası: {e}")
 
