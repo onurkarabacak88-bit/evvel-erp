@@ -914,6 +914,10 @@ async def mola_bitir(request: Request):
         if dict(a)["sube_id"] != sube:
             raise HTTPException(409, "Molan başka şubede — o şubenin QR'ını okut")
         m = _mola_kapat(cur, p["id"], "qr", mesafe=k["mesafe_m"], istek_id=ist)
+        if not m:   # Codex: arada sistem (61. dk / gece) kapattıysa — 500 yerine durumu söyle
+            md = _mola_durum(cur, p["id"], is_gunu()) or {}
+            return {"ok": True, "tekrar": True, "hak_dustu": bool(md.get("hak_dustu")),
+                    "mesaj": f"Mola zaten kapanmıştı · {md.get('sure_dk', '—')} dk" + (" — yemek hakkını kaybettin" if md.get("hak_dustu") else "")}
         return {"ok": True, "hak_dustu": not m["yemek_hakki"],   # K7: tek bilgi satırı (bildirim değil)
                 "mesaj": f"Mola bitti · {_saat(datetime.now(timezone.utc))} · {m['sure_dk']} dk" + ("" if m["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
     return await _telefon(request, fn)
@@ -932,7 +936,7 @@ def molalar(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = F
         if acik:
             cur.execute(q + """(m.bitis_ts IS NULL AND (m.is_gunu < %s OR m.baslangic_ts < NOW() - (%s || ' minutes')::interval))
                                 OR (m.yemek_hakki = FALSE AND NOT m.hak_elle AND m.gorulen IS NULL)
-                                ORDER BY m.is_gunu, m.baslangic_ts""", (is_gunu(), str(mola_limit(cur))))
+                                ORDER BY m.is_gunu, m.baslangic_ts""", (is_gunu(), str(mola_limit(cur) + 1)))
         elif bas and son:
             cur.execute(q + "m.is_gunu BETWEEN %s AND %s ORDER BY m.is_gunu, m.baslangic_ts", (bas, son))
         else:
@@ -1290,7 +1294,7 @@ def _bekleyen(cur, baglam: dict) -> list:
                      JOIN ey_personel p ON p.id=m.personel_id LEFT JOIN ey_sube s ON s.id=m.sube_id
                     WHERE (m.bitis_ts IS NULL AND (m.is_gunu < %s OR m.baslangic_ts < NOW() - (%s || ' minutes')::interval))
                        OR (m.yemek_hakki = FALSE AND NOT m.hak_elle AND m.gorulen IS NULL)
-                    ORDER BY m.is_gunu""", (bugun, str(mola_limit(cur))))
+                    ORDER BY m.is_gunu""", (bugun, str(mola_limit(cur) + 1)))
     for r in [dict(x) for x in cur.fetchall() or []]:
         if r["bitis_ts"] is None and r["is_gunu"] >= bugun:
             out.append({"tur": "yoklama_mola_uzun", "genel": True, "grup": "personel", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
