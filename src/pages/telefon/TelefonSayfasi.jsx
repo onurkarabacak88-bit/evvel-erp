@@ -372,10 +372,10 @@ function DevirIslem({ sube, jeton, did }) {
   const ilk = (() => { try { return JSON.parse(localStorage.getItem(tKey) || 'null'); } catch { return null; } })();
   const [adim, setAdim] = useState(ilk?.adim || 1);
   const [f, setF] = useState(ilk?.f || { kasa: '', s: {}, pasta: '', dogru: false, adina: '' });
-  useEffect(() => { try { localStorage.setItem(tKey, JSON.stringify({ adim, f })); } catch { /* yok */ } }, [adim, f, tKey]);
-  const [tutmuyor, setTutmuyor] = useState(false);
-  const [say, setSay] = useState('');
-  const [notY, setNotY] = useState('');
+  const [tutmuyor, setTutmuyor] = useState(!!ilk?.tutmuyor);
+  const [say, setSay] = useState(ilk?.say || '');
+  const [notY, setNotY] = useState(ilk?.notY || '');
+  useEffect(() => { try { localStorage.setItem(tKey, JSON.stringify({ adim, f, tutmuyor, say, notY })); } catch { /* yok */ } }, [adim, f, tutmuyor, say, notY, tKey]);
 
   const yukle = useCallback(() => {
     if (!bagli) return Promise.resolve(null);
@@ -396,7 +396,8 @@ function DevirIslem({ sube, jeton, did }) {
       setMesgul(false);
       return r;
     } catch (e) {
-      setIsHata(e instanceof TypeError ? 'İnternet yok — bağlantı gelince tekrar dene' : (e?.message || 'Kaydedilemedi'));
+      setIsHata(e instanceof TypeError ? 'İnternet yok — bağlantı gelince tekrar dene'
+        : /QR süresi doldu/i.test(e?.message || '') ? "QR'ın süresi doldu — paneldeki QR'ı tekrar okut (yazdıkların duruyor)" : (e?.message || 'Kaydedilemedi'));
       if (!(e instanceof TypeError) && e?.status !== 429 && !(e?.status >= 500)) istek.current[anahtar] = null;
       setMesgul(false);
       return null;
@@ -443,7 +444,7 @@ function DevirIslem({ sube, jeton, did }) {
   const kabul = async (tutuyor) => {
     const r = await gonder(`/api/evvel-yeni/yoklama/devir/${encodeURIComponent(did)}/kabul`,
       { qr: jeton, surum: d?.surum, tutuyor, ...(tutuyor ? {} : { sayilan: say.replace(',', '.'), not: notY.trim() }) }, tutuyor ? 'kabul' : 'kabul-tutmuyor');
-    if (r) setSonuc({ baslik: tutuyor ? 'Devir tamam' : 'Devir kaydedildi', mesaj: r.mesaj });
+    if (r) { try { localStorage.removeItem(tKey); } catch { /* yok */ } setSonuc({ baslik: tutuyor ? 'Devir tamam' : 'Devir kaydedildi', mesaj: r.mesaj }); }
     else yukle();
   };
   const girisYap = async () => {

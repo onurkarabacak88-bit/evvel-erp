@@ -328,9 +328,11 @@ function DevirSatir({ s, duz, setDuz, mesgul, yap }) {
     <tr>
       <td style={{ color: R.not }}>{gunKisa(s.gun)}</td>
       <td style={{ color: R.not }}>{s.sube || '—'}</td>
-      <td><b>{s.devreden || '?'}</b> → <b>{s.devralan || '?'}</b></td>
-      <td style={num}>{tlYazi(s.sayilan)}</td>
-      <td style={{ color: R.metin2 }}>{s.bardak?.length ? bardakOzet(s.bardak) : '—'}</td>
+      <td><b>{s.devreden || '?'}</b> → <b>{s.devralan || '?'}</b>{s.vekil && s.ustlenen ? <div style={{ fontSize: 12, color: R.not }}>{s.ustlenen} adına doldurdu</div> : null}</td>
+      <td style={num}>{s.sayilan == null ? '—' : tlYazi(s.sayilan)}{s.devralan_sayilan != null && <div style={{ fontSize: 12, color: R.kirmizi }}>devralan: {tlYazi(s.devralan_sayilan)}</div>}</td>
+      <td style={{ color: R.metin2 }}>{s.bardak?.length ? bardakOzet(s.bardak) : '—'}
+        {s.urunler?.length ? <div style={{ fontSize: 12 }}>{s.urunler.map((u) => `${u.ad} ${u.sayilan}`).join(' · ')}</div> : null}
+        {s.pasta != null ? <div style={{ fontSize: 12 }}>pasta {s.pasta}</div> : null}</td>
       <td style={{ ...num, color: R.not }} title="form · devretti · kabul">{s.panel || '—'} · {s.devreden_saat || '—'} · {s.devralan_saat || '—'}</td>
       <td>{devirCip(s)}</td>
       <td style={{ color: s.durum === 'tutmuyor' ? R.kirmizi : R.metin2, maxWidth: 220 }}>{s.not || '—'}</td>
@@ -343,8 +345,8 @@ function DevirSatir({ s, duz, setDuz, mesgul, yap }) {
               onClick={() => kapat('kapandi')}>Devir sayıldı</Dugme>
           </span>
         )}
-        {s.durum === 'tutmuyor' && !s.gorulen && <Dugme kucuk ana disabled={mesgul[s.id]} onClick={() => yap(s.id, `/evvel-yeni/yoklama/devir/${s.id}/gorundu`, {})}>Gördüm</Dugme>}
-        {s.durum === 'tutmuyor' && s.gorulen && <span style={{ fontSize: 12, color: R.not }}>görüldü: {s.gorulen}</span>}
+        {(s.durum === 'tutmuyor' || (s.durum === 'tamam' && s.vekil)) && !s.gorulen && <Dugme kucuk ana disabled={mesgul[s.id]} onClick={() => yap(s.id, `/evvel-yeni/yoklama/devir/${s.id}/gorundu`, {})}>Gördüm</Dugme>}
+        {(s.durum === 'tutmuyor' || (s.durum === 'tamam' && s.vekil)) && s.gorulen && <span style={{ fontSize: 12, color: R.not }}>görüldü: {s.gorulen}</span>}
       </td>
     </tr>
   );
