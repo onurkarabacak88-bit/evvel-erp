@@ -686,6 +686,23 @@ def _gece_isi_bitir(is_adi: str, tarih, sonuc: str = "ok") -> None:
         logger.warning("⏰ gece işi kapanışı yazılamadı (%s): %s", is_adi, e)
 
 
+def _eski_panel_zinciri_acik() -> bool:
+    """🔌 TEK ANAHTAR (Fable F7, 1 Kasım listesi madde 3): yeni şube paneli canlıya geçince (iş günü ≥ panel_baslangic) ESKİ panel
+    tablolarına (sube_operasyon_event, gorev_yoklama, sube_fire_bildirim, kasa_teslim, ciro_taslak, operasyon_defter) bakan gece
+    halkaları SUSAR — boşalan tablolardan sahte "kapanış girilmedi / açık / eksik" üretmesinler (WhatsApp günlük özet dahil).
+    SİLİNMEZ: ey_ayar 'eski_gece_zinciri' = 'acik' yazılırsa geri açılır; söküm 1 hafta canary sonra (E1 kesim listesi).
+    Emin olunamazsa (hata) eski davranış: açık."""
+    try:
+        from evvel_yeni_cekirdek import ayar_oku, is_gunu, panel_baslangic
+        with db() as (_c, cur):
+            if (ayar_oku(cur, "eski_gece_zinciri", "") or "").strip() == "acik":
+                return True
+            return is_gunu() < panel_baslangic(cur)
+    except Exception as e:  # noqa: BLE001
+        logger.warning(f"🔌 eski gece zinciri anahtarı okunamadı (açık sayıldı): {e}")
+        return True
+
+
 def _gece_yarisi_scheduler():
     """
     Her gece yarısı çalışır. Restart bağımlılığını kaldırır.
@@ -1019,8 +1036,9 @@ def _gece_yarisi_scheduler():
                 _r = ocr_yeniden_dene(limit=50)
                 logger.info(f"⏰ OCR gece kurtarma: {_r.get('kuyruga_alinan')} foto kuyruga alindi")
             _halka("ocr_kurtarma", _ocr_kurtarma)
-            _halka("recete_kontrol", lambda: __import__("recete_api").gece_recete_kontrol_ozeti())
-            _halka("degirmen", lambda: __import__("recete_api").gece_degirmen_izleme())
+            if _eski_panel_zinciri_acik():   # 🔌 eski URUN_AC / degirmen_sayac okur (reçete yeni sistemde İLERİDE)
+                _halka("recete_kontrol", lambda: __import__("recete_api").gece_recete_kontrol_ozeti())
+                _halka("degirmen", lambda: __import__("recete_api").gece_degirmen_izleme())
             _halka("kart_dongu", lambda: __import__("duyu_gorunumler").gece_kart_dongu_izleme())
             _halka("belge_kimlik", lambda: __import__("fatura_api").gece_belge_kimlik())
             # OCR RETRY (2026-08-08, sahip: "ileride de yaşamamak için önlem al"):
@@ -1052,7 +1070,8 @@ def _gece_yarisi_scheduler():
             _halka("bagsiz_giris",
                    lambda: __import__("duyu_bagsiz_giris").gece_bagsiz_giris_tara())
             _halka("fiyat_bandi", lambda: __import__("fatura_api").gece_fiyat_bandi_izleme())
-            _halka("personel_puan", lambda: __import__("personel_puan_api").gece_personel_puan_tara())
+            if _eski_panel_zinciri_acik():   # 🔌 eski panel olay / uyarı / not okur
+                _halka("personel_puan", lambda: __import__("personel_puan_api").gece_personel_puan_tara())
             _halka("agir_onhesap", lambda: __import__("duyu_gorunumler").gece_agir_onhesap())
             _halka("bag_defteri", lambda: __import__("duyu_gorunumler").bag_defteri_hesapla())
             _halka("ozsorgu", lambda: __import__("beyin_api").gece_ozsorgu())
@@ -1069,7 +1088,7 @@ def _gece_yarisi_scheduler():
                 logger.warning(f"⏰ Scheduler beyin sentez hatası: {e}")
 
             # Pazartesi — geçen haftanın kalem bazlı fire raporu
-            if bugun.weekday() == 0:  # 0 = Pazartesi
+            if bugun.weekday() == 0 and _eski_panel_zinciri_acik():  # 0 = Pazartesi · 🔌 eski sube_fire_bildirim okur
                 try:
                     from operasyon_stok_motor import haftalik_fire_hesapla
                     gecen_hf_basi = bugun - timedelta(days=7)
@@ -1155,23 +1174,24 @@ def _gece_yarisi_scheduler():
                 # Mühür polling'i (kapanis-bekleyen) zaten gün içinde otomatik
                 # kapatıyor; bu, hiç poll edilmeyen/açık kalan günün son
                 # yoklamalarını da kapatır (cikis_tip='otomatik', planlanan saat).
-                try:
-                    from gorev_api import otomatik_mesai_kapat as _oto_kapat
-                    with db() as (conn, cur):
-                        cur.execute("SELECT id::text AS id FROM subeler WHERE aktif=TRUE")
-                        _kap_subeler = cur.fetchall() or []
-                        _kap_toplam = 0
-                        for _ks in _kap_subeler:
-                            for _kt in (str(_dun), str(_bugun_tr())):
-                                try:
-                                    _kap_toplam += len(_oto_kapat(cur, _ks['id'], _kt))
-                                except Exception:
-                                    pass
-                        conn.commit()
-                    if _kap_toplam:
-                        logger.info(f"⏰ Otomatik mesai kapatma: {_kap_toplam} açık yoklama kapatıldı")
-                except Exception as _e:
-                    logger.warning(f"⏰ Otomatik mesai kapatma hatası: {_e}")
+                if _eski_panel_zinciri_acik():   # 🔌 1 Kasım: eski panel tablolarına bakan halka (tek anahtar)
+                    try:
+                        from gorev_api import otomatik_mesai_kapat as _oto_kapat
+                        with db() as (conn, cur):
+                            cur.execute("SELECT id::text AS id FROM subeler WHERE aktif=TRUE")
+                            _kap_subeler = cur.fetchall() or []
+                            _kap_toplam = 0
+                            for _ks in _kap_subeler:
+                                for _kt in (str(_dun), str(_bugun_tr())):
+                                    try:
+                                        _kap_toplam += len(_oto_kapat(cur, _ks['id'], _kt))
+                                    except Exception:
+                                        pass
+                            conn.commit()
+                        if _kap_toplam:
+                            logger.info(f"⏰ Otomatik mesai kapatma: {_kap_toplam} açık yoklama kapatıldı")
+                    except Exception as _e:
+                        logger.warning(f"⏰ Otomatik mesai kapatma hatası: {_e}")
 
                 # ── Fatura fotoğrafı saklama: 6 aydan eski "kanıt" görüntülerini sil
                 # (kayıt + OCR kalır; sadece ağır BYTEA düşer → DB şişmez) ──────────
@@ -1189,48 +1209,49 @@ def _gece_yarisi_scheduler():
                 except Exception as _e:
                     logger.warning(f"🧾 Fatura foto temizleme hatası: {_e}")
 
-                try:
-                    import truth_motor as _tm
-                    if _tm._global_aktif():
-                        with db() as (conn, cur):
-                            cur.execute("SELECT id::text AS id, ad FROM subeler WHERE aktif=TRUE")
-                            _subeler = cur.fetchall()
-                            _calisan = 0
-                            for _s in _subeler:
-                                _sid = _s['id']
-                                try:
-                                    if not _tm.sube_aktif_mi(cur, _sid):
-                                        continue
-                                    # Aynı gece restart olursa tekrar kaydetmesin
-                                    cur.execute(
-                                        "SELECT 1 FROM truth_motor_kararlar WHERE sube_id=%s AND tarih=%s::date LIMIT 1",
-                                        (_sid, str(_dun)),
-                                    )
-                                    if cur.fetchone():
-                                        continue
-                                    _veriler = _tm.veri_topla(cur, _sid, str(_dun))
-                                    _sonuc = _tm.motor_calistir(cur, _sid, str(_dun), _veriler)
-                                    if _sonuc.get("calisti"):
-                                        _calisan += 1
-                                except Exception as _e:
-                                    logger.warning(f"⏰ Akıllı Denetim {_s.get('ad')}: {_e}")
+                if _eski_panel_zinciri_acik():   # 🔌 1 Kasım: eski panel tablolarına bakan halka (tek anahtar)
+                    try:
+                        import truth_motor as _tm
+                        if _tm._global_aktif():
+                            with db() as (conn, cur):
+                                cur.execute("SELECT id::text AS id, ad FROM subeler WHERE aktif=TRUE")
+                                _subeler = cur.fetchall()
+                                _calisan = 0
+                                for _s in _subeler:
+                                    _sid = _s['id']
+                                    try:
+                                        if not _tm.sube_aktif_mi(cur, _sid):
+                                            continue
+                                        # Aynı gece restart olursa tekrar kaydetmesin
+                                        cur.execute(
+                                            "SELECT 1 FROM truth_motor_kararlar WHERE sube_id=%s AND tarih=%s::date LIMIT 1",
+                                            (_sid, str(_dun)),
+                                        )
+                                        if cur.fetchone():
+                                            continue
+                                        _veriler = _tm.veri_topla(cur, _sid, str(_dun))
+                                        _sonuc = _tm.motor_calistir(cur, _sid, str(_dun), _veriler)
+                                        if _sonuc.get("calisti"):
+                                            _calisan += 1
+                                    except Exception as _e:
+                                        logger.warning(f"⏰ Akıllı Denetim {_s.get('ad')}: {_e}")
 
-                                # ── Sprint L: Evo verisi geçmişte eksikse, şimdi
-                                # geldiyse son 3 günü yeniden değerlendir ──────────
-                                try:
-                                    _duzeltilen = _tm.evo_eksik_gunleri_yeniden_degerlendir(cur, _sid, gun_sayisi=3)
-                                    if _duzeltilen:
-                                        logger.info(f"⏰ Sprint L Evo telafi {_s.get('ad')}: {_duzeltilen}")
-                                except Exception as _e:
-                                    logger.warning(f"⏰ Sprint L Evo telafi {_s.get('ad')}: {_e}")
-                            conn.commit()
-                        logger.info(f"⏰ Akıllı Denetim: {_calisan}/{len(_subeler)} şube — tarih={_dun}")
-                except Exception as e:
-                    logger.warning(f"⏰ Akıllı Denetim motor hatası: {e}")
+                                    # ── Sprint L: Evo verisi geçmişte eksikse, şimdi
+                                    # geldiyse son 3 günü yeniden değerlendir ──────────
+                                    try:
+                                        _duzeltilen = _tm.evo_eksik_gunleri_yeniden_degerlendir(cur, _sid, gun_sayisi=3)
+                                        if _duzeltilen:
+                                            logger.info(f"⏰ Sprint L Evo telafi {_s.get('ad')}: {_duzeltilen}")
+                                    except Exception as _e:
+                                        logger.warning(f"⏰ Sprint L Evo telafi {_s.get('ad')}: {_e}")
+                                conn.commit()
+                            logger.info(f"⏰ Akıllı Denetim: {_calisan}/{len(_subeler)} şube — tarih={_dun}")
+                    except Exception as e:
+                        logger.warning(f"⏰ Akıllı Denetim motor hatası: {e}")
 
-                # ── P3 Faz 1: sevkiyat çift-kolon tutarlılık duyusu (global, 1 kez) ──
-                # Audit Brain'in iç veri-bütünlüğü duyusu: yeni kolon tek gerçek
-                # kaynak mı? Bulguları öğrenme defterine yazar (salt okuma).
+                    # ── P3 Faz 1: sevkiyat çift-kolon tutarlılık duyusu (global, 1 kez) ──
+                    # Audit Brain'in iç veri-bütünlüğü duyusu: yeni kolon tek gerçek
+                    # kaynak mı? Bulguları öğrenme defterine yazar (salt okuma).
                 try:
                     from siparis_kontrol_kulesi import sevkiyat_kolon_tutarsizlik_tara
                     with db() as (conn, cur):
@@ -1262,27 +1283,29 @@ def _gece_yarisi_scheduler():
             # ciro olmayan günleri bulup ONAY BEKLEYEN öneri üretir (deftere yazmaz,
             # KAPANIS event'e dokunmaz). WhatsApp özetinden ÖNCE çalışır ki mesaj
             # taze önerileri içersin. Hata-yutar (Evo erişilemezse atlar).
-            try:
-                from ciro_taslak_api import eksik_gun_ciro_tara, EksikGunTaraBody
-                _ek = eksik_gun_ciro_tara(EksikGunTaraBody(gun_sayisi=35, uygula=True))
-                _ekyeni = _ek.get("oneri_sayisi", 0)
-                if _ekyeni:
-                    logger.info(f"⏰ Eksik ciro sweep: {_ekyeni} yeni Evo önerisi onay kuyruğuna düştü")
-                if _ek.get("evo_hata"):
-                    logger.warning(f"⏰ Eksik ciro sweep — Evo erişim sorunu: {_ek.get('evo_hata')}")
-            except Exception as e:
-                logger.warning(f"⏰ Eksik ciro sweep hatası: {e}")
+            if _eski_panel_zinciri_acik():   # 🔌 1 Kasım: eski panel tablolarına bakan halka (tek anahtar)
+                try:
+                    from ciro_taslak_api import eksik_gun_ciro_tara, EksikGunTaraBody
+                    _ek = eksik_gun_ciro_tara(EksikGunTaraBody(gun_sayisi=35, uygula=True))
+                    _ekyeni = _ek.get("oneri_sayisi", 0)
+                    if _ekyeni:
+                        logger.info(f"⏰ Eksik ciro sweep: {_ekyeni} yeni Evo önerisi onay kuyruğuna düştü")
+                    if _ek.get("evo_hata"):
+                        logger.warning(f"⏰ Eksik ciro sweep — Evo erişim sorunu: {_ek.get('evo_hata')}")
+                except Exception as e:
+                    logger.warning(f"⏰ Eksik ciro sweep hatası: {e}")
 
             # ── WHATSAPP GÜNLÜK ÖZET — gece 00:30 ──
-            try:
-                from whatsapp_bildirim import gunluk_ozet_gonder
-                sonuc = gunluk_ozet_gonder(_dun)
-                if sonuc.get("basarili"):
-                    logger.info("⏰ WhatsApp: Günlük özet gönderildi")
-                else:
-                    logger.warning(f"⏰ WhatsApp: Gönderilemedi — {sonuc.get('hata', '?')}")
-            except Exception as e:
-                logger.warning(f"⏰ WhatsApp hatası: {e}")
+            if _eski_panel_zinciri_acik():   # 🔌 1 Kasım: eski panel tablolarına bakan halka (tek anahtar)
+                try:
+                    from whatsapp_bildirim import gunluk_ozet_gonder
+                    sonuc = gunluk_ozet_gonder(_dun)
+                    if sonuc.get("basarili"):
+                        logger.info("⏰ WhatsApp: Günlük özet gönderildi")
+                    else:
+                        logger.warning(f"⏰ WhatsApp: Gönderilemedi — {sonuc.get('hata', '?')}")
+                except Exception as e:
+                    logger.warning(f"⏰ WhatsApp hatası: {e}")
 
             # ── FIRE/İADE KANIT FOTOĞRAFI TEMİZLİĞİ — depolama maliyeti için ──
             # 7 günden eski kanıt fotoğrafları (BYTEA) silinir. Hash'ler de gittiği
@@ -1302,18 +1325,19 @@ def _gece_yarisi_scheduler():
             # (kapanış 02:00'a kadar düne sayılır). Bu yüzden bugünün satırlarını
             # 02:30'da oluştururuz — o saatte is_gunu_tr() = bugün. Dashboard (ensure=False)
             # bu satırları hazır bulur. Idempotent; restart olursa startup telafi eder.
-            try:
-                hedef = datetime.combine(bugun_tr(), datetime.min.time()) + timedelta(hours=2, minutes=30)
-                _bekle2 = (hedef - dt_now_tr_naive()).total_seconds()
-                if _bekle2 > 0:
-                    _time.sleep(_bekle2)
-                from sube_operasyon import ensure_events_tum_subeler
-                with db() as (conn, cur):
-                    _ne = ensure_events_tum_subeler(cur)
-                    conn.commit()
-                logger.info(f"⏰ Scheduler: operasyon event satırları oluşturuldu — {_ne} şube")
-            except Exception as e:
-                logger.warning(f"⏰ Scheduler operasyon event hatası: {e}")
+            if _eski_panel_zinciri_acik():   # 🔌 1 Kasım: eski panel tablolarına bakan halka (tek anahtar)
+                try:
+                    hedef = datetime.combine(bugun_tr(), datetime.min.time()) + timedelta(hours=2, minutes=30)
+                    _bekle2 = (hedef - dt_now_tr_naive()).total_seconds()
+                    if _bekle2 > 0:
+                        _time.sleep(_bekle2)
+                    from sube_operasyon import ensure_events_tum_subeler
+                    with db() as (conn, cur):
+                        _ne = ensure_events_tum_subeler(cur)
+                        conn.commit()
+                    logger.info(f"⏰ Scheduler: operasyon event satırları oluşturuldu — {_ne} şube")
+                except Exception as e:
+                    logger.warning(f"⏰ Scheduler operasyon event hatası: {e}")
 
             # ENT-006: gece zinciri bitti — talebi KAPAT ki bayat sayılıp
             # yeniden koşulmasın. Hata dalında kapatMIYORUZ: yarıda kalan bir
@@ -1330,6 +1354,8 @@ def kapanis_hatirlatma_tara():
     """Kapanışa ~1 saat kala, o günün KAPANIŞ SORUMLUSUNA WhatsApp hatırlatma gönderir
     ('kapanış senden bekleniyor'). İZOLE: hata yutar. Gün başına 1 kez (subeler.
     kapanis_hatirlatma_tarih). Şube zaten mühürlendiyse / sorumlu telefonu yoksa atlar."""
+    if not _eski_panel_zinciri_acik():   # 🔌 yeni panelde kapanış hatırlatması YOK (sahip S7)
+        return
     try:
         from tr_saat import is_gunu_tr, dt_now_tr_naive
         from whatsapp_bildirim import whatsapp_gonder_numara
