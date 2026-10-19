@@ -277,6 +277,7 @@ def qr_kullan(cur, sube_id: str, dilim: int, personel_id: str, islem: str) -> bo
 def bugun_girenler(cur, sube_id: str, gun: Optional[date] = None) -> list:
     """PUBLIC: şubenin iş günündeki girişleri (kişi başına son satır): ad · giriş · çıkış."""
     yoklama_hazirla()
+    gece_kapat(cur)   # geçmiş günlerin açıkları kapanır (sahip: gece kapanır, iş bırakmaz)
     g = gun or is_gunu()
     cur.execute("""SELECT DISTINCT ON (y.personel_id) y.personel_id, p.ad, y.giris_ts, y.cikis_ts, y.cikis_tur,
                           EXISTS (SELECT 1 FROM ey_mola m WHERE m.personel_id=y.personel_id AND m.bitis_ts IS NULL) AS molada
@@ -297,17 +298,17 @@ def acik_mi(cur, sube_id: str, personel_id: str) -> bool:
     return bool(cur.fetchone())
 
 
-def eski_acik_kapat(cur, personel_id: str) -> int:
-    """Geçmiş iş gününden açık kalan giriş (çıkış yapılmamış) → 'cikissiz' işaretlenir: kişi bugün yeniden GİRİŞ yapabilir;
-    kayıt merkez Bekleyen işler'de "Çıkış yok" olarak KALIR (çıkış saatini merkez yazar). Süre uydurulmaz: çıkış = giriş anı
-    (0 saat) — merkez gerçek saati yazana dek. Açık kalmış molası da 0 dk kapanır (hak üretmez)."""
-    cur.execute("""UPDATE ey_yoklama SET cikis_ts=giris_ts, cikis_tur='cikissiz'
-                   WHERE personel_id=%s AND cikis_ts IS NULL AND is_gunu < %s RETURNING id""", (personel_id, is_gunu()))
+def gece_kapat(cur) -> int:
+    """PUBLIC: geçmiş iş gününden açık kalan girişleri ve molaları kapatır (tür 'gece_otomatik'). Çıkış saati bilinmediği için
+    giriş anı yazılır (süre uydurulmaz; ileride vardiya planı gelince oradan alınabilir). Maaşa etkisi YOK: maaş yoklamadan yalnız
+    "çalışılan gün" (giriş olan gün) ve mola süresini (yemek hakkı) okur; çıkış saatini okumaz. Bitirilmemiş mola: hak VERİLİR
+    (personel düğmeye basmayı unuttu diye yemek kesilmez — sahip kararıyla değiştirilebilir)."""
+    g = is_gunu()
+    cur.execute("""UPDATE ey_yoklama SET cikis_ts=giris_ts, cikis_tur='gece_otomatik'
+                   WHERE cikis_ts IS NULL AND is_gunu < %s RETURNING id""", (g,))
     n = len(cur.fetchall() or [])
-    cur.execute("SELECT baslangic_ts FROM ey_mola WHERE personel_id=%s AND bitis_ts IS NULL AND is_gunu < %s", (personel_id, is_gunu()))
-    m = cur.fetchone()
-    if m:
-        _mola_kapat(cur, personel_id, "cikissiz", ts=dict(m)["baslangic_ts"])
+    cur.execute("""UPDATE ey_mola SET bitis_ts=baslangic_ts, bitis_tur='gece_otomatik', sure_dk=0, yemek_hakki=TRUE
+                   WHERE bitis_ts IS NULL AND is_gunu < %s""", (g,))
     return n
 
 
@@ -388,6 +389,7 @@ def yemek_ozet(cur, bas: date, son: date) -> dict:
     """PUBLIC (Maaş yemek kalemi, F4): kişi → {calisilan_gun, hak_gun, dusen:[{gun, sure_dk}]} + müdür listesi.
     Çalışılan gün = QR girişi ∪ panel izi (F1a). Hak gün = molası ≤ limit ya da merkezin elle verdiği gün (K7; K8: molasız gün hak yok)."""
     yoklama_hazirla()
+    gece_kapat(cur)   # geçmiş günlerin açıkları kapanır (sahip: gece kapanır, iş bırakmaz)
     gunler: dict = {}
     cur.execute("SELECT personel_id, is_gunu FROM ey_yoklama WHERE is_gunu BETWEEN %s AND %s", (bas, son))
     for r in [dict(x) for x in cur.fetchall() or []]:
@@ -639,8 +641,7 @@ async def _telefon(request: Request, fn):
         with db() as (conn, cur):
             c = cihaz_coz(cur, request.headers, request.method, request.url.path, govde, tur="telefon")
             p = _personel(cur, c["personel_id"])
-            personel_kilidi(cur, p["id"])
-            eski_acik_kapat(cur, p["id"])   # sahip: dünkü girişi kapanmamış kişi bugün "Giriş yap" görsün
+            gece_kapat(cur)   # sahip: dünkü girişi kapanmamış kişi bugün "Giriş yap" görsün
             try:
                 veri = json.loads(govde) if govde else {}
             except ValueError:
@@ -766,9 +767,10 @@ def gunler(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = Fa
     yoklama_hazirla()
     with db() as (conn, cur):
         _merkez(cur, x_evvel_oturum)
+        gece_kapat(cur)
         if acik:
             cur.execute("""SELECT y.*, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
-                             LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE (y.cikis_ts IS NULL OR y.cikis_tur='cikissiz') AND y.is_gunu < %s
+                             LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE y.cikis_ts IS NULL AND y.is_gunu < %s
                             ORDER BY y.is_gunu, y.giris_ts""", (is_gunu(),))
         elif bas and son:
             cur.execute("""SELECT y.*, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
@@ -806,7 +808,7 @@ def duzelt(b: DuzeltBody, x_evvel_oturum: Optional[str] = Header(default=None)):
             personel_kilidi(cur, dict(k0)["personel_id"])   # Codex: telefondan mola başlatma ile yarışmasın
         cur.execute("SELECT * FROM ey_yoklama WHERE id=%s FOR UPDATE", (b.yoklama_id,))
         r = cur.fetchone()
-        if not r or (dict(r)["cikis_ts"] is not None and dict(r).get("cikis_tur") != "cikissiz"):
+        if not r or dict(r)["cikis_ts"] is not None:
             raise HTTPException(404, "Açık giriş bulunamadı")
         r = dict(r)
         from zoneinfo import ZoneInfo
@@ -1235,10 +1237,11 @@ def devir_gorundu(did: str, x_evvel_oturum: Optional[str] = Header(default=None)
 # ─────────────────────────── Bekleyen işler (grup personel; personele gitmez) ───────────────────────────
 def _bekleyen(cur, baglam: dict) -> list:
     yoklama_hazirla()
+    gece_kapat(cur)   # geçmiş günlerin açıkları kapanır (sahip: gece kapanır, iş bırakmaz)
     out = []
     bugun = is_gunu()
     cur.execute("""SELECT y.id, y.is_gunu, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
-                     LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE (y.cikis_ts IS NULL OR y.cikis_tur='cikissiz') AND y.is_gunu < %s
+                     LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE y.cikis_ts IS NULL AND y.is_gunu < %s
                     ORDER BY y.is_gunu""", (bugun,))
     for r in [dict(x) for x in cur.fetchall() or []]:
         out.append({"tur": "yoklama_cikis_yok", "genel": True, "grup": "personel", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
