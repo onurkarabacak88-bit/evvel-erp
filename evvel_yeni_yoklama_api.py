@@ -450,6 +450,7 @@ def cihaz_davet(b: DavetBody, x_evvel_oturum: Optional[str] = Header(default=Non
                 raise HTTPException(404, "Şube bulunamadı")
             ad = dict(r)["ad"]
         cid = "cz-" + uuid.uuid4().hex[:16]
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_cihaz_hedef:" + (f"p:{b.personel_id}" if b.personel_id else f"s:{b.sube_id}"),))
         # sahip (2026-10-19): yeniden link üretilince ÖNCEKİ kullanılmamış link geçersiz olur (tek geçerli link)
         if b.personel_id:
             cur.execute("UPDATE ey_cihaz SET durum='iptal', iptal_zaman=NOW(), davet_hash=NULL WHERE tur='telefon' AND personel_id=%s AND durum='davet'",
@@ -478,6 +479,12 @@ def cihaz_bagla(b: BaglaBody):
     yoklama_hazirla()
     h = hashlib.sha256((b.davet or "").encode()).hexdigest()
     with db() as (conn, cur):
+        cur.execute("SELECT personel_id, sube_id, tur FROM ey_cihaz WHERE davet_hash=%s", (h,))
+        _h = cur.fetchone()
+        if _h:   # Codex: hedef kilidi satır kilidinden ÖNCE (iki cihaz aynı anda devreye girerse karşılıklı bekleme olmasın)
+            _h = dict(_h)
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                        ("ey_cihaz_hedef:" + (f"p:{_h['personel_id']}" if _h["tur"] == "telefon" else f"s:{_h['sube_id']}"),))
         cur.execute("SELECT * FROM ey_cihaz WHERE davet_hash=%s FOR UPDATE", (h,))
         c = cur.fetchone()
         if not c:
@@ -518,6 +525,10 @@ def cihaz_onayla(cid: str, x_evvel_oturum: Optional[str] = Header(default=None))
     yoklama_hazirla()
     with db() as (conn, cur):
         _merkez(cur, x_evvel_oturum)
+        cur.execute("SELECT sube_id FROM ey_cihaz WHERE id=%s", (cid,))
+        _s = cur.fetchone()
+        if _s:   # aynı hedef kilidi (bağlama / davet ile aynı sıra)
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_cihaz_hedef:s:" + str(dict(_s)["sube_id"]),))
         cur.execute("UPDATE ey_cihaz SET durum='aktif' WHERE id=%s AND durum='onay' AND tur='tablet' RETURNING id, sube_id", (cid,))
         r = cur.fetchone()
         if not r:

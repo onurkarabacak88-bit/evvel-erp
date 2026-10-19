@@ -358,7 +358,7 @@ def _olay(cur, **kw) -> Optional[str]:
     r = dict(cur.fetchone() or {})
     iptalli = r.get("son") is not None and r.get("iptal") is not None and r["iptal"] >= r["son"]
     vardi = r.get("son") is not None and not iptalli   # Fable: iptal edilen gün yeniden açılabilsin
-    if iptalli:   # Codex: aynı içerik iptal edilmiş eski sürümle "tekrar" sayılmasın → yeni sürüm
+    if r.get("iptal") is not None:   # Codex: iptal varsa içerik son iptale bağlanır → yeniden açılış yeni sürüm, aynı isteğin tekrarı yine "tekrar"
         kw["veri"] = {**(kw.get("veri") or {}), "iptal_sonrasi": str(r["iptal"])}
     oid = olay_yaz(cur, **kw)
     if vardi and oid is not None:
