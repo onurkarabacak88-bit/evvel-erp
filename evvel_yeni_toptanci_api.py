@@ -100,6 +100,8 @@ def _toptanci_ddl(cur) -> None:
         id TEXT PRIMARY KEY, teslim_id TEXT NOT NULL, sayfa INT NOT NULL, mime TEXT NOT NULL, boyut INT NOT NULL, veri BYTEA NOT NULL,
         sha256 TEXT NOT NULL, yukleyen TEXT, kaynak TEXT NOT NULL, iptal BOOLEAN NOT NULL DEFAULT FALSE, iptal_kim TEXT, iptal_zaman TIMESTAMPTZ,
         zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    cur.execute("ALTER TABLE ey_toptanci_belge ADD COLUMN IF NOT EXISTS iptal_kim TEXT")
+    cur.execute("ALTER TABLE ey_toptanci_belge ADD COLUMN IF NOT EXISTS iptal_zaman TIMESTAMPTZ")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_top_belge ON ey_toptanci_belge (teslim_id) WHERE NOT iptal")
     from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
     if not ayar_oku(cur, "fiyat_gecmis_kopya"):   # bir kez: bugünkü fiyatlar 1 Ekim'den geçerli ilk satır olur
@@ -616,18 +618,18 @@ async def _govde_oku(request: Request) -> dict:
         n = 0
     if n > GOVDE_MAX:
         raise HTTPException(413, "Dosya çok büyük")
-    ham = b""
+    ham = bytearray()
     async for parca in request.stream():
-        ham += parca
+        ham.extend(parca)
         if len(ham) > GOVDE_MAX:
             raise HTTPException(413, "Dosya çok büyük")
     try:
-        v = json.loads(ham or b"{}")
+        v = json.loads(bytes(ham) or b"{}")
     except ValueError:
         raise HTTPException(400, "İstek okunamadı")
     if not isinstance(v, dict):
         raise HTTPException(400, "İstek okunamadı")
-    return {"ham": ham, "v": v}
+    return {"ham": bytes(ham), "v": v}
 
 
 @router.post("/teslim/{tid}/belge")

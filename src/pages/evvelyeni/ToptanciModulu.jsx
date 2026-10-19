@@ -25,6 +25,100 @@ const fiyataGit = (urunId) => {
   window.history.pushState({}, '', `/evvel-yeni/urun_fiyatlari${urunId ? `?urun=${encodeURIComponent(urunId)}` : '?eksik=1'}`);
   window.dispatchEvent(new window.PopStateEvent('popstate'));
 };
+// ── 📒 TOPTANCI KİTABI (E3, sahip 2026-10-19): her teslimin faturası (foto/PDF) sayfa sayfa — belge teslimin EKİ (E1) ──
+const oturumBaslik = () => { try { const j = (localStorage.getItem('evvel_oturum') || '').trim(); return j ? { 'X-Evvel-Oturum': j } : {}; } catch { return {}; } };
+const BASE_URL = import.meta.env.VITE_API_URL || '';
+const belgeBlob = async (id) => {   // sayfa ham bayt (img / PDF) — oturum başlığıyla
+  const r = await fetch(`${BASE_URL}/api/evvel-yeni/toptanci/belge/${encodeURIComponent(id)}`, { headers: oturumBaslik(), cache: 'no-store' });
+  if (!r.ok) throw new Error('Belge açılamadı');
+  return URL.createObjectURL(await r.blob());
+};
+const dosyaOku = (f) => new Promise((coz, red) => {   // PDF olduğu gibi; fotoğraf 1600 px JPEG'e küçültülür (telefondaki gibi)
+  if (f.type === 'application/pdf') {
+    const fr = new window.FileReader();
+    fr.onload = () => coz({ veri: fr.result, mime: 'application/pdf' });
+    fr.onerror = () => red(new Error('Dosya okunamadı'));
+    fr.readAsDataURL(f);
+    return;
+  }
+  const img = new window.Image();
+  const u = URL.createObjectURL(f);
+  img.onload = () => {
+    const o = Math.min(1, 1600 / Math.max(img.width, img.height));
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(img.width * o); cv.height = Math.round(img.height * o);
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+    URL.revokeObjectURL(u);
+    coz({ veri: cv.toDataURL('image/jpeg', 0.75), mime: 'image/jpeg' });
+  };
+  img.onerror = () => { URL.revokeObjectURL(u); red(new Error('Yalnız fotoğraf ya da PDF')); };
+  img.src = u;
+});
+
+function BelgeKitap({ h, t, onKapat, onToast, yenile }) {
+  const [sayfalar, setSayfalar] = useState(null);
+  const [i, setI] = useState(0);
+  const [url, setUrl] = useState(null);
+  const [mesgul, setMesgul] = useState(false);
+  const liste = useCallback(async () => {
+    try { const r = await api(`/evvel-yeni/toptanci/teslim/${encodeURIComponent(h.id)}/belgeler`); setSayfalar(r.sayfalar || []); }
+    catch (e) { onToast?.(e?.message || 'Belgeler okunamadı'); setSayfalar([]); }
+  }, [h.id, onToast]);
+  useEffect(() => { liste(); }, [liste]);
+  const s = sayfalar && sayfalar[i];
+  useEffect(() => {
+    if (!s) { setUrl(null); return undefined; }
+    let canli = true; let u = null;
+    belgeBlob(s.id).then((x) => { u = x; if (canli) setUrl(x); else URL.revokeObjectURL(x); }).catch((e) => onToast?.(e.message));
+    return () => { canli = false; if (u) URL.revokeObjectURL(u); };
+  }, [s?.id]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const ekle = async (e) => {
+    const f = e.target.files?.[0]; e.target.value = '';
+    if (!f || mesgul) return;
+    setMesgul(true);
+    try {
+      const d = await dosyaOku(f);
+      const r = await api(`/evvel-yeni/toptanci/teslim/${encodeURIComponent(h.id)}/belge`, { method: 'POST', body: d });
+      onToast?.(r.mesaj); await liste(); yenile?.();
+      if (r.sayfa) setI((sayfalar || []).length);
+    } catch (er) { onToast?.(er?.message || 'Eklenemedi'); }
+    setMesgul(false);
+  };
+  const kaldir = async () => {
+    if (!s || !window.confirm(`Sayfa ${s.sayfa} kaldırılsın mı? (silinmez — iz kalır)`)) return;
+    try { const r = await api(`/evvel-yeni/toptanci/belge/${encodeURIComponent(s.id)}/kaldir`, { method: 'POST', body: {} }); onToast?.(r.mesaj); setI(0); await liste(); yenile?.(); }
+    catch (er) { onToast?.(er?.message || 'Kaldırılamadı'); }
+  };
+  return (
+    <Pencere genis baslik={`📒 ${t.ad} · ${tKisa(h.tarih)} ${h.sube}`} onKapat={onKapat}>
+      <div style={{ fontSize: 13, color: R.not }}>{h.fatura_geldi === true ? `faturalı${h.fatura_no ? ` · no ${h.fatura_no}` : ''}` : h.fatura_geldi === false ? 'faturasız' : ''}
+        {h.borc != null ? ` · ${fmt(h.borc)} ₺ (${DURUM[h.durum].ad})` : ''}{h.teslim_alan ? ` · ${h.teslim_alan}` : ''}</div>
+      {sayfalar === null ? <div style={{ color: R.not }}>Yükleniyor…</div> : sayfalar.length === 0 ? (
+        <div style={{ padding: 18, textAlign: 'center', color: h.fatura_geldi ? R.kirmizi : R.not, fontWeight: 700 }}>📎❌ Bu teslimin belgesi yok{h.fatura_geldi ? ' — fatura gelmişti' : ''}</div>
+      ) : (<>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', justifyContent: 'center' }}>
+          <Dugme kucuk onClick={() => setI((x) => Math.max(0, x - 1))}>‹ Önceki</Dugme>
+          <b style={num}>Sayfa {i + 1} / {sayfalar.length}</b>
+          <Dugme kucuk onClick={() => setI((x) => Math.min(sayfalar.length - 1, x + 1))}>Sonraki ›</Dugme>
+        </div>
+        <div style={{ minHeight: 360, display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'var(--pi-bg)', borderRadius: 10, overflow: 'hidden' }}>
+          {!url ? <span style={{ color: R.not }}>Sayfa yükleniyor…</span>
+            : s.mime === 'application/pdf' ? <iframe title="belge" src={url} style={{ width: '100%', height: '70vh', border: 'none' }} />
+            : <img src={url} alt={`Sayfa ${s.sayfa}`} style={{ maxWidth: '100%', maxHeight: '70vh', objectFit: 'contain' }} />}
+        </div>
+        {s && <div style={{ fontSize: 12, color: R.not, textAlign: 'center' }}>{s.kaynak === 'telefon' ? '📱' : '🖥️'} {s.yukleyen} · {tKisa(s.zaman.slice(0, 10))}</div>}
+      </>)}
+      <div style={{ display: 'flex', gap: 8, justifyContent: 'space-between', flexWrap: 'wrap' }}>
+        <label style={{ ...alan, width: 'auto', cursor: mesgul ? 'default' : 'pointer', fontWeight: 700, opacity: mesgul ? 0.6 : 1 }}>
+          {mesgul ? 'Yükleniyor…' : '📎 Belge ekle (PDF / fotoğraf)'}
+          <input type="file" accept="application/pdf,image/*" disabled={mesgul} onChange={ekle} style={{ display: 'none' }} />
+        </label>
+        {s && <Dugme kucuk onClick={kaldir}>Bu sayfayı kaldır</Dugme>}
+      </div>
+    </Pencere>
+  );
+}
+
 const DURUM = {
   kesin: { ad: 'kesin', renk: R.yesil },
   tahmini: { ad: 'tahmini', renk: R.amber },
@@ -40,6 +134,7 @@ export default function ToptanciModulu({ onToast }) {
   const [mesgul, setMesgul] = useState(false);
   const [ara, setAra] = useState('');
   const [ck, setCk] = useState(null);   // 🔍 "nerede" çekmecesi
+  const [kitap, setKitap] = useState(null);   // 📒 {h, t} — teslimin belge sayfaları
   const donus = useRef(null);           // tutar girildikten sonra hangi toptancının izine dönülecek
   const no = useRef(0);
   const yukle = useCallback(async () => {
@@ -204,6 +299,8 @@ export default function ToptanciModulu({ onToast }) {
                   {t.eksik_tahmin_sayi > 0 && <Cip tur="sari">{t.eksik_tahmin_sayi} teslimde fiyatsız kalem</Cip>}
                   {t.vadesi_belirsiz > 0 && <Cip>vadesi tanımsız {fmt(t.vadesi_belirsiz)}</Cip>}
                   {t.sapma_sayi > 0 && <Cip tur="sari">⚠ {t.sapma_sayi} tutar tahminden %30+ farklı</Cip>}
+                  {(() => { const n = t.hareketler.filter((h) => h.tur === 'teslim' && h.belge_eksik).length; return n > 0 ? <Cip tur="kirmizi">📎❌ {n} faturalı teslimin belgesi yok</Cip> : null; })()}
+                  {(() => { const n = t.hareketler.filter((h) => h.tur === 'teslim' && !h.iptal && h.kesin_kaynak === 'şube').length; return n > 0 ? <Cip tur="sari">✔ {n} şube tutarı onay bekliyor</Cip> : null; })()}
                 </div>
               </div>
               <div style={{ fontSize: 12, color: R.not, textAlign: 'right' }}>açılış {fmt(t.acilis)} · kesin {fmt(t.kesin)} · tahmini {fmt(t.tahmini)}<br />ödenen {fmt(t.odenen)}</div>
@@ -235,6 +332,12 @@ export default function ToptanciModulu({ onToast }) {
                               {h.aciklama && <div style={{ fontSize: 11.5, color: R.not }}>{h.aciklama}</div>}
                               {(h.iz || []).map((z, i) => <div key={i} style={{ fontSize: 11, color: R.not }}>✎ {z.zaman} {z.kim}: {z.eski != null ? `${fmt(z.eski)} → ` : ''}{fmt(z.yeni)} · {z.sebep}</div>)}
                               {h.iptal && <span style={{ color: R.kirmizi }}> · İPTAL ({h.iptal_sebep})</span>}
+                              {!h.iptal && <div style={{ marginTop: 3, display: 'flex', gap: 6, flexWrap: 'wrap' }}>
+                                <button type="button" onClick={() => setKitap({ h, t })} style={{ border: 'none', background: 'none', padding: 0, font: 'inherit', cursor: 'pointer' }}>
+                                  {h.belge_sayi > 0 ? <Cip tur="yesil">📎 {h.belge_sayi} sayfa — aç</Cip> : h.belge_eksik ? <Cip tur="kirmizi">📎❌ belge yok — ekle</Cip> : <Cip>📎 belge ekle</Cip>}
+                                </button>
+                                {h.kesin_kaynak === 'şube' && h.kesin != null && <Cip tur="sari">tutarı şube yazdı</Cip>}
+                              </div>}
                             </> : <>💸 ödeme · {h.aciklama}{h.kartla ? ' · 💳' : ''}</>}
                           </td>
                           <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
@@ -244,6 +347,9 @@ export default function ToptanciModulu({ onToast }) {
                           </td>
                           <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                             {h.tur === 'teslim' && !h.iptal && <span style={{ display: 'inline-flex', gap: 4 }}>
+                              {h.kesin_kaynak === 'şube' && h.kesin != null && (   // E5: şubenin tutarı merkez onaylayınca kesinleşir + fiyat öğrenilir
+                                <Dugme kucuk ana onClick={() => { if (window.confirm(`Şubenin yazdığı ${fmt(h.kesin)} ₺ doğru mu? Onaylarsan ürün fiyatları bu tutardan öğrenilir.`)) gonder(`/evvel-yeni/toptanci/teslim/${h.id}/tutar`, { tutar: h.kesin, fatura_geldi: h.fatura_geldi !== false, fatura_no: h.fatura_no || null, sebep: 'şube tutarı merkezce onaylandı' }); }}>✔ Onayla</Dugme>
+                              )}
                               <Dugme kucuk ana={h.durum !== 'kesin'} onClick={() => setTutarForm({ h, tutar: h.kesin != null ? String(h.kesin) : '', fatura_no: h.fatura_no || '', sebep: '' })}>{h.durum === 'kesin' ? 'Düzelt' : 'Tutar gir'}</Dugme>
                               <Dugme kucuk onClick={() => { const s = window.prompt('Bu teslim neden iptal ediliyor?'); if (s) gonder(`/evvel-yeni/toptanci/teslim/${h.id}/iptal`, { sebep: s }); }}>İptal</Dugme>
                             </span>}
@@ -261,6 +367,7 @@ export default function ToptanciModulu({ onToast }) {
       </div>
 
       <Cekmece v={ck} onKapat={() => setCk(null)} />
+      {kitap && <BelgeKitap h={kitap.h} t={kitap.t} onKapat={() => setKitap(null)} onToast={onToast} yenile={yukle} />}
       {tutarForm && (
         <Pencere baslik={`🧾 Tutar — ${tKisa(tutarForm.h.tarih)} ${tutarForm.h.sube}`} onKapat={() => !mesgul && setTutarForm(null)}>
           {tutarForm.h.tahmini != null && <div style={{ fontSize: 13, color: R.not }}>Sistemin tahmini: {fmt(tutarForm.h.tahmini)} ₺</div>}
@@ -295,10 +402,10 @@ export default function ToptanciModulu({ onToast }) {
   );
 }
 
-function Pencere({ baslik, onKapat, children }) {
+function Pencere({ baslik, onKapat, children, genis }) {
   return (
     <div onClick={onKapat} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
-      <div style={{ ...kart, padding: 18, width: 'min(440px, 100%)', display: 'flex', flexDirection: 'column', gap: 12 }} onClick={(e) => e.stopPropagation()}>
+      <div style={{ ...kart, padding: 18, width: genis ? 'min(920px, 100%)' : 'min(440px, 100%)', maxHeight: '94vh', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }} onClick={(e) => e.stopPropagation()}>
         <b style={{ fontSize: 17 }}>{baslik}</b>{children}
       </div>
     </div>
