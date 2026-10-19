@@ -28,7 +28,7 @@ KASA_KILIT = 7_012_026         # para defterinin tek yazma kilidi (pg_advisory_x
 
 # ─────────────────────────── TARİH ───────────────────────────
 def bugun() -> date:
-    """Türkiye iş günü (02:00'ye kadar önceki gün — tr_saat.bugun_tr)."""
+    """Türkiye TAKVİM günü (tr_saat.bugun_tr — gece yarısında değişir). Şube iş günü (02:00) için is_gunu() kullan (Fable düzeltmesi)."""
     try:
         from tr_saat import bugun_tr
         return bugun_tr()

@@ -453,8 +453,8 @@ def acilis(sube_id: str, b: AcilisBody):
                        personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(kasa) / 100,
                        veri={"kasa_sayim": kasa, "sayim": satir, "istek_id": b.istek_id,
                              "pasta_toplam": None if b.pasta_toplam is None else _tam(b.pasta_toplam, "Pasta")})
-        d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=f"{KIM} · {p['ad']}", tur="gunluk",
-                      kaynak_ref=f"{kok}:sayim:{oid}") if satir and oid else None   # Codex: sürüme bağlı (iptal sonrası yeni sayım)
+        d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=f"{KIM} · {p['ad']}", tur="gunluk", gun=c["gun"],
+                      kaynak_ref=f"{kok}:sayim:{oid}") if satir and oid else None   # Codex: sürüme bağlı (iptal sonrası yeni sayım); Fable: iş günü
         return {"olay": oid, "tekrar": oid is None, "sayilan": len(satir) if d else 0, "mesaj": "Açılış kaydedildi", "saat_engeli": engel}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
@@ -522,8 +522,10 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
                      kaynak_ref=f"{kok}:teslim:{i}")
         # Codex BLOKER: geç kapanışta sayım BUGÜNÜN bakiyesine uygulanmaz (geçmiş gün uzlaştırılamaz) — olayda kalır, merkez görür
         gecmis = bool(c.get("merkez")) and c["gun"] != _bugun()
-        d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=kim, tur="gunluk",
-                      kaynak_ref=f"{kok}:sayim") if satir and not gecmis else None
+        # Fable: sayım kaynak_ref olay SÜRÜMÜNE bağlı (iptal sonrası yeniden kapanışta sayım yeniden yazılır; tekrar gönderimde yazılmaz)
+        # ve İŞ GÜNÜNE yazılır (00:00–02:00 kapanışı dünün hareketi)
+        d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=kim, tur="gunluk", gun=c["gun"],
+                      kaynak_ref=f"{kok}:sayim:{oid}") if satir and oid and not gecmis else None
         if satir and gecmis:
             log.warning("geç kapanış %s %s: ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)", sube_id, gun)
             cur.execute("""UPDATE ey_sube_olay SET veri = veri || '{"sayim_uygulanmadi": true}'::jsonb WHERE id=%s""", (oid,)) if oid else None

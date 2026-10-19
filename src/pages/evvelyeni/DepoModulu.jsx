@@ -21,14 +21,32 @@ const alan = {
   color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, minWidth: 0,
 };
 
+// Kimlik evreni (Fable altyapı denetimi): 1 Kasım'dan itibaren YENİ katalog (sunucu kendisi seçer); öncesinde geçiş (eski aktarım).
+// Merkez 1 Kasım'dan önce "Yeni katalog" görünümüne geçip yeni kimlikle açılış sayımı yapabilir. Seçim bu tarayıcıda hatırlanır.
+const evrenOku = () => { try { return localStorage.getItem('ey_depo_evren') || ''; } catch { return ''; } };
 function useOzet() {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
+  const [evren, setEvrenS] = useState(evrenOku);
+  const setEvren = (x) => { try { localStorage.setItem('ey_depo_evren', x); } catch { /* yok */ } setEvrenS(x); setV(null); };
   const yukle = useCallback(async () => {
-    try { setV(await api('/evvel-yeni/depo/ozet')); setHata(null); } catch (e) { setHata(e?.message || 'okunamadı'); }
-  }, []);
+    try { setV(await api('/evvel-yeni/depo/ozet' + (evren ? `?evren=${evren}` : ''))); setHata(null); } catch (e) { setHata(e?.message || 'okunamadı'); }
+  }, [evren]);
   useEffect(() => { yukle(); }, [yukle]);
-  return [v, hata, yukle];
+  return [v, hata, yukle, setEvren];
+}
+
+function EvrenSecimi({ v, setEvren }) {
+  if (!v) return null;
+  const yeni = v.evren === 'yeni';
+  return (
+    <div style={{ ...kart, padding: '8px 12px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+      <span style={{ color: R.not }}>Katalog:</span>
+      <b style={{ color: yeni ? R.yesil : R.not }}>{yeni ? '🆕 Yeni katalog (Evvel Yeni ürün kimlikleri)' : '🔁 Geçiş — eski sistemden aktarılan kayıtlar'}</b>
+      <span style={{ flex: 1 }} />
+      <Dugme kucuk onClick={() => setEvren(yeni ? 'eski' : 'yeni')}>{yeni ? 'Geçiş görünümüne dön' : 'Yeni kataloğa geç (1 Kasım açılış sayımı)'}</Dugme>
+    </div>
+  );
 }
 
 export default function DepoModulu({ gorunum, onToast }) {
@@ -39,7 +57,7 @@ export default function DepoModulu({ gorunum, onToast }) {
 }
 
 function Nerede() {
-  const [v, hata, yukle] = useOzet();
+  const [v, hata, yukle, setEvren] = useOzet();
   const [ara, setAra] = useState('');
   const [sadeceEksi, setSadeceEksi] = useState(false);
   const [ck, setCk] = useState(null);
@@ -73,6 +91,7 @@ function Nerede() {
       <style>{PI_CSS}</style>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
         <div><div className="pi-eyebrow">Evvel Yeni · Depo</div><h1 style={{ fontSize: 30 }}>Depo — Nerede?</h1></div>
+        <EvrenSecimi v={v} setEvren={setEvren} />
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {v.eksi_sayi > 0 && <Cip tur="kirmizi">{v.eksi_sayi} hücre eksi</Cip>}
           <label style={{ fontSize: 13, display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={sadeceEksi} onChange={(e) => setSadeceEksi(e.target.checked)} />yalnız eksiler</label>
@@ -188,7 +207,7 @@ function Yoldakiler({ onToast, mod }) {
 }
 
 function DepoSayim({ onToast }) {
-  const [v, hata, yukle] = useOzet();
+  const [v, hata, yukle, setEvren] = useOzet();
   const [konum, setKonum] = useState('');
   const [deger, setDeger] = useState({});
   const [acilis, setAcilis] = useState(false);
@@ -211,7 +230,7 @@ function DepoSayim({ onToast }) {
     if (!window.confirm(`${k?.ad} · ${satirlar.length} ürün ${acilis ? 'AÇILIŞ SAYIMI' : 'sayımı'} olarak kaydedilsin mi?`)) return;
     setMesgul(true);
     try {
-      const r = await api('/evvel-yeni/depo/sayim', { method: 'POST', body: { konum, satirlar, acilis } });
+      const r = await api('/evvel-yeni/depo/sayim', { method: 'POST', body: { konum, satirlar, acilis, evren: v.evren } });
       onToast?.(r.mesaj); setSonuc(r); setDeger({}); yukle();
     } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); } finally { setMesgul(false); }
   };
@@ -220,6 +239,7 @@ function DepoSayim({ onToast }) {
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <style>{PI_CSS}</style>
       <div><div className="pi-eyebrow">Evvel Yeni · Depo</div><h1 style={{ fontSize: 30 }}>Depo sayımı</h1></div>
+      <EvrenSecimi v={v} setEvren={(x) => { setEvren(x); setDeger({}); setKonum(''); }} />
       <div style={{ fontSize: 12.5, color: R.not }}>KÖR SAYIM: sistemin rakamı gösterilmez. Saydığın ürünün adedini yaz; boş bıraktığın ürün sayılmamış sayılır (0 değil).
         Kaydedince her ürün için fark (sayılan − sistem) iz bırakan bir hareket olarak yazılır. Konumdaki ilk sayım AÇILIŞ sayımıdır.</div>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center' }}>

@@ -53,7 +53,42 @@ def depo_hazirla(cur) -> None:
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_stok_sayim (
         id TEXT PRIMARY KEY, konum TEXT NOT NULL, is_gunu DATE NOT NULL, kim TEXT, acilis BOOLEAN NOT NULL DEFAULT FALSE,
         satirlar JSONB NOT NULL DEFAULT '[]'::jsonb, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    # Fable (altyapı denetimi): İKİ KİMLİK EVRENİ aynı defterde olmasın → her satır evrenini taşır. Okuyucular 1 Kasım'dan
+    # (panel_baslangic) itibaren YALNIZ yeni evreni okur; eski aktarım satırları arşiv olarak kalır (silinmez, karışmaz).
+    try:
+        with savepoint(cur, "sp_dp_evren"):
+            cur.execute("ALTER TABLE ey_stok_hareket ADD COLUMN IF NOT EXISTS yeni BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("ALTER TABLE ey_stok_sayim ADD COLUMN IF NOT EXISTS yeni BOOLEAN NOT NULL DEFAULT FALSE")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_kaynak ON ey_stok_hareket (yeni, kaynak, is_gunu)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_hedef ON ey_stok_hareket (yeni, hedef, is_gunu)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_bag ON ey_stok_hareket (bag)")
+            # bir kez: yeni katalog kimliğiyle yazılmış eski satırlar yeni evrene (yeni panel / merkez sayımı)
+            cur.execute("""UPDATE ey_stok_hareket SET yeni=TRUE WHERE NOT yeni AND urun_id IN (SELECT id::text FROM ey_urun)""")
+    except Exception:  # noqa: BLE001
+        log.warning("depo evren göçü yapılamadı — sonraki istekte yeniden", exc_info=True)
+        return
     _HAZIR = True
+
+
+def evren_yeni(cur) -> bool:
+    """PUBLIC: okuma evreni — panel_baslangic (1 Kasım) ve sonrası YENİ katalog (ey_urun), öncesi eski aktarım (geçiş)."""
+    from evvel_yeni_cekirdek import ayar_oku
+    try:
+        bas = date.fromisoformat((ayar_oku(cur, "panel_baslangic", "2026-11-01") or "2026-11-01")[:10])
+    except ValueError:
+        bas = date(2026, 11, 1)
+    return _bugun() >= bas
+
+
+def _ey_urun_dogrula(cur, idler) -> dict:
+    """Yeni evrene YALNIZ yeni katalog (ey_urun) kimliği yazılır — eski kimlik / kod / ad gelirse 400."""
+    from evvel_yeni_urun_api import urun_bilgi
+    idler = sorted({str(i) for i in idler if i})
+    b = urun_bilgi(cur, idler)
+    yok = [i for i in idler if i not in b]
+    if yok:
+        raise HTTPException(400, f"Ürün yeni katalogda yok ({len(yok)}) — listeyi yenileyin")
+    return b
 
 
 def _n(x) -> str:
@@ -90,12 +125,12 @@ def _depo_sube(cur) -> str:
     return depo_sube_id(cur) or "sube-tema"
 
 
-def _yaz(cur, rows: List[tuple]) -> int:
+def _yaz(cur, rows: List[tuple], yeni: bool = False) -> int:
     n = 0
     for r in rows:
-        cur.execute("""INSERT INTO ey_stok_hareket (id, kaynak_ref, tur, urun_id, urun_ad, adet, kaynak, hedef, is_gunu, olay_zaman, kim, aciklama, bag)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (kaynak_ref) DO NOTHING""",
-                    ("sh-" + uuid.uuid4().hex[:16],) + r)
+        cur.execute("""INSERT INTO ey_stok_hareket (id, kaynak_ref, tur, urun_id, urun_ad, adet, kaynak, hedef, is_gunu, olay_zaman, kim, aciklama, bag, yeni)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (kaynak_ref) DO NOTHING""",
+                    ("sh-" + uuid.uuid4().hex[:16],) + r + (yeni,))
         n += cur.rowcount
     return n
 
@@ -134,9 +169,21 @@ def _json_parca(acik: str, on: str) -> dict:
         return {"_okunamadi": True}   # Codex: eski defter 2000 karakterde kesiyor → sessiz kayıp olmasın, raporda say
 
 
+SENKRON_KESIM_GUN = 2   # eski panel 1 Kasım'da kapanır; geç düşen son kayıtlar için 2 gün sonra köprü TAMAMEN durur
+
+
 def senkron(cur) -> dict:
-    """Panel kayıtlarını deftere aktar (idempotent). Her kaynak kendi savepoint'inde — biri bozulursa diğerleri yazılır."""
+    """Panel kayıtlarını deftere aktar (idempotent). Her kaynak kendi savepoint'inde — biri bozulursa diğerleri yazılır.
+    KÖPRÜ (eski sistem → eski evren). panel_baslangic + 2 günden sonra ÇALIŞMAZ (Fable: geçiş günü çift sayım olmasın)."""
     depo_hazirla(cur)
+    if evren_yeni(cur):
+        from evvel_yeni_cekirdek import ayar_oku
+        try:
+            bas = date.fromisoformat((ayar_oku(cur, "panel_baslangic", "2026-11-01") or "2026-11-01")[:10])
+        except ValueError:
+            bas = date(2026, 11, 1)
+        if (_bugun() - bas).days >= SENKRON_KESIM_GUN:
+            return {"kesildi": True, "not": "Eski sistem köprüsü kapalı (1 Kasım kesimi)"}
     coz = _urun_haritasi(cur)
     depo = _depo_sube(cur)
     rapor = {}
@@ -273,11 +320,12 @@ def _otomatik_senkron() -> None:
         log.warning("depo otomatik senkron: %s", str(e)[:200])
 
 
-def _bakiyeler(cur) -> dict:
-    """{(urun_id, konum): adet} — iptal olmayan hareketlerden."""
-    cur.execute("""SELECT urun_id, konum, SUM(d) AS adet FROM (
-                     SELECT urun_id, hedef AS konum, adet AS d FROM ey_stok_hareket WHERE NOT iptal
-                     UNION ALL SELECT urun_id, kaynak AS konum, -adet AS d FROM ey_stok_hareket WHERE NOT iptal) x
+def _bakiyeler(cur, yeni: Optional[bool] = None) -> dict:
+    """{(urun_id, konum): adet} — iptal olmayan hareketlerden. yeni=True/False: yalnız o kimlik evreni; None: hepsi."""
+    q = "" if yeni is None else (" AND yeni" if yeni else " AND NOT yeni")
+    cur.execute(f"""SELECT urun_id, konum, SUM(d) AS adet FROM (
+                     SELECT urun_id, hedef AS konum, adet AS d FROM ey_stok_hareket WHERE NOT iptal{q}
+                     UNION ALL SELECT urun_id, kaynak AS konum, -adet AS d FROM ey_stok_hareket WHERE NOT iptal{q}) x
                    GROUP BY urun_id, konum""")
     return {(dict(r)["urun_id"], dict(r)["konum"]): int(dict(r)["adet"] or 0) for r in cur.fetchall() or []}
 
@@ -310,24 +358,26 @@ def hareket_yaz(cur, *, kaynak_ref: str, tur: str, urun_id: str, adet: int, kayn
         raise HTTPException(400, "Geçersiz konum")
     if not kaynak_ref or not urun_id:
         raise HTTPException(400, "kaynak_ref ve ürün gerekli")
+    b = _ey_urun_dogrula(cur, [urun_id])   # Fable: yeni evrene yalnız ey_urun kimliği
     _konum_kilidi(cur, kaynak, hedef)   # Codex: sayımla eşzamanlı hareket fark hesabını bozmasın
-    return _yaz(cur, [(kaynak_ref, tur, str(urun_id), urun_ad, adet, kaynak, hedef, gun or _bugun(), datetime.now(),
-                       kim, aciklama, bag)]) == 1
+    return _yaz(cur, [(kaynak_ref, tur, str(urun_id), urun_ad or b[str(urun_id)]["ad"], adet, kaynak, hedef, gun or _bugun(),
+                       datetime.now(), kim, aciklama, bag)], yeni=True) == 1
 
 
 def bakiye(cur, konum: Optional[str] = None, urun_id: Optional[str] = None) -> dict:
-    """PUBLIC: {(urun_id, konum): adet} — iptal olmayan hareketlerden (ayrı saklanan bakiye yok)."""
+    """PUBLIC: {(urun_id, konum): adet} — YENİ evren (ey_urun kimliği), iptal olmayan hareketlerden (ayrı saklanan bakiye yok)."""
     depo_hazirla(cur)
-    return {k: v for k, v in _bakiyeler(cur).items()
+    return {k: v for k, v in _bakiyeler(cur, yeni=True).items()
             if (konum is None or k[1] == konum) and (urun_id is None or k[0] == str(urun_id))}
 
 
 def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sayim", kaynak_ref: Optional[str] = None,
-              ad_coz=None) -> dict:
+              ad_coz=None, gun: Optional[date] = None, eski_evren: bool = False) -> dict:
     """PUBLIC: kör sayım → her sayılan ürün için FARK hareketi (sayılan − o anki defter). Boş bırakılan SAYILMAZ (0 sayılmaz).
     tur: 'sayim' (merkez) · 'acilis' (konumdaki açılış) · 'gunluk' (şube paneli: fark<0 = 'tuketim' (bardak satışı),
     fark>0 = 'sayim'). kaynak_ref verilirse aynı sayım ikinci kez yazılmaz ({'tekrar': True}) — kaynak_ref KONUMU içermeli
-    (ör. panel:kapanis:{şube}:{gün}; kilit konum bazlı)."""
+    (ör. panel:kapanis:{şube}:{gün}; kilit konum bazlı). gun: İŞ GÜNÜ (panel c['gun'] — gece 00:00–02:00 kapanışı dünün)
+    — verilmezse bugün. Yeni evren (varsayılan): yalnız ey_urun kimliği; eski_evren=True yalnız geçişte merkezin eski-katalog sayımı."""
     depo_hazirla(cur)
     if not konum.startswith("depo:"):
         raise HTTPException(400, "Sayım yalnız bir şube deposunda yapılır")
@@ -342,8 +392,13 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
             return {"sayim_id": sid, "tekrar": True, "kayit": [], "farklar": []}
     else:
         sid = "ss-" + uuid.uuid4().hex[:12]
-    B = _bakiyeler(cur)
-    gun = _bugun()
+    B = _bakiyeler(cur, yeni=not eski_evren)
+    gun = gun or _bugun()
+    if not eski_evren:
+        _b = _ey_urun_dogrula(cur, [x.get("urun_id") for x in satirlar if x.get("sayilan") not in (None, "")])
+        if ad_coz is None:
+            def ad_coz(u):   # noqa: E306
+                return (_b.get(str(u)) or {}).get("ad")
     rows, kayit, gorulen = [], [], set()
     for s in satirlar:
         v = s.get("sayilan")
@@ -378,9 +433,9 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
             rows.append((f"sayim:{sid}:{uid}", ht, uid, uad, abs(f_), kaynak, hedef, gun, datetime.now(), kim, acik, sid))
     if not kayit:
         raise HTTPException(400, "Hiç ürün sayılmadı")
-    cur.execute("INSERT INTO ey_stok_sayim (id, konum, is_gunu, kim, acilis, satirlar) VALUES (%s,%s,%s,%s,%s,%s::jsonb)",
-                (sid, konum, gun, kim, tur == "acilis", json.dumps(kayit, ensure_ascii=False)))
-    _yaz(cur, rows)
+    cur.execute("INSERT INTO ey_stok_sayim (id, konum, is_gunu, kim, acilis, satirlar, yeni) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s)",
+                (sid, konum, gun, kim, tur == "acilis", json.dumps(kayit, ensure_ascii=False), not eski_evren))
+    _yaz(cur, rows, yeni=not eski_evren)
     return {"sayim_id": sid, "tekrar": False, "kayit": kayit, "farklar": [k for k in kayit if k["fark"]]}
 
 
@@ -397,31 +452,39 @@ def _konumlar(cur) -> list:
 
 
 @router.get("/ozet")
-def depo_ozet():
-    """📦 NEREDE? — ürün × konum (kategori sırasıyla). Eski sistemin bakiyesi yalnız KARŞILAŞTIRMA için."""
+def depo_ozet(evren: Optional[str] = None):
+    """📦 NEREDE? — ürün × konum (kategori sırasıyla). 1 Kasım'dan itibaren YENİ katalog (ey_urun) ve yalnız yeni evren;
+    öncesinde eski aktarım (geçiş) — ?evren=yeni ile yeni katalog ön izlenir. Eski sistemin bakiyesi yalnız KARŞILAŞTIRMA için."""
     _otomatik_senkron()
     with db() as (conn, cur):
         depo_hazirla(cur)
+        yeni = evren == "yeni" if evren in ("yeni", "eski") else evren_yeni(cur)
         konumlar = _konumlar(cur)
-        B = _bakiyeler(cur)
-        cur.execute("""SELECT k.id::text AS kid, k.ad AS kat, k.emoji, k.sira AS ks, u.id::text AS id, u.ad, u.sira
-                         FROM siparis_urun u JOIN siparis_kategori k ON k.id = u.kategori_id
-                        WHERE u.aktif AND k.aktif ORDER BY k.sira, k.ad, u.sira, u.ad""")
-        katalog = [dict(r) for r in cur.fetchall() or []]
-        cur.execute("SELECT DISTINCT urun_id, urun_ad FROM ey_stok_hareket")
+        B = _bakiyeler(cur, yeni=yeni)
+        if yeni:
+            from evvel_yeni_urun_api import katalog as _ey_katalog
+            katalog = [{"kid": str(k["id"]), "kat": k["ad"], "emoji": k.get("emoji"), "id": str(u["id"]), "ad": u["ad"]}
+                       for k in _ey_katalog(cur) for u in k["urunler"]]
+        else:
+            cur.execute("""SELECT k.id::text AS kid, k.ad AS kat, k.emoji, k.sira AS ks, u.id::text AS id, u.ad, u.sira
+                             FROM siparis_urun u JOIN siparis_kategori k ON k.id = u.kategori_id
+                            WHERE u.aktif AND k.aktif ORDER BY k.sira, k.ad, u.sira, u.ad""")
+            katalog = [dict(r) for r in cur.fetchall() or []]
+        cur.execute("SELECT DISTINCT urun_id, urun_ad FROM ey_stok_hareket WHERE yeni = %s", (yeni,))
         hareketli = {dict(r)["urun_id"]: dict(r)["urun_ad"] for r in cur.fetchall() or []}
         eski = {}
-        try:
-            with savepoint(cur, "sp_dp_eski"):
-                coz_e = _urun_haritasi(cur)
-                cur.execute("SELECT sube_id::text AS sid, kalem_kodu, mevcut_adet FROM sube_depo_stok")
-                for r in cur.fetchall() or []:
-                    r = dict(r)
-                    k_ = (coz_e(r["kalem_kodu"])[0], f"depo:{r['sid']}")   # Fable: havuz kodlu (su, süt, bardak) da eşleşsin
-                    eski[k_] = eski.get(k_, 0) + int(r["mevcut_adet"] or 0)
-        except Exception:  # noqa: BLE001
-            pass
-        cur.execute("SELECT konum, MAX(is_gunu) AS son, BOOL_OR(acilis) AS acilis FROM ey_stok_sayim GROUP BY konum")
+        if not yeni:   # yalnız geçiş evreninde (eski sistem bakiyesiyle karşılaştırma)
+            try:
+                with savepoint(cur, "sp_dp_eski"):
+                    coz_e = _urun_haritasi(cur)
+                    cur.execute("SELECT sube_id::text AS sid, kalem_kodu, mevcut_adet FROM sube_depo_stok")
+                    for r in cur.fetchall() or []:
+                        r = dict(r)
+                        k_ = (coz_e(r["kalem_kodu"])[0], f"depo:{r['sid']}")   # Fable: havuz kodlu (su, süt, bardak) da eşleşsin
+                        eski[k_] = eski.get(k_, 0) + int(r["mevcut_adet"] or 0)
+            except Exception:  # noqa: BLE001
+                pass
+        cur.execute("SELECT konum, MAX(is_gunu) AS son, BOOL_OR(acilis) AS acilis FROM ey_stok_sayim WHERE yeni = %s GROUP BY konum", (yeni,))
         sayimlar = {dict(r)["konum"]: dict(r) for r in cur.fetchall() or []}
     kat_ad = {}
     satirlar = []
@@ -442,7 +505,7 @@ def depo_ozet():
     satirlar = [s for s in satirlar if any(s["bakiye"].values()) or s["kategori"] != "❔ Katalogda eşleşmeyen"]
     return {"konumlar": [{**k, "son_sayim": (sayimlar.get(k["id"]) or {}).get("son").isoformat() if (sayimlar.get(k["id"]) or {}).get("son") else None,
                           "acilis_sayimi": bool((sayimlar.get(k["id"]) or {}).get("acilis"))} for k in konumlar],
-            "satirlar": satirlar, "eksi_sayi": eksi, "senkron": _SON_SENKRON["sonuc"],
+            "satirlar": satirlar, "eksi_sayi": eksi, "senkron": _SON_SENKRON["sonuc"], "evren": "yeni" if yeni else "eski",
             "baslangic": BASLANGIC.isoformat(),
             "not": "Stok = 1 Ekim'den bu yana panel kayıtlarının toplamı (Ürün Teslim Al + kabul − sevk − ürün aç − fire ± sayım). "
                    "Konumda AÇILIŞ SAYIMI yapılana kadar rakamlar başlangıç stoğunu içermez. Tema'da ürün aç depodan düşer."}
@@ -515,6 +578,7 @@ class SayimBody(BaseModel):
     satirlar: List[dict]          # [{urun_id, sayilan}] — boş bırakılan ürün SAYILMAZ (0 sayılmaz)
     acilis: bool = False
     gun: Optional[str] = None
+    evren: Optional[str] = None   # 'yeni' | 'eski' — ekran hangi katalogla sayıyorsa (ozet.evren)
 
 
 @router.post("/sayim")
@@ -525,10 +589,14 @@ def depo_sayim(body: SayimBody, x_evvel_oturum: Optional[str] = Header(default=N
         if body.konum not in {k["id"] for k in _konumlar(cur)} or body.konum == "yolda":
             raise HTTPException(400, "Sayım yalnız bir şube deposunda yapılır")
         kim = _aktor(cur, x_evvel_oturum)
-        senkron(cur)   # Codex: aktarılmamış son kayıtlar farka girip sonra İKİNCİ kez yazılmasın
-        coz = _urun_haritasi(cur)
-        r = sayim_yaz(cur, konum=body.konum, satirlar=body.satirlar, kim=kim, tur="acilis" if body.acilis else "sayim",
-                      ad_coz=lambda u: coz(u)[1])
+        yeni = body.evren == "yeni" if body.evren in ("yeni", "eski") else evren_yeni(cur)
+        if yeni:   # Fable: merkez sayımı yeni katalog kimliğiyle (panel sayımıyla AYNI ürün kimliği)
+            r = sayim_yaz(cur, konum=body.konum, satirlar=body.satirlar, kim=kim, tur="acilis" if body.acilis else "sayim")
+        else:
+            senkron(cur)   # Codex: aktarılmamış son kayıtlar farka girip sonra İKİNCİ kez yazılmasın
+            coz = _urun_haritasi(cur)
+            r = sayim_yaz(cur, konum=body.konum, satirlar=body.satirlar, kim=kim, tur="acilis" if body.acilis else "sayim",
+                          ad_coz=lambda u: coz(u)[1], eski_evren=True)
     kayit = r["kayit"]
     return {"ok": True, "mesaj": f"{len(kayit)} ürün sayıldı · {sum(1 for k in kayit if k['fark'])} üründe fark yazıldı", "sayim_id": r["sayim_id"],
             "farklar": r["farklar"]}
