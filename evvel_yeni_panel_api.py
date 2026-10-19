@@ -25,7 +25,7 @@ from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
-from database import db
+from database import db, savepoint
 from evvel_yeni_cekirdek import ayar_oku, bekleyen_is_kaydet, is_gunu as _bugun, kurus as _kurus   # şube İŞ GÜNÜ (gece 02:00'ye kadar önceki gün)
 
 router = APIRouter(prefix="/api/evvel-yeni/panel", tags=["evvel-yeni-panel"])
@@ -327,16 +327,26 @@ def panel_durum(sube_id: str):
             yok["kapanis_sorumlusu"] = y.kapanis_sorumlusu(cur, str(sube_id), gun)
             if yok["qr_gerekli"]:   # ad listesi = bu şubede QR'la girmiş olanlar (K11: başka şubenin personeli dahil)
                 per = [{"id": g["personel_id"], "ad": g["ad"]} for g in yok["girenler"] if g["acik"]]
+        depo_acik, depo_yolda, depo_mu = _modul_acik("depo"), [], False
+        if depo_acik:   # Basamak 5 (Fable F3/F6): gelen paketler (ADET YOK — kör sayım) + Tema depo bayrağı; yumuşak bağ
+            try:
+                with savepoint(cur, "sp_panel_depo"):
+                    from evvel_yeni_depo_api import yoldakiler, _depo_sube
+                    depo_yolda = yoldakiler(cur, str(sube_id))
+                    depo_mu = _depo_sube(cur) == str(sube_id)
+            except Exception:  # noqa: BLE001
+                log.warning("panel durum: depo okunamadı", exc_info=True)
     def _u(x):
         return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici")}
-    return {"sube": {"id": s["id"], "ad": s["ad"]}, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
+    return {"sube": {"id": s["id"], "ad": s["ad"], "depo": depo_mu}, "depo_acik": depo_acik, "depo_yolda": depo_yolda, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
             "personel": per, "teslim_alanlar": [{"id": c, "ad": c.split(":")[1].capitalize()} for c in TESLIM_ALANLAR],
             "sayilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "sayim" and x.get("panel_sayim")]}
                         for k in kat],
             "acilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "acilinca"]} for k in kat],
             # Basamak 5 Ürün Aç: BÜTÜN katalog (aktif kategoriler; ürünlerde aktif bayrağı — "Pasifleri göster")
             "ac_katalog": [{"id": str(k.get("id")), "kategori": k["ad"], "emoji": k.get("emoji"),
-                            "urunler": [{**_u(x), "takip": x.get("takip") or "sayim", "aktif": bool(x.get("aktif", True))} for x in k["urunler"]]}
+                            "urunler": [{**_u(x), "takip": x.get("takip") or "sayim", "aktif": bool(x.get("aktif", True))} for x in k["urunler"]
+                                        if x.get("takip") != "gununde"]}   # pasta (gununde) açılmaz — girişte tüketildi
                            for k in kat_hepsi if k.get("aktif", True)],
             "bugun": bugunku, "yoklama": yok,
             # gün çizgisi (eski ana sayfa ①): AÇILIŞ · KAPANIŞ — kim, saat (KONTROL noktası yok: sahip istisnası 10)
@@ -912,6 +922,8 @@ def urun_ac(sube_id: str, b: UrunAcBody):
         p = _personel(cur, sube_id, b.personel_id)
         _pin(cur, p, b.pin)
         k = _kalemler(cur, b.kalemler, pasif_olur=True)
+        if any(x["takip"] == "gununde" for x in k):   # sahip P1: pasta depoya girerken tüketildi — açılırsa çift gider
+            raise HTTPException(400, "Pasta gibi gününde tüketilen ürün Ürün Aç'ta açılmaz — listeyi yenileyin")
         kok = f"panel:ac:{sube_id}:{b.istek_id}"
         oid = _olay(cur, sube_id=sube_id, tur="urun_ac", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], veri={"kalemler": k, "aciklama": (b.aciklama or "").strip()[:200] or None})

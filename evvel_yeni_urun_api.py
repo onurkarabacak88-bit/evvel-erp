@@ -34,7 +34,7 @@ router = APIRouter(prefix="/api/evvel-yeni/urun", tags=["evvel-yeni-urun"])
 log = logging.getLogger(__name__)
 BIRIMLER = ("adet", "paket", "kutu", "şişe", "rulo")      # sayım birimi (tam sayı); kg / lt miktar zinciri ondalığa geçince
 FATURA_BIRIMLER = ("adet", "paket", "kutu", "koli", "şişe", "rulo")
-TAKIPLER = ("sayim", "acilinca")
+TAKIPLER = ("sayim", "acilinca", "gununde")   # gununde (pasta, sahip P1 20 Eki): depoya girdiği an tüketilir — sayılmaz, açılmaz
 KDV_ORANLARI = (Decimal("0"), Decimal("0.01"), Decimal("0.10"), Decimal("0.20"))
 SURUM = 5
 _HAZIR = False

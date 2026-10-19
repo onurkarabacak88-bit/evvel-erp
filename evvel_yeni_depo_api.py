@@ -341,7 +341,7 @@ def _bakiyeler(cur, yeni: Optional[bool] = None) -> dict:
 
 
 # ─────────────────────────── PUBLIC SERVİSLER (yeni şube paneli + merkez aynı kapıdan yazar) ───────────────────────────
-TURLER = {"giris", "sevk", "kabul", "fazla_kabul", "ac", "tuketim", "fire", "sayim", "acilis_sayim", "iade", "kayip"}
+TURLER = {"giris", "sevk", "kabul", "fazla_kabul", "ac", "tuketim", "fire", "sayim", "acilis_sayim", "iade", "kayip", "hasar"}
 
 
 def _konum_gecerli(k: str) -> bool:
@@ -372,8 +372,22 @@ def hareket_yaz(cur, *, kaynak_ref: str, tur: str, urun_id: str, adet: int, kayn
         raise HTTPException(400, "kaynak_ref ve ürün gerekli")
     b = _ey_urun_dogrula(cur, [urun_id])   # Fable: yeni evrene yalnız ey_urun kimliği
     _konum_kilidi(cur, kaynak, hedef)   # Codex: sayımla eşzamanlı hareket fark hesabını bozmasın
-    return _yaz(cur, [(kaynak_ref, tur, str(urun_id), urun_ad or b[str(urun_id)]["ad"], adet, kaynak, hedef, gun or _bugun(),
-                       _simdi_tr(), kim, aciklama, bag)], yeni=True) == 1
+    ad = urun_ad or b[str(urun_id)]["ad"]
+    n = _yaz(cur, [(kaynak_ref, tur, str(urun_id), ad, adet, kaynak, hedef, gun or _bugun(), _simdi_tr(), kim, aciklama, bag)], yeni=True)
+    if n and tur in ("giris", "kabul"):
+        _gununde_tuket(cur, b[str(urun_id)], kaynak_ref=kaynak_ref, urun_id=str(urun_id), urun_ad=ad, adet=adet, konum=hedef,
+                       kim=kim, bag=bag, gun=gun or _bugun())
+    return n == 1
+
+
+def _gununde_tuket(cur, bilgi: dict, *, kaynak_ref: str, urun_id: str, urun_ad: str, adet: int, konum: str, kim: str,
+                   bag: Optional[str], gun: date) -> None:
+    """🍰 Sahip P1 (2026-10-20, Fable): takip='gununde' ürün (pasta) depoya GİRDİĞİ AN tüketilir → depo bakiyesi hep 0,
+    Gider = alınan × fiyat; vitrindeki pasta Bar'ın pasta sayımıyla izlenir (defterde ikinci sayım yok). AYNI bag → iptal birlikte."""
+    if (bilgi.get("takip") or "sayim") != "gununde" or adet <= 0 or not konum.startswith("depo:"):
+        return
+    _yaz(cur, [(f"{kaynak_ref}:gununde", "tuketim", urun_id, urun_ad, adet, konum, "dışarı:tuketim", gun, _simdi_tr(), kim,
+                "Gününde tüketilir (pasta) — girişte gider", bag)], yeni=True)
 
 
 def hareket_iptal(cur, *, bag: str, sebep: str) -> dict:
@@ -588,43 +602,56 @@ def depo_iz(urun_id: str, konum: str):
 
 
 @router.get("/yolda")
-def depo_yolda():
-    """Yoldakiler (sevk edildi, kabul edilmedi) + sevk ≠ kabul olanlar. GEC_KABUL_GUN'den eski olan kırmızı."""
+def depo_yolda(evren: Optional[str] = None):
+    """Yoldakiler (sevk edildi, kabul edilmedi) + sevk ≠ kabul olanlar. GEC_KABUL_GUN'den eski olan kırmızı.
+    ?evren=eski|yeni (Fable #3): 31 Ekim akşamı eski açık sevkler 1 Kasım sabahı da kapatılabilsin; deneme sevkleri önceden görülsün."""
     _otomatik_senkron()
     bugun = _bugun()
     with db() as (conn, cur):
         depo_hazirla(cur)
+        yeni_mi = evren == "yeni" if evren in ("yeni", "eski") else evren_yeni(cur)
         cur.execute("""SELECT bag, MAX(urun_ad) AS urun_ad, MAX(urun_id) AS urun_id,
                               SUM(CASE WHEN tur='sevk' THEN adet ELSE 0 END) AS sevk,
                               SUM(CASE WHEN tur='kabul' THEN adet ELSE 0 END) AS kabul,
                               COUNT(*) FILTER (WHERE tur='kabul') AS kabul_kayit,
                               BOOL_OR(tur='kabul' AND kaynak_ref LIKE '%%:merkez_kabul') AS merkez,
                               SUM(CASE WHEN tur IN ('kayip','iade_geri') THEN adet ELSE 0 END) AS cozulen,
+                              SUM(CASE WHEN tur='hasar' THEN adet WHEN tur IN ('hasar_fire','hasar_iade') THEN -adet ELSE 0 END) AS hasar,
+                              SUM(CASE WHEN tur='hasar' THEN adet ELSE 0 END) AS hasar_top,
                               SUM(CASE WHEN tur='fazla_kabul' THEN adet WHEN tur IN ('fazla_onay','fazla_ret') THEN -adet ELSE 0 END) AS fazla,
                               MIN(CASE WHEN tur='sevk' THEN is_gunu END) AS sevk_gunu,
                               MAX(CASE WHEN tur='sevk' THEN kaynak END) AS kaynak,
                               MAX(CASE WHEN tur IN ('kabul','fazla_kabul') THEN hedef END) AS hedef_k
-                         FROM ey_stok_hareket WHERE bag IS NOT NULL AND NOT iptal AND yeni = %s GROUP BY bag""", (evren_yeni(cur),))
+                         FROM ey_stok_hareket WHERE bag IS NOT NULL AND NOT iptal AND yeni = %s
+                          AND bag IN (SELECT bag FROM ey_stok_hareket WHERE tur='sevk' AND NOT iptal AND bag IS NOT NULL)
+                        GROUP BY bag""", (yeni_mi,))
         rs = [dict(r) for r in cur.fetchall() or []]
-        cur.execute("SELECT id, sube_id::text AS hedef FROM stok_yolda WHERE sevk_ts >= %s", (BASLANGIC,))
-        hedefler = {dict(r)["id"]: dict(r)["hedef"] for r in cur.fetchall() or []}
+        hedefler = _parti_hedefleri(cur)   # yeni sevk: hedef parti başlığında (kimlik kaynakta)
+        if not yeni_mi:   # eski aktarım (geçiş) — hedef eski stok_yolda'da; kesimde bu dal silinir
+            try:
+                with savepoint(cur, "sp_dp_yolda_eski"):
+                    cur.execute("SELECT id, sube_id::text AS hedef FROM stok_yolda WHERE sevk_ts >= %s", (BASLANGIC,))
+                    hedefler.update({dict(r)["id"]: dict(r)["hedef"] for r in cur.fetchall() or []})
+            except Exception:  # noqa: BLE001
+                log.warning("depo yolda: eski hedefler okunamadı", exc_info=True)
         konum_ad = {k["id"]: k["ad"] for k in _konumlar(cur)}
     bekleyen, fark = [], []
     for r in rs:
         hedef = r.get("hedef_k") or (f"depo:{hedefler.get(r['bag'])}" if hedefler.get(r["bag"]) else None)
         x = {"id": r["bag"], "urun": r["urun_ad"], "urun_id": r["urun_id"], "sevk": int(r["sevk"] or 0), "kabul": int(r["kabul"] or 0),
              "fazla": int(r["fazla"] or 0), "cozulen": int(r["cozulen"] or 0), "merkez_kabul": bool(r.get("merkez")), "sevk_gunu": r["sevk_gunu"].isoformat() if r["sevk_gunu"] else None,
-             "nereden": konum_ad.get(r["kaynak"], r["kaynak"]), "nereye": konum_ad.get(hedef, hedef)}
+             "hasar": int(r["hasar"] or 0), "nereden": konum_ad.get(r["kaynak"], r["kaynak"]), "nereye": konum_ad.get(hedef, hedef)}
         x["gun"] = (bugun - r["sevk_gunu"]).days if r["sevk_gunu"] else None
-        x["eksik"] = max(0, x["sevk"] - x["kabul"] - x["cozulen"])
+        x["eksik"] = max(0, x["sevk"] - x["kabul"] - x["cozulen"] - int(r["hasar_top"] or 0))
         if x["sevk"] and not r.get("kabul_kayit"):
             x["gec"] = bool(x["gun"] is not None and x["gun"] >= GEC_KABUL_GUN)
             bekleyen.append(x)
-        elif x["sevk"] and (x["eksik"] or x["fazla"] > 0):
+        elif x["sevk"] and (x["eksik"] or x["fazla"] > 0 or x["hasar"] > 0):
             fark.append(x)
     bekleyen.sort(key=lambda z: z["sevk_gunu"] or "")
     fark.sort(key=lambda z: z["sevk_gunu"] or "", reverse=True)
-    return {"bekleyen": bekleyen, "fark": fark, "gec_sayi": sum(1 for x in bekleyen if x["gec"]), "gec_gun": GEC_KABUL_GUN}
+    return {"bekleyen": bekleyen, "fark": fark, "gec_sayi": sum(1 for x in bekleyen if x["gec"]), "gec_gun": GEC_KABUL_GUN,
+            "evren": "yeni" if yeni_mi else "eski"}
 
 
 class SayimBody(BaseModel):
@@ -669,28 +696,33 @@ def merkez_kabul(yid: str, body: KabulBody, x_evvel_oturum: Optional[str] = Head
     with db() as (conn, cur):
         depo_hazirla(cur)
         kim = _aktor(cur, x_evvel_oturum)
-        cur.execute("SELECT * FROM ey_stok_hareket WHERE kaynak_ref=%s AND NOT iptal", (f"yolda:{yid}:sevk",))
+        on = _on_ek(yid)
+        hedef_sube = _hedef_sube(cur, yid)
+        if not hedef_sube:
+            raise HTTPException(404, "Sevkin hedef şubesi bulunamadı")
+        _konum_kilidi(cur, f"depo:{hedef_sube}")   # Fable F2: konum kilidi ÖNCE, sevk kilidi SONRA (her uçta aynı sıra)
+        _bag_kilidi(cur, yid)
+        cur.execute("SELECT * FROM ey_stok_hareket WHERE kaynak_ref=%s AND NOT iptal", (f"{on}:sevk",))
         sv = cur.fetchone()
         if not sv:
             raise HTTPException(404, "Sevk bulunamadı")
         sv = dict(sv)
-        cur.execute("SELECT sube_id::text AS hedef FROM stok_yolda WHERE id=%s", (yid,))
-        h = cur.fetchone()
-        if not h:
-            raise HTTPException(404, "Sevkin hedef şubesi bulunamadı")
-        cur.execute("SELECT 1 FROM ey_stok_hareket WHERE kaynak_ref=%s AND NOT iptal", (f"yolda:{yid}:kabul",))
+        cur.execute("SELECT 1 FROM ey_stok_hareket WHERE kaynak_ref=%s AND NOT iptal", (f"{on}:kabul",))
         if cur.fetchone():
             raise HTTPException(409, "Şube bu sevki zaten kabul etmiş")
-        n = _yaz(cur, [(f"yolda:{yid}:merkez_kabul", "kabul", sv["urun_id"], sv["urun_ad"], sv["adet"], "yolda", f"depo:{dict(h)['hedef']}",
+        n = _yaz(cur, [(f"{on}:merkez_kabul", "kabul", sv["urun_id"], sv["urun_ad"], sv["adet"], "yolda", f"depo:{hedef_sube}",
                         _bugun(), _simdi_tr(), kim, "Merkez adına kabul (şube kabul ederse onun adedi geçer)"
                         + (f" · {body.sebep}" if body.sebep else ""), yid)], yeni=bool(dict(sv).get("yeni")))   # Fable: sevkin evreni
+        if n and sv.get("yeni"):
+            _gununde_tuket(cur, _urun_bilgi1(cur, sv["urun_id"]), kaynak_ref=f"{on}:merkez_kabul", urun_id=sv["urun_id"], urun_ad=sv["urun_ad"],
+                           adet=int(sv["adet"]), konum=f"depo:{hedef_sube}", kim=kim, bag=yid, gun=_bugun())
     if not n:
         raise HTTPException(409, "Bu sevk zaten merkez adına kabul edilmiş")
     return {"ok": True, "mesaj": "Merkez adına kabul edildi"}
 
 
 class FarkCozBody(BaseModel):
-    karar: str                 # eksik: 'kayip' | 'iade' · fazla: 'fazla_onay' | 'fazla_ret'
+    karar: str                 # eksik: 'kayip' | 'iade' · fazla: 'fazla_onay' | 'fazla_ret' · hasarlı: 'hasar_fire' | 'hasar_iade'
     not_: Optional[str] = None
 
 
@@ -700,6 +732,9 @@ def fark_coz(yid: str, body: FarkCozBody, x_evvel_oturum: Optional[str] = Header
     with db() as (conn, cur):
         depo_hazirla(cur)
         kim = _aktor(cur, x_evvel_oturum)
+        cur.execute("SELECT DISTINCT kaynak, hedef FROM ey_stok_hareket WHERE bag=%s AND NOT iptal", (yid,))
+        _konum_kilidi(cur, *{k for r in cur.fetchall() or [] for k in (dict(r)["kaynak"], dict(r)["hedef"])})   # F2 sıra
+        _bag_kilidi(cur, yid)   # Codex #5: aynı anda iki çözüm çift yazmasın — kilit altında yeniden hesaplanır
         cur.execute("""SELECT tur, urun_id, urun_ad, adet, kaynak, hedef, yeni FROM ey_stok_hareket WHERE bag=%s AND NOT iptal""", (yid,))
         hs = [dict(x) for x in cur.fetchall() or []]
         if not hs:
@@ -707,7 +742,9 @@ def fark_coz(yid: str, body: FarkCozBody, x_evvel_oturum: Optional[str] = Header
         sev = next((h for h in hs if h["tur"] == "sevk"), None)
         sevk = sum(h["adet"] for h in hs if h["tur"] == "sevk")
         kab = sum(h["adet"] for h in hs if h["tur"] == "kabul")
-        coz = sum(h["adet"] for h in hs if h["tur"] in ("kayip", "iade_geri"))
+        coz = sum(h["adet"] for h in hs if h["tur"] in ("kayip", "iade_geri")) + sum(h["adet"] for h in hs if h["tur"] == "hasar")
+        hasar = sum(h["adet"] for h in hs if h["tur"] == "hasar") - sum(h["adet"] for h in hs if h["tur"] in ("hasar_fire", "hasar_iade"))
+        on = _on_ek(yid)
         fazla = sum(h["adet"] for h in hs if h["tur"] == "fazla_kabul") - sum(h["adet"] for h in hs if h["tur"] in ("fazla_onay", "fazla_ret"))
         hedef = next((h["hedef"] for h in hs if h["tur"] == "kabul"), None)
         u, ua = hs[0]["urun_id"], hs[0]["urun_ad"]
@@ -716,19 +753,368 @@ def fark_coz(yid: str, body: FarkCozBody, x_evvel_oturum: Optional[str] = Header
             kalan = sevk - kab - coz
             if kalan <= 0:
                 raise HTTPException(400, "Yolda kalan eksik yok")
-            row = (f"yolda:{yid}:coz:{body.karar}:{uuid.uuid4().hex[:6]}", "kayip" if body.karar == "kayip" else "iade_geri", u, ua, kalan, "yolda",
+            row = (f"{on}:coz:{body.karar}:{uuid.uuid4().hex[:6]}", "kayip" if body.karar == "kayip" else "iade_geri", u, ua, kalan, "yolda",
                    "dışarı:kayip" if body.karar == "kayip" else (sev or {}).get("kaynak"), _bugun(), _simdi_tr(), kim,
                    ("Eksik geldi → KAYIP" if body.karar == "kayip" else "Eksik geldi → kaynağa geri") + ek, yid)
         elif body.karar in ("fazla_onay", "fazla_ret"):
             if fazla <= 0 or not hedef:
                 raise HTTPException(400, "Askıda fazla yok")
-            row = (f"yolda:{yid}:coz:{body.karar}:{uuid.uuid4().hex[:6]}", body.karar, u, ua, fazla, "askida",
+            row = (f"{on}:coz:{body.karar}:{uuid.uuid4().hex[:6]}", body.karar, u, ua, fazla, "askida",
                    hedef if body.karar == "fazla_onay" else "dışarı:bilinmeyen", _bugun(), _simdi_tr(), kim,
                    ("Fazla kabul ONAYLANDI → şube stoğuna" if body.karar == "fazla_onay" else "Fazla kabul REDDEDİLDİ (birim hatası)") + ek, yid)
+        elif body.karar in ("hasar_fire", "hasar_iade"):   # sahip P3: hasarlı gelen askıda → merkez karar verir
+            if hasar <= 0:
+                raise HTTPException(400, "Askıda hasarlı yok")
+            row = (f"{on}:coz:{body.karar}:{uuid.uuid4().hex[:6]}", body.karar, u, ua, hasar, "askida",
+                   "dışarı:fire" if body.karar == "hasar_fire" else (sev or {}).get("kaynak"), _bugun(), _simdi_tr(), kim,
+                   ("Hasarlı geldi → FİRE" if body.karar == "hasar_fire" else "Hasarlı geldi → kaynağa geri") + ek, yid)
         else:
-            raise HTTPException(400, "karar: kayip | iade | fazla_onay | fazla_ret")
+            raise HTTPException(400, "karar: kayip | iade | fazla_onay | fazla_ret | hasar_fire | hasar_iade")
+        if not row[6]:
+            raise HTTPException(400, "Sevkin kaynağı bulunamadı")
         _yaz(cur, [row], yeni=bool(hs[0].get("yeni")))   # Fable: çözüm sevkin evreninde (aksi hâlde yeni evrende sevk hep 'yolda')
+        if body.karar == "fazla_onay" and hs[0].get("yeni"):
+            _gununde_tuket(cur, _urun_bilgi1(cur, u), kaynak_ref=row[0], urun_id=u, urun_ad=ua, adet=fazla, konum=hedef, kim=kim, bag=yid,
+                           gun=_bugun())
     return {"ok": True, "mesaj": "Fark çözüldü"}
+
+
+# ═══════════════════════ 🚚 SEVK ET ⇄ DEPODAN GELEN (Basamak 5 — sahip P1–P4 + Fable/Codex 20 Eki) ═══════════════════════
+# Başlık = Depo'nun KENDİ küçük tablosu `ey_sevk_parti` (merkez sevki bir şube olayı değil; Sipariş sonra parti_id'ye bağlanır).
+# Satırlar = mevcut ey_stok_hareket: her ÜRÜN ayrı satır, bag = sevk:{parti}:{i} (/yolda, fark çöz, merkez kabul tek-ürün varsayar).
+# Ref ailesi `sevk:` — eski köprünün `yolda:` ailesinden ayrı (Codex #4 / Fable F1: köprü iptali yeni satıra dokunmasın).
+_SEVK_HAZIR = False
+
+
+def _sevk_hazirla(cur) -> None:
+    """Çağıranın işleminde, savepoint + lock_timeout; YALNIZ eksikse kurar (19 Eki dersi: ayrı bağlantıda DDL yok)."""
+    global _SEVK_HAZIR
+    if _SEVK_HAZIR:
+        return
+    depo_hazirla(cur)
+    cur.execute("SELECT to_regclass('ey_sevk_parti') IS NOT NULL AS v")
+    if not dict(cur.fetchone() or {}).get("v"):
+        try:
+            with savepoint(cur, "sp_ey_sevk_hazirla"):
+                cur.execute("SET LOCAL lock_timeout = '3s'")
+                cur.execute("""CREATE TABLE IF NOT EXISTS ey_sevk_parti (
+                    id TEXT PRIMARY KEY, kaynak TEXT NOT NULL, hedef TEXT NOT NULL, kim TEXT, istek_id TEXT UNIQUE, notu TEXT,
+                    is_gunu DATE NOT NULL, kalemler JSONB NOT NULL DEFAULT '[]'::jsonb, iptal BOOLEAN NOT NULL DEFAULT FALSE,
+                    iptal_kim TEXT, iptal_zaman TIMESTAMPTZ, iptal_sebep TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+                cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_sevk_parti_hedef ON ey_sevk_parti (hedef, iptal)")
+                cur.execute("SET LOCAL lock_timeout = DEFAULT")
+        except Exception:  # noqa: BLE001
+            log.warning("sevk partisi tablosu kurulamadı", exc_info=True)
+            raise HTTPException(503, "Depo hazırlanıyor — birkaç saniye sonra tekrar dene")
+        return   # bayrak ancak bir SONRAKİ çağrıda nesne görülünce açılır
+    _SEVK_HAZIR = True
+
+
+def _var_tablo(cur, ad: str) -> bool:
+    cur.execute("SELECT to_regclass(%s) IS NOT NULL AS v", (ad,))
+    return bool(dict(cur.fetchone() or {}).get("v"))
+
+
+def _on_ek(bag: str) -> str:
+    """Satır ref öneki: yeni sevk = bag'in kendisi (sevk:{parti}:{i}); eski aktarım = yolda:{stok_yolda id}."""
+    return bag if str(bag).startswith("sevk:") else f"yolda:{bag}"
+
+
+def _parti_id(bag: str) -> Optional[str]:
+    p = str(bag).split(":")
+    return p[1] if len(p) >= 3 and p[0] == "sevk" else None
+
+
+def _parti_hedefleri(cur) -> dict:
+    """{bag: hedef_sube} — yeni sevkler parti başlığından (tablo yoksa boş)."""
+    if not _var_tablo(cur, "ey_sevk_parti"):
+        return {}
+    cur.execute("""SELECT h.bag, p.hedef FROM ey_stok_hareket h JOIN ey_sevk_parti p ON h.bag LIKE 'sevk:' || p.id || ':%'
+                    WHERE h.tur='sevk' AND h.bag LIKE 'sevk:%'""")
+    return {dict(r)["bag"]: dict(r)["hedef"] for r in cur.fetchall() or []}
+
+
+def _hedef_sube(cur, bag: str) -> Optional[str]:
+    pid = _parti_id(bag)
+    if pid:
+        if not _var_tablo(cur, "ey_sevk_parti"):
+            return None
+        cur.execute("SELECT hedef FROM ey_sevk_parti WHERE id=%s", (pid,))
+        r = cur.fetchone()
+        return dict(r)["hedef"] if r else None
+    try:   # eski aktarım (kesimde silinir)
+        with savepoint(cur, "sp_dp_hedef_eski"):
+            cur.execute("SELECT sube_id::text AS hedef FROM stok_yolda WHERE id=%s", (bag,))
+            r = cur.fetchone()
+            return dict(r)["hedef"] if r else None
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _bag_kilidi(cur, bag: str) -> None:
+    """Sevk kalemi kilidi — Fable F2: HER uçta konum kilidinden SONRA alınır."""
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_sevk_bag:" + str(bag),))
+
+
+def _urun_bilgi1(cur, urun_id) -> dict:
+    from evvel_yeni_urun_api import urun_bilgi
+    return urun_bilgi(cur, [str(urun_id)]).get(str(urun_id)) or {}
+
+
+def _is_gunu() -> date:
+    from evvel_yeni_cekirdek import is_gunu
+    return is_gunu()   # Codex #11: depo da panel gibi İŞ GÜNÜ (00–02 önceki gün)
+
+
+def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], kim: str, istek_id: str,
+             notu: Optional[str] = None, gun: Optional[date] = None) -> dict:
+    """PUBLIC (merkez Sevk et · ileride Tema paneli 'Yola çıkar'): bir paket (parti) sevk eder. kalemler [{urun_id, adet}].
+    Aynı istek_id + aynı içerik → tekrar (ikinci kez yazılmaz); aynı istek_id farklı içerik → 409.
+    Eksi bakiye ENGELLENMEZ (sahip P2) — sonuçta 'eksi' listesi döner, Bekleyen işler'de türetilir."""
+    _sevk_hazirla(cur)
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    aktif = {s["id"] for s in _ey_subeler(cur)}
+    if kaynak_sube not in aktif or hedef_sube not in aktif:
+        raise HTTPException(400, "Şube bulunamadı")
+    if kaynak_sube == hedef_sube:
+        raise HTTPException(400, "Kaynak ile hedef aynı şube olamaz")
+    if not istek_id or len(str(istek_id)) > 80:
+        raise HTTPException(400, "istek_id gerekli")
+    top = {}
+    for x in kalemler or []:
+        a = x.get("adet")
+        if not isinstance(a, int) or isinstance(a, bool) or a <= 0:
+            raise HTTPException(400, "Adet 1 ya da daha fazla tam sayı olmalı")
+        top[str(x.get("urun_id") or "")] = top.get(str(x.get("urun_id") or ""), 0) + a
+    top.pop("", None)
+    if not top:
+        raise HTTPException(400, "En az bir ürün seç")
+    if len(top) > 80:
+        raise HTTPException(400, "Bir pakette en çok 80 ürün")
+    b = _ey_urun_dogrula(cur, list(top))
+    sira = sorted(top.items(), key=lambda kv: b[kv[0]]["ad"])
+    ozet = [{"urun_id": u, "ad": b[u]["ad"], "adet": a} for u, a in sira]
+    _konum_kilidi(cur, f"depo:{kaynak_sube}")
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_sevk_istek:" + str(istek_id),))
+    cur.execute("SELECT id, kaynak, hedef, kalemler, iptal FROM ey_sevk_parti WHERE istek_id=%s", (str(istek_id),))
+    r = cur.fetchone()
+    if r:
+        r = dict(r)
+        ayni = r["kaynak"] == kaynak_sube and r["hedef"] == hedef_sube and \
+            [(k["urun_id"], k["adet"]) for k in (r["kalemler"] or [])] == [(k["urun_id"], k["adet"]) for k in ozet]
+        if not ayni:
+            raise HTTPException(409, "Bu istek başka içerikle zaten gönderilmiş — sayfayı yenile")
+        return {"parti_id": r["id"], "tekrar": True, "kalem": len(ozet), "eksi": []}
+    pid = uuid.uuid4().hex[:12]
+    g = gun or _is_gunu()
+    cur.execute("""INSERT INTO ey_sevk_parti (id, kaynak, hedef, kim, istek_id, notu, is_gunu, kalemler)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s::jsonb)""",
+                (pid, kaynak_sube, hedef_sube, kim, str(istek_id), (notu or "").strip()[:300] or None, g, json.dumps(ozet, ensure_ascii=False)))
+    for i, x in enumerate(ozet):
+        bag = f"sevk:{pid}:{i}"
+        hareket_yaz(cur, kaynak_ref=f"{bag}:sevk", tur="sevk", urun_id=x["urun_id"], urun_ad=x["ad"], adet=x["adet"],
+                    kaynak=f"depo:{kaynak_sube}", hedef="yolda", kim=kim, bag=bag, gun=g,
+                    aciklama=(notu or "").strip()[:200] or None)
+    B = _bakiyeler(cur, yeni=True)
+    eksi = [x["ad"] for x in ozet if B.get((x["urun_id"], f"depo:{kaynak_sube}"), 0) < 0]
+    return {"parti_id": pid, "tekrar": False, "kalem": len(ozet), "eksi": eksi}
+
+
+def kabul_yaz(cur, *, bag: str, sayilan: int, hasarli: int = 0, kim: str, gun: Optional[date] = None,
+              beklenen_hedef: Optional[str] = None) -> dict:
+    """PUBLIC (panel Depodan gelen): bir sevk kaleminin KÖR sayımla kabulü. sayılan = sağlam gelen; 0 da GERÇEK kayıttır ("hiç gelmedi").
+    · kabul = min(sağlam, sevk − hasarlı) yolda → depo:hedef · fazlası → askıda (fazla_kabul) · hasarlı (sahip P3) → askıda (hasar)
+    · merkez daha önce adına kabul ettiyse o iptal edilir (şubenin adedi geçer) · aynı adet ikinci kez → tekrar; farklı → 409."""
+    _sevk_hazirla(cur)
+    if not str(bag).startswith("sevk:"):
+        raise HTTPException(400, "Bu paket eski sistemden — merkez Yoldakiler'den kapatır")
+    for v in (sayilan, hasarli):
+        if not isinstance(v, int) or isinstance(v, bool) or v < 0 or v > 100000:
+            raise HTTPException(400, "Sayı 0 ya da daha büyük tam sayı olmalı")
+    pid = _parti_id(bag)
+    cur.execute("SELECT hedef, iptal FROM ey_sevk_parti WHERE id=%s", (pid,))
+    p = cur.fetchone()
+    if not p or dict(p)["iptal"]:
+        raise HTTPException(404, "Paket bulunamadı ya da merkez iptal etti")
+    hedef = dict(p)["hedef"]
+    if beklenen_hedef and beklenen_hedef != hedef:
+        raise HTTPException(403, "Bu paket başka şubeye gönderilmiş")
+    _konum_kilidi(cur, f"depo:{hedef}")   # F2: konum ÖNCE
+    _bag_kilidi(cur, bag)                  # F2: kalem SONRA
+    cur.execute("SELECT * FROM ey_stok_hareket WHERE kaynak_ref=%s AND NOT iptal", (f"{bag}:sevk",))
+    sv = cur.fetchone()
+    if not sv:
+        raise HTTPException(404, "Sevk satırı bulunamadı")
+    sv = dict(sv)
+    S = int(sv["adet"])
+    cur.execute("SELECT adet, aciklama FROM ey_stok_hareket WHERE kaynak_ref=%s AND NOT iptal", (f"{bag}:kabul",))
+    onceki = cur.fetchone()
+    if onceki:
+        o = dict(onceki)
+        if (o.get("aciklama") or "").endswith(f"[sayılan {sayilan} · hasarlı {hasarli}]"):
+            return {"tekrar": True, "kabul": int(o["adet"])}
+        raise HTTPException(409, "Bu ürün zaten kabul edildi — düzeltme merkezde (fark çöz)")
+    h = min(hasarli, S)
+    kab = min(sayilan, S - h)
+    fazla = (sayilan - kab) + (hasarli - h)
+    g = gun or _is_gunu()
+    ts = _simdi_tr()
+    cur.execute("""UPDATE ey_stok_hareket SET iptal=TRUE, iptal_sebep='şube kendisi kabul etti (onun adedi geçer)'
+                    WHERE kaynak_ref=%s AND NOT iptal""", (f"{bag}:merkez_kabul",))
+    if cur.rowcount:   # merkez adına kabulün gününde tüketimi de geri alınır
+        cur.execute("UPDATE ey_stok_hareket SET iptal=TRUE, iptal_sebep='merkez kabulü geri alındı' WHERE kaynak_ref=%s AND NOT iptal",
+                    (f"{bag}:merkez_kabul:gununde",))
+    satir = [(f"{bag}:kabul", "kabul", sv["urun_id"], sv["urun_ad"], kab, "yolda", f"depo:{hedef}", g, ts, kim,
+              f"Şube kör sayımla kabul [sayılan {sayilan} · hasarlı {hasarli}]", bag)]
+    if h:
+        satir.append((f"{bag}:hasar", "hasar", sv["urun_id"], sv["urun_ad"], h, "yolda", "askida", g, ts, kim,
+                      "Hasarlı geldi — merkez karar verecek (fire / iade)", bag))
+    if fazla:
+        satir.append((f"{bag}:fazla", "fazla_kabul", sv["urun_id"], sv["urun_ad"], fazla, "dışarı:bilinmeyen", "askida", g, ts, kim,
+                      f"Sevkten fazla geldi ({fazla}) — merkez doğrular", bag))
+    _yaz(cur, satir, yeni=True)   # 0 kabul de yazılır (hareket_yaz adet>0 ister — bilerek _yaz)
+    if kab:
+        _gununde_tuket(cur, _urun_bilgi1(cur, sv["urun_id"]), kaynak_ref=f"{bag}:kabul", urun_id=sv["urun_id"], urun_ad=sv["urun_ad"],
+                       adet=kab, konum=f"depo:{hedef}", kim=kim, bag=bag, gun=g)
+    return {"tekrar": False, "kabul": kab, "eksik": max(0, S - kab - h), "hasar": h, "fazla": fazla}
+
+
+def sevk_iptal(cur, *, parti_id: str, kim: str, sebep: str) -> dict:
+    """PUBLIC (merkez): paketin tamamını geri alır. Fable F5: herhangi bir kalem kabul/hasar/fazla aldıysa 409 (yarım iptal yok →
+    fark çöz). hareket_iptal'in 'sonradan sayıldıysa satır kalır' kuralı geçerli — kalan ürünler döner."""
+    _sevk_hazirla(cur)
+    cur.execute("SELECT kaynak, hedef, iptal, kalemler FROM ey_sevk_parti WHERE id=%s", (parti_id,))
+    p = cur.fetchone()
+    if not p:
+        raise HTTPException(404, "Paket bulunamadı")
+    p = dict(p)
+    if p["iptal"]:
+        return {"tekrar": True, "kalan": []}
+    _konum_kilidi(cur, f"depo:{p['kaynak']}", f"depo:{p['hedef']}")
+    baglar = [f"sevk:{parti_id}:{i}" for i in range(len(p["kalemler"] or []))]
+    for bg in baglar:
+        _bag_kilidi(cur, bg)
+    cur.execute("""SELECT 1 FROM ey_stok_hareket WHERE bag = ANY(%s) AND NOT iptal AND tur <> 'sevk' LIMIT 1""", (baglar,))
+    if cur.fetchone():
+        raise HTTPException(409, "Şube bu paketi (bir kısmını) kabul etmiş — geri alınamaz; farkı Sevk farkları'ndan çöz")
+    kalan = []
+    for bg in baglar:
+        kalan += hareket_iptal(cur, bag=bg, sebep=f"sevk geri alındı · {kim} · {sebep}"[:200])["kalan"]
+    cur.execute("UPDATE ey_sevk_parti SET iptal=TRUE, iptal_kim=%s, iptal_zaman=NOW(), iptal_sebep=%s WHERE id=%s",
+                (kim, (sebep or "")[:200], parti_id))
+    return {"tekrar": False, "kalan": kalan}
+
+
+def yoldakiler(cur, hedef_sube: str) -> list:
+    """PUBLIC (panel Depodan gelen): bu şubeye gelen, şubenin henüz KENDİSİ kabul etmediği paketler. ADET DÖNMEZ (kör sayım).
+    Merkez adına kabul edilmiş kalem de listede kalır (şube sayınca onun adedi geçer). Yeni evren (1 Kasım öncesi deneme sevkleri dahil)."""
+    if not _var_tablo(cur, "ey_sevk_parti"):
+        return []
+    cur.execute("""SELECT p.id, p.kaynak, p.is_gunu, p.notu, p.zaman, p.kalemler FROM ey_sevk_parti p
+                    WHERE p.hedef=%s AND NOT p.iptal AND p.zaman > NOW() - INTERVAL '30 days' ORDER BY p.zaman""", (hedef_sube,))
+    partiler = [dict(r) for r in cur.fetchall() or []]
+    if not partiler:
+        return []
+    cur.execute("""SELECT bag FROM ey_stok_hareket WHERE NOT iptal AND tur='kabul' AND kaynak_ref LIKE 'sevk:%%:kabul'
+                    AND bag LIKE ANY(%s)""", ([f"sevk:{p['id']}:%" for p in partiler],))
+    kabul = {dict(r)["bag"] for r in cur.fetchall() or []}
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
+    out = []
+    for p in partiler:
+        kal = [{"bag": f"sevk:{p['id']}:{i}", "urun_id": k["urun_id"], "ad": k["ad"]} for i, k in enumerate(p["kalemler"] or [])
+               if f"sevk:{p['id']}:{i}" not in kabul]
+        if kal:
+            out.append({"parti_id": p["id"], "nereden": ad.get(p["kaynak"], p["kaynak"]), "gun": p["is_gunu"].isoformat(),
+                        "not": p.get("notu"), "zaman": p["zaman"].isoformat(), "kalemler": kal, "toplam_kalem": len(p["kalemler"] or [])})
+    return out
+
+
+class _Kuru(Exception):
+    """1 Kasım öncesi merkez sevki DENEME: her şey yazılır, sonuç okunur, savepoint geri alınır."""
+
+
+class SevkBody(BaseModel):
+    hedef: str
+    kalemler: List[dict]          # [{urun_id, adet}]
+    istek_id: str
+    not_: Optional[str] = None
+    kaynak: Optional[str] = None  # boşsa merkez depo (Tanım'daki depo şubesi)
+
+
+@router.post("/sevk")
+def sevk_et(body: SevkBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """🚚 Merkez 'Sevk et'. 1 Kasım (panel_baslangic) öncesi DENEME: kaydedilmez, sonuç gösterilir (gerçek sevk eski sistemden)."""
+    with db() as (conn, cur):
+        _sevk_hazirla(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        if kim in ("oturumsuz", "bilinmiyor"):
+            raise HTTPException(401, "Merkez oturumu gerekli")
+        kaynak = body.kaynak or _depo_sube(cur)
+        kuru = not evren_yeni(cur)
+        sonuc = {}
+        try:
+            with savepoint(cur, "sp_sevk_et"):
+                sonuc = sevk_yaz(cur, kaynak_sube=kaynak, hedef_sube=body.hedef, kalemler=body.kalemler, kim=kim,
+                                 istek_id=body.istek_id, notu=body.not_)
+                if kuru:
+                    raise _Kuru()
+        except _Kuru:
+            pass
+    sonuc["kuru"] = kuru
+    sonuc["mesaj"] = ("🧪 DENEME — kaydedilmedi (1 Kasım'a kadar gerçek sevk eski sistemden). " if kuru else "") + \
+        (f"Paket zaten gönderilmişti ({sonuc['kalem']} ürün)" if sonuc.get("tekrar") else f"{sonuc['kalem']} ürün yola çıktı") + \
+        (f" · ⚠ depoda görünmeyen: {', '.join(sonuc['eksi'][:5])}" if sonuc.get("eksi") else "")
+    return sonuc
+
+
+class SevkIptalBody(BaseModel):
+    sebep: str
+
+
+@router.post("/sevk/{parti_id}/iptal")
+def sevk_geri_al(parti_id: str, body: SevkIptalBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    if len((body.sebep or "").strip()) < 3:
+        raise HTTPException(400, "Sebep yaz")
+    with db() as (conn, cur):
+        _sevk_hazirla(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        if kim in ("oturumsuz", "bilinmiyor"):
+            raise HTTPException(401, "Merkez oturumu gerekli")
+        r = sevk_iptal(cur, parti_id=parti_id, kim=kim, sebep=body.sebep.strip())
+    return {"ok": True, "mesaj": "Sevk geri alındı" + (f" · sayımla kesinleşen kaldı: {', '.join(r['kalan'])}" if r["kalan"] else ""), **r}
+
+
+@router.get("/sevkler")
+def sevkler(gun_sayisi: int = 14):
+    """Merkez: son paketler (başlık + kalem durumları) — Sevk et ekranının alt listesi."""
+    with db() as (conn, cur):
+        _sevk_hazirla(cur)
+        if not _var_tablo(cur, "ey_sevk_parti"):
+            return {"partiler": []}
+        cur.execute("""SELECT id, kaynak, hedef, kim, notu, is_gunu, kalemler, iptal, iptal_sebep, zaman FROM ey_sevk_parti
+                        WHERE zaman > NOW() - make_interval(days => %s) ORDER BY zaman DESC LIMIT 200""", (max(1, min(gun_sayisi, 90)),))
+        ps = [dict(r) for r in cur.fetchall() or []]
+        cur.execute("""SELECT bag, tur, SUM(adet) AS a FROM ey_stok_hareket WHERE NOT iptal AND bag LIKE 'sevk:%%'
+                        AND bag LIKE ANY(%s) GROUP BY bag, tur""", ([f"sevk:{p['id']}:%" for p in ps] or ["-"],))
+        T = {}
+        for r in cur.fetchall() or []:
+            r = dict(r)
+            T.setdefault(r["bag"], {})[r["tur"]] = int(r["a"] or 0)
+        from evvel_yeni_tanim_api import subeler as _ey_subeler
+        ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
+    out = []
+    for p in ps:
+        kal = []
+        for i, k in enumerate(p["kalemler"] or []):
+            t = T.get(f"sevk:{p['id']}:{i}", {})
+            kal.append({**k, "bag": f"sevk:{p['id']}:{i}", "kabul": t.get("kabul"), "hasar": t.get("hasar", 0), "fazla": t.get("fazla_kabul", 0)})
+        durum = "iptal" if p["iptal"] else ("kabul" if all(x["kabul"] is not None for x in kal) else
+                                          ("kismi" if any(x["kabul"] is not None for x in kal) else "yolda"))
+        out.append({"id": p["id"], "nereden": ad.get(p["kaynak"], p["kaynak"]), "nereye": ad.get(p["hedef"], p["hedef"]), "kim": p["kim"],
+                    "not": p["notu"], "gun": p["is_gunu"].isoformat(), "zaman": p["zaman"].isoformat(), "durum": durum,
+                    "iptal_sebep": p["iptal_sebep"], "kalemler": kal})
+    return {"partiler": out}
 
 
 @router.post("/senkron")
@@ -749,10 +1135,21 @@ def depo_isleri(cur) -> list:
                        AND SUM(CASE WHEN tur='kabul' THEN 1 ELSE 0 END) = 0
                        AND MIN(is_gunu) <= %s""", (evren_yeni(cur), _bugun() - timedelta(days=GEC_KABUL_GUN)))
     rs = [dict(r) for r in cur.fetchall() or []]
-    if not rs:
-        return []
-    return [{"tur": "depo_yolda", "grup": "tedarik", "id": "dy", "tarih": min(r["gun"] for r in rs).isoformat(), "ad": f"{len(rs)} sevk kalemi",
-             "sayi": len(rs), "ornek": ", ".join(str(r["urun"]) for r in rs[:3])}]
+    out = []
+    if rs:
+        out.append({"tur": "depo_yolda", "grup": "tedarik", "id": "dy", "tarih": min(r["gun"] for r in rs).isoformat(), "ad": f"{len(rs)} sevk kalemi",
+                    "sayi": len(rs), "ornek": ", ".join(str(r["urun"]) for r in rs[:3])})
+    if evren_yeni(cur):   # sahip P2 + Fable F4: sevk eksiye yazılabilir → saklanmaz, bakiyeden TÜRETİLİR (sayımla düzelince kendiliğinden kalkar)
+        eksi = {}
+        for (u, k), a in _bakiyeler(cur, yeni=True).items():
+            if a < 0 and k.startswith("depo:"):
+                eksi.setdefault(k, []).append(u)
+        if eksi:
+            ad = {x["id"]: x["ad"] for x in _konumlar(cur)}
+            out.append({"tur": "depo_eksi", "grup": "tedarik", "id": "de", "tarih": _bugun().isoformat(),
+                        "ad": " · ".join(f"{ad.get(k, k)}: {len(v)} ürün" for k, v in sorted(eksi.items())),
+                        "sayi": sum(len(v) for v in eksi.values())})
+    return out
 
 
 # 🧩 Bekleyen işler kayıt defterine (Kasa bu modülü tanımaz; modül kapanınca satırları da kalkar)
