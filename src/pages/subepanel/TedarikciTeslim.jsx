@@ -59,7 +59,6 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
     if (fatura === null) { setHata('🧾 Fatura geldi mi? — EVET ya da HAYIR seçin'); return; }
     if (ftTutar && !(tutarNum(ftTutar) > 0)) { setHata('Tutarı sayı olarak yazın (ör. 1250,50)'); return; }
     if (fatura === true && !(tutarNum(ftTutar) > 0)) { setHata('Fatura geldiyse faturadaki TOPLAM tutarı yazın'); return; }
-    if (fatura === true && !ftNo.trim()) { setHata('Fatura geldiyse fatura numarasını yazın'); return; }
     setOnay(1);
   };
   const kaydet = async () => {
@@ -141,7 +140,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
             {fatura !== null && (<>
               <label style={{ display: 'grid', gap: 4 }}><span style={{ fontSize: 13, color: C.soluk }}>{fatura ? 'Faturadaki TOPLAM tutar (₺) *' : 'Kâğıtta (irsaliye / fiş) tutar yazıyorsa ₺ — yazmıyorsa BOŞ bırak'}</span>
                 <input className="sp-in" inputMode="decimal" value={ftTutar} onChange={(e) => setFtTutar(tutar(e.target.value))} placeholder="0,00" /></label>
-              {fatura && <label style={{ display: 'grid', gap: 4 }}><span style={{ fontSize: 13, color: C.soluk }}>Fatura no *</span>
+              {fatura && <label style={{ display: 'grid', gap: 4 }}><span style={{ fontSize: 13, color: C.soluk }}>Fatura no (varsa)</span>
                 <input className="sp-in" style={{ fontSize: 16 }} value={ftNo} onChange={(e) => setFtNo(e.target.value.slice(0, 40))} /></label>}
             </>)}
           </div>
