@@ -125,8 +125,8 @@ export default function SubePaneli({ subeId }) {
       const dun = new Date(new Date(d.gun + 'T12:00').getTime() - 864e5).toISOString().slice(0, 10);
       let var_ = false;
       try { var_ = !!localStorage.getItem(`sp_taslak:${subeId}:${dun}:kapanis_sihirbaz`); } catch { var_ = false; }
-      const g = var_ && window.confirm(`${dun} gününün GÖNDERİLMEMİŞ kapanış formu duruyor. Onu açıp merkeze gönderelim mi?
-(İptal = bugünün kapanışı)`) ? dun : d.gun;
+      const g = var_ && (d.kapanis_var || window.confirm(`${dun} gününün GÖNDERİLMEMİŞ kapanış formu duruyor. Onu açıp merkeze gönderelim mi?
+(İptal = bugünün kapanışı)`)) ? dun : d.gun;
       setFormGun(g); setModal('kapanis'); return;
     }
     temizle();
@@ -214,6 +214,13 @@ export default function SubePaneli({ subeId }) {
       )}
     </div>
   );
+  // Codex: bugün mühürlense de DÜNÜN gönderilmemiş kapanış formu kurtarılabilsin (Günü Kapat açık kalır → yalnız o form)
+  const dunTaslak = (() => {
+    try {
+      const dun = new Date(new Date(d.gun + 'T12:00').getTime() - 864e5).toISOString().slice(0, 10);
+      return !!localStorage.getItem(`sp_taslak:${subeId}:${dun}:kapanis_sihirbaz`);
+    } catch { return false; }
+  })();
   const kapali = !!d.kapanis_var;   // D7: kapanıştan sonra yalnız Ana / Depodan gelen / Sipariş takip
 
   const yakinda = (m) => setMesaj({ tur: 'deneme', metin: m });
@@ -270,7 +277,7 @@ export default function SubePaneli({ subeId }) {
         <div className="sp-sol-kolon">
           <button className={'sp-sol' + (sekme === 'ana' ? ' akt' : '')} onClick={() => sekmeyeGec('ana')}><span style={{ fontSize: 18, width: 24 }}>🏠</span>Ana Sayfa</button>
           {SOL.map((m, i) => (m.b ? <div key={i} className="sp-sol-baslik">{m.b}</div> : (
-            <button key={m.k} className={'sp-sol' + (m.k === sekme ? ' akt' : '')} disabled={m.kapanisKarti ? kapali : kapali && !m.acikKapali && ['ac', 'fire', 'araTeslim', 'devir'].includes(m.k)} title={m.yakinda ? 'Kendi basamağında açılacak' : ''}
+            <button key={m.k} className={'sp-sol' + (m.k === sekme ? ' akt' : '')} disabled={m.kapanisKarti ? (kapali && !dunTaslak) : kapali && !m.acikKapali && ['ac', 'fire', 'araTeslim', 'devir'].includes(m.k)} title={m.yakinda ? 'Kendi basamağında açılacak' : ''}
               onClick={() => (m.yakinda ? yakinda(`${m.ad} — kendi basamağında açılacak`) : ac(m.k))}>
               <span style={{ fontSize: 18, width: 24 }}>{m.i}</span><span style={{ flex: 1 }}>{m.ad}</span>{m.yakinda && <small style={{ opacity: 0.7 }}>yakında</small>}
               {m.k === 'ac' && acSecim > 0 && <span className="sp-rozet" style={{ background: C.sari }} title={`${acSecim} kalem seçili — PIN onayı bekleniyor`}>{acSecim}</span>}
@@ -292,7 +299,7 @@ export default function SubePaneli({ subeId }) {
             <b style={{ fontSize: 16 }}>💵 Kasa Devri</b><span style={{ color: C.soluk, fontSize: 12 }}>Vardiya nakit teslim & devir</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: devirEtiket(devir).renk }}>{devirEtiket(devir).metin}</span>
           </button>
-          <button className="sp-kart" disabled={d.kapanis_var} onClick={() => { if (d.kapanis_merkezde && !window.confirm(`Bu günün kapanışı ${d.kapanis_merkezde}'de merkeze gönderildi; merkez işleyecek. Yine de yeniden doldurmak istiyor musun?`)) return; ac('kapanis'); }} style={{ textAlign: 'left', cursor: d.kapanis_var ? 'default' : 'pointer', minHeight: 78, opacity: d.kapanis_var ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4,
+          <button className="sp-kart" disabled={d.kapanis_var && !dunTaslak} onClick={() => { if (d.kapanis_merkezde && !window.confirm(`Bu günün kapanışı ${d.kapanis_merkezde}'de merkeze gönderildi; merkez işleyecek. Yine de yeniden doldurmak istiyor musun?`)) return; ac('kapanis'); }} style={{ textAlign: 'left', cursor: d.kapanis_var ? 'default' : 'pointer', minHeight: 78, opacity: d.kapanis_var ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4,
             background: 'linear-gradient(135deg,rgba(76,29,149,.5),rgba(124,58,237,.35))' }}>
             <b style={{ fontSize: 16 }}>🌙 Günü Kapat</b><span style={{ color: C.soluk, fontSize: 12 }}>Ciro, stok & kapanış protokolü</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: d.kapanis_var ? C.yesil : d.kapanis_merkezde ? C.mavi : C.soluk }}>

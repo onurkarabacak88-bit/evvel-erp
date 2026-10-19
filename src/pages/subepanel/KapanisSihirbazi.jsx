@@ -66,7 +66,9 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
     istemci_gunu: gun, istek_id: istek, nakit: tutarNum(v.nakit), pos: tutarNum(v.pos), online: tutarNum(v.online), teslimler,
     kor_sayim: tutarNum(v.kor), birakilan: tutarNum(v.birakilan), x_rapor: !!v.xrapor, urun_ac_yok: !urunAcVar && !!v.urunAcYok,
     degirmen: Object.values(v.deg || {}).some((x) => x !== '') ? v.deg : null, pasta_toplam: Number(v.pasta),
-    sayim: urunler.map((u) => ({ urun_id: u.id, sayilan: Number(sayim[u.id]) })),
+    // Codex: eski günün formu → girilen BÜTÜN sayımlar gider (bugünkü katalogdan çıkan ürün sessizce düşmesin; merkez geç kapanışı ayıklar)
+    sayim: eskiGun ? Object.entries(sayim).filter(([, x]) => x !== '' && x != null).map(([urun_id, x]) => ({ urun_id, sayilan: Number(x) }))
+      : urunler.map((u) => ({ urun_id: u.id, sayilan: Number(sayim[u.id]) })),
   });
   const zorunlu = (liste) => {
     const bos = liste.find((u) => sayim[u.id] === undefined || sayim[u.id] === '');
@@ -139,7 +141,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
     if (!o?.id) { sonucGoster({ tur: 'tamam', uyarilar: [] }); return; }
     api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}`)
       .then((r) => { if (r.durum === 'onaylandi') bittiSonuc(r, r.kisi); else if (r.durum !== 'isleniyor') sonucGoster({ tur: 'tamam', uyarilar: [] }); })   // isleniyor: sorgu sürer, uyarı gelince gösterilir
-      .catch(() => sonucGoster({ tur: 'tamam', uyarilar: [] }));
+      .catch(() => { /* Codex: sorgu hatası başarıyı kilitlemez — onay sorgusu sürer, uyarı gelince gösterilir */ });
   }, [d.kapanis_var]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   const ileri = () => {
