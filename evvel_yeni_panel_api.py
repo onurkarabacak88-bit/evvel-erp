@@ -354,6 +354,7 @@ def _olay(cur, **kw) -> Optional[str]:
     """Olay yaz — aynı kök ZATEN varsa: içerik aynıysa tekrar (None), farklıysa 409 (Codex: olay ile defterler ayrışmasın;
     düzeltme personelde değil merkezde). Kök kilidi altında (eşzamanlı iki gönderim aynı sürümü alamasın)."""
     from evvel_yeni_olay import olay_yaz
+    kw.setdefault("sema_surumu", 2)   # Fable (altyapı #9): yeni panel biçimi (kuruş int, sayim listesi, ey_urun) ≠ eski çift yazım (1)
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_panel_kok:" + kw["kok"],))
     cur.execute("""SELECT (SELECT MAX(olay_zamani) FROM ey_sube_olay WHERE kok=%s AND tur<>'iptal') AS son,
                           (SELECT MAX(olay_zamani) FROM ey_sube_olay WHERE hedef_kok=%s AND tur='iptal') AS iptal""",

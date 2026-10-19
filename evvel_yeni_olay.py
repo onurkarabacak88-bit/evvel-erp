@@ -41,7 +41,7 @@ def olay_tablosu_kur() -> bool:
     global _HAZIR
     if _HAZIR:
         return True
-    from database import db
+    from database import db, savepoint
     try:
         with db() as (conn, cur):
             cur.execute("SET LOCAL lock_timeout = '5s'")
@@ -65,6 +65,12 @@ def olay_tablosu_kur() -> bool:
                 sema_surumu  INTEGER NOT NULL DEFAULT 1)""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_sube_olay_gun ON ey_sube_olay (sube_id, is_gunu, tur)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_sube_olay_kok ON ey_sube_olay (kok, surum)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_sube_olay_hedef ON ey_sube_olay (hedef_kok) WHERE hedef_kok IS NOT NULL")
+            try:   # Fable (altyapı #11): aynı kök + sürüm iki kez olamaz (eşzamanlı yazım). Eski çakışan satır varsa kilit yine korur.
+                with savepoint(cur, "sp_ey_olay_ux"):
+                    cur.execute("CREATE UNIQUE INDEX IF NOT EXISTS ux_ey_sube_olay_kok_surum ON ey_sube_olay (kok, surum)")
+            except Exception:  # noqa: BLE001
+                log.warning("ux_ey_sube_olay_kok_surum kurulamadı (eski çakışma) — kök kilidi korur")
         _HAZIR = True
         return True
     except Exception as e:  # noqa: BLE001
@@ -80,7 +86,7 @@ def _kurus(x) -> Optional[int]:
 
 def olay_yaz(cur, *, sube_id: Any, tur: str, is_gunu: Any, kok: str, veri: dict, kaynak_tablo: Optional[str] = None,
              kaynak_id: Any = None, tutar: Any = None, personel_id: Any = None, personel_ad: Optional[str] = None,
-             hedef_kok: Optional[str] = None, neden: Optional[str] = None) -> Optional[str]:
+             hedef_kok: Optional[str] = None, neden: Optional[str] = None, sema_surumu: int = 1) -> Optional[str]:
     """Panelin işlemiyle AYNI transaction'da olay yazar. Başarısızsa HTTP 503 (panel 'tekrar dene' der, hepsi geri alınır)."""
     import uuid
     if not _HAZIR and not olay_tablosu_kur():
@@ -92,16 +98,17 @@ def olay_yaz(cur, *, sube_id: Any, tur: str, is_gunu: Any, kok: str, veri: dict,
         cur.execute("SELECT 1 FROM ey_sube_olay WHERE kaynak_ref=%s", (ref,))
         if cur.fetchone():
             return None   # aynı istek tekrar geldi — ikinci kez yazılmaz
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_olay_kok:" + kok,))   # Fable: MAX+1 yarışı (eski panel kilitsiz yazıyordu)
         cur.execute("SELECT COALESCE(MAX(surum), 0) AS s FROM ey_sube_olay WHERE kok=%s", (kok,))
         surum = int(dict(cur.fetchone() or {}).get("s") or 0) + 1
         gun = is_gunu.isoformat() if hasattr(is_gunu, "isoformat") else str(is_gunu)[:10]
         oid = str(uuid.uuid4())
         cur.execute("""INSERT INTO ey_sube_olay (id, sube_id, tur, is_gunu, kok, surum, kaynak_ref, kaynak_tablo, kaynak_id,
-                                                  personel_id, personel_ad, tutar_kurus, veri, hedef_kok, neden)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s)""",
+                                                  personel_id, personel_ad, tutar_kurus, veri, hedef_kok, neden, sema_surumu)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s::jsonb,%s,%s,%s)""",
                     (oid, str(sube_id), tur, gun, kok, surum, ref, kaynak_tablo, None if kaynak_id is None else str(kaynak_id),
                      None if personel_id is None else str(personel_id), (personel_ad or None), _kurus(tutar), govde,
-                     hedef_kok, (neden or None)))
+                     hedef_kok, (neden or None), int(sema_surumu or 1)))
         return oid
     except HTTPException:
         raise

@@ -363,6 +363,13 @@ def hareket_yaz(cur, *, kaynak_ref: str, tur: str, urun_id: str, adet: int, kayn
                        datetime.now(), kim, aciklama, bag)], yeni=True) == 1
 
 
+def urun_hareketi_var(cur, urun_id: str) -> bool:
+    """PUBLIC: ürünün YENİ evrende (ey_urun kimliğiyle) stok hareketi var mı — Ürün kataloğu birim kilidi bunu sorar."""
+    depo_hazirla(cur)
+    cur.execute("SELECT 1 FROM ey_stok_hareket WHERE urun_id=%s AND yeni LIMIT 1", (str(urun_id),))
+    return cur.fetchone() is not None
+
+
 def bakiye(cur, konum: Optional[str] = None, urun_id: Optional[str] = None) -> dict:
     """PUBLIC: {(urun_id, konum): adet} — YENİ evren (ey_urun kimliği), iptal olmayan hareketlerden (ayrı saklanan bakiye yok)."""
     depo_hazirla(cur)

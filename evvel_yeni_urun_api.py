@@ -396,7 +396,19 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
         if b.aktif and ("ad" in degisen or "kategori_id" in degisen or "aktif" in degisen):
             cur.execute("SELECT pg_advisory_xact_lock(7012042)")
             _ayni_ad(cur, b.kategori_id, yeni["ad"], uid)
-        # Birim kilidi (hareket görmüş ürünün sayım birimi değişmez) Depo hareketleri bu kataloğa bağlanınca (1b) gelir; yeni katalogda henüz hareket yok.
+        # Fable (altyapı #6): BİRİM KİLİDİ — yeni panel ey_urun kimliğiyle hareket yazıyor; hareket görmüş ürünün birim/çevrim
+        # alanları değişirse eski adetlerin anlamı kayar → 409. Depo kapalıysa (tak-çıkar) kilit uygulanamaz, sessiz geçilir.
+        birim_alanlari = {"birim", "sayim_ici", "fatura_ici", "koli_ici", "fatura_birim"}
+        if birim_alanlari & set(degisen):
+            try:
+                from evvel_yeni_depo_api import urun_hareketi_var
+                hareketli = urun_hareketi_var(cur, uid)
+            except HTTPException:
+                raise
+            except Exception:  # noqa: BLE001
+                hareketli = False
+            if hareketli:
+                raise HTTPException(409, "Bu ürünün stok hareketi var — birimi / koli içeriği değiştirilemez. Yeni ürün aç, bunu pasifleştir.")
         if not degisen and e["birim_teyit"]:
             return {"ok": True, "mesaj": "Değişiklik yok"}
         cur.execute("""UPDATE ey_urun SET ad=%s, kategori_id=%s, birim=%s, birim_teyit=TRUE, koli_ici=%s, kdv_oran=%s, aktif=%s,
