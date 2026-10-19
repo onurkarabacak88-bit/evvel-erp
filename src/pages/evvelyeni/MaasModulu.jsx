@@ -203,6 +203,7 @@ export function PersonelTakvim({ onToast }) {
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Takvim hazırlanıyor…</div>}
       {v && <>
+        {v.uyari && <div style={{ ...kart, padding: 12, color: R.kirmizi, fontWeight: 700 }}>{v.uyari}</div>}
         {/* Sahip: "arka arkaya iki gün QR girişi yoksa sistem SORSUN — ayrıldı mı, yıllık izinde mi, devam mı" */}
         {(v.sorulacak || []).length > 0 && (
           <div style={{ ...kart, padding: 14, borderLeft: '5px solid var(--pi-warn)', display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -307,6 +308,7 @@ export function GunlukYoklama() {
       <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12.5 }}>{Object.values(YOK_DURUM).map((d) => <span key={d.ad}>{d.ikon} {d.ad}</span>)}</div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Yoklama hazırlanıyor…</div>}
+      {v?.uyari && <div style={{ ...kart, padding: 12, color: R.kirmizi, fontWeight: 700 }}>{v.uyari}</div>}
       {v && <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>}
       {v && v.gunler.map((g) => (
         <div key={g.gun} style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
