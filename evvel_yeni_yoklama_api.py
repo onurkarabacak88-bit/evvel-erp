@@ -470,6 +470,17 @@ def yemek_ozet(cur, bas: date, son: date) -> dict:
                                      for pid, g in gunler.items()}}
 
 
+def yoklama_satirlari(cur, bas: date, son: date) -> list:
+    """PUBLIC (Maaş › Personel takvimi + Günlük yoklama — Y3): iş günü aralığındaki QR giriş satırları.
+    {pid, tarih (iş günü), sid, giris_ts, cikis_ts, cikis_tur} — eski gorev_yoklama okuyucusunun yeni dönem kaynağı."""
+    yoklama_hazirla()
+    gece_kapat(cur)
+    cur.execute("""SELECT personel_id, is_gunu, sube_id, giris_ts, cikis_ts, cikis_tur FROM ey_yoklama
+                    WHERE is_gunu BETWEEN %s AND %s ORDER BY giris_ts""", (bas, son))
+    return [{"pid": str(r["personel_id"]), "tarih": r["is_gunu"], "sid": str(r["sube_id"]), "giris_ts": r["giris_ts"],
+             "cikis_ts": r["cikis_ts"], "cikis_tur": r["cikis_tur"]} for r in [dict(x) for x in cur.fetchall() or []]]
+
+
 def son_okutanlar(cur, sube_id: str, sn: int = 300) -> list:
     """PUBLIC: panelde canlı 'son okutanlar' (yabancı ad hemen görülsün)."""
     cur.execute("""SELECT q.islem, q.zaman, p.ad FROM ey_qr_kullanim q JOIN ey_personel p ON p.id = q.personel_id

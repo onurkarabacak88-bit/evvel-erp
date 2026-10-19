@@ -475,15 +475,19 @@ def personel_takvim(ay: Optional[str] = None):
             r = dict(r)
             kararlar.setdefault(r["personel_id"], []).append(r)
         yok = {}
+        pb, yeni_qr = _yeni_yoklama(cur, ay_bas, ay_son)   # 1 Kasım'dan itibaren YENİ QR (Y3); öncesi eski panel QR'ı
         try:
             with savepoint(cur, "sp_ey_takvim"):
                 cur.execute("""SELECT personel_id::text AS pid, tarih, sube_id::text AS sid, vardiya_tip, giris_ts, vardiya_disi
-                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s ORDER BY giris_ts""", (ay_bas, ay_son))
+                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (ay_bas, ay_son, pb))
                 for r in cur.fetchall() or []:
                     r = dict(r)
                     yok.setdefault((r["pid"], r["tarih"].isoformat()), []).append(r)
         except Exception as e:  # noqa: BLE001
             log.warning("personel takvim: yoklama okunamadı: %s", str(e)[:150])
+        for r in yeni_qr:
+            yok.setdefault((r["pid"], r["tarih"].isoformat()), []).append(
+                {"pid": r["pid"], "tarih": r["tarih"], "sid": r["sid"], "vardiya_tip": "QR", "giris_ts": r["giris_ts"], "vardiya_disi": False})
         # Sahip (2026-10-16): "QR okutarak giriş yaptığı BÜTÜN şubeleri tara" —
         # (1) başka kimlikle (aynı kişinin ikinci kaydı) yazılmış QR'lar ADA göre kişiye bağlanır;
         # (2) QR okutmadan panelde açılış/kapanış/teslim yaptıysa o gün o şubede ÇALIŞTI sayılır (panel izi).
@@ -515,14 +519,15 @@ def personel_takvim(ay: Optional[str] = None):
         try:
             with savepoint(cur, "sp_ey_takvim_panel"):
                 cur.execute("""SELECT personel_id::text AS pid, personel_ad AS ad, tarih, sube_id::text AS sid, cevap_ts AS ts, tip
-                                 FROM sube_operasyon_event WHERE tarih BETWEEN %s AND %s AND durum='tamamlandi'
-                                  AND tip IN ('ACILIS','KAPANIS')""", (ay_bas, ay_son))
+                                 FROM sube_operasyon_event WHERE tarih BETWEEN %s AND %s AND tarih < %s AND durum='tamamlandi'
+                                  AND tip IN ('ACILIS','KAPANIS')""", (ay_bas, ay_son, pb))
                 panel += [dict(r) for r in cur.fetchall() or []]
                 cur.execute("""SELECT teslim_eden_personel_id::text AS pid, teslim_eden_ad AS ad, tarih, sube_id::text AS sid, olusturma AS ts, 'TESLIM' AS tip
-                                 FROM kasa_teslim WHERE tarih BETWEEN %s AND %s""", (ay_bas, ay_son))
+                                 FROM kasa_teslim WHERE tarih BETWEEN %s AND %s AND tarih < %s""", (ay_bas, ay_son, pb))
                 panel += [dict(r) for r in cur.fetchall() or []]
         except Exception as e:  # noqa: BLE001
             log.warning("personel takvim: panel izi okunamadı: %s", str(e)[:150])
+        panel += [{**r, "tip": r["tip_ad"]} for r in _yeni_panel_izi(cur, ay_bas, ay_son, pb)]   # yeni dönem panel izi
         for r in panel:
             pid = r["pid"] if r["pid"] in ey_ids else ad_kimlik.get(_n(r.get("ad")))
             if not pid or not r.get("tarih"):
@@ -531,7 +536,7 @@ def personel_takvim(ay: Optional[str] = None):
             if any(x["sid"] == r["sid"] for x in yok.get(key, [])):
                 continue
             yok.setdefault(key, []).append({"pid": pid, "tarih": r["tarih"], "sid": r["sid"], "giris_ts": r["ts"], "vardiya_disi": False,
-                                            "vardiya_tip": {"ACILIS": "panel: açılış", "KAPANIS": "panel: kapanış", "TESLIM": "panel: teslim"}[r["tip"]],
+                                            "vardiya_tip": {"ACILIS": "panel: açılış", "KAPANIS": "panel: kapanış", "TESLIM": "panel: teslim"}.get(r["tip"], r["tip"]),
                                             "panel": True})
     # Sahip: Alsancak QR kullanmıyor → o ay HİÇ QR girişi olmayan şubenin personeline soru sorulmaz
     qr_sube = {r["sid"] for rows in yok.values() for r in rows if not r.get("panel")}
@@ -648,6 +653,15 @@ def takvim_karar(b: YoklamaKararBody, x_evvel_oturum: Optional[str] = Header(def
                     son = (dict(cur.fetchone() or {}) or {}).get("t")
             except Exception:  # noqa: BLE001
                 son = None
+            try:
+                with savepoint(cur, "sp_ey_son_qr_yeni"):   # yeni dönem QR'ı da (Y3) — eski okunamasa da
+                    cur.execute("SELECT to_regclass('ey_yoklama') IS NOT NULL AS v")
+                    if dict(cur.fetchone())["v"]:
+                        cur.execute("SELECT MAX(is_gunu) AS t FROM ey_yoklama WHERE personel_id=%s", (b.personel_id,))
+                        t2 = (dict(cur.fetchone() or {}) or {}).get("t")
+                        son = max([x for x in (son, t2) if x], default=None)
+            except Exception:  # noqa: BLE001
+                pass
             cikis = son or (date.fromisoformat(t) - timedelta(days=1))
             cur.execute("UPDATE ey_personel SET aktif=FALSE, cikis=COALESCE(cikis, %s), degistiren=%s, zaman=NOW() WHERE id=%s",
                         (cikis, kim, b.personel_id))
@@ -685,16 +699,20 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
                 plan = [dict(r) for r in cur.fetchall() or []]
         except Exception as e:  # noqa: BLE001
             log.warning("yoklama: plan okunamadı: %s", str(e)[:150])
+        pb, yeni_qr = _yeni_yoklama(cur, bas, son)   # 1 Kasım'dan itibaren YENİ QR (Y3)
         try:
             with savepoint(cur, "sp_ey_yok_qr"):
                 cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, cikis_ts, vardiya_tip
-                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s ORDER BY giris_ts""", (bas, son))
+                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (bas, son, pb))
                 qr = [dict(r) for r in cur.fetchall() or []]
         except Exception:  # noqa: BLE001
             with savepoint(cur, "sp_ey_yok_qr2"):
                 cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, NULL AS cikis_ts, vardiya_tip
-                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s ORDER BY giris_ts""", (bas, son))
+                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (bas, son, pb))
                 qr = [dict(r) for r in cur.fetchall() or []]
+        qr += [{"tarih": r["tarih"], "pid": r["pid"], "sid": r["sid"], "giris_ts": r["giris_ts"], "cikis_ts": r["cikis_ts"], "vardiya_tip": "QR"}
+               for r in yeni_qr]
+        qr.sort(key=lambda x: str(x["giris_ts"] or ""))
 
     def tr(ts):
         if not ts:
@@ -754,6 +772,36 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
     return {"son": son.isoformat(), "gunler": gunler, "tolerans_dk": GEC_TOLERANS_DK,
             "not": f"Plan: şube panelinin vardiya planı · QR: panelde okutulan giriş. Başlangıçtan {GEC_TOLERANS_DK} dk sonrasına kadar zamanında sayılır."}
 
+
+
+def _yeni_yoklama(cur, bas: date, son: date):
+    """1 Kasım (panel_baslangic) sınırı + yeni dönem QR satırları (yoklama modülünün PUBLIC servisi; Y3 planı).
+    Dönüş (sinir, satirlar). Yoklama modülü kapalıysa satırlar boş (tak-çıkar)."""
+    from evvel_yeni_cekirdek import panel_baslangic
+    from evvel_yeni_moduller import DURUM
+    pb = panel_baslangic(cur)
+    if son < pb or DURUM.get("yoklama") != "yuklendi":
+        return pb, []
+    import evvel_yeni_yoklama_api as y
+    return pb, y.yoklama_satirlari(cur, max(bas, pb), son)
+
+
+def _yeni_panel_izi(cur, bas: date, son: date, pb: date) -> list:
+    """Yeni dönem panel izi: QR okutmadan yeni panelde açılış / kapanış / teslim yapan o gün o şubede ÇALIŞTI sayılır."""
+    if son < pb:
+        return []
+    try:
+        from evvel_yeni_olay import olaylar
+    except Exception:  # noqa: BLE001
+        return []
+    ad = {"acilis": "panel: açılış", "kapanis": "panel: kapanış", "teslim": "panel: teslim", "teslim_al": "panel: teslim al"}
+    out = []
+    for o in olaylar(cur, bas=max(bas, pb), son=son, turler=set(ad)):
+        if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel" or not o.get("personel_id"):
+            continue
+        out.append({"pid": str(o["personel_id"]), "ad": o.get("personel_ad"), "tarih": o["is_gunu"], "sid": str(o["sube_id"]),
+                    "ts": o["olay_zamani"], "tip_ad": ad[o["tur"]]})
+    return out
 
 
 def _ey_subeler_aktif():
