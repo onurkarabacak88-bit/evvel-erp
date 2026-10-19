@@ -1156,7 +1156,8 @@ def kapanis_sorumlusu(cur, sube_id: str, gun: Optional[date] = None) -> Optional
 def _devir_olay(cur, d: dict, veri_ek: dict) -> Optional[str]:
     """'vardiya' olayı — Satış › Devir defteri / kasa sağlaması bunu okur (var olan okuyucu; kaynak değişmez)."""
     from evvel_yeni_olay import olay_yaz
-    bas = (ayar_oku(cur, "panel_baslangic", "2026-11-01") or "2026-11-01")[:10]
+    from evvel_yeni_cekirdek import panel_baslangic as _pb
+    bas = _pb(cur).isoformat()   # Fable: tek yerde ayrıştırılır
     if str(d["is_gunu"])[:10] < bas:   # deneme dönemi: telefon onayları denenir, vardiya olayı (Satış › Devir defteri) yazılmaz
         return None
     cur.execute("SELECT id, ad FROM ey_personel WHERE id = ANY(%s)", ([x for x in (d.get("devreden_id"), d.get("devralan_id")) if x],))
@@ -1189,7 +1190,8 @@ def _devir_al(cur, did: str, ek_kisi: Optional[str] = None, ek_kisi2: Optional[s
 
 def _canli_konum_sart(cur, sube_id: str) -> None:
     """Para devri: canlıda (1 Kasım sonrası) şube koordinatı tanımsızsa devir yapılmaz (Fable — QR fotoğrafı uzaktan okutulmasın)."""
-    bas = (ayar_oku(cur, "panel_baslangic", "2026-11-01") or "2026-11-01")[:10]
+    from evvel_yeni_cekirdek import panel_baslangic as _pb
+    bas = _pb(cur).isoformat()   # Fable: tek yerde ayrıştırılır
     if is_gunu().isoformat() < bas:
         return
     cur.execute("SELECT lat, lng FROM ey_sube WHERE id=%s", (sube_id,))

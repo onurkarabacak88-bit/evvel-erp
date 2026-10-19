@@ -214,4 +214,4 @@ def bekleyen_saglayicilar() -> List[str]:
 
 __all__ = ["bugun", "tr_saat", "tr_gun", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tl", "kilit", "aktor",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
-           "ayar_oku", "ayar_yaz", "is_gunu"]
+           "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem"]

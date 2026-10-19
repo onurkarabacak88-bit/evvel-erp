@@ -40,39 +40,41 @@ DISARI = {"dışarı:toptanci": "Toptancı", "dışarı:tuketim": "Ürün aç (t
           "dışarı:ikram": "İkram", "dışarı:personel": "Personel kullanımı"}
 
 
-def depo_hazirla(cur) -> None:
+def depo_hazirla(cur=None) -> None:
+    """Depo tabloları + kimlik evreni göçü — KENDİ kısa işleminde (Fable: çağıranın işlemine kilit / lock_timeout taşınmaz;
+    işçiler sırayla, önce lock_timeout sonra kilit; _HAZIR yalnız commit'ten sonra). Başarısızsa 503 (sonraki istek yeniden dener)."""
     global _HAZIR
     if _HAZIR:
         return
-    cur.execute("""CREATE TABLE IF NOT EXISTS ey_stok_hareket (
-        id TEXT PRIMARY KEY, kaynak_ref TEXT UNIQUE NOT NULL, tur TEXT NOT NULL, urun_id TEXT NOT NULL, urun_ad TEXT,
-        adet INT NOT NULL, kaynak TEXT NOT NULL, hedef TEXT NOT NULL, is_gunu DATE NOT NULL, olay_zaman TIMESTAMPTZ,
-        kim TEXT, aciklama TEXT, bag TEXT, iptal BOOLEAN NOT NULL DEFAULT FALSE, iptal_sebep TEXT,
-        zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
-    cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_urun ON ey_stok_hareket (urun_id, is_gunu)")
-    cur.execute("""CREATE TABLE IF NOT EXISTS ey_stok_sayim (
-        id TEXT PRIMARY KEY, konum TEXT NOT NULL, is_gunu DATE NOT NULL, kim TEXT, acilis BOOLEAN NOT NULL DEFAULT FALSE,
-        satirlar JSONB NOT NULL DEFAULT '[]'::jsonb, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
-    # Fable (altyapı denetimi): İKİ KİMLİK EVRENİ aynı defterde olmasın → her satır evrenini taşır. Okuyucular 1 Kasım'dan
-    # (panel_baslangic) itibaren YALNIZ yeni evreni okur; eski aktarım satırları arşiv olarak kalır (silinmez, karışmaz).
     try:
-        with savepoint(cur, "sp_dp_evren"):
-            cur.execute("SELECT pg_advisory_xact_lock(7012061)")   # Fable: işçiler sırayla göçer
-            cur.execute("SET LOCAL lock_timeout = '3s'")
-            cur.execute("ALTER TABLE ey_stok_hareket ADD COLUMN IF NOT EXISTS yeni BOOLEAN NOT NULL DEFAULT FALSE")
-            cur.execute("ALTER TABLE ey_stok_sayim ADD COLUMN IF NOT EXISTS yeni BOOLEAN NOT NULL DEFAULT FALSE")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_kaynak ON ey_stok_hareket (yeni, kaynak, is_gunu)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_hedef ON ey_stok_hareket (yeni, hedef, is_gunu)")
-            cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_bag ON ey_stok_hareket (bag)")
-            # bir kez: yeni katalog kimliğiyle yazılmış eski satırlar yeni evrene (yeni panel / merkez sayımı)
-            cur.execute("SELECT to_regclass('ey_urun') IS NOT NULL AS var")
-            if dict(cur.fetchone())["var"]:
-                cur.execute("""UPDATE ey_stok_hareket SET yeni=TRUE WHERE NOT yeni AND urun_id IN (SELECT id::text FROM ey_urun)""")
-                cur.execute("""UPDATE ey_stok_sayim SET yeni=TRUE WHERE NOT yeni AND id IN (SELECT DISTINCT bag FROM ey_stok_hareket WHERE yeni AND bag IS NOT NULL)""")
-            cur.execute("SET LOCAL lock_timeout = DEFAULT")   # çağıranın işleminin geri kalanı 3 sn sınırını miras almasın
+        with db() as (_c, k):
+            k.execute("SET LOCAL lock_timeout = '3s'")
+            k.execute("SELECT pg_advisory_xact_lock(7012061)")
+            k.execute("""CREATE TABLE IF NOT EXISTS ey_stok_hareket (
+                id TEXT PRIMARY KEY, kaynak_ref TEXT UNIQUE NOT NULL, tur TEXT NOT NULL, urun_id TEXT NOT NULL, urun_ad TEXT,
+                adet INT NOT NULL, kaynak TEXT NOT NULL, hedef TEXT NOT NULL, is_gunu DATE NOT NULL, olay_zaman TIMESTAMPTZ,
+                kim TEXT, aciklama TEXT, bag TEXT, iptal BOOLEAN NOT NULL DEFAULT FALSE, iptal_sebep TEXT,
+                zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+            k.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_urun ON ey_stok_hareket (urun_id, is_gunu)")
+            k.execute("""CREATE TABLE IF NOT EXISTS ey_stok_sayim (
+                id TEXT PRIMARY KEY, konum TEXT NOT NULL, is_gunu DATE NOT NULL, kim TEXT, acilis BOOLEAN NOT NULL DEFAULT FALSE,
+                satirlar JSONB NOT NULL DEFAULT '[]'::jsonb, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+            # Fable (altyapı denetimi): İKİ KİMLİK EVRENİ aynı defterde olmasın → her satır evrenini taşır. Okuyucular 1 Kasım'dan
+            # (panel_baslangic) itibaren YALNIZ yeni evreni okur; eski aktarım satırları arşiv olarak kalır (silinmez, karışmaz).
+            k.execute("ALTER TABLE ey_stok_hareket ADD COLUMN IF NOT EXISTS yeni BOOLEAN NOT NULL DEFAULT FALSE")
+            k.execute("ALTER TABLE ey_stok_sayim ADD COLUMN IF NOT EXISTS yeni BOOLEAN NOT NULL DEFAULT FALSE")
+            k.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_kaynak ON ey_stok_hareket (yeni, kaynak, is_gunu)")
+            k.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_hedef ON ey_stok_hareket (yeni, hedef, is_gunu)")
+            k.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_bag ON ey_stok_hareket (bag)")
+            k.execute("SELECT to_regclass('ey_urun') IS NOT NULL AS var")
+            if dict(k.fetchone())["var"]:   # yeni katalog kimliğiyle yazılmış satırlar yeni evrene (hareket + sayım başlığı)
+                k.execute("""UPDATE ey_stok_hareket SET yeni=TRUE WHERE NOT yeni AND urun_id IN (SELECT id::text FROM ey_urun)""")
+                k.execute("""UPDATE ey_stok_sayim s SET yeni=TRUE WHERE NOT yeni AND (
+                               id IN (SELECT DISTINCT bag FROM ey_stok_hareket WHERE yeni AND bag IS NOT NULL)
+                               OR EXISTS (SELECT 1 FROM jsonb_array_elements(s.satirlar) e JOIN ey_urun u ON u.id::text = e->>'urun_id'))""")
     except Exception:  # noqa: BLE001
-        log.warning("depo evren göçü yapılamadı — sonraki istekte yeniden", exc_info=True)
-        raise HTTPException(503, "Depo hazırlanıyor — birkaç saniye sonra tekrar dene")   # Fable: 'yeni' sütunu yokken yazma patlamasın
+        log.warning("depo hazırlanamadı — sonraki istekte yeniden", exc_info=True)
+        raise HTTPException(503, "Depo hazırlanıyor — birkaç saniye sonra tekrar dene")
     _HAZIR = True
 
 
@@ -442,7 +444,7 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
     if not kayit:
         raise HTTPException(400, "Hiç ürün sayılmadı")
     ilk = False
-    if not eski_evren and tur != "acilis":   # Fable: yeni evrende konumun İLK sayımı = açılış sayımı (bakiye sıfırdan kurulur)
+    if not eski_evren and tur == "sayim":   # Fable: yeni evrende konumun İLK merkez sayımı = açılış sayımı (panel günlük sayımı değil)
         cur.execute("SELECT 1 FROM ey_stok_sayim WHERE konum=%s AND yeni LIMIT 1", (konum,))
         ilk = cur.fetchone() is None
     cur.execute("INSERT INTO ey_stok_sayim (id, konum, is_gunu, kim, acilis, satirlar, yeni) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s)",
@@ -631,9 +633,6 @@ def merkez_kabul(yid: str, body: KabulBody, x_evvel_oturum: Optional[str] = Head
         kim = _aktor(cur, x_evvel_oturum)
         cur.execute("SELECT * FROM ey_stok_hareket WHERE kaynak_ref=%s AND NOT iptal", (f"yolda:{yid}:sevk",))
         sv = cur.fetchone()
-        if not sv:   # yeni evren sevki (hareket_yaz) — kaynak_ref biçimi serbest; bag ile bul
-            cur.execute("SELECT * FROM ey_stok_hareket WHERE bag=%s AND tur='sevk' AND NOT iptal ORDER BY zaman LIMIT 1", (yid,))
-            sv = cur.fetchone()
         if not sv:
             raise HTTPException(404, "Sevk bulunamadı")
         sv = dict(sv)

@@ -318,7 +318,7 @@ function Butonlar({ mesgul, onVazgec, onKaydet }) {
 
 // ── 🏷️ ÜRÜN FİYATLARI — sahip (2026-10-16): "paneldeki kategori şekliyle ürün fiyatlarını kur, benzer olsun;
 //    fiyatı olmayan ürünleri manuel girebilelim" ──
-const KAYNAK_RENK = { elle: 'var(--pi-accent)', 'son alış': R.yesil, katalog: R.amber };
+const KAYNAK_RENK = { elle: 'var(--pi-accent)', 'son alış': R.yesil, katalog: R.amber, 'toptancı': R.yesil };
 export function UrunFiyatlari({ onToast }) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
@@ -330,7 +330,12 @@ export function UrunFiyatlari({ onToast }) {
   const setEvren = (x) => { try { localStorage.setItem('ey_fiyat_evren', x); } catch { /* yok */ } setEvrenS(x); setV(null); setKat(null); };
   const yukle = useCallback(async () => {
     try {
-      const r = await api('/evvel-yeni/toptanci/fiyatlar' + (evren ? `?evren=${evren}` : '')); setV(r); setHata(null);
+      const r = await api('/evvel-yeni/toptanci/fiyatlar' + (evren ? `?evren=${evren}` : ''));
+      if (r.varsayilan_evren === 'yeni' && evren) {   // 1 Kasım'dan sonra eski seçim yapışık kalmasın
+        try { localStorage.removeItem('ey_fiyat_evren'); } catch { /* yok */ }
+        setEvrenS(''); return;
+      }
+      setV(r); setHata(null);
       const q = new window.URLSearchParams(window.location.search);
       const hedef = q.get('urun');
       const hk = hedef && r.kategoriler.find((k) => k.urunler.some((u) => u.id === hedef));
@@ -369,7 +374,7 @@ export function UrunFiyatlari({ onToast }) {
         <span style={{ color: R.not }}>Katalog:</span>
         <b style={{ color: v.evren === 'yeni' ? R.yesil : R.not }}>{v.evren === 'yeni' ? '🆕 Yeni katalog (Evvel Yeni)' : '🔁 Geçiş — eski katalog'}</b>
         <span style={{ flex: 1 }} />
-        <Dugme kucuk onClick={() => setEvren(v.evren === 'yeni' ? 'eski' : 'yeni')}>{v.evren === 'yeni' ? 'Eski kataloğa dön' : 'Yeni kataloğa geç'}</Dugme>
+        {v.varsayilan_evren !== 'yeni' && <Dugme kucuk onClick={() => setEvren(v.evren === 'yeni' ? 'eski' : 'yeni')}>{v.evren === 'yeni' ? 'Eski kataloğa dön' : 'Yeni kataloğa geç'}</Dugme>}
       </div>
       <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>

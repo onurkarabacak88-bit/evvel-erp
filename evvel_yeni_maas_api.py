@@ -168,7 +168,8 @@ def _yemek_kaynagi(cur, ay: str, ay_bas: date, ay_son: date):
     PUBLIC yemek_ozet'i (K7/K8). Öncesi: eski formül (None). Modül kapalıysa {'kapali': True} → tam + uyarı."""
     from evvel_yeni_cekirdek import ayar_oku
     from evvel_yeni_moduller import DURUM
-    bas = (ayar_oku(cur, "panel_baslangic", "2026-11-01") or "2026-11-01")[:10]
+    from evvel_yeni_cekirdek import panel_baslangic
+    bas = panel_baslangic(cur).isoformat()   # Fable: tek yerde ayrıştırılır
     if ay < bas[:7]:
         return None
     if DURUM.get("yoklama") != "yuklendi":

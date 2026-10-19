@@ -45,7 +45,8 @@ class _Kuru(Exception):
 
 def _baslangic(cur) -> date:
     try:
-        return date.fromisoformat((ayar_oku(cur, "panel_baslangic", VARSAYILAN_BASLANGIC) or VARSAYILAN_BASLANGIC)[:10])
+        from evvel_yeni_cekirdek import panel_baslangic
+        return panel_baslangic(cur)   # Fable: tek yerde ayrıştırılır
     except ValueError:
         return date.fromisoformat(VARSAYILAN_BASLANGIC)
 
