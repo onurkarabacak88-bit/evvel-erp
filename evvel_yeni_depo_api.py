@@ -336,12 +336,14 @@ TURLER = {"giris", "sevk", "kabul", "fazla_kabul", "ac", "tuketim", "fire", "say
 
 
 def _konum_gecerli(k: str) -> bool:
-    return bool(k) and (k.startswith("depo:") or k.startswith("dışarı:") or k in ("yolda", "askida"))
+    # bar:{şube} — sahip (2026-10-19): personel açılış/kapanışta YALNIZ tezgahtakini sayar (arkadaki kapalı koli sayılmaz) →
+    # panelde sayılan ürün (panel_sayim) açılınca depo:{şube} → bar:{şube} TAŞINIR (gider değil); tüketim = bar sayım farkı.
+    return bool(k) and (k.startswith("depo:") or k.startswith("bar:") or k.startswith("dışarı:") or k in ("yolda", "askida"))
 
 
 def _konum_kilidi(cur, *konumlar) -> None:
     """Depo konumu kilidi — sayım, hareket ve iptal AYNI kilidi alır; birden çok konum SABİT sırayla (kilitlenme olmasın)."""
-    for k in sorted({k for k in konumlar if k and k.startswith("depo:")}):
+    for k in sorted({k for k in konumlar if k and (k.startswith("depo:") or k.startswith("bar:"))}):
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_depo_sayim:" + k,))
 
 
@@ -387,8 +389,8 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
     (ör. panel:kapanis:{şube}:{gün}; kilit konum bazlı). gun: İŞ GÜNÜ (panel c['gun'] — gece 00:00–02:00 kapanışı dünün)
     — verilmezse bugün. Yeni evren (varsayılan): yalnız ey_urun kimliği; eski_evren=True yalnız geçişte merkezin eski-katalog sayımı."""
     depo_hazirla(cur)
-    if not konum.startswith("depo:"):
-        raise HTTPException(400, "Sayım yalnız bir şube deposunda yapılır")
+    if not (konum.startswith("depo:") or konum.startswith("bar:")):
+        raise HTTPException(400, "Sayım yalnız bir şube deposunda ya da barında yapılır")
     if tur not in ("sayim", "acilis", "gunluk"):
         raise HTTPException(400, "Sayım türü: sayim / acilis / gunluk")
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_depo_sayim:" + konum,))
@@ -460,6 +462,8 @@ def _konumlar(cur) -> list:
     for s in sorted(_ey_subeler(cur), key=lambda x: (x["id"] != depo, x["ad"])):
         out.append({"id": f"depo:{s['id']}", "ad": s["ad"] + (" (merkez depo + kafe)" if s["id"] == depo else ""), "merkez": s["id"] == depo,
                     "sube_id": s["id"]})
+    for s in sorted(_ey_subeler(cur), key=lambda x: (x["id"] != depo, x["ad"])):   # tezgah (açılış/kapanış sayımının yeri)
+        out.append({"id": f"bar:{s['id']}", "ad": s["ad"] + " · bar", "merkez": False, "sube_id": s["id"], "bar": True})
     out.append({"id": "yolda", "ad": "Yolda", "merkez": False, "sube_id": None})
     out.append({"id": "askida", "ad": "Askıda (fazla kabul)", "merkez": False, "sube_id": None})
     return out

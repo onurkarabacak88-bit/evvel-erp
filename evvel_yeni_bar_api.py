@@ -117,10 +117,117 @@ def _bos():
     return {k: 0 for k in KODLAR}
 
 
+def _tr_saat(ts):
+    """Saat dilimli zamanı TR duvar saatine (dilimsiz) çevir."""
+    if ts is None or getattr(ts, "tzinfo", None) is None:
+        return ts
+    from zoneinfo import ZoneInfo
+    return ts.astimezone(ZoneInfo("Europe/Istanbul")).replace(tzinfo=None)
+
+
+def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
+    """YENİ DÖNEM (1 Kasım — panel_baslangic): Evvel Yeni defterlerinden. Formül AYNI (eski panel):
+    DEVİR FARKI = bugün açılış − (dün kapanış + gece bara giren) · NET EKSİLME = açılış + gün içi bara giren − kapanış.
+    Kalemler = katalogda 'panelde sayılır' ürünler (ey_urun kimliği) + PASTA TOPLAM. Bara giren = Ürün Aç'ta açılan tezgah ürünü
+    (olay saati) + pasta sevk kabulü (Depo defteri, yeni evren). Sahip (2026-10-19): açılış/kapanışta YALNIZ tezgah sayılır."""
+    from evvel_yeni_olay import olaylar
+    from evvel_yeni_urun_api import katalog
+    kat = katalog(cur)
+    sayilan = [(str(u["id"]), u["ad"]) for k in kat for u in k["urunler"] if u.get("panel_sayim")]
+    sayilan_id = {i for i, _ in sayilan}
+    pasta_id = {str(u["id"]) for k in kat if "pasta" in (k["ad"] or "").lower() for u in k["urunler"] if str(u["id"]) not in sayilan_id}
+    kalemler = sayilan + [("pasta", "Pasta (toplam)")]
+    kodlar = [k for k, _ in kalemler]
+    # Satış kontrolü bardakları anlam anahtarıyla arar (bardak_kucuk/buyuk/plastik) — ürün adından TEK eşleştiriciyle
+    anahtar_of = {k: ("pasta" if k == "pasta" else _anahtar_ad(ad)) for k, ad in kalemler}
+    sids = {s_["id"] for s_ in subeler}
+    ev, ac = {}, {}
+    for o in olaylar(cur, bas=bas, son=son + timedelta(days=1), turler={"acilis", "kapanis", "urun_ac"}):
+        if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel" or str(o["sube_id"]) not in sids:
+            continue
+        sid = str(o["sube_id"])
+        v = o["veri"] if isinstance(o["veri"], dict) else json.loads(o["veri"] or "{}")
+        if o["tur"] == "urun_ac":
+            for x in v.get("kalemler") or []:
+                if str(x.get("urun_id")) in sayilan_id:
+                    ac.setdefault(sid, []).append((o["olay_zamani"], o["is_gunu"], str(x["urun_id"]), int(x.get("adet") or 0)))
+            continue
+        say = {str(x.get("urun_id")): (int(x["sayilan"]) if x.get("sayilan") is not None else None) for x in v.get("sayim") or []}
+        say["pasta"] = None if v.get("pasta_toplam") is None else int(v["pasta_toplam"])
+        ev.setdefault(sid, {}).setdefault(o["is_gunu"], {})[o["tur"]] = {"say": say, "ts": o["olay_zamani"], "kim": o.get("personel_ad")}
+    if pasta_id:   # pasta vitrine sevkle gelir (ürün aç ile değil) — şubenin KABUL ettiği pasta = bara giren pasta
+        try:
+            from evvel_yeni_moduller import DURUM
+            if DURUM.get("depo") == "yuklendi":
+                cur.execute("""SELECT hedef, olay_zaman, is_gunu, adet FROM ey_stok_hareket WHERE yeni AND NOT iptal AND tur='kabul'
+                                AND urun_id = ANY(%s) AND is_gunu BETWEEN %s AND %s AND hedef LIKE 'depo:%%'""",
+                            (list(pasta_id), bas, son + timedelta(days=1)))
+                for h in [dict(x) for x in cur.fetchall() or []]:
+                    ac.setdefault(h["hedef"].split(":", 1)[1], []).append((h["olay_zaman"], h["is_gunu"], "pasta", int(h["adet"])))
+        except Exception:  # noqa: BLE001
+            log.warning("bar: pasta kabulü okunamadı", exc_info=True)
+
+    def bos():
+        return {k: 0 for k in kodlar}
+
+    def ac_topla(sid, t0, t1):
+        out = bos()
+        t0, t1 = _tr_saat(t0), _tr_saat(t1)
+        for ts, _g, k, adet in ac.get(sid, []):
+            ts = _tr_saat(ts)
+            if ts is not None and t0 is not None and t1 is not None and t0 < ts <= t1:
+                out[k] += adet
+        return out
+
+    sonuc = []
+    for s_ in subeler:
+        sid = s_["id"]
+        gunler = []
+        g = ay_bas
+        while g <= son:
+            e = ev.get(sid, {}).get(g, {})
+            dun = ev.get(sid, {}).get(g - timedelta(days=1), {})
+            acil, kap, dkap = e.get("acilis"), e.get("kapanis"), dun.get("kapanis")
+            A, K, DK = (acil or {}).get("say"), (kap or {}).get("say"), (dkap or {}).get("say")
+            gun = {"gun": g.isoformat(), "acilis_var": bool(acil), "kapanis_var": bool(kap), "kalemler": [], "devir_fark": 0, "ac_eksik": 0,
+                   "kapanisci": (kap or {}).get("kim"), "kapanis_saat": _saat(kap["ts"]) if kap else None,
+                   "acilisci": (acil or {}).get("kim"), "acilis_saat": _saat(acil["ts"]) if acil else None,
+                   "dun_kapanisci": (dkap or {}).get("kim")}
+            gun_ici = ac_topla(sid, acil["ts"], kap["ts"]) if (acil and kap) else bos()
+            gece = ac_topla(sid, dkap["ts"], acil["ts"]) if (dkap and acil) else bos()
+            for k, ad in kalemler:
+                a = A.get(k) if A else None
+                kk = K.get(k) if K else None
+                dk = DK.get(k) if DK else None
+                net = (a + gun_ici[k] - kk) if (a is not None and kk is not None) else None
+                devir = (a - (dk + gece[k])) if (a is not None and dk is not None) else None
+                gun["kalemler"].append({"kod": k, "ad": ad, "anahtar": anahtar_of[k], "dun_kapanis": dk, "gece_ac": gece[k], "acilis": a,
+                                        "devir_fark": devir, "gun_ici_ac": gun_ici[k], "kapanis": kk, "net_eksilme": net,
+                                        "ac_eksik": (-net if net is not None and net < 0 else 0)})
+                if devir:
+                    gun["devir_fark"] += 1
+                if net is not None and net < 0:
+                    gun["ac_eksik"] += 1
+            gun["durum"] = ("kapanis_yok" if not kap else "acilis_yok" if not acil else
+                            "sorun" if (gun["devir_fark"] or gun["ac_eksik"]) else "tamam")
+            gunler.append(gun)
+            g += timedelta(days=1)
+        sonuc.append({"sube_id": sid, "ad": s_["ad"], "gunler": gunler,
+                      "panel_yok": not any(x["acilis_var"] or x["kapanis_var"] for x in gunler),
+                      "ozet": {"devir_sorunlu_gun": sum(1 for x in gunler if x["devir_fark"]),
+                               "ac_eksik_gun": sum(1 for x in gunler if x["ac_eksik"]),
+                               "kapanis_yok": sum(1 for x in gunler if x["durum"] == "kapanis_yok"),
+                               "tamam": sum(1 for x in gunler if x["durum"] == "tamam")}})
+    return {"kalemler": [{"kod": k, "ad": a, "anahtar": anahtar_of[k]} for k, a in kalemler], "subeler": sonuc, "evren": "yeni",
+            "not": "YENİ PANEL — tezgah sayımı (açılış/kapanış) + Ürün Aç'ta bara açılan + pasta kabulü. Devir farkı = bugün açılış − "
+                   "(dün kapanış + gece giren). Net eksilme = açılış + gün içi giren − kapanış (satış + fire + ikram; kayıp değildir). "
+                   "Eksiye düşerse Ürün Aç girilmemiş olabilir. Sayım gideri ve kasayı değiştirmez."}
+
+
 @router.get("/ozet")
-def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
+def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None, evren: Optional[str] = None):
     from evvel_yeni_tanim_api import subeler as _ey_subeler
-    from evvel_yeni_cekirdek import bugun as _bugun
+    from evvel_yeni_cekirdek import bugun as _bugun, yeni_donem
     bugun = _bugun()
     a_ = (ay or bugun.strftime("%Y-%m"))[:7]
     ay_bas = date.fromisoformat(a_ + "-01")
@@ -128,6 +235,8 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
     bas, son = ay_bas - timedelta(days=1), min(ay_son, bugun)
     with db() as (conn, cur):
         subeler = [s for s in _ey_subeler(cur) if not sube_id or s["id"] == sube_id]
+        if (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur):   # Evvel Yeni defterleri; eski okuma yalnız geçişte
+            return {"ay": a_, **_bar_yeni(cur, subeler, ay_bas, bas, son)}
         sids = [s["id"] for s in subeler]
         cur.execute("""SELECT sube_id::text AS sube_id, tarih, tip, cevap_ts, meta, personel_ad FROM sube_operasyon_event
                         WHERE tarih BETWEEN %s AND %s AND durum='tamamlandi' AND tip IN ('ACILIS','KAPANIS')
@@ -260,7 +369,7 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None):
                                "ac_eksik_gun": sum(1 for x in gunler if x["ac_eksik"]),
                                "kapanis_yok": sum(1 for x in gunler if x["durum"] == "kapanis_yok"),
                                "tamam": sum(1 for x in gunler if x["durum"] == "tamam")}})
-    return {"ay": a_, "kalemler": [{"kod": k, "ad": a} for k, a in KALEMLER], "subeler": sonuc,
+    return {"ay": a_, "kalemler": [{"kod": k, "ad": a} for k, a in KALEMLER], "subeler": sonuc, "evren": "eski",
             "not": "Bara giriş = ürün aç + panelden stok ekle + pasta sevk kabulü. Devir farkı = bugün açılış − (dün kapanış + gece giren). Net eksilme = açılış + gün içi açılan − kapanış "
                    "(satış + fire + ikram birlikte; kayıp değildir). Net eksilme eksiye düşerse ürün aç girilmemiş olabilir. "
                    "Sayım gideri ve kasayı değiştirmez."}

@@ -58,7 +58,7 @@ def _gunluk(ay: str) -> dict:
             continue
         for s in b["subeler"]:
             for g in s["gunler"]:
-                k = {x["kod"]: x for x in g["kalemler"]}
+                k = {(x.get("anahtar") or x["kod"]): x for x in g["kalemler"]}   # yeni dönem: kod=ürün kimliği, anahtar=anlam
                 nets = [k[c]["net_eksilme"] for c in BARDAKLAR]
                 neden = None
                 if g["durum"] in ("kapanis_yok", "acilis_yok"):
@@ -364,9 +364,10 @@ def satis_gun(gun: Optional[str] = None):
         fr = fire.get(sid, [])
         kalemler = []
         for k in (gr["kalemler"] if gr else [{"kod": c, "ad": a} for c, a in KALEMLER]):
-            f_ = sum(x["adet"] for x in fr if x["kod"] == k["kod"])
+            kk_ = k.get("anahtar") or k["kod"]   # yeni dönem: anlam anahtarıyla eşleşir (fire + bardak toplamı)
+            f_ = sum(x["adet"] for x in fr if x["kod"] == kk_)
             net = k.get("net_eksilme")
-            kalemler.append({"kod": k["kod"], "ad": k["ad"], "sabah": k.get("acilis"), "giren": (k.get("gun_ici_ac") or 0),
+            kalemler.append({"kod": kk_, "ad": k["ad"], "sabah": k.get("acilis"), "giren": (k.get("gun_ici_ac") or 0),
                              "aksam": k.get("kapanis"), "kullanilan": net, "fire": f_,
                              "satilan": (net - f_) if net is not None else None, "devir_fark": k.get("devir_fark")})
         kr = next((x for x in kontrol.get(sid, {}).get("gunler", []) if x["gun"] == g_), {})

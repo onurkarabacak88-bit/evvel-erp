@@ -191,3 +191,9 @@ Eski: sube_panel.html tab-ac (5363–5395), renderStokForms('ac') (11479–11560
 - **Çift gönderim:** istek kimliği (mevcut) + düğme kilidi.
 - **Kalan:** "stok sayımı sürüyor — Ürün Aç kapalı" bandı (EY'de sayım kilidi kaynağı yok → kaynak gelince) · ürün aç hatırlatma bandı (Basamak 1'de var) · kapanışta "ürün aç kaydı yok" sorusu (Basamak 3).
 - **Basamak 5 tasarım denetimi (Fable, 2026-10-19) uygulandı:** (A) işlev kaybı geri — sekmeden çıkış uyarısı, taslak sunucuda (ey_panel_taslak), pencerede "Pasifleri göster", son açan kişi hatırlanır, PIN'de Enter · (B) eski tasarım — 72 px −/+, 640 px pencere, yeşil hero, eski metinler. ⏳ "🔒 Stok sayımı sürüyor — Ürün Aç kapalı" bandı: EY'de sayım kilidi kaynağı gelince (kuyruk).
+
+### Bağlantı — Gider + Bar (2026-10-19) · sahip kararı: açılış/kapanışta YALNIZ TEZGAH sayılır
+- Her şubede iki konum: `depo:{şube}` (arka, kapalı koli) · `bar:{şube}` (tezgah). Panelde sayılan ürün (panel_sayim: bardak/süt/su/Redbull/cookie) Ürün Aç'ta depo→bar TAŞINIR (gider değil); açılış/kapanış sayımı `bar:{şube}`'e yazılır; tüketim = bar sayım farkı (eski formül açılış + ürün aç − kapanış ile aynı). Açılınca biten (acilinca) → depo→dışarı:tüketim (gider). Yalnız dönem sayımlı → yalnız olay.
+- Gider (yeni dönem): mal = dışarı:tüketim hareketleri (ac + bar tüketimi) × fiyat_bilgi (KDV dahil, eklenmez); sevk bedeli = şubenin kabulü + toptancıdan doğrudan giriş; gün kesin = panel kapanış olayı. Depo kapalıysa boş + depo_kapali.
+- Bar (yeni dönem): olay defteri (açılış/kapanış sayim + pasta_toplam, ürün aç olay saati) + pasta kabulü; kalemler = panel_sayim ürünleri + pasta; her kalemde `anahtar` (bardak_kucuk/buyuk/plastik…) → Satış kontrolü değişmeden çalışır.
+- ⏳ Kalan: Satış günlük dökümünde FİRE hâlâ eski sube_fire_bildirim'den → Fire basamağında yeni olaya bağlanacak.

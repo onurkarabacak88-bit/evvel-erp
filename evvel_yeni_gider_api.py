@@ -199,8 +199,89 @@ def _tuketim_satirlari(cur, bas: date, son: date):
     return satir
 
 
+# ─────────────── YENİ DÖNEM (1 Kasım — panel_baslangic) OKUYUCULARI: Evvel Yeni defterleri ───────────────
+# Kaynak TEK: Depo hareket defteri (yeni evren, ey_urun kimliği) × fiyat_bilgi (o gün geçerli; KDV DAHİL kuruş, sayım birimi →
+# KDV bir daha EKLENMEZ). Gün kesin = yeni panelin kapanış olayı. Depo / Toptancı modülü kapalıysa (tak-çıkar) mal satırı boş + uyarı.
+def _yeni_fiyatci(cur):
+    from evvel_yeni_toptanci_api import fiyat_bilgi
+    onbellek = {}
+
+    def f(uid, gun):
+        k = (uid, gun)
+        if k not in onbellek:
+            onbellek[k] = fiyat_bilgi(cur, uid, gun)
+        return onbellek[k]
+    return f
+
+
+def _modul_acik(kod: str) -> bool:
+    from evvel_yeni_moduller import DURUM
+    return DURUM.get(kod) == "yuklendi"
+
+
+def _yeni_kesin_gunler(cur, bas: date, son: date) -> set:
+    """(şube, gün) — yeni panelin kapanış olayı yazılmış günler (iptal edilmemiş)."""
+    try:
+        from evvel_yeni_olay import olaylar
+        return {(str(o["sube_id"]), o["is_gunu"]) for o in olaylar(cur, bas=bas, son=son, turler={"kapanis"})
+                if not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"}
+    except Exception:  # noqa: BLE001
+        log.warning("evvel-yeni gider: kapanış olayları okunamadı", exc_info=True)
+        return set()
+
+
+def _yeni_hareketler(cur, bas: date, son: date, turler: tuple, hedef_kosul: str) -> list:
+    """Depo defteri (yeni evren) — hareket satırları. hedef_kosul: SQL parçası (sabit, kullanıcı girdisi değil)."""
+    cur.execute(f"""SELECT tur, urun_id, urun_ad, adet, kaynak, hedef, is_gunu FROM ey_stok_hareket
+                     WHERE yeni AND NOT iptal AND tur = ANY(%s) AND is_gunu BETWEEN %s AND %s AND {hedef_kosul}""",
+                (list(turler), bas, son))
+    return [dict(x) for x in cur.fetchall() or []]
+
+
+def _tuketim_satirlari_yeni(cur, bas: date, son: date) -> list:
+    """ŞUBE MAL GİDERİ (yeni dönem) = 'dışarı:tuketim'e giden hareketler: Ürün Aç ('ac' — açılınca biten ürün, depodan) +
+    bar sayım farkı ('tuketim' — tezgahta sayılan bardak/süt/su; açılış + bara açılan − kapanış). Bardak kolisi açılınca depo→bar
+    TAŞINIR (gider değil) → aynı ürün iki kez gider olmaz (sahip 2026-10-19: yalnız tezgah sayılır)."""
+    if not _modul_acik("depo"):
+        return []
+    fiyat = _yeni_fiyatci(cur)
+    kesin = _yeni_kesin_gunler(cur, bas, son)
+    top = {}
+    for h in _yeni_hareketler(cur, bas, son, ("ac", "tuketim"), "hedef = 'dışarı:tuketim' AND (kaynak LIKE 'depo:%%' OR kaynak LIKE 'bar:%%')"):
+        sid = h["kaynak"].split(":", 1)[1]
+        k = (sid, h["is_gunu"], h["urun_id"], h["tur"])
+        top.setdefault(k, [h["urun_ad"], 0])[1] += int(h["adet"])
+    satir = []
+    for (sid, gun, uid, tur), (ad, adet) in top.items():
+        f = fiyat(uid, gun)
+        satir.append({"sube_id": sid, "gun": gun, "kalem_kodu": uid, "ad": ad or uid, "adet": adet,
+                      "birim_kurus": f["kurus"] if f else None, "fk": f["kaynak"] if f else None, "fiyat_tarihi": f.get("tarih") if f else None,
+                      "kaynak": "ürün aç" if tur == "ac" else "günlük sayım (kullanılan)", "gun_kesin": (sid, gun) in kesin})
+    return satir
+
+
+def _mal_satirlari_yeni(cur, bas: date, son: date, depo: str) -> list:
+    """DEPODAN SEVK BEDELİ (yeni dönem, gidere EKLENMEZ): şubenin KABUL ettiği sevkler (yolda → depo:şube) + toptancıdan doğrudan
+    şubeye giriş (dışarı:toptanci → depo:şube, depo hariç) × o gün geçerli fiyat."""
+    if not _modul_acik("depo"):
+        return []
+    fiyat = _yeni_fiyatci(cur)
+    satir = []
+    for h in _yeni_hareketler(cur, bas, son, ("kabul", "giris"), "hedef LIKE 'depo:%%'"):
+        sid = h["hedef"].split(":", 1)[1]
+        if h["tur"] == "kabul" and h["kaynak"] != "yolda":
+            continue
+        if h["tur"] == "giris" and (h["kaynak"] != "dışarı:toptanci" or sid == depo):
+            continue
+        f = fiyat(h["urun_id"], h["is_gunu"])
+        satir.append({"sube_id": sid, "gun": h["is_gunu"], "kalem_kodu": h["urun_id"], "ad": h["urun_ad"] or h["urun_id"], "adet": int(h["adet"]),
+                      "birim_kurus": f["kurus"] if f else None, "fk": f["kaynak"] if f else None, "fiyat_tarihi": f.get("tarih") if f else None,
+                      "kaynak": "depodan sevk" if h["tur"] == "kabul" else "toptancıdan doğrudan"})
+    return satir
+
+
 @router.get("/ozet")
-def gider_ozet(ay: Optional[str] = None):
+def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
     """Şube şube kendi işletme gideri: mal (sevk × güncel fiyat, KDV dahil) · dükkân küçük
     giderleri · POS/online komisyonu. Patron şahsi çekişler AYRI (gider değil)."""
     _hazirla()
@@ -210,9 +291,19 @@ def gider_ozet(ay: Optional[str] = None):
         _sinif_tablosu(cur)
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
         oranlar = _oranlar(cur)
-        depo = _depo_id(cur)
-        mal = _tuketim_satirlari(cur, ay_bas, min(ay_son, bugun))
-        sevk = _mal_satirlari(cur, ay_bas, min(ay_son, bugun), depo)
+        from evvel_yeni_cekirdek import yeni_donem
+        yeni = (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur)
+        if yeni:   # Evvel Yeni defterleri (tek kaynak); eski okuyucular (köprü) yalnız geçişte — kesimde silinir
+            from evvel_yeni_tanim_api import depo_sube_id
+            depo = depo_sube_id(cur) or "sube-tema"
+            mal = _tuketim_satirlari_yeni(cur, ay_bas, min(ay_son, bugun))
+            sevk = _mal_satirlari_yeni(cur, ay_bas, min(ay_son, bugun), depo)
+            depo_kapali = not _modul_acik("depo")
+        else:
+            depo = _depo_id(cur)
+            mal = _tuketim_satirlari(cur, ay_bas, min(ay_son, bugun))
+            sevk = _mal_satirlari(cur, ay_bas, min(ay_son, bugun), depo)
+            depo_kapali = False
         cur.execute("SELECT kaynak_ref, tur, kimin FROM ey_gider_sinif")
         sinif = {dict(r)["kaynak_ref"]: dict(r) for r in cur.fetchall() or []}
     subeler = {c["sube_id"]: c for c in cep_list if c["tur"] == "sube"}
@@ -230,31 +321,41 @@ def gider_ozet(ay: Optional[str] = None):
         adet = Decimal(str(r["adet"] or 0))
         if not r.get("gun_kesin", True):
             S[sid]["kesin_degil"].add(r["gun"].isoformat())
-        if r["birim"] is None:
+        if (r.get("birim_kurus") if "birim_kurus" in r else r["birim"]) is None:
             S[sid]["fiyat_eksik"] += 1
             S[sid]["satirlar"].append({"gun": r["gun"].isoformat(), "tur": "mal", "aciklama": f"{r['ad']} · {r['kaynak']}", "adet": float(adet),
                                        "birim": None, "tutar": 0, "not": "FİYATI EKSİK"})
             continue
-        kdv = Decimal(str(r["kdv"] or VARSAYILAN_KDV))
-        birim_kdvli = Decimal(str(r["birim"])) * (1 + kdv)
-        t = _kurus((adet * birim_kdvli).quantize(Decimal("0.01")))
+        if "birim_kurus" in r:   # yeni dönem: fiyat_bilgi KDV DAHİL kuruş, sayım birimi — KDV EKLENMEZ (Fable: çift KDV yok)
+            t = int(r["birim_kurus"]) * int(adet)
+            birim_kdvli = Decimal(int(r["birim_kurus"])) / 100
+            not_ = f"{r['fk']} fiyatı" + (f" ({r['fiyat_tarihi']})" if r.get("fiyat_tarihi") else "") + " · KDV dahil"
+        else:
+            kdv = Decimal(str(r["kdv"] or VARSAYILAN_KDV))
+            birim_kdvli = Decimal(str(r["birim"])) * (1 + kdv)
+            t = _kurus((adet * birim_kdvli).quantize(Decimal("0.01")))
+            not_ = f"{r['fk']}" + (f" ({r['fiyat_tarihi']})" if r.get("fiyat_tarihi") else "") + f" · KDV %{int(kdv * 100)} dahil"
         S[sid]["mal"] += t
         S[sid]["katalog"] += r["fk"] == "katalog"
         S[sid]["satirlar"].append({"gun": r["gun"].isoformat(), "tur": "mal", "aciklama": f"{r['ad']} · {r['kaynak']}",
                                    "adet": float(adet), "birim": float(birim_kdvli.quantize(Decimal('0.01'))), "tutar": _tl_sayi(t),
-                                   "not": f"{r['fk']}" + (f" ({r['fiyat_tarihi']})" if r.get("fiyat_tarihi") else "") + f" · KDV %{int(kdv * 100)} dahil"})
+                                   "not": not_})
     # 1b) DEPODAN SEVK BEDELİ — AYRI hesap, gidere EKLENMEZ (sevk = stok; tüketim = gider)
     for r in sevk:
         sid = str(r["sube_id"])
         if sid not in S:
             continue
         adet = Decimal(str(r["adet"] or 0))
-        if r["birim"] is None:
+        if (r.get("birim_kurus") if "birim_kurus" in r else r["birim"]) is None:
             S[sid]["sevk_eksik"] += 1
             S[sid]["sevk_satir"].append({"gun": r["gun"].isoformat(), "aciklama": f"{r['ad']} · {r['kaynak']}", "adet": float(adet), "birim": None, "tutar": 0})
             continue
-        birim_kdvli = Decimal(str(r["birim"])) * (1 + Decimal(str(r["kdv"] or VARSAYILAN_KDV)))
-        t = _kurus((adet * birim_kdvli).quantize(Decimal("0.01")))
+        if "birim_kurus" in r:   # yeni dönem: KDV dahil kuruş
+            birim_kdvli = Decimal(int(r["birim_kurus"])) / 100
+            t = int(r["birim_kurus"]) * int(adet)
+        else:
+            birim_kdvli = Decimal(str(r["birim"])) * (1 + Decimal(str(r["kdv"] or VARSAYILAN_KDV)))
+            t = _kurus((adet * birim_kdvli).quantize(Decimal("0.01")))
         S[sid]["sevk"] += t
         S[sid]["sevk_satir"].append({"gun": r["gun"].isoformat(), "aciklama": f"{r['ad']} · {r['kaynak']}", "adet": float(adet),
                                      "birim": float(birim_kdvli.quantize(Decimal('0.01'))), "tutar": _tl_sayi(t)})
@@ -358,6 +459,7 @@ def gider_ozet(ay: Optional[str] = None):
     T = {k: sum(_kurus(x[k]) for x in out) for k in KALEMLER}
     sube_top = sum(T.values())
     return {"ay": a_, "ay_basi": bas_i, "ay_sonu": son_i, "ay_bitti": ay_son < bugun, "depo_sube_id": depo,
+            "evren": "yeni" if yeni else "eski", "depo_kapali": depo_kapali,
             "turler": TURLER, "toplam": _tl_sayi(sube_top + ORTAK["toplam"]), "sube_toplam": _tl_sayi(sube_top),
             **{k: _tl_sayi(v) for k, v in T.items()},
             "ortak": {"toplam": _tl_sayi(ORTAK["toplam"]), "satirlar": sorted(ORTAK["satirlar"], key=lambda x: x["gun"])},

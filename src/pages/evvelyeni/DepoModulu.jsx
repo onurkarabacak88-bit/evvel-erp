@@ -92,7 +92,7 @@ function Nerede() {
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Depo hesaplanıyor (ilk açılışta panel kayıtları aktarılıyor)…</div></div>;
   let sonKat = null;
   const hucre = { padding: '5px 8px', borderTop: '1px solid var(--pi-line)', fontSize: 13 };
-  const subeK = v.konumlar.filter((k) => k.id.startsWith('depo:'));   // sahip: yolda / askıda kendi sekmesinde, burada karışmasın
+  const subeK = v.konumlar.filter((k) => k.id.startsWith('depo:') || k.id.startsWith('bar:'));   // sahip: yolda / askıda kendi sekmesinde, burada karışmasın
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <style>{PI_CSS}</style>
@@ -107,7 +107,7 @@ function Nerede() {
       </div>
       <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-        {v.konumlar.filter((k) => k.id.startsWith('depo:')).map((k) => (
+        {v.konumlar.filter((k) => k.id.startsWith('depo:') || k.id.startsWith('bar:')).map((k) => (
           <Cip key={k.id} tur={k.acilis_sayimi ? 'yesil' : 'sari'}>{k.ad}: {k.acilis_sayimi ? `açılış sayımı var${k.son_sayim ? ` · son ${tKisa(k.son_sayim)}` : ''}` : 'açılış sayımı YOK'}</Cip>
         ))}
       </div>

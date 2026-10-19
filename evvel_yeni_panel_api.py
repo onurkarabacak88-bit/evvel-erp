@@ -455,7 +455,7 @@ def acilis(sube_id: str, b: AcilisBody):
                        personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(kasa) / 100,
                        veri={"kasa_sayim": kasa, "sayim": satir, "istek_id": b.istek_id,
                              "pasta_toplam": None if b.pasta_toplam is None else _tam(b.pasta_toplam, "Pasta")})
-        d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=f"{KIM} · {p['ad']}", tur="gunluk", gun=c["gun"],
+        d = sayim_yaz(cur, konum=f"bar:{sube_id}", satirlar=satir, kim=f"{KIM} · {p['ad']}", tur="gunluk", gun=c["gun"],
                       kaynak_ref=f"{kok}:sayim:{oid}") if satir and oid else None   # Codex: sürüme bağlı (iptal sonrası yeni sayım); Fable: iş günü
         return {"olay": oid, "tekrar": oid is None, "sayilan": len(satir) if d else 0, "mesaj": "Açılış kaydedildi", "saat_engeli": engel}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
@@ -526,7 +526,7 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
         gecmis = bool(c.get("merkez")) and c["gun"] != _bugun()
         # Fable: sayım kaynak_ref olay SÜRÜMÜNE bağlı (iptal sonrası yeniden kapanışta sayım yeniden yazılır; tekrar gönderimde yazılmaz)
         # ve İŞ GÜNÜNE yazılır (00:00–02:00 kapanışı dünün hareketi)
-        d = sayim_yaz(cur, konum=f"depo:{sube_id}", satirlar=satir, kim=kim, tur="gunluk", gun=c["gun"],
+        d = sayim_yaz(cur, konum=f"bar:{sube_id}", satirlar=satir, kim=kim, tur="gunluk", gun=c["gun"],
                       kaynak_ref=f"{kok}:sayim:{oid}") if satir and oid and not gecmis else None
         if satir and gecmis:
             log.warning("geç kapanış %s %s: ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)", sube_id, gun)
@@ -631,14 +631,15 @@ def _kalemler(cur, kalemler: List[Kalem], takip: Optional[str] = None, pasif_olu
     for x in k:
         x["ad"] = b[x["urun_id"]]["ad"]
         x["takip"] = b[x["urun_id"]].get("takip") or "sayim"
+        x["panel_sayim"] = bool(b[x["urun_id"]].get("panel_sayim"))
     return k
 
 
 @router.post("/{sube_id}/urun-ac")
 def urun_ac(sube_id: str, b: UrunAcBody):
-    """Ürün aç — BÜTÜN katalog (sahip: "bütün mekanizma", Basamak 5). ÇİFT GİDER kuralı: takip='acilinca' ürün → Depo 'ac'
-    (depo:şube → dışarı:tuketim = gider); takip='sayim' ürün → YALNIZ olay (iz) — tüketimi sayım farkı verir (açınca defterden
-    düşüp bar sayımında 'fazla' dönmesin). Fiyat yazılmaz. Eksi stok ENGELLENMEZ — merkeze iş düşer (personele uyarı yok)."""
+    """Ürün aç — BÜTÜN katalog (sahip: "bütün mekanizma", Basamak 5). Sahip (2026-10-19): açılış/kapanışta YALNIZ tezgah sayılır.
+    takip='acilinca' → Depo 'ac' depo:şube → dışarı:tuketim (= gider) · panelde sayılan (panel_sayim: bardak/süt/su…) → depo:şube →
+    bar:şube (taşıma; tüketimi bar sayım farkı) · yalnız dönem sayımlı → yalnız olay. Eksi stok ENGELLENMEZ (merkeze iş)."""
     _TUR = "urun_ac"
     def is_(cur, c):
         from evvel_yeni_depo_api import hareket_yaz
@@ -650,10 +651,16 @@ def urun_ac(sube_id: str, b: UrunAcBody):
         oid = _olay(cur, sube_id=sube_id, tur="urun_ac", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], veri={"kalemler": k, "aciklama": (b.aciklama or "").strip()[:200] or None})
         for i, x in enumerate(k):
-            if oid is None or x["takip"] != "acilinca":   # tekrar gönderim / sayımla izlenen ürün: yalnız iz (tüketim şişmez)
+            if oid is None:   # tekrar gönderim
+                continue
+            if x["takip"] == "acilinca":   # açılınca biten (şurup, kapak…) → gider
+                hedef = "dışarı:tuketim"
+            elif x["panel_sayim"]:          # tezgahta sayılan (bardak, süt, su…) → bara taşınır; tüketimi bar sayım farkı verir
+                hedef = f"bar:{sube_id}"
+            else:                           # yalnız dönem sayımıyla izlenen → yalnız iz (tüketimi depo sayım farkı verir)
                 continue
             hareket_yaz(cur, kaynak_ref=f"{kok}:{i}", tur="ac", urun_id=x["urun_id"], urun_ad=x["ad"], adet=x["adet"],
-                        kaynak=f"depo:{sube_id}", hedef="dışarı:tuketim", kim=f"{KIM} · {p['ad']}", bag=kok, gun=c["gun"])
+                        kaynak=f"depo:{sube_id}", hedef=hedef, kim=f"{KIM} · {p['ad']}", bag=kok, gun=c["gun"])
         return {"olay": oid, "tekrar": oid is None, "mesaj": f"{len(k)} kalem · {sum(x['adet'] for x in k)} adet açıldı"}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
