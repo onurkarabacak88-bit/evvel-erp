@@ -71,13 +71,10 @@ def depo_hazirla(cur) -> None:
 
 
 def evren_yeni(cur) -> bool:
-    """PUBLIC: okuma evreni — panel_baslangic (1 Kasım) ve sonrası YENİ katalog (ey_urun), öncesi eski aktarım (geçiş)."""
-    from evvel_yeni_cekirdek import ayar_oku
-    try:
-        bas = date.fromisoformat((ayar_oku(cur, "panel_baslangic", "2026-11-01") or "2026-11-01")[:10])
-    except ValueError:
-        bas = date(2026, 11, 1)
-    return _bugun() >= bas
+    """PUBLIC: okuma evreni — panel_baslangic (1 Kasım) ve sonrası YENİ katalog (ey_urun), öncesi eski aktarım (geçiş).
+    Kural çekirdekte (yeni_donem) — modüller birbirine değil çekirdeğe bağlı."""
+    from evvel_yeni_cekirdek import yeni_donem
+    return yeni_donem(cur)
 
 
 def _ey_urun_dogrula(cur, idler) -> dict:

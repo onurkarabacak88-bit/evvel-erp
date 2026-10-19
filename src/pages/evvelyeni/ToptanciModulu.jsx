@@ -326,9 +326,11 @@ export function UrunFiyatlari({ onToast }) {
   const [sadeceEksik, setSadeceEksik] = useState(false);
   const [duz, setDuz] = useState(null);   // {u, deger}
   const [mesgul, setMesgul] = useState(false);
+  const [evren, setEvrenS] = useState(() => { try { return localStorage.getItem('ey_fiyat_evren') || ''; } catch { return ''; } });
+  const setEvren = (x) => { try { localStorage.setItem('ey_fiyat_evren', x); } catch { /* yok */ } setEvrenS(x); setV(null); setKat(null); };
   const yukle = useCallback(async () => {
     try {
-      const r = await api('/evvel-yeni/toptanci/fiyatlar'); setV(r); setHata(null);
+      const r = await api('/evvel-yeni/toptanci/fiyatlar' + (evren ? `?evren=${evren}` : '')); setV(r); setHata(null);
       const q = new window.URLSearchParams(window.location.search);
       const hedef = q.get('urun');
       const hk = hedef && r.kategoriler.find((k) => k.urunler.some((u) => u.id === hedef));
@@ -342,7 +344,7 @@ export function UrunFiyatlari({ onToast }) {
       if (hedef || q.get('eksik')) window.history.replaceState({}, '', window.location.pathname);
     }
     catch (e) { setHata(e?.message || 'okunamadı'); }
-  }, []);
+  }, [evren]);
   useEffect(() => { yukle(); }, [yukle]);
   const kaydet = async (birim) => {
     setMesgul(true);
@@ -363,6 +365,12 @@ export function UrunFiyatlari({ onToast }) {
           <label style={{ fontSize: 13, display: 'flex', gap: 5, alignItems: 'center' }}><input type="checkbox" checked={sadeceEksik} onChange={(e) => setSadeceEksik(e.target.checked)} />yalnız fiyatı olmayanlar</label>
         </span>
       </div>
+      <div style={{ ...kart, padding: '8px 12px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 13 }}>
+        <span style={{ color: R.not }}>Katalog:</span>
+        <b style={{ color: v.evren === 'yeni' ? R.yesil : R.not }}>{v.evren === 'yeni' ? '🆕 Yeni katalog (Evvel Yeni)' : '🔁 Geçiş — eski katalog'}</b>
+        <span style={{ flex: 1 }} />
+        <Dugme kucuk onClick={() => setEvren(v.evren === 'yeni' ? 'eski' : 'yeni')}>{v.evren === 'yeni' ? 'Eski kataloğa dön' : 'Yeni kataloğa geç'}</Dugme>
+      </div>
       <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {v.kategoriler.map((k) => (
@@ -381,7 +389,7 @@ export function UrunFiyatlari({ onToast }) {
           }}>
             <b style={{ fontSize: 14, lineHeight: 1.2 }}>{u.ad}</b>
             {u.gecerli != null
-              ? <span style={{ ...num, fontSize: 20, fontWeight: 800 }}>{fmt(u.gecerli)} ₺<span style={{ fontSize: 12, fontWeight: 600, color: R.not }}> / adet</span></span>
+              ? <span style={{ ...num, fontSize: 20, fontWeight: 800 }}>{fmt(u.gecerli)} ₺<span style={{ fontSize: 12, fontWeight: 600, color: R.not }}> / {u.birim || 'adet'}</span></span>
               : <span style={{ color: R.kirmizi, fontWeight: 700 }}>fiyat yok — gir</span>}
             {u.koli && u.gecerli != null && <span style={{ fontSize: 11.5, color: R.not }}>1 koli ({u.koli} adet) = {fmt(u.gecerli * u.koli)} ₺</span>}
             {u.kaynak && <span style={{ fontSize: 11.5, color: KAYNAK_RENK[u.kaynak] }}>{u.kaynak}{u.kaynak === 'son alış' && u.son_alis?.kdv_yok ? ' (KDV oranı yok)' : ''}</span>}
@@ -399,7 +407,7 @@ export function UrunFiyatlari({ onToast }) {
               <span>Katalog: {duz.u.katalog != null ? `${fmt(duz.u.katalog)} ₺` : 'yok'}</span>
               {duz.u.elle != null && <span>Elle girilen: {fmt(duz.u.elle)} ₺{duz.u.elle_kim ? ` · ${duz.u.elle_kim}` : ''}</span>}
             </div>
-            <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13, fontWeight: 600 }}>1 ADET fiyatı ₺ (KDV dahil){duz.u.koli ? ` — kolide ${duz.u.koli} adet var, koli fiyatını ${duz.u.koli}'e böl` : ''}
+            <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13, fontWeight: 600 }}>1 {(duz.u.birim || 'adet').toUpperCase()} fiyatı ₺ (KDV dahil){duz.u.koli ? ` — kolide ${duz.u.koli} adet var, koli fiyatını ${duz.u.koli}'e böl` : ''}
               <input autoFocus inputMode="decimal" value={duz.deger} onChange={(e) => setDuz({ ...duz, deger: e.target.value })}
                 style={{ padding: '10px 12px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 18 }} /></label>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end', flexWrap: 'wrap' }}>

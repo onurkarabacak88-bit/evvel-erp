@@ -68,7 +68,31 @@ def toptanci_hazirla(cur) -> None:
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_toptanci_fiyat (
         toptanci_id TEXT NOT NULL, urun_anahtar TEXT NOT NULL, birim BIGINT NOT NULL, tarih DATE NOT NULL,
         kaynak TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (toptanci_id, urun_anahtar))""")
+    # Fable (altyapı #3): TARİHLİ fiyat geçmişi — YALNIZ EKLENİR (silinmez, ezilmez). "O gün geçerli fiyat" buradan okunur.
+    # tur: 'elle' (merkez girdi; birim NULL = elle fiyat o günden itibaren kaldırıldı) · 'toptanci' (kesin tutardan öğrenilen).
+    # Sözleşme: birim = KURUŞ, KDV DAHİL, 1 SAYIM BİRİMİ (yeni katalog). Eski kimlikli kayıtlar eski birimdedir.
+    cur.execute("""CREATE TABLE IF NOT EXISTS ey_urun_fiyat_gecmis (
+        id TEXT PRIMARY KEY, urun_id TEXT NOT NULL, tur TEXT NOT NULL, toptanci_id TEXT, birim BIGINT, tarih DATE NOT NULL,
+        kaynak TEXT, girilen TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_fiyat_g ON ey_urun_fiyat_gecmis (urun_id, tur, tarih DESC, zaman DESC)")
+    from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
+    if not ayar_oku(cur, "fiyat_gecmis_kopya"):   # bir kez: bugünkü fiyatlar 1 Ekim'den geçerli ilk satır olur
+        cur.execute("""INSERT INTO ey_urun_fiyat_gecmis (id, urun_id, tur, birim, tarih, kaynak, girilen)
+                       SELECT 'fg-' || md5(urun_id || ':ilk'), urun_id, 'elle', birim, DATE '2026-10-01', 'ilk kopya (ey_urun_fiyat)', girilen
+                         FROM ey_urun_fiyat ON CONFLICT (id) DO NOTHING""")
+        cur.execute("""INSERT INTO ey_urun_fiyat_gecmis (id, urun_id, tur, toptanci_id, birim, tarih, kaynak)
+                       SELECT 'fg-' || md5(toptanci_id || ':' || urun_anahtar || ':ilk'), urun_anahtar, 'toptanci', toptanci_id, birim, tarih,
+                              'ilk kopya (' || COALESCE(kaynak, 'toptancı') || ')'
+                         FROM ey_toptanci_fiyat WHERE urun_anahtar NOT LIKE 'ad:%' ON CONFLICT (id) DO NOTHING""")
+        ayar_yaz(cur, "fiyat_gecmis_kopya", "1", "kurulum")
     _HAZIR = True
+
+
+def _fiyat_gecmis_yaz(cur, urun_id: str, tur: str, birim: Optional[int], tarih: date, kaynak: str,
+                      toptanci_id: Optional[str] = None, girilen: Optional[str] = None) -> None:
+    cur.execute("""INSERT INTO ey_urun_fiyat_gecmis (id, urun_id, tur, toptanci_id, birim, tarih, kaynak, girilen)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                ("fg-" + uuid.uuid4().hex[:16], str(urun_id), tur, toptanci_id, birim, tarih, kaynak, girilen))
 
 
 def _anahtar(k: dict) -> str:
@@ -167,10 +191,40 @@ def _fiyat_ogren(cur, t: dict, gun: date) -> None:
     else:
         return
     for an, b in birimler.items():
+        if b > 0 and not str(an).startswith("ad:"):
+            _fiyat_gecmis_yaz(cur, an, "toptanci", b, gun, "kesin tutar", toptanci_id=t["toptanci_id"])
         if b > 0:
             cur.execute("""INSERT INTO ey_toptanci_fiyat (toptanci_id, urun_anahtar, birim, tarih, kaynak) VALUES (%s,%s,%s,%s,'kesin tutar')
                            ON CONFLICT (toptanci_id, urun_anahtar) DO UPDATE SET birim=EXCLUDED.birim, tarih=EXCLUDED.tarih, zaman=NOW()
                            WHERE ey_toptanci_fiyat.tarih <= EXCLUDED.tarih""", (t["toptanci_id"], an, b, gun))
+
+
+def fiyat_bilgi(cur, urun_id: str, gun: Optional[date] = None) -> Optional[dict]:
+    """PUBLIC — TEK FİYAT KURALI, SÖZLEŞMELİ: {kurus, kdv_dahil: True, birim: 'sayim', kaynak, tarih} ya da None.
+    O GÜN geçerli fiyat (tarihli geçmişten): o güne kadar öğrenilen en yeni TOPTANCI fiyatı → yoksa o güne kadar en yeni ELLE fiyat
+    (kaldırıldıysa yok) → geçmişte hiç satır yoksa bugünkü tablo (eski kimlik / geçiş). Okuyan modül KDV EKLEMEZ."""
+    toptanci_hazirla(cur)
+    uid = str(urun_id or "").strip()
+    if not uid:
+        return None
+    g = gun or _bugun()
+    cur.execute("""SELECT birim, tarih, kaynak FROM ey_urun_fiyat_gecmis WHERE urun_id=%s AND tur='toptanci' AND tarih <= %s AND birim IS NOT NULL
+                    ORDER BY tarih DESC, zaman DESC LIMIT 1""", (uid, g))
+    r = cur.fetchone()
+    if r:
+        return {"kurus": int(dict(r)["birim"]), "kdv_dahil": True, "birim": "sayim", "kaynak": "toptancı", "tarih": dict(r)["tarih"].isoformat()}
+    cur.execute("""SELECT birim, tarih FROM ey_urun_fiyat_gecmis WHERE urun_id=%s AND tur='elle' AND tarih <= %s
+                    ORDER BY tarih DESC, zaman DESC LIMIT 1""", (uid, g))
+    r = cur.fetchone()
+    if r:
+        return None if dict(r)["birim"] is None else {"kurus": int(dict(r)["birim"]), "kdv_dahil": True, "birim": "sayim",
+                                                       "kaynak": "elle", "tarih": dict(r)["tarih"].isoformat()}
+    cur.execute("SELECT 1 FROM ey_urun_fiyat_gecmis WHERE urun_id=%s LIMIT 1", (uid,))
+    if cur.fetchone():
+        return None   # geçmişi var ama o gün geçerli fiyat yok (sonra girilmiş) — UYDURMA
+    cur.execute("SELECT birim FROM ey_urun_fiyat WHERE urun_id=%s", (uid,))
+    r = cur.fetchone()
+    return {"kurus": int(dict(r)["birim"]), "kdv_dahil": True, "birim": "sayim", "kaynak": "elle", "tarih": None} if r else None
 
 
 def guncel_fiyat(cur, urun_id: str, gun: Optional[date] = None) -> Optional[int]:
@@ -178,20 +232,8 @@ def guncel_fiyat(cur, urun_id: str, gun: Optional[date] = None) -> Optional[int]
     → elle girilen ürün fiyatı → yok (None: okuyan modül 'fiyatı eksik' der, uydurmaz).
     BİRİM: fiyat, kaydın girildiği birimdedir. Yeni şube panelinin kayıtları (ey_urun kimliği) SAYIM biriminde girilir → fiyat
     1 sayım birimidir. Ekim'e kadarki eski kimlikli kayıtlar eski birimdedir (Fable: çevrim yapılmış sanılmasın)."""
-    toptanci_hazirla(cur)
-    uid = str(urun_id or "").strip()
-    if not uid:
-        return None
-    # Codex: ey_toptanci_fiyat toptancı×ürün başına TEK satır (yenisi ezer) → tarih geçmişi yok; 'gun' bugün için anlamlı.
-    # Fiyat geçmişi (teslim kaynaklı) yeni panelin teslim akışıyla gelir (SUBE_PANELI_TASARIM faz 2).
-    cur.execute("""SELECT birim FROM ey_toptanci_fiyat WHERE urun_anahtar=%s AND tarih <= %s ORDER BY tarih DESC, zaman DESC LIMIT 1""",
-                (uid, gun or date.today()))
-    r = cur.fetchone()
-    if r:
-        return int(dict(r)["birim"])
-    cur.execute("SELECT birim FROM ey_urun_fiyat WHERE urun_id=%s", (uid,))
-    r = cur.fetchone()
-    return int(dict(r)["birim"]) if r else None
+    f = fiyat_bilgi(cur, urun_id, gun)   # Fable: tarihli geçmişten (o gün geçerli); sözleşme fiyat_bilgi'de
+    return f["kurus"] if f else None
 
 
 def teslim_yaz(cur, *, kaynak_ref: str, toptanci_id: str, toptanci_ad: str, sube_id: Optional[str], gun: date,
@@ -482,13 +524,47 @@ def teslim_iptal(tid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Head
 
 
 # ─────────────── ÜRÜN FİYATLARI (panel kataloğu şeklinde) ───────────────
+def _fiyatlar_yeni(cur) -> dict:
+    """Yeni katalog (ey_urun) × o gün geçerli fiyat (fiyat_bilgi). 1 SAYIM birimi, KDV dahil."""
+    from evvel_yeni_urun_api import katalog as _ey_katalog
+    kat = _ey_katalog(cur)
+    idler = [str(u["id"]) for k in kat for u in k["urunler"]]
+    cur.execute("SELECT urun_id, birim, girilen, zaman FROM ey_urun_fiyat WHERE urun_id = ANY(%s)", (idler,))
+    elle = {dict(r)["urun_id"]: dict(r) for r in cur.fetchall() or []}
+    cur.execute("""SELECT f.urun_anahtar, f.birim, f.tarih, t.ad FROM ey_toptanci_fiyat f LEFT JOIN ey_toptanci t ON t.id = f.toptanci_id
+                    WHERE f.urun_anahtar = ANY(%s)""", (idler,))
+    top_f = {}
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        top_f.setdefault(r["urun_anahtar"], []).append({"toptanci": r["ad"], "birim": _tl_sayi(int(r["birim"])), "tarih": r["tarih"].isoformat()})
+    out = []
+    for k in kat:
+        satir = []
+        for u in k["urunler"]:
+            uid = str(u["id"])
+            f = fiyat_bilgi(cur, uid)
+            e = elle.get(uid)
+            satir.append({"id": uid, "ad": u["ad"], "gecerli": _tl_sayi(f["kurus"]) if f else None, "kaynak": f["kaynak"] if f else None,
+                          "birim": u.get("birim") or "adet", "koli": u.get("koli_ici"),
+                          "elle": _tl_sayi(int(e["birim"])) if e else None, "elle_kim": e.get("girilen") if e else None,
+                          "son_alis": None, "katalog": None, "toptanci": top_f.get(uid, [])})
+        out.append({"id": str(k["id"]), "ad": k["ad"], "emoji": k.get("emoji"), "urunler": satir,
+                    "eksik": sum(1 for x in satir if x["gecerli"] is None)})
+    return {"kategoriler": out, "eksik": sum(k["eksik"] for k in out), "toplam": sum(len(k["urunler"]) for k in out), "evren": "yeni",
+            "not": "YENİ KATALOG — fiyat 1 SAYIM birimi başına (ürünün biriminde), KDV DAHİL. Sıra: toptancının kesin faturasından öğrenilen "
+                   "→ elle girilen. Her değişiklik tarihli geçmişe yazılır (geçen ayın gideri o günün fiyatıyla hesaplanır)."}
+
+
 @router.get("/fiyatlar")
-def urun_fiyatlari():
+def urun_fiyatlari(evren: Optional[str] = None):
     """Panel kataloğu (siparis_kategori → siparis_urun) + her ürünün GEÇERLİ fiyatı (KDV dahil) ve kaynağı.
     Sıra: elle girilen → son alış (KDV dahil) → katalog. Toptancıya özel öğrenilen fiyatlar ayrıca listelenir."""
     _hazirla()
     with db() as (conn, cur):
         toptanci_hazirla(cur)
+        from evvel_yeni_cekirdek import yeni_donem
+        if (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur):
+            return _fiyatlar_yeni(cur)
         cur.execute("SELECT id::text AS id, kod, ad, emoji, sira FROM siparis_kategori WHERE aktif ORDER BY sira, ad")
         kats = [dict(r) for r in cur.fetchall() or []]
         cur.execute("""SELECT id::text AS id, kategori_id::text AS kategori_id, ad, sira, birim_fiyat_tl, depo_stok_kalem_kodu
@@ -549,8 +625,8 @@ def urun_fiyatlari():
                           "son_alis": son, "katalog": kat, "toptanci": top_f.get(u["id"], [])})
         out.append({"id": k["id"], "ad": k["ad"], "emoji": k.get("emoji"), "urunler": satir,
                     "eksik": sum(1 for x in satir if x["gecerli"] is None)})
-    return {"kategoriler": out, "eksik": sum(k["eksik"] for k in out), "toplam": sum(len(k["urunler"]) for k in out),
-            "not": "Her şey ADET başına (sahip: 'her şeyi sayılabilir, adet mantığında fiyatlayalım'), KDV DAHİL — şube teslimde adet sayar. "
+    return {"kategoriler": out, "eksik": sum(k["eksik"] for k in out), "toplam": sum(len(k["urunler"]) for k in out), "evren": "eski",
+            "not": "GEÇİŞ (eski katalog) — Her şey ADET başına (sahip: 'her şeyi sayılabilir, adet mantığında fiyatlayalım'), KDV DAHİL — şube teslimde adet sayar. "
                    "Sıra: elle girilen → son alış → katalog. "
                    "Toptancı tahmini önce o toptancının kendi faturasından öğrenilen fiyatı kullanır."}
 
@@ -590,6 +666,7 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
             raise HTTPException(404, "Ürün bulunamadı")
         if body.birim is None:
             cur.execute("DELETE FROM ey_urun_fiyat WHERE urun_id=%s", (body.urun_id,))
+            _fiyat_gecmis_yaz(cur, body.urun_id, "elle", None, _bugun(), "elle fiyat kaldırıldı", girilen=_aktor(cur, x_evvel_oturum))
             tahminleri_tazele(cur)
             return {"ok": True, "mesaj": f"{dict(r)['ad']}: elle fiyat kaldırıldı"}
         b = _kurus(body.birim)
@@ -598,6 +675,7 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
         cur.execute("""INSERT INTO ey_urun_fiyat (urun_id, birim, girilen) VALUES (%s,%s,%s)
                        ON CONFLICT (urun_id) DO UPDATE SET birim=EXCLUDED.birim, girilen=EXCLUDED.girilen, zaman=NOW()""",
                     (body.urun_id, b, _aktor(cur, x_evvel_oturum)))
+        _fiyat_gecmis_yaz(cur, body.urun_id, "elle", b, _bugun(), "elle", girilen=_aktor(cur, x_evvel_oturum))
         tahminleri_tazele(cur)
     return {"ok": True, "mesaj": f"{dict(r)['ad']}: {_tl_sayi(b):,.2f} ₺ (KDV dahil) kaydedildi"}
 
