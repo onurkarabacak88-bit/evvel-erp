@@ -691,7 +691,8 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
         kim = _aktor(cur, x_evvel_oturum)
         if body.birim is None:
             cur.execute("DELETE FROM ey_urun_fiyat WHERE urun_id=%s RETURNING urun_id", (body.urun_id,))
-            if cur.fetchone():
+            from evvel_yeni_urun_api import urun_bilgi
+            if cur.fetchone() and urun_bilgi(cur, [body.urun_id]):
                 _fiyat_gecmis_yaz(cur, body.urun_id, "elle", None, _bugun(), "elle fiyat kaldırıldı", girilen=kim)
             tahminleri_tazele(cur)
             return {"ok": True, "mesaj": f"{dict(r)['ad']}: elle fiyat kaldırıldı"}
@@ -701,7 +702,9 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
         cur.execute("""INSERT INTO ey_urun_fiyat (urun_id, birim, girilen) VALUES (%s,%s,%s)
                        ON CONFLICT (urun_id) DO UPDATE SET birim=EXCLUDED.birim, girilen=EXCLUDED.girilen, zaman=NOW()""",
                     (body.urun_id, b, kim))
-        _fiyat_gecmis_yaz(cur, body.urun_id, "elle", b, _bugun(), "elle", girilen=kim)
+        from evvel_yeni_urun_api import urun_bilgi
+        if urun_bilgi(cur, [body.urun_id]):   # Fable: eski kimlik fiyat geçmişine girmez
+            _fiyat_gecmis_yaz(cur, body.urun_id, "elle", b, _bugun(), "elle", girilen=kim)
         tahminleri_tazele(cur)
     return {"ok": True, "mesaj": f"{dict(r)['ad']}: {_tl_sayi(b):,.2f} ₺ (KDV dahil) kaydedildi"}
 
