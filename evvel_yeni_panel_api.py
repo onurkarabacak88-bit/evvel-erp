@@ -709,8 +709,12 @@ def _kapanis_merkeze(sube_id: str, b: KapanisBody) -> dict:
                        AND islenme > NOW() - INTERVAL '2 minutes' LIMIT 1""", (str(sube_id),))
         if cur.fetchone():
             raise HTTPException(409, "Kapanış şu an telefondan onaylanıyor — birkaç saniye bekle")
-        if _gun_kapali(cur, sube_id, _bugun()):
-            raise HTTPException(409, "Bugünün kapanışı zaten yapıldı")
+        try:
+            fg = date.fromisoformat(str(b.istemci_gunu or "")[:10])
+        except ValueError:
+            fg = _bugun()
+        if _gun_kapali(cur, sube_id, fg):   # Codex: formun GÜNÜ (dünkü eksik kapanış da gönderilebilsin)
+            raise HTTPException(409, "Bu günün kapanışı zaten yapıldı")
         cur.execute("""UPDATE ey_panel_onay SET durum='iptal', mesaj='merkeze gönderildi' WHERE sube_id=%s AND tur='kapanis'
                        AND durum IN ('bekliyor','hata')""", (str(sube_id),))   # açık QR onayı kalmasın
         if not b.istemci_gunu:

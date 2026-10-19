@@ -22,6 +22,7 @@ const kapanisErken = (hhmm) => {
 
 export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, urunAcaGit, gun: formGunu }) {
   const gun = formGunu || d.gun;   // Codex P1: formun iş günü AÇILDIĞI an sabit — 02:00'de yeniden kurulup rakamlar silinmez
+  const eskiGun = gun !== d.gun;    // gün değişti: QR onayı artık yazamaz → yalnız "Merkeze gönder" (rakamlar kaybolmaz)
   const urunler = d.sayilan.flatMap((g) => g.urunler);
   const bardakMi = (u) => /bardak/i.test(u.ad) && !/kapa[kğ]|çanta|tutucu/i.test(u.ad);
   const bardaklar = urunler.filter(bardakMi);
@@ -49,7 +50,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   const [mesgul, setMesgul] = useState(false);
   const [sonuc, setSonuc] = useState(null);   // { tur: 'tamam' | 'uyari' | 'merkeze', mesaj, uyarilar }
   const [agHata, setAgHata] = useState(0);
-  const [merkezAc, setMerkezAc] = useState(false);
+  const [merkezAc, setMerkezAc] = useState(eskiGun);
   const [mKisi, setMKisi] = useState('');
   const [mPin, setMPin] = useState('');   // YALNIZ bellekte
   const [saat, setSaat] = useState(() => new Date());
@@ -137,7 +138,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
     const o = onayRef.current;
     if (!o?.id) { sonucGoster({ tur: 'tamam', uyarilar: [] }); return; }
     api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}`)
-      .then((r) => (r.durum === 'onaylandi' ? bittiSonuc(r, r.kisi) : sonucGoster({ tur: 'tamam', uyarilar: [] })))
+      .then((r) => { if (r.durum === 'onaylandi') bittiSonuc(r, r.kisi); else if (r.durum !== 'isleniyor') sonucGoster({ tur: 'tamam', uyarilar: [] }); })   // isleniyor: sorgu sürer, uyarı gelince gösterilir
       .catch(() => sonucGoster({ tur: 'tamam', uyarilar: [] }));
   }, [d.kapanis_var]);   // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -336,7 +337,9 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
                   {yok.kapanis_sorumlusu?.ad && <span style={{ color: C.soluk }}>🌙 Kapanış sorumlusu: {yok.kapanis_sorumlusu.ad}</span>}
                   {iceride.length > 1 && <span style={{ color: C.soluk }}>Kapanışı yapmayacak olan aynı QR'ı okutup telefonunda <b>"🚪 Sadece çıkış yap"</b>a bassın.</span>}
                 </div>
-                {!tabletVar ? (
+                {eskiGun ? (
+                  <b style={{ color: C.sari }}>📅 Bu form {gun} gününe ait — gün değişti. Aşağıdan MERKEZE GÖNDER: merkez o günün kapanışı olarak işler.</b>
+                ) : !tabletVar ? (
                   <b style={{ color: C.sari }}>Bu bilgisayar kayıtlı değil — QR çıkamaz. Merkezden bağlantı iste.</b>
                 ) : !onay ? (
                   <span style={{ color: C.soluk, fontSize: 13 }}>Özet doğruysa aşağıdaki düğmeye bas — ekranda mühür QR'ı çıkar.</span>
@@ -379,7 +382,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
           <div className="aw-dugmeler">
             {adim > 1 && <button className="aw-btn" onClick={geri} disabled={mesgul}>« Geri</button>}
             {adim < 5 && <button className="aw-btn ana" onClick={ileri}>İleri →</button>}
-            {adim === 5 && tabletVar && (!onay || !['bekliyor', 'isleniyor'].includes(onay.durum)) && (
+            {adim === 5 && tabletVar && !eskiGun && (!onay || !['bekliyor', 'isleniyor'].includes(onay.durum)) && (
               <button className="aw-btn ana yesil" disabled={mesgul} onClick={onayIste}>
                 {mesgul ? 'Hazırlanıyor…' : onay ? '🔁 Yeniden QR iste' : '🔒 QR ile Mühürle'}</button>
             )}

@@ -121,6 +121,14 @@ export default function SubePaneli({ subeId }) {
   const ac = (m) => {
     if (m === 'acilis') { setDenemeKapandi(false); setSihirbazElle(true); return; }
     if (m === 'ac') { setSekme('ac'); return; }   // Basamak 5: Ürün Aç eski panel gibi orta alanda SEKME
+    if (m === 'kapanis') {   // Codex: gece yarısından sonra sayfa yenilense de dünün GÖNDERİLMEMİŞ kapanışı kaybolmasın
+      const dun = new Date(new Date(d.gun + 'T12:00').getTime() - 864e5).toISOString().slice(0, 10);
+      let var_ = false;
+      try { var_ = !!localStorage.getItem(`sp_taslak:${subeId}:${dun}:kapanis_sihirbaz`); } catch { var_ = false; }
+      const g = var_ && window.confirm(`${dun} gününün GÖNDERİLMEMİŞ kapanış formu duruyor. Onu açıp merkeze gönderelim mi?
+(İptal = bugünün kapanışı)`) ? dun : d.gun;
+      setFormGun(g); setModal('kapanis'); return;
+    }
     temizle();
     const adaylar = (yok.girenler || []).filter((g) => g.acik).map((g) => g.personel_id);
     setKisi(adaylar.length === 1 ? adaylar[0] : '');
