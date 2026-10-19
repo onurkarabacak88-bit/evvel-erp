@@ -268,7 +268,8 @@ def _mal_satirlari_yeni(cur, bas: date, son: date, depo: str) -> list:
     fiyat = _yeni_fiyatci(cur)
     satir = []
     iptal_teslim = set()
-    if _modul_acik("toptanci"):   # Codex: teslimi iptal edilip stoğu sayımla kalan giriş sevk bedelinde sayılmasın
+    cur.execute("SELECT to_regclass('ey_toptanci_teslim') IS NOT NULL AS v")
+    if dict(cur.fetchone())["v"]:   # Codex: teslimi iptal edilip stoğu sayımla kalan giriş sevk bedelinde sayılmasın (modül kapalı da olsa)
         cur.execute("SELECT kaynak_ref FROM ey_toptanci_teslim WHERE iptal AND kaynak_ref LIKE 'panel:teslim:%%' AND tarih BETWEEN %s AND %s",
                     (bas, son))
         iptal_teslim = {dict(r)["kaynak_ref"] for r in cur.fetchall() or []}

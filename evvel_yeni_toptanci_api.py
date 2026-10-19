@@ -282,15 +282,16 @@ def teslim_yaz(cur, *, kaynak_ref: str, toptanci_id: str, toptanci_ad: str, sube
 def panel_teslim_yaz(cur, *, defter_id, sube_id, toptanci_id, toptanci_ad, kalemler, fatura_geldi, fatura_tutar, fatura_no, teslim_alan) -> None:
     """sube_panel /urun-sevk kancası — kendi SAVEPOINT'inde; hata teslimi (stok) BOZMAZ, iz bırakır."""
     try:
-        from evvel_yeni_cekirdek import bugun as _bg, panel_baslangic as _pb
-        if _bg() >= _pb(cur):   # Codex: yeni panel canlıyken TEK teslim kapısı yeni panel — eski köprü borç yazmaz
-            log.warning("eski panel teslimi yeni dönemde geldi — Evvel Yeni borcuna YAZILMADI (defter=%s)", defter_id)
-            return
+        from evvel_yeni_cekirdek import is_gunu as _ig, panel_baslangic as _pb
+        # Codex: yeni dönemde (iş günü ≥ panel_baslangic) eski panelden teslim gelirse borç KAYBOLMASIN (sessiz kayıp) ama
+        # yeni panelle çift kayıt olabilir → yazılır + "⚠ ESKİ PANELDEN" işareti (merkez Toptancılar'da görür, çiftse iptal eder)
+        isaret = "⚠ ESKİ PANELDEN (yeni dönem) — yeni panelde aynı teslim varsa birini iptal et" if _ig() >= _pb(cur) else None
         with savepoint(cur, "sp_ey_top_panel"):
             from evvel_yeni_cekirdek import bugun as _b
             teslim_yaz(cur, kaynak_ref=f"urun_sevk:{defter_id}", toptanci_id=str(toptanci_id), toptanci_ad=toptanci_ad,
                        sube_id=str(sube_id), gun=_b(), kalemler=kalemler or [], fatura_geldi=fatura_geldi,
-                       kesin_tutar=_kr(fatura_tutar) if fatura_tutar else None, fatura_no=fatura_no, teslim_alan=teslim_alan)
+                       kesin_tutar=_kr(fatura_tutar) if fatura_tutar else None, fatura_no=fatura_no, teslim_alan=teslim_alan,
+                       aciklama=isaret)
     except Exception as e:  # noqa: BLE001
         log.warning("Evvel Yeni toptancı teslimi yazılamadı (stok etkilenmedi) defter=%s: %s", defter_id, str(e)[:200])
 
