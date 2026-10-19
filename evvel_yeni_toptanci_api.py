@@ -22,8 +22,9 @@ from datetime import date, timedelta
 from decimal import Decimal
 from typing import List, Optional
 
-from fastapi import APIRouter, Header, HTTPException
+from fastapi import APIRouter, Header, HTTPException, Request
 from pydantic import BaseModel
+from starlette.concurrency import run_in_threadpool
 
 from database import db, savepoint
 from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
@@ -75,6 +76,11 @@ def toptanci_hazirla(cur) -> None:
         id TEXT PRIMARY KEY, urun_id TEXT NOT NULL, tur TEXT NOT NULL, toptanci_id TEXT, birim BIGINT, tarih DATE NOT NULL,
         kaynak TEXT, girilen TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_fiyat_g ON ey_urun_fiyat_gecmis (urun_id, tur, tarih DESC, zaman DESC)")
+    # E1 (sahip onayı 2026-10-19): fatura belgesi TESLİMİN EKİ — ayrı fatura nesnesi / OCR / eşleştirme YOK (eski hastalık).
+    cur.execute("""CREATE TABLE IF NOT EXISTS ey_toptanci_belge (
+        id TEXT PRIMARY KEY, teslim_id TEXT NOT NULL, sayfa INT NOT NULL, mime TEXT NOT NULL, boyut INT NOT NULL, veri BYTEA NOT NULL,
+        sha256 TEXT NOT NULL, yukleyen TEXT, kaynak TEXT NOT NULL, iptal BOOLEAN NOT NULL DEFAULT FALSE, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_top_belge ON ey_toptanci_belge (teslim_id) WHERE NOT iptal")
     from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
     if not ayar_oku(cur, "fiyat_gecmis_kopya"):   # bir kez: bugünkü fiyatlar 1 Ekim'den geçerli ilk satır olur
         cur.execute("""INSERT INTO ey_urun_fiyat_gecmis (id, urun_id, tur, birim, tarih, kaynak, girilen)
@@ -309,6 +315,8 @@ def _hesap(cur, bugun: date):
     toptanci_hazirla(cur)
     cur.execute("SELECT id, ad, kategori, telefon, acilis_bakiye, aktif, vade_gun FROM ey_toptanci ORDER BY ad")
     tlar = [dict(r) for r in cur.fetchall() or []]
+    cur.execute("SELECT teslim_id, COUNT(*) AS n FROM ey_toptanci_belge WHERE NOT iptal GROUP BY teslim_id")
+    belge_say = {dict(r)["teslim_id"]: int(dict(r)["n"]) for r in cur.fetchall() or []}
     cur.execute("SELECT * FROM ey_toptanci_teslim ORDER BY tarih, zaman")
     teslimler = [dict(r) for r in cur.fetchall() or []]
     bilinen = {t["id"] for t in tlar}
@@ -370,7 +378,9 @@ def _hesap(cur, bugun: date):
                         "borc": _tl_sayi(borc) if borc is not None else None, "durum": ("kesin" if x.get("kesin_tutar") is not None else "tahmini" if borc is not None else "bilinmiyor"),
                         "sapma": round(sapma * 100) if sapma is not None else None, "sapma_uyari": bool(sapma is not None and abs(sapma) > SAPMA_ORAN),
                         "vade": vade.isoformat() if vade else None, "teslim_alan": x.get("teslim_alan"), "aciklama": x.get("aciklama"),
-                        "iptal": x["iptal"], "iptal_sebep": x.get("iptal_sebep"), "iz": x.get("iz") or []})
+                        "iptal": x["iptal"], "iptal_sebep": x.get("iptal_sebep"), "iz": x.get("iz") or [],
+                        "belge_sayi": belge_say.get(x["id"], 0),
+                        "belge_eksik": bool(x.get("fatura_geldi") and not belge_say.get(x["id"]) and not x["iptal"])})
         od_top = sum(o["tutar"] for o in od)
         har += [{**o, "tutar": _tl_sayi(o["tutar"])} for o in od]
         har.sort(key=lambda z: z["tarih"], reverse=True)
@@ -531,6 +541,153 @@ def teslim_tutar(tid: str, body: TutarBody, x_evvel_oturum: Optional[str] = Head
 
 class IptalBody(BaseModel):
     sebep: str
+
+
+# ─────────────── E1 · FATURA BELGESİ (teslimin eki) ───────────────
+BELGE_MAX_SAYFA = 6
+BELGE_MAX = {"image/jpeg": 900_000, "image/png": 900_000, "image/webp": 900_000, "application/pdf": 3_500_000}
+
+
+def _belge_coz(veri: str, mime: Optional[str]) -> tuple:
+    import base64
+    import hashlib
+    v = (veri or "").strip()
+    if v.startswith("data:"):
+        bas, _, v = v.partition(",")
+        mime = mime or bas[5:].split(";")[0]
+    if mime not in BELGE_MAX:
+        raise HTTPException(400, "Yalnız fotoğraf (JPEG/PNG) ya da PDF")
+    try:
+        ham = base64.b64decode(v, validate=True)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, "Dosya okunamadı")
+    if not ham or len(ham) > BELGE_MAX[mime]:
+        raise HTTPException(400, f"Dosya çok büyük (en çok {BELGE_MAX[mime] // 1_000_000 or 1} MB)")
+    imza = {b"\xff\xd8\xff": "image/jpeg", b"\x89PNG": "image/png", b"%PDF": "application/pdf", b"RIFF": "image/webp"}
+    if not any(ham.startswith(k) and (m == mime) for k, m in imza.items()):
+        raise HTTPException(400, "Dosya türü içeriğiyle uyuşmuyor")
+    return ham, mime, hashlib.sha256(ham).hexdigest()
+
+
+def _belge_ekle(cur, tid: str, ham: bytes, mime: str, sha: str, yukleyen: str, kaynak: str) -> dict:
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_top_belge:" + tid,))
+    cur.execute("SELECT id FROM ey_toptanci_belge WHERE teslim_id=%s AND sha256=%s AND NOT iptal", (tid, sha))
+    r = cur.fetchone()
+    if r:   # aynı dosya ikinci kez (tekrar gönderim) → yeni sayfa açılmaz
+        return {"id": dict(r)["id"], "tekrar": True}
+    cur.execute("SELECT COALESCE(MAX(sayfa), 0) AS s, COUNT(*) AS n FROM ey_toptanci_belge WHERE teslim_id=%s AND NOT iptal", (tid,))
+    s = dict(cur.fetchone())
+    if int(s["n"]) >= BELGE_MAX_SAYFA:
+        raise HTTPException(409, f"Bu teslime en çok {BELGE_MAX_SAYFA} sayfa eklenir")
+    bid = "tb-" + uuid.uuid4().hex[:12]
+    cur.execute("""INSERT INTO ey_toptanci_belge (id, teslim_id, sayfa, mime, boyut, veri, sha256, yukleyen, kaynak)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""", (bid, tid, int(s["s"]) + 1, mime, len(ham), ham, sha, yukleyen, kaynak))
+    return {"id": bid, "sayfa": int(s["s"]) + 1, "tekrar": False}
+
+
+class BelgeBody(BaseModel):
+    veri: str                    # base64 (data URL olabilir) — telefon fotoğrafı küçültüp gönderir
+    mime: Optional[str] = None
+    sube: Optional[str] = None   # telefon: okutulan panelin şubesi
+
+
+@router.post("/teslim/{tid}/belge")
+def belge_merkez(tid: str, body: BelgeBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez: faturayı sonradan (PDF / fotoğraf) teslime ekler."""
+    ham, mime, sha = _belge_coz(body.veri, body.mime)
+    with db() as (conn, cur):
+        toptanci_hazirla(cur)
+        kim = _aktor(cur, x_evvel_oturum)
+        if kim in ("oturumsuz", "bilinmiyor"):
+            raise HTTPException(401, "Merkez oturumu gerekli")
+        cur.execute("SELECT 1 FROM ey_toptanci_teslim WHERE id=%s AND NOT iptal", (tid,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Teslim bulunamadı ya da iptal")
+        r = _belge_ekle(cur, tid, ham, mime, sha, kim, "merkez")
+    return {"ok": True, **r, "mesaj": "Belge zaten ekliydi" if r["tekrar"] else f"Belge eklendi (sayfa {r['sayfa']})"}
+
+
+def _telefon_teslim(cur, request_headers, method, yol, govde: bytes, tid: str, sube: Optional[str]) -> tuple:
+    """Telefon (imzalı) → kişi; teslim o şubenin, son 2 gün, iptal değil; kişi o şubede İÇERİDE. Yoklama kapalıysa 503."""
+    from evvel_yeni_moduller import DURUM
+    if DURUM.get("yoklama") != "yuklendi":
+        raise HTTPException(503, "Telefon onayı kapalı — merkez PDF ekler")
+    import evvel_yeni_yoklama_api as y
+    c = y.cihaz_coz(cur, request_headers, method, yol, govde, tur="telefon")
+    p = y.personel_oku(cur, c["personel_id"])
+    cur.execute("SELECT id, sube_id, toptanci_ad, tarih, kesin_tutar, tahmini, fatura_geldi FROM ey_toptanci_teslim WHERE id=%s AND NOT iptal", (tid,))
+    t = cur.fetchone()
+    if not t:
+        raise HTTPException(404, "Teslim bulunamadı")
+    t = dict(t)
+    if sube and str(t["sube_id"]) != str(sube):
+        raise HTTPException(409, "Bu teslim başka şubenin")
+    if t["tarih"] < _bugun() - timedelta(days=2):
+        raise HTTPException(409, "Teslim eski — faturayı merkez eklesin")
+    if not y.acik_mi(cur, str(t["sube_id"]), p["id"]):
+        raise HTTPException(409, "Önce bu şubeye QR ile giriş yap")
+    return p, t
+
+
+@router.get("/teslim/{tid}/belge-telefon")
+async def belge_telefon_ozet(tid: str, request: Request, sube: Optional[str] = None):
+    def _is():
+        with db() as (conn, cur):
+            toptanci_hazirla(cur)
+            p, t = _telefon_teslim(cur, request.headers, "GET", request.url.path, b"", tid, sube)
+            cur.execute("SELECT COUNT(*) AS n FROM ey_toptanci_belge WHERE teslim_id=%s AND NOT iptal", (tid,))
+            n = int(dict(cur.fetchone())["n"])
+        tut = t.get("kesin_tutar") if t.get("kesin_tutar") is not None else t.get("tahmini")
+        return {"kisi": p["ad"], "toptanci": t["toptanci_ad"], "tarih": t["tarih"].isoformat(), "belge_sayi": n, "max": BELGE_MAX_SAYFA,
+                "tutar": _tl_sayi(int(tut)) if tut is not None else None, "fatura_geldi": t.get("fatura_geldi")}
+    return await run_in_threadpool(_is)
+
+
+@router.post("/teslim/{tid}/belge-telefon")
+async def belge_telefon(tid: str, request: Request):
+    ham_govde = await request.body()
+
+    def _is():
+        try:
+            v = json.loads(ham_govde or b"{}")
+        except ValueError:
+            raise HTTPException(400, "İstek okunamadı")
+        with db() as (conn, cur):
+            toptanci_hazirla(cur)
+            p, t = _telefon_teslim(cur, request.headers, "POST", request.url.path, ham_govde, tid, v.get("sube"))
+            ham, mime, sha = _belge_coz(str(v.get("veri") or ""), v.get("mime"))
+            return _belge_ekle(cur, tid, ham, mime, sha, p["ad"], "telefon")
+    r = await run_in_threadpool(_is)
+    return {"ok": True, **r, "mesaj": "Bu sayfa zaten eklendi" if r["tekrar"] else f"Sayfa {r['sayfa']} eklendi"}
+
+
+@router.get("/teslim/{tid}/belgeler")
+def belgeler(tid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez (Toptancı Kitabı): teslimin sayfaları — veri data URL olarak (sayfa çevirici)."""
+    import base64
+    with db() as (conn, cur):
+        toptanci_hazirla(cur)
+        if _aktor(cur, x_evvel_oturum) in ("oturumsuz", "bilinmiyor"):
+            raise HTTPException(401, "Merkez oturumu gerekli")
+        cur.execute("""SELECT id, sayfa, mime, boyut, veri, yukleyen, kaynak, zaman FROM ey_toptanci_belge
+                        WHERE teslim_id=%s AND NOT iptal ORDER BY sayfa""", (tid,))
+        rows = [dict(x) for x in cur.fetchall() or []]
+    return {"sayfalar": [{"id": r["id"], "sayfa": r["sayfa"], "mime": r["mime"], "boyut": r["boyut"], "yukleyen": r["yukleyen"],
+                          "kaynak": r["kaynak"], "zaman": r["zaman"].isoformat(),
+                          "veri": f"data:{r['mime']};base64," + base64.b64encode(bytes(r["veri"])).decode()} for r in rows]}
+
+
+@router.post("/belge/{bid}/kaldir")
+def belge_kaldir(bid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez: yanlış sayfayı kaldırır (silinmez — iptal, iz kalır)."""
+    with db() as (conn, cur):
+        toptanci_hazirla(cur)
+        if _aktor(cur, x_evvel_oturum) in ("oturumsuz", "bilinmiyor"):
+            raise HTTPException(401, "Merkez oturumu gerekli")
+        cur.execute("UPDATE ey_toptanci_belge SET iptal=TRUE WHERE id=%s AND NOT iptal RETURNING id", (bid,))
+        if not cur.fetchone():
+            raise HTTPException(404, "Belge bulunamadı")
+    return {"ok": True, "mesaj": "Sayfa kaldırıldı"}
 
 
 @router.post("/teslim/{tid}/iptal")

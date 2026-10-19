@@ -676,12 +676,15 @@ async def qr_png(request: Request):
     # Basamak 4: panelin devir ekranı → QR devir kimliğini taşır (okutan telefon doğrudan devir akışına girer; yetki sunucuda)
     dv = (request.query_params.get("dv") or "").strip()
     dv = dv if dv and len(dv) <= 40 and all(ch.isalnum() or ch == "-" for ch in dv) else ""
+    # Basamak 8 / E1: teslim sonrası "Faturayı çek" → QR teslim kimliğini taşır (yükleme imzalı telefonla, yetki Toptancı'da)
+    tb = (request.query_params.get("tb") or "").strip()
+    tb = tb if tb and len(tb) <= 40 and all(ch.isalnum() or ch == "-" for ch in tb) else ""
     import io
     import os
     import qrcode
     taban = os.getenv("APP_URL", "https://evvel-erp-production.up.railway.app").rstrip("/")
     q = qrcode.QRCode(version=None, error_correction=qrcode.constants.ERROR_CORRECT_M, box_size=10, border=3)
-    q.add_data(f"{taban}/q/{sube_id}/{jeton}" + (f"?o={onay}" if onay else f"?dv={dv}" if dv else ""))
+    q.add_data(f"{taban}/q/{sube_id}/{jeton}" + (f"?o={onay}" if onay else f"?dv={dv}" if dv else f"?tb={tb}" if tb else ""))
     q.make(fit=True)
     buf = io.BytesIO()
     q.make_image(fill_color="black", back_color="white").save(buf, format="PNG")

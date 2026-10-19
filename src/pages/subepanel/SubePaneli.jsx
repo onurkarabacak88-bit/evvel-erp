@@ -289,7 +289,7 @@ export default function SubePaneli({ subeId }) {
 
         {/* ORTA: ANA SAYFA */}
         {sekme === 'teslim' ? (
-          <TedarikciTeslim key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali}
+          <TedarikciTeslim key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} tabletVar={tabletVar}
             bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
         ) : sekme === 'ac' ? (
           <UrunAc key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} secimBildir={setAcSecim}

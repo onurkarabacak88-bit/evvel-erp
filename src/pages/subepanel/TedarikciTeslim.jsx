@@ -5,11 +5,11 @@
 // Sök-tak: Toptancılar modülü kapalıysa ekran "kapalı" der. Sipariş modu / eksik bildirimi sipariş basamağıyla (ertelendi). Bip YOK (sahip).
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, Modal, tl, tutar, tutarNum, yeniIstek } from './ortak';
+import { C, Modal, TabletQR, tl, tutar, tutarNum, yeniIstek } from './ortak';
 
 const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 
-export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, secimBildir }) {
+export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, secimBildir, tabletVar }) {
   const anahtar = `sp_taslak:${subeId}:${d.gun}:teslim_al`;
   const ilk = useMemo(() => { try { return JSON.parse(localStorage.getItem(anahtar) || 'null'); } catch { return null; } }, [anahtar]);
   const [adet, setAdet] = useState(ilk?.adet || {});
@@ -27,6 +27,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   const [pin, setPin] = useState('');    // YALNIZ bellekte
   const [mesgul, setMesgul] = useState(false);
   const [hata, setHata] = useState('');
+  const [foto, setFoto] = useState(null);   // E1: kayıttan sonra { teslim_id, toptanci, fatura } → "📷 Faturayı çek" QR
   useEffect(() => {
     try { localStorage.setItem(anahtar, JSON.stringify({ adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek })); } catch { /* yok say */ }
   }, [adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek, anahtar]);
@@ -73,7 +74,8 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
         koli: Object.keys(koli).length ? Object.fromEntries(Object.entries(koli).map(([id, x]) => [id, { ...x, koli_ici: urunMap[id]?.koli_ici || null }])) : null } });
       setOnay(0); setPin(''); setKisi('');
       temizle();
-      bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : (r.mesaj || 'Teslim kaydedildi'), !!r.kuru);
+      if (!r.kuru && r.teslim_id) setFoto({ teslim_id: r.teslim_id, toptanci: r.toptanci, fatura });   // E1: belgeyi telefonla çek
+      bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'} · 📷 fatura fotoğrafı 1 Kasım'dan sonra` : (r.mesaj || 'Teslim kaydedildi'), !!r.kuru);
     } catch (e) {
       if (e instanceof TypeError) setHata('İnternet yok — bağlantı gelince yeniden gönder (girdiklerin duruyor)');
       else {
@@ -152,6 +154,18 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
         </div>
       </div>
 
+      {foto && (
+        <Modal baslik="📷 Faturayı çek" kapat={() => setFoto(null)}>
+          <div style={{ display: 'grid', justifyItems: 'center', gap: 10, textAlign: 'center' }}>
+            <b>{foto.toptanci} teslimi kaydedildi ✓</b>
+            {tabletVar ? <TabletQR boyut={Math.min(300, Math.max(220, (window.innerWidth || 600) - 120))} teslim={foto.teslim_id} />
+              : <b style={{ color: C.sari }}>Bu bilgisayar kayıtlı değil — QR çıkamaz; faturayı merkez ekler.</b>}
+            <span style={{ color: C.soluk }}>{foto.fatura ? 'Teslim alan kişi telefonuyla okutsun → faturanın her sayfasını çeksin (en çok 6).' : 'Kâğıt (irsaliye / fiş) varsa telefonla okutup çekin.'}
+              <br />Fotoğraf teslime eklenir — merkez Toptancılar'da sayfa sayfa görür.</span>
+            <button className="sp-btn" onClick={() => setFoto(null)}>Bitti / sonra</button>
+          </div>
+        </Modal>
+      )}
       {k0 && (
         <Modal baslik={`${k0.emoji || '📦'} ${k0.kategori}`} kapat={() => setAcikKat(null)} genislik={680}>
           {k0.urunler.filter((u) => u.aktif || pasif).map((u) => {

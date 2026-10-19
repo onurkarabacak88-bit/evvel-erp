@@ -54,7 +54,8 @@ export default function TelefonSayfasi({ mod, davet, sube, jeton }) {
       <style>{CSS}</style>
       {mod === 'bagla' && <Bagla davet={davet} />}
       {mod === 'qr' && (onayKimligi() ? <OnayIslem sube={sube} jeton={jeton} onay={onayKimligi()} />
-        : devirKimligi() ? <DevirIslem sube={sube} jeton={jeton} did={devirKimligi()} /> : <QrIslem sube={sube} jeton={jeton} />)}
+        : devirKimligi() ? <DevirIslem sube={sube} jeton={jeton} did={devirKimligi()} />
+        : teslimKimligi() ? <FaturaCek sube={sube} tid={teslimKimligi()} /> : <QrIslem sube={sube} jeton={jeton} />)}
       {mod === 'durum' && <Durum />}
     </div>
   );
@@ -321,6 +322,84 @@ function OnayIslem({ sube, jeton, onay }) {
           </>)}
         </div>
       )}
+    </>
+  );
+}
+
+// ── /q/{sube}/{jeton}?tb={teslim}: teslim kaydedildi → "📷 Faturayı çek" (Basamak 8 / E1). Fotoğraf telefonda küçültülür
+// (uzun kenar 1600 px, JPEG) ve imzalı istekle teslime EK olarak yüklenir — ayrı fatura kaydı / okuma / eşleştirme YOK.
+const teslimKimligi = () => {
+  try { const t = new window.URLSearchParams(window.location.search).get('tb') || ''; return /^[A-Za-z0-9-]{1,40}$/.test(t) ? t : ''; } catch { return ''; }
+};
+const kucult = (dosya) => new Promise((coz, red) => {
+  const img = new window.Image();
+  const url = URL.createObjectURL(dosya);
+  img.onload = () => {
+    const o = Math.min(1, 1600 / Math.max(img.width, img.height));
+    const cv = document.createElement('canvas');
+    cv.width = Math.round(img.width * o); cv.height = Math.round(img.height * o);
+    cv.getContext('2d').drawImage(img, 0, 0, cv.width, cv.height);
+    URL.revokeObjectURL(url);
+    coz(cv.toDataURL('image/jpeg', 0.72));
+  };
+  img.onerror = () => { URL.revokeObjectURL(url); red(new Error('Fotoğraf okunamadı')); };
+  img.src = url;
+});
+
+function FaturaCek({ sube, tid }) {
+  const bagli = !!cihazId('telefon');
+  const [ozet, setOzet] = useState(null);
+  const [hata, setHata] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+  const [eklenen, setEklenen] = useState([]);
+  const yol = `/api/evvel-yeni/toptanci/teslim/${encodeURIComponent(tid)}/belge-telefon`;
+  const yukle = useCallback(() => {
+    if (!bagli) return;
+    setHata('');
+    imzaliJson('telefon', 'GET', `${yol}?sube=${encodeURIComponent(sube)}`).then(setOzet)
+      .catch((e) => setHata(e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || 'Okunamadı')));
+  }, [bagli, yol, sube]);
+  useEffect(() => { yukle(); }, [yukle]);
+  if (!bagli) return <TanimliDegil />;
+  const sec = async (e) => {
+    const dosyalar = [...(e.target.files || [])];
+    e.target.value = '';
+    if (!dosyalar.length || mesgul) return;
+    setMesgul(true); setHata('');
+    for (const f of dosyalar) {
+      try {
+        const veri = await kucult(f);
+        const r = await imzaliJson('telefon', 'POST', yol, { sube, veri, mime: 'image/jpeg' });
+        setEklenen((o) => [...o, r.mesaj || 'Sayfa eklendi']);
+      } catch (er) {
+        setHata(er instanceof TypeError ? 'İnternet yok — bağlantı gelince tekrar çek' : (er?.message || 'Yüklenemedi'));
+        break;
+      }
+    }
+    setMesgul(false);
+    yukle();
+  };
+  const dolu = ozet && ozet.belge_sayi >= ozet.max;
+  return (
+    <>
+      <Marka alt="Faturayı çek" />
+      <div className="tq-kart">
+        {hata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{hata}</div>}
+        {!hata && !ozet && <div className="tq-not">Hazırlanıyor…</div>}
+        {ozet && (<>
+          <div style={{ fontSize: 20, fontWeight: 800 }}>🚚 {ozet.toptanci}</div>
+          <div className="tq-not">{gunYazi(ozet.tarih)}{ozet.tutar != null ? ` · ${ozet.tutar.toLocaleString('tr-TR')} ₺` : ''} · çeken: <b>{ozet.kisi}</b></div>
+          <div style={{ fontWeight: 700 }}>📎 Eklenen sayfa: {ozet.belge_sayi} / {ozet.max}</div>
+          {eklenen.map((m, i) => <div key={i} style={{ color: T.yesil, fontWeight: 700 }}>✓ {m}</div>)}
+          {!dolu && (
+            <label className="tq-btn tq-ana" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: mesgul ? 0.6 : 1 }}>
+              {mesgul ? 'Yükleniyor…' : ozet.belge_sayi ? '📷 SONRAKİ SAYFAYI ÇEK' : '📷 FATURAYI ÇEK'}
+              <input type="file" accept="image/*" capture="environment" multiple disabled={mesgul} onChange={sec} style={{ display: 'none' }} />
+            </label>
+          )}
+          <div className="tq-silik">Her sayfayı ayrı çek, yazılar okunur olsun. Bittiyse sayfayı kapatabilirsin.</div>
+        </>)}
+      </div>
     </>
   );
 }
