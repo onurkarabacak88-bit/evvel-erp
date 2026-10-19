@@ -585,7 +585,11 @@ def kasa_devri(sube_id: str, b: DevirBody):
             if bardak:
                 ad = _urunler(cur, [x["urun_id"] for x in bardak], takip="sayim")
                 bardak = [{**x, "ad": ad[x["urun_id"]]["ad"]} for x in bardak]
-            r = y.devir_ac(cur, str(sube_id), c["gun"], a, v, k, bardak, b.istek_id, giris_zorunlu=_qr_gerekli(cur))
+            if c["kuru"]:   # sahip (2026-10-19): denemede telefon onayları denenebilsin → devir satırı AYRI işlemde kalıcı
+                with db() as (_c2, k2):   # (para / olay yazmaz; 'vardiya' olayı 1 Kasım öncesi yazılmaz — yoklama _devir_olay)
+                    r = y.devir_ac(k2, str(sube_id), c["gun"], a, v, k, bardak, b.istek_id, giris_zorunlu=False)
+            else:
+                r = y.devir_ac(cur, str(sube_id), c["gun"], a, v, k, bardak, b.istek_id, giris_zorunlu=_qr_gerekli(cur))
             return {**r, "tekrar": bool(r.get("tekrar")),
                     "mesaj": f"Devir hazır — {a['ad']} telefonundan 'Devrediyorum', sonra {v['ad']} 'Kabul ediyorum' desin"}
         oid = _olay(cur, sube_id=sube_id, tur="vardiya", is_gunu=c["gun"], kok=f"panel:vardiya:{sube_id}:{b.istek_id}",

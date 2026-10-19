@@ -1117,6 +1117,9 @@ def kapanis_sorumlusu(cur, sube_id: str, gun: Optional[date] = None) -> Optional
 def _devir_olay(cur, d: dict, veri_ek: dict) -> Optional[str]:
     """'vardiya' olayı — Satış › Devir defteri / kasa sağlaması bunu okur (var olan okuyucu; kaynak değişmez)."""
     from evvel_yeni_olay import olay_yaz
+    bas = (ayar_oku(cur, "panel_baslangic", "2026-11-01") or "2026-11-01")[:10]
+    if str(d["is_gunu"])[:10] < bas:   # deneme dönemi: telefon onayları denenir, vardiya olayı (Satış › Devir defteri) yazılmaz
+        return None
     cur.execute("SELECT id, ad FROM ey_personel WHERE id IN (%s,%s)", (d["devreden_id"], d["devralan_id"]))
     ad = {dict(x)["id"]: dict(x)["ad"] for x in cur.fetchall() or []}
     a = {"id": d["devreden_id"], "ad": ad.get(d["devreden_id"])}
