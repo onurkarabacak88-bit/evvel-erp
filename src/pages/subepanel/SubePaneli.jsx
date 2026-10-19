@@ -9,6 +9,7 @@ import AcilisSihirbazi from './AcilisSihirbazi';
 import AnaSayfa from './AnaSayfa';
 import KapanisSihirbazi from './KapanisSihirbazi';
 import KasaDevri, { DEVIR_ACIK, devirEtiket } from './KasaDevri';
+import TedarikciTeslim from './TedarikciTeslim';
 import UrunAc from './UrunAc';
 import { AdetListesi, C, CSS, kalemGovde, Modal, SayiTusTakimi, TabletQR, tutar, tutarNum, yeniIstek } from './ortak';
 
@@ -121,6 +122,7 @@ export default function SubePaneli({ subeId }) {
   const ac = (m) => {
     if (m === 'acilis') { setDenemeKapandi(false); setSihirbazElle(true); return; }
     if (m === 'ac') { setSekme('ac'); return; }   // Basamak 5: Ürün Aç eski panel gibi orta alanda SEKME
+    if (m === 'teslim') { sekmeyeGec('teslim'); return; }   // Basamak 8: Tedarikçiden teslim al (orta alanda sekme)
     if (m === 'kapanis') {   // Codex: gece yarısından sonra sayfa yenilense de dünün GÖNDERİLMEMİŞ kapanışı kaybolmasın
       const dun = new Date(new Date(d.gun + 'T12:00').getTime() - 864e5).toISOString().slice(0, 10);
       let var_ = false;
@@ -232,7 +234,7 @@ export default function SubePaneli({ subeId }) {
   const urunBandi = d.acilis_var && !kapali && bandSaat && !urunAcVar && Date.now() > bandSus;
   const SOL = [
     { b: 'STOK İŞLEMLERİ' },
-    { k: 'teslim', i: '📦', ad: 'Tedarikçiden Gelen — Teslim Al', yakinda: true },
+    { k: 'teslim', i: '📦', ad: 'Tedarikçiden Gelen — Teslim Al' },
     { k: 'depo', i: '🚚', ad: 'Depodan Gelen — Teslim Al', yakinda: true, acikKapali: true },
     { k: 'siparis', i: '🛒', ad: 'Sipariş Ver', yakinda: true },
     { k: 'siparisTakip', i: '📊', ad: 'Sipariş Takip', yakinda: true, acikKapali: true },
@@ -277,7 +279,7 @@ export default function SubePaneli({ subeId }) {
         <div className="sp-sol-kolon">
           <button className={'sp-sol' + (sekme === 'ana' ? ' akt' : '')} onClick={() => sekmeyeGec('ana')}><span style={{ fontSize: 18, width: 24 }}>🏠</span>Ana Sayfa</button>
           {SOL.map((m, i) => (m.b ? <div key={i} className="sp-sol-baslik">{m.b}</div> : (
-            <button key={m.k} className={'sp-sol' + (m.k === sekme ? ' akt' : '')} disabled={m.kapanisKarti ? (kapali && !dunTaslak) : kapali && !m.acikKapali && ['ac', 'fire', 'araTeslim', 'devir'].includes(m.k)} title={m.yakinda ? 'Kendi basamağında açılacak' : ''}
+            <button key={m.k} className={'sp-sol' + (m.k === sekme ? ' akt' : '')} disabled={m.kapanisKarti ? (kapali && !dunTaslak) : kapali && !m.acikKapali && ['ac', 'teslim', 'fire', 'araTeslim', 'devir'].includes(m.k)} title={m.yakinda ? 'Kendi basamağında açılacak' : ''}
               onClick={() => (m.yakinda ? yakinda(`${m.ad} — kendi basamağında açılacak`) : ac(m.k))}>
               <span style={{ fontSize: 18, width: 24 }}>{m.i}</span><span style={{ flex: 1 }}>{m.ad}</span>{m.yakinda && <small style={{ opacity: 0.7 }}>yakında</small>}
               {m.k === 'ac' && acSecim > 0 && <span className="sp-rozet" style={{ background: C.sari }} title={`${acSecim} kalem seçili — PIN onayı bekleniyor`}>{acSecim}</span>}
@@ -286,7 +288,10 @@ export default function SubePaneli({ subeId }) {
         </div>
 
         {/* ORTA: ANA SAYFA */}
-        {sekme === 'ac' ? (
+        {sekme === 'teslim' ? (
+          <TedarikciTeslim key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali}
+            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+        ) : sekme === 'ac' ? (
           <UrunAc key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} secimBildir={setAcSecim}
             bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
         ) : (
@@ -299,11 +304,11 @@ export default function SubePaneli({ subeId }) {
             <b style={{ fontSize: 16 }}>💵 Kasa Devri</b><span style={{ color: C.soluk, fontSize: 12 }}>Vardiya nakit teslim & devir</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: devirEtiket(devir).renk }}>{devirEtiket(devir).metin}</span>
           </button>
-          <button className="sp-kart" disabled={d.kapanis_var && !dunTaslak} onClick={() => { if (d.kapanis_merkezde && !window.confirm(`Bu günün kapanışı ${d.kapanis_merkezde}'de merkeze gönderildi; merkez işleyecek. Yine de yeniden doldurmak istiyor musun?`)) return; ac('kapanis'); }} style={{ textAlign: 'left', cursor: d.kapanis_var ? 'default' : 'pointer', minHeight: 78, opacity: d.kapanis_var ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4,
+          <button className="sp-kart" disabled={d.kapanis_var && !dunTaslak} onClick={() => { if (d.kapanis_merkezde && !window.confirm(`Bu günün kapanışı ${d.kapanis_merkezde}'de merkeze gönderildi; merkez işleyecek. Yine de yeniden doldurmak istiyor musun?`)) return; ac('kapanis'); }} style={{ textAlign: 'left', cursor: d.kapanis_var && !dunTaslak ? 'default' : 'pointer', minHeight: 78, opacity: d.kapanis_var && !dunTaslak ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4,
             background: 'linear-gradient(135deg,rgba(76,29,149,.5),rgba(124,58,237,.35))' }}>
             <b style={{ fontSize: 16 }}>🌙 Günü Kapat</b><span style={{ color: C.soluk, fontSize: 12 }}>Ciro, stok & kapanış protokolü</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: d.kapanis_var ? C.yesil : d.kapanis_merkezde ? C.mavi : C.soluk }}>
-              {d.kapanis_var ? '🔒 Mühürlendi' : d.kapanis_merkezde ? `📨 Merkeze gönderildi · ${d.kapanis_merkezde}` : '● 5 adım'}</span>
+              {d.kapanis_var && dunTaslak ? '📨 Dünün kapanış formu gönderilmedi — aç' : d.kapanis_var ? '🔒 Mühürlendi' : d.kapanis_merkezde ? `📨 Merkeze gönderildi · ${d.kapanis_merkezde}` : '● 5 adım'}</span>
           </button>
         </div>
       </div>
