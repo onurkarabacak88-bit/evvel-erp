@@ -331,7 +331,21 @@ function OnayIslem({ sube, jeton, onay }) {
 const teslimKimligi = () => {
   try { const t = new window.URLSearchParams(window.location.search).get('tb') || ''; return /^[A-Za-z0-9-]{1,40}$/.test(t) ? t : ''; } catch { return ''; }
 };
-const kucult = (dosya) => new Promise((coz, red) => {
+const kucult = async (dosya) => {   // Fable: EXIF yönü — createImageBitmap(imageOrientation) varsa yan dönmez
+  if (window.createImageBitmap) {
+    try {
+      const bm = await window.createImageBitmap(dosya, { imageOrientation: 'from-image' });
+      const o = Math.min(1, 1600 / Math.max(bm.width, bm.height));
+      const cv = document.createElement('canvas');
+      cv.width = Math.round(bm.width * o); cv.height = Math.round(bm.height * o);
+      cv.getContext('2d').drawImage(bm, 0, 0, cv.width, cv.height);
+      bm.close?.();
+      return cv.toDataURL('image/jpeg', 0.72);
+    } catch { /* eski tarayıcı — Image yolu */ }
+  }
+  return kucultImg(dosya);
+};
+const kucultImg = (dosya) => new Promise((coz, red) => {
   const img = new window.Image();
   const url = URL.createObjectURL(dosya);
   img.onload = () => {
@@ -394,7 +408,7 @@ function FaturaCek({ sube, tid }) {
           {!dolu && (
             <label className="tq-btn tq-ana" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', opacity: mesgul ? 0.6 : 1 }}>
               {mesgul ? 'Yükleniyor…' : ozet.belge_sayi ? '📷 SONRAKİ SAYFAYI ÇEK' : '📷 FATURAYI ÇEK'}
-              <input type="file" accept="image/*" capture="environment" multiple disabled={mesgul} onChange={sec} style={{ display: 'none' }} />
+              <input type="file" accept="image/*" capture="environment" disabled={mesgul} onChange={sec} style={{ display: 'none' }} />
             </label>
           )}
           <div className="tq-silik">Her sayfayı ayrı çek, yazılar okunur olsun. Bittiyse sayfayı kapatabilirsin.</div>
