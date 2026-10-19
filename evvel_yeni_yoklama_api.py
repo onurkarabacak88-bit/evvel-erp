@@ -914,10 +914,12 @@ async def mola_bitir(request: Request):
         if dict(a)["sube_id"] != sube:
             raise HTTPException(409, "Molan başka şubede — o şubenin QR'ını okut")
         m = _mola_kapat(cur, p["id"], "qr", mesafe=k["mesafe_m"], istek_id=ist)
-        if not m:   # Codex: arada sistem (61. dk / gece) kapattıysa — 500 yerine durumu söyle
-            md = _mola_durum(cur, p["id"], is_gunu()) or {}
-            return {"ok": True, "tekrar": True, "hak_dustu": bool(md.get("hak_dustu")),
-                    "mesaj": f"Mola zaten kapanmıştı · {md.get('sure_dk', '—')} dk" + (" — yemek hakkını kaybettin" if md.get("hak_dustu") else "")}
+        if not m:   # Codex: arada sistem (61. dk / gece) kapattıysa — 500 yerine o molanın kendi durumunu söyle (gün değişse de)
+            cur.execute("SELECT sure_dk, yemek_hakki, hak_elle FROM ey_mola WHERE personel_id=%s ORDER BY baslangic_ts DESC LIMIT 1", (p["id"],))
+            md = dict(cur.fetchone() or {})
+            dustu = not md.get("yemek_hakki") and not md.get("hak_elle")
+            return {"ok": True, "tekrar": True, "hak_dustu": dustu,
+                    "mesaj": f"Mola zaten kapanmıştı · {md.get('sure_dk', '—')} dk" + (" — yemek hakkını kaybettin" if dustu else "")}
         return {"ok": True, "hak_dustu": not m["yemek_hakki"],   # K7: tek bilgi satırı (bildirim değil)
                 "mesaj": f"Mola bitti · {_saat(datetime.now(timezone.utc))} · {m['sure_dk']} dk" + ("" if m["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
     return await _telefon(request, fn)

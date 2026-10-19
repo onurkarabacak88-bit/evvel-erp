@@ -81,11 +81,12 @@ def _personel(cur, sube_id: str, pid: Optional[str], kapi: bool = True, gun=None
     if not p:
         raise HTTPException(400, "Personel bulunamadı")
     y = _yoklama()
-    burada = y is not None and _qr_gerekli(cur) and (
+    # sahip (2026-10-19): "bütün personeller bütün şubelere gider" — QR'la BU şubeye girmiş olan (deneme döneminde de) burada çalışır
+    burada = y is not None and (
         y.acik_mi(cur, sube_id, str(p["id"])) if kapi
         else y.girdi_mi(cur, sube_id, str(p["id"]), gun or _bugun()))   # K11: QR'la bu şubeye girmiş (kapanış: o gün girmiş)
-    if str(p.get("sube_id") or "") != str(sube_id) and not burada:   # Codex: başka şubenin personeli bu şubeye yazamasın
-        raise HTTPException(400, "Bu şubenin personeli değilsin — adını listeden seç")
+    if str(p.get("sube_id") or "") != str(sube_id) and not burada:   # Codex: QR'sız başka şubenin personeli bu şubeye yazamasın
+        raise HTTPException(400, "Önce bu şubeye telefonundan QR ile giriş yap")
     if kapi and y is not None and _qr_gerekli(cur) and not y.acik_mi(cur, sube_id, str(p["id"])):   # K: panel ad listesi = bugün girenler
         raise HTTPException(400, "Önce telefonundan QR ile giriş yap")
     return {"id": str(p["id"]), "ad": p["ad"], "erken_acilis": bool(p.get("erken_acilis"))}
