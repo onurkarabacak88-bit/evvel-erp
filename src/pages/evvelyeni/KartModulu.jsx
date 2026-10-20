@@ -8,6 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
+import { sayiTR } from '../../utils/trSayi';
 import { PI_CSS, R, kart, num, Dugme, Cip, fmt, tUzun, tKisa } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici, tutarYaz } from './AyTakvim';
 
@@ -20,7 +21,7 @@ const alan = {
   width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)',
   color: 'var(--pi-ink)', font: 'inherit', fontSize: 15, minWidth: 0,
 };
-const sayi = (x) => { const t = String(x ?? '').trim().replace(/\s/g, ''); if (!t) return null; const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t); return Number.isFinite(n) ? n : NaN; };
+const sayi = (x) => sayiTR(x, null);   // tek kaynak utils/trSayi
 const gunBugun = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
 
 export default function KartModulu({ onToast }) {

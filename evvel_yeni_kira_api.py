@@ -20,6 +20,8 @@ from pydantic import BaseModel
 from database import db, savepoint
 from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
 from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi
+from evvel_yeni_cekirdek import takvim_durumu
+from evvel_yeni_kopru import gecis_odenen
 
 router = APIRouter(prefix="/api/evvel-yeni/kira", tags=["evvel-yeni-kira"])
 _HAZIR = False
@@ -142,7 +144,6 @@ def kira_tutar(sube_id: str, ay: str):
     yeni = sum(int(h["veri"].get("toplam", h["tutar"])) for h in kayit if h["tur"] == "odeme"
                and (h["veri"].get("konu") or {}).get("tip") == "kira" and (h["veri"].get("konu") or {}).get("sube_id") == sube_id
                and (h["veri"].get("ait_ay") or "")[:7] == ay[:7])
-    from evvel_yeni_kopru import gecis_odenen
     odenen, iki_yerde = gecis_odenen(yeni, eski)   # C-T1-08: toplanmaz — Kart/Kredi ile aynı kural
     return {"sube_id": sube_id, "ay": ay[:7], "kira": _tl_sayi(t) if t is not None else None, "odenen": _tl_sayi(odenen), "iki_yerde": iki_yerde,
             "kalan": _tl_sayi(max(0, t - odenen)) if t is not None else None, "tanimli": t is not None}
@@ -192,7 +193,6 @@ def kira_aylari(cur, yil: int, bugun: date) -> list:
             gec = [g for g in t["gecmis"] if g["ay"] <= ay]
             bek = gec[-1]["tutar"] if gec else None
             yn = yeni.get((sid, ay), [])
-            from evvel_yeni_kopru import gecis_odenen
             od_k, iki_yerde = gecis_odenen(sum(x["kr"] for x in yn), eski.get((sid, ay), 0))   # C-T1-08: toplanmaz
             od = _tl_sayi(od_k)
             vade_gunu = min(t["odeme_gunu"] or 1, 28)
@@ -202,7 +202,6 @@ def kira_aylari(cur, yil: int, bugun: date) -> list:
             elif bek is None:
                 durum = "tanimsiz" if od == 0 else "odendi"
             else:   # TEK kural (çekirdek takvim_durumu — C-T1-11); TL biriminde tolerans 1
-                from evvel_yeni_cekirdek import takvim_durumu
                 durum = takvim_durumu(bek, od, vade, bugun, once=ay < bas_ay, tolerans=1)
             aylar.append({"ay": ay, "beklenen": bek, "odenen": od, "kalan": round(max(0, (bek or 0) - od), 2), "durum": durum, "iki_yerde": iki_yerde,
                           "artis_ayi": t["artis_ayi"] == m, "artis": bool(onceki is not None and bek is not None and bek != onceki),

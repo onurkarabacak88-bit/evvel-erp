@@ -22,6 +22,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
+import { sayiTR } from '../../utils/trSayi';
 
 // Kadife (v2) bileşenlerine BAĞIMLILIK YOK — sahip: "kadife tasarımda değil ayrı bir
 // alanda yap, sonra (eskiyi) tamamen kaldırsak". Bu dosya src/pages/evvelyeni altında,
@@ -91,9 +92,7 @@ button.pi-kapi:hover{border-color:var(--pi-accent)}
 const AY = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const GUNLER = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
 // Kuruş görünür (Codex): 999,75 ₺ "1.000" diye yuvarlanmaz.
-// TR tutar okuyucu — TEK kural (tekrar denetimi C-T4-01: Kredi/Mülk "1.250,50" yazılınca 0 kaydediyordu).
-// "12,50" ve "12.50" ve "1.250,00" olur; boş → 0; okunamazsa NaN (sessiz 0 YOK — çağıran uyarır).
-const sayiTR = (x) => { const t = String(x ?? '').trim().replace(/\s/g, ''); if (!t) return 0; const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t); return Number.isFinite(n) ? n : NaN; };
+// TR tutar okuyucu: src/utils/trSayi.js (tek kaynak; burada yeniden dışa verilir)
 // Patronlar — TEK liste (sunucuda evvel_yeni_kasa_api.PATRONLAR ile aynı; C-T1-34)
 const PATRONLAR = ['Onur', 'Fethi', 'Fatma'];
 const fmt = (n) => (Number(n) || 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 });

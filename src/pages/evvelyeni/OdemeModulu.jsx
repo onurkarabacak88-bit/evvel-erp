@@ -7,6 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
+import { sayiTR } from '../../utils/trSayi';
 import { PATRONLAR, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, odemeFisi, fmt, tl, tKisa } from './KasaModulu';
 
 export const ODEME_SAYFALAR = [
@@ -35,7 +36,7 @@ const yeniId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `
 const BOS_PARCA = () => [{ yontem: 'nakit', cep: '', kart_id: '', tutar: '' }];
 const BOS = () => ({ konu: '', tarih: gunBugun(), ait_ay: ayBugun(), parcalar: BOS_PARCA(), istek_id: yeniId() });
 // Türkçe klavye: "12,50" da "12.50" de olur; binlik noktası "1.250,00" da olur
-const sayi = (x) => { const t = String(x ?? '').trim().replace(/\s/g, ''); if (!t) return 0; const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t); return Number.isFinite(n) ? n : NaN; };
+const sayi = (x) => sayiTR(x, 0);   // tek kaynak utils/trSayi
 
 // Sahip (2026-10-17): "Ödeme / gider gir ayrı olsun; altındaki defter 'Ödeme defteri' diye ayrı olsun, gün gün bakılabilsin."
 export default function OdemeModulu({ onToast, gorunum }) {

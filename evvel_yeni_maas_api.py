@@ -301,7 +301,13 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
                 od = {**od, "Ödendi sayıldı (Evvel Yeni öncesi)": eo}
             elif eo:
                 od = {**od, "Eski sistemde ödenen": eo}
-            odenen += eo
+            if ay <= KAPALI_SON_AY:
+                odenen += eo   # "ödendi sayıldı" TAMAMLAYICI (kalan 0) — gerçek ödeme değil, toplanır
+            else:
+                from evvel_yeni_kopru import gecis_odenen
+                odenen, iki_yerde = gecis_odenen(odenen, eo)   # T1-08: gerçek eski ödeme — Kira/Kredi/Kart ile AYNI kural, toplanmaz
+                if iki_yerde:
+                    od = {**od, "⚠ iki sistemde de ödeme (toplanmadı, büyüğü)": 0}
             satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, 0, odenen, od, e, ucret.get(pid), "eski_sistem",
                                 {"eski_durum": (x or {}).get("durum"), "eski_avans_mahsup": _tl((x or {}).get("mahsup", 0))}, False))
             continue

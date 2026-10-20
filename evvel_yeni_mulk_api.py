@@ -24,6 +24,7 @@ from pydantic import BaseModel
 
 from database import db, savepoint
 from evvel_yeni_cekirdek import aktor as _aktor, ay_kaydir, bekleyen_is_kaydet, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi
+from evvel_yeni_cekirdek import takvim_durumu
 
 router = APIRouter(prefix="/api/evvel-yeni/mulk", tags=["evvel-yeni-mulk"])
 log = logging.getLogger(__name__)
@@ -107,7 +108,6 @@ def _takvim(cur, yil: int) -> dict:
             if not aktif_ay or bek == 0:
                 durum = "yok" if g == 0 else "odendi"
             else:   # TEK kural (çekirdek takvim_durumu — C-T1-11)
-                from evvel_yeni_cekirdek import takvim_durumu
                 durum = takvim_durumu(bek, g, vade, bugun, once=a < donem_ay)
             satir.append({"ay": a, "beklenen": _tl_sayi(bek), "odenen": _tl_sayi(g), "kalan": _tl_sayi(max(0, bek - g)),
                           "durum": durum, "vade": vade.isoformat(), "artis_ayi": bool(k.get("artis_ayi")) and int(a[5:7]) == k["artis_ayi"]})

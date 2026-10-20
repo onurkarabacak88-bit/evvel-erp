@@ -7,6 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
+import { sayiTR } from '../../utils/trSayi';
 import { PI_CSS, R, kart, num, Dugme, Cip, Cekmece, fmt, tKisa } from './KasaModulu';
 
 export const TOPTANCI_SAYFALAR = [
@@ -18,7 +19,7 @@ const alan = {
   width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)',
   color: 'var(--pi-ink)', font: 'inherit', fontSize: 15, minWidth: 0,
 };
-const sayi = (x) => { const t = String(x ?? '').trim().replace(/\s/g, ''); if (!t) return null; const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t); return Number.isFinite(n) ? n : NaN; };
+const sayi = (x) => sayiTR(x, null);   // tek kaynak utils/trSayi
 const gunStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 // Sahip: "fiyat yok tıklayınca direkt o alana gitsin — köprü olsun"
 const fiyataGit = (urunId) => {
@@ -528,7 +529,7 @@ export function UrunFiyatlari({ onToast }) {
               {duz.u.elle != null && <Dugme kucuk disabled={mesgul} onClick={() => kaydet(null)}>Elle fiyatı kaldır</Dugme>}
               <Dugme kucuk disabled={mesgul} onClick={() => setDuz(null)}>Vazgeç</Dugme>
               <Dugme ana disabled={mesgul} onClick={() => {
-                const t = String(duz.deger).trim().replace(/\s/g, ''); const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t);
+                const n = sayiTR(duz.deger, null);
                 if (!(n > 0)) { onToast?.('Fiyat yaz'); return; }
                 kaydet(n);
               }}>{mesgul ? 'Kaydediliyor…' : 'Kaydet'}</Dugme>

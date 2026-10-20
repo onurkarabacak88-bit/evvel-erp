@@ -22,6 +22,8 @@ from pydantic import BaseModel
 from database import db, savepoint
 from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
 from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi, bekleyen_is_kaydet
+from evvel_yeni_cekirdek import takvim_durumu
+from evvel_yeni_kopru import gecis_odenen
 
 router = APIRouter(prefix="/api/evvel-yeni/kart", tags=["evvel-yeni-kart"])
 
@@ -93,18 +95,24 @@ def _hareketler(kayit) -> dict:
     return out
 
 
-def odeme_ayi(kart: dict, tarih, donem: Optional[str], teyit_son: dict) -> str:
+def odeme_ayi(kart: dict, tarih, donem: Optional[str], teyit_son: dict, teyit_tarih: Optional[dict] = None) -> str:
     """TEK KURAL (tekrar denetimi C-T1-09: özet ile takvim ayrı kuralla kalan hesaplıyordu) — bir kart borcu ödemesi hangi ayın
     ekstresine sayılır: dönemi açıkça seçildiyse o ay; değilse tarihinden SONRAKİ ilk son ödeme günü (teyitteki gerçek tarih > kartın
-    son ödeme günü > ay sonu). teyit_son: {'YYYY-AA': date}."""
+    son ödeme günü > ay sonu). teyit_son: {'YYYY-AA': date}.
+    Dalga 1 denetimi B1: o ayın ekstresi TEYİT EDİLDİĞİ günden ÖNCE yapılan ödeme bankanın verdiği ekstre rakamına zaten yansımıştır →
+    o ekstreden bir daha düşülmez; bir önceki ayın GEÇ ödemesi sayılır. teyit_tarih: {'YYYY-AA': teyit günü}."""
     if donem:
         return str(donem)[:7]
     t = tarih if isinstance(tarih, date) else date.fromisoformat(str(tarih)[:10])
+    teyit_tarih = teyit_tarih or {}
     y, m = t.year, t.month
     for _ in range(3):
         a = f"{y}-{m:02d}"
         son = teyit_son.get(a) or _son_gun(y, m, kart.get("son_odeme_gunu") or 31)
         if son >= t:
+            if teyit_tarih.get(a) and t <= teyit_tarih[a]:
+                py, pm = (y - (m == 1), 12 if m == 1 else m - 1)
+                return f"{py}-{pm:02d}"   # ekstre ondan sonra kesildi → önceki ayın geç ödemesi
             return a
         y, m = y + (m == 12), m % 12 + 1
     return t.strftime("%Y-%m")
@@ -149,9 +157,11 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
         so = None
         if ekstre_cipa:
             if ekstre_cipa.get("son_odeme"):   # C-T1-09: takvimle AYNI kural — ödeme o ekstrenin ayına yerleştiyse düşülür
-                tson = {t["son_odeme"].strftime("%Y-%m"): t["son_odeme"] for t in reversed(ty) if t.get("son_odeme")}
+                ety = [t for t in reversed(ty) if t.get("son_odeme") and t.get("ekstre_borc") is not None]   # B3: takvimle AYNI teyit kümesi
+                tson = {t["son_odeme"].strftime("%Y-%m"): t["son_odeme"] for t in ety}
+                ttar = {t["son_odeme"].strftime("%Y-%m"): t["tarih"] for t in ety}
                 e_ay = ekstre_cipa["son_odeme"].strftime("%Y-%m")
-                odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and odeme_ayi(k, x["gun"], x.get("donem"), tson) == e_ay)
+                odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and odeme_ayi(k, x["gun"], x.get("donem"), tson, ttar) == e_ay)
             else:
                 odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and x["gun"] > ekstre_cipa["tarih"].isoformat())
             son_tarih = ekstre_cipa.get("son_odeme")
@@ -260,12 +270,12 @@ def kart_takvimi(yil: Optional[int] = None):
         cur.execute("SELECT * FROM ey_kart WHERE aktif ORDER BY limit_grup NULLS LAST, ad")
         kartlar = [dict(r) for r in cur.fetchall() or []]
         # Codex: aynı aya birden çok teyit → EN SON girilen kazanır (sıralı okuma); teyitteki gerçek son ödeme tarihi korunur
-        cur.execute("""SELECT kart_id, ekstre_borc, son_odeme FROM ey_kart_teyit
+        cur.execute("""SELECT kart_id, ekstre_borc, son_odeme, tarih FROM ey_kart_teyit
                         WHERE ekstre_borc IS NOT NULL AND son_odeme IS NOT NULL ORDER BY tarih, zaman""")
         teyit = {}
         for r in cur.fetchall() or []:
             r = dict(r)
-            teyit[(r["kart_id"], r["son_odeme"].strftime("%Y-%m"))] = (int(r["ekstre_borc"]), r["son_odeme"])
+            teyit[(r["kart_id"], r["son_odeme"].strftime("%Y-%m"))] = (int(r["ekstre_borc"]), r["son_odeme"], r["tarih"])
         eski = _eski_plan(cur)
         bas = kasa.donem_baslangici(cur).strftime("%Y-%m")
         import evvel_yeni_odeme_api as odeme   # PUBLIC özet (Kasa'nın iç defterine dokunmadan)
@@ -285,7 +295,8 @@ def kart_takvimi(yil: Optional[int] = None):
             if x.get("donem"):
                 yer[x["donem"]] = yer.get(x["donem"], 0) + x["toplam"]
                 continue
-            hedef_ay = odeme_ayi(k, x["tarih"], None, {a: v[1] for (kid_, a), v in teyit.items() if kid_ == k["id"]})
+            hedef_ay = odeme_ayi(k, x["tarih"], None, {a: v[1] for (kid_, a), v in teyit.items() if kid_ == k["id"]},
+                                 {a: v[2] for (kid_, a), v in teyit.items() if kid_ == k["id"]})
             yer[hedef_ay] = yer.get(hedef_ay, 0) + x["toplam"]
         aylar = []
         for m in range(1, 13):
@@ -295,7 +306,6 @@ def kart_takvimi(yil: Optional[int] = None):
             od_yeni = yer.get(a, 0)
             e = eski.get((k["id"], a)) or {}
             od_e = int(e.get("odenen") or 0)
-            from evvel_yeni_kopru import gecis_odenen
             od, iki_yerde = gecis_odenen(od_yeni, od_e)   # iki sistemde de varsa TOPLANMAZ — TEK kural (C-T1-08)
             ekstre, ekstre_kaynak = (ty[0] if ty else None), "teyit"
             if ekstre is None and e.get("ekstre"):
@@ -305,7 +315,6 @@ def kart_takvimi(yil: Optional[int] = None):
             if ekstre is None and od > 0:
                 durum = "odeme_var"         # Codex: ekstre bilinmeden 'ödendi' DENMEZ
             else:   # TEK kural (çekirdek takvim_durumu — C-T1-11)
-                from evvel_yeni_cekirdek import takvim_durumu
                 durum = takvim_durumu(ekstre, od, son, bugun, once=a < bas)
             aylar.append({"ay": a, "son_odeme": son.isoformat() if son else None, "ekstre": _tl_sayi(ekstre) if ekstre is not None else None,
                           "ekstre_kaynak": ekstre_kaynak, "odenen": _tl_sayi(od),

@@ -7,6 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
+import { sayiTR } from '../../utils/trSayi';
 import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, fmt, tl } from './KasaModulu';
 
 export const MAAS_SAYFALAR = [
@@ -18,7 +19,7 @@ export const MAAS_SAYFALAR = [
 const alan = { padding: '8px 10px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, width: 110 };
 // Varsayılan: ödenecek ay = geçen ay; ama Evvel Yeni öncesi (kapanmış) aylar varsayılan olmaz → en erken Ekim 2026
 const gecenAy = () => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); const a = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; return a < '2026-10' ? '2026-10' : a; };
-const sayi = (x) => { const t = String(x ?? '').trim().replace(/\s/g, ''); if (!t) return null; const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t); return Number.isFinite(n) ? n : NaN; };
+const sayi = (x) => sayiTR(x, null);   // tek kaynak utils/trSayi
 
 export default function MaasModulu({ onToast, onSekme }) {
   const [ay, setAy] = useState(gecenAy);

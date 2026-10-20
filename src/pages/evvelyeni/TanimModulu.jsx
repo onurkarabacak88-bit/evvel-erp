@@ -6,6 +6,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
+import { sayiTR } from '../../utils/trSayi';
 import { PI_CSS, R, kart, num, Dugme, Cip, fmt } from './KasaModulu';
 
 export const TANIM_SAYFALAR = [
@@ -17,7 +18,7 @@ export const TANIM_SAYFALAR = [
 ];
 
 const alan = { width: '100%', padding: '9px 11px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14.5, minWidth: 0 };
-const sayi = (x) => { const t = String(x ?? '').trim().replace(/\s/g, ''); if (!t) return null; const n = Number(t.includes(',') ? t.replace(/\./g, '').replace(',', '.') : t); return Number.isFinite(n) ? n : NaN; };
+const sayi = (x) => sayiTR(x, null);   // tek kaynak utils/trSayi
 
 // Her tanımın alanları — tek bileşen hepsini çizer
 const YAPI = {

@@ -4,6 +4,7 @@
 // Bu dosya yalnız React'e bağımlıdır (döngü yok): ekranlar ortak'ı alır, SubePaneli ekranları alır.
 import React, { useEffect, useRef, useState } from 'react';
 import { imzaliFetch } from '../../utils/cihazImza';
+import { sayiTR } from '../../utils/trSayi';
 
 export const C = { bg: '#0b0f1a', bg1: '#111827', bg2: '#1a2236', bg3: '#222d42', cizgi: 'rgba(99,120,160,0.18)', yazi: '#f0f4ff', soluk: '#7a8ba8',
   mavi: '#3b82f6', cyan: '#06b6d4', yesil: '#22c55e', sari: '#f59e0b', kirmizi: '#ef4444', mor: '#8b5cf6', turuncu: '#f97316' };
@@ -39,7 +40,7 @@ export const yeniIstek = () => (window.crypto?.randomUUID ? window.crypto.random
 export const tl = (x) => (Number(x || 0)).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
 export const sayi = (s) => String(s ?? '').replace(/[^\d]/g, '');
 export const tutar = (s) => String(s ?? '').replace(/[^\d,.]/g, '').replace('.', ',');
-export const tutarNum = (s) => (s === '' || s == null ? 0 : Number(String(s).replace(/\./g, '').replace(',', '.')) || 0);
+export const tutarNum = (s) => { const n = sayiTR(s, 0); return Number.isNaN(n) ? 0 : n; };   // tek kaynak utils/trSayi ("12.50" artık 12,5)
 export const sayimGovde = (sayim) => Object.entries(sayim).filter(([, v]) => v !== '' && v != null).map(([urun_id, v]) => ({ urun_id, sayilan: Number(v) }));
 export const kalemGovde = (adet) => Object.entries(adet).filter(([, n]) => n > 0).map(([urun_id, n]) => ({ urun_id, adet: n }));
 

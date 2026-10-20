@@ -21,6 +21,8 @@ from pydantic import BaseModel
 
 from database import db, savepoint
 from evvel_yeni_cekirdek import aktor as _aktor, ay_kaydir, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi
+from evvel_yeni_cekirdek import takvim_durumu
+from evvel_yeni_kopru import gecis_odenen
 
 router = APIRouter(prefix="/api/evvel-yeni/kredi", tags=["evvel-yeni-kredi"])
 log = logging.getLogger(__name__)
@@ -141,13 +143,11 @@ def takvim(yil: Optional[int] = None):
             # Fable+Codex: aynı taksit iki sistemde de girilmişse TOPLANMAZ — yeni kayıt varsa eski sayılmaz; ikisi de varsa işaret
             od_y = yeni.get((k["id"], a), 0)
             od_e = eski.get((k.get("eski_id"), a), 0) if k.get("eski_id") else 0
-            from evvel_yeni_kopru import gecis_odenen
             od, iki_yerde = gecis_odenen(od_y, od_e)   # toplanmaz (aynı taksit olabilir); büyüğü + işaret — TEK kural (C-T1-08)
             vade = _gun(int(a[:4]), int(a[5:7]), k["odeme_gunu"])
             if not aktif_ay:
                 durum = "yok"
             else:   # TEK kural (çekirdek takvim_durumu — C-T1-11)
-                from evvel_yeni_cekirdek import takvim_durumu
                 durum = takvim_durumu(bek, od, vade, bugun, once=a < bas)
             satir.append({"ay": a, "beklenen": _tl_sayi(bek), "odenen": _tl_sayi(od), "kalan": _tl_sayi(max(0, bek - od)),
                           "durum": durum, "vade": vade.isoformat(), "iki_yerde": iki_yerde})

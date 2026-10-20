@@ -608,7 +608,7 @@ def _ozet(D: dict, fl: List[dict]) -> dict:
     return o
 
 
-def _isler(kayitlar: List[dict], C: dict, fl: List[dict]) -> List[dict]:
+def _isler(kayitlar: List[dict], C: dict, fl: List[dict], bas: Optional[date] = None) -> List[dict]:
     """Bekleyen işler — GÜNE BAĞLI DEĞİL, en eski üstte (sahip: 'onayları gözden kaçırırız')."""
     out = []
     for h in kayitlar:
@@ -621,7 +621,7 @@ def _isler(kayitlar: List[dict], C: dict, fl: List[dict]) -> List[dict]:
                         "hedef_kisa": C.get(h["hedef"], {}).get("kisa"), "tutar": _tl_sayi(h["tutar"]), "eski_sistem": bool(h.get("kaynak_ref"))})
     # Sahip (2026-10-20): kasa farkının TEK EVİ "Açık farklar" — Bekleyen işler'e fark satırı DÜŞMEZ (aynı fark 3 yerde görünüyordu);
     # Kasam'daki kırmızı "Açık farklar" kartı uyarır, çözüm orada. (fl parametresi geriye uyum için duruyor)
-    out.extend(_eksik_kapanislar(kayitlar, C))
+    out.extend(_eksik_kapanislar(kayitlar, C, bas))
     out.sort(key=lambda x: x["tarih"])
     return out
 
@@ -643,13 +643,14 @@ def kapanissiz_gunler(kayitlar: List[dict], C: dict, bas: str, son: str) -> dict
     return out
 
 
-def _eksik_kapanislar(kayitlar: List[dict], C: dict) -> List[dict]:
+def _eksik_kapanislar(kayitlar: List[dict], C: dict, donem_bas: Optional[date] = None) -> List[dict]:
     """Sahip (2026-10-16): "Girilmemiş ciro uyarı versin; o günün girişi şubeden yeniden istensin."
     Dönem başından DÜNE kadar her aktif şube × gün: kapanış YOKSA → 'eksik_kapanis';
     kapanış yalnız Evo'nun tahmini taslağıysa (şube kapanış yapmamış) → 'evo_kapanis'."""
-    if not kayitlar:
+    if not kayitlar and donem_bas is None:
         return []
-    bas = min(h["is_gunu"] for h in kayitlar)
+    # Dalga 1 denetimi B4: Gelir ile AYNI başlangıç — Kasa'nın dönem başlangıcı (en eski kayıt değil; kayıt yoksa da iş üretir)
+    bas = donem_bas.isoformat() if donem_bas else min(h["is_gunu"] for h in kayitlar)
     dun = (_bugun() - timedelta(days=1)).isoformat()
     var = {}
     for h in kayitlar:
@@ -820,7 +821,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
                          "alinan": _tl_sayi(int(o["veri"].get("alinan", o["tutar"])))} for o in alimlar],
         "iptaller": [{"id": i["id"], "hedef_id": i["veri"].get("hedef_id"), "sebep": i["veri"].get("sebep"), "kaydeden": i.get("kaydeden"),
                       "hedef_tur": (tum_ad.get(i["veri"].get("hedef_id")) or {}).get("tur")} for i in gunun_iptal],
-        "isler": _isler(kayit, C, _farklar(ol_tum, C)) + kart_isleri,
+        "isler": _isler(kayit, C, _farklar(ol_tum, C), bas) + kart_isleri,
         "dis_turleri": [{"kod": k, "ad": v[0], "geri_odenecek": v[2]} for k, v in DIS_TURLERI.items()],
         "anlik_bakiye": {cid: _tl_sayi(v) for cid, v in _bakiye(ol_tum, C)["b"].items() if cid in C},
         "acilis_girilen": sorted({h["cep"] for h in kayit if h["tur"] == "acilis" and h["is_gunu"] == bas.isoformat()}),
@@ -1593,7 +1594,7 @@ def yeni_donem(body: DonemBody, x_evvel_oturum: Optional[str] = Header(default=N
         ol = [o for o in _olaylar(kayit) if o["gun"] < g.isoformat()]
         D = _bakiye(ol, C)
         devir = [{"cep": c["id"], "ad": c["ad"], "defterde": _tl_sayi(D["b"].get(c["id"], 0))} for c in cep_list]
-        bekleyen = len(_isler(kayit, C, _farklar(_olaylar(kayit), C)))
+        bekleyen = len(_isler(kayit, C, _farklar(_olaylar(kayit), C), _baslangic(cur)))
         if not body.kuru:
             kim = _aktor(cur, x_evvel_oturum)
             cur.execute("""INSERT INTO para_izi_ayar (anahtar, deger, degistiren) VALUES ('baslangic', %s, %s)
