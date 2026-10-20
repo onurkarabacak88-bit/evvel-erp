@@ -57,11 +57,16 @@ def avans_hazirla(cur) -> None:
 AKTIF = ("talep", "onaylandi", "odendi")   # tavana sayılan
 
 
-def avans_durumu(cur, personel_id: str) -> dict:
-    """PUBLIC (telefon): tavan · bu ay kullanılan · kullanılabilir · açık talep (kuruş). Tavan Maaş'ın (eski oran)."""
+def avans_durumu(cur, personel_id: str, ay: Optional[str] = None) -> dict:
+    """PUBLIC (telefon): tavan · o ay (verilmezse bu ay) kullanılan · kullanılabilir · açık talep (kuruş). Tavan Maaş'ın (eski oran).
+    ay verilirse tavan O AYIN sonuna göre (Codex 2. tur: önceki aydan bekleyen talep onaylanırken bu ayın toplamına bakılıyordu)."""
     avans_hazirla(cur)
     from evvel_yeni_maas_api import avans_tavani
-    t = avans_tavani(cur, str(personel_id))
+    gun = None
+    if ay and ay[:7] != __import__("evvel_yeni_cekirdek").is_gunu().strftime("%Y-%m"):   # Maaş tavanıyla aynı gün kuralı
+        from evvel_yeni_cekirdek import ay_gunu
+        gun = ay_gunu(int(ay[:4]), int(ay[5:7]), 31)   # geçmiş ayın son günü — hak ediş o ayın tamamı
+    t = avans_tavani(cur, str(personel_id), gun)
     cur.execute("SELECT COALESCE(SUM(tutar),0) AS k FROM ey_avans_talep WHERE personel_id=%s AND donem=%s AND durum = ANY(%s)",
                 (str(personel_id), t["ay"], list(AKTIF)))
     kul = int(dict(cur.fetchone())["k"] or 0)
@@ -79,7 +84,7 @@ def _onay_denetle(cur, t: dict) -> None:
     p = tanim_oku(cur, "ey_personel", t["personel_id"], ("aktif",))
     if not p or not p["aktif"]:
         raise HTTPException(409, "Personel pasif — avans verilemez (talebi kapat ya da reddet)")
-    d = avans_durumu(cur, t["personel_id"])
+    d = avans_durumu(cur, t["personel_id"], t["donem"])   # talebin AYI (önceki aydan bekleyen talep o ayın tavanına bakar)
     if d["kullanilan"] > d["tavan"]:
         raise HTTPException(409, f"Güncel avans tavanı {d['tavan'] / 100:,.0f} ₺ — bu ay talepler bunu aşıyor; reddet ya da tavan "
                                  f"düzelince onayla".replace(",", "."))
