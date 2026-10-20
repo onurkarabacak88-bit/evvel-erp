@@ -1,4 +1,5 @@
-// 📅 ORTAK AY TAKVİMİ IZGARASI — satır × 12 ay (kredi takvimi, kart ödeme takvimi). Kira takviminin görünümüyle aynı dil.
+// 📅 ORTAK AY TAKVİMİ IZGARASI — satır × 12 ay (kredi · kart ödeme · KİRA takvimi). Dalga 5 (T4-08): Kira ayrı kopya tutuyordu;
+// hücre vurgusu (kira artış ayı) ve ek durumlar (mülk bizim / tanımsız) buraya eklendi.
 // Yalnız dizer; rakamlar ve durum sunucudan. Hiçbir modülü tanımaz (ortak UI kiti).
 import React from 'react';
 import { R, kart, num, Dugme, fmt } from './KasaModulu';
@@ -15,8 +16,10 @@ export const DURUM = {
   gelecek: { renk: GRI, ad: 'gelecek', ikon: '' },
   once: { renk: GRI, ad: 'Evvel Yeni öncesi', ikon: '·' },
   yok: { renk: GRI, ad: '—', ikon: '' },
+  tanimsiz: { renk: GRI, ad: 'kira tanımsız', ikon: '—' },
+  mulk: { renk: GRI, ad: 'mülk bizim', ikon: '🏠' },
 };
-const SADE = new Set(['gelecek', 'once', 'yok']);
+const SADE = new Set(['gelecek', 'once', 'yok', 'tanimsiz', 'mulk']);
 
 export function YilSecici({ yil, setYil }) {
   return (
@@ -26,24 +29,26 @@ export function YilSecici({ yil, setYil }) {
   );
 }
 
-export function Lejant() {
+// ek: [{ ad, renk }] — ekrana özgü işaret (ör. kira artış ayı, çerçeveli)
+export function Lejant({ ek = [] }) {
   return (
     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12.5 }}>
       {['odendi', 'kismi', 'gecikti', 'yaklasiyor', 'gelecek'].map((k) => (
         <span key={k}><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 3, background: DURUM[k].renk, marginRight: 5 }} />{DURUM[k].ad}</span>
       ))}
+      {ek.map((x) => <span key={x.ad}><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 3, border: `2px solid ${x.renk}`, background: `${x.renk}33`, marginRight: 5 }} />{x.ad}</span>)}
     </div>
   );
 }
 
-// satirlar: [{ id, baslik, alt, aylar: [{ay, durum, ust (büyük rakam), alt (küçük satır)}], sag, sagAlt }]
-export function AyIzgara({ satirlar, onHucre }) {
+// satirlar: [{ id, baslik, alt, aylar: [{ay, durum, ust (büyük rakam), alt (küçük satır), vurgu (çerçeve rengi), etiket (üst satır)}], sag, sagAlt }]
+export function AyIzgara({ satirlar, onHucre, ilkBaslik = '' }) {
   const hucre = { padding: '6px 4px', textAlign: 'center', borderTop: '1px solid var(--pi-line)', fontSize: 12 };
   return (
     <div style={{ ...kart, overflowX: 'auto' }}>
       <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 900 }}>
         <thead><tr style={{ fontSize: 12, color: R.metin2 }}>
-          <th style={{ ...hucre, textAlign: 'left', borderTop: 'none', padding: '8px 10px' }} />
+          <th style={{ ...hucre, textAlign: 'left', borderTop: 'none', padding: '8px 10px' }}>{ilkBaslik}</th>
           {AY.map((a) => <th key={a} style={{ ...hucre, borderTop: 'none' }}>{a}</th>)}
           <th style={{ ...hucre, borderTop: 'none', textAlign: 'right', padding: '8px 10px' }}>Yıl</th>
         </tr></thead>
@@ -60,8 +65,10 @@ export function AyIzgara({ satirlar, onHucre }) {
                   {a.durum === 'yok' ? <span style={{ color: R.not }}>—</span> : (
                     <button type="button" onClick={() => onHucre?.(s, a, i)} title={`${AY_UZUN[i]} · ${d.ad}`} style={{
                       width: '100%', minHeight: 48, borderRadius: 8, cursor: 'pointer', font: 'inherit', fontSize: 11.5, lineHeight: 1.25, padding: '4px 2px',
-                      border: `1px solid ${sade ? 'var(--pi-line)' : d.renk}`, background: sade ? 'transparent' : `color-mix(in srgb, ${d.renk} 16%, transparent)`, color: 'var(--pi-ink)',
+                      border: a.vurgu ? `2px solid ${a.vurgu}` : `1px solid ${sade ? 'var(--pi-line)' : d.renk}`,
+                      background: a.vurgu ? `${a.vurgu}22` : sade ? 'transparent' : `color-mix(in srgb, ${d.renk} 16%, transparent)`, color: 'var(--pi-ink)',
                     }}>
+                      {a.etiket && <div style={{ color: a.vurgu || R.not, fontWeight: 800 }}>{a.etiket}</div>}
                       <div style={{ ...num, fontWeight: 700, color: d.renk }}>{d.ikon} {a.ust}</div>
                       {a.alt && <div style={{ color: R.not }}>{a.alt}</div>}
                     </button>
