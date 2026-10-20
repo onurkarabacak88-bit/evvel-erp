@@ -184,6 +184,17 @@ export function useQrOnay({ subeId, tur, govde, mesgul, setMesgul, setHata, onay
 // QR boyutu: ekran genişliğinden (pay kadar boşluk bırak), [enAz, enCok] arasında — TEK hesap (Dalga 5, K11: 8 kopya)
 export const qrBoyut = (enCok, enAz, pay) => Math.min(enCok, Math.max(enAz, (window.innerWidth || 600) - pay));
 
+// 🎴 EKRAN BAŞLIĞI (hero) — TEK parça (Dalga 5, F#64: Ürün aç · Depodan gelen · Sipariş ver · Tedarikçi teslim aynı yapıyı ayrı yazıyordu)
+export function Hero({ ikon, baslik, alt, zemin, cerceve, renk }) {
+  return (
+    <div className="sp-kart" style={{ display: 'flex', gap: 12, alignItems: 'center', background: zemin, borderColor: cerceve }}>
+      <span style={{ fontSize: 28 }}>{ikon}</span>
+      <div><b style={{ fontSize: 18, color: renk }}>{baslik}</b>
+        <div style={{ color: C.soluk, fontSize: 13 }}>{alt}</div></div>
+    </div>
+  );
+}
+
 // 🔌 MODÜL KAPALI kartı (sök-tak) — TEK parça (Dalga 5, F#63: Depodan gelen, Sipariş, Tedarikçi ayrı yazıyordu)
 export const ModulKapali = ({ children }) => <div className="sp-kart" style={{ color: C.sari, fontWeight: 700 }}>{children}</div>;
 

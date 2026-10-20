@@ -5,7 +5,7 @@
 // Sök-tak: Toptancılar modülü kapalıysa ekran "kapalı" der. Sipariş modu / eksik bildirimi sipariş basamağıyla (ertelendi). Bip YOK (sahip).
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, qrBoyut, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
+import { AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, qrBoyut, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
 
 
 export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, secimBildir, tabletVar }) {
@@ -88,11 +88,8 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   const k0 = katalog.find((k) => k.id === acikKat);
   return (
     <div style={{ display: 'grid', gap: 12, alignContent: 'start' }}>
-      <div className="sp-kart" style={{ display: 'flex', gap: 12, alignItems: 'center', background: 'linear-gradient(135deg,rgba(30,58,138,.75),rgba(59,130,246,.3))', borderColor: 'rgba(59,130,246,.35)' }}>
-        <span style={{ fontSize: 28 }}>📦</span>
-        <div><b style={{ fontSize: 18, color: '#93c5fd' }}>Tedarikçiden Gelen — Teslim Al</b>
-          <div style={{ color: C.soluk, fontSize: 13 }}>Gelen ürünleri say · tedarikçi + fatura · Personel + PIN onayda istenir</div></div>
-      </div>
+      <Hero ikon="📦" baslik="Tedarikçiden Gelen — Teslim Al" alt="Gelen ürünleri say · tedarikçi + fatura · Personel + PIN onayda istenir"
+        zemin="linear-gradient(135deg,rgba(30,58,138,.75),rgba(59,130,246,.3))" cerceve="rgba(59,130,246,.35)" renk="#93c5fd" />
       {kapali && <div className="sp-kart" style={{ color: C.soluk, fontWeight: 700 }}>🔒 Gün kapandı — teslim alınamaz (merkez girer)</div>}
 
       <div className="sp-teslim" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(260px,340px)', gap: 12, alignItems: 'start' }}>

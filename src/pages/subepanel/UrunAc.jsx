@@ -4,7 +4,7 @@
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek } from './ortak';
+import { AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek } from './ortak';
 
 
 export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir }) {
@@ -116,11 +116,8 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
         </div>
       )}
       {/* hero */}
-      <div className="sp-kart" style={{ display: 'flex', gap: 12, alignItems: 'center', background: 'linear-gradient(135deg,rgba(6,78,59,.75),rgba(16,185,129,.3))', borderColor: 'rgba(34,197,94,.35)' }}>
-        <span style={{ fontSize: 28 }}>🔓</span>
-        <div><b style={{ fontSize: 18, color: '#86efac' }}>Ürün Aç — Aktif Kullanıma Al</b>
-          <div style={{ color: C.soluk, fontSize: 13 }}>Depodan bara/sahaya çıkan ürünleri sayın · Personel + PIN onayda istenir</div></div>
-      </div>
+      <Hero ikon="🔓" baslik="Ürün Aç — Aktif Kullanıma Al" alt="Depodan bara/sahaya çıkan ürünleri sayın · Personel + PIN onayda istenir"
+        zemin="linear-gradient(135deg,rgba(6,78,59,.75),rgba(16,185,129,.3))" cerceve="rgba(34,197,94,.35)" renk="#86efac" />
       {kapali && <div className="sp-kart" style={{ color: C.soluk, fontWeight: 700 }}>🔒 Gün kapandı — Ürün Aç yapılamaz</div>}
       {mesaj === 'taslak' && kalem > 0 && (
         <div className="sp-kart" style={{ borderColor: C.sari, color: C.sari, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>

@@ -5,7 +5,7 @@
 // ya da "🚚 Yola çıkar" (kısmi → kalan merkeze döner). Sunucu: evvel_yeni_panel_api (/siparis, /siparisler, /gonderilecek) → Sipariş modülü.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
+import { AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
 import { tarihNokta } from '../../utils/trTarih';
 
 const DURUM = {
@@ -80,11 +80,8 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
   const RozetU = ({ id }) => (rozet[id] ? <span style={{ fontSize: 12, fontWeight: 800, color: rozet[id] === 'yolda' ? C.mavi : C.sari }}>{rozet[id] === 'yolda' ? '🚚 yolda' : '⏳ bekliyor'}</span> : null);
   return (
     <div style={{ display: 'grid', gap: 12, alignContent: 'start' }}>
-      <div className="sp-kart" style={{ display: 'flex', gap: 12, alignItems: 'center', background: 'linear-gradient(135deg,rgba(120,53,15,.75),rgba(245,158,11,.3))', borderColor: 'rgba(245,158,11,.35)' }}>
-        <span style={{ fontSize: 28 }}>🛒</span>
-        <div><b style={{ fontSize: 18, color: '#fcd34d' }}>Sipariş Ver</b>
-          <div style={{ color: C.soluk, fontSize: 13 }}>Ürün seç · adet yaz · Personel + PIN onayda istenir{acikSayi ? ` · ${acikSayi} siparişin hâlâ açık (Sipariş Takip)` : ''}</div></div>
-      </div>
+      <Hero ikon="🛒" baslik="Sipariş Ver" alt={<>Ürün seç · adet yaz · Personel + PIN onayda istenir{acikSayi ? ` · ${acikSayi} siparişin hâlâ açık (Sipariş Takip)` : ''}</>}
+        zemin="linear-gradient(135deg,rgba(120,53,15,.75),rgba(245,158,11,.3))" cerceve="rgba(245,158,11,.35)" renk="#fcd34d" />
       {kapali && <div className="sp-kart" style={{ color: C.soluk, fontWeight: 700 }}>🔒 Gün kapandı — sipariş verilemez</div>}
       <div className="sp-teslim" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(260px,340px)', gap: 12, alignItems: 'start' }}>
         <KategoriKartlari katalog={katalog} adet={adet} kapali={kapali} onSec={setAcikKat} />

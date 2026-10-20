@@ -5,7 +5,7 @@
 // Sunucu: evvel_yeni_panel_api.depodan_kabul → Depo kabul_yaz (tek işlem). Sök-tak: Depo modülü kapalıysa ekran "kapalı" der.
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, KisiPin, Modal, ModulKapali, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
+import { C, Hero, KisiPin, Modal, ModulKapali, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
 import { tarihNokta } from '../../utils/trTarih';
 
 export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
@@ -66,11 +66,8 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
 
   return (
     <div style={{ display: 'grid', gap: 12, alignContent: 'start' }}>
-      <div className="sp-kart" style={{ display: 'flex', gap: 12, alignItems: 'center', background: 'linear-gradient(135deg,rgba(6,95,70,.75),rgba(16,185,129,.3))', borderColor: 'rgba(16,185,129,.35)' }}>
-        <span style={{ fontSize: 28 }}>🚚</span>
-        <div><b style={{ fontSize: 18, color: '#6ee7b7' }}>Depodan Gelen — Teslim Al</b>
-          <div style={{ color: C.soluk, fontSize: 13 }}>Merkezden gelen paketi aç · her ürünü SAY (beklenen gösterilmez) · Personel + PIN onayda istenir</div></div>
-      </div>
+      <Hero ikon="🚚" baslik="Depodan Gelen — Teslim Al" alt="Merkezden gelen paketi aç · her ürünü SAY (beklenen gösterilmez) · Personel + PIN onayda istenir"
+        zemin="linear-gradient(135deg,rgba(6,95,70,.75),rgba(16,185,129,.3))" cerceve="rgba(16,185,129,.35)" renk="#6ee7b7" />
 
       {!p && (paketler.length === 0
         ? <div className="sp-kart" style={{ color: C.soluk, fontWeight: 700, textAlign: 'center', padding: 24 }}>Bekleyen paket yok ✓</div>
