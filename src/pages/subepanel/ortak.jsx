@@ -3,6 +3,7 @@
 // ok #22c55e, warn #f59e0b, danger #ef4444, depo mor #8b5cf6, tedarikçi turuncu #f97316, radius 12/8, Inter 14px.
 // Bu dosya yalnız React'e bağımlıdır (döngü yok): ekranlar ortak'ı alır, SubePaneli ekranları alır.
 import React, { useEffect, useRef, useState } from 'react';
+import { api } from '../../utils/api';
 import { imzaliFetch } from '../../utils/cihazImza';
 import { sayiTR } from '../../utils/trSayi';
 
@@ -123,6 +124,61 @@ export function KategoriKartlari({ katalog, adet, kapali, onSec, alt, enAz = 160
       })}
     </div>
   );
+}
+
+// 📱 QR ONAY AKIŞI (R1: işlem SONUNDA personelin telefonu) — açılış + kapanış sihirbazı ORTAK (Dalga 5, F#55: ~70 satır iki kopyaydı).
+// onayIste: form → sunucuda onay kaydı (para/stok YAZILMAZ) · 2 sn'de bir durum sorulur · telefon onaylayınca onaylandi(r) ·
+// onayIptal: « Geri — iptal KESİNLEŞMEDEN düzenlemeye dönülmez (Codex); belirsizlikte gerçek durum sorulur. true = geri dönülebilir.
+export function useQrOnay({ subeId, tur, govde, mesgul, setMesgul, setHata, onaylandi }) {
+  const [onay, setOnay] = useState(null);   // { id, durum, mesaj } — taslağa YAZILMAZ (yenilemede yeni QR)
+  const [agHata, setAgHata] = useState(0);   // art arda bağlantı hatası
+  const onayRef = useRef(onay); onayRef.current = onay;
+  const sonRef = useRef(onaylandi); sonRef.current = onaylandi;
+  const onayIste = async () => {
+    if (mesgul) return;
+    setMesgul(true); setHata('');
+    try {
+      const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/onay-iste`, { method: 'POST', body: { tur, govde: { ...govde(), personel_id: '-' } } });
+      setOnay({ id: r.onay_id, durum: 'bekliyor', mesaj: '' });
+    } catch (e) {
+      setHata(e instanceof TypeError ? 'İnternet yok — bağlantı gelince yeniden dene' : (e?.message || 'Onay istenemedi'));
+    }
+    setMesgul(false);
+  };
+  const onayIptal = async () => {
+    const o = onay;
+    if (!o || !['bekliyor', 'hata', 'isleniyor'].includes(o.durum)) { setOnay(null); return true; }
+    try {
+      await api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}/iptal`, { method: 'POST', body: {} });
+      setOnay(null); return true;
+    } catch (e) {
+      if (e instanceof TypeError) { setHata('İnternet yok — onay iptal edilemedi, bağlantı gelince tekrar dene'); return false; }
+      try {   // o an telefonda onaylanmış / işleniyor olabilir → gerçek durumu sor
+        const r = await api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}`);
+        if (r.durum === 'onaylandi') { sonRef.current(r); return false; }
+        if (r.durum === 'iptal' || r.durum === 'sure_doldu') { setOnay(null); return true; }   // yalnız doğrulanmış geçersizlikte
+        setOnay({ id: o.id, durum: r.durum, mesaj: r.mesaj || '' });
+      } catch { /* belirsiz */ }
+      setHata('Onay iptal edilemedi — QR hâlâ geçerli olabilir; birazdan yeniden dene');   // Codex: belirsizlikte geri dönülmez
+      return false;
+    }
+  };
+  useEffect(() => {   // telefon onaylayınca panel kendiliğinden geçer
+    if (!onay?.id || !['bekliyor', 'isleniyor', 'hata'].includes(onay.durum)) return undefined;
+    let canli = true;
+    const sor = async () => {
+      try {
+        const r = await api(`/evvel-yeni/panel/onay/${encodeURIComponent(onay.id)}`);
+        if (!canli || onayRef.current?.id !== onay.id) return;
+        setAgHata(0);
+        if (r.durum === 'onaylandi') sonRef.current(r);
+        else if (r.durum !== onay.durum) setOnay({ id: onay.id, durum: r.durum, mesaj: r.mesaj || '' });
+      } catch { if (canli) setAgHata((n) => n + 1); }   // ağ geçici — sonraki turda
+    };
+    const t = window.setInterval(sor, 2000);
+    return () => { canli = false; window.clearInterval(t); };
+  }, [onay?.id, onay?.durum]);   // eslint-disable-line react-hooks/exhaustive-deps
+  return { onay, setOnay, agHata, onayRef, onayIste, onayIptal };
 }
 
 // 🔑 KİM + PIN (sahip R1b: QR'la içeride olan + kendi 4 haneli PIN'i) — TEK parça (Dalga 5, F#48: Ürün aç · Tedarikçi teslim ·

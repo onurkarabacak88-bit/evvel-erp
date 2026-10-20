@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { CSS_AW, trSaat } from './AcilisSihirbazi';
-import { C, TabletQR, sayi, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, yeniIstek } from './ortak';
+import { C, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, yeniIstek } from './ortak';
 import { gunKaydir } from '../../utils/trTarih';
 import { paraGecerli } from '../../utils/trSayi';
 
@@ -48,10 +48,8 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   const [sayim, setSayim] = useState(ilk?.sayim || {});
   const [istek] = useState(ilk?.istek || yeniIstek());   // aynı form = aynı kimlik → iki onay gelse de tek kapanış
   const [hata, setHata] = useState('');
-  const [onay, setOnay] = useState(null);
   const [mesgul, setMesgul] = useState(false);
   const [sonuc, setSonuc] = useState(null);   // { tur: 'tamam' | 'uyari' | 'merkeze', mesaj, uyarilar }
-  const [agHata, setAgHata] = useState(0);
   const [merkezAc, setMerkezAc] = useState(eskiGun);
   const [mKisi, setMKisi] = useState('');
   const [mPin, setMPin] = useState('');   // YALNIZ bellekte
@@ -92,51 +90,9 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
     sonucGoster({ tur: u.length ? 'uyari' : 'tamam', uyarilar: u, kisi, mesaj: r?.kuru ? (r.mesaj || 'DENEME — kaydedilmedi') : '' });
   };
 
-  const onayIste = async () => {
-    if (mesgul) return;
-    setMesgul(true); setHata('');
-    try {
-      const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/onay-iste`, { method: 'POST', body: { tur: 'kapanis', govde: { ...govde(), personel_id: '-' } } });
-      setOnay({ id: r.onay_id, durum: 'bekliyor', mesaj: '' });
-    } catch (e) {
-      setHata(e instanceof TypeError ? 'İnternet yok — bağlantı gelince yeniden dene' : (e?.message || 'Onay istenemedi'));
-    }
-    setMesgul(false);
-  };
-  const onayIptal = async () => {   // AcilisSihirbazi ile aynı kural: iptal kesinleşmeden düzenlemeye dönülmez
-    const o = onay;
-    if (!o || !['bekliyor', 'hata', 'isleniyor'].includes(o.durum)) { setOnay(null); return true; }
-    try {
-      await api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}/iptal`, { method: 'POST', body: {} });
-      setOnay(null); return true;
-    } catch (e) {
-      if (e instanceof TypeError) { setHata('İnternet yok — onay iptal edilemedi, bağlantı gelince tekrar dene'); return false; }
-      try {
-        const r = await api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}`);
-        if (r.durum === 'onaylandi') { bittiSonuc(r, r.kisi); return false; }
-        if (r.durum === 'iptal' || r.durum === 'sure_doldu') { setOnay(null); return true; }
-        setOnay({ id: o.id, durum: r.durum, mesaj: r.mesaj || '' });
-      } catch { /* belirsiz */ }
-      setHata('Onay iptal edilemedi — QR hâlâ geçerli olabilir; birazdan yeniden dene');
-      return false;
-    }
-  };
-  const onayRef = useRef(onay); onayRef.current = onay;
-  useEffect(() => {   // 5. adım: telefon onaylayınca panel kendiliğinden geçer
-    if (!onay?.id || !['bekliyor', 'isleniyor', 'hata'].includes(onay.durum)) return undefined;
-    let canli = true;
-    const sor = async () => {
-      try {
-        const r = await api(`/evvel-yeni/panel/onay/${encodeURIComponent(onay.id)}`);
-        if (!canli || onayRef.current?.id !== onay.id) return;
-        setAgHata(0);
-        if (r.durum === 'onaylandi') bittiSonuc(r, r.kisi);
-        else if (r.durum !== onay.durum) setOnay({ id: onay.id, durum: r.durum, mesaj: r.mesaj || '' });
-      } catch { if (canli) setAgHata((n) => n + 1); }
-    };
-    const t = window.setInterval(sor, 2000);
-    return () => { canli = false; window.clearInterval(t); };
-  }, [onay?.id, onay?.durum]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // 📱 QR onay akışı ortak kancada (F#55) — onaylanınca kapanış sonucu (uyarılar dahil)
+  const { onay, setOnay, agHata, onayRef, onayIste, onayIptal } = useQrOnay({ subeId, tur: 'kapanis', govde, mesgul, setMesgul, setHata,
+    onaylandi: (r) => bittiSonuc(r, r.kisi) });
   useEffect(() => {   // başka yoldan kapandıysa — Codex P2-7: açık onay varsa uyarıları ONDAN al (EKSİK VAR yutulmasın)
     if (!d.kapanis_var || sonuc || d.gun !== gun) return;
     const o = onayRef.current;

@@ -3,7 +3,7 @@
 // sunucu açılışı ONAYLAYANIN adına yazar (S17: girişli herhangi bir personel). Tak-çıkar: yalnız props; sunucu uçları panel modülünde.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, TabletQR, sayi, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, yeniIstek } from './ortak';
+import { C, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, yeniIstek } from './ortak';
 import { paraGecerli } from '../../utils/trSayi';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
@@ -72,11 +72,9 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
   const [pasta, setPasta] = useState(ilk?.pasta ?? '');
   const [istek] = useState(ilk?.istek || yeniIstek());   // aynı form = aynı kimlik → iki onay gelse de tek açılış
   const [hata, setHata] = useState('');
-  const [onay, setOnay] = useState(null);   // { id, durum, mesaj } — taslağa YAZILMAZ (yenilemede yeni QR)
   const [mesgul, setMesgul] = useState(false);
   const [basari, setBasari] = useState(false);
   const [basariMesaj, setBasariMesaj] = useState('');
-  const [agHata, setAgHata] = useState(0);   // 5. adımda art arda bağlantı hatası
   const [saat, setSaat] = useState(() => new Date());
   useEffect(() => { const t = window.setInterval(() => setSaat(new Date()), 10000); return () => window.clearInterval(t); }, []);
   useEffect(() => {   // 💾 her tuşta tablete
@@ -106,54 +104,9 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
     window.setTimeout(() => ebeveyn.current.bitti(), 1900);   // eski: ~1,9 sn başarı ekranı (panel bu sürede sihirbazı kapatmaz)
   }, [anahtar]);
 
-  const onayIste = async () => {
-    if (mesgul) return;
-    setMesgul(true); setHata('');
-    try {
-      const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/onay-iste`, { method: 'POST', body: { tur: 'acilis', govde: { ...govde(), personel_id: '-' } } });
-      setOnay({ id: r.onay_id, durum: 'bekliyor', mesaj: '' });
-    } catch (e) {
-      setHata(e instanceof TypeError ? 'İnternet yok — bağlantı gelince yeniden dene' : (e?.message || 'Onay istenemedi'));
-    }
-    setMesgul(false);
-  };
-  // « Geri: bekleyen onay iptal edilir; iptal KESİNLEŞMEDEN düzenlemeye dönülmez (Codex). true = geri dönülebilir
-  const onayIptal = async () => {
-    const o = onay;
-    if (!o || !['bekliyor', 'hata', 'isleniyor'].includes(o.durum)) { setOnay(null); return true; }
-    try {
-      await api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}/iptal`, { method: 'POST', body: {} });
-      setOnay(null); return true;
-    } catch (e) {
-      if (e instanceof TypeError) { setHata('İnternet yok — onay iptal edilemedi, bağlantı gelince tekrar dene'); return false; }
-      try {   // o an telefonda onaylanmış / işleniyor olabilir → gerçek durumu sor
-        const r = await api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}`);
-        if (r.durum === 'onaylandi') { basariGoster(r.kuru ? r.mesaj : ''); return false; }
-        if (r.durum === 'iptal' || r.durum === 'sure_doldu') { setOnay(null); return true; }   // yalnız doğrulanmış geçersizlikte
-        setOnay({ id: o.id, durum: r.durum, mesaj: r.mesaj || '' });
-      } catch { /* belirsiz */ }
-      setHata('Onay iptal edilemedi — QR hâlâ geçerli olabilir; birazdan yeniden dene');   // Codex: belirsizlikte geri dönülmez
-      return false;
-    }
-  };
-
-  // 5. adım: onay durumunu 2 sn'de bir sor (telefon onaylayınca panel kendiliğinden geçer)
-  const onayRef = useRef(onay); onayRef.current = onay;
-  useEffect(() => {
-    if (!onay?.id || !['bekliyor', 'isleniyor', 'hata'].includes(onay.durum)) return undefined;
-    let canli = true;
-    const sor = async () => {
-      try {
-        const r = await api(`/evvel-yeni/panel/onay/${encodeURIComponent(onay.id)}`);
-        if (!canli || onayRef.current?.id !== onay.id) return;
-        setAgHata(0);
-        if (r.durum === 'onaylandi') basariGoster(r.kuru ? r.mesaj : '');
-        else if (r.durum !== onay.durum) setOnay({ id: onay.id, durum: r.durum, mesaj: r.mesaj || '' });
-      } catch { if (canli) setAgHata((n) => n + 1); }   // ağ geçici — sonraki turda
-    };
-    const t = window.setInterval(sor, 2000);
-    return () => { canli = false; window.clearInterval(t); };
-  }, [onay?.id, onay?.durum, basariGoster]);   // eslint-disable-line react-hooks/exhaustive-deps
+  // 📱 QR onay akışı ortak kancada (F#55) — onaylanınca başarı ekranı
+  const { onay, setOnay, agHata, onayIste, onayIptal } = useQrOnay({ subeId, tur: 'acilis', govde, mesgul, setMesgul, setHata,
+    onaylandi: (r) => basariGoster(r.kuru ? r.mesaj : '') });
   // başka yoldan (ikinci sekme / telefon) açılış yazıldıysa
   useEffect(() => { if (d.acilis_var && !basari) basariGoster(); }, [d.acilis_var]);   // eslint-disable-line react-hooks/exhaustive-deps
 
