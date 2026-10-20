@@ -10,6 +10,7 @@ import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { ALAN, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, odemeFisi, PATRONLAR, PI_CSS, R, sayfayaGit, tKisa, tl } from './KasaModulu';
 import { ayAdi, ayKaydir, ayTR, bugunTR, gunKaydir as trGunKaydir } from '../../utils/trTarih';
+import { Pencere } from './AyTakvim';
 
 export const ODEME_SAYFALAR = [
   { id: 'odemeler', ad: 'Ödeme / gider gir', alt: 'Nakit · havale · kart' },
@@ -416,9 +417,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
         );
       })()}
       {duz && (
-        <div role="dialog" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'grid', placeItems: 'center', zIndex: 50, padding: 16 }} onClick={() => setDuz(null)}>
-          <div style={{ ...kart, padding: 18, width: 'min(460px, 100%)', display: 'flex', flexDirection: 'column', gap: 12 }} onClick={(e) => e.stopPropagation()}>
-            <b>Gider tarafını düzelt</b>
+        <Pencere baslik="Gider tarafını düzelt" onKapat={() => setDuz(null)} mesgul={mesgul} genislik={460} kapatDugmesi={false} aralik={12}>   {/* ortak Pencere (T4-06) — işlem sürerken kapanmaz */}
             <div style={{ fontSize: 13, color: R.not }}>{duz.baslik}<br />Para oynamaz — cepler ve tutar aynı kalır. Tutar / cep yanlışsa: iptal edip yeniden gir.</div>
             <Etiket ad="Kimin gideri"><select style={alan} value={duz.kimin} onChange={(e) => setDuz((d) => ({ ...d, kimin: e.target.value }))}>
               {L.subeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
@@ -430,8 +429,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
             )}
             <Etiket ad="Açıklama"><input style={alan} value={duz.aciklama} onChange={(e) => setDuz((d) => ({ ...d, aciklama: e.target.value }))} /></Etiket>
             <div style={{ display: 'flex', gap: 8 }}><Dugme onClick={duzKaydet}>Kaydet</Dugme><Dugme kucuk onClick={() => setDuz(null)}>Vazgeç</Dugme></div>
-          </div>
-        </div>
+        </Pencere>
       )}
       <Cekmece v={ck} onKapat={() => setCk(null)} />
     </div>

@@ -10,6 +10,7 @@ import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { ALAN, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tl } from './KasaModulu';
 import { ayKaydir, ayTR } from '../../utils/trTarih';
+import { Pencere } from './AyTakvim';
 
 export const MAAS_SAYFALAR = [
   { id: 'maaslar', ad: 'Maaşlar', alt: 'Hak ediş · avans · kalan' },
@@ -113,8 +114,7 @@ export default function MaasModulu({ onToast, onSekme }) {
       </div>
 
       {r && (
-        <div role="dialog" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'grid', placeItems: 'center', zIndex: 50, padding: 16 }} onClick={() => setSec(null)}>
-          <div style={{ ...kart, padding: 18, width: 'min(640px, 100%)', maxHeight: '90vh', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }} onClick={(e) => e.stopPropagation()}>
+        <Pencere onKapat={() => setSec(null)} mesgul={mesgul} genislik={640} kapatDugmesi={false} aralik={12} maxYukseklik="90vh">   {/* ortak Pencere (T4-06) — işlem sürerken kapanmaz */}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <b style={{ fontSize: 18 }}>{r.ad}</b><span style={{ color: R.not }}>{r.sube_ad} · {v.ay} · {r.calisma_turu === 'yari' ? 'yarı zamanlı' : 'tam zamanlı'}</span>
               <span style={{ marginLeft: 'auto' }}><Dugme kucuk onClick={() => setSec(null)}>Kapat</Dugme></span>
@@ -163,8 +163,7 @@ export default function MaasModulu({ onToast, onSekme }) {
             )}
             {r.onay && <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Cip tur="yesil">Onaylı — kalemler donduruldu</Cip><Dugme kucuk onClick={() => onayla(true)}>Onayı kaldır</Dugme></div>}
             {r.kalan > 0 && <div><Dugme ana onClick={() => ode(r)}>Kalanı öde ({fmt(r.oneri['Maaş'])} ₺ maaş)</Dugme></div>}
-          </div>
-        </div>
+        </Pencere>
       )}
     </div>
   );
