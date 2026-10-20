@@ -410,10 +410,8 @@ def _olay(cur, **kw) -> Optional[str]:
     from evvel_yeni_olay import olay_yaz
     kw.setdefault("sema_surumu", 2)   # Fable (altyapı #9): yeni panel biçimi (kuruş int, sayim listesi, ey_urun) ≠ eski çift yazım (1)
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_panel_kok:" + kw["kok"],))
-    cur.execute("""SELECT (SELECT MAX(olay_zamani) FROM ey_sube_olay WHERE kok=%s AND tur<>'iptal') AS son,
-                          (SELECT MAX(olay_zamani) FROM ey_sube_olay WHERE hedef_kok=%s AND tur='iptal') AS iptal""",
-                (kw["kok"], kw["kok"]))
-    r = dict(cur.fetchone() or {})
+    from evvel_yeni_olay import kok_durumu
+    r = kok_durumu(cur, kw["kok"])   # Olay modülünün kapısı (ham SQL değil — F#25)
     iptalli = r.get("son") is not None and r.get("iptal") is not None and r["iptal"] >= r["son"]
     vardi = r.get("son") is not None and not iptalli   # Fable: iptal edilen gün yeniden açılabilsin
     if r.get("iptal") is not None:   # Codex: iptal varsa içerik son iptale bağlanır → yeniden açılış yeni sürüm, aynı isteğin tekrarı yine "tekrar"
@@ -682,7 +680,7 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
                       kaynak_ref=f"{kok}:sayim:{oid}") if satir and oid and not gecmis else None
         if satir and gecmis:
             log.warning("geç kapanış %s %s: ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)", sube_id, gun)
-            cur.execute("""UPDATE ey_sube_olay SET veri = veri || '{"sayim_uygulanmadi": true}'::jsonb WHERE id=%s""", (oid,)) if oid else None
+            __import__("evvel_yeni_olay").olay_veri_ekle(cur, oid, {"sayim_uygulanmadi": True})
         uyarilar, merkez_uyarilari = [], []
         y0 = _yoklama()
         if y0 is not None and not c["kuru"] and not c.get("merkez") and oid is not None:
@@ -692,8 +690,7 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
             if dusen:
                 uyarilar.append("Geç kapanış: sayımdaki " + ", ".join(dusen) + " artık sayım listesinde değil — uygulanmadı")
             merkez_uyarilari = ek["kasa_uyarilari"] + uyarilar   # merkez HEPSİNİ görür; panel kasa uyarısını GÖRMEZ
-            cur.execute("UPDATE ey_sube_olay SET veri = veri || %s::jsonb WHERE id=%s",
-                        (json.dumps({"uyarilar": uyarilar, **ek}, ensure_ascii=False, default=str), oid))
+            __import__("evvel_yeni_olay").olay_veri_ekle(cur, oid, {"uyarilar": uyarilar, **ek})
         y = _yoklama()
         if y is not None and not c["kuru"] and not c.get("merkez") and oid is not None:
             y.personel_kilidi(cur, p["id"])   # Codex: telefon çıkış/giriş ile yarışmasın
@@ -874,8 +871,7 @@ def depodan_kabul(sube_id: str, b: DepoKabulBody):
         bek = next((x for x in yoldakiler(cur, str(sube_id)) if x["parti_id"] == b.parti_id), None)
         kok = f"panel:depo_kabul:{sube_id}:{b.istek_id}"
         if bek is None:   # tekrar gönderim (aynı istek) ya da başka yerden kabul edildi / merkez geri aldı
-            cur.execute("SELECT 1 FROM ey_sube_olay WHERE kok=%s LIMIT 1", (kok,))
-            if cur.fetchone():
+            if __import__("evvel_yeni_olay").kok_var(cur, kok):
                 return {"tekrar": True, "mesaj": "Bu paket zaten kabul edilmişti ✓"}
             raise HTTPException(409, "Bu paket artık bekleyenlerde yok — sayfayı yenile")
         gerek = {k["bag"]: k["ad"] for k in bek["kalemler"]}
@@ -1149,10 +1145,8 @@ def teslim_al(sube_id: str, b: TeslimAlBody):
         ozet = hashlib.sha1(json.dumps(sorted((x["urun_id"], x["adet"]) for x in k)).encode()).hexdigest()[:16] + ":" + str(t["id"])
         if not c["kuru"]:   # Fable: "kaydedildi mi?" deyip yeni istekle ikinci basış → 3 dk aynı içerik kilidi (eski SUBE-004)
             cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_teslim_al:{sube_id}",))
-            cur.execute("""SELECT 1 FROM ey_sube_olay WHERE sube_id=%s AND tur='teslim_al' AND veri->>'ozet'=%s
-                             AND olay_zamani > NOW() - INTERVAL '3 minutes' AND veri->>'istek_id' <> %s LIMIT 1""",
-                        (str(sube_id), ozet, b.istek_id))
-            if cur.fetchone():
+            if __import__("evvel_yeni_olay").yakin_ayni_olay(cur, sube_id=str(sube_id), tur="teslim_al", veri_alan="ozet", deger=ozet,
+                                                             dakika=3, istek_haric=b.istek_id):
                 raise HTTPException(409, "Bu teslim az önce kaydedildi — tekrar gönderme. Gerçekten ikinci teslimse 3 dk sonra dene.")
         kok = f"panel:teslim:{sube_id}:{b.istek_id}"
         kalem_veri = [{"urun_id": x["urun_id"], "ad": x["ad"], "adet": x["adet"]} for x in k]

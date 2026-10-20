@@ -117,6 +117,34 @@ def olay_yaz(cur, *, sube_id: Any, tur: str, is_gunu: Any, kok: str, veri: dict,
         raise HTTPException(503, TEKRAR_DENE)
 
 
+# ── PUBLIC küçük kapılar (tekrar denetimi F#25 / C-T2-13: panel ey_sube_olay'a ham SQL atıyordu — tablo şeması tek yerde) ──
+def kok_durumu(cur, kok: str) -> dict:
+    """{son: kökün en son (iptal olmayan) olay zamanı, iptal: o köke yazılmış en son iptal zamanı} — sürüm/iptal kararı için."""
+    cur.execute("""SELECT (SELECT MAX(olay_zamani) FROM ey_sube_olay WHERE kok=%s AND tur<>'iptal') AS son,
+                          (SELECT MAX(olay_zamani) FROM ey_sube_olay WHERE hedef_kok=%s AND tur='iptal') AS iptal""", (kok, kok))
+    return dict(cur.fetchone() or {})
+
+
+def kok_var(cur, kok: str) -> bool:
+    cur.execute("SELECT 1 FROM ey_sube_olay WHERE kok=%s LIMIT 1", (kok,))
+    return cur.fetchone() is not None
+
+
+def olay_veri_ekle(cur, olay_id: Optional[str], ek: dict) -> None:
+    """Yazılmış olayın verisine EK alan (uyarılar, sorumlu…) — kaynak_ref ilk veriden üretildiği için oynak alanlar sonra eklenir."""
+    if not olay_id:
+        return
+    cur.execute("UPDATE ey_sube_olay SET veri = veri || %s::jsonb WHERE id=%s", (json.dumps(ek, ensure_ascii=False, default=str), olay_id))
+
+
+def yakin_ayni_olay(cur, *, sube_id: str, tur: str, veri_alan: str, deger: str, dakika: int, istek_haric: Optional[str] = None) -> bool:
+    """Son N dakikada aynı şubede aynı türde, verisinin bir alanı aynı olan BAŞKA istekli olay var mı (çift basış kilidi)."""
+    cur.execute("""SELECT 1 FROM ey_sube_olay WHERE sube_id=%s AND tur=%s AND veri->>%s=%s
+                     AND olay_zamani > NOW() - make_interval(mins => %s) AND COALESCE(veri->>'istek_id','') <> %s LIMIT 1""",
+                (str(sube_id), tur, veri_alan, str(deger), int(dakika), istek_haric or ""))
+    return cur.fetchone() is not None
+
+
 def olaylar(cur, sube_id: Optional[str] = None, bas: Any = None, son: Any = None, turler=None) -> list:
     """Okuyucu: her KÖKÜN son sürümü; iptal edilmiş kökler 'iptal=True' işaretli."""
     q = "SELECT * FROM ey_sube_olay WHERE 1=1"
