@@ -89,8 +89,25 @@ def _hareketler(kayit) -> dict:
         if k.get("kart_id"):
             tut = sum(int(p["tutar"]) for p in v.get("parcalar") or [])
             out.setdefault(str(k["kart_id"]), []).append({"gun": h["is_gunu"], "tutar": tut, "tur": "borc_odeme",
-                                                          "aciklama": v.get("aciklama"), "id": h["id"]})
+                                                          "aciklama": v.get("aciklama"), "id": h["id"], "donem": k.get("donem")})
     return out
+
+
+def odeme_ayi(kart: dict, tarih, donem: Optional[str], teyit_son: dict) -> str:
+    """TEK KURAL (tekrar denetimi C-T1-09: özet ile takvim ayrı kuralla kalan hesaplıyordu) — bir kart borcu ödemesi hangi ayın
+    ekstresine sayılır: dönemi açıkça seçildiyse o ay; değilse tarihinden SONRAKİ ilk son ödeme günü (teyitteki gerçek tarih > kartın
+    son ödeme günü > ay sonu). teyit_son: {'YYYY-AA': date}."""
+    if donem:
+        return str(donem)[:7]
+    t = tarih if isinstance(tarih, date) else date.fromisoformat(str(tarih)[:10])
+    y, m = t.year, t.month
+    for _ in range(3):
+        a = f"{y}-{m:02d}"
+        son = teyit_son.get(a) or _son_gun(y, m, kart.get("son_odeme_gunu") or 31)
+        if son >= t:
+            return a
+        y, m = y + (m == 12), m % 12 + 1
+    return t.strftime("%Y-%m")
 
 
 def _sonraki_son_odeme(kesim_gunu, son_odeme_gunu, bugun: date) -> Optional[date]:
@@ -131,7 +148,12 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
         ekstre_cipa = next((t for t in ty if t.get("ekstre_borc")), None)
         so = None
         if ekstre_cipa:
-            odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and x["gun"] > ekstre_cipa["tarih"].isoformat())
+            if ekstre_cipa.get("son_odeme"):   # C-T1-09: takvimle AYNI kural — ödeme o ekstrenin ayına yerleştiyse düşülür
+                tson = {t["son_odeme"].strftime("%Y-%m"): t["son_odeme"] for t in reversed(ty) if t.get("son_odeme")}
+                e_ay = ekstre_cipa["son_odeme"].strftime("%Y-%m")
+                odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and odeme_ayi(k, x["gun"], x.get("donem"), tson) == e_ay)
+            else:
+                odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and x["gun"] > ekstre_cipa["tarih"].isoformat())
             son_tarih = ekstre_cipa.get("son_odeme")
             kaydi = False
             if son_tarih and son_tarih < bugun:
@@ -166,6 +188,7 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
                           "fark": _tl_sayi(int(t["kullanilabilir"]) - int(t["sistem_beklenen"])) if t.get("sistem_beklenen") is not None else None,
                           "girilen": t.get("girilen")} for t in ty[:6]],
             "_cipa_tarih": cipa["tarih"].isoformat() if cipa else None, "_cipa_kul": int(cipa["kullanilabilir"]) if cipa else None,
+            "_sonra_kr": [(x["gun"], int(x["tutar"])) for x in sonra],   # C-T1-02: teyit beklenen BÜTÜN hareketlerden (kuruş)
             "_limit": limit,
         })
     # ORTAK LİMİT (ör. aynı bankanın iki kartı tek limiti paylaşır): grubun en yeni teyidi + TÜM grup kartlarının sonraki hareketleri
@@ -262,8 +285,7 @@ def kart_takvimi(yil: Optional[int] = None):
             if x.get("donem"):
                 yer[x["donem"]] = yer.get(x["donem"], 0) + x["toplam"]
                 continue
-            t = date.fromisoformat(x["tarih"])
-            hedef_ay = next((a for a in sorted(sonlar) if sonlar[a] >= t), None) or x["tarih"][:7]
+            hedef_ay = odeme_ayi(k, x["tarih"], None, {a: v[1] for (kid_, a), v in teyit.items() if kid_ == k["id"]})
             yer[hedef_ay] = yer.get(hedef_ay, 0) + x["toplam"]
         aylar = []
         for m in range(1, 13):
@@ -309,7 +331,7 @@ def kart_ozet():
         kartlar = kart_durumu(cur)
     bugun = _bugun()
     for k in kartlar:
-        for x in ("_cipa_tarih", "_cipa_kul", "_limit"):
+        for x in ("_cipa_tarih", "_cipa_kul", "_limit", "_sonra_kr"):
             k.pop(x, None)
     goruldu, tekil = set(), []
     for k in kartlar:   # ortak limitli grup toplamda BİR kez
@@ -358,7 +380,7 @@ def kart_teyit(kid: str, body: TeyitBody, x_evvel_oturum: Optional[str] = Header
             if tarih == bugun and d["grup"]["kullanilabilir"] is not None:
                 beklenen = _kurus(d["grup"]["kullanilabilir"])
         elif d["cipa"] and d["cipa"]["tarih"] <= tarih.isoformat():
-            beklenen = _kurus(d["cipa"]["kullanilabilir"]) + sum(_kurus(x["tutar"]) for x in d["hareketler"] if x["gun"] <= tarih.isoformat())
+            beklenen = int(d["_cipa_kul"]) + sum(t for g, t in d["_sonra_kr"] if g <= tarih.isoformat())   # ekrandaki 40 değil, hepsi
         eb = _kurus(body.ekstre_borc) if body.ekstre_borc is not None else None
         cur.execute("""INSERT INTO ey_kart_teyit (id, kart_id, tarih, kullanilabilir, ekstre_borc, son_odeme, sistem_beklenen, kaynak, not_, girilen)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,'elle',%s,%s)""",
