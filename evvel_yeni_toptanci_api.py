@@ -28,6 +28,7 @@ from starlette.concurrency import run_in_threadpool
 
 from database import db, savepoint
 from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
+from evvel_yeni_cekirdek import merkez_aktor
 from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi, bekleyen_is_kaydet
 
 router = APIRouter(prefix="/api/evvel-yeni/toptanci", tags=["evvel-yeni-toptanci"])
@@ -57,9 +58,8 @@ def toptanci_hazirla(cur) -> None:
     global _HAZIR
     if _HAZIR:
         return
-    cur.execute("""SELECT to_regclass('ey_toptanci_belge') IS NOT NULL AND to_regclass('idx_ey_top_belge') IS NOT NULL
-                          AND to_regclass('ey_urun_fiyat_gecmis') IS NOT NULL AND to_regclass('ey_toptanci_teslim') IS NOT NULL AS v""")
-    if dict(cur.fetchone() or {}).get("v") and _kolon_var(cur, "ey_toptanci_belge", "iptal_zaman") and _kolon_var(cur, "ey_toptanci", "vade_gun"):
+    if (__import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_toptanci_belge", "idx_ey_top_belge", "ey_urun_fiyat_gecmis", "ey_toptanci_teslim")
+            and _kolon_var(cur, "ey_toptanci_belge", "iptal_zaman") and _kolon_var(cur, "ey_toptanci", "vade_gun")):
         _HAZIR = True
         return
     try:
@@ -79,8 +79,7 @@ def _kolon_var(cur, tablo: str, kolon: str) -> bool:
 
 
 def _var(cur, ad: str) -> bool:
-    cur.execute("SELECT to_regclass(%s) IS NOT NULL AS v", (ad,))
-    return bool(dict(cur.fetchone())["v"])
+    return __import__("evvel_yeni_cekirdek").tablo_var(cur, ad)   # çekirdek (F#14)
 
 
 def _toptanci_ddl(cur) -> None:
@@ -336,8 +335,7 @@ def son_toptancilar(cur, urun_idler: List[str]) -> dict:
 
 def iptal_teslim_refleri(cur, bas: date, son: date, onek: str = "panel:teslim:") -> set:
     """PUBLIC (Gider): iptal edilmiş teslimlerin kaynak_ref'leri (tarih bas..son, önekli). Tablo yoksa boş."""
-    cur.execute("SELECT to_regclass('ey_toptanci_teslim') IS NOT NULL AS v")
-    if not dict(cur.fetchone())["v"]:
+    if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_toptanci_teslim"):
         return set()
     cur.execute("SELECT kaynak_ref FROM ey_toptanci_teslim WHERE iptal AND kaynak_ref LIKE %s AND tarih BETWEEN %s AND %s",
                 (onek.replace("%", r"\%").replace("_", r"\_") + "%", bas, son))
@@ -696,9 +694,7 @@ def _belge_merkez(tid: str, v: dict, x_evvel_oturum: Optional[str]) -> dict:
     ham, mime, sha = _belge_coz(str(v.get("veri") or ""), v.get("mime"))
     with db() as (conn, cur):
         toptanci_hazirla(cur)
-        kim = _aktor(cur, x_evvel_oturum)
-        if kim in ("oturumsuz", "bilinmiyor"):
-            raise HTTPException(401, "Merkez oturumu gerekli")
+        kim = merkez_aktor(cur, x_evvel_oturum)   # çekirdek kapısı (F#2)
         cur.execute("SELECT 1 FROM ey_toptanci_teslim WHERE id=%s AND NOT iptal", (tid,))
         if not cur.fetchone():
             raise HTTPException(404, "Teslim bulunamadı ya da iptal")
@@ -708,8 +704,8 @@ def _belge_merkez(tid: str, v: dict, x_evvel_oturum: Optional[str]) -> dict:
 
 def _telefon_teslim(cur, request_headers, method, yol, govde: bytes, tid: str, sube: Optional[str]) -> tuple:
     """Telefon (imzalı) → kişi; teslim o şubenin, son 2 gün, iptal değil; kişi o şubede İÇERİDE. Yoklama kapalıysa 503."""
-    from evvel_yeni_moduller import DURUM
-    if DURUM.get("yoklama") != "yuklendi":
+    from evvel_yeni_moduller import acik as _acik
+    if not _acik("yoklama"):
         raise HTTPException(503, "Telefon onayı kapalı — merkez PDF ekler")
     import evvel_yeni_yoklama_api as y
     c = y.cihaz_coz(cur, request_headers, method, yol, govde, tur="telefon")
@@ -764,8 +760,7 @@ def belgeler(tid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Merkez (Toptancı Kitabı): teslimin sayfa listesi (META — veri yok; her sayfa /belge/{id} ile tek tek)."""
     with db() as (conn, cur):
         toptanci_hazirla(cur)
-        if _aktor(cur, x_evvel_oturum) in ("oturumsuz", "bilinmiyor"):
-            raise HTTPException(401, "Merkez oturumu gerekli")
+        merkez_aktor(cur, x_evvel_oturum)   # çekirdek kapısı (F#2)
         cur.execute("""SELECT id, sayfa, mime, boyut, yukleyen, kaynak, zaman FROM ey_toptanci_belge
                         WHERE teslim_id=%s AND NOT iptal ORDER BY sayfa""", (tid,))
         rows = [dict(x) for x in cur.fetchall() or []]
@@ -779,8 +774,7 @@ def belge_getir(bid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
     from fastapi.responses import Response
     with db() as (conn, cur):
         toptanci_hazirla(cur)
-        if _aktor(cur, x_evvel_oturum) in ("oturumsuz", "bilinmiyor"):
-            raise HTTPException(401, "Merkez oturumu gerekli")
+        merkez_aktor(cur, x_evvel_oturum)   # çekirdek kapısı (F#2)
         cur.execute("SELECT mime, veri FROM ey_toptanci_belge WHERE id=%s AND NOT iptal", (bid,))
         r = cur.fetchone()
         if not r:
@@ -794,9 +788,7 @@ def belge_kaldir(bid: str, x_evvel_oturum: Optional[str] = Header(default=None))
     """Merkez: yanlış sayfayı kaldırır (silinmez — iptal, iz kalır)."""
     with db() as (conn, cur):
         toptanci_hazirla(cur)
-        kim = _aktor(cur, x_evvel_oturum)
-        if kim in ("oturumsuz", "bilinmiyor"):
-            raise HTTPException(401, "Merkez oturumu gerekli")
+        kim = merkez_aktor(cur, x_evvel_oturum)   # çekirdek kapısı (F#2)
         cur.execute("UPDATE ey_toptanci_belge SET iptal=TRUE, iptal_kim=%s, iptal_zaman=NOW() WHERE id=%s AND NOT iptal RETURNING id", (kim, bid))
         if not cur.fetchone():
             raise HTTPException(404, "Belge bulunamadı")
@@ -813,8 +805,8 @@ def teslim_iptal(tid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Head
         cur.execute("SELECT kaynak_ref FROM ey_toptanci_teslim WHERE id=%s", (tid,))
         r0 = cur.fetchone()
         if r0 and (dict(r0)["kaynak_ref"] or "").startswith("panel:teslim:"):
-            from evvel_yeni_moduller import DURUM
-            if DURUM.get("depo") != "yuklendi":   # Codex: borç düşüp stok kalmasın — önce Depo açılmalı
+            from evvel_yeni_moduller import acik as _acik
+            if not _acik("depo"):   # Codex: borç düşüp stok kalmasın — önce Depo açılmalı
                 raise HTTPException(409, "Depo modülü kapalı — bu teslimin depo girişi de geri alınmalı; önce Depo'yu aç")
         cur.execute("UPDATE ey_toptanci_teslim SET iptal=TRUE, iptal_sebep=%s WHERE id=%s AND NOT iptal RETURNING id, kaynak_ref",
                     (f"{body.sebep.strip()[:150]} · {_aktor(cur, x_evvel_oturum)}", tid))

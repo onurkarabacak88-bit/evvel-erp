@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from database import db, savepoint
+from evvel_yeni_cekirdek import merkez_aktor
 from evvel_yeni_cekirdek import bekleyen_is_kaydet, deneme_mi, is_gunu as _bugun, kurus as _kurus   # şube İŞ GÜNÜ (gece 02:00'ye kadar önceki gün)
 
 router = APIRouter(prefix="/api/evvel-yeni/panel", tags=["evvel-yeni-panel"])
@@ -35,12 +36,7 @@ TESLIM_ALANLAR = tuple(_TH.values())     # sahip kararı: teslim yalnız Onur / 
 KIM = "şube paneli"
 
 
-class _Kuru(Exception):
-    """Deneme modunda işlemi geri almak için (sonuç taşır)."""
-
-    def __init__(self, sonuc: dict):
-        super().__init__("kuru")
-        self.sonuc = sonuc
+from evvel_yeni_cekirdek import KuruGeriAl as _Kuru   # deneme modunda geri al (sonuç taşır) — Depo ile ortak (F#21)
 
 
 def _baslangic(cur) -> date:
@@ -58,8 +54,8 @@ def _sube(cur, sube_id: str) -> dict:
 
 def _yoklama():
     """Yumuşak bağ: yoklama modülü yüklüyse PUBLIC servisleri; değilse None (panel yoklamasız çalışır)."""
-    from evvel_yeni_moduller import DURUM
-    if DURUM.get("yoklama") != "yuklendi":
+    from evvel_yeni_moduller import acik as _acik
+    if not _acik("yoklama"):
         return None
     import evvel_yeni_yoklama_api as y
     return y
@@ -368,8 +364,7 @@ def _merkezde_mi(sube_id: str, gun) -> Optional[str]:
     """Bugün telefonsuz 'Merkeze gönder' yapıldı ve henüz işlenmedi mi → gönderim saati (yoksa None)."""
     try:
         with db() as (_c, cur):
-            cur.execute("SELECT to_regclass('ey_panel_deneme') IS NOT NULL AS v")
-            if not dict(cur.fetchone())["v"]:
+            if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_panel_deneme"):
                 return None
             cur.execute("""SELECT zaman FROM ey_panel_deneme WHERE sube_id=%s AND is_gunu=%s AND tur='kapanis' AND sonuc='ret'
                              AND sebep LIKE 'Telefonsuz%%' AND NOT islendi ORDER BY zaman DESC LIMIT 1""", (str(sube_id), gun))
@@ -565,7 +560,7 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
     hesabı (kasa_mutabakat, yeni evren; bu işlemde yazılan kapanış dahil). Dönüş: (uyarılar, ek veri: sorumlu / içeride kalanlar,
     kasa_uyarilari). SAHİP (2026-10-19): KASA UYARISI PANELE VERİLMEZ (kör sayım — personel tuttu mu bilmez) → ek["kasa_uyarilari"]
     yalnız merkeze (olay + Bekleyen işler)."""
-    from evvel_yeni_moduller import DURUM
+    from evvel_yeni_moduller import acik as _acik
     from evvel_yeni_olay import olaylar
     u, ek, ku = [], {}, []
     bugun = [o for o in olaylar(cur, sube_id=sube_id, bas=gun, son=gun) if not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"]
@@ -575,7 +570,7 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
         u.append("Bugün Ürün Aç kaydı yok" + (" — personel 'ürün açılmadı' dedi" if b.urun_ac_yok else ""))
     if not b.x_rapor:
         u.append("'X raporu gönderildi' işaretlenmedi")
-    if DURUM.get("satis") == "yuklendi":
+    if _acik("satis"):
         try:
             from evvel_yeni_satis_api import kasa_mutabakat
             m = kasa_mutabakat(cur, gun.isoformat(), evren="yeni").get(str(sube_id)) or {}
@@ -825,8 +820,8 @@ def _kalemler(cur, kalemler: List[Kalem], takip: Optional[str] = None, pasif_olu
 
 
 def _modul_acik(kod: str) -> bool:
-    from evvel_yeni_moduller import DURUM
-    return DURUM.get(kod) == "yuklendi"
+    from evvel_yeni_moduller import acik as _acik
+    return _acik(kod)
 
 
 # ─────────────── BASAMAK 5 S3 · DEPODAN GELEN — TESLİM AL (PANEL_YENIDEN_KURULUM.md §6 + "Basamak 5", sahip P3) ───────────────
@@ -1553,12 +1548,9 @@ class DenemeBody(BaseModel):
 def gec_kapanis(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Merkez: reddedilen / hata veren panel kapanışını, personelin girdiği verilerle O İŞ GÜNÜNE işler
     (saat kuralı ve gün kilidi uygulanmaz; yeni istek kimliğiyle — eski deneme izli kalır)."""
-    from evvel_yeni_cekirdek import aktor
     _deneme_hazirla()
     with db() as (conn, cur):
-        kim = aktor(cur, x_evvel_oturum)
-        if kim in ("oturumsuz", "bilinmiyor"):   # Codex: deneme kimliğini bilen herkes saat kuralını atlayamasın
-            raise HTTPException(401, "Merkez oturumu gerekli")
+        kim = merkez_aktor(cur, x_evvel_oturum)   # çekirdek kapısı (F#2)
         cur.execute("SELECT * FROM ey_panel_deneme WHERE id=%s FOR UPDATE", (body.deneme_id,))
         r = cur.fetchone()
         if not r:
@@ -1581,8 +1573,7 @@ def _kapanis_isleri(cur) -> list:
     """Son 7 gün: kapanış denemesi reddedilmiş / hata vermiş ve o gün için başarılı panel kapanışı YOK → merkez işi."""
     from evvel_yeni_olay import olaylar
     from evvel_yeni_tanim_api import subeler
-    cur.execute("SELECT to_regclass('ey_panel_deneme') IS NOT NULL AS v")
-    if not dict(cur.fetchone())["v"]:
+    if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_panel_deneme"):
         return []
     _deneme_hazirla()   # uyarilar / goruldu sütunları (ayrı kısa işlem)
     cur.execute("""SELECT DISTINCT ON (sube_id, is_gunu) id, sube_id, is_gunu, sonuc, sebep, zaman FROM ey_panel_deneme
@@ -1615,12 +1606,9 @@ def _kapanis_isleri(cur) -> list:
 @router.post("/kapanis-uyari-gordum")
 def kapanis_uyari_gordum(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Merkez: uyarılı kapanışı gördü (iz: kim)."""
-    from evvel_yeni_cekirdek import aktor
     _deneme_hazirla()
     with db() as (conn, cur):
-        kim = aktor(cur, x_evvel_oturum)
-        if kim in ("oturumsuz", "bilinmiyor"):
-            raise HTTPException(401, "Merkez oturumu gerekli")
+        kim = merkez_aktor(cur, x_evvel_oturum)   # çekirdek kapısı (F#2)
         cur.execute("""UPDATE ey_panel_deneme SET goruldu=%s WHERE id=%s AND tur='kapanis' AND sonuc='ok_uyarili' AND goruldu IS NULL
                        RETURNING id""", (kim, body.deneme_id))
         if not cur.fetchone():

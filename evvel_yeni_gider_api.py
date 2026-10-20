@@ -214,8 +214,8 @@ def _yeni_fiyatci(cur):
 
 
 def _modul_acik(kod: str) -> bool:
-    from evvel_yeni_moduller import DURUM
-    return DURUM.get(kod) == "yuklendi"
+    from evvel_yeni_moduller import acik as _acik
+    return _acik(kod)
 
 
 def _yeni_kesin_gunler(cur, bas: date, son: date) -> set:

@@ -66,6 +66,11 @@ for _m in MODULLER:
 DURUM: Dict[str, str] = {}   # kod → yuklendi | kapali | eksik:<kod> | hata:<mesaj>
 
 
+def acik(kod: str) -> bool:
+    """PUBLIC — modül yüklendi mi (tak-çıkar yumuşak bağ). Dalga 4 (F#3): aynı karşılaştırma 12 yerde yazılıydı."""
+    return DURUM.get(kod) == "yuklendi"
+
+
 def modulleri_yukle(app) -> None:
     """Listeyi sırayla yükler. Sıra önemli: bir modül, gerektirdiği modüllerden SONRA gelir."""
     for m in MODULLER:

@@ -32,7 +32,8 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from database import db, savepoint
-from evvel_yeni_cekirdek import aktor as _aktor, ayar_oku, ayar_yaz, bekleyen_is_kaydet, is_gunu
+from evvel_yeni_cekirdek import merkez_aktor
+from evvel_yeni_cekirdek import ayar_oku, ayar_yaz, bekleyen_is_kaydet, is_gunu
 
 router = APIRouter(prefix="/api/evvel-yeni/yoklama", tags=["evvel-yeni-yoklama"])
 log = logging.getLogger(__name__)
@@ -321,8 +322,7 @@ def bugun_girenler(cur, sube_id: str, gun: Optional[date] = None) -> list:
 
 def son_yoklama_gunu(cur, personel_id: str) -> Optional[date]:
     """PUBLIC (Maaş › işten çıkış): kişinin QR'la girdiği SON iş günü (yoksa None)."""
-    cur.execute("SELECT to_regclass('ey_yoklama') IS NOT NULL AS v")
-    if not dict(cur.fetchone())["v"]:
+    if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_yoklama"):
         return None
     cur.execute("SELECT MAX(is_gunu) AS t FROM ey_yoklama WHERE personel_id=%s", (str(personel_id),))
     return (dict(cur.fetchone() or {}) or {}).get("t")
@@ -528,9 +528,7 @@ from evvel_yeni_cekirdek import tr_saat as _saat  # noqa: E402   # Dalga 4 (F#4)
 
 # ─────────────────────────── MERKEZ: cihaz yönetimi ───────────────────────────
 def _merkez(cur, jeton: Optional[str]) -> str:
-    kim = _aktor(cur, jeton)
-    if kim in ("oturumsuz", "bilinmiyor"):
-        raise HTTPException(401, "Merkez oturumu gerekli")
+    kim = merkez_aktor(cur, jeton)   # çekirdek kapısı (F#2)
     return kim
 
 
@@ -798,8 +796,8 @@ def _qr_islem(cur, c, p, v, islem: str) -> tuple:
 
 def _avans():
     """Yumuşak bağ: Avans modülü yüklüyse PUBLIC servisleri; değilse None. 1 Kasım öncesi telefon talebi KAPALI (eski sayfadan)."""
-    from evvel_yeni_moduller import DURUM
-    if DURUM.get("avans") != "yuklendi":
+    from evvel_yeni_moduller import acik as _acik
+    if not _acik("avans"):
         return None
     import evvel_yeni_avans_api as a
     return a

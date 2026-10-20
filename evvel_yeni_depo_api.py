@@ -25,6 +25,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
+from evvel_yeni_cekirdek import merkez_aktor
 from evvel_yeni_cekirdek import aktor as _aktor, bekleyen_is_kaydet, deneme_mi, is_gunu as _is_gunu   # K1/F#23: Depo'da tek gün = İŞ GÜNÜ
 
 router = APIRouter(prefix="/api/evvel-yeni/depo", tags=["evvel-yeni-depo"])
@@ -816,8 +817,7 @@ def _sevk_hazirla(cur) -> None:
     """Çağıranın işleminde, savepoint + lock_timeout; YALNIZ eksikse kurar (19 Eki dersi: ayrı bağlantıda DDL yok).
     Codex S1 #2: süreç bayrağı TUTULMAZ — aynı işlemde kurulup 4xx ile geri alınan tablo bayrağı yalan söyletirdi; her çağrı to_regclass."""
     depo_hazirla(cur)
-    cur.execute("SELECT to_regclass('ey_sevk_parti') IS NOT NULL AS v")
-    if not dict(cur.fetchone() or {}).get("v"):
+    if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_sevk_parti"):
         try:
             with savepoint(cur, "sp_ey_sevk_hazirla"):
                 cur.execute("SET LOCAL lock_timeout = '3s'")
@@ -833,8 +833,7 @@ def _sevk_hazirla(cur) -> None:
 
 
 def _var_tablo(cur, ad: str) -> bool:
-    cur.execute("SELECT to_regclass(%s) IS NOT NULL AS v", (ad,))
-    return bool(dict(cur.fetchone() or {}).get("v"))
+    return __import__("evvel_yeni_cekirdek").tablo_var(cur, ad)   # çekirdek (F#14)
 
 
 def _on_ek(bag: str) -> str:
@@ -1098,8 +1097,7 @@ def sevk_kalem_durumlari(cur, baglar: List[str]) -> dict:
     return out
 
 
-class _Kuru(Exception):
-    """1 Kasım öncesi merkez sevki DENEME: her şey yazılır, sonuç okunur, savepoint geri alınır."""
+from evvel_yeni_cekirdek import KuruGeriAl as _Kuru  # noqa: E402 — 1 Kasım öncesi merkez sevki DENEME: yazılır, okunur, geri alınır (F#21)
 
 
 class SevkBody(BaseModel):
@@ -1115,9 +1113,7 @@ def sevk_et(body: SevkBody, x_evvel_oturum: Optional[str] = Header(default=None)
     """🚚 Merkez 'Sevk et'. 1 Kasım (panel_baslangic) öncesi DENEME: kaydedilmez, sonuç gösterilir (gerçek sevk eski sistemden)."""
     with db() as (conn, cur):
         _sevk_hazirla(cur)
-        kim = _aktor(cur, x_evvel_oturum)
-        if kim in ("oturumsuz", "bilinmiyor"):
-            raise HTTPException(401, "Merkez oturumu gerekli")
+        kim = merkez_aktor(cur, x_evvel_oturum)   # çekirdek kapısı (F#2)
         kaynak = body.kaynak or _depo_sube(cur)
         kuru = deneme_mi(cur)   # panelle AYNI tek kural (çekirdek)
         sonuc = {}
@@ -1146,9 +1142,7 @@ def sevk_geri_al(parti_id: str, body: SevkIptalBody, x_evvel_oturum: Optional[st
         raise HTTPException(400, "Sebep yaz")
     with db() as (conn, cur):
         _sevk_hazirla(cur)
-        kim = _aktor(cur, x_evvel_oturum)
-        if kim in ("oturumsuz", "bilinmiyor"):
-            raise HTTPException(401, "Merkez oturumu gerekli")
+        kim = merkez_aktor(cur, x_evvel_oturum)   # çekirdek kapısı (F#2)
         r = sevk_iptal(cur, parti_id=parti_id, kim=kim, sebep=body.sebep.strip())
     return {"ok": True, "mesaj": "Sevk geri alındı" + (f" · sayımla kesinleşen kaldı: {', '.join(r['kalan'])}" if r["kalan"] else ""), **r}
 

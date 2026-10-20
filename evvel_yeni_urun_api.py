@@ -46,8 +46,7 @@ def _n(x) -> str:
 
 
 def _tablo_var(cur, ad: str) -> bool:
-    cur.execute("SELECT to_regclass(%s) IS NOT NULL AS v", (ad,))
-    return bool(dict(cur.fetchone())["v"])
+    return __import__("evvel_yeni_cekirdek").tablo_var(cur, ad)   # çekirdek (F#14)
 
 
 def _hazirla():
@@ -401,9 +400,9 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
         birim_alanlari = {"birim", "sayim_ici", "fatura_ici", "koli_ici", "fatura_birim"}
         if birim_alanlari & set(degisen):
             try:
-                from evvel_yeni_moduller import DURUM
+                from evvel_yeni_moduller import acik as _acik
                 hareketli = False
-                if DURUM.get("depo") == "yuklendi":   # Fable: depo kapalıysa (tak-çıkar) gerçekten atla
+                if _acik("depo"):   # Fable: depo kapalıysa (tak-çıkar) gerçekten atla
                     from evvel_yeni_depo_api import urun_hareketi_var
                     hareketli = urun_hareketi_var(cur, uid)
             except HTTPException:

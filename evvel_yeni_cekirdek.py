@@ -180,6 +180,28 @@ def kilit(cur, anahtar: int = KASA_KILIT) -> None:
     cur.execute("SELECT pg_advisory_xact_lock(%s)", (anahtar,))
 
 
+class KuruGeriAl(Exception):
+    """PUBLIC — deneme (kuru) modunda işlem yapılır, sonuç okunur, savepoint/işlem GERİ ALINIR (sonuç taşıyabilir). Panel + Depo ortak (F#21)."""
+
+    def __init__(self, sonuc: Optional[dict] = None):
+        super().__init__("kuru")
+        self.sonuc = sonuc
+
+
+def tablo_var(cur, *adlar: str) -> bool:
+    """PUBLIC — verilen tablo / indeks adlarının HEPSİ var mı (salt okur, kilit istemez). Dalga 4 (F#14): 6 yerel kopya + ~10 satır içi."""
+    cur.execute("SELECT bool_and(to_regclass(x) IS NOT NULL) AS v FROM unnest(%s::text[]) AS x", (list(adlar),))
+    return bool(dict(cur.fetchone() or {}).get("v"))
+
+
+def merkez_aktor(cur, jeton: Optional[str]) -> str:
+    """PUBLIC — merkez ucu kapısı: geçerli oturumun adı, yoksa 401 (Dalga 4, F#2: aynı 3 satır 12 yerde)."""
+    kim = aktor(cur, jeton)
+    if kim in ("oturumsuz", "bilinmiyor"):
+        raise HTTPException(401, "Merkez oturumu gerekli")
+    return kim
+
+
 def aktor(cur, jeton: Optional[str]) -> str:
     """Kaydı yapan — oturum jetonundan (istemciden gelen isim yazılmaz)."""
     try:
@@ -291,7 +313,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "tl", "kilit", "aktor",
+__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

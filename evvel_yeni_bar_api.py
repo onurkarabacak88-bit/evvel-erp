@@ -156,8 +156,8 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
         ev.setdefault(sid, {}).setdefault(o["is_gunu"], {})[o["tur"]] = {"say": say, "ts": o["olay_zamani"], "kim": o.get("personel_ad")}
     if pasta_id:   # pasta vitrine sevkle gelir (ürün aç ile değil) — şubenin KABUL ettiği pasta = bara giren pasta
         try:
-            from evvel_yeni_moduller import DURUM
-            if DURUM.get("depo") == "yuklendi":
+            from evvel_yeni_moduller import acik as _acik
+            if _acik("depo"):
                 # Fable #7 / sahip P1: şubeye DOĞRUDAN gelen pasta (Tedarikçiden teslim al = giris) da bara girer
                 from evvel_yeni_depo_api import hareketler   # Depo'nun kapısı (F#34)
                 for h in hareketler(cur, turler=("kabul", "giris", "fazla_onay"), bas=bas, son=son + timedelta(days=1),

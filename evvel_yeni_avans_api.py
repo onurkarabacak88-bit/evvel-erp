@@ -27,6 +27,7 @@ from decimal import Decimal
 from datetime import date
 
 from database import db, savepoint
+from evvel_yeni_cekirdek import merkez_aktor
 from evvel_yeni_cekirdek import aktor as _aktor, bekleyen_is_kaydet, bugun as _bugun, yeni_donem
 
 router = APIRouter(prefix="/api/evvel-yeni/avans", tags=["evvel-yeni-avans"])
@@ -36,8 +37,7 @@ log = logging.getLogger(__name__)
 # ─────────────────────────── 🆕 YENİ DEFTER ey_avans_talep ───────────────────────────
 def avans_hazirla(cur) -> None:
     """Çağıranın işleminde, savepoint + lock_timeout; yalnız eksikse (19 Eki dersi)."""
-    cur.execute("SELECT to_regclass('ey_avans_talep') IS NOT NULL AS v")
-    if dict(cur.fetchone() or {}).get("v"):
+    if __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_avans_talep"):
         return
     try:
         with savepoint(cur, "sp_ey_avans_hazirla"):
@@ -100,8 +100,7 @@ def talep_yaz(cur, *, personel_id: str, tutar: int, not_: Optional[str], istek_i
 
 
 def _yeni_talepler(cur, acik: bool = True) -> list:
-    cur.execute("SELECT to_regclass('ey_avans_talep') IS NOT NULL AS v")
-    if not dict(cur.fetchone()).get("v"):
+    if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_avans_talep"):
         return []
     from evvel_yeni_tanim_api import adlar, subeler   # personel / şube adı Tanımlar'ın kapısından (C-T2-11)
     cur.execute(f"""SELECT a.* FROM ey_avans_talep a
@@ -231,9 +230,7 @@ def _karar(aid: str, durum: str, jeton: Optional[str], notu: Optional[str] = Non
     kapatılır/reddedilir (Fable O-2: kişi ayrıldı, şube teslim etmedi → talep sonsuza kadar açık kalıyor, yenisi açılamıyordu)."""
     with db() as (conn, cur):
         avans_hazirla(cur)
-        kim = _aktor(cur, jeton)
-        if kim in ("oturumsuz", "bilinmiyor"):
-            raise HTTPException(401, "Merkez oturumu gerekli")
+        kim = merkez_aktor(cur, jeton)   # çekirdek kapısı (F#2)
         ek = "".join(f", {k}=%s" for k in alan)
         cur.execute(f"""UPDATE ey_avans_talep SET durum=%s, karar_ts=NOW(), karar_kim=%s, karar_not=%s{ek}
                          WHERE id=%s AND durum = ANY(%s) RETURNING *""", (durum, kim, notu, *alan.values(), aid, list(onceki)))
@@ -276,9 +273,7 @@ def onayla(aid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(defa
         # çıkıp talep 'onaylandı-elden' kalıyor, şube de verince ÇİFT avans). Kilit sırası panel teslimiyle aynı: talep → Kasa.
         with db() as (conn, cur):
             avans_hazirla(cur)
-            kim = _aktor(cur, x_evvel_oturum)
-            if kim in ("oturumsuz", "bilinmiyor"):
-                raise HTTPException(401, "Merkez oturumu gerekli")
+            kim = merkez_aktor(cur, x_evvel_oturum)   # çekirdek kapısı (F#2)
             cur.execute("SELECT * FROM ey_avans_talep WHERE id=%s FOR UPDATE", (aid,))
             t = cur.fetchone()
             if not t or dict(t)["durum"] != "talep":

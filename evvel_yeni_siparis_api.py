@@ -20,7 +20,8 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_cekirdek import aktor as _aktor, bekleyen_is_kaydet, is_gunu as _is_gunu
+from evvel_yeni_cekirdek import merkez_aktor
+from evvel_yeni_cekirdek import bekleyen_is_kaydet, is_gunu as _is_gunu
 
 router = APIRouter(prefix="/api/evvel-yeni/siparis", tags=["evvel-yeni-siparis"])
 log = logging.getLogger(__name__)
@@ -31,8 +32,7 @@ YONSUZ_SAAT = 24        # bu kadar saattir yönlendirilmemiş talep → Bekleyen
 
 # ─────────────────────────── HAZIRLIK (19 Eki dersi: çağıranın işleminde, savepoint + lock_timeout, yalnız eksikse) ───────────────────────────
 def siparis_hazirla(cur) -> None:
-    cur.execute("SELECT to_regclass('ey_siparis') IS NOT NULL AND to_regclass('ey_siparis_yon') IS NOT NULL AS v")
-    if dict(cur.fetchone() or {}).get("v"):
+    if _var(cur):
         return
     try:
         with savepoint(cur, "sp_ey_siparis_hazirla"):
@@ -56,8 +56,7 @@ def siparis_hazirla(cur) -> None:
 
 
 def _var(cur) -> bool:
-    cur.execute("SELECT to_regclass('ey_siparis') IS NOT NULL AND to_regclass('ey_siparis_yon') IS NOT NULL AS v")
-    return bool(dict(cur.fetchone() or {}).get("v"))
+    return __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_siparis", "ey_siparis_yon")   # çekirdek (F#14)
 
 
 def _kilit(cur, sid: str) -> None:
@@ -191,8 +190,8 @@ def _sevk_durumlari(cur, yonler: List[dict]) -> dict:
 
 def _toptanci(fn: str):
     """Toptancılar modülünün PUBLIC fonksiyonu — modül kapalıysa None (yumuşak bağ: sipariş yine çalışır)."""
-    from evvel_yeni_moduller import DURUM
-    if DURUM.get("toptanci") != "yuklendi":
+    from evvel_yeni_moduller import acik as _acik
+    if not _acik("toptanci"):
         return None
     import evvel_yeni_toptanci_api as t
     return getattr(t, fn)
@@ -435,9 +434,7 @@ def teslime_bagla(cur, *, sube_id: str, teslim_id: str, toptanci_id: str, yon_id
 
 # ─────────────────────────── MERKEZ UÇLARI ───────────────────────────
 def _merkez(cur, jeton: Optional[str]) -> str:
-    kim = _aktor(cur, jeton)
-    if kim in ("oturumsuz", "bilinmiyor"):
-        raise HTTPException(401, "Merkez oturumu gerekli")
+    kim = merkez_aktor(cur, jeton)   # çekirdek kapısı (F#2)
     return kim
 
 

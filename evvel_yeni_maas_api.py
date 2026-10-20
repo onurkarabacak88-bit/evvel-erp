@@ -201,12 +201,12 @@ def _ucretler(cur, ay: str) -> dict:
 def _yemek_kaynagi(cur, ay: str, ay_bas: date, ay_son: date):
     """F4 — VAR OLAN yemek kalemi okuyucusunun KAYNAĞI: panel başlangıç ayından (1 Kasım) itibaren yoklama modülünün
     PUBLIC yemek_ozet'i (K7/K8). Öncesi: eski formül (None). Modül kapalıysa {'kapali': True} → tam + uyarı."""
-    from evvel_yeni_moduller import DURUM
+    from evvel_yeni_moduller import acik as _acik
     from evvel_yeni_cekirdek import panel_baslangic
     bas = panel_baslangic(cur).isoformat()   # Fable: tek yerde ayrıştırılır
     if ay < bas[:7]:
         return None
-    if DURUM.get("yoklama") != "yuklendi":
+    if not _acik("yoklama"):
         return {"kapali": True}
     import evvel_yeni_yoklama_api as yoklama
     return yoklama.yemek_ozet(cur, max(ay_bas, date.fromisoformat(bas)), ay_son)
@@ -853,11 +853,11 @@ def _yeni_yoklama(cur, bas: date, son: date):
     """1 Kasım (panel_baslangic) sınırı + yeni dönem QR satırları (yoklama modülünün PUBLIC servisi; Y3 planı).
     Dönüş (sinir, satirlar). Yoklama modülü kapalıysa satırlar boş (tak-çıkar)."""
     from evvel_yeni_cekirdek import panel_baslangic
-    from evvel_yeni_moduller import DURUM
+    from evvel_yeni_moduller import acik as _acik
     pb = panel_baslangic(cur)
     if son < pb:
         return pb, []
-    if DURUM.get("yoklama") != "yuklendi":
+    if not _acik("yoklama"):
         return pb, None   # Fable: yeni dönem + modül kapalı → None (okuyucu uyarı verir, "herkes izinli" sanılmasın)
     import evvel_yeni_yoklama_api as y
     try:

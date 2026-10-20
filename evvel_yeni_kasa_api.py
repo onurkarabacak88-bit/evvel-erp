@@ -2114,8 +2114,7 @@ def _try_kilit(cur) -> bool:
 
 
 def _tablo_var(cur) -> bool:
-    cur.execute("SELECT to_regclass('para_izi_hareket') IS NOT NULL AS var")
-    return bool(dict(cur.fetchone() or {}).get("var"))
+    return __import__("evvel_yeni_cekirdek").tablo_var(cur, "para_izi_hareket")   # çekirdek (F#14)
 
 
 def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None, pos=None, online=None) -> None:
@@ -2251,8 +2250,7 @@ def _kapanis_deneme_isleri(cur, C: dict) -> List[dict]:
     """sube_operasyon.operasyon_deneme: son 7 gün
       · RED: kapanış gönderilmiş ama reddedilmiş ve olay hâlâ tamamlanmamış → sebep + "geç kapanış olarak işle"
       · UYARILI: kapanış kaydedildi ama mühürsüz / X raporu yok / devir eksik → merkez "gördüm" diyene kadar."""
-    cur.execute("SELECT to_regclass('operasyon_deneme') IS NOT NULL AS var")
-    if not dict(cur.fetchone() or {}).get("var"):
+    if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "operasyon_deneme"):
         return []
     cur.execute("ALTER TABLE operasyon_deneme ADD COLUMN IF NOT EXISTS goruldu BOOLEAN NOT NULL DEFAULT FALSE")
     cur.execute("""SELECT d.id, d.sube_id, d.event_id, d.tip, d.is_gunu, d.sonuc, d.sebep, d.uyarilar, d.zaman, d.goruldu,
