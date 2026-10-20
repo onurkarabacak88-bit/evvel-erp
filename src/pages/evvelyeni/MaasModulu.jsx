@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tl } from './KasaModulu';
+import { ALAN, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tl, useSonIstek } from './KasaModulu';
 import { ayKaydir, ayTR } from '../../utils/trTarih';
 import { Pencere } from './AyTakvim';
 
@@ -30,12 +30,7 @@ export default function MaasModulu({ onToast, onSekme }) {
   const [sec, setSec] = useState(null);     // açık satır (personel_id)
   const [d, setD] = useState({});           // elle alanlar
   const [mesgul, setMesgul] = useState(false);
-  const no = useRef(0);
-  const yukle = useCallback(async () => {
-    const n = ++no.current;
-    try { const r = await api(`/evvel-yeni/maas/liste?ay=${ay}`); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
-  }, [ay]);
-  useEffect(() => { yukle(); }, [yukle]);
+  const yukle = useSonIstek(`/evvel-yeni/maas/liste?ay=${ay}`, setV, setHata);   // ortak 'son istek kazanır' (T4-09)
 
   if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>Maaşlar okunamadı: {hata} <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme></div></div>;
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Maaşlar hesaplanıyor…</div></div>;
@@ -281,13 +276,7 @@ export function GunlukYoklama() {
   const [kac, setKac] = useState(1);
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
-  const no = useRef(0);
-  useEffect(() => {
-    const n = ++no.current;
-    setV(null);
-    api(`/evvel-yeni/maas/yoklama?gun=${gun}&gun_sayisi=${kac}`).then((r) => { if (n === no.current) { setV(r); setHata(null); } })
-      .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
-  }, [gun, kac]);
+  useSonIstek(`/evvel-yeni/maas/yoklama?gun=${gun}&gun_sayisi=${kac}`, setV, setHata, true);   // ortak 'son istek kazanır' (T4-09)
   const kaydir = (d) => { const t = new Date(`${gun}T12:00:00`); t.setDate(t.getDate() + d); setGun(gunStr(t)); };
   const gunAd = (g) => new Date(`${g}T12:00:00`).toLocaleDateString('tr-TR', { weekday: 'long', day: 'numeric', month: 'long' });
   const secStil = { font: 'inherit', padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-paper)', color: 'var(--pi-ink)' };

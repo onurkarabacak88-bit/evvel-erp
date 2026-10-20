@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa } from './KasaModulu';
+import { Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';
 
 export const GIDER_SAYFALAR = [
@@ -26,12 +26,7 @@ export default function GiderModulu({ onToast }) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [ck, setCk] = useState(null);
-  const no = useRef(0);
-  const yukle = useCallback(async () => {
-    const n = ++no.current;
-    try { const r = await api(`/evvel-yeni/gider/ozet?ay=${ay}`); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
-  }, [ay]);
-  useEffect(() => { yukle(); }, [yukle]);
+  const yukle = useSonIstek(`/evvel-yeni/gider/ozet?ay=${ay}`, setV, setHata);   // ortak 'son istek kazanır' (T4-09)
 
   const sinifla = async (ref, tur, kimin) => {
     try { await api('/evvel-yeni/gider/siniflandir', { method: 'POST', body: { kaynak_ref: ref, tur, kimin } }); onToast?.(tur === 'cekis' ? "Patron harcaması olarak ayrıldı — hangi patron olduğunu Patron harcamaları'nda seç" : 'Şube giderine geri alındı'); setCk(null); yukle(); }

@@ -8,7 +8,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi } from './KasaModulu';
+import { Cekmece, Cip, Dugme, etiketStil, fmt, gunAdi, kart, num, PI_CSS, R, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';
 
 export const GELIR_SAYFALAR = [
@@ -42,12 +42,7 @@ export default function GelirModulu() {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [ck, setCk] = useState(null);
-  const no = useRef(0);
-  const yukle = useCallback(async () => {
-    const n = ++no.current;
-    try { const r = await api(`/evvel-yeni/gelir/ozet?ay=${ay}`); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
-  }, [ay]);
-  useEffect(() => { yukle(); }, [yukle]);
+  const yukle = useSonIstek(`/evvel-yeni/gelir/ozet?ay=${ay}`, setV, setHata);   // ortak 'son istek kazanır' (T4-09)
 
   const subeAc = (s) => setCk({
     tip: 'ŞUBE GELİRİ', baslik: `${s.ad} · ${tUzun(v.ay_basi).split(' ')[1]}`, alt: `${s.gun_sayisi} kapanış · günlük ortalama ${tl(s.gunluk_ort)}`,

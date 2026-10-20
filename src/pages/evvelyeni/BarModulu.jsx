@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, num, Dugme, Cip, Cekmece, fmt, tUzun, tKisa } from './KasaModulu';
+import { Cekmece, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, tUzun, useSonIstek } from './KasaModulu';
 import { ayTR, gunKisa } from '../../utils/trTarih';
 
 export const BAR_SAYFALAR = [
@@ -27,12 +27,7 @@ export default function BarModulu() {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [ck, setCk] = useState(null);
-  const no = useRef(0);
-  const yukle = useCallback(async () => {
-    const n = ++no.current;
-    try { const r = await api(`/evvel-yeni/bar/ozet?ay=${ay}`); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
-  }, [ay]);
-  useEffect(() => { yukle(); }, [yukle]);
+  const yukle = useSonIstek(`/evvel-yeni/bar/ozet?ay=${ay}`, setV, setHata);   // ortak 'son istek kazanır' (T4-09)
 
   if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>Bar sayımı okunamadı: {hata} <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme></div></div>;
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Sayımlar okunuyor…</div></div>;

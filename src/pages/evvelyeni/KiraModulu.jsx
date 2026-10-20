@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, num, fmt, tKisa } from './KasaModulu';
+import { fmt, num, PI_CSS, R, tKisa, useSonIstek } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici } from './AyTakvim';   // ortak takvim (Dalga 5, T4-08 — kopya kalktı)
 
 const MOR = '#7B4FB8';   // kira artış ayı
@@ -17,13 +17,7 @@ export function KiraTakvim() {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [sec, setSec] = useState(null);   // {s, a, i}
-  const no = useRef(0);
-  useEffect(() => {
-    const n = ++no.current;
-    setV(null);
-    api(`/evvel-yeni/kira/takvim?yil=${yil}`).then((r) => { if (n === no.current) { setV(r); setHata(null); } })
-      .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
-  }, [yil]);
+  useSonIstek(`/evvel-yeni/kira/takvim?yil=${yil}`, setV, setHata, true);   // ortak 'son istek kazanır' (T4-09)
 
   const satirlar = (v?.subeler || []).map((s) => ({
     id: s.sube_id, kaynak: s, baslik: s.ad,

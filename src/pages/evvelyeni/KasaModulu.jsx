@@ -263,6 +263,20 @@ const BASLIK = {
   acilis: 'Açılış bakiyesi', donem: 'Yeni başlangıç', kapanis: 'Şube kapanışı', dis: 'Dış kaynaktan giriş', teslim: 'Şubeden teslim',
   tasima: 'Para taşı / hesaba yatır', sayim: 'Sayım / ekstre bakiyesi', pos: 'Online platform parası bankaya yattı', odeme: 'Ödeme', coz: 'Farkı çöz', iptal: 'Kaydı iptal et', aktar: 'Eski sistemden aktar',
 };
+// 🔄 VERİ YÜKLE — "son istek kazanır" kancası TEK yerde (Dalga 5, T4-09: 12 modül aynı no/useRef/try bloğunu kopyalıyordu).
+// yol değişince yeniden yükler; geç gelen ESKİ yanıt yok sayılır. sifirla: yüklerken eski veri gizlensin. Dönüş: yukle (elle yenile).
+function useSonIstek(yol, setV, setHata, sifirla = false) {
+  const no = useRef(0);
+  const yukle = useCallback(async () => {
+    const n = ++no.current;
+    if (sifirla) setV(null);
+    try { const r = await api(yol); if (n === no.current) { setV(r); setHata(null); } }
+    catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
+  }, [yol]);   // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => { yukle(); }, [yukle]);
+  return yukle;
+}
+
 // SAYFA GEÇİŞİ — TEK yol (Dalga 5, T4-13: 8 yerde pushState + sahte popstate ayrı yazılıydı). Kabuk (EvvelYeniApp) popstate'i dinler,
 // adresten sekmeyi okur. sorgu: '?urun=…' gibi ek (isteğe bağlı).
 const sayfayaGit = (sayfa, sorgu = '') => {
@@ -1586,4 +1600,4 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
 }
 
 // Diğer Evvel Yeni bölümleri (Gelir, Gider…) aynı görsel dili kullanır
-export { ALAN, sayfayaGit, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
+export { ALAN, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };

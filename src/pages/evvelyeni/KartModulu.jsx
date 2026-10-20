@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, tUzun } from './KasaModulu';
+import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, tUzun, useSonIstek } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, tutarYaz, YilSecici } from './AyTakvim';
 import { bugunTR } from '../../utils/trTarih';
 
@@ -179,13 +179,7 @@ export function KartTakvim({ onSekme }) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [sec, setSec] = useState(null);
-  const no = useRef(0);
-  useEffect(() => {
-    const n = ++no.current;
-    setV(null);
-    api(`/evvel-yeni/kart/takvim?yil=${yil}`).then((r) => { if (n === no.current) { setV(r); setHata(null); } })
-      .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
-  }, [yil]);
+  useSonIstek(`/evvel-yeni/kart/takvim?yil=${yil}`, setV, setHata, true);   // ortak 'son istek kazanır' (T4-09)
   const ode = (k, a) => {
     try { window.sessionStorage.setItem('ey_odeme_on', JSON.stringify({ konu: 'kart_borcu', kimin: k.id, ait_ay: a.ay, tutar: a.kalan || 0 })); } catch { /* yut */ }
     onSekme?.('odemeler');

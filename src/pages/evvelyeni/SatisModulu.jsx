@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, num, Dugme, Cip, fmt, tKisa } from './KasaModulu';
+import { Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, useSonIstek } from './KasaModulu';
 import { ayTR, gunKaydir, tarihKaydir } from '../../utils/trTarih';
 
 // Sahip: "Beklenen satışı AYRI sekme yap; ilk alanda KESİN veriler (satılan, fire, kasa açığı) olsun."
@@ -78,13 +78,7 @@ function GunlukDokum() {
   const [gun, setGun] = useState(() => tarihKaydir(-1));   // dün (TR) — Dalga 5
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
-  const no = useRef(0);
-  useEffect(() => {
-    const n = ++no.current;
-    setV(null);
-    api(`/evvel-yeni/satis/gun?gun=${gun}`).then((r) => { if (n === no.current) { setV(r); setHata(null); } })
-      .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
-  }, [gun]);
+  useSonIstek(`/evvel-yeni/satis/gun?gun=${gun}`, setV, setHata, true);   // ortak 'son istek kazanır' (T4-09)
   const kaydir = (k) => setGun(gunKaydir(gun, k));
   const acikYaz = (x) => (x == null ? '—' : Math.abs(x) < 1 ? 'yok' : x > 0 ? `${fmt(Math.round(x))} ₺ AÇIK` : `${fmt(Math.round(-x))} ₺ fazla`);
   return (
@@ -165,12 +159,7 @@ function BeklenenSatis() {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [hepsi, setHepsi] = useState(false);
-  const no = useRef(0);
-  const yukle = useCallback(async () => {
-    const n = ++no.current;
-    try { const r = await api(`/evvel-yeni/satis/kontrol?ay=${ay}`); if (n === no.current) { setV(r); setHata(null); } } catch (e) { if (n === no.current) setHata(e?.message || 'okunamadı'); }
-  }, [ay]);
-  useEffect(() => { yukle(); }, [yukle]);
+  const yukle = useSonIstek(`/evvel-yeni/satis/kontrol?ay=${ay}`, setV, setHata);   // ortak 'son istek kazanır' (T4-09)
 
   if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>Satış kontrolü okunamadı: {hata} <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme></div></div>;
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Hesaplanıyor… (bar sayımı + kapanışlar)</div></div>;

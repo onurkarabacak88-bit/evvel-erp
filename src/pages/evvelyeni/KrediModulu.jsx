@@ -2,7 +2,7 @@
 // kredi × 12 ay (kira takvimi gibi). Borç = taksit; ödeme Ödeme ekranından (kredi seçilerek) → takvimde "ödendi".
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { ALAN, Dugme, fmt, num, PI_CSS, R, sayiTR, tKisa } from './KasaModulu';
+import { ALAN, Dugme, fmt, num, PI_CSS, R, sayiTR, tKisa, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici, tutarYaz } from './AyTakvim';
 
@@ -16,14 +16,7 @@ export default function KrediModulu({ onToast, onSekme }) {
   const [hata, setHata] = useState(null);
   const [sec, setSec] = useState(null);
   const [form, setForm] = useState(null);   // {id?, ad, tur, aylik_taksit, odeme_gunu, ilk_ay, taksit_sayisi, aktif}
-  const no = useRef(0);
-  const yukle = () => {
-    const n = ++no.current;
-    setV(null);
-    api(`/evvel-yeni/kredi/takvim?yil=${yil}`).then((r) => { if (n === no.current) { setV(r); setHata(null); } })
-      .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
-  };
-  useEffect(yukle, [yil]);   // eslint-disable-line react-hooks/exhaustive-deps
+  const yukle = useSonIstek(`/evvel-yeni/kredi/takvim?yil=${yil}`, setV, setHata, true);   // ortak 'son istek kazanır' (T4-09)
 
   const ode = (k, a) => {   // takvimden → Ödeme formu hazır (kredi + ay + kalan)
     try { window.sessionStorage.setItem('ey_odeme_on', JSON.stringify({ konu: 'kredi', kredi_id: k.id, kredi_ad: k.ad, ait_ay: a.ay, tutar: a.kalan })); } catch { /* yut */ }
