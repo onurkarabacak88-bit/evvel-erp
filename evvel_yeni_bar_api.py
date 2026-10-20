@@ -130,11 +130,9 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
     kat = katalog(cur, hepsi=True)   # Fable: sayımı yapılmış ürün sonradan pasife alınırsa kalem kaybolmasın
     sayilan = [(str(u["id"]), u["ad"]) for k in kat for u in k["urunler"] if __import__("evvel_yeni_urun_api").tezgahta_sayilir(u)]
     sayilan_id = {i for i, _ in sayilan}
-    # sahip P1 (20 Eki): katalogdaki 'gününde tüketilir' TEK GERÇEK; katalogda hiç işaretli yoksa (geçiş) eski ad tahmini
-    pasta_id = {str(u["id"]) for k in kat for u in k["urunler"] if u.get("takip") == "gununde"}
-    if not pasta_id:
-        pasta_id = {str(u["id"]) for k in kat for u in k["urunler"] if str(u["id"]) not in sayilan_id
-                    and ("pasta" in (k["ad"] or "").lower() or any(w in (u["ad"] or "").lower() for w in _PASTA_IZ))}
+    # sahip P1 (20 Eki): katalogdaki 'gününde tüketilir' TEK GERÇEK (Dalga 4, F#8: işaretli yoksa ADDAN tahmin eden ikinci kural kalktı —
+    # tahmin başka ekranlarla ayrışıyordu). İşaretli ürün yoksa ekranda uyarı.
+    pasta_id = {str(u["id"]) for k in kat for u in k["urunler"] if __import__("evvel_yeni_urun_api").gununde_tuketilir(u)}
     kalemler = sayilan + [("pasta", "Pasta (toplam)")]
     kodlar = [k for k, _ in kalemler]
     # Satış kontrolü bardakları anlam anahtarıyla arar (bardak_kucuk/buyuk/plastik) — ürün adından TEK eşleştiriciyle
@@ -218,6 +216,7 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
                                "kapanis_yok": sum(1 for x in gunler if x["durum"] == "kapanis_yok"),
                                "tamam": sum(1 for x in gunler if x["durum"] == "tamam")}})
     return {"kalemler": [{"kod": k, "ad": a, "anahtar": anahtar_of[k]} for k, a in kalemler], "subeler": sonuc, "evren": "yeni",
+            "uyari": None if pasta_id else "Katalogda 'gününde tüketilir' işaretli ürün yok — pasta girişi sayılamıyor (Ürün kataloğu)",
             "not": "YENİ PANEL — tezgah sayımı (açılış/kapanış) + Ürün Aç'ta bara açılan + pasta kabulü. Devir farkı = bugün açılış − "
                    "(dün kapanış + gece giren). Net eksilme = açılış + gün içi giren − kapanış (satış + fire + ikram; kayıp değildir). "
                    "Eksiye düşerse Ürün Aç girilmemiş olabilir. Sayım gideri ve kasayı değiştirmez."}

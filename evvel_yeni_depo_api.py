@@ -380,7 +380,7 @@ def _gununde_tuket(cur, bilgi: dict, *, kaynak_ref: str, urun_id: str, urun_ad: 
                    bag: Optional[str], gun: date) -> None:
     """🍰 Sahip P1 (2026-10-20, Fable): takip='gununde' ürün (pasta) depoya GİRDİĞİ AN tüketilir → depo bakiyesi hep 0,
     Gider = alınan × fiyat; vitrindeki pasta Bar'ın pasta sayımıyla izlenir (defterde ikinci sayım yok). AYNI bag → iptal birlikte."""
-    if (bilgi.get("takip") or "sayim") != "gununde" or adet <= 0 or not konum.startswith("depo:"):
+    if not __import__("evvel_yeni_urun_api").gununde_tuketilir(bilgi) or adet <= 0 or not konum.startswith("depo:"):
         return
     _yaz(cur, [(f"{kaynak_ref}:gununde", "tuketim", urun_id, urun_ad, adet, konum, "dışarı:tuketim", gun, _simdi_tr(), kim,
                 "Gününde tüketilir (pasta) — girişte gider", bag)], yeni=True)
@@ -469,7 +469,7 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
     gun = gun or _is_gunu()
     if not eski_evren:
         _b = _ey_urun_dogrula(cur, [x.get("urun_id") for x in satirlar if x.get("sayilan") not in (None, "")])
-        _p = [v["ad"] for v in _b.values() if (v.get("takip") or "sayim") == "gununde"]
+        _p = [v["ad"] for v in _b.values() if __import__("evvel_yeni_urun_api").gununde_tuketilir(v)]
         if _p:   # sahip P1: pasta girişte tüketildi — sayılırsa hayali stok doğar
             raise HTTPException(400, f"Gününde tüketilen ürün (pasta) sayılmaz: {', '.join(_p[:3])}")
         if ad_coz is None:
@@ -890,7 +890,7 @@ def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], ki
     istek_id = __import__("evvel_yeni_cekirdek").istek_dogrula(istek_id)   # TEK kural (F#15)
     top, _ = kalem_topla(kalemler, birim="pakette")   # Sipariş ile TEK kalem kuralı (F#22) — adet kabul üst sınırıyla aynı
     b = _ey_urun_dogrula(cur, list(top))
-    pasta = [b[u]["ad"] for u in top if (b[u].get("takip") or "sayim") == "gununde"]
+    pasta = [b[u]["ad"] for u in top if __import__("evvel_yeni_urun_api").gununde_tuketilir(b[u])]
     if pasta:   # sahip (20 Eki): pastane her şubeye DOĞRUDAN getirir — pasta sevk edilmez (girişte tüketildi; çift gider olmasın)
         raise HTTPException(400, f"Pasta sevk edilmez — pastane şubeye doğrudan getirir: {', '.join(pasta[:3])}")
     sira = sorted(top.items(), key=lambda kv: b[kv[0]]["ad"])

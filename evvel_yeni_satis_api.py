@@ -411,7 +411,7 @@ def _fire_yeni(cur, gun: str) -> dict:
                 continue
             b = bil.get(uid) or {}
             ad = k.get("ad") or b.get("ad") or uid
-            kod = "pasta" if (b.get("takip") or "") == "gununde" else (_anahtar_ad(ad) or uid)
+            kod = "pasta" if __import__("evvel_yeni_urun_api").gununde_tuketilir(b) else (_anahtar_ad(ad) or uid)
             out.setdefault(str(o["sube_id"]), []).append({"kod": kod, "ad": ad, "adet": adet, "sebep": v.get("sebep_ad"),
                                                           "aciklama": v.get("aciklama"), "kim": o.get("personel_ad"),
                                                           "saat": tr_saat(o.get("olay_zamani"), g)})

@@ -184,6 +184,12 @@ def tezgahta_sayilir(u: dict) -> bool:
     return (u.get("takip") or "sayim") == "sayim" and bool(u.get("panel_sayim"))
 
 
+def gununde_tuketilir(u: dict) -> bool:
+    """PUBLIC — TEK pasta kuralı (sahip P1): katalogda 'gününde tüketilir' işaretli ürün girişte tüketilir — açılmaz, sevk edilmez,
+    sayılmaz. Dalga 4 (F#8): Bar ayrıca ADDAN tahmin ediyordu (ikinci kural) — kaldırıldı."""
+    return (u or {}).get("takip") == "gununde"
+
+
 def urun_ad(cur, uid: str) -> Optional[str]:
     return (urun_bilgi(cur, [uid]).get(str(uid)) or {}).get("ad")
 

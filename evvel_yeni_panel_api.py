@@ -340,7 +340,7 @@ def panel_durum(sube_id: str):
             # Basamak 5 Ürün Aç: BÜTÜN katalog (aktif kategoriler; ürünlerde aktif bayrağı — "Pasifleri göster")
             "ac_katalog": [{"id": str(k.get("id")), "kategori": k["ad"], "emoji": k.get("emoji"),
                             "urunler": [{**_u(x), "takip": x.get("takip") or "sayim", "aktif": bool(x.get("aktif", True))} for x in k["urunler"]
-                                        if x.get("takip") != "gununde"]}   # pasta (gununde) açılmaz — girişte tüketildi
+                                        if not __import__("evvel_yeni_urun_api").gununde_tuketilir(x)]}   # pasta (gununde) açılmaz — girişte tüketildi
                            for k in kat_hepsi if k.get("aktif", True)],
             "bugun": bugunku, "yoklama": yok,
             # gün çizgisi (eski ana sayfa ①): AÇILIŞ · KAPANIŞ — kim, saat (KONTROL noktası yok: sahip istisnası 10)
@@ -1164,7 +1164,7 @@ def urun_ac(sube_id: str, b: UrunAcBody):
         p = _personel(cur, sube_id, b.personel_id)
         _pin(cur, p, b.pin)
         k = _kalemler(cur, b.kalemler, pasif_olur=True)
-        if any(x["takip"] == "gununde" for x in k):   # sahip P1: pasta depoya girerken tüketildi — açılırsa çift gider
+        if any(__import__("evvel_yeni_urun_api").gununde_tuketilir(x) for x in k):   # sahip P1: pasta depoya girerken tüketildi — açılırsa çift gider
             raise HTTPException(400, "Pasta gibi gününde tüketilen ürün Ürün Aç'ta açılmaz — listeyi yenileyin")
         kok = f"panel:ac:{sube_id}:{b.istek_id}"
         oid = _olay(cur, sube_id=sube_id, tur="urun_ac", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",

@@ -438,7 +438,7 @@ def liste(gorunum: str = "acik", gun_sayisi: int = 30, x_evvel_oturum: Optional[
     for s in hepsi:
         for k in s["kalemler"]:
             b = bil.get(str(k.get("urun_id") or ""), {})
-            k["pasta"] = (b.get("takip") or "") == "gununde"
+            k["pasta"] = __import__("evvel_yeni_urun_api").gununde_tuketilir(b)
             k["oneri_kaynak"] = (f"toptanci:{son_top[k['urun_id']]}" if k.get("urun_id") in son_top else None) if k["pasta"] \
                 else (f"depo:{depo}" if k.get("urun_id") else None)
     sec = [s for s in hepsi if (s["durum"] == "acik") == (gorunum != "gecmis")]
@@ -509,7 +509,7 @@ def yonlendir(sid: str, body: YonBody, x_evvel_oturum: Optional[str] = Header(de
                         raise HTTPException(400, "Depodan yalnız merkez depo gönderir")
                     if ref == s["sube_id"]:
                         raise HTTPException(400, "Şube kendi deposundan kendine sevk edemez")
-                    if (bil.get(k["urun_id"], {}).get("takip") or "") == "gununde":
+                    if __import__("evvel_yeni_urun_api").gununde_tuketilir(bil.get(k["urun_id"], {})):
                         raise HTTPException(400, f"{k['ad']}: pasta depodan gönderilmez — toptancıya yönlendir")
                 elif t == "toptanci":
                     if ref not in top_ok:

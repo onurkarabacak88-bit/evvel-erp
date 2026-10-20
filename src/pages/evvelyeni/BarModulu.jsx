@@ -66,6 +66,7 @@ export default function BarModulu() {
             style={{ font: 'inherit', padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-paper)', color: 'var(--pi-ink)' }} />
         </label>
       </div>
+      {v.uyari && <div style={{ ...kart, padding: '8px 14px', color: R.amber, fontSize: 13, fontWeight: 700 }}>⚠ {v.uyari}</div>}
       <div style={{ fontSize: 12.5, color: R.not }}>{v.not} Kalemler: {v.kalemler.map((k) => k.ad).join(' · ')}.</div>
 
       {v.subeler.map((s) => (s.panel_yok ? (
