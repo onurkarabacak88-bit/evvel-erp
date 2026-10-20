@@ -24,8 +24,8 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_cekirdek import (ayar_oku, saat_oku, ayar_yaz, bekleyen_is_kaydet, bir_kez, is_gunu, merkez_aktor, tablo_var,
-                                 lock_timeout_ayarla)
+from evvel_yeni_cekirdek import (ayar_oku, saat_oku, ayar_yaz, bekleyen_is_kaydet, bir_kez, ddl_kur, is_gunu, merkez_aktor, tablo_var,
+                                 tr_gun)
 
 router = APIRouter(prefix="/api/evvel-yeni/vardiya", tags=["evvel-yeni-vardiya"])
 log = logging.getLogger(__name__)
@@ -86,17 +86,18 @@ def vardiya_hazirla(cur=None) -> None:
         return
     from evvel_yeni_tanim_api import tanim_hazirla
     tanim_hazirla(cur)
-    if not tablo_var(cur, "ey_vardiya_kalip", "ey_vardiya_plan", "ey_vardiya_yayin"):
+    hazirdi = tablo_var(cur, "ey_vardiya_kalip", "ey_vardiya_plan", "ey_vardiya_yayin")
+    if not hazirdi:
         try:
-            with savepoint(cur, "sp_ey_vardiya_hazirla"):
-                onceki = lock_timeout_ayarla(cur, "3s")
-                _ddl(cur)
-                lock_timeout_ayarla(cur, onceki)
+            ddl_kur(cur, "sp_ey_vardiya_ddl", _ddl)   # TEK DDL modeli (çekirdek): savepoint + 3 sn kilit, çağıranın işleminde
         except Exception:  # noqa: BLE001
             log.warning("vardiya tabloları kurulamadı", exc_info=True)
             raise HTTPException(503, "Vardiya hazırlanıyor — birkaç saniye sonra tekrar dene")
-    bir_kez(cur, "vardiya_kalip_kopya", _eski_kalip_kopya, "vardiya kalıp kopyası")
-    _HAZIR = True
+    kopyali = ayar_oku(cur, "vardiya_kalip_kopya") is not None
+    if not kopyali:
+        bir_kez(cur, "vardiya_kalip_kopya", _eski_kalip_kopya, "vardiya kalıp kopyası")
+    # Fable D-V0: bayrak ancak nesneler bu çağrıdan ÖNCE varsa açılır (bu işlem geri alınırsa tablolar da gider — 'relation yok' 500 olmasın)
+    _HAZIR = hazirdi and kopyali
 
 
 # ─────────────────────────── saat yardımcıları ───────────────────────────
@@ -143,11 +144,12 @@ def _yayin_haritasi(cur, bas: date, son: date) -> Dict[tuple, dict]:
 
 
 def _gecerli(r: dict, yayin: Dict[tuple, dict], bugun: date) -> bool:
-    """Satır personel / maaş / yoklama için GEÇERLİ mi: izin her zaman · bugün ve geçmiş her zaman (R4) · ileri gün yalnız
-    şubenin o haftası yayınlandıysa (R2)."""
-    if r["tur"] == "izin" or r["gun"] <= bugun:
+    """Satır personel / maaş / yoklama için GEÇERLİ mi (Y2 + R4, Fable D-V0): izin her zaman · şubenin o haftası yayınlandıysa ·
+    yayınlanmadıysa yalnız GÜNÜ GELMİŞKEN YAZILAN satır (geçmiş/bugün için yazılan — 'sonradan' / bugünkü düzeltme). Önceden
+    yazılıp YAYINLANMADAN unutulan taslak, gün geçince kendiliğinden geçerli olmaz (personel görmediği planla ölçülmesin)."""
+    if r["tur"] == "izin" or (r["sube_id"], _pazartesi(r["gun"])) in yayin:
         return True
-    return (r["sube_id"], _pazartesi(r["gun"])) in yayin
+    return tr_gun(r["zaman"]) >= r["gun"]
 
 
 def _satirlar(cur, bas: date, son: date, sube_id: Optional[str] = None, personel_id: Optional[str] = None) -> List[dict]:
@@ -287,7 +289,7 @@ def _yaz(cur, *, pid: str, gun: date, tur: str, kim: str, sube_id: Optional[str]
         if sessiz:
             return None
         raise
-    if kaynak in ("elle", "kopya") and gun < is_gunu():
+    if tur == "calisma" and kaynak in ("elle", "kopya") and gun < is_gunu():
         kaynak = "sonradan"   # Y5: geçmiş güne yazılan damgalı (maaşta uyarı, geç ölçülmez)
     vid = "vp-" + uuid.uuid4().hex[:12]
     cur.execute("""INSERT INTO ey_vardiya_plan (id, personel_id, gun, tur, sube_id, bas, bit, gece, kalip_id, kaynak, onceki_id, degistiren)
@@ -321,21 +323,32 @@ def hafta(pazartesi: Optional[str] = None):
         kaliplar = [dict(r) for r in cur.fetchall() or []]
         rows = _satirlar(cur, pzt - timedelta(days=6), paz)   # 7 gün kuralı için önceki 6 gün de
         yayin = _yayin_haritasi(cur, pzt, pzt)
-        kisiler = [p for p in tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "gorev", "giris", "cikis", "calisma_turu", "aktif"))
-                   if (p.get("aktif") or (p.get("cikis") and p["cikis"] >= pzt)) and not (p.get("giris") and p["giris"] > paz)]
         hafta_rows = [r for r in rows if r["gun"] >= pzt]
+        planli = {r["personel_id"] for r in hafta_rows}
+        # Fable D-V0: o hafta satırı olan pasif kişi de listede (yoksa rozet '—', kaldırılamaz)
+        kisiler = [p for p in tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "gorev", "giris", "cikis", "calisma_turu", "aktif"))
+                   if p["id"] in planli or ((p.get("aktif") or (p.get("cikis") and p["cikis"] >= pzt)) and not (p.get("giris") and p["giris"] > paz))]
+        _kalip_esle(rows, kaliplar)
         uyarilar = _uyarilar(cur, pzt, sb, kaliplar, rows, kisiler, bugun)
+        # Fable D-V0: yayından sonra KALDIRILAN satır da değişikliktir (yoksa sayaç 0, personel eksik vardiyayı bilmez).
+        # Saat değişikliğinde iptal edilen eski satır sayılmaz (yeni satırı zaten sayılıyor).
+        cur.execute("""SELECT p.sube_id, COUNT(*) AS n FROM ey_vardiya_plan p
+                         JOIN ey_vardiya_yayin y ON y.sube_id = p.sube_id AND y.pazartesi = %s
+                        WHERE p.iptal AND p.gun BETWEEN %s AND %s AND p.iptal_zaman > y.zaman
+                          AND NOT EXISTS (SELECT 1 FROM ey_vardiya_plan x WHERE x.onceki_id = p.id)
+                        GROUP BY p.sube_id""", (pzt, pzt, paz))
+        kaldirilan = {dict(r)["sube_id"]: int(dict(r)["n"]) for r in cur.fetchall() or []}
         return {
             "pazartesi": pzt.isoformat(), "bugun": bugun.isoformat(), "gunler": [(pzt + timedelta(days=i)).isoformat() for i in range(7)],
             "subeler": [{"id": s["id"], "ad": s["ad"],
                          "yayin": ({"kim": yayin[(s["id"], pzt)]["yayinlayan"], "zaman": str(yayin[(s["id"], pzt)]["zaman"])[:16]}
                                    if (s["id"], pzt) in yayin else None),
                          "degisen": sum(1 for r in hafta_rows if r.get("sube_id") == s["id"] and (s["id"], pzt) in yayin
-                                        and r["zaman"] > yayin[(s["id"], pzt)]["zaman"]),
+                                        and r["zaman"] > yayin[(s["id"], pzt)]["zaman"]) + kaldirilan.get(s["id"], 0),
                          "satir": sum(1 for r in hafta_rows if r.get("sube_id") == s["id"])} for s in sb],
             "kaliplar": [{"id": k["id"], "sube_id": k["sube_id"], "ad": k["ad"], "bas": _hm(k["bas"]), "bit": _hm(k["bit"]),
                           "kisi": k["kisi"], "gunler": list(k["gunler"] or []), "sira": k["sira"]} for k in kaliplar],
-            "plan": [_disa(r) for r in hafta_rows],
+            "plan": [{**_disa(r), "kalip_es": r.get("kalip_es")} for r in hafta_rows],
             "personel": [{"id": p["id"], "ad": p["ad"], "sube_id": p.get("sube_id"), "calisma_turu": p.get("calisma_turu") or "tam",
                           "mudur": mudur_mu(p.get("gorev")), "aktif": bool(p.get("aktif")),
                           "cikis": p["cikis"].isoformat() if p.get("cikis") else None} for p in kisiler],
@@ -349,6 +362,20 @@ def _kalip_var(cur, sid: str) -> bool:
     return bool(cur.fetchone())
 
 
+def _kalip_esle(rows: list, kaliplar: list) -> None:
+    """Satırın EKRANDAKİ kalıbı (kalip_es): kendi kalıbı o şubede aktifse o; değilse aynı şube + aynı saatli aktif kalıp (Fable D-V0:
+    'Diğer saatler'den ya da eski Serbest slottan gelen 09:00–18:30 satırı Sabah'ı doldurmuyor, sahte 'eksik' uyarısı üretiyordu)."""
+    aktif = {k["id"]: k for k in kaliplar}
+    for r in rows:
+        k = aktif.get(r.get("kalip_id"))
+        if r["tur"] != "calisma":
+            r["kalip_es"] = None
+        elif k and k["sube_id"] == r["sube_id"]:
+            r["kalip_es"] = k["id"]
+        else:
+            r["kalip_es"] = next((x["id"] for x in kaliplar if x["sube_id"] == r["sube_id"] and x["bas"] == r["bas"] and x["bit"] == r["bit"]), None)
+
+
 def _uyarilar(cur, pzt: date, sb: list, kaliplar: list, rows: list, kisiler: list, bugun: date) -> List[dict]:
     """Modülün Uyarılar listesi (personele gitmez, Bekleyen işler'e düşmez — K4): kalıp eksik · 7 gün üst üste (Y11) ·
     sonradan yazılan · yayınlanmamış hafta."""
@@ -359,14 +386,16 @@ def _uyarilar(cur, pzt: date, sb: list, kaliplar: list, rows: list, kisiler: lis
     for k in kaliplar:
         if k["sube_id"] not in sad:
             continue
+        eksik = []
         for i in range(7):
             g = pzt + timedelta(days=i)
             if g < bugun or (g.isoweekday() not in (k["gunler"] or [])):
                 continue
-            n = sum(1 for r in hafta_rows if r["gun"] == g and r["kalip_id"] == k["id"])
-            if n < k["kisi"]:
-                out.append({"tur": "kalip_eksik", "gun": g.isoformat(), "sube_id": k["sube_id"],
-                            "metin": f"{sad[k['sube_id']]} · {g.strftime('%d.%m')} {k['ad']} {n}/{k['kisi']} kişi"})
+            if sum(1 for r in hafta_rows if r["gun"] == g and r.get("kalip_es") == k["id"]) < k["kisi"]:
+                eksik.append(g.strftime("%d.%m"))
+        if eksik:   # kalıp başına TEK satır (ızgaradaki sarı hücre gün gün gösteriyor) — liste sahte alarmla dolmasın
+            out.append({"tur": "kalip_eksik", "sube_id": k["sube_id"],
+                        "metin": f"{sad[k['sube_id']]} · {k['ad']} ({k['kisi']} kişi) — {len(eksik)} gün eksik: {', '.join(eksik)}"})
     gunler: Dict[str, set] = {}
     for r in rows:
         if r["tur"] == "calisma":
@@ -567,8 +596,10 @@ def eski_kopya(b: EskiBody, x_evvel_oturum: Optional[str] = Header(default=None)
                            ON CONFLICT (sube_id, pazartesi) DO NOTHING""", (s, pzt, f"{kim} (eski plan)"))
         if not eski:
             raise HTTPException(409, "Eski ekranda bu hafta için plan yok")
+        if not n:
+            return {"ok": True, "mesaj": f"Yeni satır yok — {atla} satırın hepsi zaten var / çakışıyor / kişi Evvel Yeni'de yok"}
         return {"ok": True, "mesaj": f"Eski plandan {n} satır alındı" + (f", {atla} atlandı (zaten var / çakışıyor / kişi yok)" if atla else "")
-                + " — hafta yayında sayıldı"}
+                + f" — {len(subeler_)} şubenin haftası yayında sayıldı"}
 
 
 # ── Kalıplar ──
@@ -677,6 +708,9 @@ def _bekleyen(cur, baglam: dict) -> list:
     cur.execute("SELECT DISTINCT sube_id FROM ey_vardiya_kalip WHERE aktif")
     kalipli = {dict(r)["sube_id"] for r in cur.fetchall() or []}
     yayin = _yayin_haritasi(cur, haftalar[0], haftalar[-1])
+    cur.execute("""SELECT DISTINCT sube_id, gun FROM ey_vardiya_plan
+                    WHERE NOT iptal AND tur='calisma' AND gun BETWEEN %s AND %s""", (haftalar[0], haftalar[-1] + timedelta(days=6)))
+    taslak = {(dict(r)["sube_id"], _pazartesi(dict(r)["gun"])) for r in cur.fetchall() or []}
     out = []
     for s in subeler(cur):
         if s["id"] not in kalipli:
@@ -685,8 +719,9 @@ def _bekleyen(cur, baglam: dict) -> list:
             if h < ILK_HAFTA or (s["id"], h) in yayin:
                 continue
             out.append({"tur": "vardiya_plan_yok", "genel": True, "grup": "personel", "id": f"vardiya:{s['id']}:{h.isoformat()}",
-                        "tarih": h.isoformat(), "etiket": "🗓 Vardiya planı yayınlanmadı", "ad": s["ad"],
-                        "alt": f"{h.strftime('%d.%m')}–{(h + timedelta(days=6)).strftime('%d.%m')} haftası — planla ve yayınla",
+                        "tarih": bugun.isoformat(), "etiket": "🗓 Vardiya planı yayınlanmadı", "ad": s["ad"],
+                        "alt": f"{h.strftime('%d.%m')}–{(h + timedelta(days=6)).strftime('%d.%m')} haftası — "
+                               + ("taslak hazır, yayınla" if (s["id"], h) in taslak else "planla ve yayınla"),
                         "sayfa": "vardiya_plani", "dugme": "Vardiya planı"})
     return out
 

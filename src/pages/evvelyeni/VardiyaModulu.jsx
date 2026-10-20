@@ -7,7 +7,7 @@
 // Ekran kendi hesabını kurmaz: saat, uyarı, yayın durumu sunucudan gelir.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { GUN_KISA, gunKaydir, tarihNokta } from '../../utils/trTarih';
+import { gunKaydir, gunKisa, tarihNokta } from '../../utils/trTarih';
 import { ALAN, Cip, Dugme, kart, num, PI_CSS, R } from './KasaModulu';
 import { Pencere } from './AyTakvim';
 
@@ -15,7 +15,7 @@ export const VARDIYA_SAYFALAR = [{ id: 'vardiya_plani', ad: 'Vardiya planı', al
 const alan = { ...ALAN, padding: '6px 9px', borderRadius: 9, fontSize: 13.5 };   // temel stil KasaModulu ALAN (T4-15)
 const kisa = (s) => String(s || '').replace(/:00$/, '');                           // "09:00" → "09", "18:30" kalır
 const saatYazi = (p) => `${kisa(p.bas)}–${kisa(p.bit)}`;
-const gunBaslik = (g) => `${GUN_KISA[new Date(`${g}T12:00:00`).getDay()]} ${tarihNokta(g).slice(0, 5)}`;
+const gunBaslik = (g) => `${gunKisa(g)} ${tarihNokta(g).slice(0, 5)}`;   // gün adı TEK kaynak trTarih
 const hucre = { borderTop: `1px solid ${R.cizgi}`, borderLeft: `1px solid ${R.cizgi}`, padding: 5, verticalAlign: 'top', minWidth: 96 };
 
 function Rozet({ p, ad, onClick, sube }) {
@@ -95,7 +95,7 @@ export default function VardiyaModulu({ onToast }) {
         const kaliplar = v.kaliplar.filter((k) => k.sube_id === s.id);
         const plan = v.plan.filter((p) => p.sube_id === s.id && p.tur === 'calisma');
         const kalipIds = new Set(kaliplar.map((k) => k.id));
-        const diger = plan.filter((p) => !kalipIds.has(p.kalip_id));
+        const diger = plan.filter((p) => !kalipIds.has(p.kalip_es));   // kalip_es: sunucu aynı saatli satırı kalıba eşler
         return (
           <div key={s.id} style={{ ...kart, padding: '10px 14px', display: 'grid', gap: 8 }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -116,7 +116,7 @@ export default function VardiyaModulu({ onToast }) {
                       <td style={{ ...hucre, borderLeft: 'none' }}><b>{k.ad}</b><div style={{ fontSize: 11.5, color: R.not, ...num }}>{saatYazi(k)} · {k.kisi} kişi</div></td>
                       {v.gunler.map((g, i) => {
                         const aktifGun = k.gunler.includes(i + 1);
-                        const bu = plan.filter((p) => p.gun === g && p.kalip_id === k.id);
+                        const bu = plan.filter((p) => p.gun === g && p.kalip_es === k.id);
                         const eksik = aktifGun && !gecmis(g) && bu.length < k.kisi;
                         return (
                           <td key={g} style={{ ...hucre, background: !aktifGun ? 'var(--pi-bg)' : eksik ? 'var(--pi-warn-soft)' : undefined }}>
