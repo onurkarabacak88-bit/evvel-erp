@@ -42,3 +42,10 @@ Kural: her dalga = kod → Fable + Codex → deneme → yayın. Bulgu numaralar�
 ## DALGA 5 — ÖN YÜZ ORTAK PARÇALAR ⚪
 30. Panel: Kişi+PIN (F#48), kategori kartları + ürün satırı + koli yardımcısı (F#49–52), taslak (F#53), QR onay akışı (F#55), diğerleri (F#56–66, K11–12)
 31. Merkez: tutar ayrıştırıcı (C-T4-01 — Kredi/Mülk'te "1.250,50" → 0 sessiz! → Dalga 1'e alınabilir), UTC tarih (C-T4-02 Mülk/Kredi), modal/alan/takvim/tema kopyaları (C-T4-03…16, F#67–69)
+
+## DALGA 2 — üç kesim engeli (yeni altyapı) · Fable mekanizması + sahip kararları (20 Eki)
+Ortak: yeni tablo mimarisi yok — var olan kapılara (panel _calistir/_olay, Kasa kasa_yaz, Depo, yoklama _telefon) birer tür eklenir.
+- **Satış fire + devir defteri:** yalnız okuyucu değişir (yeni panel olayları: fire, acilis, kapanis, vardiya, teslim). Sahip: fire maliyeti GİDER'e ayrı satır (fire / ikram / personel; sayım hatası hariç) · Ekim (eski) devir defteri 1 Kasım'da KALKAR (eski dal silinir) · yarım kalan devir gri "yarım" (öneri, görüntü).
+- **Anlık gider:** panel /gider → olay 'gider' + Kasa 'odeme' (kaynak dukkan_gideri, giren_id) — tablo yok. Sahip: merkez ONAYI YOK (kayıt kesin, fiş kontrol merkezde) · panelde YALNIZ NAKİT · çekmece eksiye düşse de yazılır + merkeze uyarı. Fiş kontrol eski köprüleri + Kasa _dukkan_giderleri_aktar 1 Kasım'da kalkar; Satış mutabakatı gideri okur (gider_kaynak_yok kalkar).
+- **Avans:** tek tablo ey_avans_talep + telefon talebi + merkez onay (havale → Ödeme formunun yolu; elden → şube paneli ad+PIN "teslim ettim" → Kasa odeme kaynak sube_avansi) . Sahip: tavan = ESKİ ORAN (hak edişin %'si) · elden teslimi şube paneli kaydeder · personelin "aldım" onayı KALKAR.
+Sıra: Satış → Anlık gider → Avans.
