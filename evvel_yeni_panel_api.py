@@ -1358,8 +1358,10 @@ def taslak_sil(sube_id: str, tur: str, gun: str):
 
 
 def _tl_yaz(x) -> str:
+    """₺ sayı → '1.234,50 ₺' — çekirdek tl (kuruştan) TEK biçim (Dalga 4, F#5)."""
+    from evvel_yeni_cekirdek import kurus_yuvarla, tl
     try:
-        return f"{Decimal(str(x)):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".") + " ₺"
+        return tl(kurus_yuvarla(x))
     except Exception:  # noqa: BLE001
         return str(x)
 

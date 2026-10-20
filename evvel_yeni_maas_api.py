@@ -25,6 +25,7 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
+from evvel_yeni_cekirdek import kurus_yuvarla as _kurus_yuvarla, tl_sayi as _tl_sayi
 from database import db, savepoint
 
 log = logging.getLogger(__name__)
@@ -45,11 +46,11 @@ _HAZIR = False
 
 
 def _kurus(x) -> int:
-    return int((Decimal(str(x or 0)) * 100).quantize(Decimal("1")))
+    """Hesaplanan / eski tablodan gelen tutar → kuruş (yuvarlayarak) — çekirdeğin TEK kuralı (Dalga 4, F#5)."""
+    return _kurus_yuvarla(x or 0)
 
 
-def _tl(k) -> float:
-    return round(int(k or 0) / 100, 2)
+_tl = _tl_sayi   # kuruş → ₺ (çekirdek)
 
 
 def _ay_sinir(ay: str):

@@ -833,16 +833,13 @@ async def avans_durum_tel(request: Request):
 async def avans_talep_tel(request: Request):
     """🤝 Telefon: avans talebi (imzalı cihaz = kişi). Merkez onaylar (havale / elden)."""
     def fn(cur, c, p, v):
-        from decimal import Decimal, InvalidOperation
         from evvel_yeni_cekirdek import yeni_donem
         A = _avans()
         if A is None or not yeni_donem(cur):
             raise HTTPException(409, "Avans talebi şu an buradan alınmıyor")
         ist = _istek(v)
-        try:
-            t = int((Decimal(str(v.get("tutar") or "0").replace(",", ".")) * 100).to_integral_value())
-        except InvalidOperation:
-            raise HTTPException(400, "Tutarı sayı olarak yaz")
+        from evvel_yeni_cekirdek import kurus, tutar_oku
+        t = kurus(tutar_oku(v.get("tutar"), "Avans tutarı"))   # Türkçe yazı tek ayrıştırıcıdan (Dalga 4)
         r = A.talep_yaz(cur, personel_id=p["id"], tutar=t, not_=v.get("not"), istek_id=ist)
         return {"ok": True, "tekrar": r["tekrar"], "mesaj": "Talebin merkeze iletildi ✓" if not r["tekrar"] else "Talebin zaten iletilmişti ✓"}
     return await _telefon(request, fn)
@@ -1395,11 +1392,9 @@ def _devir_sayilar(cur, v: dict) -> tuple:
     from decimal import Decimal, InvalidOperation
     if v.get("dogruladim") is not True:
         raise HTTPException(400, "Kasadaki nakit sayımını doğruladığını işaretle")
-    try:
-        kasa = Decimal(str(v.get("kasa")).replace(",", "."))
-    except (InvalidOperation, ValueError):
-        raise HTTPException(400, "Kasadaki nakdi yaz")
-    if v.get("kasa") in (None, "") or kasa < 0 or kasa > 1000000 or kasa != kasa.quantize(Decimal("0.01")):
+    from evvel_yeni_cekirdek import tutar_oku
+    kasa = tutar_oku(v.get("kasa"), "Kasadaki nakit")   # Türkçe yazı tek ayrıştırıcıdan (Dalga 4)
+    if kasa < 0 or kasa > 1000000 or kasa != kasa.quantize(Decimal("0.01")):
         raise HTTPException(400, "Kasadaki nakit için geçerli değer gir")
     liste = devir_listesi(cur)
 
@@ -1493,7 +1488,6 @@ async def devir_kabul(did: str, request: Request):
     """Devralan = devredenden farklı, QR'ı okutup İLK kabul eden kişi. 'Kabul ediyorum' ya da 'Tutmuyor' + KENDİ saydığı kasa tutarı
     (sahip). TEK işlemde: devir tamam + vardiya olayı + devredenin çıkışı ('devir') + devralanın girişi (yoksa)."""
     def fn(cur, c, p, v):
-        from decimal import Decimal, InvalidOperation
         ist = _istek(v)
         cur.execute("SELECT id, devralan_id, durum FROM ey_devir WHERE kabul_istek_id=%s", (ist,))
         r = cur.fetchone()
@@ -1519,13 +1513,11 @@ async def devir_kabul(did: str, request: Request):
         not_ = str(v.get("not") or "").strip()[:200]
         ds = None
         if not tutuyor:   # sahip: tutmuyorsa devralanın KENDİ saydığı tutar zorunlu → fark merkeze
-            try:
-                dsd = Decimal(str(v.get("sayilan")).replace(",", "."))
-            except (InvalidOperation, ValueError):
+            from evvel_yeni_cekirdek import kurus, tutar_oku
+            dsd = tutar_oku(v.get("sayilan"), "Kendi saydığın kasa tutarı")   # Türkçe yazı tek ayrıştırıcıdan (Dalga 4)
+            if dsd < 0 or dsd > 1000000:
                 raise HTTPException(400, "Kendi saydığın kasa tutarını yaz")
-            if v.get("sayilan") in (None, "") or dsd < 0 or dsd > 1000000:
-                raise HTTPException(400, "Kendi saydığın kasa tutarını yaz")
-            ds = int(dsd * 100)
+            ds = kurus(dsd)
         _canli_konum_sart(cur, d["sube_id"])
         sube, k = _qr_islem(cur, c, p, v, "kabul")
         if sube != d["sube_id"]:

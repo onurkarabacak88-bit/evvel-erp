@@ -38,8 +38,9 @@ BILINMEYEN_UYARI_GUN = 7
 
 
 def _kr(x) -> int:
-    """Kuruşa YUVARLAYARAK çevir (KDV çarpımı / oran çarpımı çok ondalık üretir; _kurus 2 ondalıktan fazlasını reddeder)."""
-    return _kurus(Decimal(str(x)).quantize(Decimal("0.01")))
+    """Kuruşa YUVARLAYARAK çevir (KDV / oran çarpımı) — çekirdek kurus_yuvarla (Dalga 4, F#5: aynısının kopyasıydı)."""
+    from evvel_yeni_cekirdek import kurus_yuvarla
+    return kurus_yuvarla(x)
 
 
 def _kdv_kesir(oran) -> Decimal:

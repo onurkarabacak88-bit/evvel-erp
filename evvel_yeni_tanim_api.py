@@ -412,14 +412,15 @@ TURLER = {
 
 
 def _tl(k) -> float:
-    return round(int(k or 0) / 100, 2)
+    from evvel_yeni_cekirdek import tl_sayi
+    return tl_sayi(k)
 
 
 def _kurus(x) -> int:
-    try:
-        return int((Decimal(str(x or 0)) * 100).quantize(Decimal("1")))
-    except Exception:  # noqa: BLE001
-        raise HTTPException(400, "Tutar sayı olmalı")
+    """ELLE GİRİLEN tutar → kuruş: çekirdeğin TEK kuralı — 2 ondalıktan fazlası SESSİZCE yuvarlanmaz, sorulur (Dalga 4, F#5:
+    Tanımlar yuvarlıyor, Ödeme reddediyordu)."""
+    from evvel_yeni_cekirdek import kurus
+    return kurus(x or 0)
 
 
 def _slug(ad: str) -> str:

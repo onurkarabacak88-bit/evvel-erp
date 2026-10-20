@@ -105,8 +105,32 @@ def kurus_yuvarla(x) -> int:
     return kurus(Decimal(str(x)).quantize(Decimal("0.01")))
 
 
-def tl_sayi(k: int) -> float:
-    return round(k / 100.0, 2)
+def tl_sayi(k) -> float:
+    """Kuruş → ₺ sayı (ekrana / JSON). None → 0."""
+    return round(int(k or 0) / 100.0, 2)
+
+
+def tutar_oku(x, ad: str = "Tutar") -> Decimal:
+    """Telefondan / formdan gelen TÜRKÇE tutar yazısı → Decimal (₺). "1.250,50" · "1250,50" · "1250.50" · 1250.5 hepsi aynı.
+    Tek nokta ve 3 hane ("1.250") BİN ayıracıdır (Türkçe) — önce '.replace(",", ".")' bunu 1,25 ₺ okuyordu (Dalga 4, F#5).
+    Ön yüzdeki karşılığı src/utils/trSayi.js sayiTR."""
+    if x is None or isinstance(x, bool) or (isinstance(x, str) and not x.strip()):
+        raise HTTPException(400, f"{ad}: tutarı yaz")
+    if isinstance(x, (int, float, Decimal)):
+        s = str(x)
+    else:
+        s = str(x).strip().replace(" ", "").replace("₺", "")
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        elif s.count(".") > 1 or (s.count(".") == 1 and len(s.split(".")[1]) == 3):
+            s = s.replace(".", "")
+    try:
+        d = Decimal(s)
+    except (InvalidOperation, ValueError):
+        raise HTTPException(400, f"{ad}: sayı olarak yaz")
+    if not d.is_finite():
+        raise HTTPException(400, f"{ad}: geçersiz")
+    return d
 
 
 def tl(k: int) -> str:
@@ -232,7 +256,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "tr_saat", "tr_gun", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tl", "kilit", "aktor",
+__all__ = ["bugun", "tr_saat", "tr_gun", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "tl", "kilit", "aktor",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

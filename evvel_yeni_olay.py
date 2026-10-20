@@ -79,9 +79,9 @@ def olay_tablosu_kur() -> bool:
 
 
 def _kurus(x) -> Optional[int]:
-    if x is None:
-        return None
-    return int((Decimal(str(x)) * 100).quantize(Decimal("1")))
+    """Olay tutarı → kuruş (yuvarlayarak; None kalır) — çekirdeğin TEK kuralı (Dalga 4, F#5)."""
+    from evvel_yeni_cekirdek import kurus_yuvarla
+    return None if x is None else kurus_yuvarla(x)
 
 
 def olay_yaz(cur, *, sube_id: Any, tur: str, is_gunu: Any, kok: str, veri: dict, kaynak_tablo: Optional[str] = None,
