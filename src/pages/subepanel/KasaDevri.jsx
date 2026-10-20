@@ -5,10 +5,10 @@
 import React, { useState } from 'react';
 import { imzaliJson } from '../../utils/cihazImza';
 import { C, Modal, qrBoyut, TabletQR, tl, yeniIstek } from './ortak';
+import { kalemYazi } from '../../utils/devirOzet';
 
 export const DEVIR_ACIK = ['baslatildi', 'dolduruluyor', 'hazir', 'devreden_onayladi'];
 
-const kalemYazi = (l) => (l || []).map((u) => `${u.ad} ${u.sayilan}`).join(' · ') || '—';
 
 export function DevirOzet({ devir }) {
   return (

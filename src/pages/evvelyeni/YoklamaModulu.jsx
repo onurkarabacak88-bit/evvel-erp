@@ -9,6 +9,7 @@ import { api } from '../../utils/api';
 import { ayTR, bugunTR } from '../../utils/trTarih';
 import { ALAN, AySecici, Cip, Dugme, kart, num, PI_CSS, R } from './KasaModulu';
 import { tlYaz } from '../../utils/trSayi';
+import { bardakOzet } from '../../utils/devirOzet';
 
 export const YOKLAMA_SAYFALAR = [
   { id: 'personel_telefon', ad: 'Telefonlar', alt: 'Telefon bağla · tablet onayı · çıkış düzelt' },
@@ -308,7 +309,6 @@ export function YemekMolalari({ onToast }) {
 // "Bekleyenler" /devirler?acik=1: tamamlanmamış (hazir / devreden_onayladi, gün geçti ya da 2 saat) → "İptal" / "Devir sayıldı" (açıklama zorunlu,
 // merkez-kapat); görülmemiş "tutmuyor" → "Gördüm". "Merkez kapattı" satırı AYRI çip — asla kişi onayı gibi görünmez (D5).
 const tlYazi = (x) => tlYaz(x);   // ₺ biçimi TEK kaynak (F#58)
-const bardakOzet = (b) => (b || []).map((x) => `${String(x.ad || '').replace(/^bardak\s*/i, '') || 'bardak'} ${x.sayilan}`).join(' / ');
 
 function devirCip(s) {
   if (s.durum === 'hazir') return <Cip tur="sari">⏳ devreden bekleniyor</Cip>;

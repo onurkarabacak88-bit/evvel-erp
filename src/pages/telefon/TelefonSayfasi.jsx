@@ -6,6 +6,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import tulipiLogo from '../../assets/tulipi-logo.jpg';
 import { cihazBagla, cihazId, imzaliJson, yeniIstekId } from '../../utils/cihazImza';
 import { paraGecerli, sayiTR, tlYaz } from '../../utils/trSayi';
+import { bardakOzet, kalemYazi } from '../../utils/devirOzet';
 
 const T = { zemin: '#F4EFE9', kart: '#FFFFFF', kenar: '#E6DED4', yuzey: '#F7F2EC', metin: '#2A241E', metin2: '#6B5E50', silik: '#9C8E7E',
   aksan: '#C8956A', yesil: '#25794F', kirmizi: '#C03A2B', golge: '0 8px 30px rgba(120,90,60,.10)' };
@@ -583,8 +584,8 @@ function DevirIslem({ sube, jeton, did }) {
   const ozet = (x) => (
     <div style={{ background: T.yuzey, border: `1px solid ${T.kenar}`, borderRadius: 12, padding: '12px 14px', display: 'grid', gap: 4 }}>
       <div style={{ fontSize: 18, fontWeight: 800 }}>💰 Kasa: {tl(x.kasa)}</div>
-      <div>🥤 {(x.bardak || []).map((u) => `${u.ad} ${u.sayilan}`).join(' · ') || '—'}</div>
-      <div>📦 {(x.urunler || []).map((u) => `${u.ad} ${u.sayilan}`).join(' · ') || '—'}</div>
+      <div>🥤 {kalemYazi(x.bardak)}</div>
+      <div>📦 {kalemYazi(x.urunler)}</div>
       <div>🍰 Pasta: {x.pasta ?? '—'}</div>
     </div>
   );
@@ -710,7 +711,6 @@ function DevirIslem({ sube, jeton, did }) {
 
 // ── Kasa devri kartı (§A2): "Kasa: 1.250 ₺ · bardak küçük 40 / büyük 30 / plastik 20 → Mehmet"; devralanda "girişin bununla açılır" ──
 const tlYazi = (x) => tlYaz(x);
-const bardakOzet = (b) => (b || []).map((x) => `${String(x.ad || '').replace(/^bardak\s*/i, '') || 'bardak'} ${x.sayilan}`).join(' / ');
 function DevirKarti({ devir }) {
   const devralan = devir.rol === 'devralan';
   return (
