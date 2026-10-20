@@ -11,6 +11,7 @@ import KapanisSihirbazi from './KapanisSihirbazi';
 import KasaDevri, { DEVIR_ACIK, devirEtiket } from './KasaDevri';
 import TedarikciTeslim from './TedarikciTeslim';
 import DepodanGelen from './DepodanGelen';
+import AnlikGider from './AnlikGider';
 import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
 import { AdetListesi, C, CSS, kalemGovde, Modal, SayiTusTakimi, TabletQR, tutar, tutarNum, yeniIstek } from './ortak';
@@ -30,6 +31,7 @@ export default function SubePaneli({ subeId }) {
   };
   const [modal, setModal] = useState(null);
   const [mesaj, setMesaj] = useState(null);
+  const [giderAcik, setGiderAcik] = useState(false);   // 💸 anlık gider penceresi
   const [mesgul, setMesgul] = useState(false);
   const [istek, setIstek] = useState(yeniIstek);
   // form durumları
@@ -333,10 +335,15 @@ export default function SubePaneli({ subeId }) {
       {/* ALT BAR (eski 58px): Ana · Gider · Not · Mesaj */}
       <div className="sp-alt">
         <button onClick={() => sekmeyeGec('ana')} style={sekme === 'ana' ? { color: C.mavi } : undefined}><span style={{ fontSize: 20, display: 'block' }}>🏠</span><span style={{ fontSize: 11 }}>Ana</span></button>
-        <button onClick={() => yakinda('Anlık gider ekranı kendi basamağında açılacak')}><span style={{ fontSize: 20, display: 'block' }}>💸</span><span style={{ fontSize: 11 }}>Gider</span></button>
+        <button onClick={() => setGiderAcik(true)}><span style={{ fontSize: 20, display: 'block' }}>💸</span><span style={{ fontSize: 11 }}>Gider</span></button>
         <button onClick={() => yakinda('Merkez notu ekranı kendi basamağında açılacak')}><span style={{ fontSize: 20, display: 'block' }}>📝</span><span style={{ fontSize: 11 }}>Not</span></button>
         <button onClick={() => yakinda('Mesajlar kendi basamağında açılacak')}><span style={{ fontSize: 20, display: 'block' }}>📩</span><span style={{ fontSize: 11 }}>Mesaj</span></button>
       </div>
+
+      {giderAcik && (
+        <AnlikGider d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} kapat={() => setGiderAcik(false)}
+          bitti={(metin, kuru) => { setGiderAcik(false); setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+      )}
 
       {/* 🔑 AÇILIŞ ÖNCESİ KAPI (eski §1a "Personel Girişi Gerekli" — eski QR + kasa kilidi PIN'i KALKTI, yerine yeni dönen QR) */}
       {kapiAcik && (

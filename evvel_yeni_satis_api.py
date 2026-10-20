@@ -199,18 +199,17 @@ def kasa_mutabakat(cur, gun: str, evren: Optional[str] = None) -> dict:
 def _mut_veri_yeni(cur, gun: str) -> dict:
     """YENİ DÖNEM toplayıcısı — yeni şube panelinin olay defteri (ey_sube_olay, kaynak 'panel'; kuruş → ₺):
     açılış kasa_sayim · kapanış nakit / kor_sayim / teslimler / birakilan · gün içi 'teslim' (ara teslim) · dünün kapanış bırakılanı.
-    Nakit gider: yeni panelde anlık gider defteri HENÜZ YOK (1 Kasım listesi madde 7) → boş + 'gider_kaynak_yok'."""
+    Nakit gider: yeni panelin 'gider' olayı (anlık gider — madde 7, 20 Eki) → giderler; gider_kaynak_yok KALKTI."""
     from datetime import date as _date
     from evvel_yeni_olay import olaylar
     g = _date.fromisoformat(gun)
     dun = g - timedelta(days=1)
     out = {}
-    for o in olaylar(cur, bas=dun, son=g, turler={"acilis", "kapanis", "teslim"}):
+    for o in olaylar(cur, bas=dun, son=g, turler={"acilis", "kapanis", "teslim", "gider"}):
         if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel":
             continue
         v = o["veri"] if isinstance(o["veri"], dict) else __import__("json").loads(o["veri"] or "{}")
         x = out.setdefault(str(o["sube_id"]), mut_bos())
-        x["gider_kaynak_yok"] = True
         x["kor_ara_dahil"] = False   # yeni kapanış: kör sayım ara teslim GİTTİKTEN sonra çekmecede kalan → ara düşülmez
         tl = lambda k: None if k is None else int(k) / 100  # noqa: E731
         if o["is_gunu"] == dun:
@@ -226,6 +225,8 @@ def _mut_veri_yeni(cur, gun: str) -> dict:
             x["devir"] = tl(v.get("birakilan"))
         elif o["tur"] == "teslim":
             x["ara_teslimler"].append({"tutar": tl(v.get("tutar")) or 0.0, "alan": v.get("alan"), "eden": o.get("personel_ad")})
+        elif o["tur"] == "gider" and o["is_gunu"] == g:   # anlık gider (çekmeceden nakit)
+            x["giderler"].append({"tutar": tl(v.get("tutar")) or 0.0, "aciklama": v.get("aciklama"), "kim": o.get("personel_ad")})
     return out
 
 

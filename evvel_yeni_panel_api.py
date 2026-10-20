@@ -894,6 +894,46 @@ def depodan_kabul(sube_id: str, b: DepoKabulBody):
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
 
+# ─────────────── ANLIK GİDER (1 Kasım listesi madde 7, sahip kararları 20 Eki) ───────────────
+# Şube çekmecesinden ödenen küçük gider: olay 'gider' + Kasa dukkan_gideri_yaz (tek yazıcı). Onay YOK, yalnız NAKİT, eksiye düşse de
+# yazılır (personele kasa uyarısı GÖSTERİLMEZ — kör sayım; merkez Kasa'da görür). Gün kapalıyken girilmez (kasa sayıldı).
+class GiderBody(BaseModel):
+    istemci_gunu: Optional[str] = None
+    personel_id: str
+    pin: Optional[str] = None
+    tutar: Decimal
+    aciklama: str
+    kategori: Optional[str] = None
+    fis: Optional[bool] = None        # fiş / fatura alındı mı (Fiş kontrol merkezde)
+    istek_id: str
+
+
+@router.post("/{sube_id}/gider")
+def gider_gir(sube_id: str, b: GiderBody):
+    def is_(cur, c):
+        from evvel_yeni_kasa_api import dukkan_gideri_yaz
+        _gun_acik_mi(cur, c, sube_id)
+        p = _personel(cur, sube_id, b.personel_id)
+        _pin(cur, p, b.pin)
+        t = _tl(b.tutar, "Tutar")
+        if t <= 0:
+            raise HTTPException(400, "Tutar sıfırdan büyük olmalı")
+        ac = " ".join((b.aciklama or "").split())
+        if len(ac) < 3:
+            raise HTTPException(400, "Açıklama zorunlu — neye ödendiğini yaz")
+        if b.fis is None:
+            raise HTTPException(400, "Fiş / fatura alındı mı? — EVET ya da HAYIR seç")
+        kok = f"panel:gider:{sube_id}:{b.istek_id}"
+        oid = _olay(cur, sube_id=sube_id, tur="gider", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
+                    personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(t) / 100,
+                    veri={"tutar": t, "aciklama": ac[:120], "kategori": (b.kategori or "").strip()[:40] or None, "fis": bool(b.fis)})
+        if oid is not None:
+            dukkan_gideri_yaz(cur, sube_id=str(sube_id), gun=c["gun"].isoformat(), tutar=t, aciklama=ac, kim=f"{KIM} · {p['ad']}",
+                              kaynak_ref=kok, giren_id=p["id"], giren=p["ad"], kategori=b.kategori, fis=b.fis)
+        return {"olay": oid, "tekrar": oid is None, "mesaj": "Bu gider zaten kaydedilmişti ✓" if oid is None else f"💸 Gider kaydedildi — {t / 100:,.2f} ₺"}
+    return _calistir(sube_id, b.istek_id, is_, tur="gider", govde=b.model_dump(mode="json"))
+
+
 # ─────────────── BASAMAK 5 S5 · SİPARİŞ VER · TAKİP · GÖNDERİLECEK (sahip D1–D4, 2026-10-20) ───────────────
 # Kayıt Sipariş modülünün PUBLIC kapılarından (evvel_yeni_siparis_api); panel yalnız kimlik + iskelet. Modül kapalıysa 503 (yumuşak bağ).
 def _siparis():

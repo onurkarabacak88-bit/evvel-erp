@@ -1724,7 +1724,9 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
                     v2["teslim_eden"] = ad_harita[ref_]
                     cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(v2, ensure_ascii=False), h["id"]))
 
-        rapor["dukkan_gideri"] = _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim)
+        from evvel_yeni_cekirdek import yeni_donem
+        if not yeni_donem(cur):   # 1 Kasım'dan sonra anlık gider yeni panelden (dukkan_gideri_yaz) — eski köprü çalışmaz
+            rapor["dukkan_gideri"] = _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim)
 
         try:
             with savepoint(cur, "sp_pi_dis"):
@@ -1773,8 +1775,42 @@ def dukkan_giderleri(cur, bas_gun: str) -> List[dict]:
             continue
         cep = (v.get("parcalar") or [{}])[0].get("cep")
         out.append({"ref": h.get("kaynak_ref"), "id": h["id"], "tarih": h["is_gunu"], "cep": cep, "sube": C.get(cep, {}).get("kisa"),
-                    "tutar": _tl_sayi(h["tutar"]), "aciklama": v.get("aciklama"), "giren": v.get("giren"), "giren_id": v.get("giren_id")})
+                    "tutar": _tl_sayi(h["tutar"]), "aciklama": v.get("aciklama"), "giren": v.get("giren"), "giren_id": v.get("giren_id"),
+                    "fis_gonderildi": v.get("fis_gonderildi")})
     return out
+
+
+def dukkan_gideri_yaz(cur, *, sube_id: str, gun: str, tutar: int, aciklama: str, kim: str, kaynak_ref: str,
+                      giren_id: Optional[str] = None, giren: Optional[str] = None, kategori: Optional[str] = None,
+                      fis: Optional[bool] = None) -> dict:
+    """PUBLIC — şube çekmecesinden ödenen küçük gider (anlık gider) TEK yazıcısı (yeni panel /gider + geçişte eski köprü).
+    Kasa 'odeme' (kaynak 'dukkan_gideri') — Gider, Fiş kontrol, kör sayım, Satış mutabakatı bunu okur. Sahip (20 Eki): onay YOK
+    (kayıt kesin) · çekmece eksiye düşse de yazılır (merkez Kasa'da görür) · sayılmış güne yazılmaz (sayım bozulmasın).
+    Dönüş {id|None (tekrar), eksi: bool}. Kuruş."""
+    _hazirla()
+    if tutar <= 0:
+        raise HTTPException(400, "Tutar sıfırdan büyük olmalı")
+    ac = " ".join(str(aciklama or "").split())
+    if len(ac) < 3:
+        raise HTTPException(400, "Açıklama zorunlu — neye ödendiğini yaz")
+    cep = "sube:" + str(sube_id)
+    _kilit(cur)   # Kasa'nın tek yazma kilidi (kasa_yaz ile aynı sıra)
+    cep_list, C, kayit, _ = _yukle(cur)
+    if cep not in C:
+        raise HTTPException(400, "Şube kasası bulunamadı")
+    kilit = _sayim_kilidi(_olaylar(kayit))
+    if cep in kilit and gun <= kilit[cep]:
+        raise HTTPException(409, "Bu günün kasası sayıldı — gider girilemez, merkeze haber ver")
+    veri = {"aciklama": ac[:120], "kimin": C[cep]["kisa"], "parcalar": [{"cep": cep, "tutar": int(tutar)}], "kaynak": "dukkan_gideri"}
+    if giren_id:
+        veri.update(giren_id=str(giren_id), giren=giren)
+    if kategori:
+        veri["kategori"] = str(kategori).strip()[:40]
+    if fis is not None:
+        veri["fis_gonderildi"] = bool(fis)
+    hid = _yaz(cur, "odeme", gun, kim, tutar=int(tutar), veri=veri, kaynak_ref=kaynak_ref)
+    D = _bakiye(_olaylar(_yukle(cur)[2]), C)
+    return {"id": hid, "eksi": D["b"].get(cep, 0) < 0}
 
 
 def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) -> dict:
