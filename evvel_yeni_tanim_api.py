@@ -32,12 +32,22 @@ router = APIRouter(prefix="/api/evvel-yeni/tanim", tags=["evvel-yeni-tanim"])
 _HAZIR = False
 
 
-def tanim_hazirla(cur) -> None:
-    """Tabloları kurar + eski sistemden EKSİK olanları kopyalar (var olana dokunmaz). Kasa'nın _hazirla'sı da çağırır."""
-    global _HAZIR
-    if _HAZIR:
-        return
-    cur.execute("SET LOCAL lock_timeout = '3s'")
+_TANIM_NESNE = {"ey_sube": ("depo",), "ey_personel": ("cikis", "calisma_turu", "kisi_id", "erken_acilis", "pin_salt", "pin_hash", "yetki_geri_alma"),
+                "ey_kart": (), "ey_toptanci": (), "ey_personel_ucret": ("saatlik", "yol"), "ey_pin_deneme": ()}
+
+
+def _tanim_tam(cur) -> bool:
+    """Bütün Tanımlar tabloları ve kolonları VAR mı (salt okur, kilit istemez)."""
+    cur.execute("SELECT table_name, column_name FROM information_schema.columns WHERE table_schema='public' AND table_name = ANY(%s)",
+                (list(_TANIM_NESNE),))
+    var = {}
+    for r in cur.fetchall() or []:
+        var.setdefault(dict(r)["table_name"], set()).add(dict(r)["column_name"])
+    return all(t in var and set(k) <= var[t] for t, k in _TANIM_NESNE.items())
+
+
+def _tanim_ddl(cur) -> None:
+    """Tanımlar'ın tabloları / kolonları (IF NOT EXISTS). Yalnız _tanim_tam False iken çağrılır."""
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_sube (
         id TEXT PRIMARY KEY, ad TEXT NOT NULL, pos_oran NUMERIC(6,3) NOT NULL DEFAULT 0, online_oran NUMERIC(6,3) NOT NULL DEFAULT 0,
         aktif BOOLEAN NOT NULL DEFAULT TRUE, kaynak TEXT NOT NULL DEFAULT 'evvel_yeni', degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
@@ -54,12 +64,37 @@ def tanim_hazirla(cur) -> None:
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel_ucret (
         personel_id TEXT NOT NULL, gecerli_ay TEXT NOT NULL, maas BIGINT NOT NULL DEFAULT 0, yemek BIGINT NOT NULL DEFAULT 0,
         degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (personel_id, gecerli_ay))""")
-    # Maaş için personel kartı (2026-10-16, Codex): çıkış, çalışma türü, kişi kimliği; ücrette saatlik + yol
     cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS cikis DATE")
     cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS calisma_turu TEXT NOT NULL DEFAULT 'tam'")
     cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS kisi_id TEXT")
     cur.execute("ALTER TABLE ey_personel_ucret ADD COLUMN IF NOT EXISTS saatlik BIGINT NOT NULL DEFAULT 0")
     cur.execute("ALTER TABLE ey_personel_ucret ADD COLUMN IF NOT EXISTS yol BIGINT NOT NULL DEFAULT 0")
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS erken_acilis BOOLEAN NOT NULL DEFAULT FALSE")
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS pin_salt TEXT")
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS pin_hash TEXT")
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS yetki_geri_alma BOOLEAN NOT NULL DEFAULT FALSE")   # S9
+    cur.execute("""CREATE TABLE IF NOT EXISTS ey_pin_deneme (
+        personel_id TEXT PRIMARY KEY, yanlis INT NOT NULL DEFAULT 0, kilit_bitis TIMESTAMPTZ, son TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+
+
+def tanim_hazirla(cur) -> None:
+    """Tabloları kurar + eski sistemden EKSİK olanları kopyalar (var olana dokunmaz). Kasa'nın _hazirla'sı da çağırır."""
+    global _HAZIR
+    if _HAZIR:
+        return
+    # Dalga 2 (F#13 + 19 Eki dersi): var olan nesneye ALTER/kilit İSTEME — önce bak; eksikse çağıranın işleminde savepoint +
+    # kısa lock_timeout (sonra DEFAULT'a döner: önceden SET LOCAL çağıranın işlemine SIZIYORDU); bayrak ancak nesneler görülünce.
+    tam = _tanim_tam(cur)
+    if not tam:
+        try:
+            with savepoint(cur, "sp_ey_tanim_ddl"):
+                cur.execute("SET LOCAL lock_timeout = '3s'")
+                _tanim_ddl(cur)
+                cur.execute("SET LOCAL lock_timeout = DEFAULT")
+        except Exception:  # noqa: BLE001
+            log.warning("tanım tabloları hazırlanamadı", exc_info=True)
+            raise HTTPException(503, "Tanımlar hazırlanıyor — birkaç saniye sonra tekrar dene")
+    # Maaş için personel kartı (2026-10-16, Codex): çıkış, çalışma türü, kişi kimliği; ücrette saatlik + yol
     # ── Eski sistemden kopya (yalnız EKSİK kimlikler) ──
     kopyalar = [
         ("sp_ey_k_sube", """INSERT INTO ey_sube (id, ad, pos_oran, online_oran, aktif, kaynak, degistiren)
@@ -94,6 +129,9 @@ def tanim_hazirla(cur) -> None:
                                 FROM personel p WHERE p.id::text = u.personel_id AND u.degistiren = 'eski sistem kopyası'
                                  AND u.saatlik = 0 AND u.yol = 0"""),
     ]
+    from evvel_yeni_cekirdek import yeni_donem
+    if yeni_donem(cur):   # F#45: 1 Kasım'dan sonra eski tablolardan kopya yok (eski sistem kalkıyor; her yeniden başlatmada 9 boş sorgu)
+        kopyalar = []
     for sp, sql in kopyalar:
         try:
             with savepoint(cur, sp):
@@ -101,7 +139,6 @@ def tanim_hazirla(cur) -> None:
         except Exception as e:  # noqa: BLE001 — eski tablo kalktıysa kopya biter, Evvel Yeni yaşar
             log.info("evvel-yeni tanım: eski kopya atlandı (%s): %s", sp, str(e)[:120])
     # 07:00 öncesi açılış izni (sahip D10: 07:00 öncesi açılış engellenir, kişiye özel izin istisnası)
-    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS erken_acilis BOOLEAN NOT NULL DEFAULT FALSE")
     try:   # İÇERİK bir kez (köprü değil): eski personel kartındaki erken açılış izni — sonra yalnız Evvel Yeni'de değişir
         from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
         if ayar_oku(cur, "erken_acilis_kopya") is None:
@@ -112,12 +149,7 @@ def tanim_hazirla(cur) -> None:
     except Exception:  # noqa: BLE001
         log.warning("erken açılış izni kopyalanamadı", exc_info=True)
     # 🔐 PANEL PIN (sahip 2026-10-19: sık işlemler = ad + PIN; eski panelle AYNI biçim sha256(salt:pin) — personel yeniden PIN almaz)
-    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS pin_salt TEXT")
-    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS pin_hash TEXT")
-    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS yetki_geri_alma BOOLEAN NOT NULL DEFAULT FALSE")   # S9
     # yanlış deneme sayacı AYRI tabloda (Fable: ey_personel izi kirlenmesin; ayrı bağlantıda yazılır)
-    cur.execute("""CREATE TABLE IF NOT EXISTS ey_pin_deneme (
-        personel_id TEXT PRIMARY KEY, yanlis INT NOT NULL DEFAULT 0, kilit_bitis TIMESTAMPTZ, son TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     try:   # İÇERİK bir kez (köprü değil): eski personel PIN'leri — yalnız PIN'i olmayan satıra (merkezin yeni verdiği ezilmez)
         from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
         if ayar_oku(cur, "pin_kopya") is None:
@@ -128,7 +160,7 @@ def tanim_hazirla(cur) -> None:
             ayar_yaz(cur, "pin_kopya", "1", "kurulum")
     except Exception:  # noqa: BLE001
         log.warning("panel PIN'leri kopyalanamadı", exc_info=True)
-    _HAZIR = True
+    _HAZIR = tam   # bu çağrıda kurulduysa bir SONRAKİ çağrı görüp açar
 
 
 PIN_YANLIS_LIMIT = 5
