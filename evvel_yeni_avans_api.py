@@ -72,6 +72,19 @@ def avans_durumu(cur, personel_id: str) -> dict:
             "acik": ({**dict(ac), "talep_ts": str(dict(ac)["talep_ts"])[:16]} if ac else None)}
 
 
+def _onay_denetle(cur, t: dict) -> None:
+    """Onay ANINDA yeniden denetim (Codex P1 — eski avans_onayla da yapıyordu): personel hâlâ AKTİF mi · bu ayın avansları (bu talep
+    dahil) GÜNCEL tavanı aşıyor mu (talepten sonra ücret/saat düzeltilip tavan düştüyse onay verilmez)."""
+    from evvel_yeni_tanim_api import tanim_oku
+    p = tanim_oku(cur, "ey_personel", t["personel_id"], ("aktif",))
+    if not p or not p["aktif"]:
+        raise HTTPException(409, "Personel pasif — avans verilemez (talebi kapat ya da reddet)")
+    d = avans_durumu(cur, t["personel_id"])
+    if d["kullanilan"] > d["tavan"]:
+        raise HTTPException(409, f"Güncel avans tavanı {d['tavan'] / 100:,.0f} ₺ — bu ay talepler bunu aşıyor; reddet ya da tavan "
+                                 f"düzelince onayla".replace(",", "."))
+
+
 def talep_yaz(cur, *, personel_id: str, tutar: int, not_: Optional[str], istek_id: str) -> dict:
     """PUBLIC (telefon talebi): açık talep varken ikinci talep yok (eski kural) · tavanı aşan talep yok (eski oran)."""
     avans_hazirla(cur)
@@ -261,6 +274,10 @@ def onayla(aid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(defa
                 from evvel_yeni_tanim_api import subeler as _subeler
                 if str(body.sube_id) not in {str(s["id"]) for s in _subeler(cur)}:
                     raise HTTPException(400, "Şube bulunamadı ya da pasif")
+                cur.execute("SELECT * FROM ey_avans_talep WHERE id=%s", (aid,))
+                _t = cur.fetchone()
+                if _t:
+                    _onay_denetle(cur, dict(_t))   # Codex P1: aktiflik + güncel tavan
             _karar(aid, "onaylandi", x_evvel_oturum, None, yontem="elden", sube_id=str(body.sube_id))
             return {"ok": True, "mesaj": "Avans onaylandı — şube panelinde 'teslim ettim' denince dükkân kasasından düşer"}
         if not body.cep:
@@ -278,6 +295,7 @@ def onayla(aid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(defa
             if not t or dict(t)["durum"] != "talep":
                 raise HTTPException(409, "Talep bulunamadı ya da karar verilmiş — sayfayı yenile")
             t = dict(t)
+            _onay_denetle(cur, t)   # Codex P1: pasif personele / tavanı aşan avans havale edilmez
             o.odeme_yaz(cur, o.OdemeBody(konu="personel", personel_id=t["personel_id"], personel_kalemi="Avans", ait_ay=t["donem"],
                                          aciklama=f"Avans (havale) · talep {aid}", istek_id=f"avans-{aid}", tekrar_onay=True,
                                          parcalar=[o.Parca(yontem="havale", cep=body.cep, tutar=Decimal(int(t["tutar"])) / 100)]), kim)
