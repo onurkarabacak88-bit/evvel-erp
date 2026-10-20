@@ -635,7 +635,7 @@ def personel_takvim(ay: Optional[str] = None):
                             or (not p.get("aktif", True) and not p.get("cikis"))):
             continue
         satir, say = [], {}
-        mudur = "MÜDÜR" in (p.get("gorev") or "").upper() or "MUDUR" in (p.get("gorev") or "").upper()
+        mudur = __import__("evvel_yeni_tanim_api").mudur_mu(p.get("gorev"))   # TEK müdür kuralı (F#10)
         for d in gunler:
             dd = date.fromisoformat(d)
             rows = yok.get((pid, d)) or []

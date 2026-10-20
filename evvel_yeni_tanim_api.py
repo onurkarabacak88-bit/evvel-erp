@@ -340,6 +340,24 @@ def ay_ucretleri(cur, ay: str) -> Dict[str, dict]:
     return {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
 
 
+def mudur_mu(gorev: Optional[str]) -> bool:
+    """PUBLIC — TEK müdür kuralı (ayrı işaret YOK, sahip F1b): Tanımlar › Personel görevinde 'MÜDÜR'."""
+    g = (gorev or "").upper()
+    return "MÜDÜR" in g or "MUDUR" in g
+
+
+def eski_konum_kopyala(cur, ne: str) -> None:
+    """PUBLIC (Yoklama kurulumu, BİR KEZ — içerik, köprü değil): 'sube' = eski şube koordinatları (K3) · 'muaf' = eski panel
+    yöneticisinin konum muafiyeti (K2). Tablolar Tanımlar'ın — Yoklama kendisi UPDATE atmaz (F#31)."""
+    tanim_hazirla(cur)
+    if ne == "sube":
+        cur.execute("""UPDATE ey_sube e SET lat = s.lat, lng = s.lng, yaricap_m = COALESCE(s.konum_radius_m, 150)
+                         FROM subeler s WHERE s.id::text = e.id AND e.lat IS NULL AND s.lat IS NOT NULL AND s.lng IS NOT NULL""")
+    elif ne == "muaf":
+        cur.execute("""UPDATE ey_personel e SET konum_muaf = TRUE FROM personel p
+                        WHERE p.id::text = e.id AND COALESCE(p.panel_yonetici, FALSE)""")
+
+
 def toptanci_yoksa_ac(cur, tid: str, ad: Optional[str], kaynak: str) -> None:
     """PUBLIC (Toptancı teslimi): eski sistemde sonradan açılmış toptancı Evvel Yeni'de yoksa tanımını aç (teslim görünmez kalmasın).
     Tablo Tanımlar'ın — Toptancı modülü kendisi INSERT atmaz (F#32). Panel bunu ÇAĞIRMAZ (panel toptancı açmaz)."""

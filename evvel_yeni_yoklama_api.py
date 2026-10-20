@@ -41,8 +41,23 @@ SAAT_PAYI_SN = 120
 DAVET_SAAT = 48
 VARSAYILAN_YARICAP = 150
 _HAZIR = False
-# Müdür = görevinde MÜDÜR yazan (Maaş takvimi evvel_yeni_maas_api ile AYNI kural — ikinci kaynak açılmaz)
-MUDUR_SQL = "(upper(coalesce(gorev,'')) LIKE '%%MÜDÜR%%' OR upper(coalesce(gorev,'')) LIKE '%%MUDUR%%')"
+# Müdür = görevinde MÜDÜR yazan — TEK kural Tanımlar PUBLIC mudur_mu (Maaş da onu çağırır; F#10)
+
+
+# ── Tanımlar'ın okuma kapıları (F#31: yoklama ey_personel / ey_sube'ye ~35 ayrı SQL atıyordu — ad / müdür / konum tek yerden) ──
+from evvel_yeni_tanim_api import adlar, eski_konum_kopyala, mudur_mu, tanim_listesi, tanim_oku  # noqa: E402
+
+
+def _padlar(cur, rows: list) -> dict:
+    """Satırlardaki personel_id → ad (yalnız Tanımlar'da olanlar; JOIN'in 'kayıtsız kişi görünmez' davranışı korunur)."""
+    return adlar(cur, "ey_personel", {r["personel_id"] for r in rows})
+
+
+def _adla(cur, rows: list) -> list:
+    """Satırlara 'ad' (personel) + 'sube_ad' ekle; Tanımlar'da olmayan kişinin satırı düşer (önceki JOIN ile aynı)."""
+    pad = _padlar(cur, rows)
+    sad = adlar(cur, "ey_sube", {r.get("sube_id") for r in rows})
+    return [{**r, "ad": pad[r["personel_id"]], "sube_ad": sad.get(str(r.get("sube_id")))} for r in rows if r["personel_id"] in pad]
 
 
 # ─────────────────────────── KURULUM (uygulama açılışında; ayrı işlem) ───────────────────────────
@@ -56,7 +71,7 @@ def yoklama_hazirla() -> None:
         tanim_hazirla(cur)
         cur.execute("SET LOCAL lock_timeout = '3s'")
         # lat / lng / yaricap_m / konum_muaf Tanımlar'da tanımlı — tek şema sahibi (Dalga 3, F#31)
-        # F1b müdür: AYRI İŞARET YOK — tek gerçek Tanımlar › Personel'deki görev ("MÜDÜR"); Maaş da aynı kuralı okur (MUDUR_SQL)
+        # F1b müdür: AYRI İŞARET YOK — tek gerçek Tanımlar › Personel'deki görev ("MÜDÜR"); Maaş da aynı kuralı okur (Tanımlar mudur_mu)
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_cihaz (
             id TEXT PRIMARY KEY, tur TEXT NOT NULL, personel_id TEXT, sube_id TEXT, acik_anahtar JSONB, jeton_hash TEXT,
             guc TEXT, etiket TEXT, durum TEXT NOT NULL DEFAULT 'davet', davet_hash TEXT UNIQUE, davet_son TIMESTAMPTZ,
@@ -130,16 +145,14 @@ def yoklama_hazirla() -> None:
         if ayar_oku(cur, "sube_konum_kopya") is None:
             try:
                 with savepoint(cur, "sp_ey_konum_kopya"):
-                    cur.execute("""UPDATE ey_sube e SET lat = s.lat, lng = s.lng, yaricap_m = COALESCE(s.konum_radius_m, 150)
-                                     FROM subeler s WHERE s.id::text = e.id AND e.lat IS NULL AND s.lat IS NOT NULL AND s.lng IS NOT NULL""")
+                    eski_konum_kopyala(cur, "sube")   # Tanımlar'ın kapısı (F#31)
             except Exception:  # noqa: BLE001
                 log.warning("şube koordinatları kopyalanamadı", exc_info=True)
             ayar_yaz(cur, "sube_konum_kopya", "1", "kurulum")
         if ayar_oku(cur, "konum_muaf_kopya") is None:
             try:
                 with savepoint(cur, "sp_ey_muaf_kopya"):
-                    cur.execute("""UPDATE ey_personel e SET konum_muaf = TRUE FROM personel p
-                                    WHERE p.id::text = e.id AND COALESCE(p.panel_yonetici, FALSE)""")
+                    eski_konum_kopyala(cur, "muaf")
             except Exception:  # noqa: BLE001
                 log.warning("konum muafiyeti kopyalanamadı", exc_info=True)
             ayar_yaz(cur, "konum_muaf_kopya", "1", "kurulum")
@@ -188,8 +201,7 @@ def konum_kontrol(cur, sube_id: str, personel: dict, lat, lng) -> dict:
     """PUBLIC: {mesafe_m, muaf}. Yönetici muaf (K2); şube koordinatsızsa serbest (K3). Uzaksa 403."""
     if personel.get("konum_muaf"):
         return {"mesafe_m": None, "muaf": True}
-    cur.execute("SELECT lat, lng, yaricap_m FROM ey_sube WHERE id=%s", (sube_id,))
-    s = dict(cur.fetchone() or {})
+    s = tanim_oku(cur, "ey_sube", sube_id, ("lat", "lng", "yaricap_m")) or {}
     if s.get("lat") is None or s.get("lng") is None:
         return {"mesafe_m": None, "muaf": False}
     if lat is None or lng is None:
@@ -271,11 +283,10 @@ def cihaz_coz(cur, basliklar, method: str, yol: str, govde: bytes, tur: Optional
 
 # ─────────────────────────── PUBLIC okuma servisleri (panel / maaş bunları çağırır) ───────────────────────────
 def _personel(cur, pid: str) -> dict:
-    cur.execute(f"SELECT id, ad, sube_id, aktif, konum_muaf, {MUDUR_SQL} AS mudur FROM ey_personel WHERE id=%s", (pid,))
-    r = cur.fetchone()
-    if not r or not dict(r)["aktif"]:
+    r = tanim_oku(cur, "ey_personel", pid, ("ad", "sube_id", "aktif", "konum_muaf", "gorev"))   # Tanımlar'ın kapısı (F#31)
+    if not r or not r["aktif"]:
         raise HTTPException(403, "Personel kaydı aktif değil")
-    return dict(r)
+    return {k: r[k] for k in ("id", "ad", "sube_id", "aktif", "konum_muaf")} | {"mudur": mudur_mu(r.get("gorev"))}
 
 
 def personel_oku(cur, pid: str) -> dict:
@@ -295,13 +306,15 @@ def bugun_girenler(cur, sube_id: str, gun: Optional[date] = None) -> list:
     yoklama_hazirla()
     gece_kapat(cur)   # geçmiş günlerin açıkları kapanır (sahip: gece kapanır, iş bırakmaz)
     g = gun or is_gunu()
-    cur.execute("""SELECT DISTINCT ON (y.personel_id) y.personel_id, p.ad, y.giris_ts, y.cikis_ts, y.cikis_tur,
+    cur.execute("""SELECT DISTINCT ON (y.personel_id) y.personel_id, y.giris_ts, y.cikis_ts, y.cikis_tur,
                           EXISTS (SELECT 1 FROM ey_mola m WHERE m.personel_id=y.personel_id AND m.bitis_ts IS NULL) AS molada
-                     FROM ey_yoklama y JOIN ey_personel p ON p.id = y.personel_id
+                     FROM ey_yoklama y
                     WHERE y.sube_id=%s AND y.is_gunu=%s ORDER BY y.personel_id, y.giris_ts DESC""", (sube_id, g))
-    out = [{"personel_id": r["personel_id"], "ad": r["ad"], "giris": _saat(r["giris_ts"]), "cikis": _saat(r["cikis_ts"]),
+    rows = [dict(x) for x in cur.fetchall() or []]
+    pad = _padlar(cur, rows)
+    out = [{"personel_id": r["personel_id"], "ad": pad[r["personel_id"]], "giris": _saat(r["giris_ts"]), "cikis": _saat(r["cikis_ts"]),
             "cikis_tur": r["cikis_tur"], "acik": r["cikis_ts"] is None, "molada": bool(r["molada"]) and r["cikis_ts"] is None}
-           for r in [dict(x) for x in cur.fetchall() or []]]
+           for r in rows if r["personel_id"] in pad]
     out.sort(key=lambda x: (not x["acik"], x["giris"] or ""))
     return out
 
@@ -485,8 +498,7 @@ def yemek_ozet(cur, bas: date, son: date) -> dict:
             hak[r["personel_id"]] = hak.get(r["personel_id"], 0) + 1
         else:
             dusen.setdefault(r["personel_id"], []).append({"gun": r["is_gunu"].isoformat(), "sure_dk": r["sure_dk"]})
-    cur.execute(f"SELECT id FROM ey_personel WHERE {MUDUR_SQL}")
-    mudur = {dict(r)["id"] for r in cur.fetchall() or []}
+    mudur = {r["id"] for r in tanim_listesi(cur, "ey_personel", ("gorev",)) if mudur_mu(r.get("gorev"))}
     return {"mudur": mudur, "limit_dk": mola_limit(cur), "kisi": {pid: {"calisilan_gun": len(g), "hak_gun": hak.get(pid, 0), "dusen": dusen.get(pid, [])}
                                      for pid, g in gunler.items()}}
 
@@ -504,9 +516,11 @@ def yoklama_satirlari(cur, bas: date, son: date) -> list:
 
 def son_okutanlar(cur, sube_id: str, sn: int = 300) -> list:
     """PUBLIC: panelde canlı 'son okutanlar' (yabancı ad hemen görülsün)."""
-    cur.execute("""SELECT q.islem, q.zaman, p.ad FROM ey_qr_kullanim q JOIN ey_personel p ON p.id = q.personel_id
+    cur.execute("""SELECT q.islem, q.zaman, q.personel_id FROM ey_qr_kullanim q
                     WHERE q.sube_id=%s AND q.zaman > NOW() - (%s || ' seconds')::interval ORDER BY q.zaman DESC LIMIT 8""", (sube_id, str(sn)))
-    return [{"ad": r["ad"], "islem": r["islem"], "saat": _saat(r["zaman"])} for r in [dict(x) for x in cur.fetchall() or []]]
+    rows = [dict(x) for x in cur.fetchall() or []]
+    pad = _padlar(cur, rows)
+    return [{"ad": pad[r["personel_id"]], "islem": r["islem"], "saat": _saat(r["zaman"])} for r in rows if r["personel_id"] in pad]
 
 
 def _saat(ts) -> Optional[str]:
@@ -546,9 +560,8 @@ def cihaz_davet(b: DavetBody, x_evvel_oturum: Optional[str] = Header(default=Non
             p = _personel(cur, b.personel_id)
             ad = p["ad"]
         else:
-            cur.execute("SELECT ad FROM ey_sube WHERE id=%s AND aktif", (b.sube_id,))
-            r = cur.fetchone()
-            if not r:
+            r = tanim_oku(cur, "ey_sube", b.sube_id, ("ad", "aktif"))
+            if not r or not r["aktif"]:
                 raise HTTPException(404, "Şube bulunamadı")
             ad = dict(r)["ad"]
         cid = "cz-" + uuid.uuid4().hex[:16]
@@ -612,11 +625,9 @@ def cihaz_bagla(b: BaglaBody):
         if c["tur"] == "telefon" and c["personel_id"]:   # sahip: yeni telefon devreye girince eskisi iptal
             cur.execute("""UPDATE ey_cihaz SET durum='iptal', iptal_zaman=NOW(), davet_hash=NULL
                            WHERE tur='telefon' AND personel_id=%s AND id<>%s AND durum IN ('aktif','onay','davet')""", (c["personel_id"], c["id"]))
-        if c["personel_id"]:
-            cur.execute("SELECT ad FROM ey_personel WHERE id=%s", (c["personel_id"],))
-        else:
-            cur.execute("SELECT ad FROM ey_sube WHERE id=%s", (c["sube_id"],))
-        ad = dict(cur.fetchone() or {}).get("ad")
+        ad = (tanim_oku(cur, "ey_personel", c["personel_id"], ("ad",)) if c["personel_id"]
+              else tanim_oku(cur, "ey_sube", c["sube_id"], ("ad",)) or {}) or {}
+        ad = ad.get("ad")
     return {"ok": True, "cihaz_id": c["id"], "tur": c["tur"], "durum": durum, "ad": ad, "guc": guc, "sube_id": c.get("sube_id"),
             "mesaj": (f"Bu telefon artık {ad} adına" if c["tur"] == "telefon"
                       else f"Bu bilgisayar {ad} paneli olarak kaydedildi — merkez onayı bekleniyor")}
@@ -658,14 +669,16 @@ def cihazlar(x_evvel_oturum: Optional[str] = Header(default=None)):
     yoklama_hazirla()
     with db() as (conn, cur):
         _merkez(cur, x_evvel_oturum)
-        cur.execute(f"""SELECT p.id, p.ad, p.sube_id, s.ad AS sube_ad, p.konum_muaf, {MUDUR_SQL.replace('gorev', 'p.gorev')} AS mudur FROM ey_personel p
-                         LEFT JOIN ey_sube s ON s.id = p.sube_id WHERE p.aktif ORDER BY s.ad NULLS LAST, p.ad""")
-        per = [dict(r) for r in cur.fetchall() or []]
+        sad = adlar(cur, "ey_sube")
+        per = [{"id": p["id"], "ad": p["ad"], "sube_id": p["sube_id"], "sube_ad": sad.get(str(p["sube_id"])), "konum_muaf": p["konum_muaf"],
+                "mudur": mudur_mu(p.get("gorev"))}
+               for p in tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "konum_muaf", "gorev"), aktif=True)]
+        per.sort(key=lambda p: (p["sube_ad"] is None, p["sube_ad"] or "", p["ad"]))
         cur.execute("""SELECT id, tur, personel_id, sube_id, guc, etiket, durum, davet_son, olusturma, son_kullanim
                          FROM ey_cihaz WHERE durum<>'iptal' ORDER BY olusturma DESC""")
         cz = [dict(r) for r in cur.fetchall() or []]
-        cur.execute("SELECT id, ad, lat IS NOT NULL AS konum FROM ey_sube WHERE aktif ORDER BY ad")
-        subeler = [dict(r) for r in cur.fetchall() or []]
+        subeler = [{"id": s["id"], "ad": s["ad"], "konum": s["lat"] is not None}
+                   for s in tanim_listesi(cur, "ey_sube", ("ad", "lat"), aktif=True)]
     def _c(x):
         return {"id": x["id"], "guc": x["guc"], "etiket": x["etiket"], "durum": x["durum"],
                 "son_kullanim": str(x["son_kullanim"])[:16] if x["son_kullanim"] else None,
@@ -747,14 +760,14 @@ async def _telefon(request: Request, fn):
 async def ben(request: Request, sube: Optional[str] = None):
     """Telefon ekranı: kim, hangi şube, bugün giriş / çıkış, yapabileceği tek düğme."""
     def fn(cur, c, p, _v):
-        cur.execute("""SELECT y.*, s.ad AS sube_ad FROM ey_yoklama y LEFT JOIN ey_sube s ON s.id=y.sube_id
-                        WHERE y.personel_id=%s ORDER BY y.giris_ts DESC LIMIT 1""", (p["id"],))
+        cur.execute("SELECT y.* FROM ey_yoklama y WHERE y.personel_id=%s ORDER BY y.giris_ts DESC LIMIT 1", (p["id"],))
         son = dict(cur.fetchone() or {})
+        if son:
+            son["sube_ad"] = adlar(cur, "ey_sube", [son.get("sube_id")]).get(str(son.get("sube_id")))
         acik = bool(son) and son.get("cikis_ts") is None
         sube_ad = None
         if sube:
-            cur.execute("SELECT ad FROM ey_sube WHERE id=%s", (sube,))
-            sube_ad = dict(cur.fetchone() or {}).get("ad")
+            sube_ad = adlar(cur, "ey_sube", [sube]).get(str(sube))
         mola = _mola_durum(cur, p["id"], is_gunu())
         burada = acik and son.get("sube_id") == sube
         yap = ["giris"] if not acik and sube else []
@@ -776,8 +789,8 @@ async def ben(request: Request, sube: Optional[str] = None):
 
 def _qr_islem(cur, c, p, v, islem: str) -> tuple:
     sube = str(v.get("sube") or "")
-    cur.execute("SELECT 1 FROM ey_sube WHERE id=%s AND aktif", (sube,))
-    if not cur.fetchone():
+    s_ = tanim_oku(cur, "ey_sube", sube, ("aktif",)) if sube else None
+    if not s_ or not s_["aktif"]:
         raise HTTPException(404, "Şube bulunamadı")
     d = qr_dogrula(cur, sube, str(v.get("qr") or ""))
     if d is None:
@@ -854,12 +867,12 @@ async def giris(request: Request):
             if dict(r)["personel_id"] != p["id"]:
                 raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
             return {"ok": True, "tekrar": True, "mesaj": f"Giriş zaten kaydedildi · {_saat(dict(r)['giris_ts'])}"}
-        cur.execute("SELECT y.id, y.sube_id, s.ad FROM ey_yoklama y LEFT JOIN ey_sube s ON s.id=y.sube_id "
-                    "WHERE y.personel_id=%s AND y.cikis_ts IS NULL", (p["id"],))
+        cur.execute("SELECT y.id, y.sube_id FROM ey_yoklama y WHERE y.personel_id=%s AND y.cikis_ts IS NULL", (p["id"],))
         a = cur.fetchone()
         sube, k = _qr_islem(cur, c, p, v, "giris")
         if a:
             a = dict(a)
+            a["ad"] = adlar(cur, "ey_sube", [a["sube_id"]]).get(str(a["sube_id"]))
             if a["sube_id"] == sube:
                 return {"ok": True, "tekrar": True, "mesaj": "Zaten girişin var"}
             raise HTTPException(409, f"Önce {a['ad'] or 'diğer şube'}'den çıkış yap")
@@ -903,15 +916,13 @@ def gunler(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = Fa
         _merkez(cur, x_evvel_oturum)
         gece_kapat(cur)
         if acik:
-            cur.execute("""SELECT y.*, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
-                             LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE y.cikis_ts IS NULL AND y.is_gunu < %s
+            cur.execute("""SELECT y.* FROM ey_yoklama y WHERE y.cikis_ts IS NULL AND y.is_gunu < %s
                             ORDER BY y.is_gunu, y.giris_ts""", (is_gunu(),))
         elif bas and son:
-            cur.execute("""SELECT y.*, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
-                             LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE y.is_gunu BETWEEN %s AND %s ORDER BY y.is_gunu, y.giris_ts""", (bas, son))
+            cur.execute("SELECT y.* FROM ey_yoklama y WHERE y.is_gunu BETWEEN %s AND %s ORDER BY y.is_gunu, y.giris_ts", (bas, son))
         else:
             raise HTTPException(400, "bas/son ya da acik=1")
-        rows = [dict(r) for r in cur.fetchall() or []]
+        rows = _adla(cur, [dict(r) for r in cur.fetchall() or []])
     return {"satirlar": [{"id": r["id"], "gun": r["is_gunu"].isoformat(), "ad": r["ad"], "sube": r["sube_ad"], "giris": _saat(r["giris_ts"]),
                           "cikis": _saat(r["cikis_ts"]), "cikis_tur": r["cikis_tur"], "mesafe": r["giris_mesafe_m"], "muaf": r["giris_muaf"]}
                          for r in rows]}
@@ -1033,8 +1044,7 @@ def molalar(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = F
     yoklama_hazirla()
     with db() as (conn, cur):
         _merkez(cur, x_evvel_oturum)
-        q = """SELECT m.*, p.ad, s.ad AS sube_ad FROM ey_mola m JOIN ey_personel p ON p.id=m.personel_id
-                 LEFT JOIN ey_sube s ON s.id=m.sube_id WHERE """
+        q = """SELECT m.* FROM ey_mola m WHERE """
         if acik:
             cur.execute(q + """(m.bitis_ts IS NULL AND (m.is_gunu < %s OR m.baslangic_ts < NOW() - (%s || ' minutes')::interval))
                                 OR (m.yemek_hakki = FALSE AND NOT m.hak_elle AND m.gorulen IS NULL)
@@ -1043,7 +1053,7 @@ def molalar(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = F
             cur.execute(q + "m.is_gunu BETWEEN %s AND %s ORDER BY m.is_gunu, m.baslangic_ts", (bas, son))
         else:
             raise HTTPException(400, "bas/son ya da acik=1")
-        rows = [dict(r) for r in cur.fetchall() or []]
+        rows = _adla(cur, [dict(r) for r in cur.fetchall() or []])
         lim = mola_limit(cur)
     bugun = is_gunu()
 
@@ -1195,10 +1205,7 @@ def devir_iptal(cur, sube_id: str, gun) -> bool:
 
 def _devir_dict(cur, r: dict) -> dict:
     ids = [x for x in (r.get("devreden_id"), r.get("devralan_id"), r.get("ustlenen_id")) if x]
-    ad = {}
-    if ids:
-        cur.execute("SELECT id, ad FROM ey_personel WHERE id = ANY(%s)", (ids,))
-        ad = {dict(x)["id"]: dict(x)["ad"] for x in cur.fetchall() or []}
+    ad = adlar(cur, "ey_personel", ids)
     sk = r.get("sayilan_kurus")
     ds = r.get("devralan_sayilan_kurus")
     pencere = bool(r.get("ustlen_ts")) and r["durum"] == "dolduruluyor" and (
@@ -1226,11 +1233,14 @@ def devir_durum(cur, sube_id: str, gun: Optional[date] = None) -> Optional[dict]
 def kapanis_sorumlusu(cur, sube_id: str, gun: Optional[date] = None) -> Optional[dict]:
     """PUBLIC: son tamamlanan (tamam / tutmuyor / merkez kapandı) devrin devralanı (F7: kapanışçı = gönderen esas; bu yanında)."""
     yoklama_hazirla()
-    cur.execute("""SELECT d.devralan_id, p.ad FROM ey_devir d JOIN ey_personel p ON p.id=d.devralan_id
-                    WHERE d.sube_id=%s AND d.is_gunu=%s AND (d.durum IN ('tamam','tutmuyor') OR (d.durum='merkez_kapatti' AND d.merkez_sonuc='kapandi'))
+    cur.execute("""SELECT d.devralan_id FROM ey_devir d
+                    WHERE d.devralan_id IS NOT NULL AND d.sube_id=%s AND d.is_gunu=%s AND (d.durum IN ('tamam','tutmuyor') OR (d.durum='merkez_kapatti' AND d.merkez_sonuc='kapandi'))
                     ORDER BY COALESCE(d.devralan_ts, d.panel_ts) DESC LIMIT 1""", (sube_id, gun or is_gunu()))
     r = cur.fetchone()
-    return {"personel_id": dict(r)["devralan_id"], "ad": dict(r)["ad"]} if r else None
+    if not r:
+        return None
+    pid = dict(r)["devralan_id"]
+    return {"personel_id": pid, "ad": adlar(cur, "ey_personel", [pid]).get(str(pid))}
 
 
 def _devir_olay(cur, d: dict, veri_ek: dict) -> Optional[str]:
@@ -1239,8 +1249,7 @@ def _devir_olay(cur, d: dict, veri_ek: dict) -> Optional[str]:
     from evvel_yeni_cekirdek import deneme_mi
     if deneme_mi(cur, date.fromisoformat(str(d["is_gunu"])[:10])):   # tek kural (F#1) — deneme dönemi: telefon onayları denenir, vardiya olayı (Satış › Devir defteri) yazılmaz
         return None
-    cur.execute("SELECT id, ad FROM ey_personel WHERE id = ANY(%s)", ([x for x in (d.get("devreden_id"), d.get("devralan_id")) if x],))
-    ad = {dict(x)["id"]: dict(x)["ad"] for x in cur.fetchall() or []}
+    ad = adlar(cur, "ey_personel", [d.get("devreden_id"), d.get("devralan_id")])
     a = {"id": d.get("devreden_id"), "ad": ad.get(d.get("devreden_id"))}
     v = {"id": d.get("devralan_id"), "ad": ad.get(d.get("devralan_id"))}
     return olay_yaz(cur, sube_id=d["sube_id"], tur="vardiya", is_gunu=d["is_gunu"], kok=f"panel:vardiya:{d['sube_id']}:{d['id']}",
@@ -1269,12 +1278,10 @@ def _devir_al(cur, did: str, ek_kisi: Optional[str] = None, ek_kisi2: Optional[s
 
 def _canli_konum_sart(cur, sube_id: str) -> None:
     """Para devri: canlıda (1 Kasım sonrası) şube koordinatı tanımsızsa devir yapılmaz (Fable — QR fotoğrafı uzaktan okutulmasın)."""
-    from evvel_yeni_cekirdek import panel_baslangic as _pb
-    bas = _pb(cur).isoformat()   # Fable: tek yerde ayrıştırılır
-    if is_gunu().isoformat() < bas:
+    from evvel_yeni_cekirdek import deneme_mi
+    if deneme_mi(cur):   # tek kural (F#1)
         return
-    cur.execute("SELECT lat, lng FROM ey_sube WHERE id=%s", (sube_id,))
-    s = dict(cur.fetchone() or {})
+    s = tanim_oku(cur, "ey_sube", sube_id, ("lat", "lng")) or {}
     if s.get("lat") is None or s.get("lng") is None:
         raise HTTPException(409, "Şubenin konumu tanımlı değil — devir yapılamaz, merkeze haber ver (Tanımlar › Şube)")
 
@@ -1332,13 +1339,13 @@ async def devir_telefon(did: str, request: Request, sube: Optional[str] = None):
         cur.execute("SELECT * FROM ey_devir WHERE id=%s", (did,))
         d = _devir_dict(cur, dict(cur.fetchone()))
         s = dict(r)["sube_id"]
-        cur.execute("SELECT ad FROM ey_sube WHERE id=%s", (s,))
-        sube_ad = dict(cur.fetchone() or {}).get("ad")
+        sube_ad = adlar(cur, "ey_sube", [s]).get(str(s))
         icerde = acik_mi(cur, s, p["id"])
-        cur.execute("SELECT y.personel_id AS id, e.ad FROM ey_yoklama y JOIN ey_personel e ON e.id=y.personel_id "
-                    "WHERE y.sube_id=%s AND y.cikis_ts IS NULL AND y.is_gunu=%s AND y.personel_id<>%s ORDER BY e.ad",
+        cur.execute("SELECT DISTINCT y.personel_id FROM ey_yoklama y WHERE y.sube_id=%s AND y.cikis_ts IS NULL AND y.is_gunu=%s AND y.personel_id<>%s",
                     (s, is_gunu(), p["id"]))
-        digerleri = [dict(x) for x in cur.fetchall() or []]   # "başka personel adına" adayları (içeridekiler)
+        _ic = [dict(x)["personel_id"] for x in cur.fetchall() or []]
+        _ad = adlar(cur, "ey_personel", _ic)
+        digerleri = sorted(({"id": i, "ad": _ad[i]} for i in _ic if i in _ad), key=lambda x: x["ad"])   # "başka personel adına" adayları
         cur.execute("SELECT sube_id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL", (p["id"],))
         ac = cur.fetchone()
         return {"kisi": p["ad"], "muaf": bool(p.get("konum_muaf")), "sube": s, "sube_ad": sube_ad, "gun": is_gunu().isoformat(),
@@ -1498,8 +1505,7 @@ async def devir_kabul(did: str, request: Request):
         if d.get("kabul_istek_id") == ist:   # Fable: aynı istek kilit beklerken tamamlandı
             return {"ok": True, "tekrar": True, "mesaj": "Devir zaten " + ("kabul edildi" if d["durum"] == "tamam" else "kaydedildi")}
         if d["durum"] in ("tamam", "tutmuyor"):
-            cur.execute("SELECT ad FROM ey_personel WHERE id=%s", (d.get("devralan_id"),))
-            raise HTTPException(409, f"{dict(cur.fetchone() or {}).get('ad') or 'Başka biri'} zaten devraldı")
+            raise HTTPException(409, f"{adlar(cur, 'ey_personel', [d.get('devralan_id')]).get(str(d.get('devralan_id'))) or 'Başka biri'} zaten devraldı")
         if d["durum"] != "devreden_onayladi":
             raise HTTPException(409, "Önce devreden telefonundan göndersin" if d["durum"] in ("baslatildi", "dolduruluyor")
                                 else "Bu devir artık onay beklemiyor")
@@ -1552,7 +1558,7 @@ def devirler(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = 
     yoklama_hazirla()
     with db() as (conn, cur):
         _merkez(cur, x_evvel_oturum)
-        q = "SELECT d.*, s.ad AS sube_ad FROM ey_devir d LEFT JOIN ey_sube s ON s.id=d.sube_id WHERE "
+        q = "SELECT d.* FROM ey_devir d WHERE "
         if acik:
             cur.execute(q + """(d.durum IN ('hazir','devreden_onayladi') AND (d.is_gunu < %s OR COALESCE(d.devreden_ts, d.panel_ts) < NOW() - INTERVAL '2 hours'))
                                OR ((d.durum='tutmuyor' OR (d.durum='tamam' AND d.vekil)) AND d.gorulen IS NULL) ORDER BY d.is_gunu, d.panel_ts""", (is_gunu(),))
@@ -1561,7 +1567,8 @@ def devirler(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = 
         else:
             raise HTTPException(400, "bas/son ya da acik=1")
         rows = [dict(r) for r in cur.fetchall() or []]
-        out = [{**_devir_dict(cur, r), "sube": r["sube_ad"], "gorulen": r.get("gorulen")} for r in rows]
+        sad = adlar(cur, "ey_sube", {r["sube_id"] for r in rows})
+        out = [{**_devir_dict(cur, r), "sube": sad.get(str(r["sube_id"])), "gorulen": r.get("gorulen")} for r in rows]
     return {"satirlar": out}
 
 
@@ -1614,19 +1621,17 @@ def _bekleyen(cur, baglam: dict) -> list:
     gece_kapat(cur)   # geçmiş günlerin açıkları kapanır (sahip: gece kapanır, iş bırakmaz)
     out = []
     bugun = is_gunu()
-    cur.execute("""SELECT y.id, y.is_gunu, p.ad, s.ad AS sube_ad FROM ey_yoklama y JOIN ey_personel p ON p.id=y.personel_id
-                     LEFT JOIN ey_sube s ON s.id=y.sube_id WHERE y.cikis_ts IS NULL AND y.is_gunu < %s
+    cur.execute("""SELECT y.id, y.is_gunu, y.personel_id, y.sube_id FROM ey_yoklama y WHERE y.cikis_ts IS NULL AND y.is_gunu < %s
                     ORDER BY y.is_gunu""", (bugun,))
-    for r in [dict(x) for x in cur.fetchall() or []]:
+    for r in _adla(cur, [dict(x) for x in cur.fetchall() or []]):
         out.append({"tur": "yoklama_cikis_yok", "genel": True, "grup": "personel", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
                     "etiket": "🚪 Çıkış yok", "ad": f"{r['ad']} — {r['sube_ad'] or ''} {r['is_gunu'].strftime('%d.%m')} çıkış yapmadı",
                     "alt": "Çıkış saatini Personel › Telefonlar'dan yaz", "sayfa": "personel_telefon", "dugme": "Aç"})
-    cur.execute("""SELECT m.id, m.is_gunu, m.sure_dk, m.bitis_ts, p.ad, s.ad AS sube_ad FROM ey_mola m
-                     JOIN ey_personel p ON p.id=m.personel_id LEFT JOIN ey_sube s ON s.id=m.sube_id
+    cur.execute("""SELECT m.id, m.is_gunu, m.sure_dk, m.bitis_ts, m.personel_id, m.sube_id FROM ey_mola m
                     WHERE (m.bitis_ts IS NULL AND (m.is_gunu < %s OR m.baslangic_ts < NOW() - (%s || ' minutes')::interval))
                        OR (m.yemek_hakki = FALSE AND NOT m.hak_elle AND m.gorulen IS NULL)
                     ORDER BY m.is_gunu""", (bugun, str(mola_limit(cur) + 1)))
-    for r in [dict(x) for x in cur.fetchall() or []]:
+    for r in _adla(cur, [dict(x) for x in cur.fetchall() or []]):
         if r["bitis_ts"] is None and r["is_gunu"] >= bugun:
             out.append({"tur": "yoklama_mola_uzun", "genel": True, "grup": "personel", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
                         "etiket": "⏱ Mola uzun", "ad": f"{r['ad']} — {r['sube_ad'] or ''} molası sürüyor, sınır aşıldı (yemek hakkı düşüyor)",
@@ -1640,14 +1645,17 @@ def _bekleyen(cur, baglam: dict) -> list:
                         "etiket": "⏱ Mola uzun", "ad": f"{r['ad']} mola {r['sure_dk']} dk ({r['is_gunu'].strftime('%d.%m')}) — yemek hakkı düştü",
                         "alt": "Gördüm ya da hakkı elle ver — Personel › Yemek molaları", "sayfa": "personel_mola", "dugme": "Aç"})
     cur.execute("""SELECT d.id, d.is_gunu, d.durum, d.devralan_not, d.sayilan_kurus, d.devralan_sayilan_kurus, d.vekil,
-                          s.ad AS sube_ad, a.ad AS devreden, v.ad AS devralan, u.ad AS ustlenen
-                     FROM ey_devir d LEFT JOIN ey_sube s ON s.id=d.sube_id
-                     LEFT JOIN ey_personel a ON a.id=d.devreden_id LEFT JOIN ey_personel v ON v.id=d.devralan_id
-                     LEFT JOIN ey_personel u ON u.id=d.ustlenen_id
+                          d.sube_id, d.devreden_id, d.devralan_id, d.ustlenen_id
+                     FROM ey_devir d
                     WHERE (d.durum IN ('hazir','devreden_onayladi') AND (d.is_gunu < %s OR COALESCE(d.devreden_ts, d.panel_ts) < NOW() - INTERVAL '2 hours'))
                        OR (d.durum IN ('tutmuyor','tamam') AND d.gorulen IS NULL AND (d.durum='tutmuyor' OR d.vekil))
                     ORDER BY d.is_gunu""", (bugun,))
-    for r in [dict(x) for x in cur.fetchall() or []]:
+    _drows = [dict(x) for x in cur.fetchall() or []]
+    _pa = adlar(cur, "ey_personel", {r[k] for r in _drows for k in ("devreden_id", "devralan_id", "ustlenen_id") if r.get(k)})
+    _sa = adlar(cur, "ey_sube", {r["sube_id"] for r in _drows})
+    for r in _drows:
+        r.update(sube_ad=_sa.get(str(r["sube_id"])), devreden=_pa.get(str(r.get("devreden_id"))), devralan=_pa.get(str(r.get("devralan_id"))),
+                 ustlenen=_pa.get(str(r.get("ustlenen_id"))))
         if r["durum"] in ("tutmuyor", "tamam"):   # tutmuyor (fark) ya da başka personel ADINA devir (sahip: merkeze bildirim)
             fark = ""
             if r.get("devralan_sayilan_kurus") is not None and r.get("sayilan_kurus") is not None:
@@ -1662,17 +1670,18 @@ def _bekleyen(cur, baglam: dict) -> list:
                         "etiket": "🔁 Devir tamamlanmadı", "ad": f"{r['sube_ad'] or ''} {r['devreden']} → {r['devralan']} · "
                                                               + ("devreden onaylamadı" if r["durum"] == "hazir" else "devralan kabul etmedi"),
                         "alt": "Kapat: iptal ya da devir sayıldı — Personel › Devirler", "sayfa": "personel_devir", "dugme": "Aç"})
-    cur.execute(f"""SELECT COUNT(*) AS n FROM ey_personel p WHERE p.aktif AND NOT {MUDUR_SQL.replace('gorev', 'p.gorev')}
-                     AND NOT EXISTS (SELECT 1 FROM ey_cihaz c WHERE c.personel_id=p.id AND c.durum='aktif')""")
-    n = int(dict(cur.fetchone())["n"])
+    cur.execute("SELECT DISTINCT personel_id FROM ey_cihaz WHERE durum='aktif' AND personel_id IS NOT NULL")
+    _tel = {dict(x)["personel_id"] for x in cur.fetchall() or []}
+    n = sum(1 for p in tanim_listesi(cur, "ey_personel", ("gorev",), aktif=True) if not mudur_mu(p.get("gorev")) and p["id"] not in _tel)
     if n:
         out.append({"tur": "yoklama_telefon_yok", "genel": True, "grup": "personel", "id": "telefon_yok", "tarih": bugun.isoformat(),
                     "etiket": "📱 Telefon", "ad": f"{n} personelin telefonu bağlı değil", "alt": "Bağlantı linki üret — 1 Kasım'dan önce herkes",
                     "sayfa": "personel_telefon", "dugme": "Telefonlar"})
-    cur.execute("""SELECT s.ad, EXISTS (SELECT 1 FROM ey_cihaz c WHERE c.sube_id=s.id AND c.durum='onay') AS onay,
-                          EXISTS (SELECT 1 FROM ey_cihaz c WHERE c.sube_id=s.id AND c.durum='aktif') AS aktif, s.lat IS NULL AS konumsuz
-                     FROM ey_sube s WHERE s.aktif AND NOT COALESCE(s.depo, FALSE)""")   # depo QR göstermez
-    for r in [dict(x) for x in cur.fetchall() or []]:
+    cur.execute("SELECT sube_id, durum FROM ey_cihaz WHERE sube_id IS NOT NULL AND durum IN ('onay','aktif')")
+    _cz = {(dict(x)["sube_id"], dict(x)["durum"]) for x in cur.fetchall() or []}
+    _sub = [{"ad": s["ad"], "onay": (s["id"], "onay") in _cz, "aktif": (s["id"], "aktif") in _cz, "konumsuz": s["lat"] is None}
+            for s in tanim_listesi(cur, "ey_sube", ("ad", "lat", "depo"), aktif=True) if not s.get("depo")]   # depo QR göstermez
+    for r in _sub:
         if r["onay"]:
             out.append({"tur": "yoklama_tablet_onay", "genel": True, "grup": "personel", "id": "tablet_onay:" + r["ad"], "tarih": bugun.isoformat(),
                         "etiket": "📟 Tablet", "ad": f"{r['ad']} tableti onay bekliyor", "alt": "Bu tablet o şubenin mi? Onayla",
