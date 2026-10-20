@@ -4,13 +4,13 @@
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, KisiPin, Modal, panelHata, yeniIstek } from './ortak';
+import { C, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
 
 const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 
 export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir }) {
   const anahtar = `sp_taslak:${subeId}:${d.gun}:urun_ac`;
-  const ilk = useMemo(() => { try { return JSON.parse(localStorage.getItem(anahtar) || 'null'); } catch { return null; } }, [anahtar]);
+  const ilk = useMemo(() => { return taslakOku(anahtar) }, [anahtar]);
   const [adet, setAdet] = useState(ilk?.adet || {});
   const [not, setNot] = useState(ilk?.not || '');
   const [pasif, setPasif] = useState(false);
@@ -23,7 +23,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   const [hata, setHata] = useState('');
   const [mesaj, setMesaj] = useState(ilk && Object.keys(ilk.adet || {}).length ? 'taslak' : '');
   const [flas, setFlas] = useState(false);
-  useEffect(() => { try { localStorage.setItem(anahtar, JSON.stringify({ adet, not, istek })); } catch { /* yok say */ } }, [adet, not, istek, anahtar]);
+  useEffect(() => { taslakYaz(anahtar, { adet, not, istek }); }, [adet, not, istek, anahtar]);
   const taslakYol = `/evvel-yeni/panel/${encodeURIComponent(subeId)}/taslak/urun_ac`;
   const sunucuHazir = useRef(false);
   useEffect(() => {   // sahip: fonksiyon kaybı yok — eski panel taslağı sunucuda tutuyordu (başka PC / silinen tarayıcı)
@@ -74,7 +74,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   const art = (id, dlt) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(9999, (o[id] || 0) + dlt)) }));   // hızlı dokunuşta kaybolmasın
   const temizle = () => {
     setAdet({}); setNot(''); setIstek(yeniIstek()); setMesaj('');
-    try { localStorage.removeItem(anahtar); } catch { /* yok */ }
+    taslakKaldir(anahtar);
     api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/taslak/urun_ac?gun=${encodeURIComponent(d.gun)}`, { method: 'DELETE' }).catch(() => { /* sessiz */ });
   };
 

@@ -5,7 +5,7 @@
 // Sunucu: evvel_yeni_panel_api.depodan_kabul → Depo kabul_yaz (tek işlem). Sök-tak: Depo modülü kapalıysa ekran "kapalı" der.
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, KisiPin, Modal, panelHata, yeniIstek } from './ortak';
+import { C, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
 
 export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
   const paketler = useMemo(() => d.depo_yolda || [], [d.depo_yolda]);
@@ -21,13 +21,12 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
   const [hata, setHata] = useState('');
   useEffect(() => {   // paket değişince o paketin taslağı (yarım sayım kaybolmasın)
     if (!anahtar) return;
-    try { const t = JSON.parse(localStorage.getItem(anahtar) || 'null'); setSay(t?.say || {}); setIstek(t?.istek || yeniIstek()); }
-    catch { setSay({}); setIstek(yeniIstek()); }
+    const t = taslakOku(anahtar); setSay(t?.say || {}); setIstek(t?.istek || yeniIstek());
     setHata(''); setOnay(0); setPin(''); setKisi('');
   }, [anahtar]);
   useEffect(() => {
     if (!anahtar) return;
-    try { localStorage.setItem(anahtar, JSON.stringify({ say, istek })); } catch { /* yok say */ }
+    taslakYaz(anahtar, { say, istek });
   }, [say, istek, anahtar]);
   useEffect(() => { if (secPid && !p) setSecPid(null); }, [secPid, p]);   // paket başka yerden kabul edildiyse
 
@@ -52,7 +51,7 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
       const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/depodan-kabul`, { method: 'POST', body: {
         personel_id: kisi, pin, istek_id: istek, istemci_gunu: d.gun, parti_id: p.parti_id,
         satirlar: kalemler.map((k) => ({ bag: k.bag, sayilan: Number(say[k.bag]?.n || 0), hasarli: Number(say[k.bag]?.h || 0) })) } });
-      try { localStorage.removeItem(anahtar); } catch { /* yok */ }
+      taslakKaldir(anahtar);
       setOnay(0); setPin(''); setKisi(''); setSay({}); setSecPid(null);
       bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : (r.mesaj || 'Paket kabul edildi'), !!r.kuru);
     } catch (e) {

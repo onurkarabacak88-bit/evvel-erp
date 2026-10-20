@@ -14,7 +14,7 @@ import DepodanGelen from './DepodanGelen';
 import AnlikGider, { AvansTeslim } from './AnlikGider';
 import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
-import { AdetListesi, C, CSS, KisiPin, Modal, SayiTusTakimi, TabletQR, kalemGovde, panelHata, tutar, tutarNum, yeniIstek } from './ortak';
+import { AdetListesi, C, CSS, KisiPin, Modal, SayiTusTakimi, TabletQR, kalemGovde, panelHata, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek } from './ortak';
 import { gunKaydir } from '../../utils/trTarih';
 
 export default function SubePaneli({ subeId }) {
@@ -56,12 +56,12 @@ export default function SubePaneli({ subeId }) {
   // 💾 TASLAK (D6): açık formun her değişikliği tablete — pencere kapansa / sayfa yenilense geri gelir (iş günü boyunca)
   const [formGun, setFormGun] = useState(null);   // Codex: açık formun günü, açıldığı an sabitlenir
   const tKey = (m, g) => `sp_taslak:${subeId}:${g || formGun || d?.gun || ''}:${m}`;
-  const taslakSil = (m) => { try { localStorage.removeItem(tKey(m)); } catch { /* yok say */ } };
+  const taslakSil = (m) => { taslakKaldir(tKey(m)); };
   useEffect(() => {
     if (!modal || modal === 'kapanis' || !d) return;
     // Codex: istek kimliği de taslakta (yanıt kaybolsa da tekrar = aynı kayıt); müşteri ad/tel ORTAK tablete yazılmaz
     const { mAd, mTel, ...fGuvenli } = f;   // eslint-disable-line no-unused-vars
-    try { localStorage.setItem(tKey(modal), JSON.stringify({ adet, sebep, sayim, f: fGuvenli, istek })); } catch { /* yok say */ }
+    taslakYaz(tKey(modal), { adet, sebep, sayim, f: fGuvenli, istek });
   }, [modal, adet, sebep, sayim, f, istek]);   // eslint-disable-line react-hooks/exhaustive-deps
 
   // 🔁 KUYRUK (D6): internet yoksa gönderim tablette bekler, gelince kendiliğinden gider (istek_id → ikinci kez yazılmaz)
@@ -97,7 +97,8 @@ export default function SubePaneli({ subeId }) {
   }, [kuyruguGonder]);
 
   const yukle = useCallback(() => api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/durum`)
-    .then((x) => { setD(x); setHata(''); }).catch((e) => setHata(e?.message || 'Panel açılamadı')), [subeId]);
+    .then((x) => { setD(x); setHata(''); taslakTemizle(subeId, x.gun, (x.depo_yolda || []).map((p) => p.parti_id)); })   // F#53: eski taslak birikmesin
+    .catch((e) => setHata(e?.message || 'Panel açılamadı')), [subeId]);
   const [kapiGecildi, setKapiGecildi] = useState(false);   // yalnız DENEME'de "QR'sız geç" (saklanmaz — her yüklemede kapı yine görünür)
   const [sihirbazElle, setSihirbazElle] = useState(false);
   const [denemeKapandi, setDenemeKapandi] = useState(false);
@@ -145,7 +146,7 @@ export default function SubePaneli({ subeId }) {
     setKisi(adaylar.length === 1 ? adaylar[0] : '');
     setFormGun(d.gun);
     let t = null;
-    try { t = m !== 'kapanis' ? JSON.parse(localStorage.getItem(tKey(m, d.gun)) || 'null') : null; } catch { t = null; }
+    t = m !== 'kapanis' ? taslakOku(tKey(m, d.gun)) : null;
     if (t) {
       const { mAd, mTel, ...fGuvenli } = t.f || {};   // eslint-disable-line no-unused-vars
       setAdet(t.adet || {}); setSebep(t.sebep || ''); setSayim(t.sayim || {}); setF(fGuvenli); if (t.istek) setIstek(t.istek);

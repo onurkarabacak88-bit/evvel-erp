@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { CSS_AW, trSaat } from './AcilisSihirbazi';
-import { C, sayi, TabletQR, tl, tutar, tutarNum, yeniIstek } from './ortak';
+import { C, TabletQR, sayi, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, yeniIstek } from './ortak';
 import { gunKaydir } from '../../utils/trTarih';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
@@ -32,7 +32,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   const yok = d.yoklama || {};
   const iceride = (yok.girenler || []).filter((g) => g.acik);
   const anahtar = `sp_taslak:${subeId}:${gun}:kapanis_sihirbaz`;   // iş gününe bağlı (eski: 18 saat)
-  const ilk = (() => { try { return JSON.parse(localStorage.getItem(anahtar) || 'null'); } catch { return null; } })();
+  const ilk = (() => { return taslakOku(anahtar) })();
   useEffect(() => {   // eski günlerin taslakları birikmesin — DÜNÜNKÜ silinmez (gece yarısı gönderilmemiş kapanış kurtarılır)
     try {
       const dun = gunKaydir(gun, -1);   // Dalga 5 (F#56)
@@ -58,7 +58,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   useEffect(() => { const t = window.setInterval(() => setSaat(new Date()), 10000); return () => window.clearInterval(t); }, []);
   useEffect(() => {   // 💾 her tuşta tablete (eski kapTaslakKaydet)
     if (sonuc) return;
-    try { localStorage.setItem(anahtar, JSON.stringify({ adim: Math.min(adim, 4), v, sayim, istek })); } catch { /* yok say */ }
+    taslakYaz(anahtar, { adim: Math.min(adim, 4), v, sayim, istek });
   }, [adim, v, sayim, istek, anahtar, sonuc]);
   const set = (k, x) => setV((o) => ({ ...o, [k]: x }));
   const git = (n) => { setHata(''); setYon(n > adim ? 'ileri' : 'geri'); setAdim(n); };
@@ -82,7 +82,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   const sonucGoster = useCallback((s) => {
     if (sonucOldu.current) return;
     sonucOldu.current = true;
-    try { localStorage.removeItem(anahtar); } catch { /* yok say */ }
+    taslakKaldir(anahtar);
     setSonuc(s);
     if (s.tur === 'tamam') window.setTimeout(() => ebeveyn.current.bitti(), 2200);
   }, [anahtar]);

@@ -36,6 +36,25 @@ export const CSS = `
 @media (max-width:768px){.sp-govde{grid-template-columns:1fr} .sp-sag-kolon{display:none} .sp-alt{height:62px}}
 `;
 
+// 💾 TASLAK (tablette) — TEK kaynak (Dalga 5, F#53: 7 ekran ayrı try/JSON yazıyordu; Ürün aç / Tedarikçi / Sipariş / Depodan gelen
+// taslakları hiç temizlenmiyordu, Depodan gelen anahtarı günsüzdü). Anahtar: sp_taslak:{şube}:{iş günü | depo_kabul}:{form}.
+export const taslakOku = (k) => { try { return k ? JSON.parse(localStorage.getItem(k) || 'null') : null; } catch { return null; } };
+export const taslakYaz = (k, v) => { try { if (k) localStorage.setItem(k, JSON.stringify(v)); } catch { /* yer yok / gizli pencere */ } };
+export const taslakKaldir = (k) => { try { if (k) localStorage.removeItem(k); } catch { /* yok say */ } };
+// Panel açılınca: DÜNDEN eski günlü taslaklar + artık yolda olmayan paketlerin 'depo_kabul' taslakları silinir (dünkü kapanış kurtarılabilsin diye dün kalır)
+export const taslakTemizle = (subeId, gun, yoldakiPartiler = []) => {
+  try {
+    const dun = new Date(`${gun}T12:00:00Z`); dun.setUTCDate(dun.getUTCDate() - 1);
+    const sinir = dun.toISOString().slice(0, 10);
+    const yolda = new Set((yoldakiPartiler || []).map(String));
+    const on = `sp_taslak:${subeId}:`;
+    Object.keys(localStorage).filter((k) => k.startsWith(on)).forEach((k) => {
+      const parca = k.slice(on.length).split(':');
+      if (/^\d{4}-\d{2}-\d{2}$/.test(parca[0]) ? parca[0] < sinir : (parca[0] === 'depo_kabul' && !yolda.has(parca[1]))) localStorage.removeItem(k);
+    });
+  } catch { /* yok say */ }
+};
+
 export const yeniIstek = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).slice(0, 60);
 export const tl = (x) => (Number(x || 0)).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
 export const sayi = (s) => String(s ?? '').replace(/[^\d]/g, '');

@@ -5,7 +5,7 @@
 // ya da "🚚 Yola çıkar" (kısmi → kalan merkeze döner). Sunucu: evvel_yeni_panel_api (/siparis, /siparisler, /gonderilecek) → Sipariş modülü.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, KisiPin, Modal, panelHata, yeniIstek } from './ortak';
+import { C, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
 
 const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 const DURUM = {
@@ -32,7 +32,7 @@ function Kapali() {
 // ─────────────────────────── 🛒 SİPARİŞ VER ───────────────────────────
 export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
   const anahtar = `sp_taslak:${subeId}:${d.gun}:siparis`;
-  const ilk = useMemo(() => { try { return JSON.parse(localStorage.getItem(anahtar) || 'null'); } catch { return null; } }, [anahtar]);
+  const ilk = useMemo(() => { return taslakOku(anahtar) }, [anahtar]);
   const [v, , yukle] = useSiparisler(subeId);
   const [adet, setAdet] = useState(ilk?.adet || {});
   const [oneri, setOneri] = useState(ilk?.oneri || []);      // [{ad, adet}] katalog dışı (D4)
@@ -46,7 +46,7 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
   const [pin, setPin] = useState('');
   const [mesgul, setMesgul] = useState(false);
   const [hata, setHata] = useState('');
-  useEffect(() => { try { localStorage.setItem(anahtar, JSON.stringify({ adet, oneri, not, istek })); } catch { /* yok */ } }, [adet, oneri, not, istek, anahtar]);
+  useEffect(() => { taslakYaz(anahtar, { adet, oneri, not, istek }); }, [adet, oneri, not, istek, anahtar]);
   const katalog = useMemo(() => (d.ac_katalog || []).map((k) => ({ ...k, urunler: k.urunler.filter((u) => u.aktif) })).filter((k) => k.urunler.length), [d.ac_katalog]);
   const urunMap = useMemo(() => Object.fromEntries(katalog.flatMap((k) => k.urunler.map((u) => [u.id, u]))), [katalog]);
   const secili = Object.entries(adet).filter(([id, n]) => n > 0 && urunMap[id]);
@@ -54,7 +54,7 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
   const acikSayi = (v?.siparisler || []).filter((s) => s.durum === 'acik').length;
   if (d.siparis_acik === false) return <Kapali />;
   const degis = (id, n) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(99999, n)) }));
-  const temizle = () => { setAdet({}); setOneri([]); setNot(''); setIstek(yeniIstek()); try { localStorage.removeItem(anahtar); } catch { /* yok */ } };
+  const temizle = () => { setAdet({}); setOneri([]); setNot(''); setIstek(yeniIstek()); taslakKaldir(anahtar); };
   const oneriEkle = () => {
     const a = parseInt(onAdet, 10);
     if (onAd.trim().length < 2 || !(a > 0)) { setHata('Katalogda olmayan ürünün adını ve adedini yaz'); return; }

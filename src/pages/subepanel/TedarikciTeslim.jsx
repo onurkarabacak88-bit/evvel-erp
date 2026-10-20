@@ -5,13 +5,13 @@
 // Sök-tak: Toptancılar modülü kapalıysa ekran "kapalı" der. Sipariş modu / eksik bildirimi sipariş basamağıyla (ertelendi). Bip YOK (sahip).
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, KisiPin, Modal, TabletQR, panelHata, tl, tutar, tutarNum, yeniIstek } from './ortak';
+import { C, KisiPin, Modal, TabletQR, panelHata, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, yeniIstek } from './ortak';
 
 const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 
 export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, secimBildir, tabletVar }) {
   const anahtar = `sp_taslak:${subeId}:${d.gun}:teslim_al`;
-  const ilk = useMemo(() => { try { return JSON.parse(localStorage.getItem(anahtar) || 'null'); } catch { return null; } }, [anahtar]);
+  const ilk = useMemo(() => { return taslakOku(anahtar) }, [anahtar]);
   const [adet, setAdet] = useState(ilk?.adet || {});
   const [koli, setKoli] = useState(ilk?.koli || {});            // {urun_id: {koli, tek}} — yalnız ekran yardımcısı + iz
   const [toptanci, setToptanci] = useState(ilk?.toptanci || '');
@@ -29,7 +29,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   const [hata, setHata] = useState('');
   const [foto, setFoto] = useState(null);   // E1: kayıttan sonra { teslim_id, toptanci, fatura } → "📷 Faturayı çek" QR
   useEffect(() => {
-    try { localStorage.setItem(anahtar, JSON.stringify({ adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek })); } catch { /* yok say */ }
+    taslakYaz(anahtar, { adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek });
   }, [adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek, anahtar]);
 
   const katalog = d.ac_katalog || [];
@@ -51,7 +51,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   };
   const temizle = () => {
     setAdet({}); setKoli({}); setToptanci(''); setFatura(null); setFtTutar(''); setFtNo(''); setNot(''); setIstek(yeniIstek());
-    try { localStorage.removeItem(anahtar); } catch { /* yok */ }
+    taslakKaldir(anahtar);
   };
   const onayAc = () => {   // eski validateAndSubmit sırası
     setHata('');

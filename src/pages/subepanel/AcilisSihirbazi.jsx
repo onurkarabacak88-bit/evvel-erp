@@ -3,7 +3,7 @@
 // sunucu açılışı ONAYLAYANIN adına yazar (S17: girişli herhangi bir personel). Tak-çıkar: yalnız props; sunucu uçları panel modülünde.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, sayi, TabletQR, tl, tutar, tutarNum, yeniIstek } from './ortak';
+import { C, TabletQR, sayi, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, yeniIstek } from './ortak';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
 const BASLIK = ['', 'Kasa Sayımı', 'Bardak Stoku', 'Ürün Stoku', 'Pasta Stoku', 'QR ile Onay'];
@@ -57,7 +57,7 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
   const bardaklar = urunler.filter(bardakMi);
   const digerleri = urunler.filter((u) => !bardakMi(u));
   const anahtar = `sp_taslak:${subeId}:${d.gun}:acilis_sihirbaz`;   // iş gününe bağlı (02:00'de yeni gün = yeni form)
-  const ilk = (() => { try { return JSON.parse(localStorage.getItem(anahtar) || 'null'); } catch { return null; } })();
+  const ilk = (() => { return taslakOku(anahtar) })();
   useEffect(() => {   // Fable: eski günlerin sihirbaz taslakları birikmesin
     try {
       Object.keys(localStorage).filter((k) => k.startsWith(`sp_taslak:${subeId}:`) && k.endsWith(':acilis_sihirbaz') && k !== anahtar)
@@ -80,7 +80,7 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
   useEffect(() => { const t = window.setInterval(() => setSaat(new Date()), 10000); return () => window.clearInterval(t); }, []);
   useEffect(() => {   // 💾 her tuşta tablete
     if (basari) return;
-    try { localStorage.setItem(anahtar, JSON.stringify({ adim: Math.min(adim, 4), kasa, sayim, pasta, istek })); } catch { /* yok say */ }
+    taslakYaz(anahtar, { adim: Math.min(adim, 4), kasa, sayim, pasta, istek });
   }, [adim, kasa, sayim, pasta, istek, anahtar, basari]);
 
   const git = (n) => { setHata(''); setYon(n > adim ? 'ileri' : 'geri'); setAdim(n); };
@@ -99,7 +99,7 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
     if (basariOldu.current) return;   // tek sefer (StrictMode / iki yol)
     basariOldu.current = true;
     if (mesaj) setBasariMesaj(mesaj);
-    try { localStorage.removeItem(anahtar); } catch { /* yok say */ }
+    taslakKaldir(anahtar);
     setBasari(true);
     ebeveyn.current.basladi?.();
     window.setTimeout(() => ebeveyn.current.bitti(), 1900);   // eski: ~1,9 sn başarı ekranı (panel bu sürede sihirbazı kapatmaz)
