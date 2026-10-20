@@ -141,7 +141,7 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
         kul = (int(cipa["kullanilabilir"]) + sum(x["tutar"] for x in sonra)) if cipa else None
         limit = int(k["limit_tutar"]) if k.get("limit_tutar") else None
         # son ödeme: çıpanın ekstre borcu − çıpadan sonra yapılan borç ödemeleri
-        ekstre_cipa = next((t for t in ty if t.get("ekstre_borc")), None)
+        ekstre_cipa = next((t for t in ty if t.get("ekstre_borc") is not None), None)   # Codex P2: 0 TL ekstre de teyittir (takvimle aynı)
         so = None
         if ekstre_cipa:
             if ekstre_cipa.get("son_odeme"):   # C-T1-09: takvimle AYNI kural — ödeme o ekstrenin ayına yerleştiyse düşülür

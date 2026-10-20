@@ -219,6 +219,9 @@ def kalem_topla(kalemler, oneri_olur: bool = False, en_cok_kalem: int = 80, biri
             raise HTTPException(400, "Ürün seçilmemiş kalem var — listeyi yenile")
     if not top and not oneriler:
         raise HTTPException(400, "En az bir ürün seç")
+    asan = [u for u, a in top.items() if a > MAKS_ADET]
+    if asan:   # Codex P2: 60.000 + 40.000 birleşince kabul sınırını (99.999) aşıyordu → paket tam kabul edilemezdi
+        raise HTTPException(400, f"Aynı ürünün toplamı en çok {MAKS_ADET:,} olabilir".replace(",", "."))
     if len(top) + len(oneriler) > en_cok_kalem:
         raise HTTPException(400, f"Bir {birim} en çok {en_cok_kalem} kalem")
     return top, oneriler
@@ -276,6 +279,18 @@ def tablo_var(cur, *adlar: str) -> bool:
     """PUBLIC — verilen tablo / indeks adlarının HEPSİ var mı (salt okur, kilit istemez). Dalga 4 (F#14): 6 yerel kopya + ~10 satır içi."""
     cur.execute("SELECT bool_and(to_regclass(x) IS NOT NULL) AS v FROM unnest(%s::text[]) AS x", (list(adlar),))
     return bool(dict(cur.fetchone() or {}).get("v"))
+
+
+def ddl_kur(cur, ad: str, fn, bekleme: str = "3s") -> None:
+    """PUBLIC — TEK DDL modeli (19 Eki dersi + Codex P2): ÇAĞIRANIN işleminde savepoint + kısa lock_timeout; bitince çağıranın
+    ÖNCEKİ lock_timeout değeri geri yüklenir ('DEFAULT' değil — iç içe hazırlıkta dıştaki 3 sn kayboluyordu). Hata → savepoint geri
+    alınır (SET LOCAL de geri gider), istisna çağırana çıkar. Bayrağı çağıran ancak nesneleri SONRAKİ çağrıda görünce açmalı."""
+    cur.execute("SELECT current_setting('lock_timeout') AS v")
+    onceki = dict(cur.fetchone() or {}).get("v") or "0"
+    with savepoint(cur, ad):
+        cur.execute("SELECT set_config('lock_timeout', %s, true)", (bekleme,))
+        fn(cur)
+        cur.execute("SELECT set_config('lock_timeout', %s, true)", (onceki,))
 
 
 def bir_kez(cur, anahtar: str, is_fn, ad: str) -> bool:
@@ -413,7 +428,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "bir_kez", "KuruGeriAl",
+__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "bir_kez", "ddl_kur", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

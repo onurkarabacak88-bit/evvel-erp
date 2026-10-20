@@ -510,10 +510,11 @@ def yoklama_satirlari(cur, bas: date, son: date) -> list:
 def son_okutanlar(cur, sube_id: str, sn: int = 300) -> list:
     """PUBLIC: panelde canlı 'son okutanlar' (yabancı ad hemen görülsün)."""
     cur.execute("""SELECT q.islem, q.zaman, q.personel_id FROM ey_qr_kullanim q
-                    WHERE q.sube_id=%s AND q.zaman > NOW() - (%s || ' seconds')::interval ORDER BY q.zaman DESC LIMIT 8""", (sube_id, str(sn)))
+                    WHERE q.sube_id=%s AND q.zaman > NOW() - (%s || ' seconds')::interval ORDER BY q.zaman DESC LIMIT 50""", (sube_id, str(sn)))
     rows = [dict(x) for x in cur.fetchall() or []]
     pad = _padlar(cur, rows)
-    return [{"ad": pad[r["personel_id"]], "islem": r["islem"], "saat": _saat(r["zaman"])} for r in rows if r["personel_id"] in pad]
+    # Codex P2: önce ad süzgeci, SONRA 8 (JOIN'deki gibi) — kayıtsız kişiler ilk 8'i doldurup geçerlileri saklamasın
+    return [{"ad": pad[r["personel_id"]], "islem": r["islem"], "saat": _saat(r["zaman"])} for r in rows if r["personel_id"] in pad][:8]
 
 
 from evvel_yeni_cekirdek import tr_saat as _saat  # noqa: E402   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek

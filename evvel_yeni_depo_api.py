@@ -67,12 +67,12 @@ def depo_hazirla(cur=None) -> None:
             k.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_kaynak ON ey_stok_hareket (yeni, kaynak, is_gunu)")
             k.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_hedef ON ey_stok_hareket (yeni, hedef, is_gunu)")
             k.execute("CREATE INDEX IF NOT EXISTS idx_ey_stok_h_bag ON ey_stok_hareket (bag)")
-            k.execute("SELECT to_regclass('ey_urun') IS NOT NULL AS var")
-            if dict(k.fetchone())["var"]:   # yeni katalog kimliğiyle yazılmış satırlar yeni evrene (hareket + sayım başlığı)
-                k.execute("""UPDATE ey_stok_hareket SET yeni=TRUE WHERE NOT yeni AND urun_id IN (SELECT id::text FROM ey_urun)""")
+            if __import__("evvel_yeni_cekirdek").tablo_var(k, "ey_urun"):   # yeni katalog kimliğiyle yazılmış satırlar yeni evrene
+                ids = __import__("evvel_yeni_urun_api").urun_idleri(k)   # Ürün'ün PUBLIC kapısı (Codex P2: ey_urun JOIN'i kalktı)
+                k.execute("""UPDATE ey_stok_hareket SET yeni=TRUE WHERE NOT yeni AND urun_id = ANY(%s)""", (ids,))
                 k.execute("""UPDATE ey_stok_sayim s SET yeni=TRUE WHERE NOT yeni AND (
                                id IN (SELECT DISTINCT bag FROM ey_stok_hareket WHERE yeni AND bag IS NOT NULL)
-                               OR EXISTS (SELECT 1 FROM jsonb_array_elements(s.satirlar) e JOIN ey_urun u ON u.id::text = e->>'urun_id'))""")
+                               OR EXISTS (SELECT 1 FROM jsonb_array_elements(s.satirlar) e WHERE e->>'urun_id' = ANY(%s)))""", (ids,))
     except Exception:  # noqa: BLE001
         log.warning("depo hazırlanamadı — sonraki istekte yeniden", exc_info=True)
         raise HTTPException(503, "Depo hazırlanıyor — birkaç saniye sonra tekrar dene")

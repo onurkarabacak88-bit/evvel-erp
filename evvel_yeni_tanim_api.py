@@ -130,10 +130,8 @@ def tanim_hazirla(cur) -> None:
     tam = _tanim_tam(cur)
     if not tam:
         try:
-            with savepoint(cur, "sp_ey_tanim_ddl"):
-                cur.execute("SET LOCAL lock_timeout = '3s'")
-                _tanim_ddl(cur)
-                cur.execute("SET LOCAL lock_timeout = DEFAULT")
+            from evvel_yeni_cekirdek import ddl_kur
+            ddl_kur(cur, "sp_ey_tanim_ddl", _tanim_ddl)   # TEK DDL modeli — çağıranın lock_timeout'u geri yüklenir (Codex P2)
         except Exception:  # noqa: BLE001
             log.warning("tanım tabloları hazırlanamadı", exc_info=True)
             raise HTTPException(503, "Tanımlar hazırlanıyor — birkaç saniye sonra tekrar dene")

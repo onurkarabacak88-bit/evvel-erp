@@ -123,13 +123,14 @@ def _toptanci_ddl(cur) -> None:
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_top_belge ON ey_toptanci_belge (teslim_id) WHERE NOT iptal")
     from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
     if not ayar_oku(cur, "fiyat_gecmis_kopya"):   # bir kez: bugünkü fiyatlar 1 Ekim'den geçerli ilk satır olur
+        _idler = __import__("evvel_yeni_urun_api").urun_idleri(cur)   # Ürün'ün PUBLIC kapısı (Codex P2: ey_urun JOIN'i kalktı)
         cur.execute("""INSERT INTO ey_urun_fiyat_gecmis (id, urun_id, tur, birim, tarih, kaynak, girilen)
                        SELECT 'fg-' || md5(f.urun_id || ':ilk'), f.urun_id, 'elle', f.birim, DATE '2026-10-01', 'ilk kopya (ey_urun_fiyat)', f.girilen
-                         FROM ey_urun_fiyat f JOIN ey_urun u ON u.id::text = f.urun_id ON CONFLICT (id) DO NOTHING""")   # Fable: eski kimlik kopyalanmaz
+                         FROM ey_urun_fiyat f WHERE f.urun_id = ANY(%s) ON CONFLICT (id) DO NOTHING""", (_idler,))   # Fable: eski kimlik kopyalanmaz
         cur.execute("""INSERT INTO ey_urun_fiyat_gecmis (id, urun_id, tur, toptanci_id, birim, tarih, kaynak)
                        SELECT 'fg-' || md5(toptanci_id || ':' || urun_anahtar || ':ilk'), urun_anahtar, 'toptanci', toptanci_id, birim, tarih,
                               'ilk kopya (' || COALESCE(kaynak, 'toptancı') || ')'
-                         FROM ey_toptanci_fiyat f JOIN ey_urun u ON u.id::text = f.urun_anahtar ON CONFLICT (id) DO NOTHING""")
+                         FROM ey_toptanci_fiyat f WHERE f.urun_anahtar = ANY(%s) ON CONFLICT (id) DO NOTHING""", (_idler,))
         ayar_yaz(cur, "fiyat_gecmis_kopya", "1", "kurulum")
 
 

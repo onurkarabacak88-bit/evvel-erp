@@ -151,6 +151,13 @@ def urun_haritasi(cur):
     return coz
 
 
+def urun_idleri(cur) -> List[str]:
+    """PUBLIC — yeni katalogdaki BÜTÜN ürün kimlikleri (pasifler dahil). Depo/Toptancı göçleri ey_urun'a JOIN atıyordu (Codex P2)."""
+    _hazirla()
+    cur.execute("SELECT id::text AS id FROM ey_urun")
+    return [dict(r)["id"] for r in cur.fetchall() or []]
+
+
 def katalog(cur, hepsi: bool = False) -> List[dict]:
     """Kategori → ürünler (birim, koli, KDV, aktif). Fiyat YOK."""
     _hazirla()

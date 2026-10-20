@@ -73,8 +73,17 @@ def _hazirla(cur):
     if _HAZIR:
         return
     from evvel_yeni_tanim_api import tanim_hazirla
+    from evvel_yeni_cekirdek import ddl_kur, tablo_var
     tanim_hazirla(cur)
-    cur.execute("SET LOCAL lock_timeout = '3s'")
+    # Codex P2: tablolar yokken kuran çağrı sonra 404 ile geri alınırsa bayrak açık kalıp sonraki çağrı UndefinedTable/500 veriyordu →
+    # bayrak YALNIZ tablolar GÖRÜLÜNCE; DDL TEK modelle (savepoint + çağıranın lock_timeout'u geri yüklenir)
+    if tablo_var(cur, "ey_maas_ay", "ey_personel_yoklama_karar"):
+        _HAZIR = True
+        return
+    ddl_kur(cur, "sp_ey_maas_ddl", _maas_ddl)
+
+
+def _maas_ddl(cur) -> None:
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_maas_ay (
         personel_id TEXT NOT NULL, ay TEXT NOT NULL,
         eksik_gun NUMERIC(5,2) NOT NULL DEFAULT 0, rapor_gun NUMERIC(5,2) NOT NULL DEFAULT 0, rapor_kesinti BOOLEAN NOT NULL DEFAULT FALSE,
@@ -87,7 +96,6 @@ def _hazirla(cur):
         id TEXT PRIMARY KEY, personel_id TEXT NOT NULL, tarih DATE NOT NULL, karar TEXT NOT NULL,
         izin_bitis DATE, aciklama TEXT, degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     cur.execute("DELETE FROM ey_maas_ay WHERE personel_id='takvim' AND ay='karar'")   # gölgelenme artığı (2026-10-16)
-    _HAZIR = True
 
 
 FM_GUNLUK_ESIK = 9.5   # günlük fazla mesai eşiği (eski vardiya_takip'in varsayılanı — fm_gunluk_esik)
