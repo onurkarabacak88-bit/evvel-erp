@@ -3,10 +3,10 @@
 // her değişiklik izli; tek sayım birimi (adet), koli = giriş yardımcısı ("1 koli kaç adet"). Fiyat burada değil (Ürün fiyatları).
 import React, { useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, num, Dugme, Cip } from './KasaModulu';
+import { ALAN, Cip, Dugme, kart, num, PI_CSS, R } from './KasaModulu';
 
 export const URUN_SAYFALAR = [{ id: 'urunler', ad: 'Ürünler', alt: 'Katalog · birim · koli · KDV' }];
-const alan = { padding: '8px 10px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, minWidth: 0, width: '100%' };
+const alan = { ...ALAN, minWidth: 0, width: '100%' };   // temel stil KasaModulu ALAN (T4-15)
 const KDVLER = [['', '—'], ['0.01', '%1'], ['0.10', '%10'], ['0.20', '%20']];
 
 export default function UrunModulu({ onToast }) {

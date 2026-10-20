@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { PATRONLAR, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, odemeFisi, fmt, tl, tKisa } from './KasaModulu';
+import { ALAN, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, odemeFisi, PATRONLAR, PI_CSS, R, tKisa, tl } from './KasaModulu';
 import { ayKaydir, ayTR, bugunTR, gunKaydir as trGunKaydir } from '../../utils/trTarih';
 
 export const ODEME_SAYFALAR = [
@@ -18,10 +18,7 @@ export const ODEME_SAYFALAR = [
   { id: 'kira_takvimi', ad: 'Kira takvimi', alt: 'Şube × ay · artış ayları' },
 ];
 
-const alan = {
-  width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)',
-  color: 'var(--pi-ink)', font: 'inherit', fontSize: 15, minWidth: 0,
-};
+const alan = { ...ALAN, width: '100%', padding: '10px 12px', fontSize: 15, minWidth: 0 };   // temel stil KasaModulu ALAN (T4-15)
 const ayBugun = ayTR;   // Dalga 5 (C-T4-02): tarih tek kaynaktan
 const gunBugun = bugunTR;
 

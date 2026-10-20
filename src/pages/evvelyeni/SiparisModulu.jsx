@@ -5,10 +5,10 @@
 // Ortak parçalar KasaModulu'ndan (PI_CSS, R, kart, Dugme, Cip) — yeni stil yazılmaz. Listeler: /odeme/listeler (toptancılar) + /urun/katalog.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, num, Dugme, Cip, tKisa } from './KasaModulu';
+import { ALAN, Cip, Dugme, kart, num, PI_CSS, R, tKisa } from './KasaModulu';
 
 export const SIPARIS_SAYFALAR = [{ id: 'siparis_yon', ad: 'Sipariş yönlendirme', alt: 'Şube talepleri → depo / toptancı' }];
-const alan = { padding: '5px 8px', borderRadius: 8, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 13 };
+const alan = { ...ALAN, padding: '5px 8px', borderRadius: 8, fontSize: 13 };   // temel stil KasaModulu ALAN (T4-15)
 const DURUM = {
   yonlendirilmedi: ['Yönlendirilmedi', 'kirmizi'], hazirlaniyor: ['Depoda hazırlanıyor', 'sari'], bekleniyor: ['Toptancıdan bekleniyor', 'sari'],
   yolda: ['Yolda', 'bakir'], karsilandi: ['Karşılandı', 'yesil'], oneri: ['Katalog dışı öneri', 'kirmizi'], iptal: ['İptal', undefined],

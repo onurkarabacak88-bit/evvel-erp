@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, num, Dugme, Cip, Cekmece, tKisa } from './KasaModulu';
+import { ALAN, Cekmece, Cip, Dugme, kart, num, PI_CSS, R, tKisa } from './KasaModulu';
 import { yeniIstekId as yeniIstek } from '../../utils/cihazImza';
 
 export const DEPO_SAYFALAR = [
@@ -18,10 +18,7 @@ export const DEPO_SAYFALAR = [
   { id: 'depo_sayim', ad: 'Depo sayımı', alt: 'Kör sayım · açılış sayımı' },
 ];
 
-const alan = {
-  width: '100%', padding: '8px 10px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)',
-  color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, minWidth: 0,
-};
+const alan = { ...ALAN, width: '100%', borderRadius: 9, minWidth: 0 };   // temel stil KasaModulu ALAN (T4-15)
 
 // Kimlik evreni (Fable altyapı denetimi): 1 Kasım'dan itibaren YENİ katalog (sunucu kendisi seçer); öncesinde geçiş (eski aktarım).
 // Merkez 1 Kasım'dan önce "Yeni katalog" görünümüne geçip yeni kimlikle açılış sayımı yapabilir. Seçim bu tarayıcıda hatırlanır.

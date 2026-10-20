@@ -3,7 +3,7 @@
 // basit ama işlevsel." · "Kasım'da sıfır başlasın." 3 sekme: Ev kiraları (ev × ay) · İşletmelerin borcu (şube × ay) · Uyarılar.
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, num, Dugme, Cip, fmt, sayiTR, tKisa } from './KasaModulu';
+import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayiTR, tKisa } from './KasaModulu';
 import { ayTR, bugunTR } from '../../utils/trTarih';
 import { AY, AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici } from './AyTakvim';
 
@@ -12,7 +12,7 @@ export const MULK_SAYFALAR = [
   { id: 'mulk_borc', ad: 'İşletmelerin borcu', alt: 'Kira hesabından alınan − geri ödenen' },
   { id: 'mulk_uyari', ad: 'Uyarılar', alt: 'Geciken kira · artış ayı' },
 ];
-const alan = { padding: '8px 10px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, minWidth: 0, width: '100%' };
+const alan = { ...ALAN, minWidth: 0, width: '100%' };   // temel stil KasaModulu ALAN (T4-15)
 const ayBugun = ayTR;     // C-T4-02: UTC değil TR (tahsilat tarihi gece 00–03 arası dün olmasın)
 const gunBugun = bugunTR;
 const yeniId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;

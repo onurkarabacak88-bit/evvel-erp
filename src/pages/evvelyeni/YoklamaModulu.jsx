@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import { ayTR, bugunTR } from '../../utils/trTarih';
-import { PI_CSS, R, kart, num, Dugme, Cip } from './KasaModulu';
+import { ALAN, Cip, Dugme, kart, num, PI_CSS, R } from './KasaModulu';
 import { tlYaz } from '../../utils/trSayi';
 
 export const YOKLAMA_SAYFALAR = [
@@ -15,7 +15,7 @@ export const YOKLAMA_SAYFALAR = [
   { id: 'personel_mola', ad: 'Yemek molaları', alt: 'Gün gün mola · süre · yemek hakkı ✓/✗ · elle hak' },
   { id: 'personel_devir', ad: 'Devirler', alt: 'Kasa devri çift onay · tutmuyor notları · tamamlanmayanı kapat' },
 ];
-const alan = { padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 13.5 };
+const alan = { ...ALAN, padding: '6px 9px', borderRadius: 9, fontSize: 13.5 };   // temel stil KasaModulu ALAN (T4-15)
 const satir = { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${R.cizgi}`, padding: '8px 0', fontSize: 13.5 };
 
 function cihazDurum(c) {

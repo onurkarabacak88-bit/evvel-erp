@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, fmt, tl } from './KasaModulu';
+import { ALAN, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tl } from './KasaModulu';
 import { ayKaydir, ayTR } from '../../utils/trTarih';
 
 export const MAAS_SAYFALAR = [
@@ -17,7 +17,7 @@ export const MAAS_SAYFALAR = [
   { id: 'personel_takvim', ad: 'Personel takvimi', alt: 'Gün gün hangi şubede · izinli' },
 ];
 
-const alan = { padding: '8px 10px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, width: 110 };
+const alan = { ...ALAN, borderRadius: 9, width: 110 };   // temel stil KasaModulu ALAN (T4-15)
 // Varsayılan: ödenecek ay = geçen ay; ama Evvel Yeni öncesi (kapanmış) aylar varsayılan olmaz → en erken Ekim 2026
 const gecenAy = () => { const a = ayKaydir(ayTR(), -1); return a < '2026-10' ? '2026-10' : a; };
 const sayi = (x) => sayiTR(x, null);   // tek kaynak utils/trSayi

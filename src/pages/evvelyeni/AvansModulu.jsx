@@ -3,10 +3,10 @@
 // burada havaleyle öde (bankadan düşer, maaştan mahsup) · elden ver (şubeden) · reddet.
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, num, Dugme, Cip, fmt } from './KasaModulu';
+import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R } from './KasaModulu';
 
 export const AVANS_SAYFALAR = [{ id: 'avans_talepleri', ad: 'Avans talepleri', alt: 'Personelin talepleri · öde / reddet' }];
-const alan = { padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 13.5 };
+const alan = { ...ALAN, padding: '6px 9px', borderRadius: 9, fontSize: 13.5 };   // temel stil KasaModulu ALAN (T4-15)
 
 export default function AvansModulu({ onToast }) {
   const [v, setV] = useState(null);

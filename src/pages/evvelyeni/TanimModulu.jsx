@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { PI_CSS, R, kart, num, Dugme, Cip, fmt } from './KasaModulu';
+import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R } from './KasaModulu';
 
 export const TANIM_SAYFALAR = [
   { id: 'tanim_sube', ad: 'Şubeler', alt: 'Ekle · komisyon oranı' },
@@ -17,7 +17,7 @@ export const TANIM_SAYFALAR = [
   { id: 'tanim_toptanci', ad: 'Toptancılar', alt: 'Ekle · açılış bakiyesi' },
 ];
 
-const alan = { width: '100%', padding: '9px 11px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14.5, minWidth: 0 };
+const alan = { ...ALAN, width: '100%', padding: '9px 11px', fontSize: 14.5, minWidth: 0 };   // temel stil KasaModulu ALAN (T4-15)
 const sayi = (x) => sayiTR(x, null);   // tek kaynak utils/trSayi
 
 // Her tanımın alanları — tek bileşen hepsini çizer

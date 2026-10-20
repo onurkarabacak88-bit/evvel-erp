@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { PI_CSS, R, kart, num, Dugme, Cip, fmt, tUzun, tKisa } from './KasaModulu';
+import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, tUzun } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici, tutarYaz } from './AyTakvim';
 import { bugunTR } from '../../utils/trTarih';
 
@@ -18,10 +18,7 @@ export const KART_SAYFALAR = [
   { id: 'kart_takvimi', ad: 'Kart ödeme takvimi', alt: 'Kart × ay · son ödemeler' },
 ];
 
-const alan = {
-  width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)',
-  color: 'var(--pi-ink)', font: 'inherit', fontSize: 15, minWidth: 0,
-};
+const alan = { ...ALAN, width: '100%', padding: '10px 12px', fontSize: 15, minWidth: 0 };   // temel stil KasaModulu ALAN (T4-15)
 const sayi = (x) => sayiTR(x, null);   // tek kaynak utils/trSayi
 const gunBugun = bugunTR;   // Dalga 5 (C-T4-02): tarih tek kaynaktan
 

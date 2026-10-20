@@ -8,17 +8,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { PI_CSS, R, kart, num, Dugme, Cip, Cekmece, fmt, tKisa } from './KasaModulu';
+import { ALAN, Cekmece, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa } from './KasaModulu';
 
 export const TOPTANCI_SAYFALAR = [
   { id: 'toptancilar', ad: 'Toptancılar', alt: 'Borcumuz · vade · teslimler' },
   { id: 'urun_fiyatlari', ad: 'Ürün fiyatları', alt: 'Panel kategorileri · eksik fiyat' },
 ];
 
-const alan = {
-  width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)',
-  color: 'var(--pi-ink)', font: 'inherit', fontSize: 15, minWidth: 0,
-};
+const alan = { ...ALAN, width: '100%', padding: '10px 12px', fontSize: 15, minWidth: 0 };   // temel stil KasaModulu ALAN (T4-15)
 const sayi = (x) => sayiTR(x, null);   // tek kaynak utils/trSayi
 const gunStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 // Sahip: "fiyat yok tıklayınca direkt o alana gitsin — köprü olsun"

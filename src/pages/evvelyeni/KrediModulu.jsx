@@ -2,12 +2,12 @@
 // kredi × 12 ay (kira takvimi gibi). Borç = taksit; ödeme Ödeme ekranından (kredi seçilerek) → takvimde "ödendi".
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, num, Dugme, fmt, sayiTR, tKisa } from './KasaModulu';
+import { ALAN, Dugme, fmt, num, PI_CSS, R, sayiTR, tKisa } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici, tutarYaz } from './AyTakvim';
 
 export const KREDI_SAYFALAR = [{ id: 'kredi_takvimi', ad: 'Kredi takvimi', alt: 'Kredi × ay · taksitler' }];
-const alan = { padding: '8px 10px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, minWidth: 0, width: '100%' };
+const alan = { ...ALAN, minWidth: 0, width: '100%' };   // temel stil KasaModulu ALAN (T4-15)
 const ayBugun = ayTR;   // C-T4-02: UTC değil TR (gece 00–03 arası önceki aya kaymasın)
 
 export default function KrediModulu({ onToast, onSekme }) {

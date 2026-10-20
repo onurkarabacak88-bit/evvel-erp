@@ -4,11 +4,11 @@
 // Kaydedilen satır Ödeme'nin kendi kaydıdır (kartla fatura) → şube gideri; bir kez seçilen şube sonraki ay hatırlanır.
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, fmt, tKisa } from './KasaModulu';
+import { ALAN, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tKisa } from './KasaModulu';
 
 export const FATURA_SAYFALAR = [{ id: 'fatura_dagit', ad: 'Faturaları dağıt', alt: 'Kart ekstresi → şube gideri' }];
 
-const alan = { padding: '8px 10px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, minWidth: 0 };
+const alan = { ...ALAN, minWidth: 0 };   // temel stil KasaModulu ALAN (T4-15)
 
 export default function FaturaModulu({ onToast }) {
   const [kartlar, setKartlar] = useState([]);
