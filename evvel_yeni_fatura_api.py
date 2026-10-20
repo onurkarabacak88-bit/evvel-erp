@@ -32,7 +32,7 @@ from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun
 router = APIRouter(prefix="/api/evvel-yeni/fatura", tags=["evvel-yeni-fatura"])
 log = logging.getLogger(__name__)
 
-PATRONLAR = ("Onur", "Fethi", "Fatma")
+from evvel_yeni_kasa_api import PATRONLAR   # TEK liste Kasa'da (C-T1-34)
 # Fatura/abonelik olabilecek satırları tanıyan sözcükler (büyük harf, Türkçe karakter sadeleştirilmiş)
 ADAY_SOZLER = ("SU ", " SU", "KOSKI", "ISKI", "ELEKTR", "ENERJ", "ENERYA", "DOGALGAZ", "GAZ DAG", "INTERNET", "TELEKOM",
                "TURKCELL", "VODAFONE", "SUPERONLINE", "TURKNET", "AIDAT", "FATURA", "TALIMAT", "OTOMATIK ODEME", "POS ")

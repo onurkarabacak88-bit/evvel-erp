@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, odemeFisi, fmt, tl, tKisa } from './KasaModulu';
+import { PATRONLAR, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, odemeFisi, fmt, tl, tKisa } from './KasaModulu';
 
 export const ODEME_SAYFALAR = [
   { id: 'odemeler', ad: 'Ödeme / gider gir', alt: 'Nakit · havale · kart' },
@@ -285,7 +285,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
             )}
             {(f.konu === 'diger' || f.konu === 'anlik') && f.kimin === 'patron' && (
               <Etiket ad="Hangi patron"><select style={alan} value={f.patron || ''} onChange={(e) => set('patron', e.target.value)}>
-                <option value="">Seç… (sonra da seçilebilir)</option>{['Onur', 'Fethi', 'Fatma'].map((p) => <option key={p}>{p}</option>)}
+                <option value="">Seç… (sonra da seçilebilir)</option>{PATRONLAR.map((p) => <option key={p}>{p}</option>)}
               </select></Etiket>
             )}
             {['kira', 'fatura', 'personel'].includes(f.konu) && (

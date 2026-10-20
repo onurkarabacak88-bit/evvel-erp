@@ -91,6 +91,8 @@ button.pi-kapi:hover{border-color:var(--pi-accent)}
 const AY = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const GUNLER = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
 // Kuruş görünür (Codex): 999,75 ₺ "1.000" diye yuvarlanmaz.
+// Patronlar — TEK liste (sunucuda evvel_yeni_kasa_api.PATRONLAR ile aynı; C-T1-34)
+const PATRONLAR = ['Onur', 'Fethi', 'Fatma'];
 const fmt = (n) => (Number(n) || 0).toLocaleString('tr-TR', { maximumFractionDigits: 2 });
 const tl = (n) => `${fmt(n)} ₺`;
 const tUzun = (s) => { if (!s) return ''; const p = s.split('-'); return `${+p[2]} ${AY[+p[1] - 1]}`; };
@@ -419,7 +421,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
             <Alan etiket="Ne geldi"><select value={d.alt} onChange={set('alt')} style={alanStil}>{(veri.dis_turleri || []).map((x) => <option key={x.kod} value={x.kod}>{x.ad}</option>)}</select></Alan>
             <Alan etiket="Kimden" ipucu={d.alt === 'destek' ? 'Desteği koyan patron' : (['borc', 'kredi'].includes(d.alt) ? 'Geri ödenecek — kimden alındı' : null)}>
               <input list="pi-kisiler" value={d.kimden || ''} onChange={set('kimden')} style={alanStil} placeholder="ör. Ziraat, Onur" />
-              <datalist id="pi-kisiler"><option value="Onur" /><option value="Fethi" /><option value="Fatma" /></datalist>
+              <datalist id="pi-kisiler">{PATRONLAR.map((p) => <option key={p} value={p} />)}</datalist>
             </Alan>
             <Alan etiket="Hangi cebe girdi" ipucu={d.alt === 'kira' ? 'Kira genelde Fatma\'nın kira hesabına girer' : null}>
               <select value={d.cep} onChange={set('cep')} style={alanStil}>{secenek(null)}</select>
@@ -518,7 +520,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
           </div>
           <div style={izgara}>
             <Alan etiket="Sebep"><select value={d.sebep} onChange={set('sebep')} style={alanStil}>{fark.sebep_secenekleri.map((s) => <option key={s.kod} value={s.kod}>{s.ad}</option>)}</select></Alan>
-            <Alan etiket="Sorumlu"><select value={d.sorumlu} onChange={set('sorumlu')} style={alanStil}>{['', 'Onur', 'Fethi', 'Fatma', 'Şube personeli', 'Bilinmiyor'].map((x) => <option key={x} value={x}>{x || 'Seçilmedi'}</option>)}</select></Alan>
+            <Alan etiket="Sorumlu"><select value={d.sorumlu} onChange={set('sorumlu')} style={alanStil}>{['', ...PATRONLAR, 'Şube personeli', 'Bilinmiyor'].map((x) => <option key={x} value={x}>{x || 'Seçilmedi'}</option>)}</select></Alan>
             {gunAlani}
           </div>
           <Alan etiket="Açıklama" ipucu={['kayip', 'harcandi'].includes(d.sebep) ? 'Kayba ya da harcamaya yazarken zorunlu' : null}><input value={d.not || ''} onChange={set('not')} style={alanStil} /></Alan>
@@ -1571,4 +1573,4 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
 }
 
 // Diğer Evvel Yeni bölümleri (Gelir, Gider…) aynı görsel dili kullanır
-export { odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
+export { PATRONLAR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };

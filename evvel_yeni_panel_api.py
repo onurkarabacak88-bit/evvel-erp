@@ -31,7 +31,8 @@ from evvel_yeni_cekirdek import ayar_oku, bekleyen_is_kaydet, is_gunu as _bugun,
 router = APIRouter(prefix="/api/evvel-yeni/panel", tags=["evvel-yeni-panel"])
 log = logging.getLogger(__name__)
 VARSAYILAN_BASLANGIC = "2026-11-01"
-TESLIM_ALANLAR = ("ev:onur", "ev:fethi", "ev:fatma")     # sahip kararı: teslim yalnız Onur / Fethi / Fatma
+from evvel_yeni_kasa_api import TESLIM_HEDEFLERI as _TH   # TEK liste Kasa'da (C-T1-34; Fethi → geçiş hesabı)
+TESLIM_ALANLAR = tuple(_TH.values())     # sahip kararı: teslim yalnız Onur / Fethi / Fatma
 KIM = "şube paneli"
 
 
@@ -339,7 +340,7 @@ def panel_durum(sube_id: str):
     def _u(x):
         return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici")}
     return {"sube": {"id": s["id"], "ad": s["ad"], "depo": depo_mu}, "depo_acik": depo_acik, "depo_yolda": depo_yolda, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
-            "personel": per, "teslim_alanlar": [{"id": c, "ad": c.split(":")[1].capitalize()} for c in TESLIM_ALANLAR],
+            "personel": per, "teslim_alanlar": [{"id": c, "ad": a} for a, c in _TH.items()],
             "sayilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "sayim" and x.get("panel_sayim")]}
                         for k in kat],
             "acilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "acilinca"]} for k in kat],

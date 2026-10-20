@@ -54,7 +54,8 @@ FATURA_TURLERI = ["Elektrik", "Su", "Doğalgaz", "İnternet / telefon", "Diğer 
 VERGI_TURLERI = ["KDV", "Muhtasar / stopaj", "Gelir / kurumlar vergisi", "Diğer vergi"]
 # Sahip (2026-10-17): "SGK da vergi de ödemelerden TEK düşümle; her alan bu alana yönlendirsin" → SGK/vergi personel kaleminden çıktı (Vergi konusu)
 PERSONEL_KALEMLERI = ["Maaş", "Avans", "Yemek ücreti", "Prim"]
-PATRONLAR = ["Onur", "Fethi", "Fatma"]   # sahip: "hangi patronun harcaması olduğuna karar verelim"
+from evvel_yeni_kasa_api import PATRONLAR as _P
+PATRONLAR = list(_P)   # sahip: "hangi patronun harcaması olduğuna karar verelim" — TEK liste Kasa'da (C-T1-34)
 
 
 def _listeler(cur) -> dict:

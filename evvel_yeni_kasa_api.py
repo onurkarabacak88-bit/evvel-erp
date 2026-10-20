@@ -88,6 +88,10 @@ PATRON_CEPLERI = [
 # İÇİNDE (ödemede kaynak seçilebilir) ama işletme parasından AYRI görünür; ondan çıkan
 # ödeme "kiradan destek" diye işaretlenir. ([[project_mulk_defteri]] ayrımı korunur.)
 KIRA_CEPLERI = {"banka:fatma_kira"}
+# PUBLIC — patronlar + nakit teslim hedefleri TEK liste (tekrar denetimi C-T1-34: Ödeme/Fatura/Panel ayrı listeler tutuyordu;
+# yeni panel Fethi teslimini 'ev:fethi'ye, eski aktarım 'hesap:fethi'ye yazıyordu). Sahip (2026-10-16): Fethi'ye teslim GEÇİŞ HESABINA.
+PATRONLAR = ("Onur", "Fethi", "Fatma")
+TESLIM_HEDEFLERI = {"Onur": "ev:onur", "Fethi": "hesap:fethi", "Fatma": "ev:fatma"}
 # Sahip: "POS bir gün sonra hesaba geçiyor" → kapanışın POS'u ERTESİ GÜN şube bankasına
 # kendiliğinden yazılır (brüt − komisyon oranı = beklenen net, 'otomatik'). Gerçek kontrol
 # EKSTRE BAKİYESİYLE (banka sayımı): yatmayan/farklı yatan POS orada açık fark olur.
@@ -1314,8 +1318,8 @@ def _patron_bul(ad: str) -> Optional[str]:
     """kasa_teslim.teslim_alan_ad serbest metin — Onur/Fethi/Fatma adını içeriyorsa eşle."""
     a = (ad or "").replace("İ", "i").replace("I", "ı").lower()
     # Sahip (2026-10-16): "Fethi evden Fethi hesaba taşı — bankalara geçiş hesabı" → Fethi'ye teslim GEÇİŞ HESABINA düşer
-    for anahtar, cid in (("onur", "ev:onur"), ("fethi", "hesap:fethi"), ("fatma", "ev:fatma")):
-        if anahtar in a:
+    for ad_, cid in TESLIM_HEDEFLERI.items():
+        if ad_.lower() in a:
             return cid
     return None
 
