@@ -72,6 +72,21 @@ export function istekHatasiDinle(fn) {
   return () => _dinleyiciler.delete(fn);
 }
 
+// 🔐 Oturum başlığı — TEK okuyucu (Dalga 5, T4-12: Toptancı belge indirme kendi kopyasını tutuyordu)
+export function oturumBasligi() {
+  try {
+    const j = typeof localStorage !== 'undefined' ? (localStorage.getItem('evvel_oturum') || '').trim() : '';
+    return j ? { 'X-Evvel-Oturum': j } : {};
+  } catch { return {}; }
+}
+
+// Ham bayt (fotoğraf / PDF) indir → nesne adresi (img src / yeni sekme). Yol '/evvel-yeni/...' biçiminde (api() ile aynı).
+export async function apiBlob(path) {
+  const r = await fetch(`${BASE}/api${path}`, { headers: oturumBasligi(), cache: 'no-store' });
+  if (!r.ok) throw new Error('Belge açılamadı');
+  return URL.createObjectURL(await r.blob());
+}
+
 export async function api(path, opts = {}) {
   // 🔴 ÇİFT /api FRENİ (2026-09-12). Bu fonksiyon aşağıda `${BASE}/api${path}`
   // kuruyor; çağıran yola bir de '/api' koyarsa adres '/api/api/...' olur ve
@@ -105,15 +120,7 @@ export async function api(path, opts = {}) {
   // Sunucu tarafinda halka acik yuzeydeki yonetim uclari artik bu jetonu
   // istiyor (is-basvurusu: liste/okuma/ise-al/silme). Jeton yoksa baslik da
   // yok: halka acik uclar (basvuru formu) etkilenmez.
-  try {
-    const jeton =
-      typeof localStorage !== 'undefined'
-        ? (localStorage.getItem('evvel_oturum') || '').trim()
-        : '';
-    if (jeton) headers['X-Evvel-Oturum'] = jeton;
-  } catch {
-    /* ignore */
-  }
+  Object.assign(headers, oturumBasligi());
   let res;
   try {
     res = await fetch(`${BASE}/api${path}`, {

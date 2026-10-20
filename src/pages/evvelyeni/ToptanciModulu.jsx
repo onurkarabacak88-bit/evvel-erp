@@ -6,7 +6,7 @@
 // Bütün rakamlar /api/evvel-yeni/toptanci'dan; ekran yalnız dizer.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
-import { api } from '../../utils/api';
+import { api, apiBlob } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { ALAN, Cekmece, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayfayaGit, tKisa } from './KasaModulu';
 import { Pencere as OrtakPencere } from './AyTakvim';
@@ -24,13 +24,7 @@ const fiyataGit = (urunId) => {
   sayfayaGit('urun_fiyatlari', urunId ? `?urun=${encodeURIComponent(urunId)}` : '?eksik=1');   // TEK sayfa geçişi (T4-13)
 };
 // ── 📒 TOPTANCI KİTABI (E3, sahip 2026-10-19): her teslimin faturası (foto/PDF) sayfa sayfa — belge teslimin EKİ (E1) ──
-const oturumBaslik = () => { try { const j = (localStorage.getItem('evvel_oturum') || '').trim(); return j ? { 'X-Evvel-Oturum': j } : {}; } catch { return {}; } };
-const BASE_URL = import.meta.env.VITE_API_URL || '';
-const belgeBlob = async (id) => {   // sayfa ham bayt (img / PDF) — oturum başlığıyla
-  const r = await fetch(`${BASE_URL}/api/evvel-yeni/toptanci/belge/${encodeURIComponent(id)}`, { headers: oturumBaslik(), cache: 'no-store' });
-  if (!r.ok) throw new Error('Belge açılamadı');
-  return URL.createObjectURL(await r.blob());
-};
+const belgeBlob = (id) => apiBlob(`/evvel-yeni/toptanci/belge/${encodeURIComponent(id)}`);   // ortak api.js (T4-12)
 const dosyaOku = (f) => new Promise((coz, red) => {   // PDF olduğu gibi; fotoğraf 1600 px JPEG'e küçültülür (telefondaki gibi)
   if (f.type === 'application/pdf' && f.size > 3_500_000) { red(new Error('PDF en çok 3,5 MB olabilir')); return; }
   if (f.type === 'application/pdf') {
