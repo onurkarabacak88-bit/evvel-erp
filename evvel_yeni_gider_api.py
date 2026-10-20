@@ -253,15 +253,16 @@ def _tuketim_satirlari_yeni(cur, bas: date, son: date) -> list:
         k = (sid, h["is_gunu"], h["urun_id"], "gununde" if (h.get("kaynak_ref") or "").endswith(":gununde") else h["tur"])
         top.setdefault(k, [h["urun_ad"], 0])[1] += int(h["adet"])
     # Sahip (20 Eki, T3-19 kararı): FIRE / İKRAM / PERSONEL kullanımı ayrı gider satırı (sayım/panel hatası 'dışarı:sayim' gidere GİRMEZ).
-    # Tezgahta sayılan (panel_sayim) ürünün firesi bar sayım farkının İÇİNDE zaten gider → ikinci kez yazılmaz (çift maliyet olmasın).
-    fire = _yeni_hareketler(cur, bas, son, ("fire",), hedefler=["dışarı:fire", "dışarı:ikram", "dışarı:personel"], kaynak_onek=["depo:"])
+    # Tezgahta sayılan ürünün firesi: 20 Eki'den önce DEPODAN düşüyordu → bar sayım farkının İÇİNDEydi, ayrıca yazılmaz. Sahip kararıyla
+    # (D-4) artık BARDAN düşer → bar bakiyesi önceden azalır, sayım farkı fireyi içermez → fire AYRI satır yazılır (Codex P1: yoksa kaybolur).
+    fire = _yeni_hareketler(cur, bas, son, ("fire",), hedefler=["dışarı:fire", "dışarı:ikram", "dışarı:personel"], kaynak_onek=["depo:", "bar:"])
     if fire:
         from evvel_yeni_urun_api import urun_bilgi
         bil = urun_bilgi(cur, sorted({str(h["urun_id"]) for h in fire}))
         etiket = {"dışarı:fire": "fire", "dışarı:ikram": "ikram", "dışarı:personel": "personel kullanımı"}
         for h in fire:
-            if __import__("evvel_yeni_urun_api").tezgahta_sayilir(bil.get(str(h["urun_id"])) or {}):
-                continue
+            if h["kaynak"].startswith("depo:") and __import__("evvel_yeni_urun_api").tezgahta_sayilir(bil.get(str(h["urun_id"])) or {}):
+                continue   # eski (depodan düşen) tezgah firesi — sayım farkında zaten var
             k = (h["kaynak"].split(":", 1)[1], h["is_gunu"], h["urun_id"], etiket[h["hedef"]])
             top.setdefault(k, [h["urun_ad"], 0])[1] += int(h["adet"])
     satir = []

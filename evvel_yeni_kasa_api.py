@@ -1802,7 +1802,7 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
     rapor["ozet"] = {"kapanis": len(rapor["kapanis"]), "kapanis_onayli": sum(1 for k in rapor["kapanis"] if k["durum"] == "onaylandi"),
                      "teslim": len(rapor["teslim"]), "eslesmeyen_teslim": len(rapor["eslesmeyen_teslim"]),
                      "kilitli": len(rapor["kilitli"]), "dis_kaynak_elle": len(rapor["dis_kaynak"]),
-                     "dukkan_gideri": rapor["dukkan_gideri"]["yeni"],
+                     "dukkan_gideri": (rapor.get("dukkan_gideri") or {}).get("yeni", 0),   # Codex P1: 1 Kasım'dan sonra köprü yok → KeyError
                      "zaten_aktarilmis": rapor["atlanan"]}
     return rapor
 
