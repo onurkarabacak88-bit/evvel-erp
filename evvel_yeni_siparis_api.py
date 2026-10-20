@@ -180,14 +180,28 @@ def _toptanci(fn: str):
 
 
 def _teslim_durumlari(cur, yonler: List[dict], urunler: dict) -> dict:
-    """{yon_id: teslim edilen adet} — Toptancılar'ın teslim_kalemleri kapısından (iptal edilmiş teslim yok sayılır)."""
+    """{yon_id: teslim edilen adet} — Toptancılar'ın teslim_kalemleri kapısından. İPTAL edilmiş teslim döndürülmez (çağıran o yönü
+    'bekleniyor'a çevirir). Codex P1: aynı teslim + aynı ürün BİRDEN ÇOK yöne bağlıysa teslimin adedi yönlere SIRAYLA paylaştırılır
+    (her yöne toplamın tamamı yazılıyordu → 10 fiziksel ürün 20 karşılanmış görünüyordu); artan son yöne (fazla gelen)."""
     f = _toptanci("teslim_kalemleri")
     tid = [y["teslim_id"] for y in yonler if y.get("teslim_id")]
     if not f or not tid:
         return {}
     T = f(cur, tid)
-    return {y["id"]: T[str(y["teslim_id"])].get(str(urunler.get((y["siparis_id"], y["kalem_i"]))), 0)
-            for y in yonler if y.get("teslim_id") and str(y["teslim_id"]) in T}
+    grup = {}
+    for y in sorted(yonler, key=lambda y: (str(y.get("teslim_id")), str(y["id"]))):
+        if not y.get("teslim_id") or str(y["teslim_id"]) not in T:
+            continue
+        u = str(urunler.get((y["siparis_id"], y["kalem_i"])))
+        grup.setdefault((str(y["teslim_id"]), u), []).append(y)
+    out = {}
+    for (t, u), ys in grup.items():
+        kalan = int(T[t].get(u, 0) or 0)
+        for n, y in enumerate(ys):
+            pay = kalan if n == len(ys) - 1 else min(kalan, int(y["adet"]))
+            out[y["id"]] = pay
+            kalan -= pay
+    return out
 
 
 def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
@@ -215,8 +229,10 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
                     d = "hazirlaniyor" if not y.get("parti_id") else s["durum"] if s else "yolda"
                     gelen = s["kabul"] if s else None
                 else:
-                    d = "bekleniyor" if not y.get("teslim_id") else "karsilandi"
-                    gelen = tv.get(y["id"]) if y.get("teslim_id") else None
+                    # Codex P1: bağlı teslim İPTAL edildiyse (okuyucu döndürmez) yön yeniden 'bekleniyor' — iptal teslim siparişi tamamlamaz
+                    bagli = bool(y.get("teslim_id")) and y["id"] in tv
+                    d = "karsilandi" if bagli else "bekleniyor"
+                    gelen = tv.get(y["id"]) if bagli else None
                 dagitilan += int(y["adet"])
                 if d == "karsilandi":
                     karsilanan += int(gelen if gelen is not None else y["adet"])
@@ -238,12 +254,18 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
                 tamam = False
             kk = {"i": k["i"], "urun_id": k.get("urun_id"), "ad": k["ad"], "adet": int(k["adet"]), "oneri": bool(k.get("oneri")),
                   "durum": d, "yonsuz": yonsuz, "yonler": ys}
+            eksik = 0 if k.get("eksik_kapandi") else (max(0, dagitilan - karsilanan) if d == "karsilandi" else 0)
+            if eksik:
+                tamam = False   # Codex P1: istenenden az geldi → sipariş AÇIK kalır (yoksa Bekleyen işler'den düşüyordu)
             if not kor:
-                kk["eksik"] = 0 if k.get("eksik_kapandi") else (max(0, dagitilan - karsilanan) if d == "karsilandi" else 0)
+                kk["eksik"] = eksik
                 kk["eksik_kapandi"] = k.get("eksik_kapandi")
+            kk["_eksik"] = eksik
             kal_out.append(kk)
         tamam = tamam and any(k["durum"] != "iptal" for k in kal_out)
-        durum = "iptal" if r["iptal"] else ("tamamlandi" if tamam or all(k["durum"] in ("iptal", "karsilandi") for k in kal_out) else "acik")
+        eksik_var = any(k.pop("_eksik", 0) for k in kal_out)
+        durum = "iptal" if r["iptal"] else ("tamamlandi" if not eksik_var and (tamam or all(k["durum"] in ("iptal", "karsilandi") for k in kal_out))
+                                            else "acik")
         out.append({"id": r["id"], "sube_id": r["sube_id"], "sube": sube_ad.get(r["sube_id"], r["sube_id"]), "kim": r["kim"],
                     "notu": r["notu"], "gun": r["is_gunu"].isoformat(), "zaman": r["zaman"].isoformat(), "surum": r["surum"],
                     "deneme": bool(r["deneme"]), "durum": durum, "iptal_sebep": r.get("iptal_sebep"), "kalemler": kal_out})
@@ -399,7 +421,12 @@ def teslime_bagla(cur, *, sube_id: str, teslim_id: str, toptanci_id: str, yon_id
     f = _toptanci("teslim_kalemleri")
     tk = (f(cur, [teslim_id]) if f else {}).get(str(teslim_id), {})
     n = 0
-    for yid in sorted({str(x) for x in yon_idler or []}):
+    yidler = sorted({str(x) for x in yon_idler or []})
+    cur.execute("SELECT DISTINCT siparis_id FROM ey_siparis_yon WHERE id = ANY(%s)", (yidler,))
+    sidler = sorted({dict(x)["siparis_id"] for x in cur.fetchall() or []})
+    for sid in sidler:   # Codex P1: merkez yönlendirmesiyle AYNI sipariş kilidi (sabit sıra) — bağlama ile yeniden yönlendirme yarışmasın
+        _kilit(cur, sid)
+    for yid in yidler:
         cur.execute("""SELECT y.kalem_i, s.kalemler FROM ey_siparis_yon y JOIN ey_siparis s ON s.id=y.siparis_id WHERE y.id=%s""", (yid,))
         r = cur.fetchone()
         u = next((k.get("urun_id") for k in (dict(r)["kalemler"] if r else []) if k["i"] == dict(r)["kalem_i"]), None) if r else None
@@ -411,6 +438,8 @@ def teslime_bagla(cur, *, sube_id: str, teslim_id: str, toptanci_id: str, yon_id
         if not cur.rowcount:
             raise HTTPException(409, "Beklenen sipariş kartı değişti — sayfayı yenile")
         n += 1
+    for sid in sidler:
+        _surum_artir(cur, sid)   # merkez ekranı eski sürümle yönlendiremesin (409 → yenile)
     return n
 
 
