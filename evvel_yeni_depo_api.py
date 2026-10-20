@@ -460,7 +460,7 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
         raise HTTPException(400, "Sayım yalnız bir şube deposunda ya da barında yapılır")
     if tur not in ("sayim", "acilis", "gunluk"):
         raise HTTPException(400, "Sayım türü: sayim / acilis / gunluk")
-    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_depo_sayim:" + konum,))
+    _konum_kilidi(cur, konum)   # hareketle AYNI kilit — dize tek yerde (F#37)
     if kaynak_ref:
         import hashlib
         sid = "ss-" + hashlib.md5(kaynak_ref.encode("utf-8")).hexdigest()[:12]
