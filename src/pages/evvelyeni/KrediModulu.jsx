@@ -2,12 +2,13 @@
 // kredi × 12 ay (kira takvimi gibi). Borç = taksit; ödeme Ödeme ekranından (kredi seçilerek) → takvimde "ödendi".
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, num, Dugme, fmt, tKisa } from './KasaModulu';
+import { PI_CSS, R, num, Dugme, fmt, sayiTR, tKisa } from './KasaModulu';
+import { ayTR } from '../../utils/trTarih';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici, tutarYaz } from './AyTakvim';
 
 export const KREDI_SAYFALAR = [{ id: 'kredi_takvimi', ad: 'Kredi takvimi', alt: 'Kredi × ay · taksitler' }];
 const alan = { padding: '8px 10px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, minWidth: 0, width: '100%' };
-const ayBugun = () => new Date().toISOString().slice(0, 7);
+const ayBugun = ayTR;   // C-T4-02: UTC değil TR (gece 00–03 arası önceki aya kaymasın)
 
 export default function KrediModulu({ onToast, onSekme }) {
   const [yil, setYil] = useState(() => new Date().getFullYear());
@@ -30,7 +31,9 @@ export default function KrediModulu({ onToast, onSekme }) {
   };
   const kaydet = async () => {
     try {
-      const govde = { ...form, aylik_taksit: Number(String(form.aylik_taksit).replace(',', '.')) || 0, odeme_gunu: Number(form.odeme_gunu) || 0,
+      const tk = sayiTR(form.aylik_taksit);
+      if (Number.isNaN(tk)) { onToast?.('Taksiti sayı olarak yaz (ör. 12.500,00)'); return; }
+      const govde = { ...form, aylik_taksit: tk, odeme_gunu: Number(form.odeme_gunu) || 0,
         taksit_sayisi: form.taksit_sayisi ? Number(form.taksit_sayisi) : null };
       const r = await api(form.id ? `/evvel-yeni/kredi/${form.id}` : '/evvel-yeni/kredi', { method: 'POST', body: govde });
       onToast?.(r.mesaj); setForm(null); yukle();

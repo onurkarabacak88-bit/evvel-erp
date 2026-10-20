@@ -302,20 +302,11 @@ def kart_takvimi(yil: Optional[int] = None):
                 ekstre, ekstre_kaynak = int(e["ekstre"]), "eski"
             if ekstre is None:
                 ekstre_kaynak = None
-            if ekstre is not None and od >= ekstre - 100:
-                durum = "odendi"
-            elif ekstre is None and od > 0:
+            if ekstre is None and od > 0:
                 durum = "odeme_var"         # Codex: ekstre bilinmeden 'ödendi' DENMEZ
-            elif od > 0:
-                durum = "kismi"
-            elif a < bas:
-                durum = "once"
-            elif son and son < bugun:
-                durum = "gecikti"
-            elif son and (son - bugun).days <= 7:
-                durum = "yaklasiyor"
-            else:
-                durum = "gelecek"
+            else:   # TEK kural (çekirdek takvim_durumu — C-T1-11)
+                from evvel_yeni_cekirdek import takvim_durumu
+                durum = takvim_durumu(ekstre, od, son, bugun, once=a < bas)
             aylar.append({"ay": a, "son_odeme": son.isoformat() if son else None, "ekstre": _tl_sayi(ekstre) if ekstre is not None else None,
                           "ekstre_kaynak": ekstre_kaynak, "odenen": _tl_sayi(od),
                           "kalan": _tl_sayi(max(0, ekstre - od)) if ekstre is not None else None, "durum": durum, "iki_yerde": iki_yerde})

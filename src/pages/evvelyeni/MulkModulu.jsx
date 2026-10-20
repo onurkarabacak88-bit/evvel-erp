@@ -3,7 +3,8 @@
 // basit ama işlevsel." · "Kasım'da sıfır başlasın." 3 sekme: Ev kiraları (ev × ay) · İşletmelerin borcu (şube × ay) · Uyarılar.
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, num, Dugme, Cip, fmt, tKisa } from './KasaModulu';
+import { PI_CSS, R, kart, num, Dugme, Cip, fmt, sayiTR, tKisa } from './KasaModulu';
+import { ayTR, bugunTR } from '../../utils/trTarih';
 import { AY, AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici } from './AyTakvim';
 
 export const MULK_SAYFALAR = [
@@ -12,8 +13,8 @@ export const MULK_SAYFALAR = [
   { id: 'mulk_uyari', ad: 'Uyarılar', alt: 'Geciken kira · artış ayı' },
 ];
 const alan = { padding: '8px 10px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, minWidth: 0, width: '100%' };
-const ayBugun = () => new Date().toISOString().slice(0, 7);
-const gunBugun = () => new Date().toISOString().slice(0, 10);
+const ayBugun = ayTR;     // C-T4-02: UTC değil TR (tahsilat tarihi gece 00–03 arası dün olmasın)
+const gunBugun = bugunTR;
 const yeniId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 function useVeri(yol, yil) {
@@ -57,7 +58,9 @@ function EvKiralari({ onToast }) {
   const kaydet = async () => {
     if (mesgul) return; setMesgul(true);
     try {
-      const govde = { ...form, tutar: Number(String(form.tutar).replace(',', '.')) || 0, odeme_gunu: Number(form.odeme_gunu) || 1,
+      const tu = sayiTR(form.tutar);
+      if (Number.isNaN(tu)) { onToast?.('Tutarı sayı olarak yaz (ör. 25.000,00)'); setMesgul(false); return; }
+      const govde = { ...form, tutar: tu, odeme_gunu: Number(form.odeme_gunu) || 1,
         artis_ayi: form.artis_ayi ? Number(form.artis_ayi) : null };
       const r = await api(`/evvel-yeni/mulk${form.id ? `?mid=${encodeURIComponent(form.id)}` : ''}`, { method: 'POST', body: govde });
       onToast?.(r.mesaj); setForm(null); yukle();
@@ -67,7 +70,9 @@ function EvKiralari({ onToast }) {
   const tahsilEt = async () => {
     if (mesgul) return; setMesgul(true);
     try {
-      const r = await api('/evvel-yeni/mulk/tahsilat', { method: 'POST', body: { mulk_id: tah.e.id, ay: tah.a.ay, tutar: Number(String(tah.tutar).replace(',', '.')) || 0, tarih: tah.tarih, istek_id: tah.istek_id } });
+      const tt = sayiTR(tah.tutar);
+      if (Number.isNaN(tt) || tt <= 0) { onToast?.('Tahsilat tutarını sayı olarak yaz (ör. 25.000,00)'); setMesgul(false); return; }
+      const r = await api('/evvel-yeni/mulk/tahsilat', { method: 'POST', body: { mulk_id: tah.e.id, ay: tah.a.ay, tutar: tt, tarih: tah.tarih, istek_id: tah.istek_id } });
       onToast?.(r.mesaj); setTah(null); yukle();
     } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
     setMesgul(false);

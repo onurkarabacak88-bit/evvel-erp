@@ -106,18 +106,9 @@ def _takvim(cur, yil: int) -> dict:
             vade = _gun(int(a[:4]), int(a[5:7]), k["odeme_gunu"])
             if not aktif_ay or bek == 0:
                 durum = "yok" if g == 0 else "odendi"
-            elif bek and g >= bek - 100:
-                durum = "odendi"
-            elif g > 0:
-                durum = "gecikti" if vade < bugun else "kismi"      # Codex: vadesi geçmiş kısmi ödeme = gecikti
-            elif a < donem_ay:
-                durum = "once"                                       # Evvel Yeni öncesi, kayıt yok — borç sayılmaz
-            elif vade < bugun:
-                durum = "gecikti"
-            elif (vade - bugun).days <= 7:
-                durum = "yaklasiyor"
-            else:
-                durum = "gelecek"
+            else:   # TEK kural (çekirdek takvim_durumu — C-T1-11)
+                from evvel_yeni_cekirdek import takvim_durumu
+                durum = takvim_durumu(bek, g, vade, bugun, once=a < donem_ay)
             satir.append({"ay": a, "beklenen": _tl_sayi(bek), "odenen": _tl_sayi(g), "kalan": _tl_sayi(max(0, bek - g)),
                           "durum": durum, "vade": vade.isoformat(), "artis_ayi": bool(k.get("artis_ayi")) and int(a[5:7]) == k["artis_ayi"]})
         out.append({"id": k["id"], "ad": k["ad"], "kiraci": k.get("kiraci"), "odeme_gunu": k["odeme_gunu"], "artis_ayi": k.get("artis_ayi"),

@@ -229,3 +229,20 @@ def bekleyen_saglayicilar() -> List[str]:
 __all__ = ["bugun", "tr_saat", "tr_gun", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tl", "kilit", "aktor",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem"]
+
+
+def takvim_durumu(beklenen, odenen, vade, bugun, once: bool = False, tolerans=100) -> str:
+    """PUBLIC — ödeme takvimi hücresinin durumu TEK kural (tekrar denetimi C-T1-11: Kira/Kredi/Kart 'kısmi', Mülk 'gecikti' diyordu).
+    Codex kuralı: vadesi GEÇMİŞ kısmi ödeme = gecikti. once=True: Evvel Yeni öncesi, kayıt yok — borç sayılmaz.
+    tolerans: birim farkı (kuruş için 100 = 1 ₺; TL için 1)."""
+    if beklenen is not None and odenen >= beklenen - tolerans:   # 0 ekstre = ödendi (eski davranış)
+        return "odendi"
+    if odenen > 0:
+        return "gecikti" if (vade and vade < bugun) else "kismi"
+    if once:
+        return "once"
+    if vade and vade < bugun:
+        return "gecikti"
+    if vade and (vade - bugun).days <= 7:
+        return "yaklasiyor"
+    return "gelecek"

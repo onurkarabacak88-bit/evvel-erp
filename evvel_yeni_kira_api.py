@@ -201,18 +201,9 @@ def kira_aylari(cur, yil: int, bugun: date) -> list:
                 bek, durum = None, "mulk"
             elif bek is None:
                 durum = "tanimsiz" if od == 0 else "odendi"
-            elif od >= bek - 1:
-                durum = "odendi"
-            elif od > 0:
-                durum = "kismi"
-            elif ay < bas_ay:
-                durum = "once"          # Evvel Yeni öncesi, eski sistemde kaydı eksik — borç sayılmaz
-            elif vade < bugun:
-                durum = "gecikti"
-            elif (vade - bugun).days <= 7:
-                durum = "yaklasiyor"
-            else:
-                durum = "gelecek"
+            else:   # TEK kural (çekirdek takvim_durumu — C-T1-11); TL biriminde tolerans 1
+                from evvel_yeni_cekirdek import takvim_durumu
+                durum = takvim_durumu(bek, od, vade, bugun, once=ay < bas_ay, tolerans=1)
             aylar.append({"ay": ay, "beklenen": bek, "odenen": od, "kalan": round(max(0, (bek or 0) - od), 2), "durum": durum, "iki_yerde": iki_yerde,
                           "artis_ayi": t["artis_ayi"] == m, "artis": bool(onceki is not None and bek is not None and bek != onceki),
                           "onceki_tutar": onceki if (onceki is not None and bek is not None and bek != onceki) else None,

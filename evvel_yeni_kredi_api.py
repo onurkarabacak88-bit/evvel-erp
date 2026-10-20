@@ -146,18 +146,9 @@ def takvim(yil: Optional[int] = None):
             vade = _gun(int(a[:4]), int(a[5:7]), k["odeme_gunu"])
             if not aktif_ay:
                 durum = "yok"
-            elif od >= bek - 100:
-                durum = "odendi"
-            elif od > 0:
-                durum = "kismi"
-            elif a < bas:
-                durum = "once"          # Evvel Yeni öncesi, kayıt yok — 'gecikti' denmez
-            elif vade < bugun:
-                durum = "gecikti"
-            elif (vade - bugun).days <= 7:
-                durum = "yaklasiyor"
-            else:
-                durum = "gelecek"
+            else:   # TEK kural (çekirdek takvim_durumu — C-T1-11)
+                from evvel_yeni_cekirdek import takvim_durumu
+                durum = takvim_durumu(bek, od, vade, bugun, once=a < bas)
             satir.append({"ay": a, "beklenen": _tl_sayi(bek), "odenen": _tl_sayi(od), "kalan": _tl_sayi(max(0, bek - od)),
                           "durum": durum, "vade": vade.isoformat(), "iki_yerde": iki_yerde})
         out.append({"id": k["id"], "ad": k["ad"], "tur": k.get("tur"), "taksit": _tl_sayi(k["aylik_taksit"]), "odeme_gunu": k["odeme_gunu"],
