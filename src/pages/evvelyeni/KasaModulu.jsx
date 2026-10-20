@@ -294,6 +294,17 @@ const alanStil = {
   width: '100%', padding: '8px 10px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, background: R.girinti,
   color: R.krem, fontFamily: 'inherit', fontSize: 13, minWidth: 0,
 };
+// 🔢 ÖZET KUTUSU — başlık + büyük sayı (Dalga 5, T4-11: Kart 'Kutu' ve Açık farklar sayfası aynı kutuyu ayrı yazıyordu).
+// deger hazır yazı (fmt / '3 fark'); birim verilirse arkasına eklenir. buyuk: 22 punto (Kart), yoksa 20.
+function OzetKutusu({ etiket, deger, renk, birim, buyuk = false }) {
+  return (
+    <div style={{ ...kart, padding: buyuk ? 12 : '10px 13px' }}>
+      <div style={buyuk ? { fontSize: 12, color: R.not } : etiketStil}>{etiket}</div>
+      <div style={{ ...num, fontSize: buyuk ? 22 : 20, fontWeight: buyuk ? 800 : undefined, color: renk }}>{deger}{birim ? ` ${birim}` : ''}</div>
+    </div>
+  );
+}
+
 // 🏷 FORM ETİKETİ — TEK bileşen (Dalga 5, T4-07: Kasa Alan, Ödeme / Kart / Toptancı Etiket 4 kopya). kucuk: Kasa formunun sıkı boyu.
 function Etiket({ ad, children, ipucu, kucuk = false }) {
   return (
@@ -1423,9 +1434,7 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
-        {acikOzet(v).map((k) => (
-          <div key={k.etiket} style={{ ...kart, padding: '10px 13px' }}><div style={etiketStil}>{k.etiket}</div><div style={{ ...num, fontSize: 20, color: k.renk }}>{k.yazi || fmt(k.tutar)}</div></div>
-        ))}
+        {acikOzet(v).map((k) => <OzetKutusu key={k.etiket} etiket={k.etiket} deger={k.yazi || fmt(k.tutar)} renk={k.renk} />)}
       </div>
       <div style={{ ...kart, padding: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
         <b>Çözülmemiş farklar {acik.length ? <Cip tur="kirmizi">{acik.length}</Cip> : <Cip tur="yesil">yok</Cip>}</b>
@@ -1611,4 +1620,4 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
 }
 
 // Diğer Evvel Yeni bölümleri (Gelir, Gider…) aynı görsel dili kullanır
-export { ALAN, AySecici, Etiket, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
+export { ALAN, AySecici, Etiket, OzetKutusu, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };

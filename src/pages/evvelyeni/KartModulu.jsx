@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cip, Dugme, Etiket, fmt, kart, num, PI_CSS, R, tKisa, tUzun, useSonIstek } from './KasaModulu';
+import { ALAN, Cip, Dugme, Etiket, fmt, kart, num, OzetKutusu, PI_CSS, R, tKisa, tUzun, useSonIstek } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, tutarYaz, YilSecici } from './AyTakvim';
 import { bugunTR } from '../../utils/trTarih';
 
@@ -158,14 +158,7 @@ Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır
   );
 }
 
-function Kutu({ ad, deger, renk }) {
-  return (
-    <div style={{ ...kart, padding: 12 }}>
-      <div style={{ fontSize: 12, color: R.not }}>{ad}</div>
-      <div style={{ ...num, fontSize: 22, fontWeight: 800, color: renk }}>{deger} ₺</div>
-    </div>
-  );
-}
+const Kutu = ({ ad, deger, renk }) => <OzetKutusu etiket={ad} deger={deger} renk={renk} birim="₺" buyuk />;   // ortak (T4-11)
 
 
 
