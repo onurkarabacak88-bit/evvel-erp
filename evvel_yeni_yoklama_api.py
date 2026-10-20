@@ -23,7 +23,7 @@ import re
 import secrets
 import time
 import uuid
-from datetime import date, datetime, timedelta, timezone
+from datetime import date, datetime, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -523,14 +523,7 @@ def son_okutanlar(cur, sube_id: str, sn: int = 300) -> list:
     return [{"ad": pad[r["personel_id"]], "islem": r["islem"], "saat": _saat(r["zaman"])} for r in rows if r["personel_id"] in pad]
 
 
-def _saat(ts) -> Optional[str]:
-    if not ts:
-        return None
-    from zoneinfo import ZoneInfo
-    try:
-        return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%H:%M")
-    except Exception:  # noqa: BLE001
-        return None
+from evvel_yeni_cekirdek import tr_saat as _saat  # noqa: E402   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek
 
 
 # ─────────────────────────── MERKEZ: cihaz yönetimi ───────────────────────────
@@ -953,9 +946,8 @@ def duzelt(b: DuzeltBody, x_evvel_oturum: Optional[str] = Header(default=None)):
         if not r or dict(r)["cikis_ts"] is not None:
             raise HTTPException(404, "Açık giriş bulunamadı")
         r = dict(r)
-        from zoneinfo import ZoneInfo
-        g = r["is_gunu"] + (timedelta(days=1) if hh < 2 else timedelta(0))
-        ts = datetime(g.year, g.month, g.day, hh, mm, tzinfo=ZoneInfo("Europe/Istanbul"))
+        from evvel_yeni_cekirdek import is_gunu_zamani
+        ts = is_gunu_zamani(r["is_gunu"], hh, mm)   # Dalga 4 (F#4): iki kopya tek yerde
         if ts < r["giris_ts"]:
             raise HTTPException(400, "Çıkış girişten önce olamaz")
         iz = f"merkez: {kim} — {b.aciklama.strip()[:120]}"
@@ -1098,9 +1090,8 @@ def mola_duzelt(mid: str, b: MolaDuzeltBody, x_evvel_oturum: Optional[str] = Hea
         if not r:
             raise HTTPException(404, "Bitmemiş mola bulunamadı")
         r = dict(r)
-        from zoneinfo import ZoneInfo
-        g = r["is_gunu"] + (timedelta(days=1) if hh < 2 else timedelta(0))
-        ts = datetime(g.year, g.month, g.day, hh, mm, tzinfo=ZoneInfo("Europe/Istanbul"))
+        from evvel_yeni_cekirdek import is_gunu_zamani
+        ts = is_gunu_zamani(r["is_gunu"], hh, mm)
         if ts < r["baslangic_ts"]:
             raise HTTPException(400, "Bitiş başlangıçtan önce olamaz")
         personel_kilidi(cur, r["personel_id"])

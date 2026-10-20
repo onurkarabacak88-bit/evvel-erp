@@ -710,18 +710,7 @@ def _devir_defteri_eski(ay: Optional[str] = None):
     return {"ay": a_, "subeler": out, "not": "Zincir: akşam bırakılan (devir) = ertesi sabah sayılan olmalı. Kopukluk kırmızı."}
 
 
-def _tr_saat(ts, gun=None):
-    """TR saati; kayıt iş gününden FARKLI bir günde girildiyse tarihiyle ("15.10 14:24") — geç giriş görünür olsun."""
-    if not ts:
-        return None
-    from zoneinfo import ZoneInfo
-    try:
-        t = ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts
-        if gun is not None and t.date() != gun and not (t.date() == gun + timedelta(days=1) and t.hour < 6):
-            return t.strftime("%d.%m %H:%M")
-        return t.strftime("%H:%M")
-    except Exception:  # noqa: BLE001
-        return None
+from evvel_yeni_cekirdek import tr_saat as _tr_saat   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek (birebir kopyasıydı)
 
 
 

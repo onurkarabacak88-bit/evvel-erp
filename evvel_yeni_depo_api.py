@@ -18,7 +18,7 @@ import json
 import logging
 import time
 import uuid
-from datetime import date, datetime, timedelta
+from datetime import date, timedelta
 from typing import List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -96,13 +96,7 @@ def _ey_urun_dogrula(cur, idler) -> dict:
     return b
 
 
-def _simdi_tr():
-    """Hareket saati — Türkiye saati (Fable: container UTC; dilimsiz datetime.now() 3 saat erken yazıyordu)."""
-    try:
-        from tr_saat import dt_now_tr
-        return dt_now_tr()
-    except Exception:  # noqa: BLE001
-        return datetime.now()
+from evvel_yeni_cekirdek import simdi_tr as _simdi_tr, tr_gun as _tr_gun_c   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek
 
 
 def _n(x) -> str:
@@ -150,10 +144,9 @@ def _yaz(cur, rows: List[tuple], yeni: bool = False) -> int:
 
 
 def _tr_gun(ts) -> date:
-    """Codex: DB oturumu zaten İstanbul; +3 saat eklemek 21:00 sonrasını ertesi güne kaydırıyordu."""
-    from zoneinfo import ZoneInfo
+    """Codex: DB oturumu zaten İstanbul; +3 saat eklemek 21:00 sonrasını ertesi güne kaydırıyordu. Çekirdek tr_gun (hata → iş günü)."""
     try:
-        return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).date()
+        return _tr_gun_c(ts) if ts is not None else _is_gunu()
     except Exception:  # noqa: BLE001
         return _is_gunu()
 

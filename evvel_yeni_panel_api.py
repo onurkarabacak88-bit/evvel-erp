@@ -146,9 +146,7 @@ FIRE_SEBEPLERI = {         # sahip D9 — eski panelin sebep kartları (fire_bil
 FIRE_HEDEF = {"ikram": "dışarı:ikram", "personel_kullanim": "dışarı:personel", "sayim_hatasi": "dışarı:sayim", "panel_hatasi": "dışarı:sayim"}
 
 
-def _simdi_tr():
-    from tr_saat import dt_now_tr
-    return dt_now_tr()
+from evvel_yeni_cekirdek import simdi_tr as _simdi_tr, tr_saat as _saat_tr   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek
 
 
 def _saat_kurali(tur: str, personel: dict) -> Optional[str]:
@@ -381,12 +379,6 @@ def _merkezde_mi(sube_id: str, gun) -> Optional[str]:
         return None
 
 
-def _saat_tr(ts) -> Optional[str]:
-    from zoneinfo import ZoneInfo
-    try:
-        return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%H:%M")
-    except Exception:  # noqa: BLE001
-        return None
 
 
 # ─────────────────────────── YAZMA ───────────────────────────

@@ -2277,12 +2277,7 @@ def _kapanis_deneme_isleri(cur, C: dict) -> List[dict]:
     return out
 
 
-def _tr_zaman(ts):
-    from zoneinfo import ZoneInfo
-    try:
-        return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%d.%m %H:%M")
-    except Exception:  # noqa: BLE001
-        return None
+from evvel_yeni_cekirdek import tr_tarih_saat as _tr_zaman   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek
 
 
 class DenemeBody(BaseModel):

@@ -117,12 +117,7 @@ def _bos():
     return {k: 0 for k in KODLAR}
 
 
-def _tr_saat(ts):
-    """Saat dilimli zamanı TR duvar saatine (dilimsiz) çevir."""
-    if ts is None or getattr(ts, "tzinfo", None) is None:
-        return ts
-    from zoneinfo import ZoneInfo
-    return ts.astimezone(ZoneInfo("Europe/Istanbul")).replace(tzinfo=None)
+from evvel_yeni_cekirdek import tr_duvar as _tr_saat, tr_tarih_saat as _saat   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek
 
 
 def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
@@ -310,12 +305,7 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None, evren: Opt
     for e in olaylar:
         ev.setdefault(e["sube_id"], {}).setdefault(e["tarih"], {})[e["tip"]] = e   # aynı gün ikinci kayıt sonuncuyu tutar
 
-    def _tr(ts):
-        """Saat dilimli zamanı TR duvar saatine (dilimsiz) çevir — panel saatleri dilimsiz TR tutuluyor (Codex C3)."""
-        if ts is None or getattr(ts, "tzinfo", None) is None:
-            return ts
-        from zoneinfo import ZoneInfo
-        return ts.astimezone(ZoneInfo("Europe/Istanbul")).replace(tzinfo=None)
+    _tr = _tr_saat   # TR duvar saati (çekirdek tr_duvar — aynı dosyadaki ikinci kopya kalktı)
 
     def ac_topla(sid, t0, t1, gun_yedek=None):
         """(t0, t1] aralığında açılan; saat yoksa iş gününe göre."""
@@ -380,14 +370,6 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None, evren: Opt
 
 
 
-def _saat(ts):
-    if not ts:
-        return None
-    from zoneinfo import ZoneInfo
-    try:
-        return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%d.%m %H:%M")
-    except Exception:  # noqa: BLE001
-        return None
 
 
 # ── AÇIK KAPILAR (sök-tak): başka modüller iç '_' fonksiyonu değil BU adları kullanır — içerik aynı, kapı tek ──

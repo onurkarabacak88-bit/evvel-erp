@@ -60,6 +60,41 @@ def tr_saat(ts, gun: Optional[date] = None) -> Optional[str]:
         return None
 
 
+def tr_duvar(ts):
+    """Saat dilimli zamanı TR duvar saatine (DİLİMSİZ) çevir — panel saatleri dilimsiz TR tutulur (Codex C3). Dilimsiz gelirse aynen."""
+    if ts is None or getattr(ts, "tzinfo", None) is None:
+        return ts
+    from zoneinfo import ZoneInfo
+    return ts.astimezone(ZoneInfo("Europe/Istanbul")).replace(tzinfo=None)
+
+
+def tr_tarih_saat(ts) -> Optional[str]:
+    """TR "GG.AA HH:MM" (yoksa None)."""
+    if not ts:
+        return None
+    from zoneinfo import ZoneInfo
+    try:
+        return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%d.%m %H:%M")
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def simdi_tr():
+    """Şu an — Türkiye saati, dilimli (container UTC; dilimsiz datetime.now() 3 saat erken yazıyordu)."""
+    try:
+        from tr_saat import dt_now_tr
+        return dt_now_tr()
+    except Exception:  # noqa: BLE001
+        return datetime.now()
+
+
+def is_gunu_zamani(gun: date, hh: int, mm: int):
+    """İş günü + "SS:DD" → TR dilimli zaman. 02:00'den önceki saat ERTESİ takvim gününe düşer (iş günü kuralıyla aynı)."""
+    from zoneinfo import ZoneInfo
+    g = gun + (timedelta(days=1) if hh < 2 else timedelta(0))
+    return datetime(g.year, g.month, g.day, hh, mm, tzinfo=ZoneInfo("Europe/Istanbul"))
+
+
 def tr_gun(ts) -> date:
     """Zaman damgasının Türkiye takvim günü."""
     from zoneinfo import ZoneInfo
@@ -256,7 +291,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "tr_saat", "tr_gun", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "tl", "kilit", "aktor",
+__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "tl", "kilit", "aktor",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

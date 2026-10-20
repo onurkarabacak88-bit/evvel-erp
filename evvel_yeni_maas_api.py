@@ -522,11 +522,7 @@ def maas_onay(pid: str, ay: str, kaldir: bool = False, x_evvel_oturum: Optional[
     return {"ok": True, "mesaj": f"{r['ad']} · {ay[:7]} onaylandı · hak ediş {r['hak_edis']:,.2f} ₺"}
 
 
-def _tr_saat(ts):
-    if not ts:
-        return None
-    from zoneinfo import ZoneInfo
-    return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).strftime("%H:%M")
+from evvel_yeni_cekirdek import tr_saat as _tr_saat   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek
 
 
 @router.get("/takvim")
