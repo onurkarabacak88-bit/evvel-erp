@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, tUzun, useSonIstek } from './KasaModulu';
+import { ALAN, Cip, Dugme, Etiket, fmt, kart, num, PI_CSS, R, tKisa, tUzun, useSonIstek } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, tutarYaz, YilSecici } from './AyTakvim';
 import { bugunTR } from '../../utils/trTarih';
 
@@ -167,9 +167,6 @@ function Kutu({ ad, deger, renk }) {
   );
 }
 
-function Etiket({ ad, children }) {
-  return <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13, fontWeight: 600, color: R.metin2 }}>{ad}{children}</label>;
-}
 
 
 // 💳 KART ÖDEME TAKVİMİ — sahip (2026-10-17): "kredi kartı ödemeleri için de kira takvimi gibi". Kart × 12 ay:

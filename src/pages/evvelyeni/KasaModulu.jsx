@@ -294,11 +294,17 @@ const alanStil = {
   width: '100%', padding: '8px 10px', borderRadius: 9, border: `1px solid ${R.cizgi3}`, background: R.girinti,
   color: R.krem, fontFamily: 'inherit', fontSize: 13, minWidth: 0,
 };
-function Alan({ etiket, children, ipucu }) {
+// 🏷 FORM ETİKETİ — TEK bileşen (Dalga 5, T4-07: Kasa Alan, Ödeme / Kart / Toptancı Etiket 4 kopya). kucuk: Kasa formunun sıkı boyu.
+function Etiket({ ad, children, ipucu, kucuk = false }) {
   return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 11.5, color: R.metin2, fontWeight: 600, minWidth: 0 }}>
-      {etiket}{children}{ipucu && <span style={{ fontWeight: 400, color: R.not2 }}>{ipucu}</span>}
+    <label style={{ display: 'flex', flexDirection: 'column', gap: kucuk ? 4 : 5, fontSize: kucuk ? 11.5 : 13, fontWeight: 600, color: R.metin2, minWidth: 0 }}>
+      {ad}{children}{ipucu && <span style={{ fontWeight: 400, color: kucuk ? R.not2 : R.not, fontSize: kucuk ? undefined : 12 }}>{ipucu}</span>}
     </label>
+  );
+}
+function Alan({ etiket, ...p }) {
+  return (
+    <Etiket ad={etiket} kucuk {...p} />
   );
 }
 
@@ -1605,4 +1611,4 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
 }
 
 // Diğer Evvel Yeni bölümleri (Gelir, Gider…) aynı görsel dili kullanır
-export { ALAN, AySecici, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
+export { ALAN, AySecici, Etiket, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };

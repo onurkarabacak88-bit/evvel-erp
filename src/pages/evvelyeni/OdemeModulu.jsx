@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, AySecici, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, odemeFisi, PATRONLAR, PI_CSS, R, sayfayaGit, tKisa, tl, useSonIstek } from './KasaModulu';
+import { ALAN, AySecici, Cekmece, Cip, Dugme, Etiket, etiketStil, fmt, kart, num, odemeFisi, PATRONLAR, PI_CSS, R, sayfayaGit, tKisa, tl, useSonIstek } from './KasaModulu';
 import { ayAdi, ayKaydir, ayTR, bugunTR, gunKaydir as trGunKaydir } from '../../utils/trTarih';
 import { Pencere } from './AyTakvim';
 
@@ -23,13 +23,6 @@ const alan = { ...ALAN, width: '100%', padding: '10px 12px', fontSize: 15, minWi
 const ayBugun = ayTR;   // Dalga 5 (C-T4-02): tarih tek kaynaktan
 const gunBugun = bugunTR;
 
-function Etiket({ ad, children, ipucu }) {
-  return (
-    <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13, fontWeight: 600, color: R.metin2, minWidth: 0 }}>
-      {ad}{children}{ipucu && <span style={{ fontWeight: 400, color: R.not, fontSize: 12 }}>{ipucu}</span>}
-    </label>
-  );
-}
 
 const yeniId = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : `${Date.now()}-${Math.random().toString(36).slice(2)}`);
 const BOS_PARCA = () => [{ yontem: 'nakit', cep: '', kart_id: '', tutar: '' }];

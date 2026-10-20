@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, apiBlob } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cekmece, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayfayaGit, tKisa } from './KasaModulu';
+import { ALAN, Cekmece, Cip, Dugme, Etiket, fmt, kart, num, PI_CSS, R, sayfayaGit, tKisa } from './KasaModulu';
 import { Pencere as OrtakPencere } from './AyTakvim';
 
 export const TOPTANCI_SAYFALAR = [
@@ -397,9 +397,6 @@ export default function ToptanciModulu({ onToast }) {
 
 function Pencere({ genis, ...p }) {   // ortak Pencere'nin Toptancı ayarı (T4-06): kendi Vazgeç düğmesi olan formlar
   return <OrtakPencere {...p} genislik={genis ? 920 : 440} kapatDugmesi={false} aralik={12} />;
-}
-function Etiket({ ad, children }) {
-  return <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13, fontWeight: 600, color: R.metin2 }}>{ad}{children}</label>;
 }
 function Butonlar({ mesgul, onVazgec, onKaydet }) {
   return (
