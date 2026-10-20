@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import { ayTR, bugunTR } from '../../utils/trTarih';
-import { ALAN, Cip, Dugme, kart, num, PI_CSS, R } from './KasaModulu';
+import { ALAN, AySecici, Cip, Dugme, kart, num, PI_CSS, R } from './KasaModulu';
 import { tlYaz } from '../../utils/trSayi';
 
 export const YOKLAMA_SAYFALAR = [
@@ -260,7 +260,7 @@ export function YemekMolalari({ onToast }) {
       <style>{PI_CSS}</style>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
         <div><div className="pi-eyebrow">Evvel Yeni · Personel</div><h1 style={{ fontSize: 30 }}>Yemek molaları</h1></div>
-        <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, marginLeft: 'auto' }} />
+        <AySecici ay={ay} setAy={setAy} style={{ ...alan, marginLeft: 'auto' }} />
       </div>
       <div style={{ fontSize: 13, color: R.metin2 }}>
         Kişi başı iş gününde bir mola; telefondan QR ile başlar ve biter. Mola ≤ {v?.limit_dk ?? 60} dk → o günün yemek hakkı kazanılır; daha uzunsa ya da o gün mola kullanılmadıysa hak yok (K7/K8).
@@ -395,7 +395,7 @@ export function Devirler({ onToast }) {
       <style>{PI_CSS}</style>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
         <div><div className="pi-eyebrow">Evvel Yeni · Personel</div><h1 style={{ fontSize: 30 }}>Devirler</h1></div>
-        <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, marginLeft: 'auto' }} />
+        <AySecici ay={ay} setAy={setAy} style={{ ...alan, marginLeft: 'auto' }} />
       </div>
       <div style={{ fontSize: 13, color: R.metin2 }}>
         Kasa devri panelde sayılır, onaylar kişilerin kendi telefonunda: devreden "Devrediyorum", devralan "Kabul ediyorum" ya da "Tutmuyor" + not (devir yine tamamlanır, not burada görünür).

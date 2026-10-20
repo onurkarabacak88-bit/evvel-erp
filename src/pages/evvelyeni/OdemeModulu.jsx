@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, odemeFisi, PATRONLAR, PI_CSS, R, sayfayaGit, tKisa, tl, useSonIstek } from './KasaModulu';
+import { ALAN, AySecici, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, odemeFisi, PATRONLAR, PI_CSS, R, sayfayaGit, tKisa, tl, useSonIstek } from './KasaModulu';
 import { ayAdi, ayKaydir, ayTR, bugunTR, gunKaydir as trGunKaydir } from '../../utils/trTarih';
 import { Pencere } from './AyTakvim';
 
@@ -383,7 +383,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
             <input type="date" value={gun} max={gunBugun()} onChange={(e) => { if (e.target.value) { setGun(e.target.value); setAy(e.target.value.slice(0, 7)); } }} style={{ ...alan, width: 'auto', padding: '6px 9px', fontSize: 13 }} />
             <Dugme kucuk disabled={gun >= gunBugun()} onClick={() => gunKaydir(1)}>›</Dugme>
             <Dugme kucuk onClick={() => { setGun(gunBugun()); setAy(ayBugun()); }}>Bugün</Dugme>
-          </> : <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, width: 'auto', padding: '6px 9px', fontSize: 13 }} />}
+          </> : <AySecici ay={ay} setAy={setAy} style={{ ...alan, width: 'auto', padding: '6px 9px', fontSize: 13 }} />}
           <Dugme kucuk ana={tumAy} onClick={modDegis}>{tumAy ? 'Gün gün' : 'Bütün ay'}</Dugme>
           {liste && <span style={{ color: R.not, fontSize: 13, marginLeft: 'auto' }}>{tumAy ? 'bu ay' : 'bu gün'} ödenen <b style={num}>{fmt(t('toplam'))}</b> ₺ · kasadan {fmt(t('nakit'))} · kartla {fmt(t('kart'))}</span>}
         </div>
@@ -462,7 +462,7 @@ export function PatronHarcama() {
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 10, flexWrap: 'wrap' }}>
         <div><div className="pi-eyebrow">Evvel Yeni · Ödeme</div><h1 style={{ fontSize: 30 }}>Patron harcamaları</h1></div>
         <span style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center' }}>
-          <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, width: 'auto', padding: '6px 9px' }} />
+          <AySecici ay={ay} setAy={setAy} style={{ ...alan, width: 'auto', padding: '6px 9px' }} />
           <Dugme ana onClick={gir}>+ Patron harcaması gir</Dugme>
         </span>
       </div>

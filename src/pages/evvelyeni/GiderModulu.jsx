@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
+import { AySecici, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';
 
 export const GIDER_SAYFALAR = [
@@ -67,7 +67,7 @@ export default function GiderModulu({ onToast }) {
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
         <div><div className="pi-eyebrow">Evvel Yeni · Gider</div><h1 style={{ fontSize: 30 }}>Giderlerim</h1></div>
         <label style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>Ay
-          <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)}
+          <AySecici ay={ay} setAy={setAy}
             style={{ font: 'inherit', padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-paper)', color: 'var(--pi-ink)' }} />
         </label>
       </div>

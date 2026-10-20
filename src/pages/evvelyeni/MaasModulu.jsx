@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tl, useSonIstek } from './KasaModulu';
+import { ALAN, AySecici, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tl, useSonIstek } from './KasaModulu';
 import { ayKaydir, ayTR } from '../../utils/trTarih';
 import { Pencere } from './AyTakvim';
 
@@ -70,7 +70,7 @@ export default function MaasModulu({ onToast, onSekme }) {
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
         <div><div className="pi-eyebrow">Evvel Yeni · Personel</div><h1 style={{ fontSize: 30 }}>Maaşlar</h1></div>
         <label style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>Çalışma ayı
-          <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, width: 'auto' }} />
+          <AySecici ay={ay} setAy={setAy} style={{ ...alan, width: 'auto' }} />
         </label>
       </div>
 
@@ -194,7 +194,7 @@ export function PersonelTakvim({ onToast }) {
       <style>{PI_CSS}</style>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
         <div><div className="pi-eyebrow">Evvel Yeni · Personel</div><h1 style={{ fontSize: 30 }}>Personel takvimi</h1></div>
-        <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alan, width: 'auto', marginLeft: 'auto' }} />
+        <AySecici ay={ay} setAy={setAy} style={{ ...alan, width: 'auto', marginLeft: 'auto' }} />
       </div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Takvim hazırlanıyor…</div>}

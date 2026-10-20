@@ -277,6 +277,11 @@ function useSonIstek(yol, setV, setHata, sifirla = false) {
   return yukle;
 }
 
+// 📅 AY SEÇİCİ — TEK bileşen (Dalga 5, T4-10: 13 yerde aynı input + 'boş ay seçilemez' koruması). Görünüş çağıranın style'ıyla.
+function AySecici({ ay, setAy, style, ...p }) {
+  return <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={style || { ...ALAN, width: 'auto' }} {...p} />;
+}
+
 // SAYFA GEÇİŞİ — TEK yol (Dalga 5, T4-13: 8 yerde pushState + sahte popstate ayrı yazılıydı). Kabuk (EvvelYeniApp) popstate'i dinler,
 // adresten sekmeyi okur. sorgu: '?urun=…' gibi ek (isteğe bağlı).
 const sayfayaGit = (sayfa, sorgu = '') => {
@@ -879,7 +884,7 @@ function BankaSekmesi({ onToast, onDegisti }) {
       <div style={{ ...kart, padding: '10px 14px', fontSize: 13, color: R.metin2, background: 'var(--pi-bg)', display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <span>Ay sonunda bankanın ekstresini aç: programın hesapladığı <b>ay sonu bakiyesi</b> ekstredekiyle aynı mı? Ekstre bakiyesini yaz, fark varsa açık farka düşer.</span>
         <label style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', fontSize: 12.5 }}>Ay
-          <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)} style={{ ...alanStil, width: 'auto', padding: '5px 8px' }} />
+          <AySecici ay={ay} setAy={setAy} style={{ ...alanStil, width: 'auto', padding: '5px 8px' }} />
         </label>
       </div>
       {!v.ay_bitti && <div style={{ fontSize: 12.5, color: R.amber }}>Bu ay henüz bitmedi — rakamlar {tUzun(v.kesit)} itibarıyla.</div>}
@@ -1600,4 +1605,4 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
 }
 
 // Diğer Evvel Yeni bölümleri (Gelir, Gider…) aynı görsel dili kullanır
-export { ALAN, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
+export { ALAN, AySecici, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };

@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, useSonIstek } from './KasaModulu';
+import { AySecici, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, useSonIstek } from './KasaModulu';
 import { ayTR, gunKaydir, tarihKaydir } from '../../utils/trTarih';
 
 // Sahip: "Beklenen satışı AYRI sekme yap; ilk alanda KESİN veriler (satılan, fire, kasa açığı) olsun."
@@ -172,7 +172,7 @@ function BeklenenSatis() {
         <label style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
           <input type="checkbox" checked={hepsi} onChange={(e) => setHepsi(e.target.checked)} />veri eksik günleri de göster
         </label>
-        <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)}
+        <AySecici ay={ay} setAy={setAy}
           style={{ font: 'inherit', padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-paper)', color: 'var(--pi-ink)' }} />
       </div>
       <div style={{ fontSize: 13.5 }}>Bardaktan <b>tahmini</b> ciro ile girilen ciro — kesin değil, uyum izleme. Kesin rakamlar <b>Satış kontrolü</b> sekmesinde.</div>
@@ -241,7 +241,7 @@ export function DevirDefteri() {
       <style>{PI_CSS}</style>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
         <div><div className="pi-eyebrow">Evvel Yeni · Kontrol</div><h1 style={{ fontSize: 30 }}>Kasa devir defteri</h1></div>
-        <input type="month" value={ay} onChange={(e) => e.target.value && setAy(e.target.value)}
+        <AySecici ay={ay} setAy={setAy}
           style={{ marginLeft: 'auto', font: 'inherit', padding: '6px 9px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-paper)', color: 'var(--pi-ink)' }} />
       </div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
