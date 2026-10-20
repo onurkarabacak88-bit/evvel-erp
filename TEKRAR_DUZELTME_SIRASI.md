@@ -2,16 +2,17 @@
 Kaynak: tmp/TEKRAR_FABLE_1.md (69) + tmp/TEKRAR_CODEX_1.md (87) · 2. tur çapraz: Fable→Codex raporu (83 doğru, 4 kısmen, 0 yanlış, +11 kaçırılan) · bağımsız Fable→Fable raporu (63 doğru, 6 kısmen, 0 yanlış, +14 kaçırılan). Codex 17:06'da Fable raporunu ayrıca doğrulayacak.
 Kural: her dalga = kod → Fable + Codex → deneme → yayın. Bulgu numaraları: F# = Fable raporu, C-Tx-## = Codex raporu, K# = kaçırılan.
 
-## 📍 DURUM (20 Eki 15:40) — hepsi YEREL commit, YAYINLANMADI
-| Dalga | Durum | Commit |
-|---|---|---|
-| 1 (1–8) | ✅ kod + Fable denetimi + düzeltmeleri | 30ba02c…22b40a3, 16e88a9 |
-| 2 (9–16) + üç kesim engeli | ✅ kod + Fable denetimi (B-1 · O-1..5 · D-1..5 · T-1..2 düzeltildi) | 23c18c6…a0200cc, d678013, bfe6df0 |
-| 3 (17–23 + F#37) | ✅ kod — Fable/Codex denetimi BEKLİYOR | 88053e4, b79d13c, d03d03f, 2d23196, eb3f1cf, 1df1904, 4972b07, f40728e, 7a26535 |
-| 4 · 5 | ⏳ sırada | — |
-Açık sahip kararları: D-4 (tezgahta sayılan ürünün firesi depodan mı bardan mı düşsün) · O-4 (yeni sistemde VARDİYA PLANI tablosu yok — Maaş "önce plan" kuralı eski vardiya_atama'ya bağlı; kesimden önce yer seçilmeli).
-Kesimde silinecek göç kodu (bilerek bırakıldı): Depo `depo_hazirla` ey_urun işaretleme · Toptancı fiyat geçmişi ilk kopyası (ey_urun JOIN) · Tanımlar `kopyalar` (zaten yeni_donem'de durur).
-Codex: kota 17:06'da açılır → Dalga 1+2+3 denetimi + Fable raporunun çapraz doğrulaması.
+## 📍 DURUM (20 Eki 17:40) — hepsi YEREL commit, YAYINLANMADI (cc70180'dan beri ~85 commit)
+| Dalga | Durum |
+|---|---|
+| 1 (1–8) | ✅ kod + Fable |
+| 2 (9–16) + üç kesim engeli | ✅ kod + Fable (B-1 · O-1..5 · D-1..5 · T-1..2 düzeltildi) |
+| 3 (17–23 + F#37) | ✅ kod + Fable (H1/H2 · T1/T2 · B5/B6 düzeltildi) |
+| 4 çekirdek (24–29 + K1..K14 + T1-10/12/14/15/22/28/33/35) | ✅ kod — kuruş · saat · merkez_aktor · acik · tablo_var · KuruGeriAl · adet · kalem · istek · ad · tezgah · pasta · bardak · olay süzgeci · gün kapalı · json_ac · bir_kez · telefon_kisisi · panel_kok · ay_gunu · komisyon · kapanış kanalları · POS sıfır · eski bırakılan · ddl_kur |
+| Codex 1. tam denetim (cc70180..12f5f32) | 13 P1 + 8 P2 → 20'si düzeltildi; KALAN 1: merkez Sipariş yönlendirme ekranı yok (S5c) |
+| 5 ön yüz | ⏳ sırada |
+Açık sahip kararları: YENİ VARDİYA PLANI EKRANI (karar verildi: kurulacak — önce mekanizma) · S5c merkez Yönlendirme ekranı.
+Sonraki denetim: Fable + Codex, 12f5f32..HEAD (Codex düzeltmeleri + Dalga 4 kalanı).
 
 ## DALGA 1 — ŞİMDİDEN YANLIŞ SONUÇ (para / maaş) 🔴
 1. C-T1-01 · Ödeme'den ücret tanımı saatlik ücret + yolu SIFIRLIYOR → yarı zamanlı maaş 0 · tek sahip Tanımlar `ucret_yaz`; Ödeme'nin ikinci DDL'i ve `_ucret` okuyucusu kalkar
