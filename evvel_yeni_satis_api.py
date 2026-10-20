@@ -58,12 +58,11 @@ def _gunluk(ay: str) -> dict:
         for s in b["subeler"]:
             for g in s["gunler"]:
                 k = {(x.get("anahtar") or x["kod"]): x for x in g["kalemler"]}   # yeni dönem: kod=ürün kimliği, anahtar=anlam
-                bt = [c for c in BARDAKLAR if c in k]   # E2E #17: katalogda OLAN bardak türleriyle hesapla (üçü birden şart değil)
-                if not bt:   # Fable: yeni dönemde bardak kalemi katalogda yoksa 500 olmasın
+                if any(c not in k for c in BARDAKLAR):   # Fable: yeni dönemde bardak kalemi katalogda yoksa 500 olmasın
                     out[(s["sube_id"], g["gun"])] = {"bardak": 0, "neden": "bardak kalemi katalogda yok (panelde sayılır işaretli değil)",
                                                      "sayim_var": bool(g.get("acilis_var") or g.get("kapanis_var")), "bardak_kalem": {}}
                     continue
-                nets = [k[c]["net_eksilme"] for c in bt]
+                nets = [k[c]["net_eksilme"] for c in BARDAKLAR]
                 neden = None
                 if g["durum"] in ("kapanis_yok", "acilis_yok"):
                     neden = "sayım yok"
@@ -71,12 +70,11 @@ def _gunluk(ay: str) -> dict:
                     neden = "bardak sayılmamış"
                 elif any(n < 0 for n in nets):
                     neden = "ürün aç eksik (bardak eksiye düştü)"
-                elif any(abs(k[c]["devir_fark"] or 0) > DEVIR_SINIR for c in bt):
+                elif any(abs(k[c]["devir_fark"] or 0) > DEVIR_SINIR for c in BARDAKLAR):
                     neden = "bardak devir farkı büyük (dün akşam ≠ bu sabah)"
                 out[(s["sube_id"], g["gun"])] = {"bardak": sum(n for n in nets if n is not None and n > 0), "neden": neden,
                                                  "sayim_var": bool(g.get("acilis_var") or g.get("kapanis_var")),
-                                                 "bardak_kalem": {c: k[c]["net_eksilme"] for c in bt},
-                                                 "eksik_bardak_turu": [c for c in BARDAKLAR if c not in k]}
+                                                 "bardak_kalem": {c: k[c]["net_eksilme"] for c in BARDAKLAR}}
     _hazirla()
     with db() as (conn, cur):
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)

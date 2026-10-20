@@ -980,7 +980,7 @@ export const IS_GRUPLARI = [
   { id: 'isler_kasa', grup: 'kasa', ad: 'Kasa & kapanış', alt: 'Kapanış · teslim · fark' },
   { id: 'isler_odeme', grup: 'odeme', ad: 'Ödemeler', alt: 'Kart son ödeme · toptancı vadesi' },
   { id: 'isler_tedarik', grup: 'tedarik', ad: 'Tedarik & depo', alt: 'Yolda kalan · fatura tutarı' },
-  { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri · vardiya planı yok', mod: ['avans', 'vardiya'] },   // biri açıksa görünür
+  { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri', mod: 'avans' },
   { id: 'isler_kira', grup: 'kira', ad: 'Kira hesabı', alt: 'Gelmeyen kira · şahsi mi borç mu', mod: 'mulk' },
 ];
 const GRUPLAR = new Set(['kasa', 'odeme', 'tedarik', 'personel', 'kira']);
@@ -1502,7 +1502,7 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(R.kirmizi, 55)}` }}>
         <Cip tur="kirmizi">Kapanış YOK</Cip>
-        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}{x.gun_sayisi > 1 && <b style={{ color: R.kirmizi }}> · toplam {x.gun_sayisi} gün</b>}<div style={{ fontSize: 11.5, color: R.not }}>Şube {x.gun_sayisi > 1 ? `bu günlerin kapanışını girmedi (${x.gunler.map((g) => g.slice(8, 10) + '.' + g.slice(5, 7)).join(', ')})` : 'o günün kapanışını girmedi'} — gelir eksik. Şubeden iste; X/Z raporu geldiyse buradan gir (en eski günden başlar) · {yas}</div></div>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Şube o günün kapanışını girmedi — gelir eksik. Şubeden iste; X/Z raporu geldiyse buradan gir · {yas}</div></div>
         <Dugme ana kucuk onClick={() => onKapanis?.(x)}>Kapanışı gir</Dugme>
       </div>
     );

@@ -22,7 +22,6 @@ from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
-from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
@@ -72,8 +71,7 @@ def _hazirla(cur):
     tanim_hazirla(cur)
     # Codex P2: tablolar yokken kuran çağrı sonra 404 ile geri alınırsa bayrak açık kalıp sonraki çağrı UndefinedTable/500 veriyordu →
     # bayrak YALNIZ tablolar GÖRÜLÜNCE; DDL TEK modelle (savepoint + çağıranın lock_timeout'u geri yüklenir)
-    from evvel_yeni_cekirdek import kolon_var
-    if tablo_var(cur, "ey_maas_ay", "ey_personel_yoklama_karar") and kolon_var(cur, "ey_personel_yoklama_karar", "iptal_zaman"):
+    if tablo_var(cur, "ey_maas_ay", "ey_personel_yoklama_karar"):
         _HAZIR = True
         return
     ddl_kur(cur, "sp_ey_maas_ddl", _maas_ddl)
@@ -91,9 +89,6 @@ def _maas_ddl(cur) -> None:
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel_yoklama_karar (
         id TEXT PRIMARY KEY, personel_id TEXT NOT NULL, tarih DATE NOT NULL, karar TEXT NOT NULL,
         izin_bitis DATE, aciklama TEXT, degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
-    # İzin kaldırma izli (silinmez): Vardiya planı izni buraya yazar/kaldırır — izin TEK gerçek burada (sahip 20 Eki)
-    cur.execute("ALTER TABLE ey_personel_yoklama_karar ADD COLUMN IF NOT EXISTS iptal_zaman TIMESTAMPTZ")
-    cur.execute("ALTER TABLE ey_personel_yoklama_karar ADD COLUMN IF NOT EXISTS iptal_kim TEXT")
     cur.execute("DELETE FROM ey_maas_ay WHERE personel_id='takvim' AND ay='karar'")   # gölgelenme artığı (2026-10-16)
 
 
@@ -464,7 +459,7 @@ class ElleBody(BaseModel):
     bayram_saat: Optional[Decimal] = None
     mesai_saat: Optional[Decimal] = None        # boş gönderilirse vardiya önerisi
     calisma_saat: Optional[Decimal] = None
-    duzeltme: Optional[TrTutar] = None
+    duzeltme: Optional[Decimal] = None
     aciklama: Optional[str] = None
     mesai_oneriye_don: bool = False
     saat_oneriye_don: bool = False
@@ -553,7 +548,7 @@ def personel_takvim(ay: Optional[str] = None):
         sube_ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
         from evvel_yeni_tanim_api import tanim_listesi
         kisiler = tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "gorev", "giris", "cikis", "calisma_turu", "aktif"))
-        cur.execute("SELECT personel_id, tarih, karar, izin_bitis FROM ey_personel_yoklama_karar WHERE iptal_zaman IS NULL ORDER BY zaman")
+        cur.execute("SELECT personel_id, tarih, karar, izin_bitis FROM ey_personel_yoklama_karar ORDER BY zaman")
         kararlar = {}
         for r in cur.fetchall() or []:
             r = dict(r)
@@ -750,42 +745,6 @@ def takvim_karar(b: YoklamaKararBody, x_evvel_oturum: Optional[str] = Header(def
             tanim_guncelle(cur, "ey_personel", b.personel_id, {"aktif": False}, bos_ise={"cikis": cikis}, kim=kim)   # Tanımlar'ın kapısı (C-T2-07)
             mesaj = f"Ayrıldı olarak işaretlendi — ayrılış {cikis}"
     return {"ok": True, "mesaj": mesaj}
-
-
-# ─────────── 🏖 İZİN — TEK gerçek (sahip 20 Eki: vardiyadaki gri 'izinli' hücre = bu kayıt; iki ayrı izin defteri YOK) ───────────
-def izin_araliklari(cur, bas: date, son: date, personel_id: Optional[str] = None) -> list:
-    """PUBLIC — [bas, son] ile kesişen izinler [{id, personel_id, bas, bit (None = bitişi belli değil), aciklama, degistiren}].
-    Kaynak: takvim kararı 'izin' (2 gün QR yok sorusu) + Vardiya planı izin hücresi — ikisi de AYNI kayıt."""
-    _hazirla(cur)
-    kos, prm = ["karar='izin'", "iptal_zaman IS NULL", "tarih <= %s", "(izin_bitis IS NULL OR izin_bitis >= %s)"], [son, bas]
-    if personel_id:
-        kos.append("personel_id=%s")
-        prm.append(str(personel_id))
-    cur.execute(f"""SELECT id, personel_id, tarih AS bas, izin_bitis AS bit, aciklama, degistiren FROM ey_personel_yoklama_karar
-                     WHERE {' AND '.join(kos)} ORDER BY tarih""", tuple(prm))
-    return [dict(r) for r in cur.fetchall() or []]
-
-
-def izin_yaz(cur, *, personel_id: str, bas: date, bit: Optional[date], kim: str, aciklama: Optional[str] = None) -> str:
-    """PUBLIC — izin aralığı yaz (çakışan açık izin varsa 409). Kaldırma izin_kaldir ile (silinmez, izli)."""
-    import uuid as _uuid
-    if bit and bit < bas:
-        raise HTTPException(400, "İzin bitişi başlangıçtan önce olamaz")
-    if izin_araliklari(cur, bas, bit or date(2999, 12, 31), personel_id):
-        raise HTTPException(409, "Bu tarihlerde zaten izin var — önce onu kaldır")
-    kid = str(_uuid.uuid4())
-    cur.execute("""INSERT INTO ey_personel_yoklama_karar (id, personel_id, tarih, karar, izin_bitis, aciklama, degistiren)
-                   VALUES (%s,%s,%s,'izin',%s,%s,%s)""", (kid, str(personel_id), bas, bit, (aciklama or "vardiya planı")[:200], kim))
-    return kid
-
-
-def izin_kaldir(cur, izin_id: str, kim: str) -> None:
-    """PUBLIC — izni kaldır (satır silinmez: iptal_zaman + iptal_kim)."""
-    _hazirla(cur)
-    cur.execute("""UPDATE ey_personel_yoklama_karar SET iptal_zaman=NOW(), iptal_kim=%s
-                    WHERE id=%s AND karar='izin' AND iptal_zaman IS NULL RETURNING id""", (kim, izin_id))
-    if not cur.fetchone():
-        raise HTTPException(409, "İzin bulunamadı ya da kaldırılmış — sayfayı yenile")
 
 
 GEC_TOLERANS_DK = 5   # planlanan başlangıçtan bu kadar sonrasına kadar "zamanında"

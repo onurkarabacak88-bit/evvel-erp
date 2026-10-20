@@ -21,8 +21,6 @@ import logging
 import re
 from datetime import date
 from decimal import Decimal
-
-from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from typing import List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -257,7 +255,7 @@ class Satir(BaseModel):
     id: str
     tarih: str
     aciklama: str
-    tutar: TrTutar
+    tutar: Decimal
     hedef: str                       # şube id | patron:Ad | yoksay
     fatura_turu: Optional[str] = None
     no: Optional[str] = None

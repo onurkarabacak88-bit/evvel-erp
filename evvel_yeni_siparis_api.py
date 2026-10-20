@@ -324,10 +324,9 @@ def toptanci_beklenen(cur, sube_id: str) -> List[dict]:
     cur.execute("""SELECT y.id, y.kaynak, y.adet, y.kalem_i, s.kalemler, s.zaman FROM ey_siparis_yon y JOIN ey_siparis s ON s.id = y.siparis_id
                     WHERE s.sube_id=%s AND y.kaynak LIKE 'toptanci:%%' AND NOT y.iptal AND y.teslim_id IS NULL AND NOT s.iptal
                     ORDER BY s.zaman""", (str(sube_id),))
-    rows = [dict(r) for r in cur.fetchall() or []]   # E2E #3: ÖNCE oku — _toptanci_adlari aynı imleçle sorgu atıyor (sonuç kayboluyordu)
     top_ad = _toptanci_adlari(cur)
     grup = {}
-    for y in rows:
+    for y in [dict(r) for r in cur.fetchall() or []]:
         tid = y["kaynak"].split(":", 1)[1]
         k = next((x for x in y["kalemler"] or [] if x["i"] == y["kalem_i"]), {})
         if k.get("iptal"):

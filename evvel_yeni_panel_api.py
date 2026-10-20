@@ -19,8 +19,6 @@ import re
 import uuid
 from datetime import date
 from decimal import Decimal
-
-from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (E2E #10)
 from typing import List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -384,7 +382,7 @@ class SayimSatir(BaseModel):
 class AcilisBody(BaseModel):
     istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
-    kasa_sayim: TrTutar                      # sabah kasadaki nakit (TL)
+    kasa_sayim: Decimal                      # sabah kasadaki nakit (TL)
     sayim: List[SayimSatir] = []             # sayılan ürünler (boş bırakılan SAYILMAZ)
     pasta_toplam: Optional[Decimal] = None   # sahip: pasta yalnız TOPLAM adet (eski panel "Pasta adedi")
     istek_id: Optional[str] = None
@@ -506,18 +504,18 @@ def acilis(sube_id: str, b: AcilisBody):
 
 class TeslimSatir(BaseModel):
     alan: str          # ev:onur · ev:fethi · ev:fatma
-    tutar: TrTutar
+    tutar: Decimal
 
 
 class KapanisBody(BaseModel):
     istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
-    nakit: TrTutar
-    pos: TrTutar = Decimal(0)
-    online: TrTutar = Decimal(0)
-    kor_sayim: Optional[TrTutar] = None      # kasada sayılan (sağlama — Kasa'ya SAYIM yazılmaz, mevcut karar)
+    nakit: Decimal
+    pos: Decimal = Decimal(0)
+    online: Decimal = Decimal(0)
+    kor_sayim: Optional[Decimal] = None      # kasada sayılan (sağlama — Kasa'ya SAYIM yazılmaz, mevcut karar)
     teslimler: List[TeslimSatir] = []
-    birakilan: Optional[TrTutar] = None      # kasada bırakılan
+    birakilan: Optional[Decimal] = None      # kasada bırakılan
     degirmen: Optional[dict] = None          # değirmen sayaçları (sahip: kalır) — {gunluk, doz1, doz2, doz3} (eski panelle aynı 4 alan)
     sayim: List[SayimSatir] = []
     pasta_toplam: Optional[Decimal] = None   # sahip: pasta yalnız TOPLAM adet
@@ -639,14 +637,14 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
         kim = (f"merkez (geç kapanış) · {c['merkez']} · {p['ad']}" if c.get("merkez") else f"{KIM} · {p['ad']}")
         k = kasa_yaz(cur, HareketBody(tur="kapanis", is_gunu=gun, cep=f"sube:{sube_id}", tutar=Decimal(nakit) / 100,
                                       kart=Decimal(pos) / 100, online=Decimal(onl) / 100), kim,
-                     kaynak_ref=f"kapanis:{sube_id}:{gun}", kor=True)
+                     kaynak_ref=f"kapanis:{sube_id}:{gun}")
         if k.get("tekrar") and oid is not None and not c["kuru"]:
             # içerik değişmiş ikinci kapanış: Kasa'daki beyan sessizce eski kalmasın → hepsi geri alınır, düzeltme merkezde
             raise HTTPException(409, "Bugünün kapanışı zaten yapıldı — değiştirmek için merkeze haber verin")
         for i, t in enumerate(tes):
             kasa_yaz(cur, HareketBody(tur="teslim", is_gunu=gun, kaynak=f"sube:{sube_id}", hedef=t["alan"],
                                       tutar=Decimal(t["tutar"]) / 100, teslim_eden=p["ad"]), kim,
-                     kaynak_ref=f"{kok}:teslim:{i}", kor=True)   # kör sayım: ret mesajı rakamsız (E2E #4)
+                     kaynak_ref=f"{kok}:teslim:{i}")
         # Codex BLOKER: geç kapanışta sayım BUGÜNÜN bakiyesine uygulanmaz (geçmiş gün uzlaştırılamaz) — olayda kalır, merkez görür
         gecmis = bool(c.get("merkez")) and c["gun"] != _bugun()
         # Fable: sayım kaynak_ref olay SÜRÜMÜNE bağlı (iptal sonrası yeniden kapanışta sayım yeniden yazılır; tekrar gönderimde yazılmaz)
@@ -753,7 +751,7 @@ class AraTeslimBody(BaseModel):
     personel_id: str
     pin: Optional[str] = None          # 4 hane — doğrulanır, hiçbir yere yazılmaz
     alan: str
-    tutar: TrTutar
+    tutar: Decimal
     istek_id: str
 
 
@@ -775,7 +773,7 @@ def ara_teslim(sube_id: str, b: AraTeslimBody):
         oid = _olay(cur, sube_id=sube_id, tur="teslim", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(k) / 100, veri={"alan": b.alan, "tutar": k})
         r = kasa_yaz(cur, HareketBody(tur="teslim", is_gunu=c["gun"].isoformat(), kaynak=f"sube:{sube_id}", hedef=b.alan,
-                                      tutar=Decimal(k) / 100, teslim_eden=p["ad"]), f"{KIM} · {p['ad']}", kaynak_ref=kok, kor=True)
+                                      tutar=Decimal(k) / 100, teslim_eden=p["ad"]), f"{KIM} · {p['ad']}", kaynak_ref=kok)
         return {"olay": oid, "tekrar": oid is None and bool(r.get("tekrar")), "mesaj": "Teslim kaydedildi"}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
@@ -909,7 +907,7 @@ class GiderBody(BaseModel):
     istemci_gunu: Optional[str] = None
     personel_id: str
     pin: Optional[str] = None
-    tutar: TrTutar
+    tutar: Decimal
     aciklama: str
     kategori: Optional[str] = None
     fis: Optional[bool] = None        # fiş / fatura alındı mı (Fiş kontrol merkezde)
@@ -1083,7 +1081,7 @@ class TeslimAlBody(BaseModel):
     toptanci_id: str
     kalemler: List[Kalem]
     fatura_geldi: Optional[bool] = None   # zorunlu soru (eski "🧾 FATURA GELDİ Mİ?")
-    tutar: Optional[TrTutar] = None       # EVET → faturadaki TOPLAM (zorunlu) · HAYIR → kâğıtta yazıyorsa
+    tutar: Optional[Decimal] = None       # EVET → faturadaki TOPLAM (zorunlu) · HAYIR → kâğıtta yazıyorsa
     fatura_no: Optional[str] = None
     aciklama: Optional[str] = None
     koli: Optional[dict] = None           # yalnız iz: {urun_id: {koli, koli_ici, tek}} (hesap ekranda)

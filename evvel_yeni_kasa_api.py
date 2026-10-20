@@ -38,8 +38,6 @@ import logging
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal
-
-from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (E2E #10)
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -277,19 +275,7 @@ def _baslangic(cur) -> date:
 # ─────────────────────────── OKUMA ───────────────────────────
 def _cepler(cur) -> List[dict]:
     cur.execute("SELECT id, ad, kisa, tur, sube_id, sira FROM para_izi_cep WHERE aktif ORDER BY sira, ad")
-    rows = [dict(r) for r in cur.fetchall() or []]
-    # E2E #6: Tanımlar'da PASİF yapılan şubenin cebi görünür kalır (para kaybolmasın) ama 'aktif' DEĞİL → kapanış beklenmez,
-    # eksik kapanış / Gelir eksik günü üretmez. Şube durumu Tanımlar'ın kapısından (tek gerçek).
-    try:
-        from evvel_yeni_tanim_api import subeler as _ey_subeler
-        with savepoint(cur, "sp_kasa_sube_aktif"):
-            aktif = {str(s["id"]) for s in _ey_subeler(cur)}
-        for c in rows:
-            if c["tur"] == "sube" and c.get("sube_id"):
-                c["aktif"] = str(c["sube_id"]) in aktif
-    except Exception:  # noqa: BLE001
-        log.warning("kasa: şube aktiflik okunamadı", exc_info=True)
-    return rows
+    return [dict(r) for r in cur.fetchall() or []]
 
 
 def _ham(cur):
@@ -689,13 +675,11 @@ def _ozet(D: dict, fl: List[dict]) -> dict:
 def _isler(kayitlar: List[dict], C: dict, fl: List[dict], bas: Optional[date] = None) -> List[dict]:
     """Bekleyen işler — GÜNE BAĞLI DEĞİL, en eski üstte (sahip: 'onayları gözden kaçırırız')."""
     out = []
-    kilit = _sayim_kilidi(_olaylar(kayitlar))   # E2E #5: sayım kilidine takılan teslim otomatik kabul EDİLEMEZ → burada görünmeli
     for h in kayitlar:
         if h["tur"] == "kapanis" and h["durum"] != "onaylandi":
             out.append({"tur": "kapanis", "id": h["id"], "tarih": h["is_gunu"], "cep": h["cep"], "ad": C.get(h["cep"], {}).get("ad"),
                         "nakit": _tl_sayi(h["tutar"]), "kart": _tl_sayi(int(h["veri"].get("kart", 0))), "eski_sistem": bool(h.get("kaynak_ref"))})
-        kilitli = h["tur"] == "teslim" and _kilitli_teslim(h, kilit)
-        if h["tur"] == "teslim" and h["durum"] != "onaylandi" and (OTOMATIK_KABUL_GUN > 0 or kilitli):
+        if h["tur"] == "teslim" and h["durum"] != "onaylandi" and OTOMATIK_KABUL_GUN > 0:
             out.append({"tur": "teslim", "id": h["id"], "tarih": h["is_gunu"], "kaynak": h["kaynak"], "hedef": h["hedef"],
                         "ad": f"{C.get(h['kaynak'], {}).get('ad')} → {C.get(h['hedef'], {}).get('ad')}",
                         "hedef_kisa": C.get(h["hedef"], {}).get("kisa"), "tutar": _tl_sayi(h["tutar"]), "eski_sistem": bool(h.get("kaynak_ref"))})
@@ -739,9 +723,8 @@ def _eksik_kapanislar(kayitlar: List[dict], C: dict, donem_bas: Optional[date] =
     out = []
     subeler = [c for c in C.values() if c["tur"] == "sube" and c.get("aktif", True)]
     for cid, gunler in kapanissiz_gunler(kayitlar, C, bas, dun).items():
-        if gunler:   # E2E #18: şube × gün ayrı satır 113 satıra çıkıyordu → şube başına TEK satır; 'Kapanışı gir' en eski günü açar
-            out.append({"tur": "eksik_kapanis", "id": f"eksik:{cid}:{gunler[0]}", "tarih": gunler[0], "cep": cid, "ad": C[cid]["kisa"],
-                        "gun_sayisi": len(gunler), "gunler": gunler[:31]})
+        for gi in gunler:
+            out.append({"tur": "eksik_kapanis", "id": f"eksik:{cid}:{gi}", "tarih": gi, "cep": cid, "ad": C[cid]["kisa"]})
     g = date.fromisoformat(bas)
     while g.isoformat() <= dun:
         gi = g.isoformat()
@@ -795,9 +778,8 @@ def _kilit_denetle(etkiler: List[tuple], kilit: Dict[str, str], C: dict, sayim_i
                                      f"(sayım bozulurdu). Fark varsa 'Farkı çöz' ile kapat ya da kaydı sayımdan sonraki bir güne gir.")
 
 
-def _eksi_denetle(ol: List[dict], cepler: set, bas_gun: str, C: dict, kor: bool = False) -> None:
-    """Verilen ceplerin bas_gun'den itibaren HİÇBİR gün sonunda eksiye düşmediğini doğrular. kor=True (şube paneli): mesaj RAKAMSIZ —
-    kör sayım (sahip 19 Eki: kasa uyarısı panele verilmez; E2E #4: '−98.151 ₺' çekmecedeki beklenen nakdi ele veriyordu)."""
+def _eksi_denetle(ol: List[dict], cepler: set, bas_gun: str, C: dict) -> None:
+    """Verilen ceplerin bas_gun'den itibaren HİÇBİR gün sonunda eksiye düşmediğini doğrular."""
     if not cepler:
         return
     bal = {c: 0 for c in cepler}
@@ -810,8 +792,6 @@ def _eksi_denetle(ol: List[dict], cepler: set, bas_gun: str, C: dict, kor: bool 
             gunler[o["gun"]] = dict(bal)
     for g in sorted(gunler):
         for c, v in gunler[g].items():
-            if v < 0 and kor:
-                raise HTTPException(400, "Bu tutar teslim edilemez — çekmecedeki parayı yeniden sayın ya da merkeze haber verin")
             if v < 0:
                 raise HTTPException(400, f"{C[c]['ad']} {g} günü sonunda eksiye düşüyor ({_tl(v)}). "
                                          f"O gün o cepte bu kadar para yok — açılış bakiyesi ya da bir giriş eksik olabilir.")
@@ -1088,7 +1068,7 @@ def fark_detay(fark_id: str):
 # ─────────────────────────── UÇLAR: YAZMA ───────────────────────────
 class Parca(BaseModel):
     cep: str
-    tutar: TrTutar
+    tutar: Decimal
 
 
 class HareketBody(BaseModel):
@@ -1098,20 +1078,20 @@ class HareketBody(BaseModel):
     cep: Optional[str] = None
     kaynak: Optional[str] = None
     hedef: Optional[str] = None
-    tutar: Optional[TrTutar] = None
-    kart: Optional[TrTutar] = None
+    tutar: Optional[Decimal] = None
+    kart: Optional[Decimal] = None
     alt: Optional[str] = None
     kimden: Optional[str] = None
     not_: Optional[str] = Field(None, alias="not")
     aciklama: Optional[str] = None
     kimin: Optional[str] = None
     parcalar: Optional[List[Parca]] = None
-    sayilan: Optional[TrTutar] = None
+    sayilan: Optional[Decimal] = None
     fark_id: Optional[str] = None
     sebep: Optional[str] = None
     sorumlu: Optional[str] = None
     teslim_eden: Optional[str] = None
-    online: Optional[TrTutar] = None
+    online: Optional[Decimal] = None
     bag: Optional[dict] = None          # 🧩 tak-çıkar: bu kaydı hangi modülün neyine bağlar (ör. {"modul":"mulk","id":..,"ay":..}) — Kasa yorumlamaz
     istek_id: Optional[str] = None      # formun tek kimliği — tekrar gönderilirse İKİNCİ KEZ yazılmaz
 
@@ -1141,7 +1121,7 @@ def kasa_hazirla() -> None:
     _hazirla()
 
 
-def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = None, kor: bool = False) -> dict:
+def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = None) -> dict:
     """PUBLIC — Kasa'nın TEK yazma kapısı (merkez ucu + yeni şube paneli). Çağıranın işleminde çalışır: modül kilidi,
     sayım kilidi, eksi denetimi burada. kaynak_ref verilirse (ör. kapanis:{şube}:{gün}) aynı kayıt ikinci kez yazılmaz.
     Önce kasa_hazirla() çağrılmış olmalı."""
@@ -1319,7 +1299,7 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
     if t != "cozum":   # fark çözümü sayımın kendi kapanış yoludur — kilide takılmaz
         _kilit_denetle(etkiler, kilit, C, sayim_icin=body.cep if t == "sayim" else None)
     cikan = {e["cep"] for o in yeni_ol for e in _etki(o, C) if e["d"] < 0 and e["cep"] in C}
-    _eksi_denetle(_olaylar(kayit + yeniler), cikan, gun, C, kor=kor)
+    _eksi_denetle(_olaylar(kayit + yeniler), cikan, gun, C)
 
     if evo_yerine:
         _yaz(cur, "iptal", _bugun().isoformat(), kim,
@@ -1342,7 +1322,7 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
 
 
 class OnayBody(BaseModel):
-    alinan: Optional[TrTutar] = None
+    alinan: Optional[Decimal] = None
 
 
 @router.post("/hareket/{hid}/onay")
@@ -1467,11 +1447,6 @@ def _otomatik_senkron() -> dict:
             "zaman": datetime.fromtimestamp(zz, timezone.utc).isoformat() if zz else None}
 
 
-def _kilitli_teslim(h: dict, kilit: Dict[str, str]) -> bool:
-    """TEK kural: teslimin hedef cebi teslim günü ya da sonrasında SAYILMIŞ → otomatik kabul edilemez, merkez 'aldım' der."""
-    return h["hedef"] in kilit and h["is_gunu"] <= kilit[h["hedef"]]
-
-
 def _otomatik_kabul(cur) -> int:
     """Teslim gününden en az OTOMATIK_KABUL_GUN geçmiş, hâlâ 'aldım' denmemiş teslimleri
     teslim edilen tutarla KABUL eder (para teslim günü eve girmiş sayılır). Patronun evi o
@@ -1483,7 +1458,7 @@ def _otomatik_kabul(cur) -> int:
     for h in kayit:
         if h["tur"] != "teslim" or h["durum"] == "onaylandi" or h["is_gunu"] > sinir:
             continue
-        if _kilitli_teslim(h, kilit):
+        if h["hedef"] in kilit and h["is_gunu"] <= kilit[h["hedef"]]:
             continue
         veri = dict(h["veri"])
         veri.update(alinan=h["tutar"], onay_gunu=h["is_gunu"], otomatik=True)
@@ -1557,7 +1532,7 @@ def _pos_otomatik(cur) -> int:
 
 
 class DuzeltBody(BaseModel):
-    alinan: TrTutar
+    alinan: Decimal
 
 
 @router.post("/hareket/{hid}/teslim-duzelt")
@@ -1584,10 +1559,6 @@ def teslim_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = He
         veri = dict(h["veri"])
         veri.setdefault("duzeltmeler", []).append({"eski": int(veri.get("alinan", h["tutar"])), "yeni": al, "kim": kim})
         veri["alinan"] = al
-        # E2E #1: alınan AZALINCA hedef cep (patron evi) o günden sonra eksiye düşmesin (para zaten harcanmış olabilir).
-        # Fable: yönlü — artış (1.000 değil 1.200 saydım) bakiyeyi iyileştirir, eski bir eksik yüzünden reddedilmez.
-        if al < int(veri["duzeltmeler"][-1]["eski"]):
-            _eksi_denetle(_olaylar([{**x, "veri": veri} if x["id"] == hid else x for x in kayit]), {h["hedef"]}, og, C)
         cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(veri, ensure_ascii=False), hid))
     return {"ok": True}
 
@@ -1649,10 +1620,8 @@ def toplu_onay(body: TopluOnayBody, x_evvel_oturum: Optional[str] = Header(defau
     with db() as (conn, cur):
         _kilit(cur)
         kim = _aktor(cur, x_evvel_oturum)
-        cur.execute("""UPDATE para_izi_hareket h SET durum='onaylandi', onay_zamani=NOW(), onaylayan=%s
-                        WHERE h.id = ANY(%s) AND h.tur='kapanis' AND COALESCE(h.durum,'') <> 'onaylandi'
-                          AND NOT EXISTS (SELECT 1 FROM para_izi_hareket i WHERE i.tur='iptal' AND i.veri->>'hedef_id' = h.id)""",
-                    (kim, idler))   # E2E #14: iptal edilmiş kapanış onaylanmaz
+        cur.execute("""UPDATE para_izi_hareket SET durum='onaylandi', onay_zamani=NOW(), onaylayan=%s
+                        WHERE id = ANY(%s) AND tur='kapanis' AND COALESCE(durum,'') <> 'onaylandi'""", (kim, idler))
         n = cur.rowcount
     return {"ok": True, "onaylanan": n}
 

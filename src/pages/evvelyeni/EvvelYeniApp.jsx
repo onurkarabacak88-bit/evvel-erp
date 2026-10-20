@@ -114,7 +114,7 @@ export default function EvvelYeniApp() {
   const GORUNUR = acikMod ? MODULLER.filter((b) => b.mod === 'kasa' || b.her_zaman || acikMod.has(b.mod)) : MODULLER;
   // 'bolum' taşıyan modülün sayfaları ana bölümün altına eklenir (her sayfa kendi modülünü bilir → kapanınca o da kalkar)
   const BOLUMLER = GORUNUR.filter((b) => !b.bolum).map((b) => ({
-    ...b, sayfalar: [...b.sayfalar.filter((x) => !x.mod || !acikMod || [].concat(x.mod).some((m) => acikMod.has(m))), ...GORUNUR.filter((e) => e.bolum === b.mod).flatMap((e) => e.sayfalar)],
+    ...b, sayfalar: [...b.sayfalar.filter((x) => !x.mod || !acikMod || acikMod.has(x.mod)), ...GORUNUR.filter((e) => e.bolum === b.mod).flatMap((e) => e.sayfalar)],
   }));
   const veriGeldi = (v) => setRozet({
     teslim: v.isler.filter((x) => x.tur === 'teslim').length, farklar: v.ozet.acik_fark_sayisi,

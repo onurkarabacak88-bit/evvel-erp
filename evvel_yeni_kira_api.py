@@ -11,8 +11,7 @@ otomatik gelsin; ay ay ödenen kiraların listesi yıllıkta ay ay tutulsun — 
 """
 
 from datetime import date
-
-from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
+from decimal import Decimal
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -91,8 +90,6 @@ def kira_yaz(cur, sube_id: str, kim: str, tutar=None, gecerli_ay=None, artis_ayi
     for g, ad in ((artis_ayi, "Artış ayı 1–12"), (odeme_gunu, "Kira ödeme günü 1–31")):
         if g is not None and not 1 <= int(g) <= (12 if ad.startswith("Artış") else 31):
             raise HTTPException(400, f"{ad} olmalı")
-    if tutar is not None and _kurus(tutar) < 0:
-        raise HTTPException(400, "Kira eksi olamaz")   # E2E #8: −100 ₺ şube giderine eksi yazılıyordu
     if tutar is not None:
         ay = (gecerli_ay or _bugun().strftime("%Y-%m"))[:7]
         try:
@@ -211,7 +208,7 @@ def kira_aylari(cur, yil: int, bugun: date) -> list:
 
 
 class KiraBody(BaseModel):
-    tutar: Optional[TrTutar] = None
+    tutar: Optional[Decimal] = None
     gecerli_ay: Optional[str] = None
     artis_ayi: Optional[int] = None
     odeme_gunu: Optional[int] = None

@@ -47,8 +47,6 @@ MODULLER: List[dict] = [
     {"kod": "kazanc", "ad": "Şube kazancı", "ikon": "📈", "sektor": "genel", "gerekir": ["gelir", "gider"], "aciklama": "gelir − şubenin gideri"},
     {"kod": "avans", "ad": "Avans talepleri", "ikon": "🤝", "sektor": "genel", "gerekir": ["maas"], "menu": False,
      "aciklama": "personelin QR sayfasından avans talepleri → havale / elden / ret (sayfası Personel altında)"},
-    {"kod": "vardiya", "ad": "Vardiya planı", "ikon": "🗓️", "sektor": "genel", "gerekir": ["tanim"], "menu": False,
-     "kurulum": "vardiya_hazirla", "aciklama": "kalıp + kişi/gün planı, taslak → yayın; Günlük yoklama, Maaş, Panel/Telefon 'Bugün' buradan okur (sayfası Personel altında)"},
     {"kod": "fis", "ad": "Anlık gider fiş kontrol", "ikon": "🧾", "sektor": "genel", "gerekir": ["kasa"], "menu": False,
      "aciklama": "panelden girilen giderlerin fişi geldi mi; gelmeyen girişi yapan personelle (sayfası Gider altında)"},
     {"kod": "mulk", "ad": "Kira hesabı", "ikon": "🏠", "sektor": "ozel", "gerekir": ["kasa"],
