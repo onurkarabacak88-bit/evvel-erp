@@ -194,3 +194,15 @@ Her faz: `python scripts/kapi_kontrol.py` + Codex + Fable; 23:45–00:15 yayın 
 
 ## C. SAHİP KARARI (2026-10-18)
 V1–V10: **Fable'ın önerileri aynen onaylandı** (sahip: "devam et"). Codex görüşü kota açılınca alınacak; çelişki çıkarsa sahibe getirilir.
+
+## 🆕 20 EKİM — SAHİP KARARLARI (yeni kurgu bunların üzerine)
+Sahip: "baştan ele alalım — daha iyi, daha işlevsel bir mekanizma; ama KULLANILAN özellikleri içinde barındırsın." (Eski plan olduğu gibi taşınmaz; özellik envanteri → koru / sadeleştir / çıkar.)
+| # | Karar |
+|---|---|
+| K1 | Fazla mesai (tam zamanlı): plan varsa plan − 9,5, yoksa güvenilir QR − 9,5 (yarı zamanlıyla TEK kural) |
+| K2 | Plan var, QR çıkışı yok → plan saati sayılır + Vardiya › Uyarılar "QR çıkışsız, plan sayıldı" |
+| K3 | Planlı gün, QR yok, panel izi yok → otomatik eksik gün YOK; Bekleyen işler 'gelmedi' → merkez karar |
+| K4 | Bekleyen işler'e yalnız 2 satır: 'gelecek hafta plan yok' + 'gelmedi'; gerisi modülün Uyarılar sekmesi |
+| K5 | Eski planın taşınması: yeni kurguyla birlikte yeniden ele alınacak (açık) |
+| K6 | Personel planını görür: panel + telefonda "Bugün" satırı; sabah/akşam etiketi saatten türetilir |
+Durum: yeni kurgu Fable'da (özellik envanteri + yeni mekanizma + karar soruları).
