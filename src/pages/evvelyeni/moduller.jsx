@@ -19,6 +19,7 @@ import KrediModulu, { KREDI_SAYFALAR } from './KrediModulu';
 import { KiraTakvim } from './KiraModulu';
 import ToptanciModulu, { TOPTANCI_SAYFALAR, UrunFiyatlari } from './ToptanciModulu';
 import DepoModulu, { DEPO_SAYFALAR } from './DepoModulu';
+import SiparisModulu, { SIPARIS_SAYFALAR } from './SiparisModulu';
 import FaturaModulu, { FATURA_SAYFALAR } from './FaturaModulu';
 import FisModulu, { FIS_SAYFALAR } from './FisModulu';
 import AvansModulu, { AVANS_SAYFALAR } from './AvansModulu';
@@ -50,6 +51,8 @@ export const MODULLER = [
   { mod: 'toptanci', ad: 'Toptancılar', ikon: '🚚', sektor: 'genel', sayfalar: TOPTANCI_SAYFALAR,
     g: (s, c) => (s === 'urun_fiyatlari' ? <UrunFiyatlari onToast={c.onToast} /> : <ToptanciModulu onToast={c.onToast} />) },
   { mod: 'depo', ad: 'Depo', ikon: '📦', sektor: 'genel', sayfalar: DEPO_SAYFALAR, g: (s, c) => <DepoModulu gorunum={s} onToast={c.onToast} /> },
+  // 🛒 Sipariş (S5c): şube talebi → merkez yönlendirme. Bekleyen işler 'siparis_yon' sayfasına gelir (Codex P1: karşılığı yoktu).
+  { mod: 'siparis', bolum: 'depo', ad: 'Sipariş yönlendirme', ikon: '🛒', sektor: 'genel', sayfalar: SIPARIS_SAYFALAR, g: (s, c) => <SiparisModulu onToast={c.onToast} /> },
   { mod: 'kazanc', ad: 'Şube kazancı', ikon: '📈', sektor: 'genel', sayfalar: KAZANC_SAYFALAR, g: () => <KazancModulu /> },
   { mod: 'bar', ad: 'Bar', ikon: '🥤', sektor: 'kahve', sayfalar: BAR_SAYFALAR, g: () => <BarModulu /> },
   { mod: 'satis', ad: 'Satış kontrolü', ikon: '🔍', sektor: 'kahve', sayfalar: SATIS_SAYFALAR, g: (s) => <SatisModulu gorunum={s} /> },

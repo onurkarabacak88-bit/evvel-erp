@@ -528,9 +528,7 @@ def yonlendir(sid: str, body: YonBody, x_evvel_oturum: Optional[str] = Header(de
                 raise HTTPException(400, f"{k['ad']}: katalog dışı öneri — önce ürünü bağla ya da reddet")
             yeni, top = [], kilitli
             for yy in x.get("yonler") or []:
-                kn, a = str(yy.get("kaynak") or ""), yy.get("adet")
-                if not isinstance(a, int) or isinstance(a, bool) or a <= 0:
-                    raise HTTPException(400, "Yönlendirilen adet 1 ya da daha fazla tam sayı")
+                kn, a = str(yy.get("kaynak") or ""), adet_oku(yy.get("adet"), "Yönlendirilen adet", en_az=1)   # TEK adet kuralı
                 t, _, ref = kn.partition(":")
                 if t == "depo":
                     if not merkez_depo or ref != merkez_depo:   # Fable #7: Gönderilecek yalnız merkez depoda — başka şube deposu görünmezdi
