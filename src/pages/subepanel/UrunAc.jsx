@@ -46,7 +46,9 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
     return () => window.clearTimeout(t);
   }, [adet, not, istek]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const katalog = d.ac_katalog || [];
+  // pasta ('gununde') açılmaz — girişte tüketildi (sunucu da reddeder); liste Tedarikçi / Sipariş ile ortak olduğu için burada süzülür
+  const katalog = useMemo(() => (d.ac_katalog || []).map((k) => ({ ...k, urunler: k.urunler.filter((u) => u.takip !== 'gununde') }))
+    .filter((k) => k.urunler.length), [d.ac_katalog]);
   const urunMap = useMemo(() => Object.fromEntries(katalog.flatMap((k) => k.urunler.map((u) => [u.id, { ...u, kategori: k.kategori }]))), [katalog]);
   const secili = Object.entries(adet).filter(([id, n]) => n > 0 && urunMap[id]);
   const kalem = secili.length;

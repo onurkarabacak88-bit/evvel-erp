@@ -341,8 +341,9 @@ def panel_durum(sube_id: str):
             "acilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "acilinca"]} for k in kat],
             # Basamak 5 Ürün Aç: BÜTÜN katalog (aktif kategoriler; ürünlerde aktif bayrağı — "Pasifleri göster")
             "ac_katalog": [{"id": str(k.get("id")), "kategori": k["ad"], "emoji": k.get("emoji"),
-                            "urunler": [{**_u(x), "takip": x.get("takip") or "sayim", "aktif": bool(x.get("aktif", True))} for x in k["urunler"]
-                                        if not __import__("evvel_yeni_urun_api").gununde_tuketilir(x)]}   # pasta (gununde) açılmaz — girişte tüketildi
+                            # Codex P1: pasta (gununde) BURADAN atılmaz — Tedarikçiden teslim + Sipariş ver aynı listeyi kullanır (pasta seçilemiyordu).
+                            # Ürün Aç ekranı 'gununde'yi kendisi gizler; sunucu da açmayı reddeder (girişte tüketildi).
+                            "urunler": [{**_u(x), "takip": x.get("takip") or "sayim", "aktif": bool(x.get("aktif", True))} for x in k["urunler"]]}
                            for k in kat_hepsi if k.get("aktif", True)],
             "bugun": bugunku, "yoklama": yok,
             # gün çizgisi (eski ana sayfa ①): AÇILIŞ · KAPANIŞ — kim, saat (KONTROL noktası yok: sahip istisnası 10)
