@@ -187,10 +187,16 @@ def eski_panel_zinciri_acik() -> bool:
         return is_gunu() < date(2026, 11, 1)
 
 
-def yeni_donem(cur) -> bool:
-    """PUBLIC: panel_baslangic (1 Kasım) geldi mi — okuyucular bundan sonra YALNIZ Evvel Yeni kaynaklarını (yeni katalog
-    kimliği) okur; öncesi geçiş (eski aktarım). Tek kural, tek yer (Fable altyapı denetimi)."""
-    return bugun() >= panel_baslangic(cur)
+def yeni_donem(cur, gun: Optional[date] = None) -> bool:
+    """PUBLIC — TEK KURAL "1 Kasım geldi mi" (tekrar denetimi F#1/F#23/C-T1-17: 12 yerde ayrı yazılmış, bir kısmı TAKVİM bir kısmı İŞ
+    gününe bakıyordu → 1 Kasım 00:00–02:00 arası okuyucular yeni evrene geçip yazıcılar hâlâ denemedeydi). Artık HEPSİ İŞ GÜNÜ
+    (gece 02:00'ye kadar önceki gün). gun verilirse o güne göre (ör. mutabakatta bakılan gün)."""
+    return (gun or is_gunu()) >= panel_baslangic(cur)
+
+
+def deneme_mi(cur, gun: Optional[date] = None) -> bool:
+    """PUBLIC — deneme (kuru) dönemi mi: yeni_donem'in tersi. Panel / Depo / Sipariş kuru kapıları bunu kullanır."""
+    return not yeni_donem(cur, gun)
 
 
 def ayar_yaz(cur, anahtar: str, deger: Optional[str], kim: str) -> None:

@@ -357,8 +357,8 @@ def yola_cikar(cur, *, depo_sube: str, hedef_sube: str, satirlar: List[dict], ki
         raise HTTPException(400, "Gönderilecek kalem yok")
     for sid in sorted({str(x.get("siparis_id") or "") for x in satirlar}):
         _kilit(cur, sid)
-    from evvel_yeni_cekirdek import panel_baslangic
-    gercek = _is_gunu() >= panel_baslangic(cur)
+    from evvel_yeni_cekirdek import yeni_donem
+    gercek = yeni_donem(cur)
     ys = {}
     for x in satirlar:
         cur.execute("""SELECT y.*, s.sube_id AS hedef, s.surum, s.iptal AS s_iptal, s.kalemler FROM ey_siparis_yon y
@@ -660,12 +660,12 @@ def deneme_temizle(x_evvel_oturum: Optional[str] = Header(default=None)):
 def siparis_isleri(cur) -> list:
     if not _var(cur):
         return []
-    from evvel_yeni_cekirdek import panel_baslangic
-    gercek = _is_gunu() >= panel_baslangic(cur)
+    from evvel_yeni_cekirdek import yeni_donem
+    gercek = yeni_donem(cur)
     cur.execute("SELECT * FROM ey_siparis WHERE NOT iptal AND zaman > NOW() - INTERVAL '30 days' AND NOT (deneme AND %s) ORDER BY zaman",
                 (gercek,))
     acik = [s for s in _derle(cur, [dict(r) for r in cur.fetchall() or []]) if s["durum"] == "acik"]
-    out, simdi = [], date.today()
+    out, simdi = [], _is_gunu()   # F#23: sunucu UTC date.today() değil
     oneri = [k["ad"] for s in acik for k in s["kalemler"] if k["durum"] == "oneri"]
     if oneri:
         out.append({"genel": True, "tur": "siparis_oneri", "grup": "tedarik", "id": "so", "tarih": simdi.isoformat(), "etiket": "🛒 Katalog dışı istek",

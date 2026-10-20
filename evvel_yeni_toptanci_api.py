@@ -354,10 +354,10 @@ def teslim_yaz(cur, *, kaynak_ref: str, toptanci_id: str, toptanci_ad: str, sube
 def panel_teslim_yaz(cur, *, defter_id, sube_id, toptanci_id, toptanci_ad, kalemler, fatura_geldi, fatura_tutar, fatura_no, teslim_alan) -> None:
     """sube_panel /urun-sevk kancası — kendi SAVEPOINT'inde; hata teslimi (stok) BOZMAZ, iz bırakır."""
     try:
-        from evvel_yeni_cekirdek import is_gunu as _ig, panel_baslangic as _pb
+        from evvel_yeni_cekirdek import is_gunu as _ig, yeni_donem as _yd
         # Codex: yeni dönemde (iş günü ≥ panel_baslangic) eski panelden teslim gelirse borç KAYBOLMASIN (sessiz kayıp) ama
         # yeni panelle çift kayıt olabilir → yazılır + "⚠ ESKİ PANELDEN" işareti (merkez Toptancılar'da görür, çiftse iptal eder)
-        isaret = "⚠ ESKİ PANELDEN (yeni dönem) — yeni panelde aynı teslim varsa birini iptal et" if _ig() >= _pb(cur) else None
+        isaret = "⚠ ESKİ PANELDEN (yeni dönem) — yeni panelde aynı teslim varsa birini iptal et" if _yd(cur) else None   # TEK kural (çekirdek)
         with savepoint(cur, "sp_ey_top_panel"):   # Fable: tarih = İŞ GÜNÜ (yeni panelle aynı; 00–02 çifti yakalansın)
             teslim_yaz(cur, kaynak_ref=f"urun_sevk:{defter_id}", toptanci_id=str(toptanci_id), toptanci_ad=toptanci_ad,
                        sube_id=str(sube_id), gun=_ig(), kalemler=kalemler or [], fatura_geldi=fatura_geldi,

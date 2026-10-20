@@ -33,7 +33,11 @@ router = APIRouter(prefix="/api/evvel-yeni/maas", tags=["evvel-yeni-maas"])
 AY_GUN = 30
 GUNLUK_SAAT = Decimal("9.5")
 BAYRAM_KAT = 2
-YENI_HESAP_BASLANGIC = "2026-11"     # Ekim ve öncesi eski sistemin hesabıyla
+def _yeni_hesap(cur) -> str:
+    """Yeni maaş hesabının ilk ayı = panel_baslangic'ın ayı (tekrar denetimi "dört ayrı başlangıç": sabit "2026-11" ayardan kopuktu).
+    Öncesi (Ekim) eski sistemin hesabıyla."""
+    from evvel_yeni_cekirdek import panel_baslangic
+    return panel_baslangic(cur).strftime("%Y-%m")
 KAPALI_SON_AY = "2026-09"            # Sahip (2026-10-16): "Eylül'ü Eylül sonu/Ekim başı ödüyoruz" → Evvel Yeni
                                      # (1 Ekim) öncesi çalışma ayları ÖDENMİŞ ve KAPANMIŞ sayılır
 ODENEN_KALEMLER = ("Maaş", "Yemek ücreti", "Prim")   # SGK/vergi kişinin bakiyesini kapatmaz
@@ -166,7 +170,6 @@ def _ucretler(cur, ay: str) -> dict:
 def _yemek_kaynagi(cur, ay: str, ay_bas: date, ay_son: date):
     """F4 — VAR OLAN yemek kalemi okuyucusunun KAYNAĞI: panel başlangıç ayından (1 Kasım) itibaren yoklama modülünün
     PUBLIC yemek_ozet'i (K7/K8). Öncesi: eski formül (None). Modül kapalıysa {'kapali': True} → tam + uyarı."""
-    from evvel_yeni_cekirdek import ayar_oku
     from evvel_yeni_moduller import DURUM
     from evvel_yeni_cekirdek import panel_baslangic
     bas = panel_baslangic(cur).isoformat()   # Fable: tek yerde ayrıştırılır
@@ -224,7 +227,8 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
     kisiler = [dict(r) for r in cur.fetchall() or []]
     cur.execute("SELECT * FROM ey_maas_ay WHERE ay=%s", (ay,))
     elle = {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
-    eski_mod = ay < YENI_HESAP_BASLANGIC
+    yh = _yeni_hesap(cur)
+    eski_mod = ay < yh
     eski = _eski_ekim(cur, ay) if eski_mod else {}
     eski_od = _eski_odenen(cur, ay) if eski_mod else {}
     ucret = _ucretler(cur, ay)
@@ -232,7 +236,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
     yemek_k = _yemek_kaynagi(cur, ay, ay_bas, ay_son) if not eski_mod else None
     # önceki aydan avans devri (yeni hesap başlangıcından itibaren zincir)
     devir_in = {}
-    if not eski_mod and ay > YENI_HESAP_BASLANGIC:
+    if not eski_mod and ay > yh:
         onceki = _ay_kaydir(ay, -1)
         for r in hesapla(cur, onceki, sadece, odemeler):
             devir_in[r["personel_id"]] = _kurus(r["avans_devir_sonraki"])
@@ -359,14 +363,15 @@ def maas_liste(ay: Optional[str] = None):
         from evvel_yeni_tanim_api import subeler
         sube_ad = {s["id"]: s["ad"] for s in subeler(cur, hepsi=True)}
         rows = hesapla(cur, a_)
+        yh = _yeni_hesap(cur)
     for r in rows:
         r["sube_ad"] = sube_ad.get(r["sube_id"]) or "Ortak"
     T = lambda k: round(sum(r[k] for r in rows), 2)  # noqa: E731
-    return {"ay": a_, "eski_mod": a_ < YENI_HESAP_BASLANGIC, "personel": rows,
+    return {"ay": a_, "eski_mod": a_ < yh, "personel": rows,
             "toplam": {"hak_edis": T("hak_edis"), "avans_mahsup": T("avans_mahsup"), "odenen": T("odenen"), "kalan": T("kalan")},
             "kapali": a_ <= KAPALI_SON_AY,
             "not": ("Evvel Yeni (1 Ekim) öncesi ay: maaşlar ödenmiş ve kapanmış sayılır. " if a_ <= KAPALI_SON_AY else "")
-            + ("Ekim ve öncesi eski sistemin hesabıyla (avans düşülmüş net + mahsup). " if a_ < YENI_HESAP_BASLANGIC else "")
+            + ("Ekim ve öncesi eski sistemin hesabıyla (avans düşülmüş net + mahsup). " if a_ < yh else "")
             + "Kalan = hak ediş − avans mahsubu − ödenen (maaş, yemek, prim). SGK/vergi kişinin bakiyesini kapatmaz."}
 
 
@@ -386,8 +391,9 @@ class ElleBody(BaseModel):
 @router.post("/{pid}/{ay}")
 def maas_elle(pid: str, ay: str, b: ElleBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     from evvel_yeni_cekirdek import aktor as _aktor
-    if ay[:7] < YENI_HESAP_BASLANGIC:
-        raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
+    with db() as (_c0, _k0):
+        if ay[:7] < _yeni_hesap(_k0):
+            raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
     if b.duzeltme and not (b.aciklama or "").strip():
         raise HTTPException(400, "Düzeltmenin gerekçesini yaz")
     with db() as (conn, cur):
@@ -427,8 +433,9 @@ def maas_elle(pid: str, ay: str, b: ElleBody, x_evvel_oturum: Optional[str] = He
 def maas_onay(pid: str, ay: str, kaldir: bool = False, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Onay: ayın kalemleri DONDURULUR (ücret/vardiya sonradan değişse de bu ay bozulmaz); gider 'kesin' olur."""
     from evvel_yeni_cekirdek import aktor as _aktor
-    if ay[:7] < YENI_HESAP_BASLANGIC:
-        raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
+    with db() as (_c0, _k0):
+        if ay[:7] < _yeni_hesap(_k0):
+            raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
     with db() as (conn, cur):
         _hazirla(cur)
         kim = _aktor(cur, x_evvel_oturum)

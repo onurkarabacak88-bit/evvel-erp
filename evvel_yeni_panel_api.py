@@ -26,11 +26,10 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from database import db, savepoint
-from evvel_yeni_cekirdek import ayar_oku, bekleyen_is_kaydet, is_gunu as _bugun, kurus as _kurus   # şube İŞ GÜNÜ (gece 02:00'ye kadar önceki gün)
+from evvel_yeni_cekirdek import ayar_oku, bekleyen_is_kaydet, deneme_mi, is_gunu as _bugun, kurus as _kurus   # şube İŞ GÜNÜ (gece 02:00'ye kadar önceki gün)
 
 router = APIRouter(prefix="/api/evvel-yeni/panel", tags=["evvel-yeni-panel"])
 log = logging.getLogger(__name__)
-VARSAYILAN_BASLANGIC = "2026-11-01"
 from evvel_yeni_kasa_api import TESLIM_HEDEFLERI as _TH   # TEK liste Kasa'da (C-T1-34; Fethi → geçiş hesabı)
 TESLIM_ALANLAR = tuple(_TH.values())     # sahip kararı: teslim yalnız Onur / Fethi / Fatma
 KIM = "şube paneli"
@@ -45,11 +44,8 @@ class _Kuru(Exception):
 
 
 def _baslangic(cur) -> date:
-    try:
-        from evvel_yeni_cekirdek import panel_baslangic
-        return panel_baslangic(cur)   # Fable: tek yerde ayrıştırılır
-    except ValueError:
-        return date.fromisoformat(VARSAYILAN_BASLANGIC)
+    from evvel_yeni_cekirdek import panel_baslangic
+    return panel_baslangic(cur)   # tek yerde ayrıştırılır (çekirdek; geçersiz ayarda kendisi 1 Kasım'a düşer)
 
 
 def _sube(cur, sube_id: str) -> dict:
@@ -71,7 +67,8 @@ def _yoklama():
 
 def _qr_gerekli(cur) -> bool:
     """QR kapısı: yoklama yüklü + deneme dönemi bitti (panel_baslangic). Denemede kapı uyarı olarak görünür, engel olmaz."""
-    return _yoklama() is not None and _bugun() >= _baslangic(cur)
+    from evvel_yeni_cekirdek import yeni_donem
+    return _yoklama() is not None and yeni_donem(cur)
 
 
 def _personel(cur, sube_id: str, pid: Optional[str], kapi: bool = True, gun=None) -> dict:
@@ -284,7 +281,7 @@ def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez:
         with db() as (conn, cur):
             g = gun or _bugun()
             cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_gun:{sube_id}:{g.isoformat()}",))
-            ctx = {"gun": g, "sube": _sube(cur, sube_id), "kuru": g < _baslangic(cur), "merkez": merkez}
+            ctx = {"gun": g, "sube": _sube(cur, sube_id), "kuru": deneme_mi(cur, g), "merkez": merkez}
             sonuc = is_fn(cur, ctx)
             if isle_deneme and not ctx["kuru"]:   # Codex: geç kapanış ile 'işlendi' işareti AYNI işlemde (yarıda kalmaz)
                 cur.execute("UPDATE ey_panel_deneme SET islendi=TRUE, isleyen=%s WHERE id=%s", (merkez, isle_deneme))
@@ -743,7 +740,7 @@ def _kapanis_merkeze(sube_id: str, b: KapanisBody) -> dict:
     did = _deneme_ac(sube_id, "kapanis", gun, govde)
     _deneme_kapat(did, "ret", f"Telefonsuz — {p['ad']} merkeze gönderdi (geç kapanış olarak işleyin)")
     with db() as (_c, cur):
-        kuru = gun < _baslangic(cur)
+        kuru = deneme_mi(cur, gun)
     return {"ok": True, "merkeze": True, "kuru": kuru,
             "mesaj": ("DENEME — gerçekte merkeze iletilirdi" if kuru else "Kapanış merkeze iletildi — merkez işleyince gün kapanır. Rakamlar kaydedildi.")}
 

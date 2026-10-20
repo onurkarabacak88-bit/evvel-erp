@@ -25,7 +25,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, bekleyen_is_kaydet
+from evvel_yeni_cekirdek import aktor as _aktor, bekleyen_is_kaydet, deneme_mi, is_gunu as _is_gunu   # K1/F#23: Depo'da tek gün = İŞ GÜNÜ
 
 router = APIRouter(prefix="/api/evvel-yeni/depo", tags=["evvel-yeni-depo"])
 log = logging.getLogger(__name__)
@@ -155,7 +155,7 @@ def _tr_gun(ts) -> date:
     try:
         return (ts.astimezone(ZoneInfo("Europe/Istanbul")) if getattr(ts, "tzinfo", None) else ts).date()
     except Exception:  # noqa: BLE001
-        return _bugun()
+        return _is_gunu()
 
 
 def _yaz_guncel(cur, row: tuple) -> int:
@@ -192,7 +192,7 @@ def senkron(cur) -> dict:
     depo_hazirla(cur)
     if evren_yeni(cur):
         from evvel_yeni_cekirdek import panel_baslangic
-        if (_bugun() - panel_baslangic(cur)).days >= SENKRON_KESIM_GUN:
+        if (_is_gunu() - panel_baslangic(cur)).days >= SENKRON_KESIM_GUN:
             return {"kesildi": True, "not": "Eski sistem köprüsü kapalı (1 Kasım kesimi)"}
     coz = _urun_haritasi(cur)
     depo = _depo_sube(cur)
@@ -373,10 +373,10 @@ def hareket_yaz(cur, *, kaynak_ref: str, tur: str, urun_id: str, adet: int, kayn
     b = _ey_urun_dogrula(cur, [urun_id])   # Fable: yeni evrene yalnız ey_urun kimliği
     _konum_kilidi(cur, kaynak, hedef)   # Codex: sayımla eşzamanlı hareket fark hesabını bozmasın
     ad = urun_ad or b[str(urun_id)]["ad"]
-    n = _yaz(cur, [(kaynak_ref, tur, str(urun_id), ad, adet, kaynak, hedef, gun or _bugun(), _simdi_tr(), kim, aciklama, bag)], yeni=True)
+    n = _yaz(cur, [(kaynak_ref, tur, str(urun_id), ad, adet, kaynak, hedef, gun or _is_gunu(), _simdi_tr(), kim, aciklama, bag)], yeni=True)
     if n and tur in ("giris", "kabul"):
         _gununde_tuket(cur, b[str(urun_id)], kaynak_ref=kaynak_ref, urun_id=str(urun_id), urun_ad=ad, adet=adet, konum=hedef,
-                       kim=kim, bag=bag, gun=gun or _bugun())
+                       kim=kim, bag=bag, gun=gun or _is_gunu())
     return n == 1
 
 
@@ -451,7 +451,7 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
     else:
         sid = "ss-" + uuid.uuid4().hex[:12]
     B = _bakiyeler(cur, yeni=not eski_evren)
-    gun = gun or _bugun()
+    gun = gun or _is_gunu()
     if not eski_evren:
         _b = _ey_urun_dogrula(cur, [x.get("urun_id") for x in satirlar if x.get("sayilan") not in (None, "")])
         _p = [v["ad"] for v in _b.values() if (v.get("takip") or "sayim") == "gununde"]
@@ -611,7 +611,7 @@ def depo_yolda(evren: Optional[str] = None):
     """Yoldakiler (sevk edildi, kabul edilmedi) + sevk ≠ kabul olanlar. GEC_KABUL_GUN'den eski olan kırmızı.
     ?evren=eski|yeni (Fable #3): 31 Ekim akşamı eski açık sevkler 1 Kasım sabahı da kapatılabilsin; deneme sevkleri önceden görülsün."""
     _otomatik_senkron()
-    bugun = _bugun()
+    bugun = _is_gunu()
     with db() as (conn, cur):
         depo_hazirla(cur)
         yeni_mi = evren == "yeni" if evren in ("yeni", "eski") else evren_yeni(cur)
@@ -871,10 +871,6 @@ def _urun_bilgi1(cur, urun_id) -> dict:
     return urun_bilgi(cur, [str(urun_id)]).get(str(urun_id)) or {}
 
 
-def _is_gunu() -> date:
-    from evvel_yeni_cekirdek import is_gunu
-    return is_gunu()   # Codex #11: depo da panel gibi İŞ GÜNÜ (00–02 önceki gün)
-
 
 def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], kim: str, istek_id: str,
              notu: Optional[str] = None, gun: Optional[date] = None) -> dict:
@@ -1111,8 +1107,7 @@ def sevk_et(body: SevkBody, x_evvel_oturum: Optional[str] = Header(default=None)
         if kim in ("oturumsuz", "bilinmiyor"):
             raise HTTPException(401, "Merkez oturumu gerekli")
         kaynak = body.kaynak or _depo_sube(cur)
-        from evvel_yeni_cekirdek import panel_baslangic
-        kuru = _is_gunu() < panel_baslangic(cur)   # panelle AYNI sınır (iş günü)
+        kuru = deneme_mi(cur)   # panelle AYNI tek kural (çekirdek)
         sonuc = {}
         try:
             with savepoint(cur, "sp_sevk_et"):
@@ -1151,8 +1146,7 @@ def sevkler(gun_sayisi: int = 14):
     """Merkez: son paketler (başlık + kalem durumları) — Sevk et ekranının alt listesi."""
     with db() as (conn, cur):
         _sevk_hazirla(cur)
-        from evvel_yeni_cekirdek import panel_baslangic
-        deneme = _is_gunu() < panel_baslangic(cur)   # Codex 2.tur: ekran bandı kayıt kapısıyla AYNI sınır (iş günü)
+        deneme = deneme_mi(cur)   # ekran bandı kayıt kapısıyla AYNI tek kural
         if not _var_tablo(cur, "ey_sevk_parti"):
             return {"partiler": [], "deneme": deneme}
         cur.execute("""SELECT id, kaynak, hedef, kim, notu, is_gunu, kalemler, iptal, iptal_sebep, zaman FROM ey_sevk_parti
@@ -1191,7 +1185,7 @@ def depo_isleri(cur) -> list:
                       AND yeni = %s
                     GROUP BY bag HAVING SUM(CASE WHEN tur='sevk' THEN 1 ELSE 0 END) > 0
                        AND SUM(CASE WHEN tur='kabul' THEN 1 ELSE 0 END) = 0
-                       AND MIN(is_gunu) <= %s""", (evren_yeni(cur), _bugun() - timedelta(days=GEC_KABUL_GUN)))
+                       AND MIN(is_gunu) <= %s""", (evren_yeni(cur), _is_gunu() - timedelta(days=GEC_KABUL_GUN)))
     rs = [dict(r) for r in cur.fetchall() or []]
     out = []
     if rs:
@@ -1204,7 +1198,7 @@ def depo_isleri(cur) -> list:
                 eksi.setdefault(k, []).append(u)
         if eksi:
             ad = {x["id"]: x["ad"] for x in _konumlar(cur)}
-            out.append({"tur": "depo_eksi", "grup": "tedarik", "id": "de", "tarih": _bugun().isoformat(),
+            out.append({"tur": "depo_eksi", "grup": "tedarik", "id": "de", "tarih": _is_gunu().isoformat(),
                         "ad": " · ".join(f"{ad.get(k, k)}: {len(v)} ürün" for k, v in sorted(eksi.items())),
                         "sayi": sum(len(v) for v in eksi.values())})
     return out
