@@ -822,6 +822,19 @@ async def avans_talep_tel(request: Request):
     return await _telefon(request, fn)
 
 
+def _istek_kaydi(cur, tablo: str, kolon: str, ist: str, alanlar: str, sahip: dict) -> Optional[dict]:
+    """Aynı istek kimliğiyle daha önce yazılmış satır (yoksa None). Satır BAŞKA kişiye / kayda aitse 409 (Dalga 4, K2: telefon
+    giriş · çıkış · mola başlat · mola bitir · devret · kabul aynı 6 satırı ayrı yazıyordu). tablo/kolon/alanlar sabit (kod içi)."""
+    cur.execute(f"SELECT {alanlar} FROM {tablo} WHERE {kolon}=%s", (ist,))
+    r = cur.fetchone()
+    if not r:
+        return None
+    r = dict(r)
+    if any(str(r.get(k)) != str(v) for k, v in sahip.items()):
+        raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
+    return r
+
+
 def _istek(v) -> str:
     return __import__("evvel_yeni_cekirdek").istek_dogrula(v.get("istek_id"))   # TEK kural (F#15; isalnum Türkçe harfi de geçiriyordu)
 
@@ -832,11 +845,8 @@ async def giris(request: Request):
     def fn(cur, c, p, v):
         ist = _istek(v)
         personel_kilidi(cur, p["id"])
-        cur.execute("SELECT personel_id, giris_ts FROM ey_yoklama WHERE istek_id=%s", (ist,))
-        r = cur.fetchone()
+        r = _istek_kaydi(cur, "ey_yoklama", "istek_id", ist, "personel_id, giris_ts", {"personel_id": p["id"]})   # K2: tekrar bloğu tek
         if r:
-            if dict(r)["personel_id"] != p["id"]:
-                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
             return {"ok": True, "tekrar": True, "mesaj": f"Giriş zaten kaydedildi · {_saat(dict(r)['giris_ts'])}"}
         cur.execute("SELECT y.id, y.sube_id FROM ey_yoklama y WHERE y.personel_id=%s AND y.cikis_ts IS NULL", (p["id"],))
         a = cur.fetchone()
@@ -859,11 +869,8 @@ async def cikis(request: Request):
     def fn(cur, c, p, v):
         ist = _istek(v)
         personel_kilidi(cur, p["id"])
-        cur.execute("SELECT personel_id, cikis_ts FROM ey_yoklama WHERE cikis_istek_id=%s", (ist,))
-        r = cur.fetchone()
+        r = _istek_kaydi(cur, "ey_yoklama", "cikis_istek_id", ist, "personel_id, cikis_ts", {"personel_id": p["id"]})   # K2: tekrar bloğu tek
         if r:
-            if dict(r)["personel_id"] != p["id"]:
-                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
             return {"ok": True, "tekrar": True, "mesaj": f"Çıkış zaten kaydedildi · {_saat(dict(r)['cikis_ts'])}"}
         cur.execute("SELECT sube_id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL", (p["id"],))
         a = cur.fetchone()
@@ -943,11 +950,8 @@ async def mola_baslat(request: Request):
     def fn(cur, c, p, v):
         ist = _istek(v)
         personel_kilidi(cur, p["id"])
-        cur.execute("SELECT personel_id, baslangic_ts FROM ey_mola WHERE istek_id=%s", (ist,))
-        r = cur.fetchone()
+        r = _istek_kaydi(cur, "ey_mola", "istek_id", ist, "personel_id, baslangic_ts", {"personel_id": p["id"]})   # K2: tekrar bloğu tek
         if r:
-            if dict(r)["personel_id"] != p["id"]:
-                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
             return {"ok": True, "tekrar": True, "mesaj": f"Mola zaten başladı · {_saat(dict(r)['baslangic_ts'])}"}
         cur.execute("SELECT id, sube_id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL", (p["id"],))
         a = cur.fetchone()
@@ -974,12 +978,8 @@ async def mola_bitir(request: Request):
     def fn(cur, c, p, v):
         ist = _istek(v)
         personel_kilidi(cur, p["id"])
-        cur.execute("SELECT personel_id, sure_dk, yemek_hakki, bitis_ts FROM ey_mola WHERE bitis_istek_id=%s", (ist,))
-        r = cur.fetchone()
+        r = _istek_kaydi(cur, "ey_mola", "bitis_istek_id", ist, "personel_id, sure_dk, yemek_hakki, bitis_ts", {"personel_id": p["id"]})   # K2: tekrar bloğu tek
         if r:
-            r = dict(r)
-            if r["personel_id"] != p["id"]:
-                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
             return {"ok": True, "tekrar": True, "hak_dustu": not r["yemek_hakki"],
                     "mesaj": f"Mola zaten bitti · {_saat(r['bitis_ts'])} · {r['sure_dk']} dk" + ("" if r["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
         cur.execute("SELECT sube_id, baslangic_ts, NOW() - baslangic_ts AS gecen FROM ey_mola WHERE personel_id=%s AND bitis_ts IS NULL", (p["id"],))
@@ -1394,11 +1394,8 @@ async def devir_devret(did: str, request: Request):
     (15 dk pencere, sahip); konum yeniden ölçülür."""
     def fn(cur, c, p, v):
         ist = _istek(v)
-        cur.execute("SELECT id, ustlenen_id FROM ey_devir WHERE devret_istek_id=%s", (ist,))
-        r = cur.fetchone()
+        r = _istek_kaydi(cur, "ey_devir", "devret_istek_id", ist, "id, ustlenen_id", {"id": did, "ustlenen_id": p["id"]})   # K2: tekrar bloğu tek
         if r:
-            if dict(r)["id"] != did or dict(r)["ustlenen_id"] != p["id"]:
-                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
             return {"ok": True, "tekrar": True, "mesaj": "Devir zaten gönderildi"}
         adina = str(v.get("adina") or "").strip() or None   # sahip: devredenin telefonu yoksa içerideki başka personel ONUN ADINA
         d = _devir_al(cur, did, ek_kisi=p["id"], ek_kisi2=adina if adina and adina != p["id"] else None)
@@ -1442,11 +1439,8 @@ async def devir_kabul(did: str, request: Request):
     (sahip). TEK işlemde: devir tamam + vardiya olayı + devredenin çıkışı ('devir') + devralanın girişi (yoksa)."""
     def fn(cur, c, p, v):
         ist = _istek(v)
-        cur.execute("SELECT id, devralan_id, durum FROM ey_devir WHERE kabul_istek_id=%s", (ist,))
-        r = cur.fetchone()
+        r = _istek_kaydi(cur, "ey_devir", "kabul_istek_id", ist, "id, devralan_id, durum", {"id": did, "devralan_id": p["id"]})   # K2: tekrar bloğu tek
         if r:
-            if dict(r)["id"] != did or dict(r)["devralan_id"] != p["id"]:
-                raise HTTPException(409, "İstek kimliği başka bir kayda ait — tekrar dene")
             return {"ok": True, "tekrar": True, "mesaj": "Devir zaten " + ("kabul edildi" if dict(r)["durum"] == "tamam" else "kaydedildi")}
         d = _devir_al(cur, did, ek_kisi=p["id"])
         if d.get("kabul_istek_id") == ist:   # Fable: aynı istek kilit beklerken tamamlandı
