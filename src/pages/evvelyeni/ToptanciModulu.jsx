@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cekmece, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa } from './KasaModulu';
+import { ALAN, Cekmece, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayfayaGit, tKisa } from './KasaModulu';
 
 export const TOPTANCI_SAYFALAR = [
   { id: 'toptancilar', ad: 'Toptancılar', alt: 'Borcumuz · vade · teslimler' },
@@ -20,8 +20,7 @@ const sayi = (x) => sayiTR(x, null);   // tek kaynak utils/trSayi
 const gunStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 // Sahip: "fiyat yok tıklayınca direkt o alana gitsin — köprü olsun"
 const fiyataGit = (urunId) => {
-  window.history.pushState({}, '', `/evvel-yeni/urun_fiyatlari${urunId ? `?urun=${encodeURIComponent(urunId)}` : '?eksik=1'}`);
-  window.dispatchEvent(new window.PopStateEvent('popstate'));
+  sayfayaGit('urun_fiyatlari', urunId ? `?urun=${encodeURIComponent(urunId)}` : '?eksik=1');   // TEK sayfa geçişi (T4-13)
 };
 // ── 📒 TOPTANCI KİTABI (E3, sahip 2026-10-19): her teslimin faturası (foto/PDF) sayfa sayfa — belge teslimin EKİ (E1) ──
 const oturumBaslik = () => { try { const j = (localStorage.getItem('evvel_oturum') || '').trim(); return j ? { 'X-Evvel-Oturum': j } : {}; } catch { return {}; } };
@@ -156,8 +155,7 @@ export default function ToptanciModulu({ onToast }) {
   };
   const ode = (t) => {
     try { window.sessionStorage.setItem('ey_odeme_on', JSON.stringify({ konu: 'toptanci', toptanci_id: t.id, tutar: t.vadesi_gecen > 0 ? t.vadesi_gecen : 0 })); } catch { /* yut */ }
-    window.history.pushState({}, '', '/evvel-yeni/odemeler');
-    window.dispatchEvent(new window.PopStateEvent('popstate'));
+    sayfayaGit('odemeler');
   };
 
   if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>Toptancılar okunamadı: {hata} <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme></div></div>;

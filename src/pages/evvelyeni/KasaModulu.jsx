@@ -266,6 +266,12 @@ const BASLIK = {
   acilis: 'Açılış bakiyesi', donem: 'Yeni başlangıç', kapanis: 'Şube kapanışı', dis: 'Dış kaynaktan giriş', teslim: 'Şubeden teslim',
   tasima: 'Para taşı / hesaba yatır', sayim: 'Sayım / ekstre bakiyesi', pos: 'Online platform parası bankaya yattı', odeme: 'Ödeme', coz: 'Farkı çöz', iptal: 'Kaydı iptal et', aktar: 'Eski sistemden aktar',
 };
+// SAYFA GEÇİŞİ — TEK yol (Dalga 5, T4-13: 8 yerde pushState + sahte popstate ayrı yazılıydı). Kabuk (EvvelYeniApp) popstate'i dinler,
+// adresten sekmeyi okur. sorgu: '?urun=…' gibi ek (isteğe bağlı).
+const sayfayaGit = (sayfa, sorgu = '') => {
+  window.history.pushState({}, '', `/evvel-yeni/${sayfa}${sorgu}`);
+  window.dispatchEvent(new window.PopStateEvent('popstate'));
+};
 // FORM ALANI temel stili — TEK kaynak (Dalga 5, T4-15 / F#68: 13 modül ayrı nesne tutuyordu). Modül yalnız FARKINI yazar: { ...ALAN, fontSize: 13 }.
 const ALAN = { padding: '8px 10px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14 };
 const alanStil = {
@@ -1506,7 +1512,7 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
     );
   }
   if (x.tur === 'depo_yolda') {
-    const git = () => { window.history.pushState({}, '', '/evvel-yeni/depo_yolda'); window.dispatchEvent(new window.PopStateEvent('popstate')); };
+    const git = () => { sayfayaGit('depo_yolda'); };
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(R.amber, 60)}` }}>
         <Cip tur="sari">📦 Yolda kaldı</Cip>
@@ -1516,7 +1522,7 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
     );
   }
   if (x.tur === 'depo_eksi') {   // sahip P2: sevk eksiye yazılabilir → depo sayımıyla düzelir (kayıt saklanmaz, türetilir)
-    const git = () => { window.history.pushState({}, '', '/evvel-yeni/depo_nerede'); window.dispatchEvent(new window.PopStateEvent('popstate')); };
+    const git = () => { sayfayaGit('depo_nerede'); };
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(R.kirmizi, 55)}` }}>
         <Cip tur="kirmizi">📦 Stok eksi</Cip>
@@ -1526,7 +1532,7 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
     );
   }
   if (x.tur === 'toptanci_vade' || x.tur === 'toptanci_tutar') {
-    const git = () => { window.history.pushState({}, '', '/evvel-yeni/toptancilar'); window.dispatchEvent(new window.PopStateEvent('popstate')); };
+    const git = () => { sayfayaGit('toptancilar'); };
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(x.tur === 'toptanci_vade' ? R.kirmizi : R.amber, 55)}` }}>
         <Cip tur={x.tur === 'toptanci_vade' && x.gecti ? 'kirmizi' : 'sari'}>{x.tur === 'toptanci_vade' ? (x.gecti ? '🚚 Vadesi geçti' : '🚚 Vade 3 gün içinde') : '🚚 Tutar bilinmiyor'}</Cip>
@@ -1542,12 +1548,12 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
         <Cip tur={x.gun_kaldi <= 2 ? 'kirmizi' : 'sari'}>💳 Kart son ödeme</Cip>
         <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · son gün {tUzun(x.tarih)} ({x.gun_kaldi === 0 ? 'BUGÜN' : `${x.gun_kaldi} gün kaldı`})
           <div style={{ fontSize: 11.5, color: R.not }}>{x.kalan != null ? <>Ekstre {fmt(x.ekstre)} · kalan <b style={num}>{fmt(x.kalan)}</b> ₺ — Ödeme'den "Kart borcu" olarak gir</> : 'Ekstre tutarı girilmedi — Kartlar bölümünden teyit et'}</div></div>
-        <Dugme kucuk onClick={() => { window.history.pushState({}, '', '/evvel-yeni/kartlar'); window.dispatchEvent(new window.PopStateEvent('popstate')); }}>Kartlar</Dugme>
+        <Dugme kucuk onClick={() => { sayfayaGit('kartlar'); }}>Kartlar</Dugme>
       </div>
     );
   }
   if (x.genel) {   // 🧩 tak-çıkar: modülün kendi tarif ettiği satır (etiket · ad · alt · sayfa) — Kasa modülü tanımaz
-    const git = () => { window.history.pushState({}, '', `/evvel-yeni/${x.sayfa}`); window.dispatchEvent(new window.PopStateEvent('popstate')); };
+    const git = () => { sayfayaGit(x.sayfa); };
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(R.amber, 55)}` }}>
         <Cip tur="sari">{x.etiket}</Cip>
@@ -1578,4 +1584,4 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
 }
 
 // Diğer Evvel Yeni bölümleri (Gelir, Gider…) aynı görsel dili kullanır
-export { ALAN, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
+export { ALAN, sayfayaGit, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };

@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, odemeFisi, PATRONLAR, PI_CSS, R, tKisa, tl } from './KasaModulu';
+import { ALAN, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, odemeFisi, PATRONLAR, PI_CSS, R, sayfayaGit, tKisa, tl } from './KasaModulu';
 import { ayKaydir, ayTR, bugunTR, gunKaydir as trGunKaydir } from '../../utils/trTarih';
 
 export const ODEME_SAYFALAR = [
@@ -456,8 +456,7 @@ export function PatronHarcama() {
   }, [ay]);
   const gir = () => {
     try { window.sessionStorage.setItem('ey_odeme_on', JSON.stringify({ konu: 'diger', kimin: 'patron' })); } catch { /* yut */ }
-    window.history.pushState({}, '', '/evvel-yeni/odemeler');
-    window.dispatchEvent(new window.PopStateEvent('popstate'));
+    sayfayaGit('odemeler');   // TEK sayfa geçişi (T4-13)
   };
   const IKON = { sahsi: '🛍️', cekis: '🚬', kredi: '🏦', kart_borcu: '💳' };
   const ata = async (x, patron, geri_al = false) => {
