@@ -182,19 +182,22 @@ def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
     if idler:
         cur.execute("SELECT urun_id, birim FROM ey_urun_fiyat WHERE urun_id = ANY(%s)", (idler,))
         elle = {dict(r)["urun_id"]: int(dict(r)["birim"]) for r in cur.fetchall() or []}
-    if idler:
+    from evvel_yeni_urun_api import urun_bilgi
+    yeni_k = set(urun_bilgi(cur, [i for i in idler]))   # yeni katalog kimlikleri → tek fiyat servisi (fiyat_bilgi, o gün geçerli)
+    eski_idler = [i for i in idler if i not in yeni_k]
+    if eski_idler and not _yd(cur):   # F#39: eski fiyat kaynakları YALNIZ geçişte ve yalnız eski kimlikler için (kesimden sonra hiç sorulmaz)
         try:
             with savepoint(cur, "sp_ey_top_fiyat"):
-                cur.execute("SELECT id::text AS id, depo_stok_kalem_kodu, birim_fiyat_tl FROM siparis_urun WHERE id::text = ANY(%s)", (idler,))
+                cur.execute("SELECT id::text AS id, depo_stok_kalem_kodu, birim_fiyat_tl FROM siparis_urun WHERE id::text = ANY(%s)", (eski_idler,))
                 urun = {dict(r)["id"]: dict(r) for r in cur.fetchall() or []}
-                kodlar = set(idler) | {u["depo_stok_kalem_kodu"] for u in urun.values() if u.get("depo_stok_kalem_kodu")}
+                kodlar = set(eski_idler) | {u["depo_stok_kalem_kodu"] for u in urun.values() if u.get("depo_stok_kalem_kodu")}
                 cur.execute("""SELECT DISTINCT ON (kalem_kodu) kalem_kodu, birim_maliyet_tl FROM urun_alis_fiyat
                                 WHERE kalem_kodu = ANY(%s) AND birim_maliyet_tl > 0 AND gecerli_baslangic <= %s
                                 ORDER BY kalem_kodu, gecerli_baslangic DESC, created_at DESC""", (list(kodlar), gun))
                 af = {dict(r)["kalem_kodu"]: Decimal(dict(r)["birim_maliyet_tl"]) for r in cur.fetchall() or []}
                 cur.execute("SELECT kalem_kodu, kdv_oran FROM kalem_kdv_oran WHERE kalem_kodu = ANY(%s)", (list(kodlar),))
                 ko = {dict(r)["kalem_kodu"]: Decimal(dict(r)["kdv_oran"] or 0) for r in cur.fetchall() or []}
-                for uid in idler:
+                for uid in eski_idler:
                     u = urun.get(uid) or {}
                     for kod in (uid, u.get("depo_stok_kalem_kodu")):
                         if kod and kod in af:
@@ -205,8 +208,6 @@ def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
                         katalog[uid] = Decimal(u["birim_fiyat_tl"])
         except Exception as e:  # noqa: BLE001
             log.warning("toptancı tahmin: fiyat okunamadı: %s", str(e)[:150])
-    from evvel_yeni_urun_api import urun_bilgi
-    yeni_k = set(urun_bilgi(cur, [i for i in idler]))   # yeni katalog kimlikleri → tek fiyat servisi (fiyat_bilgi, o gün geçerli)
     for k, an in zip(kalemler, anahtarlar):
         adet = int(k.get("adet") or 0)
         uid = str(k.get("urun_id") or "")
@@ -961,12 +962,18 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
     _hazirla()
     with db() as (conn, cur):
         toptanci_hazirla(cur)
-        cur.execute("SELECT ad FROM siparis_urun WHERE id::text=%s", (body.urun_id,))
-        r = cur.fetchone()
-        if not r:   # yeni katalog (sıfırdan, yeni kimlik) — 1 SAYIM biriminin fiyatı
-            from evvel_yeni_urun_api import urun_ad
-            ad = urun_ad(cur, body.urun_id)
-            r = {"ad": ad} if ad else None
+        # F#38: ÖNCE yeni katalog (PUBLIC urun_ad); eski siparis_urun yalnız geçişte ve savepoint'te — eski tablo kalkınca 500 olmasın
+        from evvel_yeni_cekirdek import yeni_donem
+        from evvel_yeni_urun_api import urun_ad
+        ad = urun_ad(cur, body.urun_id)
+        r = {"ad": ad} if ad else None
+        if not r and not yeni_donem(cur):
+            try:
+                with savepoint(cur, "sp_ey_fiyat_eski_ad"):
+                    cur.execute("SELECT ad FROM siparis_urun WHERE id::text=%s", (body.urun_id,))
+                    r = cur.fetchone()
+            except Exception:  # noqa: BLE001
+                r = None
         if not r:
             raise HTTPException(404, "Ürün bulunamadı")
         kim = _aktor(cur, x_evvel_oturum)
