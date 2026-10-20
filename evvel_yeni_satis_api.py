@@ -350,6 +350,37 @@ def _urun_ad(cur, kod):
     return _URUN_AD[k]
 
 
+class _YeniGun(Exception):
+    pass
+
+
+def _fire_yeni(cur, gun: str) -> dict:
+    """YENİ DÖNEM fire listesi — yeni panelin 'fire' olayı (sebep, açıklama, kim, saat, kalemler: ey_urun kimliği). Bar'ın anlam
+    anahtarıyla eşleşir (bardak / pasta) — eşleşmeyen ürün kendi kimliğiyle listelenir. Ürün adı/pasta: Ürün kataloğu PUBLIC."""
+    from evvel_yeni_bar_api import anahtar_ad as _anahtar_ad
+    from evvel_yeni_cekirdek import tr_saat
+    from evvel_yeni_olay import olaylar
+    from evvel_yeni_urun_api import urun_bilgi
+    g = date.fromisoformat(gun)
+    oz = [o for o in olaylar(cur, bas=g, son=g, turler={"fire"}) if not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"]
+    vs = [(o, o["veri"] if isinstance(o["veri"], dict) else __import__("json").loads(o["veri"] or "{}")) for o in oz]
+    bil = urun_bilgi(cur, sorted({str(k.get("urun_id")) for _, v in vs for k in v.get("kalemler") or [] if k.get("urun_id")}))
+    out = {}
+    for o, v in vs:
+        for k in v.get("kalemler") or []:
+            uid = str(k.get("urun_id") or "")
+            adet = int(k.get("adet") or 0)
+            if adet <= 0:
+                continue
+            b = bil.get(uid) or {}
+            ad = k.get("ad") or b.get("ad") or uid
+            kod = "pasta" if (b.get("takip") or "") == "gununde" else (_anahtar_ad(ad) or uid)
+            out.setdefault(str(o["sube_id"]), []).append({"kod": kod, "ad": ad, "adet": adet, "sebep": v.get("sebep_ad"),
+                                                          "aciklama": v.get("aciklama"), "kim": o.get("personel_ad"),
+                                                          "saat": tr_saat(o.get("olay_zamani"), g)})
+    return out
+
+
 @router.get("/gun")
 def satis_gun(gun: Optional[str] = None):
     """GÜNLÜK DÖKÜM (sahip: "bugün 14 adet 8oz vs. görmek istiyorum; kasada açık var mı, satıştan gelen açık var mı;
@@ -365,7 +396,15 @@ def satis_gun(gun: Optional[str] = None):
     kontrol = {s["sube_id"]: s for s in satis_kontrol(ay)["subeler"]}
     fire = {}
     with db() as (conn, cur):
+        from evvel_yeni_cekirdek import yeni_donem
+        yeni_gun = yeni_donem(cur, date.fromisoformat(g_))
+    if yeni_gun:   # T3-19: 1 Kasım'dan itibaren fire YENİ panelin olayından (eski sube_fire_bildirim / siparis_urun okunmaz)
+        with db() as (conn, cur):
+            fire = _fire_yeni(cur, g_)
+    with db() as (conn, cur):
         try:
+            if yeni_gun:
+                raise _YeniGun()
             cur.execute("""SELECT sube_id::text AS sube_id, sebep_label, aciklama, kalemler, personel_ad, olusturma
                              FROM sube_fire_bildirim WHERE tarih = %s ORDER BY olusturma""", (g_,))
             for r in cur.fetchall() or []:
@@ -382,6 +421,8 @@ def satis_gun(gun: Optional[str] = None):
                     fire.setdefault(r["sube_id"], []).append({"kod": kod, "ad": k.get("label") or _urun_ad(cur, k.get("kalem_kodu")), "adet": adet,
                                                               "sebep": r["sebep_label"], "aciklama": r.get("aciklama"),
                                                               "kim": r.get("personel_ad"), "saat": r["olusturma"].strftime("%H:%M") if r.get("olusturma") else None})
+        except _YeniGun:
+            pass
         except Exception as e:  # noqa: BLE001
             log.warning("satış günlük: fire okunamadı: %s", str(e)[:150])
     try:
@@ -455,6 +496,99 @@ def satis_gun(gun: Optional[str] = None):
 
 @router.get("/devir-defteri")
 def devir_defteri(ay: Optional[str] = None):
+    """🔁 KASA DEVİR DEFTERİ — 1 Kasım'dan (panel_baslangic, iş günü) itibaren YENİ panelin olay defterinden (açılış · vardiya devri ·
+    kapanış · ara teslim). Sahip (20 Eki): Ekim (eski) defteri 1 Kasım'da KALKAR — eski okuyucu yalnız geçişe kadar (T3-21)."""
+    from evvel_yeni_cekirdek import yeni_donem
+    with db() as (conn, cur):
+        yeni = yeni_donem(cur)
+    return _devir_defteri_yeni(ay) if yeni else _devir_defteri_eski(ay)
+
+
+def _devir_defteri_yeni(ay: Optional[str] = None):
+    import json as _json
+    from evvel_yeni_cekirdek import is_gunu as _ig, tr_saat
+    from evvel_yeni_kasa_api import TESLIM_HEDEFLERI
+    from evvel_yeni_olay import olaylar
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    bugun = _ig()
+    a_ = (ay or bugun.strftime("%Y-%m"))[:7]
+    ay_bas = date.fromisoformat(a_ + "-01")
+    ay_son = (ay_bas.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    alan_ad = {cid: ad for ad, cid in TESLIM_HEDEFLERI.items()}
+    ev = {}
+    with db() as (conn, cur):
+        subeler = _ey_subeler(cur)
+        for o in olaylar(cur, bas=ay_bas - timedelta(days=1), son=ay_son + timedelta(days=1), turler={"acilis", "kapanis", "vardiya", "teslim"}):
+            if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel":
+                continue
+            v = o["veri"] if isinstance(o["veri"], dict) else _json.loads(o["veri"] or "{}")
+            ev.setdefault((str(o["sube_id"]), o["is_gunu"].isoformat(), o["tur"]), []).append({**o, "v": v})
+    elle_tes = {}
+    try:   # yönetimin Kasa'ya ELLE girdiği teslimler (panelden gelmeyen) — "kime"de görünsün
+        from evvel_yeni_kasa_api import kasa_hazirla as _kh, kasa_kayitlari as _ky
+        _kh()
+        with db() as (conn2, cur2):
+            _, C2, kayit2, _ = _ky(cur2, tum_donemler=True)
+        for h in kayit2:
+            ref = h.get("kaynak_ref") or ""
+            if h["tur"] != "teslim" or ref.startswith("kasa_teslim:") or ref.startswith("panel:"):
+                continue
+            ks = (C2.get(h.get("kaynak")) or {}).get("sube_id")
+            if ks:
+                elle_tes.setdefault((str(ks), h["is_gunu"]), []).append(
+                    f"{(C2.get(h.get('hedef')) or {}).get('kisa') or h.get('hedef')} {h['tutar'] / 100:,.0f}".replace(",", "."))
+    except Exception as e:  # noqa: BLE001
+        log.warning("devir defteri: Kasa teslimleri okunamadı: %s", str(e)[:150])
+    tl = lambda k: None if k is None else int(k) / 100  # noqa: E731
+    son = lambda lst: lst[-1] if lst else None  # noqa: E731
+    out = []
+    for s_ in subeler:
+        sid = s_["id"]
+        gunler = []
+        g = ay_bas
+        while g <= min(ay_son, bugun):
+            gi, ert, dn = g.isoformat(), (g + timedelta(days=1)).isoformat(), (g - timedelta(days=1)).isoformat()
+            a = son(ev.get((sid, gi, "acilis"), []))
+            k = son(ev.get((sid, gi, "kapanis"), []))
+            ka = son(ev.get((sid, ert, "acilis"), []))
+            dk = son(ev.get((sid, dn, "kapanis"), []))
+            vd = son(ev.get((sid, gi, "vardiya"), []))
+            dun_birak = tl(dk["v"].get("birakilan")) if dk else None
+            sab = tl(a["v"].get("kasa_sayim")) if a else None
+            sabah = {"kim": a.get("personel_ad"), "saat": tr_saat(a.get("olay_zamani"), g), "sayilan": sab, "dun_birakilan": dun_birak,
+                     "fark": round(sab - dun_birak, 2) if (sab is not None and dun_birak is not None) else None} if a else None
+            vardiya = None
+            if vd:
+                vv = vd["v"]
+                vardiya = {"devreden": (vv.get("devreden") or {}).get("ad") or "?", "devralan": (vv.get("devralan") or {}).get("ad") or "?",
+                           "saat": tr_saat(vd.get("olay_zamani"), g), "nakit": tl(vv.get("sayilan")), "teslim": None, "birakilan": None,
+                           "durum": "tamam" if vv.get("tutuyor", True) else "tutmadi"}
+            ara = [f"{alan_ad.get(t['v'].get('alan'), t['v'].get('alan'))} {tl(t['v'].get('tutar')) or 0:.0f}" for t in ev.get((sid, gi, "teslim"), [])]
+            aksam = None
+            if k:
+                kv = k["v"]
+                tes = kv.get("teslimler") or []
+                aksam = {"kim": k.get("personel_ad"), "saat": tr_saat(k.get("olay_zamani"), g), "kor_toplam": tl(kv.get("kor_sayim")),
+                         "teslim": sum(int(t.get("tutar") or 0) for t in tes) / 100,
+                         "kime": ", ".join(f"{alan_ad.get(t.get('alan'), t.get('alan'))} {int(t.get('tutar') or 0) / 100:.0f}" for t in tes) or None,
+                         "ara_teslim": ", ".join(ara) or None, "birakilan": tl(kv.get("birakilan"))}
+            ertesi = {"kim": ka.get("personel_ad"), "saat": tr_saat(ka.get("olay_zamani"), g + timedelta(days=1)),
+                      "sayilan": tl(ka["v"].get("kasa_sayim"))} if ka else None
+            kopuk = None
+            if aksam and ertesi and aksam["birakilan"] is not None and ertesi["sayilan"] is not None:
+                kopuk = round(ertesi["sayilan"] - aksam["birakilan"], 2)
+            gunler.append({"gun": gi, "sabah": sabah, "vardiya": vardiya, "aksam": aksam, "ertesi_sabah": ertesi,
+                           "elle_teslim": ", ".join(elle_tes.get((sid, gi), [])) or None,
+                           "zincir_fark": kopuk, "zincir_tutuyor": (kopuk is not None and abs(kopuk) < 1)})
+            g += timedelta(days=1)
+        out.append({"sube_id": sid, "ad": s_["ad"], "gunler": gunler,
+                    "panel_yok": not any(x["sabah"] or x["aksam"] for x in gunler),
+                    "ozet": {"tutan": sum(1 for x in gunler if x["zincir_tutuyor"]),
+                             "kopuk": sum(1 for x in gunler if x["zincir_fark"] is not None and not x["zincir_tutuyor"])}})
+    return {"ay": a_, "subeler": out, "not": "Zincir: akşam bırakılan = ertesi sabah sayılan olmalı. Kopukluk kırmızı. (Yeni panel kayıtları)"}
+
+
+def _devir_defteri_eski(ay: Optional[str] = None):
     """🔁 KASA DEVİR DEFTERİ (sahip 2026-10-16): "açılış kasası sayımlarını, kapanış sayımlarını ve devrin kimden kime
     yapıldığını takip etmek." Şube × gün zinciri:
       SABAH: kim saydı, saat, sayılan ↔ dün akşam bırakılan

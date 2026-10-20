@@ -251,12 +251,25 @@ def _tuketim_satirlari_yeni(cur, bas: date, son: date) -> list:
         sid = h["kaynak"].split(":", 1)[1]
         k = (sid, h["is_gunu"], h["urun_id"], "gununde" if (h.get("kaynak_ref") or "").endswith(":gununde") else h["tur"])
         top.setdefault(k, [h["urun_ad"], 0])[1] += int(h["adet"])
+    # Sahip (20 Eki, T3-19 kararı): FIRE / İKRAM / PERSONEL kullanımı ayrı gider satırı (sayım/panel hatası 'dışarı:sayim' gidere GİRMEZ).
+    # Tezgahta sayılan (panel_sayim) ürünün firesi bar sayım farkının İÇİNDE zaten gider → ikinci kez yazılmaz (çift maliyet olmasın).
+    fire = _yeni_hareketler(cur, bas, son, ("fire",), "hedef IN ('dışarı:fire','dışarı:ikram','dışarı:personel') AND kaynak LIKE 'depo:%%'")
+    if fire:
+        from evvel_yeni_urun_api import urun_bilgi
+        bil = urun_bilgi(cur, sorted({str(h["urun_id"]) for h in fire}))
+        etiket = {"dışarı:fire": "fire", "dışarı:ikram": "ikram", "dışarı:personel": "personel kullanımı"}
+        for h in fire:
+            if (bil.get(str(h["urun_id"])) or {}).get("panel_sayim"):
+                continue
+            k = (h["kaynak"].split(":", 1)[1], h["is_gunu"], h["urun_id"], etiket[h["hedef"]])
+            top.setdefault(k, [h["urun_ad"], 0])[1] += int(h["adet"])
     satir = []
     for (sid, gun, uid, tur), (ad, adet) in top.items():
         f = fiyat(uid, gun)
         satir.append({"sube_id": sid, "gun": gun, "kalem_kodu": uid, "ad": ad or uid, "adet": adet,
                       "birim_kurus": f["kurus"] if f else None, "fk": f["kaynak"] if f else None, "fiyat_tarihi": f.get("tarih") if f else None,
-                      "kaynak": {"ac": "ürün aç", "gununde": "gününde tüketilir (pasta — girişte)"}.get(tur, "günlük sayım (kullanılan)"),
+                      "kaynak": {"ac": "ürün aç", "gununde": "gününde tüketilir (pasta — girişte)", "fire": "fire", "ikram": "ikram",
+                                 "personel kullanımı": "personel kullanımı"}.get(tur, "günlük sayım (kullanılan)"),
                       "gun_kesin": (sid, gun) in kesin})
     return satir
 
