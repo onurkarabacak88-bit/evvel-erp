@@ -221,4 +221,18 @@ Durum: Fable yeni kurguyu verdi (25-28 özellik envanteri: KORU 7 · SADELEŞTİ
 | varsayılan | kişi sayısı | kalıp satırındaki `kisi` (eksik → Uyarılar) |
 | varsayılan | yayın sonrası değişiklik | telefonda "planın değişti" satırı |
 | varsayılan | WhatsApp "yarın açılışçı" + Beyin B43 | çıkar; panel/telefon "Bugün" satırı yerini tutar |
-Açık: Y1+Y2 birleşince "Yayınla"yı kim basar (yazan mı, ayrı yetki mi) — ikinci Fable görüşü bekleniyor.
+### İkinci Fable görüşü (20 Eki) → uygulama kuralları
+| # | Kural |
+|---|---|
+| R1 | Yayın kaydı: `ey_vardiya_yayin (sube_id, pazartesi, yayinlayan, zaman)`; "planın değişti" = plan satırı `zaman > yayin.zaman` |
+| R2 | PUBLIC (`gun_plani`, `kisi_bugun`, `ay_ozet`) YALNIZ yayınlanmış haftayı döner; taslak yalnız Vardiya ekranının kendi ucunda |
+| R3 | Yayınlanmış haftada değişiklik anında geçerli (yeniden yayın yok) + telefonda "planın değişti" |
+| R4 | Geçmiş/bugün için yazılan satır taslağa düşmez (anında yayın) ve `sonradan` satırından GEÇ hesaplanmaz |
+| R5 | Bekleyen 'gelecek hafta plan yok' koşulu = YAYINLANMIŞ plan yok (taslak varsa düğmesi "Yayınla") |
+| R6 | Eski kopya (27 Eki–9 Kas, Y4 esas; B6/V5'teki "27 Eki–2 Kas" geçersiz) YAYIN sayılır |
+| R7 | "Geçen haftayı kopyala" taslağa düşer |
+| R8 | Telefon: "Bugün" + "Bu hafta" (7 satır, bilgi) — değişen ileri gün görünür olsun |
+| R9 | V1 kod düzeltmesi: `_yeni_oneri` mesai'yi plandan da hesaplasın (K1: plan varsa plan − 9,5; bugün yalnız QR − 9,5) |
+| R10 | B8'deki 4 bekleyen türünden yalnız `plan_yok` + `gelmedi` kalır (K4); `kalip_eksik`, `plansiz_calisti` → Uyarılar |
+| R11 | İzinli hücre yeni tablo AÇMAZ: mevcut `takvim-karar` (`ey_personel_yoklama_karar` karar=izin) yazılır; rapor/ücretsiz maaşta elle |
+Açık sahip soruları: yayın yetkisi tek mi · yetki kapısı zamanı · Ay özeti sekmesi (Fable 2 'gerek yok' dedi) · 7 gün ardışık çalışma uyarısı.
