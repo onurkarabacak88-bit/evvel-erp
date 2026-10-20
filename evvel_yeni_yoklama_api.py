@@ -1057,12 +1057,8 @@ class AciklamaBody(BaseModel):
 
 
 def _saat_coz(saat: str):
-    try:
-        hh, mm = [int(x) for x in (saat or "").split(":")]
-        assert 0 <= hh <= 23 and 0 <= mm <= 59
-        return hh, mm
-    except Exception:  # noqa: BLE001
-        raise HTTPException(400, "Saat SS:DD olmalı")
+    t = __import__("evvel_yeni_cekirdek").saat_oku(saat)   # TEK saat kuralı çekirdekte (vardiya ile ortak)
+    return t.hour, t.minute
 
 
 @router.post("/mola/{mid}/duzelt")

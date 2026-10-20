@@ -980,7 +980,7 @@ export const IS_GRUPLARI = [
   { id: 'isler_kasa', grup: 'kasa', ad: 'Kasa & kapanış', alt: 'Kapanış · teslim · fark' },
   { id: 'isler_odeme', grup: 'odeme', ad: 'Ödemeler', alt: 'Kart son ödeme · toptancı vadesi' },
   { id: 'isler_tedarik', grup: 'tedarik', ad: 'Tedarik & depo', alt: 'Yolda kalan · fatura tutarı' },
-  { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri', mod: 'avans' },
+  { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri · vardiya planı yok' },   // avans ya da vardiya kapalı olsa da grup görünür
   { id: 'isler_kira', grup: 'kira', ad: 'Kira hesabı', alt: 'Gelmeyen kira · şahsi mi borç mu', mod: 'mulk' },
 ];
 const GRUPLAR = new Set(['kasa', 'odeme', 'tedarik', 'personel', 'kira']);

@@ -23,6 +23,7 @@ import SiparisModulu, { SIPARIS_SAYFALAR } from './SiparisModulu';
 import FaturaModulu, { FATURA_SAYFALAR } from './FaturaModulu';
 import FisModulu, { FIS_SAYFALAR } from './FisModulu';
 import AvansModulu, { AVANS_SAYFALAR } from './AvansModulu';
+import VardiyaModulu, { VARDIYA_SAYFALAR } from './VardiyaModulu';
 import MulkModulu, { MULK_SAYFALAR } from './MulkModulu';
 import UrunModulu, { URUN_SAYFALAR } from './UrunModulu';
 import YoklamaModulu, { YOKLAMA_SAYFALAR, YemekMolalari, Devirler } from './YoklamaModulu';
@@ -37,6 +38,7 @@ export const MODULLER = [
   { mod: 'gelir', ad: 'Gelir', ikon: '📥', sektor: 'genel', sayfalar: GELIR_SAYFALAR, g: () => <GelirModulu /> },
   { mod: 'gider', ad: 'Gider', ikon: '💸', sektor: 'genel', sayfalar: GIDER_SAYFALAR, g: (s, c) => <GiderModulu onToast={c.onToast} /> },
   { mod: 'avans', bolum: 'maas', ad: 'Avans talepleri', ikon: '🤝', sektor: 'genel', sayfalar: AVANS_SAYFALAR, g: (s, c) => <AvansModulu onToast={c.onToast} /> },
+  { mod: 'vardiya', bolum: 'maas', ad: 'Vardiya planı', ikon: '🗓️', sektor: 'genel', sayfalar: VARDIYA_SAYFALAR, g: (s, c) => <VardiyaModulu onToast={c.onToast} /> },
   { mod: 'yoklama', bolum: 'maas', ad: 'Yoklama', ikon: '📱', sektor: 'genel', sayfalar: YOKLAMA_SAYFALAR,
     g: (s, c) => (s === 'personel_mola' ? <YemekMolalari onToast={c.onToast} /> : s === 'personel_devir' ? <Devirler onToast={c.onToast} /> : <YoklamaModulu onToast={c.onToast} />) },
   { mod: 'urun', bolum: 'tanim', ad: 'Ürünler', ikon: '📚', sektor: 'genel', sayfalar: URUN_SAYFALAR, g: (s, c) => <UrunModulu onToast={c.onToast} /> },

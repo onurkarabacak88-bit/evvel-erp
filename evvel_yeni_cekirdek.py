@@ -12,7 +12,7 @@ bir modülü çıkarmak başka modülleri kırıyordu. Kural:
 
 import logging
 import math
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
 from typing import Callable, Dict, List, Optional
 
@@ -93,6 +93,18 @@ def is_gunu_zamani(gun: date, hh: int, mm: int):
     from zoneinfo import ZoneInfo
     g = gun + (timedelta(days=1) if hh < 2 else timedelta(0))
     return datetime(g.year, g.month, g.day, hh, mm, tzinfo=ZoneInfo("Europe/Istanbul"))
+
+
+def saat_oku(x, ad: str = "Saat") -> time:
+    """PUBLIC — "SS:DD" → time (TEK saat kuralı: Yoklama mola düzeltme + Vardiya). '9.30' / '24:00' (= 00:00) kabul; bozuksa 400."""
+    s = str(x or "").strip().replace(".", ":")
+    try:
+        hh, mm = [int(p) for p in (s.split(":") + ["0"])[:2]]
+        if (hh, mm) == (24, 0):
+            hh = 0
+        return time(hh, mm)
+    except Exception:  # noqa: BLE001
+        raise HTTPException(400, f"{ad} SS:DD olmalı (ör. 09:00)")
 
 
 def tr_gun(ts) -> date:
@@ -436,7 +448,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "bir_kez", "ddl_kur", "lock_timeout_ayarla", "KuruGeriAl",
+__all__ = ["bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "bir_kez", "ddl_kur", "lock_timeout_ayarla", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 
