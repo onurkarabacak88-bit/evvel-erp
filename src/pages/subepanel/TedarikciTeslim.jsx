@@ -27,9 +27,15 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   const [mesgul, setMesgul] = useState(false);
   const [hata, setHata] = useState('');
   const [foto, setFoto] = useState(null);   // E1: kayıttan sonra { teslim_id, toptanci, fatura } → "📷 Faturayı çek" QR
+  // 🛒 S5d (A10, D3): bu şubeye toptancıdan BEKLENEN sipariş kalemleri — işaretlenen kart teslime bağlanır (sipariş 'karşılandı' olur)
+  const [bekl, setBekl] = useState([]);
+  const [secYon, setSecYon] = useState(ilk?.secYon || []);
   useEffect(() => {
-    taslakYaz(anahtar, { adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek });
-  }, [adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek, anahtar]);
+    api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/siparisler`).then((r) => setBekl(r?.toptanci_beklenen || [])).catch(() => setBekl([]));
+  }, [subeId]);
+  useEffect(() => {
+    taslakYaz(anahtar, { adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek, secYon });
+  }, [adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek, secYon, anahtar]);
 
   const katalog = d.ac_katalog || [];
   const urunMap = useMemo(() => urunHaritasi(katalog), [katalog]);
@@ -48,7 +54,13 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
     setKoli((o) => ({ ...o, [u.id]: x }));
     degis(u.id, x.koli * Number(u.koli_ici || 0) + x.tek);
   };
+  const beklenenler = (bekl.find((g) => String(g.toptanci_id) === String(toptanci)) || {}).kalemler || [];
+  const yonSec = (k, sec) => {   // kartı işaretle → beklenen adet listeye eklenir (personel gelen GERÇEK adede göre düzeltir); kaldır → düşer
+    setSecYon((o) => (sec ? [...o, k.yon_id] : o.filter((x) => x !== k.yon_id)));
+    if (k.urun_id) setAdet((o) => ({ ...o, [k.urun_id]: Math.max(0, Math.min(99999, (o[k.urun_id] || 0) + (sec ? k.adet : -k.adet))) }));
+  };
   const temizle = () => {
+    setSecYon([]);
     setAdet({}); setKoli({}); setToptanci(''); setFatura(null); setFtTutar(''); setFtNo(''); setNot(''); setIstek(yeniIstek());
     taslakKaldir(anahtar);
   };
@@ -70,6 +82,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
         personel_id: kisi, pin, istek_id: istek, istemci_gunu: d.gun, toptanci_id: toptanci,
         kalemler: secili.map(([urun_id, n]) => ({ urun_id, adet: n })), fatura_geldi: fatura,
         tutar: ftTutar ? tutarNum(ftTutar) : null, fatura_no: fatura ? (ftNo.trim() || null) : null, aciklama: not.trim() || null,
+        siparis_yon: secYon.length ? secYon : null,   // S5d: işaretli beklenen sipariş kartları bu teslime bağlanır
         koli: Object.keys(koli).length ? Object.fromEntries(Object.entries(koli).map(([id, x]) => [id, { ...x, koli_ici: urunMap[id]?.koli_ici || null }])) : null } });
       setOnay(0); setPin(''); setKisi('');
       temizle();
@@ -102,10 +115,22 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
         {/* sağ sabit panel (eski): tedarikçi · özet · fatura · not · kaydet */}
         <div className="sp-kart" style={{ display: 'grid', gap: 10, position: 'sticky', top: 0 }}>
           <label style={{ display: 'grid', gap: 4 }}><b>🚚 Tedarikçi *</b>
-            <select className="sp-in" style={{ fontSize: 16 }} value={toptanci} onChange={(e) => setToptanci(e.target.value)} disabled={kapali}>
+            <select className="sp-in" style={{ fontSize: 16 }} value={toptanci} onChange={(e) => { setToptanci(e.target.value); setSecYon([]); }} disabled={kapali}>
               <option value="">— seç —</option>
-              {(d.toptancilar || []).map((t) => <option key={t.id} value={t.id}>{t.ad}</option>)}
+              {(d.toptancilar || []).map((t) => <option key={t.id} value={t.id}>{t.ad}{bekl.some((g) => String(g.toptanci_id) === String(t.id)) ? ' · 🛒 sipariş bekleniyor' : ''}</option>)}
             </select></label>
+          {beklenenler.length > 0 && (
+            <div style={{ display: 'grid', gap: 6, padding: 8, borderRadius: 10, background: 'rgba(245,158,11,.1)', border: '1px solid rgba(245,158,11,.35)' }}>
+              <b style={{ fontSize: 14 }}>🛒 Bu tedarikçiden beklenen sipariş — gelenleri işaretle</b>
+              {beklenenler.map((k) => (
+                <label key={k.yon_id} style={{ display: 'flex', gap: 8, alignItems: 'center', fontSize: 14, cursor: 'pointer' }}>
+                  <input type="checkbox" checked={secYon.includes(k.yon_id)} disabled={kapali} onChange={(e) => yonSec(k, e.target.checked)} />
+                  <span style={{ flex: 1 }}>{k.ad}</span><b>{k.adet}</b>
+                </label>
+              ))}
+              <span style={{ color: C.soluk, fontSize: 12 }}>İşaretleyince adet listeye eklenir — gelen farklıysa ürün listesinden düzelt.</span>
+            </div>
+          )}
           <div style={{ display: 'grid', gap: 4, maxHeight: 220, overflow: 'auto' }}>
             {kalem === 0 ? <span style={{ color: C.soluk }}>Henüz ürün girilmedi</span> : (<>
               <b style={{ color: C.yesil }}>{kalem} kalem · {toplam} adet</b>
