@@ -44,7 +44,10 @@ export default function AvansModulu({ onToast }) {
                 <span style={{ flex: '1 1 180px' }}><b>{t.ad}</b><div style={{ fontSize: 12, color: R.not }}>talep {t.talep}</div></span>
                 <b style={{ ...num, width: 90, textAlign: 'right' }}>{fmt(t.tutar)} ₺</b>
                 <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                  <Dugme kucuk ana disabled={mesgul[t.id]} onClick={() => yap(t, 'onayla', { yontem: 'havale' })}>Havaleyle ödendi</Dugme>
+                  {t.yeni && <select value={s.cep || ''} onChange={(e) => set('cep', e.target.value)} style={alan}>
+                    <option value="">Banka…</option>{(L?.banka_cepler || []).map((b) => <option key={b.id} value={b.id}>{b.ad}</option>)}
+                  </select>}
+                  <Dugme kucuk ana disabled={mesgul[t.id] || (t.yeni && !s.cep)} onClick={() => yap(t, 'onayla', { yontem: 'havale', cep: s.cep })}>Havaleyle öde</Dugme>
                   <select value={s.sube_id || ''} onChange={(e) => set('sube_id', e.target.value)} style={alan}>
                     <option value="">Şube…</option>{(L?.subeler || []).map((b) => <option key={b.id} value={b.id}>{b.ad}</option>)}
                   </select>
@@ -73,7 +76,7 @@ export default function AvansModulu({ onToast }) {
           <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700 }}>Onaylandı · şubeden teslim bekleniyor</div>
           {elden.map((t) => (
             <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', borderTop: `1px solid ${R.cizgi}`, padding: '6px 0', fontSize: 13.5 }}>
-              <span style={{ flex: 1 }}><b>{t.ad}</b> · {t.sube || '—'}</span><b style={num}>{fmt(t.tutar)} ₺</b><Cip tur="sari">{t.durum === 'teslim_edildi' ? 'personel onayı bekliyor' : 'elden verilecek'}</Cip>
+              <span style={{ flex: 1 }}><b>{t.ad}</b> · {t.sube || '—'}</span><b style={num}>{fmt(t.tutar)} ₺</b><Cip tur="sari">{t.durum === 'teslim_edildi' ? 'personel onayı bekliyor' : 'elden verilecek — şube panelinde "teslim ettim"'}</Cip>
             </div>
           ))}
         </div>

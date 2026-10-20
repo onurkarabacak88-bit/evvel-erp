@@ -1780,19 +1780,12 @@ def dukkan_giderleri(cur, bas_gun: str) -> List[dict]:
     return out
 
 
-def dukkan_gideri_yaz(cur, *, sube_id: str, gun: str, tutar: int, aciklama: str, kim: str, kaynak_ref: str,
-                      giren_id: Optional[str] = None, giren: Optional[str] = None, kategori: Optional[str] = None,
-                      fis: Optional[bool] = None) -> dict:
-    """PUBLIC — şube çekmecesinden ödenen küçük gider (anlık gider) TEK yazıcısı (yeni panel /gider + geçişte eski köprü).
-    Kasa 'odeme' (kaynak 'dukkan_gideri') — Gider, Fiş kontrol, kör sayım, Satış mutabakatı bunu okur. Sahip (20 Eki): onay YOK
-    (kayıt kesin) · çekmece eksiye düşse de yazılır (merkez Kasa'da görür) · sayılmış güne yazılmaz (sayım bozulmasın).
-    Dönüş {id|None (tekrar), eksi: bool}. Kuruş."""
+def _sube_cekmece_odeme(cur, *, sube_id: str, gun: str, tutar: int, veri: dict, kim: str, kaynak_ref: str) -> dict:
+    """Şube çekmecesinden çıkan nakit (anlık gider · elden avans) — ORTAK yazım: Kasa kilidi, sayılmış güne yazılmaz, eksiye düşse
+    de yazılır (sahip 20 Eki; merkez Kasa'da görür). Dönüş {id|None (tekrar), eksi}."""
     _hazirla()
     if tutar <= 0:
         raise HTTPException(400, "Tutar sıfırdan büyük olmalı")
-    ac = " ".join(str(aciklama or "").split())
-    if len(ac) < 3:
-        raise HTTPException(400, "Açıklama zorunlu — neye ödendiğini yaz")
     cep = "sube:" + str(sube_id)
     _kilit(cur)   # Kasa'nın tek yazma kilidi (kasa_yaz ile aynı sıra)
     cep_list, C, kayit, _ = _yukle(cur)
@@ -1800,17 +1793,38 @@ def dukkan_gideri_yaz(cur, *, sube_id: str, gun: str, tutar: int, aciklama: str,
         raise HTTPException(400, "Şube kasası bulunamadı")
     kilit = _sayim_kilidi(_olaylar(kayit))
     if cep in kilit and gun <= kilit[cep]:
-        raise HTTPException(409, "Bu günün kasası sayıldı — gider girilemez, merkeze haber ver")
-    veri = {"aciklama": ac[:120], "kimin": C[cep]["kisa"], "parcalar": [{"cep": cep, "tutar": int(tutar)}], "kaynak": "dukkan_gideri"}
+        raise HTTPException(409, "Bu günün kasası sayıldı — girilemez, merkeze haber ver")
+    v = {**veri, "kimin": C[cep]["kisa"], "parcalar": [{"cep": cep, "tutar": int(tutar)}]}
+    hid = _yaz(cur, "odeme", gun, kim, tutar=int(tutar), veri=v, kaynak_ref=kaynak_ref)
+    D = _bakiye(_olaylar(_yukle(cur)[2]), C)
+    return {"id": hid, "eksi": D["b"].get(cep, 0) < 0}
+
+
+def dukkan_gideri_yaz(cur, *, sube_id: str, gun: str, tutar: int, aciklama: str, kim: str, kaynak_ref: str,
+                      giren_id: Optional[str] = None, giren: Optional[str] = None, kategori: Optional[str] = None,
+                      fis: Optional[bool] = None) -> dict:
+    """PUBLIC — şube çekmecesinden ödenen küçük gider (anlık gider) TEK yazıcısı. Kasa 'odeme' (kaynak 'dukkan_gideri') — Gider, Fiş
+    kontrol, kör sayım, Satış mutabakatı bunu okur. Sahip (20 Eki): onay YOK (kayıt kesin). Kuruş."""
+    ac = " ".join(str(aciklama or "").split())
+    if len(ac) < 3:
+        raise HTTPException(400, "Açıklama zorunlu — neye ödendiğini yaz")
+    veri = {"aciklama": ac[:120], "kaynak": "dukkan_gideri"}
     if giren_id:
         veri.update(giren_id=str(giren_id), giren=giren)
     if kategori:
         veri["kategori"] = str(kategori).strip()[:40]
     if fis is not None:
         veri["fis_gonderildi"] = bool(fis)
-    hid = _yaz(cur, "odeme", gun, kim, tutar=int(tutar), veri=veri, kaynak_ref=kaynak_ref)
-    D = _bakiye(_olaylar(_yukle(cur)[2]), C)
-    return {"id": hid, "eksi": D["b"].get(cep, 0) < 0}
+    return _sube_cekmece_odeme(cur, sube_id=sube_id, gun=gun, tutar=tutar, veri=veri, kim=kim, kaynak_ref=kaynak_ref)
+
+
+def sube_avansi_yaz(cur, *, sube_id: str, gun: str, tutar: int, personel_id: str, personel_ad: Optional[str], ait_ay: str,
+                    kim: str, kaynak_ref: str) -> dict:
+    """PUBLIC — şubeden ELDEN verilen avans (Avans modülü, panel 'teslim ettim'). Kasa 'odeme' konu personel · kalem Avans ·
+    kaynak 'sube_avansi' · gider DEĞİL — Maaş bunu 'Avans (şube)' olarak mahsup eder (eski köprüyle AYNI biçim). Kuruş."""
+    veri = {"konu": {"tip": "personel", "ad": "Personel", "personel_id": str(personel_id), "personel_ad": personel_ad, "kalem": "Avans"},
+            "ait_ay": str(ait_ay)[:7], "gider": False, "kaynak": "sube_avansi", "aciklama": f"Avans (şubeden elden) · {personel_ad or ''}"[:120]}
+    return _sube_cekmece_odeme(cur, sube_id=sube_id, gun=gun, tutar=tutar, veri=veri, kim=kim, kaynak_ref=kaynak_ref)
 
 
 def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) -> dict:

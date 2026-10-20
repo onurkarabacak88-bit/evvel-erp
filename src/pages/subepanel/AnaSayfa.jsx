@@ -31,7 +31,7 @@ function Cip({ ad, deger, onClick }) {
   );
 }
 
-export default function AnaSayfa({ d, yok, tabletVar, kapali, ac, setQrBuyuk, setMolaQr, bilgi }) {
+export default function AnaSayfa({ d, yok, tabletVar, kapali, ac, setQrBuyuk, setMolaQr, bilgi, avansTeslim }) {
   const cizgi = d.gun_cizgisi || {};
   return (
     <div style={{ display: 'grid', gap: 12, alignContent: 'start' }}>
@@ -86,10 +86,23 @@ export default function AnaSayfa({ d, yok, tabletVar, kapali, ac, setQrBuyuk, se
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 10 }}>
         <button className="sp-hizli" disabled={kapali} style={{ background: 'linear-gradient(135deg,#7f1d1d,#ef4444)' }} onClick={() => ac('fire')}><i>🔥</i><b>Fire Bildirimi</b><span>Kayıp / zayi kaydı</span></button>
         <button className="sp-hizli" disabled={kapali} style={{ background: 'linear-gradient(135deg,#1e3a8a,#3b82f6)' }} onClick={() => ac('ac')}><i>🔓</i><b>Ürün Aç</b><span>Depodan kullanıma al</span></button>
-        <button className="sp-hizli" disabled={kapali} style={{ background: 'linear-gradient(135deg,#78350f,#f59e0b)' }} onClick={() => bilgi('Anlık gider ekranı kendi basamağında açılacak')}><i>💸</i><b>Anlık Gider</b><span>PIN ile merkeze gönder</span></button>
+        <button className="sp-hizli" disabled={kapali} style={{ background: 'linear-gradient(135deg,#78350f,#f59e0b)' }} onClick={() => ac('gider')}><i>💸</i><b>Anlık Gider</b><span>Çekmeceden nakit gider</span></button>
         <button className="sp-hizli" style={{ background: 'linear-gradient(135deg,#4c1d95,#8b5cf6)' }} onClick={() => bilgi('Merkez notu ekranı kendi basamağında açılacak')}><i>📝</i><b>Merkez Notu</b><span>Operasyona bildir</span></button>
         <button className="sp-hizli" disabled={!yok.var} style={{ background: 'linear-gradient(135deg,#7c2d12,#f97316)' }} onClick={() => setMolaQr(true)}><i>🍽️</i><b>Yemek Molası</b><span>QR okut → mola başlat / bitir</span></button>
       </div>
+
+      {/* 🤝 ELDEN VERİLECEK AVANS — merkez onayladı; çekmeceden verilince ad + PIN ile "teslim ettim" (sahip 20 Eki) */}
+      {(d.avans_elden || []).length > 0 && (
+        <div className="sp-kart" style={{ display: 'grid', gap: 8, borderColor: 'rgba(245,158,11,.5)' }}>
+          <b>🤝 Elden verilecek avans</b>
+          {d.avans_elden.map((t) => (
+            <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
+              <span style={{ flex: 1 }}>{t.ad}</span><b>{Number(t.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</b>
+              <button type="button" className="sp-btn sp-yesil" style={{ minHeight: 44 }} disabled={kapali} onClick={() => avansTeslim?.(t)}>Teslim ettim</button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {/* ③ DURUM ÇİPLERİ — kaynak Evvel Yeni'de henüz yoksa "—" (0 yanlış bilgi olur; gizlemek düzeni bozar) */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>

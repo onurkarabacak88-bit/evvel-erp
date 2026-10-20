@@ -325,6 +325,14 @@ def panel_durum(sube_id: str):
             yok["kapanis_sorumlusu"] = y.kapanis_sorumlusu(cur, str(sube_id), gun)
             if yok["qr_gerekli"]:   # ad listesi = bu şubede QR'la girmiş olanlar (K11: başka şubenin personeli dahil)
                 per = [{"id": g["personel_id"], "ad": g["ad"]} for g in yok["girenler"] if g["acik"]]
+        avans_elden = []
+        if _modul_acik("avans"):   # 🤝 bu şubeden elden verilecek onaylı avanslar (yumuşak bağ)
+            try:
+                with savepoint(cur, "sp_panel_avans"):
+                    from evvel_yeni_avans_api import elden_bekleyen
+                    avans_elden = [{"id": t["id"], "ad": t["ad"], "tutar": t["tutar"]} for t in elden_bekleyen(cur, str(sube_id))]
+            except Exception:  # noqa: BLE001
+                log.warning("panel durum: avans okunamadı", exc_info=True)
         depo_acik, depo_yolda, depo_mu = _modul_acik("depo"), [], False
         if depo_acik:   # Basamak 5 (Fable F3/F6): gelen paketler (ADET YOK — kör sayım) + Tema depo bayrağı; yumuşak bağ
             try:
@@ -336,7 +344,7 @@ def panel_durum(sube_id: str):
                 log.warning("panel durum: depo okunamadı", exc_info=True)
     def _u(x):
         return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici")}
-    return {"sube": {"id": s["id"], "ad": s["ad"], "depo": depo_mu}, "depo_acik": depo_acik, "depo_yolda": depo_yolda, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
+    return {"sube": {"id": s["id"], "ad": s["ad"], "depo": depo_mu}, "depo_acik": depo_acik, "depo_yolda": depo_yolda, "avans_elden": avans_elden, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
             "personel": per, "teslim_alanlar": [{"id": c, "ad": a} for a, c in _TH.items()],
             "sayilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "sayim" and x.get("panel_sayim")]}
                         for k in kat],
@@ -892,6 +900,36 @@ def depodan_kabul(sube_id: str, b: DepoKabulBody):
         return {"olay": oid, "tekrar": False,
                 "mesaj": f"{len(b.satirlar)} ürün kabul edildi ✓" + (" · Sayımda fark var — merkeze iletildi" if fark else "")}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
+
+
+# ─────────────── 🤝 AVANS — ELDEN TESLİM (kesim engeli T3-17, sahip 20 Eki: panelde ad + PIN; personel "aldım" onayı YOK) ───────────────
+class AvansTeslimBody(BaseModel):
+    istemci_gunu: Optional[str] = None
+    personel_id: str                  # avansı ÇEKMECEDEN veren (QR'la içeride)
+    pin: Optional[str] = None
+    talep_id: str
+    istek_id: str
+
+
+@router.post("/{sube_id}/avans-teslim")
+def avans_teslim(sube_id: str, b: AvansTeslimBody):
+    if not _modul_acik("avans"):
+        raise HTTPException(503, "Avans modülü kapalı — merkeze haber ver")
+
+    def is_(cur, c):
+        from evvel_yeni_avans_api import elden_teslim_yaz
+        _gun_acik_mi(cur, c, sube_id)
+        p = _personel(cur, sube_id, b.personel_id)
+        _pin(cur, p, b.pin)
+        kok = f"panel:avans:{sube_id}:{b.talep_id}"
+        oid = _olay(cur, sube_id=sube_id, tur="avans", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
+                    personel_id=p["id"], personel_ad=p["ad"], veri={"talep_id": b.talep_id})   # kök talep başına — aynı talep iki kez teslim edilemez
+        if oid is None:
+            return {"tekrar": True, "mesaj": "Bu avans zaten teslim edilmişti ✓"}
+        r = elden_teslim_yaz(cur, talep_id=b.talep_id, sube_id=str(sube_id), kim=f"{KIM} · {p['ad']}", gun=c["gun"])
+        return {"olay": oid, "tekrar": r["tekrar"],
+                "mesaj": "Bu avans zaten teslim edilmişti ✓" if r["tekrar"] else f"🤝 {r['personel']} — {r['tutar'] / 100:,.2f} ₺ avans teslim edildi"}
+    return _calistir(sube_id, b.istek_id, is_, tur="avans", govde=b.model_dump(mode="json"))
 
 
 # ─────────────── ANLIK GİDER (1 Kasım listesi madde 7, sahip kararları 20 Eki) ───────────────

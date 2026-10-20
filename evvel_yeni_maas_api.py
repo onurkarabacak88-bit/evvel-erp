@@ -384,6 +384,30 @@ def _satir(p, ay, hak, kalemler, mahsup, avans, din, odenen, od, e, u, kaynak, e
     }
 
 
+AVANS_SABIT_TAVAN = 2_000_000   # 20.000 ₺ (kuruş) — eski avans_service ile AYNI kural (sahip 20 Eki: "eski oran")
+AVANS_HAKEDIS_ORAN = 0.50       # bugüne kadarki hak edişin %50'si
+AVANS_NET_ORAN = 0.30           # ay sonu beklenen netin %30'u
+
+
+def avans_tavani(cur, personel_id: str, gun: Optional[date] = None) -> dict:
+    """PUBLIC (Avans modülü) — hak edişin sahibi Maaş: tavan = min(20.000 ₺, bugüne kadarki hak ediş × %50, beklenen net × %30);
+    ikisi de ölçülemiyorsa 0 (hak ediş oluşmadan avans açılmaz — eski kural). Kuruş. Beklenen: tam zamanlı maaş+yemek+yol,
+    yarı zamanlı (ayın vardiya planı / güvenilir QR saati) × saatlik."""
+    from evvel_yeni_cekirdek import is_gunu as _ig
+    ay = (gun or _ig()).strftime("%Y-%m")
+    _hazirla(cur)
+    r = next(iter(hesapla(cur, ay, sadece=str(personel_id))), None)
+    hak = _kurus(r["hak_edis"]) if r else 0
+    u = _ucretler(cur, ay).get(str(personel_id)) or {}
+    if r and r.get("calisma_turu") == "yari":
+        saat = (_yeni_oneri(cur, ay).get(str(personel_id)) or {}).get("calisma_saat", 0)
+        bek = int(Decimal(str(saat)) * int(u.get("saatlik") or 0))
+    else:
+        bek = int(u.get("maas") or 0) + int(u.get("yemek") or 0) + int(u.get("yol") or 0)
+    aday = [AVANS_SABIT_TAVAN] + ([int(hak * AVANS_HAKEDIS_ORAN)] if hak > 0 else []) + ([int(bek * AVANS_NET_ORAN)] if bek > 0 else [])
+    return {"ay": ay, "tavan": 0 if (hak <= 0 and bek <= 0) else min(aday), "hakedis": hak, "beklenen": bek}
+
+
 def personel_giderleri(cur, ay: str) -> list:
     """GİDER için: [(sube_id|None, hak kuruş, ad, tahmini)] — hak edişten, çalışma ayına, BİR KEZ."""
     out = []

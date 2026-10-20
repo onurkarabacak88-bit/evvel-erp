@@ -73,3 +73,32 @@ export default function AnlikGider({ d, subeId, adaylar, kapali, kapat, bitti })
     </Modal>
   );
 }
+
+// 🤝 ELDEN AVANS TESLİMİ (kesim engeli T3-17, sahip 20 Eki): merkez onayladı → çekmeceden veren ad + PIN → Kasa (şube avansı) + maaştan
+// mahsup. Personelin "aldım" onayı YOK. Aynı çekmece nakdi işi olduğu için anlık giderle aynı dosyada (ortak parçalar).
+export function AvansTeslim({ t, d, subeId, adaylar, kapat, bitti }) {
+  const [kisi, setKisi] = useState('');
+  const [pin, setPin] = useState('');
+  const [istek, setIstek] = useState(yeniIstek);
+  const [mesgul, setMesgul] = useState(false);
+  const [hata, setHata] = useState('');
+  const kaydet = async () => {
+    if (mesgul) return;
+    setMesgul(true); setHata('');
+    try {
+      const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/avans-teslim`, { method: 'POST', body: {
+        personel_id: kisi, pin, istek_id: istek, istemci_gunu: d.gun, talep_id: t.id } });
+      bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : (r.mesaj || 'Avans teslim edildi'), !!r.kuru);
+    } catch (e) {
+      panelHata(e, { setHata, pinSifirla: () => setPin(''), yeniIstekVer: () => setIstek(yeniIstek()) });
+    }
+    setMesgul(false);
+  };
+  return (
+    <Modal baslik="🤝 Avans teslimi" kapat={kapat}>
+      <div style={{ fontSize: 18 }}><b>{t.ad}</b> — <b style={{ color: C.sari }}>{tl(t.tutar)}</b> çekmeceden verildi mi?</div>
+      <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim verdi?" devam={kaydet}
+        devamYazi={mesgul ? 'Kaydediliyor…' : '🤝 Teslim ettim'} />
+    </Modal>
+  );
+}

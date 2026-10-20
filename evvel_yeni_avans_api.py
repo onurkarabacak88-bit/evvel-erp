@@ -8,6 +8,12 @@ kimse görmeden kaldı.
   · Reddet: eski reddet.
 KÖPRÜ (eski sistem kalkınca: talepler doğrudan Evvel Yeni'ye yazılacak — KESIM_LISTESI): personel_avans okuması ve
 avans_service.avans_onayla / avans_reddet çağrıları.
+
+🆕 1 KASIM (kesim engeli T3-17 — Fable mekanizması + sahip kararları 20 Eki): talep defteri Evvel Yeni'nin `ey_avans_talep`
+tablosu (kimlikler 'av-…'). Talep telefondan (yoklama /avans — imzalı cihaz); TAVAN = eski oran (Maaş PUBLIC avans_tavani).
+Havale onayı = Ödeme formunun KENDİ yolu (konu personel · kalem Avans → Kasa → Maaş mahsup; ikinci yazıcı yok). Elden onay →
+şube panelinde ad + PIN "teslim ettim" → Kasa PUBLIC sube_avansi_yaz (çekmeceden düşer, Maaş 'Avans (şube)' mahsup).
+Personelin "aldım" onayı KALKTI (sahip). 1 Kasım'a kadar eski talepler eski yoldan; sonra yalnız yeni defter.
 """
 
 import logging
@@ -16,11 +22,122 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
+import uuid
+from datetime import date
+
 from database import db, savepoint
-from evvel_yeni_cekirdek import aktor as _aktor, bekleyen_is_kaydet, bugun as _bugun
+from evvel_yeni_cekirdek import aktor as _aktor, bekleyen_is_kaydet, bugun as _bugun, yeni_donem
 
 router = APIRouter(prefix="/api/evvel-yeni/avans", tags=["evvel-yeni-avans"])
 log = logging.getLogger(__name__)
+
+
+# ─────────────────────────── 🆕 YENİ DEFTER ey_avans_talep ───────────────────────────
+def avans_hazirla(cur) -> None:
+    """Çağıranın işleminde, savepoint + lock_timeout; yalnız eksikse (19 Eki dersi)."""
+    cur.execute("SELECT to_regclass('ey_avans_talep') IS NOT NULL AS v")
+    if dict(cur.fetchone() or {}).get("v"):
+        return
+    try:
+        with savepoint(cur, "sp_ey_avans_hazirla"):
+            cur.execute("SET LOCAL lock_timeout = '3s'")
+            cur.execute("""CREATE TABLE IF NOT EXISTS ey_avans_talep (
+                id TEXT PRIMARY KEY, personel_id TEXT NOT NULL, tutar BIGINT NOT NULL, donem TEXT NOT NULL, not_ TEXT,
+                durum TEXT NOT NULL DEFAULT 'talep', yontem TEXT, sube_id TEXT, istek_id TEXT UNIQUE,
+                talep_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(), karar_ts TIMESTAMPTZ, karar_kim TEXT, karar_not TEXT,
+                odeme_ref TEXT, teslim_ts TIMESTAMPTZ, teslim_kim TEXT)""")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_avans_p ON ey_avans_talep (personel_id, donem)")
+            cur.execute("SET LOCAL lock_timeout = DEFAULT")
+    except Exception:  # noqa: BLE001
+        log.warning("avans tablosu kurulamadı", exc_info=True)
+        raise HTTPException(503, "Avans hazırlanıyor — birkaç saniye sonra tekrar dene")
+
+
+AKTIF = ("talep", "onaylandi", "odendi")   # tavana sayılan
+
+
+def avans_durumu(cur, personel_id: str) -> dict:
+    """PUBLIC (telefon): tavan · bu ay kullanılan · kullanılabilir · açık talep (kuruş). Tavan Maaş'ın (eski oran)."""
+    avans_hazirla(cur)
+    from evvel_yeni_maas_api import avans_tavani
+    t = avans_tavani(cur, str(personel_id))
+    cur.execute("SELECT COALESCE(SUM(tutar),0) AS k FROM ey_avans_talep WHERE personel_id=%s AND donem=%s AND durum = ANY(%s)",
+                (str(personel_id), t["ay"], list(AKTIF)))
+    kul = int(dict(cur.fetchone())["k"] or 0)
+    cur.execute("""SELECT id, tutar, durum, yontem, talep_ts FROM ey_avans_talep WHERE personel_id=%s AND durum IN ('talep','onaylandi')
+                    ORDER BY talep_ts DESC LIMIT 1""", (str(personel_id),))
+    ac = cur.fetchone()
+    return {"ay": t["ay"], "tavan": t["tavan"], "kullanilan": kul, "kullanilabilir": max(0, t["tavan"] - kul),
+            "acik": ({**dict(ac), "talep_ts": str(dict(ac)["talep_ts"])[:16]} if ac else None)}
+
+
+def talep_yaz(cur, *, personel_id: str, tutar: int, not_: Optional[str], istek_id: str) -> dict:
+    """PUBLIC (telefon talebi): açık talep varken ikinci talep yok (eski kural) · tavanı aşan talep yok (eski oran)."""
+    avans_hazirla(cur)
+    if not istek_id or len(str(istek_id)) > 80:
+        raise HTTPException(400, "istek_id gerekli")
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_avans:" + str(personel_id),))
+    cur.execute("SELECT id, tutar FROM ey_avans_talep WHERE istek_id=%s", (str(istek_id),))
+    r = cur.fetchone()
+    if r:
+        if int(dict(r)["tutar"]) != int(tutar):
+            raise HTTPException(409, "Bu istek başka tutarla gönderilmiş — sayfayı yenile")
+        return {"id": dict(r)["id"], "tekrar": True}
+    d = avans_durumu(cur, personel_id)
+    if d["acik"]:
+        raise HTTPException(409, "Açık avans talebin var — sonuçlanınca yenisini açabilirsin")
+    if tutar <= 0:
+        raise HTTPException(400, "Tutar yaz")
+    if d["tavan"] <= 0:
+        raise HTTPException(409, "Bu ay henüz hak ediş oluşmadı — avans talep edilemez")
+    if tutar > d["kullanilabilir"]:
+        raise HTTPException(409, f"En çok {d['kullanilabilir'] / 100:,.0f} ₺ talep edebilirsin".replace(",", "."))
+    tid = "av-" + uuid.uuid4().hex[:12]
+    cur.execute("""INSERT INTO ey_avans_talep (id, personel_id, tutar, donem, not_, istek_id) VALUES (%s,%s,%s,%s,%s,%s)""",
+                (tid, str(personel_id), int(tutar), d["ay"], (not_ or "").strip()[:200] or None, str(istek_id)))
+    return {"id": tid, "tekrar": False}
+
+
+def _yeni_talepler(cur, acik: bool = True) -> list:
+    cur.execute("SELECT to_regclass('ey_avans_talep') IS NOT NULL AS v")
+    if not dict(cur.fetchone()).get("v"):
+        return []
+    from evvel_yeni_tanim_api import subeler
+    cur.execute(f"""SELECT a.*, p.ad FROM ey_avans_talep a LEFT JOIN ey_personel p ON p.id = a.personel_id
+                     WHERE {"a.durum IN ('talep','onaylandi')" if acik else "a.durum IN ('reddedildi','kapatildi') AND a.talep_ts >= NOW() - INTERVAL '60 days'"}
+                     ORDER BY a.talep_ts""")
+    sad = {x["id"]: x["ad"] for x in subeler(cur, hepsi=True)}
+    return [{"id": r["id"], "personel_id": r["personel_id"], "ad": r.get("ad") or "—", "tutar": int(r["tutar"]) / 100, "durum": r["durum"],
+             "yontem": r.get("yontem"), "sube": sad.get(r.get("sube_id")), "sube_id": r.get("sube_id"), "donem": r["donem"],
+             "talep": str(r["talep_ts"])[:16], "onay": str(r.get("karar_ts") or "")[:16], "not": r.get("not_") or r.get("karar_not"),
+             "yeni": True} for r in [dict(x) for x in cur.fetchall() or []]]
+
+
+def elden_bekleyen(cur, sube_id: str) -> list:
+    """PUBLIC (şube paneli): bu şubeden ELDEN verilecek onaylı avanslar (personel adı + tutar)."""
+    return [t for t in _yeni_talepler(cur) if t["durum"] == "onaylandi" and t["yontem"] == "elden" and t["sube_id"] == str(sube_id)]
+
+
+def elden_teslim_yaz(cur, *, talep_id: str, sube_id: str, kim: str, gun: date) -> dict:
+    """PUBLIC (panel 'teslim ettim'): Kasa sube_avansi_yaz (çekmeceden düşer) + talep 'odendi'. Aynı talep ikinci kez → tekrar."""
+    avans_hazirla(cur)
+    from evvel_yeni_kasa_api import sube_avansi_yaz
+    cur.execute("SELECT * FROM ey_avans_talep WHERE id=%s FOR UPDATE", (talep_id,))
+    t = cur.fetchone()
+    if not t:
+        raise HTTPException(404, "Avans bulunamadı")
+    t = dict(t)
+    if t["durum"] == "odendi":
+        return {"tekrar": True}
+    if t["durum"] != "onaylandi" or t.get("yontem") != "elden" or t.get("sube_id") != str(sube_id):
+        raise HTTPException(409, "Bu avans bu şubeden elden verilecek değil — sayfayı yenile")
+    cur.execute("SELECT ad FROM ey_personel WHERE id=%s", (t["personel_id"],))
+    pad = dict(cur.fetchone() or {}).get("ad")
+    ref = f"avans:{talep_id}"
+    sube_avansi_yaz(cur, sube_id=str(sube_id), gun=gun.isoformat(), tutar=int(t["tutar"]), personel_id=t["personel_id"], personel_ad=pad,
+                    ait_ay=t["donem"], kim=kim, kaynak_ref=ref)
+    cur.execute("UPDATE ey_avans_talep SET durum='odendi', odeme_ref=%s, teslim_ts=NOW(), teslim_kim=%s WHERE id=%s", (ref, kim, talep_id))
+    return {"tekrar": False, "tutar": int(t["tutar"]), "personel": pad}
 
 
 def _acik_talepler(cur) -> list:
@@ -53,7 +170,15 @@ def _bekleyen(cur, baglam: dict) -> list:
     return [{"tur": "avans_talep", "genel": True, "grup": "personel", "id": f"avans:{t['id']}", "tarih": (t["talep"] or _bugun().isoformat())[:10],
              "etiket": "🤝 Avans talebi", "ad": t["ad"], "alt": f"{t['tutar']:,.0f} ₺ — onayla ya da reddet".replace(",", "."),
              "sayfa": "avans_talepleri", "dugme": "Avans talepleri"}
-            for t in _acik_talepler(cur) if t["durum"] == "talep"]
+            for t in _tum_acik(cur) if t["durum"] == "talep"]
+
+
+def _tum_acik(cur) -> list:
+    """Yeni defter + (1 Kasım'a kadar) eski personel_avans açıkları."""
+    out = _yeni_talepler(cur)
+    if not yeni_donem(cur):
+        out = _acik_talepler(cur) + out
+    return out
 
 
 bekleyen_is_kaydet("avans_talep", _bekleyen)
@@ -76,7 +201,8 @@ def _kapananlar(cur) -> list:
 @router.get("/talepler")
 def talepler():
     with db() as (conn, cur):
-        return {"talepler": _acik_talepler(cur), "kapananlar": _kapananlar(cur), "bugun": _bugun().isoformat()}
+        kapanan = _yeni_talepler(cur, acik=False) + ([] if yeni_donem(cur) else _kapananlar(cur))
+        return {"talepler": _tum_acik(cur), "kapananlar": kapanan, "bugun": _bugun().isoformat()}
 
 
 class KapatBody(BaseModel):
@@ -87,11 +213,30 @@ class KapatBody(BaseModel):
 def kapat(aid: str, body: KapatBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Sahip (2026-10-17): "Bu avanslar Eylül'de verilmişti, kapatıldı — grileştir." Talep PARA HAREKETİ OLMADAN kapanır
     (eski sistemde 'iptal' — para çıkmamış kayıt; maaş mahsubu oluşturmaz). Açık talep kalırsa personel yeni talep açamıyordu."""
+    if aid.startswith("av-"):
+        _karar(aid, "kapatildi", x_evvel_oturum, (body.not_ or "daha önce verildi")[:200])
+        return {"ok": True, "mesaj": "Talep kapatıldı (para hareketi yok)"}
     import avans_service as eski
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
     eski.avans_iptal(aid, eski.AvansIptalModel(neden=f"Kapatıldı ({kim}): {(body.not_ or 'daha önce verildi')}"[:200]))
     return {"ok": True, "mesaj": "Talep kapatıldı (para hareketi yok)"}
+
+
+def _karar(aid: str, durum: str, jeton: Optional[str], notu: Optional[str] = None, **alan) -> dict:
+    """Yeni defterde talebin kararı (yalnız 'talep' durumundaki)."""
+    with db() as (conn, cur):
+        avans_hazirla(cur)
+        kim = _aktor(cur, jeton)
+        if kim in ("oturumsuz", "bilinmiyor"):
+            raise HTTPException(401, "Merkez oturumu gerekli")
+        ek = "".join(f", {k}=%s" for k in alan)
+        cur.execute(f"""UPDATE ey_avans_talep SET durum=%s, karar_ts=NOW(), karar_kim=%s, karar_not=%s{ek}
+                         WHERE id=%s AND durum='talep' RETURNING *""", (durum, kim, notu, *alan.values(), aid))
+        t = cur.fetchone()
+        if not t:
+            raise HTTPException(409, "Talep bulunamadı ya da karar verilmiş — sayfayı yenile")
+        return {**dict(t), "kim": kim}
 
 
 class OnayBody(BaseModel):
@@ -106,13 +251,32 @@ def onayla(aid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(defa
     avans akışıyla (eski Cep ekranının yaptığı birebir): havale = eski kasa + eski maaş mahsubu; elden = şube panelinden teslim
     edilince Kasa köprüsüyle Evvel Yeni dükkân nakdinden düşer. Avansın Evvel Yeni'ye tam taşınması (havalenin EY bankasından
     düşmesi) envanter madde 35'te, 1 Kasım öncesi — KESIM_LISTESI."""
-    import avans_service as eski
-    with db() as (conn, cur):
-        kim = _aktor(cur, x_evvel_oturum)
     if body.yontem not in ("havale", "elden"):
         raise HTTPException(400, "Yöntem: havale ya da elden")
     if body.yontem == "elden" and not body.sube_id:
         raise HTTPException(400, "Elden verilecekse şubeyi seç")
+    if aid.startswith("av-"):
+        if body.yontem == "elden":
+            _karar(aid, "onaylandi", x_evvel_oturum, None, yontem="elden", sube_id=body.sube_id)
+            return {"ok": True, "mesaj": "Avans onaylandı — şube panelinde 'teslim ettim' denince dükkân kasasından düşer"}
+        if not body.cep:
+            raise HTTPException(400, "Havale hangi bankadan? — cep seç")
+        with db() as (conn, cur):
+            avans_hazirla(cur)
+            cur.execute("SELECT * FROM ey_avans_talep WHERE id=%s", (aid,))
+            t = cur.fetchone()
+        if not t or dict(t)["durum"] != "talep":
+            raise HTTPException(409, "Talep bulunamadı ya da karar verilmiş — sayfayı yenile")
+        t = dict(t)
+        import evvel_yeni_odeme_api as o   # Ödeme formunun KENDİ yolu (konu personel · kalem Avans) — ikinci yazıcı yok
+        o.odeme_gir(o.OdemeBody(konu="personel", personel_id=t["personel_id"], personel_kalemi="Avans", ait_ay=t["donem"],
+                                aciklama=f"Avans (havale) · talep {aid}", istek_id=f"avans-{aid}", tekrar_onay=True,
+                                parcalar=[o.Parca(yontem="havale", cep=body.cep, tutar=__import__("decimal").Decimal(int(t["tutar"])) / 100)]), x_evvel_oturum)
+        _karar(aid, "odendi", x_evvel_oturum, None, yontem="havale", odeme_ref=f"odeme_formu:avans-{aid}")
+        return {"ok": True, "mesaj": "Avans havaleyle ödendi (bankadan düştü, maaştan mahsup edilir)"}
+    import avans_service as eski
+    with db() as (conn, cur):
+        kim = _aktor(cur, x_evvel_oturum)
     eski.avans_onayla(aid, eski.AvansOnayModel(yontem=body.yontem, sube_id=body.sube_id if body.yontem == "elden" else None, onaylayan=kim))
     return {"ok": True, "mesaj": "Avans havaleyle ödendi olarak işaretlendi (maaştan düşer)" if body.yontem == "havale"
             else "Avans onaylandı — şube panelinden teslim edilince dükkân kasasından düşer"}
@@ -123,7 +287,10 @@ class RedBody(BaseModel):
 
 
 @router.post("/{aid}/reddet")
-def reddet(aid: str, body: RedBody):
+def reddet(aid: str, body: RedBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    if aid.startswith("av-"):
+        _karar(aid, "reddedildi", x_evvel_oturum, (body.neden or "Merkez reddetti")[:200])
+        return {"ok": True, "mesaj": "Talep reddedildi"}
     import avans_service as eski
     eski.avans_reddet(aid, eski.AvansRedModel(neden=(body.neden or "Merkez reddetti")[:200]))
     return {"ok": True, "mesaj": "Talep reddedildi"}

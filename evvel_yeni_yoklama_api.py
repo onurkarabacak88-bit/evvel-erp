@@ -766,6 +766,51 @@ def _qr_islem(cur, c, p, v, islem: str) -> tuple:
     return sube, k
 
 
+def _avans():
+    """Yumuşak bağ: Avans modülü yüklüyse PUBLIC servisleri; değilse None. 1 Kasım öncesi telefon talebi KAPALI (eski sayfadan)."""
+    from evvel_yeni_moduller import DURUM
+    if DURUM.get("avans") != "yuklendi":
+        return None
+    import evvel_yeni_avans_api as a
+    return a
+
+
+@router.get("/avans")
+async def avans_durum_tel(request: Request):
+    """🤝 Telefon: avans tavanı · kullanılabilir · açık talep (sahip 20 Eki: tavan eski oran)."""
+    def fn(cur, c, p, _v):
+        from evvel_yeni_cekirdek import yeni_donem
+        A = _avans()
+        if A is None:
+            return {"kapali": "Avans şu an kapalı — merkeze sor"}
+        if not yeni_donem(cur):
+            return {"kapali": "Avans talebi 1 Kasım'dan itibaren buradan — şimdilik eski personel sayfasından"}
+        d = A.avans_durumu(cur, p["id"])
+        return {"tavan": d["tavan"] / 100, "kullanilan": d["kullanilan"] / 100, "kullanilabilir": d["kullanilabilir"] / 100,
+                "acik": ({"tutar": int(d["acik"]["tutar"]) / 100, "durum": d["acik"]["durum"], "yontem": d["acik"].get("yontem"),
+                          "talep": d["acik"]["talep_ts"]} if d["acik"] else None), "ay": d["ay"]}
+    return await _telefon(request, fn)
+
+
+@router.post("/avans")
+async def avans_talep_tel(request: Request):
+    """🤝 Telefon: avans talebi (imzalı cihaz = kişi). Merkez onaylar (havale / elden)."""
+    def fn(cur, c, p, v):
+        from decimal import Decimal, InvalidOperation
+        from evvel_yeni_cekirdek import yeni_donem
+        A = _avans()
+        if A is None or not yeni_donem(cur):
+            raise HTTPException(409, "Avans talebi şu an buradan alınmıyor")
+        ist = _istek(v)
+        try:
+            t = int((Decimal(str(v.get("tutar") or "0").replace(",", ".")) * 100).to_integral_value())
+        except InvalidOperation:
+            raise HTTPException(400, "Tutarı sayı olarak yaz")
+        r = A.talep_yaz(cur, personel_id=p["id"], tutar=t, not_=v.get("not"), istek_id=ist)
+        return {"ok": True, "tekrar": r["tekrar"], "mesaj": "Talebin merkeze iletildi ✓" if not r["tekrar"] else "Talebin zaten iletilmişti ✓"}
+    return await _telefon(request, fn)
+
+
 def _istek(v) -> str:
     i = str(v.get("istek_id") or "")
     if not (8 <= len(i) <= 64) or not all(ch.isalnum() or ch == "-" for ch in i):

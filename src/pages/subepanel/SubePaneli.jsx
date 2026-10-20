@@ -11,7 +11,7 @@ import KapanisSihirbazi from './KapanisSihirbazi';
 import KasaDevri, { DEVIR_ACIK, devirEtiket } from './KasaDevri';
 import TedarikciTeslim from './TedarikciTeslim';
 import DepodanGelen from './DepodanGelen';
-import AnlikGider from './AnlikGider';
+import AnlikGider, { AvansTeslim } from './AnlikGider';
 import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
 import { AdetListesi, C, CSS, kalemGovde, Modal, SayiTusTakimi, TabletQR, tutar, tutarNum, yeniIstek } from './ortak';
@@ -32,6 +32,7 @@ export default function SubePaneli({ subeId }) {
   const [modal, setModal] = useState(null);
   const [mesaj, setMesaj] = useState(null);
   const [giderAcik, setGiderAcik] = useState(false);   // 💸 anlık gider penceresi
+  const [avansT, setAvansT] = useState(null);           // 🤝 elden verilecek avans (teslim penceresi)
   const [mesgul, setMesgul] = useState(false);
   const [istek, setIstek] = useState(yeniIstek);
   // form durumları
@@ -128,6 +129,7 @@ export default function SubePaneli({ subeId }) {
     if (m === 'ac') { setSekme('ac'); return; }   // Basamak 5: Ürün Aç eski panel gibi orta alanda SEKME
     if (m === 'teslim') { sekmeyeGec('teslim'); return; }   // Basamak 8: Tedarikçiden teslim al (orta alanda sekme)
     if (m === 'depo') { sekmeyeGec('depo'); return; }
+    if (m === 'gider') { setGiderAcik(true); return; }   // 💸 anlık gider (alt bar + ana sayfa kartı aynı pencere)
     if (['siparis', 'siparisTakip', 'gonderilecek'].includes(m)) { sekmeyeGec(m); return; }   // S5 sipariş (orta alanda sekme)       // Basamak 5 S3: Depodan gelen (orta alanda sekme; gün kapalıyken de açık)
     if (m === 'kapanis') {   // Codex: gece yarısından sonra sayfa yenilense de dünün GÖNDERİLMEMİŞ kapanışı kaybolmasın
       const dun = new Date(new Date(d.gun + 'T12:00').getTime() - 864e5).toISOString().slice(0, 10);
@@ -314,7 +316,7 @@ export default function SubePaneli({ subeId }) {
           <UrunAc key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} secimBildir={setAcSecim}
             bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
         ) : (
-          <AnaSayfa d={d} yok={yok} tabletVar={tabletVar} kapali={kapali} ac={ac} setQrBuyuk={setQrBuyuk} setMolaQr={setMolaQr} bilgi={yakinda} />
+          <AnaSayfa d={d} yok={yok} tabletVar={tabletVar} kapali={kapali} ac={ac} setQrBuyuk={setQrBuyuk} setMolaQr={setMolaQr} bilgi={yakinda} avansTeslim={setAvansT} />
         )}
 
         {/* SAĞ: GÜN SONU kartları (eski: 💵 Kasa Devri · 🌙 Günü Kapat, durum çipleriyle) */}
@@ -340,6 +342,10 @@ export default function SubePaneli({ subeId }) {
         <button onClick={() => yakinda('Mesajlar kendi basamağında açılacak')}><span style={{ fontSize: 20, display: 'block' }}>📩</span><span style={{ fontSize: 11 }}>Mesaj</span></button>
       </div>
 
+      {avansT && (
+        <AvansTeslim t={avansT} d={d} subeId={subeId} adaylar={kisiAdaylari} kapat={() => setAvansT(null)}
+          bitti={(metin, kuru) => { setAvansT(null); setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+      )}
       {giderAcik && (
         <AnlikGider d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} kapat={() => setGiderAcik(false)}
           bitti={(metin, kuru) => { setGiderAcik(false); setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />

@@ -220,10 +220,56 @@ function QrIslem({ sube, jeton }) {
               </button>
             )}
             {!islemVar && !ben.acik && <div className="tq-silik">Bu QR ile yapılacak işlem yok.</div>}
+            <AvansKart />
           </>)}
         </div>
       )}
     </>
+  );
+}
+
+// ── 🤝 AVANS TALEBİ (1 Kasım — kesim engeli T3-17, sahip 20 Eki: tavan eski oran; "aldım" onayı YOK) ──
+// Tavan / kullanılabilir sunucudan (Maaş'ın hak edişi). Açık talep varken yenisi açılmaz. 1 Kasım öncesi kart görünmez (eski sayfa).
+function AvansKart() {
+  const [d, setD] = useState(null);
+  const [ac, setAc] = useState(false);
+  const [tut, setTut] = useState('');
+  const [not, setNot] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+  const [msj, setMsj] = useState(null);
+  const istek = useRef(null);
+  const yukle = () => imzaliJson('telefon', 'GET', '/api/evvel-yeni/yoklama/avans').then(setD).catch(() => setD(null));
+  useEffect(() => { yukle(); }, []);
+  if (!d || d.kapali) return null;
+  const para = (x) => `${Number(x || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺`;
+  const gonder = async () => {
+    if (mesgul) return;
+    setMesgul(true); setMsj(null);
+    if (!istek.current) istek.current = yeniIstekId();
+    try {
+      const r = await imzaliJson('telefon', 'POST', '/api/evvel-yeni/yoklama/avans', { tutar: tut.replace(',', '.'), not: not.trim(), istek_id: istek.current });
+      setMsj({ ok: true, metin: r.mesaj }); istek.current = null; setAc(false); setTut(''); setNot(''); yukle();
+    } catch (e) {
+      setMsj({ ok: false, metin: e instanceof TypeError ? 'İnternet yok — tekrar dene (talebin bekliyor)' : (e?.message || 'Gönderilemedi') });
+      if (!(e instanceof TypeError)) istek.current = null;
+    }
+    setMesgul(false);
+  };
+  return (
+    <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${T.kenar}`, display: 'grid', gap: 8 }}>
+      <b>🤝 Avans</b>
+      {d.acik ? <div className="tq-not">Açık talebin: <b>{para(d.acik.tutar)}</b> — {d.acik.durum === 'talep' ? 'merkez bakıyor' : d.acik.yontem === 'elden' ? 'onaylandı, şubeden elden verilecek' : 'onaylandı'}</div>
+        : d.kullanilabilir > 0 ? <div className="tq-silik">Bu ay en çok {para(d.kullanilabilir)} isteyebilirsin</div>
+        : <div className="tq-silik">Bu ay avans hakkın yok (hak ediş oluşmadı ya da doldu)</div>}
+      {msj && <div style={{ color: msj.ok ? T.yesil : T.kirmizi, fontWeight: 700 }}>{msj.metin}</div>}
+      {!d.acik && d.kullanilabilir > 0 && !ac && <button className="tq-btn tq-kucuk" onClick={() => setAc(true)}>Avans iste</button>}
+      {ac && (<>
+        <input value={tut} onChange={(e) => setTut(e.target.value.replace(/[^\d,]/g, '').slice(0, 9))} placeholder="Tutar (₺)" inputMode="decimal" autoFocus style={GIRDI} />
+        <input value={not} onChange={(e) => setNot(e.target.value.slice(0, 200))} placeholder="Not (isteğe bağlı)" style={GIRDI} />
+        <button className="tq-btn tq-ana" disabled={mesgul || !tut} onClick={gonder}>{mesgul ? 'Gönderiliyor…' : 'Talebi gönder'}</button>
+        <button className="tq-btn tq-kucuk" disabled={mesgul} onClick={() => setAc(false)}>Vazgeç</button>
+      </>)}
+    </div>
   );
 }
 
