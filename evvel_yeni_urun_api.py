@@ -40,9 +40,7 @@ SURUM = 5
 _HAZIR = False
 
 
-def _n(x) -> str:
-    """Ad anahtarı (Türkçe İ/I tuzağı güvenli): büyük/küçük harf ve boşluk farkı yok sayılır."""
-    return " ".join(str(x or "").replace("İ", "i").replace("I", "ı").lower().split())
+from evvel_yeni_cekirdek import ad_anahtari as _n  # noqa: E402 — ad anahtarı TEK yerde (F#6)
 
 
 def _tablo_var(cur, ad: str) -> bool:

@@ -564,8 +564,7 @@ def personel_takvim(ay: Optional[str] = None):
         # Sahip (2026-10-16): "QR okutarak giriş yaptığı BÜTÜN şubeleri tara" —
         # (1) başka kimlikle (aynı kişinin ikinci kaydı) yazılmış QR'lar ADA göre kişiye bağlanır;
         # (2) QR okutmadan panelde açılış/kapanış/teslim yaptıysa o gün o şubede ÇALIŞTI sayılır (panel izi).
-        def _n(x):
-            return " ".join((x or "").replace("İ", "i").replace("I", "ı").lower().split())
+        from evvel_yeni_cekirdek import ad_anahtari as _n   # ad anahtarı TEK yerde (F#6)
         ey_ids = {p["id"] for p in kisiler}
         ad_kimlik = {}
         for p in kisiler:

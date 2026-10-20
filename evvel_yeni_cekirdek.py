@@ -104,6 +104,12 @@ def tr_gun(ts) -> date:
         return bugun()
 
 
+def ad_anahtari(x) -> str:
+    """PUBLIC — ad EŞLEME anahtarı (Türkçe İ/I tuzağı güvenli): büyük/küçük harf ve boşluk farkı yok sayılır. Dalga 4 (F#6): Ürün,
+    Depo, Toptancı (5 yer), Maaş aynı satırı ayrı yazıyordu."""
+    return " ".join(str(x or "").replace("İ", "i").replace("I", "ı").lower().split())
+
+
 _TR_ABC = "abcçdefgğhıijklmnoöprsştuüvwxyz"
 
 
@@ -376,7 +382,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_kaydir", "tr_baslik", "tr_sira", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "KuruGeriAl",
+__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

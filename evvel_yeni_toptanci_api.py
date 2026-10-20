@@ -140,11 +140,14 @@ def _fiyat_gecmis_yaz(cur, urun_id: str, tur: str, birim: Optional[int], tarih: 
                 ("fg-" + uuid.uuid4().hex[:16], str(urun_id), tur, toptanci_id, birim, tarih, kaynak, girilen))
 
 
+from evvel_yeni_cekirdek import ad_anahtari as _n  # noqa: E402 — ad anahtarı TEK yerde (F#6)
+
+
 def _anahtar(k: dict) -> str:
     uid = str(k.get("urun_id") or "").strip()
     if uid:
         return uid
-    return "ad:" + " ".join(str(k.get("urun_ad") or k.get("ad") or "").replace("İ", "i").replace("I", "ı").lower().split())
+    return "ad:" + _n(k.get("urun_ad") or k.get("ad") or "")
 
 
 def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
@@ -155,9 +158,9 @@ def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
     from evvel_yeni_cekirdek import yeni_donem as _yd
     if adsiz and _yd(cur):   # yeni dönem: ad çözümü YENİ katalogdan (eski kimlik sızmasın)
         from evvel_yeni_urun_api import katalog as _kat
-        _ad = {" ".join(str(u["ad"]).replace("İ", "i").replace("I", "ı").lower().split()): str(u["id"]) for kk in _kat(cur) for u in kk["urunler"]}
+        _ad = {_n(u["ad"]): str(u["id"]) for kk in _kat(cur) for u in kk["urunler"]}
         for k in adsiz:
-            n = " ".join(str(k.get("urun_ad") or k.get("ad")).replace("İ", "i").replace("I", "ı").lower().split())
+            n = _n(k.get("urun_ad") or k.get("ad"))
             if n in _ad:
                 k["urun_id"] = _ad[n]
         adsiz = []
@@ -165,9 +168,9 @@ def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
         try:
             with savepoint(cur, "sp_ey_top_ad"):
                 cur.execute("SELECT id::text AS id, ad FROM siparis_urun WHERE aktif")
-                ad_id = {" ".join(str(dict(x)["ad"]).replace("İ", "i").replace("I", "ı").lower().split()): dict(x)["id"] for x in cur.fetchall() or []}
+                ad_id = {_n(dict(x)["ad"]): dict(x)["id"] for x in cur.fetchall() or []}
                 for k in adsiz:
-                    n = " ".join(str(k.get("urun_ad") or k.get("ad")).replace("İ", "i").replace("I", "ı").lower().split())
+                    n = _n(k.get("urun_ad") or k.get("ad"))
                     if n in ad_id:
                         k["urun_id"] = ad_id[n]
         except Exception:  # noqa: BLE001

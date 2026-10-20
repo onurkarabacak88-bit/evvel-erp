@@ -100,8 +100,7 @@ def _ey_urun_dogrula(cur, idler) -> dict:
 from evvel_yeni_cekirdek import simdi_tr as _simdi_tr, tr_gun as _tr_gun_c   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek
 
 
-def _n(x) -> str:
-    return " ".join(str(x or "").replace("İ", "i").replace("I", "ı").lower().split())
+from evvel_yeni_cekirdek import ad_anahtari as _n  # noqa: E402 — ad anahtarı TEK yerde (F#6)
 
 
 def _urun_haritasi(cur):
