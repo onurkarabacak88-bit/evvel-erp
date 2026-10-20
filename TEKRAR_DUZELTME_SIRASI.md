@@ -2,17 +2,18 @@
 Kaynak: tmp/TEKRAR_FABLE_1.md (69) + tmp/TEKRAR_CODEX_1.md (87) · 2. tur çapraz: Fable→Codex raporu (83 doğru, 4 kısmen, 0 yanlış, +11 kaçırılan) · bağımsız Fable→Fable raporu (63 doğru, 6 kısmen, 0 yanlış, +14 kaçırılan). Codex 17:06'da Fable raporunu ayrıca doğrulayacak.
 Kural: her dalga = kod → Fable + Codex → deneme → yayın. Bulgu numaraları: F# = Fable raporu, C-Tx-## = Codex raporu, K# = kaçırılan.
 
-## 📍 DURUM (20 Eki 17:40) — hepsi YEREL commit, YAYINLANMADI (cc70180'dan beri ~85 commit)
+## 📍 DURUM (20 Eki akşam) — 5 DALGA KODDA BİTTİ · hepsi YEREL commit, YAYINLANMADI (cc70180'dan beri ~130 commit)
 | Dalga | Durum |
 |---|---|
-| 1 (1–8) | ✅ kod + Fable |
-| 2 (9–16) + üç kesim engeli | ✅ kod + Fable (B-1 · O-1..5 · D-1..5 · T-1..2 düzeltildi) |
-| 3 (17–23 + F#37) | ✅ kod + Fable (H1/H2 · T1/T2 · B5/B6 düzeltildi) |
-| 4 çekirdek (24–29 + K1..K14 + T1-10/12/14/15/22/28/33/35) | ✅ kod — kuruş · saat · merkez_aktor · acik · tablo_var · KuruGeriAl · adet · kalem · istek · ad · tezgah · pasta · bardak · olay süzgeci · gün kapalı · json_ac · bir_kez · telefon_kisisi · panel_kok · ay_gunu · komisyon · kapanış kanalları · POS sıfır · eski bırakılan · ddl_kur |
-| Codex 1. tam denetim (cc70180..12f5f32) | 13 P1 + 8 P2 → 20'si düzeltildi; KALAN 1: merkez Sipariş yönlendirme ekranı yok (S5c) |
-| 5 ön yüz | ⏳ sırada |
-Açık sahip kararları: YENİ VARDİYA PLANI EKRANI (karar verildi: kurulacak — önce mekanizma) · S5c merkez Yönlendirme ekranı.
-Sonraki denetim: Fable + Codex, 12f5f32..HEAD (Codex düzeltmeleri + Dalga 4 kalanı).
+| 1 para/maaş | ✅ kod + Fable |
+| 2 kesim engelleri (+ avans, anlık gider, satış fire/devir) | ✅ kod + Fable |
+| 3 tek sahip (modüller arası SQL) | ✅ kod + Fable |
+| 4 çekirdek kurallar + K1..K14 + T1 blocker'ları | ✅ kod + Fable (12 bulgu düzeltildi) |
+| Codex tam denetim 1 (cc70180..12f5f32) | 21 bulgu → 21 kapandı (S5c ekranı kuruldu) |
+| Codex tam denetim 2 (kısmen, kota) | 2 bulgu → kapandı (avans ay tavanı, '-1.250') |
+| 5 ön yüz | ✅ kod — Fable denetimi SÜRÜYOR; Codex 22:11 kota |
+Bilerek tek yapılmayanlar (gerekçeli): Kasa ana para formu penceresi (ayrı katman) · Kapanış sihirbazının merkeze-gönder kişi seçimi (sihirbaz teması) · Depodan gelen adet satırı (kör sayımda boş ≠ 0) · koli yardımcıları (teslimde izli / siparişte hızlı — amaçları ayrı) · tıklanır/çok satırlı KPI'lar · göç kodları (kesimde silinir).
+Açık sahip kararları: YENİ VARDİYA PLANI EKRANI (karar: kurulacak — önce mekanizma Fable'la).
 
 ## DALGA 1 — ŞİMDİDEN YANLIŞ SONUÇ (para / maaş) 🔴
 1. C-T1-01 · Ödeme'den ücret tanımı saatlik ücret + yolu SIFIRLIYOR → yarı zamanlı maaş 0 · tek sahip Tanımlar `ucret_yaz`; Ödeme'nin ikinci DDL'i ve `_ucret` okuyucusu kalkar
