@@ -230,6 +230,20 @@ def _elle_teslimler() -> dict:
     return elle_tes
 
 
+def _eski_birakilan(r: dict, meta: Optional[dict] = None) -> Optional[float]:
+    """ESKİ panel kapanışında kasada BIRAKILAN (₺) — TEK kural (Codex T1-33): devir → kasiyerin devir beyanı → kasa sayımı − teslim.
+    Mutabakat (dün / bugün) ve devir defteri (dün / akşam) dört ayrı yedek kullanıyordu → aynı sabah iki ekranda farklı fark."""
+    from evvel_yeni_cekirdek import json_ac
+    m = meta if meta is not None else json_ac(r.get("meta"), {})
+    if r.get("devir") is not None:
+        return float(r["devir"])
+    if m.get("kasiyer_devir_beyan") is not None:
+        return float(m["kasiyer_devir_beyan"])
+    if r.get("kasa_sayim") is not None:
+        return float(r["kasa_sayim"]) - float(r.get("teslim") or 0)
+    return None
+
+
 def _mut_veri_yeni(cur, gun: str) -> dict:
     """YENİ DÖNEM toplayıcısı — yeni şube panelinin olay defteri (ey_sube_olay, kaynak 'panel'; kuruş → ₺):
     açılış kasa_sayim · kapanış nakit / kor_sayim / teslimler / birakilan · gün içi 'teslim' (ara teslim) · dünün kapanış bırakılanı.
@@ -316,15 +330,14 @@ def _mut_veri_eski(cur, gun: str) -> dict:
         f = lambda v: float(v) if v is not None else None  # noqa: E731
         if r["t"] == dun:
             if r["tip"] == "KAPANIS":
-                x["dun_devir"] = f(r["devir"]) if r["devir"] is not None else (
-                    (f(r["kasa_sayim"]) or 0) - (f(r["teslim"]) or 0) if r["kasa_sayim"] is not None else None)
+                x["dun_devir"] = _eski_birakilan(r, m)   # TEK kural (T1-33)
             continue
         if r["tip"] == "ACILIS":
             x["acilis"] = f(r["kasa_sayim"])
         elif r["tip"] == "KAPANIS":
             x["kor_sayim"] = f(r["kasa_sayim"])
             x["teslim"] = f(r["teslim"]) or 0.0
-            x["devir"] = f(r["devir"]) if r["devir"] is not None else f(m.get("kasiyer_devir_beyan"))
+            x["devir"] = _eski_birakilan(r, m)   # TEK kural (T1-33)
             xr = m.get("x_rapor") or {}
             x["z_nakit"] = f(xr.get("nakit")) if xr.get("nakit") is not None else f((m.get("mutabakat") or {}).get("z_nakit"))
             x["eski_fark"] = f((m.get("mutabakat") or {}).get("fark"))
@@ -671,7 +684,7 @@ def _devir_defteri_eski(ay: Optional[str] = None):
             dun_k = ev.get((sid, (g - timedelta(days=1)).isoformat(), "KAPANIS"))
             vd = devir.get((sid, gi))
             km = (__import__("evvel_yeni_cekirdek").json_ac(k["meta"], {})) if k else {}
-            dun_birak = f(dun_k["devir"]) if dun_k else None
+            dun_birak = _eski_birakilan(dun_k) if dun_k else None   # TEK kural (T1-33) — mutabakatla aynı
             sabah = {"kim": a.get("personel_ad") if a else None, "saat": saat(a["cevap_ts"], g) if a else None,
                      "sayilan": f(a["kasa_sayim"]) if a else None, "dun_birakilan": dun_birak,
                      "fark": round(f(a["kasa_sayim"]) - dun_birak, 2) if (a and dun_birak is not None and a["kasa_sayim"] is not None) else None}
@@ -686,7 +699,7 @@ def _devir_defteri_eski(ay: Optional[str] = None):
                 aksam = {"kim": kapanan.get((sid, gi)) or k.get("personel_ad"), "saat": saat(k["cevap_ts"], g), "kor_toplam": f(k["kasa_sayim"]),
                          "teslim": f(k["teslim"]) or 0.0, "kime": ", ".join(f"{t['alan']} {t['tutar']:.0f}" for t in tes if t["tur"] == "gun_sonu") or None,
                          "ara_teslim": ", ".join(f"{t['alan']} {t['tutar']:.0f}" for t in tes if t["tur"] != "gun_sonu") or None,
-                         "birakilan": f(k["devir"]) if k["devir"] is not None else f(km.get("kasiyer_devir_beyan"))}
+                         "birakilan": _eski_birakilan(k, km)}   # TEK kural (T1-33)
             ertesi = {"kim": ka.get("personel_ad"), "saat": saat(ka["cevap_ts"], g + timedelta(days=1)), "sayilan": f(ka["kasa_sayim"])} if ka else None
             kopuk = None
             if aksam and ertesi and aksam["birakilan"] is not None and ertesi["sayilan"] is not None:
