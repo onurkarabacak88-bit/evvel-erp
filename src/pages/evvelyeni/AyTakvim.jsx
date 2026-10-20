@@ -84,13 +84,24 @@ export function AyIzgara({ satirlar, onHucre, ilkBaslik = '' }) {
   );
 }
 
-export function Pencere({ baslik, children, onKapat }) {
+// 🪟 PENCERE — merkez ekranlarının TEK açılır penceresi (Dalga 5, T4-06/F#69: Toptancı, Kart, Ürün 3, Kira kendi kopyasını tutuyordu;
+// arka plana tıklayınca kimi kapanıyor kimi kapanmıyordu). Kural: işlem sürerken (mesgul) KAPANMAZ · Esc ile kapanır.
+// 🪟 PENCERE — merkez ekranlarının TEK açılır penceresi (Dalga 5, T4-06/F#69: Toptancı, Kart, Ürün 3, Kira kendi kopyasını tutuyordu;
+// arka plana tıklayınca kimi kapanıyor kimi kapanmıyordu). Kural: işlem sürerken (mesgul) KAPANMAZ · Esc ile kapanır.
+export function Pencere({ baslik, children, onKapat, mesgul = false, genislik = 460, maxYukseklik = '94vh', kapatDugmesi = true, aralik = 10 }) {
+  const kapat = () => { if (!mesgul) onKapat?.(); };
+  React.useEffect(() => {
+    const t = (e) => { if (e.key === 'Escape') kapat(); };
+    window.addEventListener('keydown', t);
+    return () => window.removeEventListener('keydown', t);
+  });
   return (
-    <div onClick={onKapat} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
-      <div style={{ ...kart, padding: 18, width: 'min(460px, 100%)', display: 'flex', flexDirection: 'column', gap: 10 }} onClick={(e) => e.stopPropagation()}>
-        <b style={{ fontSize: 17 }}>{baslik}</b>
+    <div onClick={kapat} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
+      <div role="dialog" aria-modal="true" style={{ ...kart, padding: 18, width: `min(${genislik}px, 100%)`, maxHeight: maxYukseklik, overflow: 'auto', display: 'flex', flexDirection: 'column', gap: aralik }}
+        onClick={(e) => e.stopPropagation()}>
+        {baslik && <b style={{ fontSize: 17 }}>{baslik}</b>}
         {children}
-        <div style={{ textAlign: 'right' }}><Dugme kucuk onClick={onKapat}>Kapat</Dugme></div>
+        {kapatDugmesi && <div style={{ textAlign: 'right' }}><Dugme kucuk disabled={mesgul} onClick={kapat}>Kapat</Dugme></div>}
       </div>
     </div>
   );

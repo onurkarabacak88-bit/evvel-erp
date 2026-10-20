@@ -4,6 +4,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import { ALAN, Cip, Dugme, kart, num, PI_CSS, R } from './KasaModulu';
+import { Pencere } from './AyTakvim';
 
 export const URUN_SAYFALAR = [{ id: 'urunler', ad: 'Ürünler', alt: 'Katalog · birim · koli · KDV' }];
 const alan = { ...ALAN, minWidth: 0, width: '100%' };   // temel stil KasaModulu ALAN (T4-15)
@@ -90,9 +91,7 @@ export default function UrunModulu({ onToast }) {
         </div>
       </>)}
       {form && (
-        <div onClick={() => setForm(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ ...kart, padding: 18, width: 'min(460px, 100%)', display: 'grid', gap: 10 }}>
-            <b style={{ fontSize: 17 }}>{form.id ? 'Ürünü düzelt' : 'Yeni ürün'}</b>
+        <Pencere baslik={<>{form.id ? 'Ürünü düzelt' : 'Yeni ürün'}</>} onKapat={() => setForm(null)} genislik={460} kapatDugmesi={false} mesgul={mesgul} aralik={10}>   {/* ortak Pencere (T4-06) */}
             <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Adı<input style={alan} value={form.ad} onChange={(e) => setForm((f) => ({ ...f, ad: e.target.value }))} /></label>
             <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Kategori<select style={alan} value={form.kategori_id} onChange={(e) => setForm((f) => ({ ...f, kategori_id: e.target.value }))}>
               {v.kategoriler.filter((k) => k.id).map((k) => <option key={k.id} value={k.id}>{k.ad}</option>)}</select></label>
@@ -120,27 +119,20 @@ export default function UrunModulu({ onToast }) {
             {form.id && <label style={{ fontSize: 13 }}><input type="checkbox" checked={!form.aktif} onChange={(e) => setForm((f) => ({ ...f, aktif: !e.target.checked }))} /> Artık kullanılmıyor (pasif — geçmişi korunur)</label>}
             {form.id && !form.teyit && <div style={{ fontSize: 12.5, color: R.amber }}>Kaydedince bu ürünün birimi ve koli bilgisi "teyitli" olur.</div>}
             <div><Dugme ana disabled={mesgul || !form.ad.trim() || (form.koliyle && Number(form.koli_ici) < 2) || (form.fatura_birim !== form.birim && (form.fatura_birim === 'koli' ? !(form.koliyle && Number(form.koli_ici) >= 2) : Number(form.cevrim) < 2))} onClick={kaydet}>Kaydet</Dugme></div>
-          </div>
-        </div>
+        </Pencere>
       )}
       {katForm && (
-        <div onClick={() => setKatForm(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ ...kart, padding: 18, width: 'min(380px, 100%)', display: 'grid', gap: 10 }}>
-            <b style={{ fontSize: 17 }}>Yeni kategori</b>
+        <Pencere baslik="Yeni kategori" onKapat={() => setKatForm(null)} genislik={380} kapatDugmesi={false} mesgul={mesgul} aralik={10}>   {/* ortak Pencere (T4-06) */}
             <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Adı<input style={alan} value={katForm.ad} onChange={(e) => setKatForm((f) => ({ ...f, ad: e.target.value }))} /></label>
             <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Simge (isteğe bağlı)<input style={alan} value={katForm.emoji} maxLength={4} onChange={(e) => setKatForm((f) => ({ ...f, emoji: e.target.value }))} /></label>
             <div><Dugme ana disabled={mesgul || katForm.ad.trim().length < 2} onClick={katKaydet}>Kaydet</Dugme></div>
-          </div>
-        </div>
+        </Pencere>
       )}
       {iz && (
-        <div onClick={() => setIz(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
-          <div onClick={(e) => e.stopPropagation()} style={{ ...kart, padding: 18, width: 'min(520px, 100%)', display: 'grid', gap: 6, maxHeight: '80vh', overflow: 'auto' }}>
-            <b style={{ fontSize: 16 }}>📜 {iz.u.ad} — değişiklik izi</b>
+        <Pencere baslik={<>📜 {iz.u.ad} — değişiklik izi</>} onKapat={() => setIz(null)} genislik={520} kapatDugmesi={false} maxYukseklik="80vh" aralik={6}>   {/* ortak Pencere (T4-06) */}
             {iz.satir.map((x, i) => <div key={i} style={{ fontSize: 13, borderTop: `1px solid ${R.cizgi}`, paddingTop: 4 }}>{x.zaman} · <b>{x.alan}</b>: {x.eski ?? '—'} → {x.yeni ?? '—'} <span style={{ color: R.not }}>· {x.kim}</span></div>)}
             <div style={{ textAlign: 'right' }}><Dugme kucuk onClick={() => setIz(null)}>Kapat</Dugme></div>
-          </div>
-        </div>
+        </Pencere>
       )}
     </div>
   );

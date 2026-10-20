@@ -10,7 +10,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, tUzun } from './KasaModulu';
-import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici, tutarYaz } from './AyTakvim';
+import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, tutarYaz, YilSecici } from './AyTakvim';
 import { bugunTR } from '../../utils/trTarih';
 
 export const KART_SAYFALAR = [
@@ -142,9 +142,7 @@ Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır
       })}
 
       {teyit && (
-        <div onClick={() => !mesgul && setTeyit(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
-          <div style={{ ...kart, padding: 18, width: 'min(440px, 100%)', display: 'flex', flexDirection: 'column', gap: 12 }} onClick={(e) => e.stopPropagation()}>
-            <b style={{ fontSize: 17 }}>🏦 {teyit.kart.ad} — bankadaki rakam</b>
+        <Pencere baslik={<>🏦 {teyit.kart.ad} — bankadaki rakam</>} onKapat={() => setTeyit(null)} genislik={440} kapatDugmesi={false} mesgul={mesgul} aralik={12}>   {/* ortak Pencere (T4-06) */}
             <div style={{ fontSize: 12.5, color: R.not }}>Bankanın uygulamasında yazanı gir. Sistem beklediğiyle karşılaştırır; fark varsa forma girilmemiş harcama/ödeme vardır. Bundan sonra bu rakamdan devam eder.</div>
             <Etiket ad="Kullanılabilir limit ₺ *"><input style={alan} inputMode="decimal" value={teyit.kullanilabilir} onChange={(e) => setTeyit({ ...teyit, kullanilabilir: e.target.value })} autoFocus /></Etiket>
             <Etiket ad="Ekstre borcu ₺ (ekstre geldiyse)"><input style={alan} inputMode="decimal" value={teyit.ekstre_borc} onChange={(e) => setTeyit({ ...teyit, ekstre_borc: e.target.value })} /></Etiket>
@@ -154,8 +152,7 @@ Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır
               <Dugme kucuk onClick={() => setTeyit(null)} disabled={mesgul}>Vazgeç</Dugme>
               <Dugme ana onClick={kaydet} disabled={mesgul}>{mesgul ? 'Kaydediliyor…' : 'Kaydet'}</Dugme>
             </div>
-          </div>
-        </div>
+        </Pencere>
       )}
     </div>
   );

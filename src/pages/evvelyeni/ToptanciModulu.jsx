@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { ALAN, Cekmece, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayfayaGit, tKisa } from './KasaModulu';
+import { Pencere as OrtakPencere } from './AyTakvim';
 
 export const TOPTANCI_SAYFALAR = [
   { id: 'toptancilar', ad: 'Toptancılar', alt: 'Borcumuz · vade · teslimler' },
@@ -400,14 +401,8 @@ export default function ToptanciModulu({ onToast }) {
   );
 }
 
-function Pencere({ baslik, onKapat, children, genis }) {
-  return (
-    <div onClick={onKapat} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
-      <div style={{ ...kart, padding: 18, width: genis ? 'min(920px, 100%)' : 'min(440px, 100%)', maxHeight: '94vh', overflow: 'auto', display: 'flex', flexDirection: 'column', gap: 12 }} onClick={(e) => e.stopPropagation()}>
-        <b style={{ fontSize: 17 }}>{baslik}</b>{children}
-      </div>
-    </div>
-  );
+function Pencere({ genis, ...p }) {   // ortak Pencere'nin Toptancı ayarı (T4-06): kendi Vazgeç düğmesi olan formlar
+  return <OrtakPencere {...p} genislik={genis ? 920 : 440} kapatDugmesi={false} aralik={12} />;
 }
 function Etiket({ ad, children }) {
   return <label style={{ display: 'flex', flexDirection: 'column', gap: 5, fontSize: 13, fontWeight: 600, color: R.metin2 }}>{ad}{children}</label>;
@@ -509,9 +504,7 @@ export function UrunFiyatlari({ onToast }) {
         {urunler.length === 0 && <div style={{ color: R.not, fontSize: 13 }}>{sadeceEksik ? 'Bu kategoride fiyatı olmayan ürün yok ✓' : 'Ürün yok.'}</div>}
       </div>
       {duz && (
-        <div onClick={() => !mesgul && setDuz(null)} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.35)', display: 'flex', alignItems: 'center', justifyContent: 'center', zIndex: 60, padding: 16 }}>
-          <div style={{ ...kart, padding: 18, width: 'min(420px, 100%)', display: 'flex', flexDirection: 'column', gap: 10 }} onClick={(e) => e.stopPropagation()}>
-            <b style={{ fontSize: 17 }}>🏷️ {duz.u.ad}</b>
+        <Pencere baslik={<>🏷️ {duz.u.ad}</>} onKapat={() => setDuz(null)} genislik={420} kapatDugmesi={false} mesgul={mesgul} aralik={10}>   {/* ortak Pencere (T4-06) */}
             <div style={{ fontSize: 13, color: R.not, display: 'flex', flexDirection: 'column', gap: 2 }}>
               <span>Son alış: {duz.u.son_alis ? `${fmt(duz.u.son_alis.birim)} ₺${duz.u.son_alis.tarih ? ` (${tKisa(duz.u.son_alis.tarih)})` : ''}` : 'yok'}</span>
               <span>Katalog: {duz.u.katalog != null ? `${fmt(duz.u.katalog)} ₺` : 'yok'}</span>
@@ -529,8 +522,7 @@ export function UrunFiyatlari({ onToast }) {
                 kaydet(n);
               }}>{mesgul ? 'Kaydediliyor…' : 'Kaydet'}</Dugme>
             </div>
-          </div>
-        </div>
+        </Pencere>
       )}
     </div>
   );
