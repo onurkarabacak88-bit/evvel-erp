@@ -1222,7 +1222,7 @@ class FireBody(BaseModel):
 
 @router.post("/{sube_id}/fire")
 def fire(sube_id: str, b: FireBody):
-    """Fire: Depo 'fire' depo:şube → dışarı:fire (sebep zorunlu)."""
+    """Fire: Depo 'fire' depo:şube (tezgahta sayılan ürün: bar:şube) → dışarı:fire (sebep zorunlu)."""
     _TUR = "fire"
     def is_(cur, c):
         from evvel_yeni_depo_api import hareket_yaz
@@ -1250,8 +1250,11 @@ def fire(sube_id: str, b: FireBody):
                     veri={"kalemler": k, "sebep": b.sebep, "sebep_ad": sebep_ad, "aciklama": aciklama or None, "iade": iade})
         hedef = FIRE_HEDEF.get(b.sebep, "dışarı:fire")
         for i, x in enumerate(k):
+            # Sahip (20 Eki, Fable D-4): tezgahta sayılan ürünün (süt / su / bardak) firesi BARDAN düşer — depodan düşerse bir sonraki
+            # depo sayımında sahte fazla çıkıyordu. Maliyeti bar sayım farkında (Gider bu satırı ayrıca yazmaz — kaynak 'bar:').
+            tezgah = x.get("panel_sayim") and x.get("takip") == "sayim"
             hareket_yaz(cur, kaynak_ref=f"{kok}:{i}", tur="fire", urun_id=x["urun_id"], urun_ad=x["ad"], adet=x["adet"],
-                        kaynak=f"depo:{sube_id}", hedef=hedef, kim=f"{KIM} · {p['ad']}",
+                        kaynak=f"{'bar' if tezgah else 'depo'}:{sube_id}", hedef=hedef, kim=f"{KIM} · {p['ad']}",
                         aciklama=sebep_ad + (f" — {aciklama}" if aciklama else "") + (f" · fiş {iade['fis_no']}" if iade else ""),
                         bag=kok, gun=c["gun"])
         return {"olay": oid, "tekrar": oid is None, "mesaj": "Fire kaydedildi"}
