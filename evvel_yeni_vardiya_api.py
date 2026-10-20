@@ -61,13 +61,15 @@ def _eski_kalip_kopya(cur) -> None:
     """BİR KEZ: eski vardiya_slot (aktif, Evvel Yeni'de olan şube) → kalıp. Eski 'Serbest' otomatik slotlar alınmaz (sahip V3)."""
     if not tablo_var(cur, "vardiya_slot"):
         return
+    from evvel_yeni_tanim_api import tanim_listesi   # şube kimliği Tanımlar'ın kapısından (başka modülün tablosuna SQL yok)
+    ey_sube = [x["id"] for x in tanim_listesi(cur, "ey_sube", ("ad",))]
     cur.execute("""INSERT INTO ey_vardiya_kalip (id, sube_id, ad, bas, bit, gece, kisi, gunler, sira, kaynak, degistiren)
                    SELECT 'vk-' || s.id, s.sube_id, s.ad, s.baslangic_saat, s.bitis_saat, COALESCE(s.gece_vardiyasi, FALSE),
                           GREATEST(COALESCE(s.ideal_personel, 1), 1), COALESCE(s.aktif_gunler, '{1,2,3,4,5,6,7}'), COALESCE(s.sira, 0),
                           'eski_kopya', 'eski sistem kopyası'
-                     FROM vardiya_slot s JOIN ey_sube e ON e.id = s.sube_id::text
-                    WHERE s.aktif AND s.ad <> 'Serbest'
-                   ON CONFLICT (id) DO NOTHING""")
+                     FROM vardiya_slot s
+                    WHERE s.aktif AND s.ad <> 'Serbest' AND s.sube_id::text = ANY(%s)
+                   ON CONFLICT (id) DO NOTHING""", (ey_sube,))
 
 
 def vardiya_hazirla(cur=None) -> None:
@@ -369,6 +371,7 @@ def hafta(pazartesi: Optional[str] = None):
             "izin_acik": __import__("evvel_yeni_moduller").acik("maas"),
             "personel": [{"id": p["id"], "ad": p["ad"], "sube_id": p.get("sube_id"), "calisma_turu": p.get("calisma_turu") or "tam",
                           "mudur": mudur_mu(p.get("gorev")), "aktif": bool(p.get("aktif")),
+                          "giris": p["giris"].isoformat() if p.get("giris") else None,
                           "cikis": p["cikis"].isoformat() if p.get("cikis") else None} for p in kisiler],
             "uyarilar": uyarilar,
             "eski_kopya": pzt <= ESKI_KOPYA_SON and tablo_var(cur, "vardiya_atama"),

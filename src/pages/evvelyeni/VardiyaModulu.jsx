@@ -37,6 +37,12 @@ const YAZDIR_CSS = `@media print { @page { size: A4 landscape; margin: 10mm }
   body * { visibility: hidden } .vd-alan, .vd-alan * { visibility: visible } .vd-alan { position: absolute; left: 0; top: 0; width: 100% }
   .vd-gizle, button.vd-arti { display: none !important } }`;   // yalnız plan basılır (sol menü / kabuk değil)
 
+// 👥 BOŞTA = o gün aktif, işe başlamış / ayrılmamış, izinli DEĞİL ve hiçbir şubeye yazılmamış kişi (sahip 20 Eki: "solda kalan
+// personel belli olsun; güne yazılınca soldan silinsin, seçimde de görünmesin"). Sol liste ve kişi seçme penceresi bu TEK kuralı okur.
+const gunuDolu = (v, pid, g) => v.plan.some((x) => x.personel_id === pid && x.gun === g);
+const calisabilir = (p, g) => p.aktif && !(p.giris && g < p.giris) && !(p.cikis && g > p.cikis);
+const bostakiler = (v, g) => v.personel.filter((p) => calisabilir(p, g) && !gunuDolu(v, p.id, g));
+
 export default function VardiyaModulu({ onToast }) {
   const [pzt, setPzt] = useState(null);         // null → sunucu bu haftayı seçer
   const [v, setV] = useState(null);
@@ -45,6 +51,8 @@ export default function VardiyaModulu({ onToast }) {
   const [mesgul, setMesgul] = useState(false);
   const [form, setForm] = useState(null);       // ekle / düzenle penceresi
   const [kalipAcik, setKalipAcik] = useState(false);
+  const [gunSec, setGunSec] = useState(null);   // sol 'Boştakiler' listesinin günü
+  const [secili, setSecili] = useState(null);   // soldan dokunulan kişi → '+' kutusuna dokununca doğrudan yazılır
   const yukle = useCallback(() => api(`/evvel-yeni/vardiya/hafta${pzt ? `?pazartesi=${pzt}` : ''}`)
     .then((d) => { setV(d); setHata(''); }).catch((e) => setHata(e?.message || 'Plan okunamadı')), [pzt]);
   useEffect(() => { yukle(); }, [yukle]);
@@ -68,6 +76,17 @@ export default function VardiyaModulu({ onToast }) {
   );
 
   const hafta = v.pazartesi;
+  const gun = v.gunler.includes(gunSec) ? gunSec : (v.gunler.includes(bugun) ? bugun : v.gunler[0]);
+  const bosta = bostakiler(v, gun);
+  const seciliKisi = secili && bosta.find((p) => p.id === secili);
+  // '+' : soldan kişi seçiliyse ve o gün boştaysa PENCERE AÇMADAN yazılır; değilse seçim penceresi
+  const arti_ = (o) => {
+    if (secili && o.gun === gun && seciliKisi && o.kalip_id) {
+      yap('plan', { personel_id: secili, gun: o.gun, sube_id: o.sube_id, bas: o.bas, bit: o.bit, kalip_id: o.kalip_id }, () => setSecili(null));
+      return;
+    }
+    ekleAc({ ...o, personel_id: secili && o.gun === gun && seciliKisi ? secili : '' });
+  };
   const ekleAc = (o) => setForm({ yeni: true, tur: 'calisma', personel_id: '', bas: '09:00', bit: '18:30', ...o });
   const duzenleAc = (p) => setForm({ yeni: false, ...p });
 
@@ -98,7 +117,29 @@ export default function VardiyaModulu({ onToast }) {
       </div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
 
-      {gorunum === 'sube' ? v.subeler.map((s) => {
+      {gorunum === 'sube' ? (
+        <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <div className="vd-gizle" style={{ ...kart, padding: '10px 12px', width: 190, flex: '0 0 190px', position: 'sticky', top: 8, display: 'grid', gap: 6 }}>
+            <b style={{ fontSize: 14 }}>👥 Boştakiler</b>
+            <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
+              {v.gunler.map((g) => (
+                <button key={g} type="button" onClick={() => { setGunSec(g); setSecili(null); }} style={{
+                  border: `1px solid ${R.cizgi}`, borderRadius: 7, padding: '6px 7px', minHeight: 36, cursor: 'pointer', font: 'inherit', fontSize: 12,
+                  background: g === gun ? 'var(--pi-accent)' : 'transparent', color: g === gun ? 'var(--pi-on-accent)' : R.metin2 }}>{gunKisa(g)}</button>))}
+            </div>
+            <div style={{ fontSize: 12, color: R.not }}>{gunBaslik(gun)} · {bosta.length} kişi boşta</div>
+            {bosta.map((p) => (
+              <button key={p.id} type="button" onClick={() => setSecili(secili === p.id ? null : p.id)} style={{
+                textAlign: 'left', padding: '9px 10px', minHeight: 42, borderRadius: 9, cursor: 'pointer', font: 'inherit', fontSize: 13.5,
+                border: `1px solid ${secili === p.id ? 'var(--pi-accent)' : R.cizgi}`,
+                background: secili === p.id ? 'var(--pi-accent-soft)' : 'var(--pi-paper)', color: R.krem }}>
+                <b>{p.ad}</b><div style={{ fontSize: 11, color: R.not }}>{sad[p.sube_id] || 'Ortak'}{p.calisma_turu === 'yari' ? ' · yarı zamanlı' : ''}</div>
+              </button>))}
+            {!bosta.length && <div style={{ fontSize: 12.5, color: R.yesil }}>Herkes yazıldı ya da izinli ✓</div>}
+            <div style={{ fontSize: 11.5, color: R.not }}>{seciliKisi ? `${seciliKisi.ad} seçili → ${gunKisa(gun)} sütununda bir '+' kutusuna dokun` : 'Bir isme dokun, sonra o günün + kutusuna dokun.'}</div>
+          </div>
+          <div style={{ flex: '1 1 600px', minWidth: 0, display: 'grid', gap: 14 }}>
+      {v.subeler.map((s) => {
         const kaliplar = v.kaliplar.filter((k) => k.sube_id === s.id);
         const plan = v.plan.filter((p) => p.sube_id === s.id && p.tur === 'calisma');
         const kalipIds = new Set(kaliplar.map((k) => k.id));
@@ -118,7 +159,8 @@ export default function VardiyaModulu({ onToast }) {
             <div style={{ overflowX: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
                 <thead><tr><th style={{ textAlign: 'left', padding: 5, minWidth: 130 }} />{v.gunler.map((g) => (
-                  <th key={g} style={{ padding: 5, fontWeight: 600, color: g === bugun ? R.bakirAcik : R.metin2, textAlign: 'left' }}>{gunBaslik(g)}</th>))}</tr></thead>
+                  <th key={g} onClick={() => { setGunSec(g); setSecili(null); }} style={{ padding: 5, fontWeight: 600, cursor: 'pointer', textAlign: 'left',
+                    color: g === bugun ? R.bakirAcik : R.metin2, background: g === gun ? 'var(--pi-accent-soft)' : undefined }}>{gunBaslik(g)}</th>))}</tr></thead>
                 <tbody>
                   {kaliplar.map((k) => (
                     <tr key={k.id}>
@@ -130,9 +172,9 @@ export default function VardiyaModulu({ onToast }) {
                         return (
                           <td key={g} style={{ ...hucre, background: !aktifGun ? 'var(--pi-bg)' : eksik ? 'var(--pi-warn-soft)' : undefined }}>
                             {bu.map((p) => <Rozet key={p.id} p={p} ad={pad[p.personel_id] || '—'} onClick={() => duzenleAc(p)} />)}
-                            {aktifGun && <button type="button" className="vd-arti" disabled={mesgul} onClick={() => ekleAc({ sube_id: s.id, gun: g, kalip_id: k.id, bas: k.bas, bit: k.bit })}
-                              style={{ ...arti, color: eksik ? R.amber : R.not }}>
-                              {eksik ? `+ ${bu.length}/${k.kisi}` : '+'}</button>}
+                            {aktifGun && <button type="button" className="vd-arti" disabled={mesgul} onClick={() => arti_({ sube_id: s.id, gun: g, kalip_id: k.id, bas: k.bas, bit: k.bit })}
+                              style={{ ...arti, color: eksik ? R.amber : R.not, background: seciliKisi && g === gun ? 'var(--pi-accent-soft)' : 'none' }}>
+                              {seciliKisi && g === gun ? `+ ${seciliKisi.ad}` : eksik ? `+ ${bu.length}/${k.kisi}` : '+'}</button>}
                           </td>
                         );
                       })}
@@ -143,7 +185,7 @@ export default function VardiyaModulu({ onToast }) {
                     {v.gunler.map((g) => (
                       <td key={g} style={hucre}>
                         {diger.filter((p) => p.gun === g).map((p) => <Rozet key={p.id} p={p} ad={pad[p.personel_id] || '—'} onClick={() => duzenleAc(p)} />)}
-                        <button type="button" className="vd-arti" disabled={mesgul} onClick={() => ekleAc({ sube_id: s.id, gun: g, kalip_id: null })}
+                        <button type="button" className="vd-arti" disabled={mesgul} onClick={() => arti_({ sube_id: s.id, gun: g, kalip_id: null })}
                           style={{ ...arti, color: R.not }}>+</button>
                       </td>
                     ))}
@@ -154,7 +196,10 @@ export default function VardiyaModulu({ onToast }) {
             {!kaliplar.length && <div style={{ fontSize: 12.5, color: R.not }}>Bu şubenin kalıbı yok — ⚙ Kalıplar'dan ekle (ör. Sabah 09:00–18:30 · 1 kişi).</div>}
           </div>
         );
-      }) : (
+      })}
+          </div>
+        </div>
+      ) : (
         <div style={{ ...kart, padding: '10px 14px', overflowX: 'auto' }}>
           <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
             <thead><tr><th style={{ textAlign: 'left', padding: 5, minWidth: 130 }}>Personel</th>{v.gunler.map((g) => (
@@ -210,8 +255,11 @@ function PlanFormu({ form, setForm, v, mesgul, yap }) {
   const set = (k, x) => setForm((f) => ({ ...f, [k]: x }));
   const kapat = () => setForm(null);
   const kisi = v.personel.find((p) => p.id === form.personel_id);
-  // kişi listesi: önce o şubenin kendi personeli, sonra diğerleri (ayrılmış kişi seçilmez)
-  const liste = v.personel.filter((p) => p.aktif).sort((a, b) => ((b.sube_id === form.sube_id) - (a.sube_id === form.sube_id)) || a.ad.localeCompare(b.ad, 'tr'));
+  // kişi listesi: o gün BOŞTA olanlar (sol listeyle aynı kural); önce o şubenin kendi personeli. 'Bölünmüş vardiya' işaretlenirse
+  // o gün başka şubede yazılı olanlar da gelir (aynı gün iki şube serbest — saat çakışmasını sunucu söyler); izinli asla gelmez.
+  const izinli = (pid) => v.plan.some((x) => x.personel_id === pid && x.gun === form.gun && x.tur === 'izin');
+  const liste = v.personel.filter((p) => calisabilir(p, form.gun) && !izinli(p.id) && (form.bolunmus || !gunuDolu(v, p.id, form.gun)))
+    .sort((a, b) => ((b.sube_id === form.sube_id) - (a.sube_id === form.sube_id)) || a.ad.localeCompare(b.ad, 'tr'));
   const baslik = form.yeni
     ? `${form.kisiSabit ? (kisi?.ad || '') + ' · ' : ''}${gunBaslik(form.gun)}${form.sube_id && !form.kisiSabit ? ' · ' + (v.subeler.find((s) => s.id === form.sube_id)?.ad || '') : ''}`
     : `${kisi?.ad || '—'} · ${gunBaslik(form.gun)}`;
@@ -255,8 +303,14 @@ function PlanFormu({ form, setForm, v, mesgul, yap }) {
       {!form.kisiSabit && (
         <select value={form.personel_id} onChange={(e) => set('personel_id', e.target.value)} style={alan}>
           <option value="">Kişi seç…</option>
-          {liste.map((p) => <option key={p.id} value={p.id}>{p.ad}{p.sube_id && p.sube_id !== form.sube_id ? ` (${v.subeler.find((s) => s.id === p.sube_id)?.ad || 'başka şube'})` : ''}</option>)}
+          {liste.map((p) => <option key={p.id} value={p.id}>{p.ad}{p.sube_id && p.sube_id !== form.sube_id ? ` (${v.subeler.find((s) => s.id === p.sube_id)?.ad || 'başka şube'})` : ''}{gunuDolu(v, p.id, form.gun) ? ' · bugün başka yerde' : ''}</option>)}
         </select>
+      )}
+      {!form.kisiSabit && (
+        <label style={{ fontSize: 12.5, color: R.not, display: 'flex', gap: 6, alignItems: 'center' }}>
+          <input type="checkbox" checked={!!form.bolunmus} onChange={(e) => set('bolunmus', e.target.checked)} />
+          o gün başka şubede yazılı olanları da göster (bölünmüş vardiya)
+        </label>
       )}
       {form.tur === 'calisma' && (
         <>
