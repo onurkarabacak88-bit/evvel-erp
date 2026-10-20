@@ -18,7 +18,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
+from evvel_yeni_kasa_api import kasa_hazirla as _hazirla
 from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi
 from evvel_yeni_cekirdek import takvim_durumu
 from evvel_yeni_kopru import gecis_odenen
@@ -139,11 +139,10 @@ def kira_tutar(sube_id: str, ay: str):
     _hazirla()
     with db() as (conn, cur):
         t = kira_tutari(cur, sube_id, ay)
-        _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+        from evvel_yeni_odeme_api import konu_odemeleri   # Ödeme'nin tek okuyucusu — takvimle AYNI 'ay' kuralı (önce ait_ay'sız ödeme burada sayılmıyordu)
+        od = konu_odemeleri(cur, "kira")
         eski = _eski_odenenler(cur).get((sube_id, ay[:7]), 0)
-    yeni = sum(int(h["veri"].get("toplam", h["tutar"])) for h in kayit if h["tur"] == "odeme"
-               and (h["veri"].get("konu") or {}).get("tip") == "kira" and (h["veri"].get("konu") or {}).get("sube_id") == sube_id
-               and (h["veri"].get("ait_ay") or "")[:7] == ay[:7])
+    yeni = sum(x["toplam"] for x in od if x["sube_id"] == sube_id and x["ay"] == ay[:7])
     odenen, iki_yerde = gecis_odenen(yeni, eski)   # C-T1-08: toplanmaz — Kart/Kredi ile aynı kural
     return {"sube_id": sube_id, "ay": ay[:7], "kira": _tl_sayi(t) if t is not None else None, "odenen": _tl_sayi(odenen), "iki_yerde": iki_yerde,
             "kalan": _tl_sayi(max(0, t - odenen)) if t is not None else None, "tanimli": t is not None}
@@ -166,22 +165,16 @@ def kira_aylari(cur, yil: int, bugun: date) -> list:
     from evvel_yeni_tanim_api import subeler as _ey_subeler
     subeler = _ey_subeler(cur)
     tan = kira_tanimlari(cur)
-    _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+    from evvel_yeni_odeme_api import konu_odemeleri   # Ödeme'nin tek okuyucusu (Kaçırılan #1)
     eski = _eski_odenenler(cur)
     import evvel_yeni_kasa_api as _kasa
     bas_ay = _kasa.donem_baslangici(cur).strftime("%Y-%m")   # sahip: "geçmiş aylar ödenmişti" — Evvel Yeni öncesi 'gecikti' DENMEZ
     yeni = {}
-    for h in kayit:
-        if h["tur"] != "odeme":
+    for x in konu_odemeleri(cur, "kira"):
+        if not x["sube_id"]:
             continue
-        v = h["veri"]
-        k = v.get("konu") or {}
-        if k.get("tip") != "kira" or not k.get("sube_id"):
-            continue
-        key = (k["sube_id"], (v.get("ait_ay") or h["is_gunu"])[:7])
-        yeni.setdefault(key, []).append({"id": h["id"], "tarih": h["is_gunu"], "tutar": _tl_sayi(int(v.get("toplam", h["tutar"]))),
-                                         "kr": int(v.get("toplam", h["tutar"])),
-                                         "aciklama": v.get("aciklama")})
+        yeni.setdefault((x["sube_id"], x["ay"]), []).append({"id": x["id"], "tarih": x["tarih"], "tutar": _tl_sayi(x["toplam"]),
+                                                             "kr": x["toplam"], "aciklama": x["aciklama"]})
     out = []
     for s in subeler:
         sid = s["id"]

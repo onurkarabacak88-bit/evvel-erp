@@ -1790,18 +1790,20 @@ def _giren_adlari(cur, idler: set) -> Dict[str, str]:
     return out
 
 
-def dukkan_giderleri(cur, bas_gun: str) -> List[dict]:
-    """PUBLIC servis (Fiş kontrolü modülü kullanır): şube PANELİNDEN girilmiş dükkân giderleri (avans hariç), iptaller düşülmüş.
-    Her satır: ref (kaynak_ref), tarih, cep, şube kısa adı, tutar (TL), açıklama, giren (personel adı/kimliği, varsa)."""
-    _, C, kayit, _ = _yukle(cur, tum_donemler=True)
+def dukkan_giderleri(cur, bas_gun: str, son_gun: Optional[str] = None, kayit: Optional[list] = None) -> List[dict]:
+    """PUBLIC servis (Fiş kontrolü + Gider raporu): şube PANELİNDEN girilmiş dükkân giderleri (avans hariç), iptaller düşülmüş.
+    Her satır: ref (kaynak_ref), id, tarih, cep, sube_id, şube kısa adı, tutar (TL), kr (kuruş), açıklama, giren, fiş bilgisi.
+    Gider raporu aynı süzgeci kendisi yazıyordu (Kaçırılan #1) — tek okuyucu burası."""
+    _, C, kayit_, _ = _yukle(cur, tum_donemler=True)
+    kayit = kayit if kayit is not None else kayit_
     out = []
     for h in kayit:
         v = h["veri"]
-        if h["tur"] != "odeme" or v.get("kaynak") != "dukkan_gideri" or h["is_gunu"] < bas_gun:
+        if h["tur"] != "odeme" or v.get("kaynak") != "dukkan_gideri" or h["is_gunu"] < bas_gun or (son_gun and h["is_gunu"] > son_gun):
             continue
         cep = (v.get("parcalar") or [{}])[0].get("cep")
         out.append({"ref": h.get("kaynak_ref"), "id": h["id"], "tarih": h["is_gunu"], "cep": cep, "sube": C.get(cep, {}).get("kisa"),
-                    "tutar": _tl_sayi(h["tutar"]), "aciklama": v.get("aciklama"), "giren": v.get("giren"), "giren_id": v.get("giren_id"),
+                    "sube_id": (cep or "").replace("sube:", "", 1), "kr": int(h["tutar"]), "tutar": _tl_sayi(h["tutar"]), "aciklama": v.get("aciklama"), "giren": v.get("giren"), "giren_id": v.get("giren_id"),
                     "fis_gonderildi": v.get("fis_gonderildi")})
     return out
 

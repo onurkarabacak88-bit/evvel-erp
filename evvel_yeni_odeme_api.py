@@ -498,10 +498,14 @@ def patron_ata(body: PatronAtaBody, x_evvel_oturum: Optional[str] = Header(defau
     return {"ok": True, "mesaj": "Şube giderine geri alındı" if body.geri_al else f"{body.patron}'un harcaması olarak işaretlendi"}
 
 
-def konu_odemeleri(cur, konu_tip: str) -> list:
-    """PUBLIC servis (Krediler / Kartlar takvimleri): bir konudaki BÜTÜN ödemeler tek okumada (iptaller düşülmüş).
-    Her satır: id, tarih, ait_ay, donem (açıkça seçildiyse), toplam (kuruş), kredi_id, kart_id."""
-    _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+def konu_odemeleri(cur, konu_tip: str, kayit: Optional[list] = None, C: Optional[dict] = None) -> list:
+    """PUBLIC servis — bir KONUDAKİ bütün ödemeler tek okumada (iptaller düşülmüş). Kredi · Kart · Kira · Maaş · Toptancı bunu okur
+    (tekrar denetimi "Kaçırılan #1": her biri Kasa kayıtlarını kendi süzgeciyle tarıyordu; Kira'nın iki okuyucusu 'ay'ı farklı alıyordu).
+    Her satır: id, tarih, ait_ay, ay (ait_ay yoksa ödeme gününün ayı — TEK kural), donem, toplam (kuruş), konu (sözlük), kalem, kaynak,
+    aciklama, kim, kartla, nereden (C verilirse cep adlarıyla), kredi_id, kart_id, sube_id, personel_id, toptanci_id."""
+    if kayit is None:
+        _, C_, kayit, _ = _yukle(cur, tum_donemler=True)
+        C = C if C is not None else C_
     out = []
     for h in kayit:
         if h["tur"] != "odeme":
@@ -510,8 +514,17 @@ def konu_odemeleri(cur, konu_tip: str) -> list:
         k = v.get("konu") or {}
         if k.get("tip") != konu_tip:
             continue
-        out.append({"id": h["id"], "tarih": h["is_gunu"], "ait_ay": v.get("ait_ay"), "donem": k.get("donem"),
-                    "toplam": int(v.get("toplam", h["tutar"])), "kredi_id": k.get("kredi_id"), "kart_id": k.get("kart_id")})
+        nereden = None
+        if C is not None:   # NEREDEN ödendi: hangi kasa/banka cebi, hangi kart (sahip: "neyin nerede olduğunu bulabilelim")
+            nereden = ([{"ad": (C.get(p["cep"]) or {}).get("ad") or p["cep"], "tur": "kasa", "tutar": _tl_sayi(int(p["tutar"]))}
+                        for p in (v.get("parcalar") or [])]
+                       + [{"ad": p.get("kart_ad") or "kart", "tur": "kart", "tutar": _tl_sayi(int(p["tutar"]))}
+                          for p in (v.get("kart_parcalar") or [])])
+        out.append({"id": h["id"], "tarih": h["is_gunu"], "ait_ay": v.get("ait_ay"), "ay": (v.get("ait_ay") or h["is_gunu"])[:7],
+                    "donem": k.get("donem"), "toplam": int(v.get("toplam", h["tutar"])), "konu": k, "kalem": k.get("kalem"),
+                    "kaynak": v.get("kaynak"), "aciklama": v.get("aciklama"), "kim": h.get("kaydeden"), "kartla": bool(v.get("kart_parcalar")),
+                    "nereden": nereden, "kredi_id": k.get("kredi_id"), "kart_id": k.get("kart_id"), "sube_id": k.get("sube_id"),
+                    "personel_id": k.get("personel_id"), "toptanci_id": k.get("toptanci_id")})
     return out
 
 

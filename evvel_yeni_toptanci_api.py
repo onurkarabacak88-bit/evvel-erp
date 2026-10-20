@@ -410,21 +410,13 @@ def _hesap(cur, bugun: date):
     from evvel_yeni_tanim_api import subeler as _ey_subeler
     sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
     _, C, kayit, _ = _yukle(cur, tum_donemler=True)
+    from evvel_yeni_odeme_api import konu_odemeleri   # Ödeme'nin tek okuyucusu (Kaçırılan #1) — 'nereden' de orada
     odemeler = {}
-    for h in kayit:
-        if h["tur"] != "odeme":
-            continue
-        k = (h["veri"].get("konu") or {})
-        if k.get("tip") == "toptanci" and k.get("toptanci_id"):
-            odemeler.setdefault(str(k["toptanci_id"]), []).append(
-                {"id": h["id"], "tarih": h["is_gunu"], "tur": "odeme", "tutar": int(h["veri"].get("toplam", h["tutar"])),
-                 "aciklama": h["veri"].get("aciklama"), "kim": h.get("kaydeden"),
-                 "kartla": bool(h["veri"].get("kart_parcalar")),
-                 # NEREDEN ödendi: hangi kasa/banka cebi, hangi kart (sahip: "neyin nerede olduğunu bulabilelim")
-                 "nereden": [{"ad": (C.get(p["cep"]) or {}).get("ad") or p["cep"], "tur": "kasa", "tutar": _tl_sayi(int(p["tutar"]))}
-                             for p in (h["veri"].get("parcalar") or [])]
-                            + [{"ad": p.get("kart_ad") or "kart", "tur": "kart", "tutar": _tl_sayi(int(p["tutar"]))}
-                               for p in (h["veri"].get("kart_parcalar") or [])]})
+    for x in konu_odemeleri(cur, "toptanci", kayit=kayit, C=C):
+        if x["toptanci_id"]:
+            odemeler.setdefault(str(x["toptanci_id"]), []).append(
+                {"id": x["id"], "tarih": x["tarih"], "tur": "odeme", "tutar": x["toplam"], "aciklama": x["aciklama"], "kim": x["kim"],
+                 "kartla": x["kartla"], "nereden": x["nereden"]})
     out = []
     for t in tlar:
         ts = [x for x in teslimler if x["toptanci_id"] == t["id"]]

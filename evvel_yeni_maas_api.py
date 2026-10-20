@@ -146,22 +146,17 @@ def _yeni_oneri(cur, ay: str) -> dict:
 
 def _odemeler(cur) -> dict:
     """(personel_id, ait_ay) → {kalem: kuruş} — Evvel Yeni ödeme formu + şubenin elden avansı (iptaller hariç)."""
-    from evvel_yeni_kasa_api import kasa_kayitlari as _yukle
-    _, _, kayit, _ = _yukle(cur, tum_donemler=True)
+    from evvel_yeni_odeme_api import konu_odemeleri   # Ödeme'nin tek okuyucusu (Kaçırılan #1)
     out = {}
-    for h in kayit:
-        if h["tur"] != "odeme":
+    for x in konu_odemeleri(cur, "personel"):
+        if not x["personel_id"]:
             continue
-        v = h["veri"]
-        k = v.get("konu") or {}
-        if k.get("tip") != "personel" or not k.get("personel_id"):
-            continue
-        anah = (str(k["personel_id"]), (v.get("ait_ay") or h["is_gunu"])[:7])
-        kal = k.get("kalem") or "Maaş"
-        if kal == "Avans" and v.get("kaynak") == "sube_avansi":
+        anah = (str(x["personel_id"]), x["ay"])
+        kal = x["kalem"] or "Maaş"
+        if kal == "Avans" and x["kaynak"] == "sube_avansi":
             kal = "Avans (şube)"   # eski sistem Ekim netinde ZATEN düşülü → Ekim'de ayrıca düşülmez
         out.setdefault(anah, {})
-        out[anah][kal] = out[anah].get(kal, 0) + int(v.get("toplam", h["tutar"]))
+        out[anah][kal] = out[anah].get(kal, 0) + x["toplam"]
     return out
 
 

@@ -431,21 +431,19 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
             ORTAK["satirlar"].append(satir)
     # 2) DÜKKÂN KÜÇÜK GİDERLERİ (Kasa'daki 'dukkan_gideri' ödemeleri) + patron şahsi ayrımı
     cekisler = []
-    for h in kayit:
-        if h["tur"] != "odeme" or h["veri"].get("kaynak") != "dukkan_gideri" or not (bas_i <= h["is_gunu"] <= son_i):
-            continue
-        cep = (h["veri"].get("parcalar") or [{}])[0].get("cep") or ""
-        sid = cep.replace("sube:", "", 1)
-        ref = h.get("kaynak_ref") or h["id"]
+    from evvel_yeni_kasa_api import dukkan_giderleri   # Kasa'nın tek okuyucusu (Kaçırılan #1 — süzgeç iki yerdeydi)
+    for g in dukkan_giderleri(cur, bas_i, son_i, kayit=kayit):
+        sid = g["sube_id"]
+        ref = g["ref"] or g["id"]
         sn = sinif.get(ref)
-        satir = {"gun": h["is_gunu"], "tur": "dukkan", "aciklama": h["veri"].get("aciklama"), "adet": None, "birim": None,
-                 "tutar": _tl_sayi(h["tutar"]), "kaynak_ref": ref,
-                 "oneri_cekis": any(k in (h["veri"].get("aciklama") or "").lower() for k in ("sigara",))}
+        satir = {"gun": g["tarih"], "tur": "dukkan", "aciklama": g["aciklama"], "adet": None, "birim": None,
+                 "tutar": g["tutar"], "kaynak_ref": ref,
+                 "oneri_cekis": any(k in (g["aciklama"] or "").lower() for k in ("sigara",))}
         if sn and sn["tur"] == "cekis":
             cekisler.append({**satir, "kim": sn.get("kimin") or "Patron", "sube": subeler.get(sid, {}).get("kisa")})
             continue
         if sid in S:
-            S[sid]["dukkan"] += h["tutar"]
+            S[sid]["dukkan"] += g["kr"]
             S[sid]["satirlar"].append(satir)
     # 3) KOMİSYON (kapanıştaki POS/online × şube oranı — tahmini; gerçek kesinti belgesi gelince değişir)
     for h in kayit:
