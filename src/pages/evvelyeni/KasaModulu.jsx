@@ -1096,13 +1096,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         const acik = a.farklar.filter((x) => !x.coz);
         onCekmece?.({
           ...temel, tip: 'AÇIK FARKLAR DEFTERİ', baslik: 'Açık farklar', alt: 'Gün gün toplam açık · İz sekmesinde',
-          kpi: [
-            { etiket: 'Açık eksik', deger: tl(a.acik_eksik), renk: a.acik_eksik ? R.kirmizi : R.yesil },
-            { etiket: 'Açık fazla', deger: tl(a.acik_fazla), renk: a.acik_fazla ? R.amber : R.yesil },
-            { etiket: 'Çözülmemiş', deger: `${acik.length} fark`, renk: acik.length ? R.kirmizi : R.yesil },
-            { etiket: 'Kayba yazılan', deger: tl(a.kayip), renk: R.kirmizi },
-            { etiket: 'Kayıtsız harcama', deger: tl(a.harcanan), renk: R.amber },
-          ],
+          kpi: acikOzet(a).map((k) => ({ etiket: k.etiket, deger: k.yazi || tl(k.tutar), renk: k.renk })),   // sayfayla AYNI (T4-14)
           listeBaslik: 'Farklar · çözülmemişler önce',
           satirlar: [...acik, ...a.farklar.filter((x) => x.coz)].map((x) => ({
             ad: `${x.coz ? '✓' : '🔴'} ${x.ad}`, detay: `${tUzun(x.tarih)} · ${x.coz ? x.coz.sebep_ad : 'çözülmedi'}`,
@@ -1381,6 +1375,18 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
 }
 
 // ─── AÇIK FARKLAR sayfası (gün gün defter) ───
+// Açık farklar ÖZET kutuları — çekmece ve sayfa AYNI liste (Dalga 5, T4-14: iki yerde ayrı hazırlanıyordu, sayfada 'çözülmemiş' yoktu)
+const acikOzet = (a) => {
+  const n = a.farklar.filter((x) => !x.coz).length;
+  return [
+    { etiket: 'Açık eksik', tutar: a.acik_eksik, renk: a.acik_eksik ? R.kirmizi : R.yesil },
+    { etiket: 'Açık fazla', tutar: a.acik_fazla, renk: a.acik_fazla ? R.amber : R.yesil },
+    { etiket: 'Çözülmemiş', yazi: `${n} fark`, renk: n ? R.kirmizi : R.yesil },
+    { etiket: 'Kayba yazılan', tutar: a.kayip, renk: R.kirmizi },
+    { etiket: 'Kayıtsız harcama', tutar: a.harcanan, renk: R.amber },
+  ];
+};
+
 function AcikSayfa({ onCoz, onCepAc, yenile }) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
@@ -1395,9 +1401,8 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
-        {[['Açık eksik', v.acik_eksik, v.acik_eksik ? R.kirmizi : R.yesil], ['Açık fazla', v.acik_fazla, v.acik_fazla ? R.amber : R.yesil],
-          ['Kayba yazılan', v.kayip, R.kirmizi], ['Kayıtsız harcama', v.harcanan, R.amber]].map(([a, t, r]) => (
-          <div key={a} style={{ ...kart, padding: '10px 13px' }}><div style={etiketStil}>{a}</div><div style={{ ...num, fontSize: 20, color: r }}>{fmt(t)}</div></div>
+        {acikOzet(v).map((k) => (
+          <div key={k.etiket} style={{ ...kart, padding: '10px 13px' }}><div style={etiketStil}>{k.etiket}</div><div style={{ ...num, fontSize: 20, color: k.renk }}>{k.yazi || fmt(k.tutar)}</div></div>
         ))}
       </div>
       <div style={{ ...kart, padding: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -1416,15 +1421,15 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
         <div style={{ padding: '9px 14px', borderBottom: `1px solid ${R.cizgi}` }}><b>Gün gün</b></div>
         <div style={{ overflowX: 'auto' }}>
           <table className="pi-tablo pi-excel">
-            <thead><tr><th>Gün</th><th>Yeni fark</th><th>Geri dönen</th><th>Kayba</th><th>Harcamaya</th><th>Gün sonu açık</th><th>Toplam kayıp</th></tr></thead>
+            <thead><tr><th>Gün</th><th>Yeni fark</th><th>Geri dönen</th><th>Kayba</th><th>Harcamaya</th><th>Gün sonu açık</th><th>Toplam kayıp</th><th>Toplam kayıtsız harcama</th></tr></thead>
             <tbody>
               {v.gun_gun.length ? v.gun_gun.map((x) => (
                 <tr key={x.gun}>
                   <td style={num}>{tUzun(x.gun)}</td><td style={num}>{x.yeni ? fmt(x.yeni) : '—'}</td><td style={{ ...num, color: R.yesil }}>{x.geri_donen ? fmt(x.geri_donen) : '—'}</td>
                   <td style={{ ...num, color: R.kirmizi }}>{x.kayba_yazilan ? fmt(x.kayba_yazilan) : '—'}</td><td style={{ ...num, color: R.amber }}>{x.harcamaya_yazilan ? fmt(x.harcamaya_yazilan) : '—'}</td>
-                  <td style={{ ...num, fontWeight: 700 }}>{fmt(x.gun_sonu_acik)}</td><td style={num}>{fmt(x.toplam_kayip)}</td>
+                  <td style={{ ...num, fontWeight: 700 }}>{fmt(x.gun_sonu_acik)}</td><td style={num}>{fmt(x.toplam_kayip)}</td><td style={num}>{fmt(x.toplam_harcanan)}</td>
                 </tr>
-              )) : <tr><td colSpan={7}>Henüz fark yok.</td></tr>}
+              )) : <tr><td colSpan={8}>Henüz fark yok.</td></tr>}
             </tbody>
           </table>
         </div>
