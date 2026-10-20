@@ -16,20 +16,26 @@ const alan = { ...ALAN, padding: '6px 9px', borderRadius: 9, fontSize: 13.5 };  
 const kisa = (s) => String(s || '').replace(/:00$/, '');                           // "09:00" → "09", "18:30" kalır
 const saatYazi = (p) => `${kisa(p.bas)}–${kisa(p.bit)}`;
 const gunBaslik = (g) => `${gunKisa(g)} ${tarihNokta(g).slice(0, 5)}`;   // gün adı TEK kaynak trTarih
+const arti = { border: 'none', background: 'none', cursor: 'pointer', font: 'inherit', fontSize: 15, minHeight: 40, minWidth: 44, padding: '6px 8px', width: '100%', textAlign: 'left' };
 const hucre = { borderTop: `1px solid ${R.cizgi}`, borderLeft: `1px solid ${R.cizgi}`, padding: 5, verticalAlign: 'top', minWidth: 96 };
 
 function Rozet({ p, ad, onClick, sube }) {
   const izin = p.tur === 'izin';
   return (
     <button type="button" onClick={onClick} title={p.kaynak === 'sonradan' ? 'sonradan yazıldı' : ''} style={{
-      display: 'block', width: '100%', textAlign: 'left', margin: '0 0 3px', padding: '3px 6px', borderRadius: 7, cursor: 'pointer',
-      font: 'inherit', fontSize: 12, border: `1px solid ${R.cizgi}`, color: izin ? R.not : R.krem,
+      display: 'block', width: '100%', textAlign: 'left', margin: '0 0 4px', padding: '8px 8px', minHeight: 40, borderRadius: 8, cursor: 'pointer',
+      font: 'inherit', fontSize: 13, border: `1px solid ${R.cizgi}`, color: izin ? R.not : R.krem,
       background: izin ? 'var(--pi-bg)' : 'var(--pi-accent-soft)', borderStyle: p.kaynak === 'sonradan' ? 'dashed' : 'solid',
     }}>
       {izin ? (ad ? <><b>{ad}</b> · izinli</> : 'İzinli') : <>{ad && <b>{ad} </b>}<span style={num}>{saatYazi(p)}</span></>}{sube ? <div style={{ fontSize: 11, color: R.not }}>{sube}</div> : null}
     </button>
   );
 }
+
+// 🖨 Yazdır: tarayıcı yazdırma (PDF kütüphanesi yok) — düğmeler, '+' ve uyarılar kâğıda çıkmaz; ızgara A4 yatay
+const YAZDIR_CSS = `@media print { @page { size: A4 landscape; margin: 10mm }
+  body * { visibility: hidden } .vd-alan, .vd-alan * { visibility: visible } .vd-alan { position: absolute; left: 0; top: 0; width: 100% }
+  .vd-gizle, button.vd-arti { display: none !important } }`;   // yalnız plan basılır (sol menü / kabuk değil)
 
 export default function VardiyaModulu({ onToast }) {
   const [pzt, setPzt] = useState(null);         // null → sunucu bu haftayı seçer
@@ -66,8 +72,8 @@ export default function VardiyaModulu({ onToast }) {
   const duzenleAc = (p) => setForm({ yeni: false, ...p });
 
   return (
-    <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <style>{PI_CSS}</style>
+    <div className="pi vd-alan" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+      <style>{PI_CSS + YAZDIR_CSS}</style>
       <div><div className="pi-eyebrow">Evvel Yeni · Personel</div><h1 style={{ fontSize: 30 }}>Vardiya planı</h1></div>
       <div style={{ fontSize: 13, color: R.metin2 }}>
         Geçen haftayı kopyala, değişen hücreleri düzelt, şubenin haftasını <b>Yayınla</b>. Yayınlanana kadar taslaktır: personel görmez,
@@ -84,10 +90,11 @@ export default function VardiyaModulu({ onToast }) {
         <Dugme kucuk ana={gorunum === 'sube'} onClick={() => setGorunum('sube')}>Şube</Dugme>
         <Dugme kucuk ana={gorunum === 'kisi'} onClick={() => setGorunum('kisi')}>Kişi</Dugme>
       </div>
-      <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+      <div className="vd-gizle" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Dugme kucuk disabled={mesgul} onClick={() => { if (window.confirm('Geçen haftanın planı bu haftaya kopyalansın mı? (Dolu hücreler atlanır, taslak olarak gelir.)')) yap('hafta-kopyala', { pazartesi: hafta }); }}>📋 Geçen haftayı kopyala</Dugme>
         {v.eski_kopya && <Dugme kucuk disabled={mesgul} onClick={() => { if (window.confirm('Eski vardiya ekranında bu hafta için yazılmış plan buraya alınsın mı? (Alınan hafta yayında sayılır.)')) yap('eski-kopya', { pazartesi: hafta }); }}>⤵ Eski plandan al</Dugme>}
         <Dugme kucuk onClick={() => setKalipAcik(true)}>⚙ Kalıplar</Dugme>
+        <Dugme kucuk onClick={() => window.print()}>🖨 Yazdır</Dugme>
       </div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
 
@@ -105,6 +112,8 @@ export default function VardiyaModulu({ onToast }) {
               <span style={{ flex: 1 }} />
               {(!s.yayin || s.degisen > 0) && s.satir > 0 && (
                 <Dugme kucuk ana disabled={mesgul} onClick={() => yap('yayinla', { pazartesi: hafta, sube_id: s.id })}>{s.yayin ? 'Yeniden yayınla' : 'Yayınla'}</Dugme>)}
+              {!s.yayin && s.satir > 0 && (
+                <span className="vd-gizle"><Dugme kucuk disabled={mesgul} onClick={() => { if (window.confirm(`${s.ad} · bu haftanın taslağı (bugünden sonraki günler) temizlensin mi?`)) yap('taslak-temizle', { pazartesi: hafta, sube_id: s.id }); }}>🧹 Taslağı temizle</Dugme></span>)}
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
@@ -121,8 +130,8 @@ export default function VardiyaModulu({ onToast }) {
                         return (
                           <td key={g} style={{ ...hucre, background: !aktifGun ? 'var(--pi-bg)' : eksik ? 'var(--pi-warn-soft)' : undefined }}>
                             {bu.map((p) => <Rozet key={p.id} p={p} ad={pad[p.personel_id] || '—'} onClick={() => duzenleAc(p)} />)}
-                            {aktifGun && <button type="button" disabled={mesgul} onClick={() => ekleAc({ sube_id: s.id, gun: g, kalip_id: k.id, bas: k.bas, bit: k.bit })}
-                              style={{ border: 'none', background: 'none', color: eksik ? R.amber : R.not, cursor: 'pointer', font: 'inherit', fontSize: 12, padding: 2 }}>
+                            {aktifGun && <button type="button" className="vd-arti" disabled={mesgul} onClick={() => ekleAc({ sube_id: s.id, gun: g, kalip_id: k.id, bas: k.bas, bit: k.bit })}
+                              style={{ ...arti, color: eksik ? R.amber : R.not }}>
                               {eksik ? `+ ${bu.length}/${k.kisi}` : '+'}</button>}
                           </td>
                         );
@@ -134,8 +143,8 @@ export default function VardiyaModulu({ onToast }) {
                     {v.gunler.map((g) => (
                       <td key={g} style={hucre}>
                         {diger.filter((p) => p.gun === g).map((p) => <Rozet key={p.id} p={p} ad={pad[p.personel_id] || '—'} onClick={() => duzenleAc(p)} />)}
-                        <button type="button" disabled={mesgul} onClick={() => ekleAc({ sube_id: s.id, gun: g, kalip_id: null })}
-                          style={{ border: 'none', background: 'none', color: R.not, cursor: 'pointer', font: 'inherit', fontSize: 12, padding: 2 }}>+</button>
+                        <button type="button" className="vd-arti" disabled={mesgul} onClick={() => ekleAc({ sube_id: s.id, gun: g, kalip_id: null })}
+                          style={{ ...arti, color: R.not }}>+</button>
                       </td>
                     ))}
                   </tr>
@@ -165,8 +174,8 @@ export default function VardiyaModulu({ onToast }) {
                         <td key={g} style={hucre}>
                           {bu.map((x) => <Rozet key={x.id} p={x} ad="" sube={x.tur === 'calisma' ? sad[x.sube_id] : null} onClick={() => duzenleAc(x)} />)}
                           {!bu.some((x) => x.tur === 'izin') && (
-                            <button type="button" disabled={mesgul} onClick={() => ekleAc({ personel_id: p.id, gun: g, sube_id: p.sube_id || '', kalip_id: null, kisiSabit: true })}
-                              style={{ border: 'none', background: 'none', color: R.not, cursor: 'pointer', font: 'inherit', fontSize: 12, padding: 2 }}>+</button>)}
+                            <button type="button" className="vd-arti" disabled={mesgul} onClick={() => ekleAc({ personel_id: p.id, gun: g, sube_id: p.sube_id || '', kalip_id: null, kisiSabit: true })}
+                              style={{ ...arti, color: R.not }}>+</button>)}
                         </td>
                       );
                     })}
@@ -180,7 +189,7 @@ export default function VardiyaModulu({ onToast }) {
       )}
 
       {/* UYARILAR — modülün kendi listesi (K4) */}
-      <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 2 }}>
+      <div className="vd-gizle" style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 2 }}>
         <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700 }}>Uyarılar · bu hafta</div>
         {!v.uyarilar.length && <div style={{ color: R.not, padding: 6, fontSize: 13 }}>Uyarı yok.</div>}
         {v.uyarilar.map((u, i) => (
@@ -209,7 +218,7 @@ function PlanFormu({ form, setForm, v, mesgul, yap }) {
   if (!form.yeni) {
     return (
       <Pencere baslik={baslik} onKapat={kapat} mesgul={mesgul}>
-        {form.tur === 'izin' ? <div style={{ fontSize: 13.5 }}>Bu gün <b>izinli</b>.</div> : (
+        {form.tur === 'izin' ? <div style={{ fontSize: 13.5 }}><b>İzinli</b> · {tarihNokta(form.izin_bas).slice(0, 5)}–{form.izin_bit ? tarihNokta(form.izin_bit).slice(0, 5) : 'bitişi belli değil'}<div style={{ fontSize: 12, color: R.not }}>İzin Personel'in izin defterinde (maaş da buradan okur).</div></div> : (
           <>
             <div style={{ fontSize: 13, color: R.metin2 }}>{v.subeler.find((s) => s.id === form.sube_id)?.ad} · {form.saat} saat{form.kaynak === 'sonradan' ? ' · sonradan yazıldı' : ''}</div>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
@@ -219,22 +228,28 @@ function PlanFormu({ form, setForm, v, mesgul, yap }) {
             </div>
           </>
         )}
-        <div style={{ fontSize: 11.5, color: R.not }}>yazan: {form.degistiren || '—'} · {form.zaman}</div>
-        <div><Dugme kucuk disabled={mesgul} onClick={() => { if (window.confirm(form.tur === 'izin' ? 'İzin kaldırılsın mı?' : 'Bu vardiya plandan kaldırılsın mı?')) yap(`plan/${form.id}/iptal`, {}, kapat); }}>
+        <div style={{ fontSize: 11.5, color: R.not }}>yazan: {form.degistiren || '—'}{form.zaman ? ` · ${form.zaman}` : ''}</div>
+        <div><Dugme kucuk disabled={mesgul} onClick={() => { if (window.confirm(form.tur === 'izin' ? 'İzin (bütün aralık) kaldırılsın mı?' : 'Bu vardiya plandan kaldırılsın mı?')) yap(form.tur === 'izin' ? `izin/${encodeURIComponent(form.id)}/kaldir` : `plan/${form.id}/iptal`, {}, kapat); }}>
           {form.tur === 'izin' ? 'İzni kaldır' : 'Plandan kaldır'}</Dugme></div>
       </Pencere>
     );
   }
   const kaydet = () => (form.tur === 'izin'
-    ? yap('plan', { personel_id: form.personel_id, gun: form.gun, tur: 'izin' }, kapat)
+    ? yap('izin', { personel_id: form.personel_id, bas: form.gun, bit: form.izin_bit || form.gun }, kapat)
     : yap('plan', { personel_id: form.personel_id, gun: form.gun, tur: 'calisma', sube_id: form.sube_id, bas: form.bas, bit: form.bit, kalip_id: form.kalip_id }, kapat));
   const kaliplar = v.kaliplar.filter((k) => k.sube_id === form.sube_id);
   return (
     <Pencere baslik={baslik} onKapat={kapat} mesgul={mesgul}>
-      {form.kisiSabit && (
+      {form.kisiSabit && v.izin_acik && (
         <div style={{ display: 'flex', gap: 6 }}>
           <Dugme kucuk ana={form.tur === 'calisma'} onClick={() => set('tur', 'calisma')}>Çalışıyor</Dugme>
           <Dugme kucuk ana={form.tur === 'izin'} onClick={() => set('tur', 'izin')}>İzinli</Dugme>
+        </div>
+      )}
+      {form.tur === 'izin' && (
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13.5 }}>
+          {tarihNokta(form.gun).slice(0, 5)} → <input type="date" min={form.gun} value={form.izin_bit || form.gun} onChange={(e) => set('izin_bit', e.target.value)} style={alan} /> gününe kadar
+          <span style={{ fontSize: 12, color: R.not }}>tek hamlede; maaş da aynı kaydı okur</span>
         </div>
       )}
       {!form.kisiSabit && (

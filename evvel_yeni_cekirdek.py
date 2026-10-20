@@ -294,6 +294,12 @@ def tablo_var(cur, *adlar: str) -> bool:
     return bool(dict(cur.fetchone() or {}).get("v"))
 
 
+def kolon_var(cur, tablo: str, kolon: str) -> bool:
+    """PUBLIC — tablo.kolon var mı (salt okur). Toptancı'nın yerel kopyası buraya taşındı (tekrar kuralı)."""
+    cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=%s AND column_name=%s", (tablo, kolon))
+    return cur.fetchone() is not None
+
+
 def lock_timeout_ayarla(cur, deger: str) -> str:
     """PUBLIC — işlemin lock_timeout'unu 'deger' yap (yalnız bu işlem), ÖNCEKİ değeri döndür (geri yüklemek için). Fable D4-4:
     hazırlıklar 'SET LOCAL ... = DEFAULT' ile çağıranın (ör. panel 3 sn) korumasını siliyordu."""
@@ -448,7 +454,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "bir_kez", "ddl_kur", "lock_timeout_ayarla", "KuruGeriAl",
+__all__ = ["bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "kolon_var", "bir_kez", "ddl_kur", "lock_timeout_ayarla", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

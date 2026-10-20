@@ -3,7 +3,8 @@
 Sahip (20 Eki): "baştan ele al — daha kolay, mantığı daha hoş; ama en az eskisi kadar işe yarar." Eski ekranın 9 tablosu / 40 ucu
 yerine ÜÇ kavram:
   · KALIP  = şubenin kadro iskeleti ("Zafer · Sabah 09:00–18:30 · 1 kişi · her gün"). Eski slot + hedef + preset → tek satır.
-  · PLAN   = kişi × iş günü × şube × saat (tür 'calisma') ya da kişi × gün 'izin' (gri hücre, Y6). APPEND-ONLY: değişiklik = eski satır
+  · PLAN   = kişi × iş günü × şube × saat. İZİN burada DEĞİL: Maaş'ın izin defteri TEK gerçek (sahip 20 Eki "tek yer + tarih
+             aralığı") — ızgaradaki gri hücre oradan okunur, "İzinli … gününe kadar" oraya yazar (Maaş PUBLIC izin_*). APPEND-ONLY: değişiklik = eski satır
              iptal + yeni satır (onceki_id) → iz. Gün geçtikten sonra yazılan 'sonradan' damgalı (Y5; maaşta uyarı, geç ölçülmez R4).
              TEK sert kural: aynı kişi aynı saatte iki yerde olamaz (409). Aynı gün iki şube farklı saatte SERBEST (split shift).
   · YAYIN  = şube × hafta (Y2). Yayınlanana kadar taslak: personel görmez, Günlük yoklama / Maaş okumaz (R2). Yayından sonra
@@ -48,11 +49,9 @@ def _ddl(cur) -> None:
         sube_id TEXT, bas TIME, bit TIME, gece BOOLEAN NOT NULL DEFAULT FALSE, kalip_id TEXT,
         kaynak TEXT NOT NULL DEFAULT 'elle', iptal BOOLEAN NOT NULL DEFAULT FALSE, iptal_neden TEXT, iptal_kim TEXT,
         iptal_zaman TIMESTAMPTZ, onceki_id TEXT, degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-        CHECK (tur IN ('calisma','izin')), CHECK (tur = 'izin' OR (sube_id IS NOT NULL AND bas IS NOT NULL AND bit IS NOT NULL)))""")
+        CHECK (tur = 'calisma'), CHECK (sube_id IS NOT NULL AND bas IS NOT NULL AND bit IS NOT NULL))   -- izin Maaş'ta (TEK gerçek)""")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_vplan_gun ON ey_vardiya_plan (gun, sube_id) WHERE NOT iptal")
     cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_vplan_kisi ON ey_vardiya_plan (personel_id, gun) WHERE NOT iptal")
-    cur.execute("""CREATE UNIQUE INDEX IF NOT EXISTS ux_ey_vplan_izin ON ey_vardiya_plan (personel_id, gun)
-                    WHERE tur = 'izin' AND NOT iptal""")
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_vardiya_yayin (
         sube_id TEXT NOT NULL, pazartesi DATE NOT NULL, yayinlayan TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(),
         PRIMARY KEY (sube_id, pazartesi))""")
@@ -152,10 +151,33 @@ def _gecerli(r: dict, yayin: Dict[tuple, dict], bugun: date) -> bool:
     return tr_gun(r["zaman"]) >= r["gun"]
 
 
+def _izinler(cur, bas: date, son: date, personel_id: Optional[str] = None) -> List[dict]:
+    """İzin TEK gerçek Maaş'ta (sahip 20 Eki): Maaş PUBLIC izin_araliklari — Maaş kapalıysa izin yok (tak-çıkar yumuşak bağ)."""
+    from evvel_yeni_moduller import acik
+    if not acik("maas"):
+        return []
+    from evvel_yeni_maas_api import izin_araliklari
+    return izin_araliklari(cur, bas, son, personel_id)
+
+
+def _izin_satirlari(cur, bas: date, son: date, personel_id: Optional[str] = None) -> List[dict]:
+    """İzin aralıklarını gün gün plan satırı biçimine açar (tur='izin', id 'izin:<kayıt>'). Bitişi belli olmayan izin 'son'a kadar."""
+    out = []
+    for z in _izinler(cur, bas, son, personel_id):
+        g = max(z["bas"], bas)
+        while g <= min(z["bit"] or son, son):
+            out.append({"id": f"izin:{z['id']}", "personel_id": str(z["personel_id"]), "gun": g, "tur": "izin", "sube_id": None,
+                        "bas": None, "bit": None, "gece": False, "kalip_id": None, "kaynak": "izin", "zaman": None,
+                        "degistiren": z.get("degistiren"), "izin_bas": z["bas"], "izin_bit": z["bit"]})
+            g += timedelta(days=1)
+    return out
+
+
 def _satirlar(cur, bas: date, son: date, sube_id: Optional[str] = None, personel_id: Optional[str] = None) -> List[dict]:
-    kos, prm = ["NOT iptal", "gun BETWEEN %s AND %s"], [bas, son]
+    """Plan tablosunun ÇALIŞMA satırları (izin Maaş'ta — _izin_satirlari)."""
+    kos, prm = ["NOT iptal", "tur = 'calisma'", "gun BETWEEN %s AND %s"], [bas, son]
     if sube_id:
-        kos.append("(sube_id = %s OR tur = 'izin')")
+        kos.append("sube_id = %s")
         prm.append(str(sube_id))
     if personel_id:
         kos.append("personel_id = %s")
@@ -169,7 +191,9 @@ def _disa(r: dict) -> dict:
             "bas": _hm(r.get("bas")), "bit": _hm(r.get("bit")), "gece": bool(r.get("gece")), "kalip_id": r.get("kalip_id"),
             "kaynak": r["kaynak"], "saat": round(sure_saat(r["bas"], r["bit"]), 2) if r["tur"] == "calisma" else 0,
             "etiket": _etiket(r["bas"]) if r["tur"] == "calisma" else "izinli", "degistiren": r.get("degistiren"),
-            "zaman": str(r.get("zaman") or "")[:16]}
+            "zaman": str(r.get("zaman") or "")[:16],
+            **({"izin_bas": r["izin_bas"].isoformat(), "izin_bit": r["izin_bit"].isoformat() if r.get("izin_bit") else None}
+               if r["tur"] == "izin" else {})}
 
 
 # ─────────────────────────── PUBLIC servisler ───────────────────────────
@@ -178,7 +202,8 @@ def gun_plani(cur, bas: date, son: date, sube_id: Optional[str] = None, izin: bo
     kaynak, kalip_id}]; izin=True ise 'izin' satırları da (tur alanıyla). Günlük yoklama, panel 'Bugün' ve Maaş buradan okur."""
     vardiya_hazirla(cur)
     yayin, bugun = _yayin_haritasi(cur, bas, son), is_gunu()
-    return [_disa(r) for r in _satirlar(cur, bas, son, sube_id) if _gecerli(r, yayin, bugun) and (izin or r["tur"] == "calisma")]
+    out = [_disa(r) for r in _satirlar(cur, bas, son, sube_id) if _gecerli(r, yayin, bugun)]
+    return out + ([_disa(r) for r in _izin_satirlari(cur, bas, son)] if izin else [])
 
 
 def kisi_gunleri(cur, personel_id: str, bas: date, son: date) -> List[dict]:
@@ -187,6 +212,7 @@ def kisi_gunleri(cur, personel_id: str, bas: date, son: date) -> List[dict]:
     from evvel_yeni_tanim_api import adlar
     yayin, bugun = _yayin_haritasi(cur, bas, son), is_gunu()
     rows = [r for r in _satirlar(cur, bas, son, personel_id=personel_id) if _gecerli(r, yayin, bugun)]
+    rows += _izin_satirlari(cur, bas, son, personel_id)
     sad = adlar(cur, "ey_sube", {r["sube_id"] for r in rows if r.get("sube_id")})
     return [{**_disa(r), "sube": sad.get(str(r.get("sube_id")))} for r in rows]
 
@@ -244,27 +270,18 @@ def _calisir_mi(p: dict, gun: date) -> None:
 
 
 def _cakisma(cur, pid: str, gun: date, tur: str, bas: Optional[time], bit: Optional[time], haric: Optional[str] = None) -> Optional[str]:
-    """TEK sert kural: aynı kişi aynı anda iki yerde olamaz (gece vardiyası komşu güne taşar → ±1 gün bakılır). İzinli gün çalışma
-    alamaz, çalışılan gün izin olamaz. Dönüş: çakışma metni ya da None."""
+    """TEK sert kural: aynı kişi aynı anda iki yerde olamaz (gece vardiyası komşu güne taşar → ±1 gün bakılır). İzinli güne
+    (Maaş izin kaydı) çalışma yazılmaz. Dönüş: çakışma metni ya da None."""
     from evvel_yeni_tanim_api import adlar
-    cur.execute("""SELECT * FROM ey_vardiya_plan WHERE personel_id=%s AND NOT iptal AND gun BETWEEN %s AND %s AND id <> %s""",
+    z = _izinler(cur, gun, gun, pid)
+    if z:
+        return (f"o gün izinli ({z[0]['bas'].strftime('%d.%m')}–{z[0]['bit'].strftime('%d.%m') if z[0]['bit'] else 'bitişi belli değil'})"
+                " — önce izni kaldır")
+    cur.execute("""SELECT * FROM ey_vardiya_plan WHERE personel_id=%s AND NOT iptal AND tur='calisma' AND gun BETWEEN %s AND %s AND id <> %s""",
                 (str(pid), gun - timedelta(days=1), gun + timedelta(days=1), haric or ""))
     rows = [dict(r) for r in cur.fetchall() or []]
-    for r in rows:
-        if r["gun"] != gun:
-            continue
-        if r["tur"] == "izin" and tur == "izin":
-            return "o gün zaten izinli"
-        if r["tur"] == "izin":
-            return "o gün izinli (önce izni kaldır)"
-        if tur == "izin":
-            return "o gün planı var (önce vardiyayı kaldır)"
-    if tur == "izin":
-        return None
     a1, b1 = _aralik(gun, bas, bit)
     for r in rows:
-        if r["tur"] != "calisma":
-            continue
         a2, b2 = _aralik(r["gun"], r["bas"], r["bit"])
         if a1 < b2 and a2 < b1:
             s = adlar(cur, "ey_sube", [r["sube_id"]]).get(str(r["sube_id"])) or "başka şube"
@@ -348,7 +365,8 @@ def hafta(pazartesi: Optional[str] = None):
                          "satir": sum(1 for r in hafta_rows if r.get("sube_id") == s["id"])} for s in sb],
             "kaliplar": [{"id": k["id"], "sube_id": k["sube_id"], "ad": k["ad"], "bas": _hm(k["bas"]), "bit": _hm(k["bit"]),
                           "kisi": k["kisi"], "gunler": list(k["gunler"] or []), "sira": k["sira"]} for k in kaliplar],
-            "plan": [{**_disa(r), "kalip_es": r.get("kalip_es")} for r in hafta_rows],
+            "plan": [{**_disa(r), "kalip_es": r.get("kalip_es")} for r in hafta_rows] + [_disa(r) for r in _izin_satirlari(cur, pzt, paz)],
+            "izin_acik": __import__("evvel_yeni_moduller").acik("maas"),
             "personel": [{"id": p["id"], "ad": p["ad"], "sube_id": p.get("sube_id"), "calisma_turu": p.get("calisma_turu") or "tam",
                           "mudur": mudur_mu(p.get("gorev")), "aktif": bool(p.get("aktif")),
                           "cikis": p["cikis"].isoformat() if p.get("cikis") else None} for p in kisiler],
@@ -411,7 +429,7 @@ def _uyarilar(cur, pzt: date, sb: list, kaliplar: list, rows: list, kisiler: lis
             out.append({"tur": "yedi_gun", "personel_id": pid,
                         "metin": f"{pad.get(pid, '—')} 7 gün üst üste planlı — hafta tatili verilmemiş"})
     for r in rows:
-        if r["gun"] >= pzt and r["kaynak"] == "sonradan":
+        if r["gun"] >= pzt and r["kaynak"] == "sonradan" and r["tur"] == "calisma":
             out.append({"tur": "sonradan", "personel_id": r["personel_id"],
                         "metin": f"{pad.get(r['personel_id'], '—')} · {r['gun'].strftime('%d.%m')} sonradan yazıldı ({r.get('degistiren') or '—'})"})
     return out
@@ -420,7 +438,6 @@ def _uyarilar(cur, pzt: date, sb: list, kaliplar: list, rows: list, kisiler: lis
 class PlanBody(BaseModel):
     personel_id: str
     gun: str
-    tur: str = "calisma"          # calisma | izin
     sube_id: Optional[str] = None
     bas: Optional[str] = None
     bit: Optional[str] = None
@@ -429,15 +446,10 @@ class PlanBody(BaseModel):
 
 @router.post("/plan")
 def plan_ekle(b: PlanBody, x_evvel_oturum: Optional[str] = Header(default=None)):
-    if b.tur not in ("calisma", "izin"):
-        raise HTTPException(400, "tür: calisma | izin")
     with db() as (conn, cur):
         vardiya_hazirla(cur)
         kim = merkez_aktor(cur, x_evvel_oturum)
         gun = _tarih(b.gun)
-        if b.tur == "izin":
-            vid = _yaz(cur, pid=b.personel_id, gun=gun, tur="izin", kim=kim)
-            return {"ok": True, "id": vid, "mesaj": "İzinli olarak yazıldı"}
         if not b.sube_id:
             raise HTTPException(400, "Şube seç")
         from evvel_yeni_tanim_api import tanim_oku
@@ -451,6 +463,72 @@ def plan_ekle(b: PlanBody, x_evvel_oturum: Optional[str] = Header(default=None))
         vid = _yaz(cur, pid=b.personel_id, gun=gun, tur="calisma", kim=kim, sube_id=str(b.sube_id),
                    bas=saat_oku(b.bas, "Başlangıç"), bit=saat_oku(b.bit, "Bitiş"), kalip_id=kalip)
         return {"ok": True, "id": vid, "mesaj": "Plana yazıldı"}
+
+
+class IzinBody(BaseModel):
+    personel_id: str
+    bas: str
+    bit: Optional[str] = None   # boş → tek gün
+
+
+@router.post("/izin")
+def izin_ekle(b: IzinBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """İzinli (tarih aralığı, tek hamlede) → Maaş'ın izin defterine (TEK gerçek). O günlerde vardiyası olan kişiye yazılmaz (önce kaldır)."""
+    from evvel_yeni_moduller import acik
+    if not acik("maas"):
+        raise HTTPException(409, "İzin Personel (Maaş) modülünde tutulur — modül kapalı")
+    from evvel_yeni_maas_api import izin_yaz
+    with db() as (conn, cur):
+        vardiya_hazirla(cur)
+        kim = merkez_aktor(cur, x_evvel_oturum)
+        bas = _tarih(b.bas, "Başlangıç")
+        bit = _tarih(b.bit, "Bitiş") if b.bit else bas
+        if (bit - bas).days > 62:
+            raise HTTPException(400, "İzin en çok 2 ay — daha uzunsa Tanımlar'dan ayrılış/pasif")
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_vardiya:" + str(b.personel_id),))
+        p = _kisi(cur, b.personel_id)
+        _calisir_mi(p, bas)
+        _calisir_mi(p, bit)
+        dolu = sorted({r["gun"] for r in _satirlar(cur, bas, bit, personel_id=b.personel_id)})
+        if dolu:
+            raise HTTPException(409, f"{p['ad']} şu günlerde planlı: {', '.join(g.strftime('%d.%m') for g in dolu)} — önce o vardiyaları kaldır")
+        izin_yaz(cur, personel_id=b.personel_id, bas=bas, bit=bit, kim=kim)
+        n = (bit - bas).days + 1
+        return {"ok": True, "mesaj": f"{p['ad']} {n} gün izinli ({bas.strftime('%d.%m')}–{bit.strftime('%d.%m')})"}
+
+
+@router.post("/izin/{kid}/kaldir")
+def izin_sil(kid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
+    from evvel_yeni_moduller import acik
+    if not acik("maas"):
+        raise HTTPException(409, "İzin Personel (Maaş) modülünde tutulur — modül kapalı")
+    from evvel_yeni_maas_api import izin_kaldir
+    with db() as (conn, cur):
+        kim = merkez_aktor(cur, x_evvel_oturum)
+        izin_kaldir(cur, kid.removeprefix("izin:"), kim)
+        return {"ok": True, "mesaj": "İzin kaldırıldı"}
+
+
+class TemizleBody(BaseModel):
+    pazartesi: str
+    sube_id: str
+
+
+@router.post("/taslak-temizle")
+def taslak_temizle(b: TemizleBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Yanlış kopyalanan haftayı geri al: YAYINLANMAMIŞ haftanın bugünden sonraki satırları iptal (silinmez, iz). Yayınlanmış hafta
+    temizlenmez (personel görmüş) — tek tek kaldırılır."""
+    with db() as (conn, cur):
+        vardiya_hazirla(cur)
+        kim = merkez_aktor(cur, x_evvel_oturum)
+        pzt = _pazartesi(_tarih(b.pazartesi))
+        if hafta_yayinda(cur, b.sube_id, pzt):
+            raise HTTPException(409, "Bu hafta yayınlanmış — personel gördü; satırları tek tek kaldır")
+        cur.execute("""UPDATE ey_vardiya_plan SET iptal=TRUE, iptal_neden='taslak temizlendi', iptal_kim=%s, iptal_zaman=NOW()
+                        WHERE NOT iptal AND tur='calisma' AND sube_id=%s AND gun BETWEEN %s AND %s AND gun > %s RETURNING id""",
+                    (kim, str(b.sube_id), pzt, pzt + timedelta(days=6), is_gunu()))
+        n = len(cur.fetchall() or [])
+        return {"ok": True, "mesaj": f"{n} taslak satır temizlendi" if n else "Temizlenecek ileri gün taslağı yok"}
 
 
 class DegistirBody(BaseModel):

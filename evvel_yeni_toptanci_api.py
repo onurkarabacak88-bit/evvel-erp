@@ -74,8 +74,7 @@ def toptanci_hazirla(cur) -> None:
 
 
 def _kolon_var(cur, tablo: str, kolon: str) -> bool:
-    cur.execute("SELECT 1 FROM information_schema.columns WHERE table_name=%s AND column_name=%s", (tablo, kolon))
-    return cur.fetchone() is not None
+    return __import__("evvel_yeni_cekirdek").kolon_var(cur, tablo, kolon)   # TEK kural çekirdekte
 
 
 def _var(cur, ad: str) -> bool:
