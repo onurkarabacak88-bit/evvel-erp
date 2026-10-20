@@ -421,21 +421,27 @@ def _sayim_satirlari(cur, sayim: List[SayimSatir]) -> list:
     return satir
 
 
-def _acilis_tam(cur, b: "AcilisBody") -> None:
-    """Eski sihirbaz: her alan dolu (boş → 'X adedini girin'), 0 yazılabilir. Liste = katalogda panelde sayılan ürünler (S5)."""
+def _sayim_tam(cur, sayim, pasta_toplam) -> None:
+    """Açılış ve kapanış ORTAK sayım zorunluluğu (Dalga 4, F#19 — iki kopyaydı): tezgahta sayılan HER ürün dolu (0 yazılabilir),
+    aynı ürün iki kez yok, pasta toplamı dolu."""
     from evvel_yeni_urun_api import katalog
     gerek = {str(x["id"]): x["ad"] for k in katalog(cur) for x in k["urunler"] if tezgahta_sayilir(x)}
     gelen = {}
-    for x in b.sayim:
+    for x in sayim:
         if x.urun_id in gelen:
             raise HTTPException(400, "Aynı ürün iki kez sayılmış — formu yenile")
         gelen[x.urun_id] = x.sayilan
     for uid, ad in gerek.items():
         if gelen.get(uid) is None:
             raise HTTPException(400, f"{ad} adedini girin")
-    if b.pasta_toplam is None:
+    if pasta_toplam is None:
         raise HTTPException(400, "Pasta adedini girin")
-    _tam(b.pasta_toplam, "Pasta")
+    _tam(pasta_toplam, "Pasta")
+
+
+def _acilis_tam(cur, b: "AcilisBody") -> None:
+    """Eski sihirbaz: her alan dolu (boş → 'X adedini girin'), 0 yazılabilir. Liste = katalogda panelde sayılan ürünler (S5)."""
+    _sayim_tam(cur, b.sayim, b.pasta_toplam)
     _tl(b.kasa_sayim, "Kasadaki para")
     _sayim_satirlari(cur, b.sayim)
     if not b.istemci_gunu:
@@ -521,7 +527,6 @@ def _kapanis_tam(cur, b: "KapanisBody", merkez: bool = False) -> None:
     """Eski kapanış korumaları (sube_operasyon.py KAPANIS 1267-1333, sube_panel.html kapNext1 — Fable F2, fonksiyon kaybı yok):
     en az bir ciro · online = nakit+POS → RED (çift sayım) · çekmecedeki TÜM para (kör) ZORUNLU · bırakılan ZORUNLU ·
     tezgah sayımı her kalem (0 yazılabilir) + pasta ZORUNLU (açılışla aynı liste)."""
-    from evvel_yeni_urun_api import katalog
     n, p_, o = _tl(b.nakit, "Nakit"), _tl(b.pos, "POS"), _tl(b.online, "Online")
     if n + p_ + o <= 0:
         raise HTTPException(400, "En az bir ciro tutarı girin")
@@ -535,18 +540,7 @@ def _kapanis_tam(cur, b: "KapanisBody", merkez: bool = False) -> None:
     if b.birakilan is None:
         raise HTTPException(400, "Kasada bırakılan (devir) tutarı zorunlu")
     _tl(b.birakilan, "Bırakılan")
-    gerek = {str(x["id"]): x["ad"] for k in katalog(cur) for x in k["urunler"] if tezgahta_sayilir(x)}
-    gelen = {}
-    for x in b.sayim:
-        if x.urun_id in gelen:
-            raise HTTPException(400, "Aynı ürün iki kez sayılmış — formu yenile")
-        gelen[x.urun_id] = x.sayilan
-    for uid, ad in gerek.items():
-        if gelen.get(uid) is None:
-            raise HTTPException(400, f"{ad} adedini girin")
-    if b.pasta_toplam is None:
-        raise HTTPException(400, "Pasta adedini girin")
-    _tam(b.pasta_toplam, "Pasta")
+    _sayim_tam(cur, b.sayim, b.pasta_toplam)
 
 
 def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tuple:
@@ -658,18 +652,17 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
             log.warning("geç kapanış %s %s: ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)", sube_id, gun)
             __import__("evvel_yeni_olay").olay_veri_ekle(cur, oid, {"sayim_uygulanmadi": True})
         uyarilar, merkez_uyarilari = [], []
-        y0 = _yoklama()
-        if y0 is not None and not c["kuru"] and not c.get("merkez") and oid is not None:
-            y0.personel_kilidi(cur, p["id"])   # Codex P2-5: devir telefonuyla aynı sıra (kişi → devir) — kilitlenme yok
+        y = _yoklama()
+        kisi_kilidi = y is not None and not c["kuru"] and not c.get("merkez") and oid is not None
+        if kisi_kilidi:   # TEK kez (F#20 — aynı kilit iki kez alınıyordu): Codex P2-5 devir telefonuyla aynı sıra (kişi → devir)
+            y.personel_kilidi(cur, p["id"])   # + telefon çıkış/giriş ile yarışmasın
         if oid is not None:   # yeni yazım: uyarılar + sorumlu + içeride kalanlar (değişken bilgi → tekrar korumasının DIŞINDA, sonradan eklenir)
             uyarilar, ek = _kapanis_uyarilari(cur, sube_id, c["gun"], p, b)
             if dusen:
                 uyarilar.append("Geç kapanış: sayımdaki " + ", ".join(dusen) + " artık sayım listesinde değil — uygulanmadı")
             merkez_uyarilari = ek["kasa_uyarilari"] + uyarilar   # merkez HEPSİNİ görür; panel kasa uyarısını GÖRMEZ
             __import__("evvel_yeni_olay").olay_veri_ekle(cur, oid, {"uyarilar": uyarilar, **ek})
-        y = _yoklama()
-        if y is not None and not c["kuru"] and not c.get("merkez") and oid is not None:
-            y.personel_kilidi(cur, p["id"])   # Codex: telefon çıkış/giriş ile yarışmasın
+        if kisi_kilidi:
             if _qr_gerekli(cur) and not y.acik_mi(cur, sube_id, p["id"]):
                 raise HTTPException(400, "Önce telefonundan QR ile giriş yap")   # yeni kapanış; işlem geri alınır
             y.cikis_yaz(cur, p["id"], "kapanis", kim=kim, sube_id=str(sube_id))   # tasarım: kapanış = kapanışçının çıkışı
