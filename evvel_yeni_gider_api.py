@@ -20,7 +20,6 @@ Sahip kararları:
 Eski tablolardan YALNIZ OKUR. Kendi küçük tablosu: ey_gider_sinif (elle sınıflandırma).
 """
 
-import json
 import logging
 from datetime import date
 from decimal import Decimal
@@ -509,11 +508,16 @@ def siniflandir(body: SinifBody, x_evvel_oturum: Optional[str] = Header(default=
         _sinif_tablosu(cur)
         _kilit(cur)
         kim = _aktor(cur, x_evvel_oturum)
-        # Silinmez — son karar üzerine yazılır, kim/ne zaman izi kalır
-        cur.execute("""INSERT INTO ey_gider_sinif (kaynak_ref, tur, kimin, degistiren) VALUES (%s,%s,%s,%s)
-                       ON CONFLICT (kaynak_ref) DO UPDATE SET tur=EXCLUDED.tur, kimin=EXCLUDED.kimin, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
-                    (body.kaynak_ref, body.tur, (body.kimin or ("Patron" if body.tur == "cekis" else None)), kim))
+        sinif_yaz(cur, body.kaynak_ref, body.tur, body.kimin or ("Patron" if body.tur == "cekis" else None), kim)
     return {"ok": True}
+
+
+def sinif_yaz(cur, kaynak_ref: str, tur: str, kimin: Optional[str], kim: Optional[str]) -> None:
+    """PUBLIC — dükkân giderini patron çekişi / gider olarak sınıfla (Ödeme formu da BUNU çağırır). Silinmez, son karar üstüne yazılır."""
+    _sinif_tablosu(cur)
+    cur.execute("""INSERT INTO ey_gider_sinif (kaynak_ref, tur, kimin, degistiren) VALUES (%s,%s,%s,%s)
+                   ON CONFLICT (kaynak_ref) DO UPDATE SET tur=EXCLUDED.tur, kimin=EXCLUDED.kimin, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
+                (kaynak_ref, tur, kimin, kim))
 
 
 # ── AÇIK KAPILAR (sök-tak): başka modüller iç '_' fonksiyonu değil BU adları kullanır — içerik aynı, kapı tek ──

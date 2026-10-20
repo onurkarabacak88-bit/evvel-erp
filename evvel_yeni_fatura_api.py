@@ -201,13 +201,11 @@ def oku(body: OkuBody):
         bas = kasa.donem_baslangici(cur)
         # C-T1-29: iptal edilen satır "yeni" görünüp aynı kimlikle yazılamıyordu (ON CONFLICT sessizce). Etkin kayıt → girilmiş;
         # yalnız iptal edilmiş sürümler varsa yeni sürüm kimliği (ekstre:…:rN) ile yeniden yazılır.
-        cur.execute("""SELECT kaynak_ref, id IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal' AND veri ? 'hedef_id') AS iptal
-                         FROM para_izi_hareket WHERE kaynak_ref LIKE 'odeme_formu:ekstre:%%'""")
         yazilmis, iptalli = set(), {}
-        for r in cur.fetchall() or []:
-            ref = dict(r)["kaynak_ref"][len("odeme_formu:"):]
+        for r in kasa.kaynak_refleri(cur, "odeme_formu:ekstre:"):   # Kasa'nın kapısı (C-T2-08)
+            ref = r["kaynak_ref"][len("odeme_formu:"):]
             kok = ref.split(":r", 1)[0]
-            if dict(r)["iptal"]:
+            if r["iptal"]:
                 iptalli[kok] = iptalli.get(kok, 0) + 1
             else:
                 yazilmis.add(kok)

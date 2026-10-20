@@ -19,7 +19,6 @@ TEK FORM, TEK KAYIT, OTOMATİK ETKİ:
          ve kart borcu ödemesi gider DEĞİL (patron katmanı / çift sayım yasağı).
 """
 
-import json
 import logging
 from datetime import date
 from typing import List, Optional
@@ -29,8 +28,10 @@ from pydantic import BaseModel
 from decimal import Decimal
 
 from database import db
-from evvel_yeni_kasa_api import (_hareket_dto, _bakiye, _baslangic, _eksi_denetle, _etki, _hazirla, _kilit_denetle, _olaylar,
-                                 _sahte, _sayim_kilidi, _yaz, _yukle)
+# Kasa'nın YALNIZ PUBLIC kapıları (tekrar denetimi C-T2-01: önce 11 özel fonksiyon ithal ediliyordu)
+from evvel_yeni_kasa_api import (bakiyeler as _bakiyeler, hareket_fisi as _hareket_dto, hareket_kaydet, hareket_veri_degistir,
+                                 hareket_veri_ekle,
+                                 kasa_baslangic as _baslangic, kasa_hazirla as _hazirla, kasa_kayitlari as _yukle, olay_listesi as _olaylar)
 from evvel_yeni_cekirdek import (aktor as _aktor, bugun as _bugun, kilit as _kilit, kurus as _kurus, tl as _tl,
                                  tl_sayi as _tl_sayi)
 
@@ -71,7 +72,7 @@ def listeler():
     with db() as (conn, cur):
         cep_list, C, kayit, _ = _yukle(cur)
         L = _listeler(cur)
-    B = _bakiye(_olaylar(kayit), C)["b"]
+    B = _bakiyeler(kayit, C)
     subeler = [{"id": c["sube_id"], "ad": c["kisa"]} for c in cep_list if c["tur"] == "sube"]
     sube_ad = {s["id"]: s["ad"] for s in subeler}
     for p in L["personel"]:
@@ -279,13 +280,9 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
                 if toplam > sinir + 100:
                     raise HTTPException(409, f"KALANI AŞIYOR: {ms['ad']} · {ait_ay} için kalan {body.personel_kalemi.lower()} "
                                              f"{_tl(sinir)} — girilen {_tl(toplam)}. Doğruysa yine de kaydedebilirsin.")
-        yeni = _sahte("odeme", gun, tutar=toplam, veri=veri)
-        yeni_ol = _olaylar([yeni])
-        etkiler = [(e["cep"], o["gun"]) for o in yeni_ol for e in _etki(o, C)]
-        _kilit_denetle(etkiler, _sayim_kilidi(_olaylar(kayit)), C)
-        _eksi_denetle(_olaylar(kayit + [yeni]), {x["cep"] for x in nakit_parca}, gun, C)
         ref = f"odeme_formu:{body.istek_id[:64]}" if body.istek_id else None
-        hid = _yaz(cur, "odeme", gun, kim, tutar=toplam, veri=veri, kaynak_ref=ref)
+        hid = hareket_kaydet(cur, tur="odeme", gun=gun, tutar=toplam, veri=veri, kim=kim, kaynak_ref=ref,
+                             para_cepleri={x["cep"] for x in nakit_parca}, kayit=kayit, C=C)   # Kasa'nın korumalı yolu
         if ref and not hid:
             return {"ok": True, "id": None, "tekrar": True, "mesaj": "Bu ödeme zaten kaydedilmişti (ikinci kez yazılmadı)"}
     return {"ok": True, "id": hid, "gider": gider_mi, "kimin": veri["kimin"], "toplam": _tl_sayi(toplam),
@@ -347,7 +344,7 @@ def odeme_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = Hea
             return {"ok": True, "mesaj": "Değişiklik yok"}
         degisen = {k: [eski[k], yeni[k]] for k in eski if eski[k] != yeni[k]}
         v["duzeltmeler"] = list(v.get("duzeltmeler") or []) + [{"kim": kim, "zaman": _bugun().isoformat(), "degisen": degisen}]
-        cur.execute("UPDATE para_izi_hareket SET veri = %s::jsonb WHERE id = %s", (json.dumps(v, ensure_ascii=False), hid))
+        hareket_veri_degistir(cur, hid, v)   # Kasa'nın kapısı (C-T2-12)
     return {"ok": True, "mesaj": "Düzeltildi · " + " · ".join(f"{k}: {a or '—'} → {b or '—'}" for k, (a, b) in degisen.items())}
 
 
@@ -486,15 +483,10 @@ def patron_ata(body: PatronAtaBody, x_evvel_oturum: Optional[str] = Header(defau
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
         if body.kaynak == "cekis":
-            from evvel_yeni_gider_api import sinif_tablosu as _sinif_tablosu
-            _sinif_tablosu(cur)
-            cur.execute("""INSERT INTO ey_gider_sinif (kaynak_ref, tur, kimin, degistiren) VALUES (%s,%s,%s,%s)
-                           ON CONFLICT (kaynak_ref) DO UPDATE SET tur=EXCLUDED.tur, kimin=EXCLUDED.kimin, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
-                        (body.id, "gider" if body.geri_al else "cekis", None if body.geri_al else body.patron, kim))
+            from evvel_yeni_gider_api import sinif_yaz   # sınıf tablosu Gider'in — kendi kapısından
+            sinif_yaz(cur, body.id, "gider" if body.geri_al else "cekis", None if body.geri_al else body.patron, kim)
         elif body.kaynak == "odeme":
-            cur.execute("""UPDATE para_izi_hareket SET veri = COALESCE(veri,'{}'::jsonb) || jsonb_build_object('patron', %s::text)
-                            WHERE id=%s AND tur='odeme' RETURNING id""", (body.patron, body.id))
-            if not cur.fetchone():
+            if not hareket_veri_ekle(cur, body.id, {"patron": body.patron}, tur="odeme"):   # Kasa'nın kapısı (C-T2-12)
                 raise HTTPException(404, "Kayıt bulunamadı")
         else:
             raise HTTPException(400, "kaynak: odeme | cekis")

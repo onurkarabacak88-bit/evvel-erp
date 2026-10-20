@@ -2311,3 +2311,48 @@ bekleyen_is_kaydet("kapanis", lambda cur, b: _kapanis_deneme_isleri(cur, b["C"])
 kasa_kayitlari = _yukle
 pos_oranlari = _oranlar
 kasa_baslangic = _baslangic
+
+
+# ─────────── PUBLIC kapılar (tekrar denetimi C-T2-01/12: Ödeme Kasa'nın 11 özel fonksiyonunu ithal edip tabloya doğrudan yazıyordu) ───────────
+olay_listesi = _olaylar          # kayıt → olay (bakiye etkisi) listesi
+hareket_fisi = _hareket_dto      # ekranda tek hareket fişi
+
+
+def bakiyeler(kayit: list, C: dict) -> Dict[str, int]:
+    """PUBLIC: {cep_id: kuruş} — kasa_kayitlari() çıktısından anlık cep bakiyeleri (Ödeme formunun kaynak seçimi)."""
+    return _bakiye(_olaylar(kayit), C)["b"]
+
+
+def hareket_kaydet(cur, *, tur: str, gun: str, tutar: int, veri: dict, kim: str, kaynak_ref: Optional[str],
+                   para_cepleri: set, kayit: Optional[list] = None, C: Optional[dict] = None) -> Optional[str]:
+    """PUBLIC — Kasa'ya hareket yazmanın KORUMALI yolu (Ödeme formu): sayım kilidi + eksiye düşme denetimi + kaynak_ref tekrarı.
+    Çağıran Kasa kilidini (çekirdek kilit) almış olmalı. Dönüş: hareket id ya da None (aynı kaynak_ref ile zaten yazılmış)."""
+    if kayit is None or C is None:
+        _, C, kayit, _ = _yukle(cur)
+    yeni = _sahte(tur, gun, tutar=tutar, veri=veri)
+    etkiler = [(e["cep"], o["gun"]) for o in _olaylar([yeni]) for e in _etki(o, C)]
+    _kilit_denetle(etkiler, _sayim_kilidi(_olaylar(kayit)), C)
+    _eksi_denetle(_olaylar(kayit + [yeni]), set(para_cepleri), gun, C)
+    return _yaz(cur, tur, gun, kim, tutar=tutar, veri=veri, kaynak_ref=kaynak_ref)
+
+
+def hareket_veri_degistir(cur, hid: str, veri: dict, tur: Optional[str] = None) -> bool:
+    """PUBLIC — hareketin VERİ alanını değiştir (para oynamaz: kimin, ay, açıklama, patron…). İz çağıranın veri['duzeltmeler']'inde."""
+    q = "UPDATE para_izi_hareket SET veri = %s::jsonb WHERE id = %s" + (" AND tur = %s" if tur else "") + " RETURNING id"
+    cur.execute(q, (json.dumps(veri, ensure_ascii=False), hid) + ((tur,) if tur else ()))
+    return cur.fetchone() is not None
+
+
+def hareket_veri_ekle(cur, hid: str, ek: dict, tur: Optional[str] = None) -> bool:
+    """PUBLIC — hareketin verisine alan EKLE / üzerine yaz (veri || ek). Para oynamaz."""
+    q = "UPDATE para_izi_hareket SET veri = COALESCE(veri,'{}'::jsonb) || %s::jsonb WHERE id = %s" + (" AND tur = %s" if tur else "") + " RETURNING id"
+    cur.execute(q, (json.dumps(ek, ensure_ascii=False), hid) + ((tur,) if tur else ()))
+    return cur.fetchone() is not None
+
+
+def kaynak_refleri(cur, onek: str) -> list:
+    """PUBLIC — 'onek' ile başlayan kaynak_ref'li hareketler: [{kaynak_ref, iptal}] (iptal = bir 'iptal' hareketi onu hedefliyor).
+    Fatura (kart ekstresi) 'bu satır yazıldı mı / iptal mi' sorusunu tabloya SQL atmadan buradan sorar (C-T2-08)."""
+    cur.execute("""SELECT kaynak_ref, id IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal' AND veri ? 'hedef_id') AS iptal
+                     FROM para_izi_hareket WHERE kaynak_ref LIKE %s""", (onek.replace("%", r"\%").replace("_", r"\_") + "%",))
+    return [dict(r) for r in cur.fetchall() or []]
