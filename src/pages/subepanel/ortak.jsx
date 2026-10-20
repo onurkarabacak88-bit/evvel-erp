@@ -55,6 +55,21 @@ export function Modal({ baslik, kapat, children, genis, genislik }) {
   );
 }
 
+// ⚠️ Panel gönderim hatası — TEK kural (tekrar denetimi F#54: 409 "zaten" bazı ekranlarda BAŞARI sayılıp form siliniyordu).
+// Sunucu AYNI içerikli tekrarı 200 + tekrar ile döner; 409 "zaten" yalnız aynı istek FARKLI içerikle gelince → başarı DEĞİL:
+// form durur, yeni istek kimliği alınır, personel ne yapacağını görür (sessiz kalem kaybı yok).
+export const panelHata = (e, { setHata, pinSifirla, yeniIstekVer }) => {
+  if (e instanceof TypeError) { setHata('İnternet yok — bağlantı gelince yeniden gönder (girdiklerin duruyor)'); return 'internet'; }
+  if (e?.status === 403 || e?.status === 429) { pinSifirla?.(); setHata(e?.message || 'PIN hatalı'); return 'pin'; }
+  if (e?.status === 409 && /zaten/i.test(e?.message || '')) {
+    yeniIstekVer?.();
+    setHata('⚠ Bu gönderim daha önce FARKLI içerikle kaydedilmiş. Ana sayfadaki "Bugün kaydedilenler"e bak; eksik kalan varsa formu düzeltip yeniden gönder (yeni kayıt olarak gider).');
+    return 'farkli';
+  }
+  setHata(e?.message || 'Kaydedilemedi');
+  return 'hata';
+};
+
 // 🔑 KİM + PIN (sahip R1b: QR'la içeride olan + kendi 4 haneli PIN'i) — TEK parça; sipariş / gönderilecek / depodan gelen bunu kullanır
 // (Tedarikçi teslim + Ürün aç'taki eski kopyalar sonraki temizlikte buna geçer). PIN yalnız bellekte.
 export function KisiPin({ adaylar, kisi, setKisi, pin, setPin, hata, devam, devamYazi = 'Devam → özet', soru = 'Kim?' }) {

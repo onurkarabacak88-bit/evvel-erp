@@ -4,7 +4,7 @@
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, Modal, yeniIstek } from './ortak';
+import { C, Modal, panelHata, yeniIstek } from './ortak';
 
 const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 
@@ -90,14 +90,8 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
       temizle();
       bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : `✅ Ürün Aç tamamlandı — ${kalem} kalem / ${toplam} adet`, !!r.kuru);
     } catch (e) {
-      if (e instanceof TypeError) setHata('İnternet yok — bağlantı gelince yeniden gönder (seçimler duruyor)');
-      else {
-        setHata(e?.message || 'Kaydedilemedi');
-        if (e?.status === 403 || e?.status === 429) { setPin(''); setOnay(1); }   // yanlış / kilitli PIN
-        if (e?.status === 409 && /zaten/i.test(e?.message || '')) {   // Fable: yanıtı kaybolmuş ilk gönderim yazılmış → başarılı say (yeni kimlik = çift kayıt olurdu)
-          setOnay(0); setPin(''); setKisi(''); temizle(); bitti('Bu kayıt zaten alınmıştı ✓', false);
-        }
-      }
+      const t = panelHata(e, { setHata, pinSifirla: () => { setPin(''); setOnay(1); }, yeniIstekVer: () => setIstek(yeniIstek()) });
+      if (t === 'farkli') { setOnay(0); setPin(''); }
     }
     setMesgul(false);
   };

@@ -5,7 +5,7 @@
 // ya da "🚚 Yola çıkar" (kısmi → kalan merkeze döner). Sunucu: evvel_yeni_panel_api (/siparis, /siparisler, /gonderilecek) → Sipariş modülü.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, KisiPin, Modal, yeniIstek } from './ortak';
+import { C, KisiPin, Modal, panelHata, yeniIstek } from './ortak';
 
 const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 const DURUM = {
@@ -71,8 +71,8 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
       setOnay(0); setPin(''); setKisi(''); temizle(); yukle();
       bitti(r.mesaj || 'Sipariş gönderildi', false);
     } catch (e) {
-      if (e instanceof TypeError) setHata('İnternet yok — bağlantı gelince yeniden gönder (seçtiklerin duruyor)');
-      else { setHata(e?.message || 'Gönderilemedi'); if (e?.status === 403 || e?.status === 429) { setPin(''); setOnay(1); } }
+      const t = panelHata(e, { setHata, pinSifirla: () => { setPin(''); setOnay(1); }, yeniIstekVer: () => setIstek(yeniIstek()) });
+      if (t === 'farkli') { setOnay(0); setPin(''); }
     }
     setMesgul(false);
   };

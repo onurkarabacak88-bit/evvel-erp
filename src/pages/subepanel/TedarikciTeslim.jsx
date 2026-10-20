@@ -5,7 +5,7 @@
 // Sök-tak: Toptancılar modülü kapalıysa ekran "kapalı" der. Sipariş modu / eksik bildirimi sipariş basamağıyla (ertelendi). Bip YOK (sahip).
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, Modal, TabletQR, tl, tutar, tutarNum, yeniIstek } from './ortak';
+import { C, Modal, TabletQR, panelHata, tl, tutar, tutarNum, yeniIstek } from './ortak';
 
 const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 
@@ -77,12 +77,8 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
       if (!r.kuru && r.teslim_id) setFoto({ teslim_id: r.teslim_id, toptanci: r.toptanci, fatura });   // E1: belgeyi telefonla çek
       bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'} · 📷 fatura fotoğrafı 1 Kasım'dan sonra` : (r.mesaj || 'Teslim kaydedildi'), !!r.kuru);
     } catch (e) {
-      if (e instanceof TypeError) setHata('İnternet yok — bağlantı gelince yeniden gönder (girdiklerin duruyor)');
-      else {
-        setHata(e?.message || 'Kaydedilemedi');
-        if (e?.status === 403 || e?.status === 429) { setPin(''); setOnay(1); }
-        if (e?.status === 409 && /zaten/i.test(e?.message || '')) { setOnay(0); setPin(''); setKisi(''); temizle(); bitti('Bu teslim zaten alınmıştı ✓', false); }
-      }
+      const t = panelHata(e, { setHata, pinSifirla: () => { setPin(''); setOnay(1); }, yeniIstekVer: () => setIstek(yeniIstek()) });
+      if (t === 'farkli') { setOnay(0); setPin(''); }
     }
     setMesgul(false);
   };
