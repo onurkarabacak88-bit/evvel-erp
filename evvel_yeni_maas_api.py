@@ -93,6 +93,9 @@ def _hazirla(cur):
 FM_GUNLUK_ESIK = 9.5   # günlük fazla mesai eşiği (eski vardiya_takip'in varsayılanı — fm_gunluk_esik)
 
 
+PLAN_YOK = "__plan_yok__"   # _yeni_oneri sözlüğünde kişi değil BAYRAK anahtarı
+
+
 def _yeni_oneri(cur, ay: str) -> dict:
     """YENİ DÖNEM öneri (tekrar denetimi C-T3-13: eski vardiya_takip eski QR'ı okuyordu). Sahip (2026-10-20): saat ÖNCE vardiya
     PLANINDAN; o gün plan yoksa QR giriş–çıkışından; çıkışı okutulmamış / gece sistemin kapattığı gün GÜVENİLMEZ → sayılmaz, uyarı.
@@ -103,13 +106,17 @@ def _yeni_oneri(cur, ay: str) -> dict:
     plan, plan_yok = {}, False
     try:
         with savepoint(cur, "sp_ey_maas_plan"):
+            # Codex P1: (1) yalnız BUGÜNE KADARKİ plan (gelecek vardiya hak edişe / avans tavanına girmesin);
+            # (2) gece vardiyası (18:00–02:00): 'time + 24h' yine saat değeri → −16 saat çıkıyordu → fark ≤ 0 ise +24 saat.
+            from evvel_yeni_cekirdek import is_gunu as _ig
             cur.execute("""SELECT a.personel_id::text AS pid, a.tarih,
-                                  EXTRACT(EPOCH FROM (CASE WHEN a.bitis_saat <= a.baslangic_saat
-                                        THEN (a.bitis_saat::time + INTERVAL '24h') - a.baslangic_saat::time
-                                        ELSE a.bitis_saat::time - a.baslangic_saat::time END))/3600.0 AS saat
-                             FROM vardiya_atama a WHERE a.tarih BETWEEN %s AND %s AND COALESCE(a.durum,'') <> 'iptal'""", (bas, son))
+                                  EXTRACT(EPOCH FROM (a.bitis_saat::time - a.baslangic_saat::time))/3600.0 AS fark
+                             FROM vardiya_atama a WHERE a.tarih BETWEEN %s AND %s AND COALESCE(a.durum,'') <> 'iptal'""",
+                        (bas, min(son, _ig())))
             for x in cur.fetchall() or []:
                 x = dict(x)
+                f_ = float(x["fark"] or 0)
+                x["saat"] = f_ + 24 if f_ <= 0 else f_
                 k = (x["pid"], x["tarih"])
                 plan[k] = plan.get(k, 0.0) + float(x["saat"] or 0)
     except Exception as e:  # noqa: BLE001
@@ -142,6 +149,7 @@ def _yeni_oneri(cur, ay: str) -> dict:
         o["calisma_saat"] = round(o["calisma_saat"], 2)
         o["mesai_saat"] = round(o["mesai_saat"], 2)
         o["plan_yok"] = plan_yok
+    out[PLAN_YOK] = plan_yok   # Codex P1: hiç QR/plan satırı olmayan kişiye de uyarı ulaşsın (kişi kaydı yoksa bayrak buradan)
     return out
 
 
@@ -313,7 +321,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         gun, acik = _gecen_gun(p.get("giris"), p.get("cikis"), ay_bas, ay_son, bugun)
         o = oneri.get(pid) or {}
         uyari = []
-        if o.get("plan_yok") and e.get("calisma_saat") is None and (p.get("calisma_turu") or "tam") == "yari":
+        if (o.get("plan_yok") or oneri.get(PLAN_YOK)) and e.get("calisma_saat") is None and (p.get("calisma_turu") or "tam") == "yari":
             uyari.append("Vardiya planı okunamadı — saat yalnız QR giriş–çıkışından, elle kontrol et")
         if o.get("guvenilmez_gun") and e.get("calisma_saat") is None:
             uyari.append(f"{o['guvenilmez_gun']} günde plan yok ve QR çıkışı okutulmamış — o günlerin saati sayılmadı, elle kontrol et")
