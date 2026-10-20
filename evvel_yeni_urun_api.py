@@ -152,8 +152,8 @@ def urun_haritasi(cur):
 
 
 def urun_idleri(cur) -> List[str]:
-    """PUBLIC — yeni katalogdaki BÜTÜN ürün kimlikleri (pasifler dahil). Depo/Toptancı göçleri ey_urun'a JOIN atıyordu (Codex P2)."""
-    _hazirla()
+    """PUBLIC — yeni katalogdaki BÜTÜN ürün kimlikleri (pasifler dahil). Depo/Toptancı göçleri ey_urun'a JOIN atıyordu (Codex P2).
+    Hazırlık ÇAĞIRMAZ (Fable D4-3: ayrı bağlantıda DDL olmasın) — çağıran ey_urun'un var olduğunu tablo_var ile bilir."""
     cur.execute("SELECT id::text AS id FROM ey_urun")
     return [dict(r)["id"] for r in cur.fetchall() or []]
 

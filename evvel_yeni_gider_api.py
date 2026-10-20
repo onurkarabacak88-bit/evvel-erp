@@ -52,11 +52,11 @@ def _sinif_tablosu(cur):
         _SINIF_HAZIR = True
         return
     with savepoint(cur, "sp_ey_gider_sinif"):   # Fable: SET LOCAL çağıranın (Ödeme) işlemine sızıyordu → savepoint + DEFAULT
-        cur.execute("SET LOCAL lock_timeout = '3s'")
+        _onceki_lt = __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, "3s")
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_gider_sinif (
                          kaynak_ref TEXT PRIMARY KEY, tur TEXT NOT NULL, kimin TEXT,
                          degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
-        cur.execute("SET LOCAL lock_timeout = DEFAULT")
+        __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, _onceki_lt)   # çağıranın değeri geri (Fable D4-4)
 
 
 def _depo_id(cur) -> Optional[str]:

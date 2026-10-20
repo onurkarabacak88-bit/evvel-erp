@@ -477,7 +477,7 @@ def kapanis_kanallari(h: dict) -> tuple:
     'kart'ın tamamı POS sayılır (ayrımsız=True, etiketli). Gelir, Satış (iki kopya), Kasa POS bekleyen ayrı yazıyordu."""
     v = h.get("veri") or {}
     nakit = int(h.get("tutar") or 0)
-    if "pos" in v:
+    if "pos" in v or "online" in v:   # Fable D4-8: yalnız 'online' yazılmış kayıt da ayrımlıdır (eski _pos_durumu böyle okuyordu)
         return nakit, int(v.get("pos") or 0), int(v.get("online") or 0), False
     return nakit, int(v.get("kart") or 0), 0, True
 

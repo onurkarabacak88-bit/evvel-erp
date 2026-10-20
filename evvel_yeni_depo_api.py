@@ -812,13 +812,13 @@ def _sevk_hazirla(cur) -> None:
     if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_sevk_parti"):
         try:
             with savepoint(cur, "sp_ey_sevk_hazirla"):
-                cur.execute("SET LOCAL lock_timeout = '3s'")
+                _onceki_lt = __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, "3s")
                 cur.execute("""CREATE TABLE IF NOT EXISTS ey_sevk_parti (
                     id TEXT PRIMARY KEY, kaynak TEXT NOT NULL, hedef TEXT NOT NULL, kim TEXT, istek_id TEXT UNIQUE, notu TEXT,
                     is_gunu DATE NOT NULL, kalemler JSONB NOT NULL DEFAULT '[]'::jsonb, iptal BOOLEAN NOT NULL DEFAULT FALSE,
                     iptal_kim TEXT, iptal_zaman TIMESTAMPTZ, iptal_sebep TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
                 cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_sevk_parti_hedef ON ey_sevk_parti (hedef, iptal)")
-                cur.execute("SET LOCAL lock_timeout = DEFAULT")
+                __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, _onceki_lt)   # çağıranın değeri geri (Fable D4-4)
         except Exception:  # noqa: BLE001
             log.warning("sevk partisi tablosu kurulamadı", exc_info=True)
             raise HTTPException(503, "Depo hazırlanıyor — birkaç saniye sonra tekrar dene")

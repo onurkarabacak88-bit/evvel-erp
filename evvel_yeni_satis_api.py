@@ -79,7 +79,10 @@ def _gunluk(ay: str) -> dict:
     with db() as (conn, cur):
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
     from evvel_yeni_kasa_api import kapanis_kanallari as _kapanis_kanallari, pos_sifir_supheli
-    supheli = pos_sifir_supheli(kayit)
+    from evvel_yeni_kasa_api import kasa_baslangic as _kb
+    with db() as (conn, cur):
+        _bas = _kb(cur).isoformat()
+    supheli = pos_sifir_supheli([h for h in kayit if h["is_gunu"] >= _bas])   # Kasa ile AYNI pencere (dönem) — Fable D4-9
     for h in kayit:
         if h["tur"] != "kapanis":
             continue

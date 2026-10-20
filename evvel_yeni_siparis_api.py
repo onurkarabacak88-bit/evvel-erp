@@ -36,7 +36,7 @@ def siparis_hazirla(cur) -> None:
         return
     try:
         with savepoint(cur, "sp_ey_siparis_hazirla"):
-            cur.execute("SET LOCAL lock_timeout = '3s'")
+            _onceki_lt = __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, "3s")
             cur.execute("""CREATE TABLE IF NOT EXISTS ey_siparis (
                 id TEXT PRIMARY KEY, sube_id TEXT NOT NULL, kim TEXT, personel_id TEXT, istek_id TEXT UNIQUE, notu TEXT,
                 is_gunu DATE NOT NULL, kalemler JSONB NOT NULL DEFAULT '[]'::jsonb, surum INT NOT NULL DEFAULT 1,
@@ -49,7 +49,7 @@ def siparis_hazirla(cur) -> None:
                 kim TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_siparis_yon_s ON ey_siparis_yon (siparis_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_siparis_yon_k ON ey_siparis_yon (kaynak, iptal)")
-            cur.execute("SET LOCAL lock_timeout = DEFAULT")
+            __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, _onceki_lt)   # çağıranın değeri geri (Fable D4-4)
     except Exception:  # noqa: BLE001
         log.warning("sipariş tabloları kurulamadı", exc_info=True)
         raise HTTPException(503, "Sipariş hazırlanıyor — birkaç saniye sonra tekrar dene")
@@ -189,7 +189,7 @@ def _teslim_durumlari(cur, yonler: List[dict], urunler: dict) -> dict:
         return {}
     T = f(cur, tid)
     grup = {}
-    for y in sorted(yonler, key=lambda y: (str(y.get("teslim_id")), str(y["id"]))):
+    for y in sorted(yonler, key=lambda y: (str(y.get("teslim_id")), str(y.get("zaman") or ""), str(y["id"]))):   # oluşturma sırası (Fable D4-7)
         if not y.get("teslim_id") or str(y["teslim_id"]) not in T:
             continue
         u = str(urunler.get((y["siparis_id"], y["kalem_i"])))
@@ -263,7 +263,7 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
             kk["_eksik"] = eksik
             kal_out.append(kk)
         tamam = tamam and any(k["durum"] != "iptal" for k in kal_out)
-        eksik_var = any(k.pop("_eksik", 0) for k in kal_out)
+        eksik_var = any([k.pop("_eksik", 0) for k in kal_out])   # LİSTE: hepsinden silinsin (any kısa devre panele sızdırıyordu — Fable D4-2)
         durum = "iptal" if r["iptal"] else ("tamamlandi" if not eksik_var and (tamam or all(k["durum"] in ("iptal", "karsilandi") for k in kal_out))
                                             else "acik")
         out.append({"id": r["id"], "sube_id": r["sube_id"], "sube": sube_ad.get(r["sube_id"], r["sube_id"]), "kim": r["kim"],
@@ -413,6 +413,22 @@ def yola_cikar(cur, *, depo_sube: str, hedef_sube: str, satirlar: List[dict], ki
     for sid in {y["siparis_id"] for y, _ in ys.values()}:
         _surum_artir(cur, sid)
     return {**sonuc, "yok": sum(1 for _, g in ys.values() if g == 0), "kismi": sum(1 for y, g in ys.values() if 0 < g < int(y["adet"]))}
+
+
+def teslim_iptal_edildi(cur, teslim_id: str) -> int:
+    """PUBLIC (Toptancı teslim iptali): o teslime bağlı yönler ÇÖZÜLÜR (teslim_id boşalır) → kalem yeniden 'bekleniyor', yeni teslime
+    bağlanabilir / yeniden yönlendirilebilir (Fable D4-1: aksi hâlde sipariş sonsuza kadar açık, kilitli kalıyordu). Dönüş: çözülen yön."""
+    if not _var(cur):
+        return 0
+    cur.execute("SELECT DISTINCT siparis_id FROM ey_siparis_yon WHERE teslim_id=%s AND NOT iptal", (str(teslim_id),))
+    sidler = sorted({dict(x)["siparis_id"] for x in cur.fetchall() or []})
+    for sid in sidler:
+        _kilit(cur, sid)
+    cur.execute("UPDATE ey_siparis_yon SET teslim_id=NULL WHERE teslim_id=%s AND NOT iptal", (str(teslim_id),))
+    n = cur.rowcount
+    for sid in sidler:
+        _surum_artir(cur, sid)
+    return n
 
 
 def teslime_bagla(cur, *, sube_id: str, teslim_id: str, toptanci_id: str, yon_idler: List[str]) -> int:

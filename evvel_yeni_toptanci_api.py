@@ -64,9 +64,9 @@ def toptanci_hazirla(cur) -> None:
         return
     try:
         with savepoint(cur, "sp_ey_toptanci_hazirla"):
-            cur.execute("SET LOCAL lock_timeout = '3s'")
+            _onceki_lt = __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, "3s")
             _toptanci_ddl(cur)
-            cur.execute("SET LOCAL lock_timeout = DEFAULT")
+            __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, _onceki_lt)   # çağıranın değeri geri (Fable D4-4)
     except Exception:  # noqa: BLE001 — kilit beklemesi vb.: ana tablolar varsa ekran AÇIK kalır, sonraki istek yine dener
         log.warning("toptancı hazırlığı yapılamadı — ana tablolar varsa devam", exc_info=True)
         if not _var(cur, "ey_toptanci_teslim"):
@@ -816,6 +816,10 @@ def teslim_iptal(tid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Head
         if not r:
             raise HTTPException(404, "Teslim bulunamadı ya da zaten iptal")
         ek = ""
+        from evvel_yeni_moduller import acik as _acik2
+        if _acik2("siparis"):   # Fable D4-1: bağlı sipariş kalemleri çözülür → yeniden 'bekleniyor' (yumuşak bağ)
+            n_ = __import__("evvel_yeni_siparis_api").teslim_iptal_edildi(cur, tid)
+            ek += f" · {n_} sipariş kalemi yeniden bekleniyor" if n_ else ""
         ref = dict(r)["kaynak_ref"] or ""
         if ref.startswith("panel:teslim:"):   # yeni panel teslimi: depo girişi de geri alınır (Depo açık — yukarıda denetlendi)
             from evvel_yeni_depo_api import hareket_iptal

@@ -109,7 +109,8 @@ def json_ac(x, bos=None):
     import json as _j
     if x is None or x == "":
         return {} if bos is None else bos
-    return x if isinstance(x, (dict, list)) else _j.loads(x)
+    v = x if isinstance(x, (dict, list)) else _j.loads(x)
+    return ({} if bos is None else bos) if v is None else v   # metin kolonda 'null' → boş (Fable D4-12)
 
 
 def ad_anahtari(x) -> str:
@@ -244,7 +245,7 @@ def tutar_oku(x, ad: str = "Tutar") -> Decimal:
         s = str(x).strip().replace(" ", "").replace("₺", "")
         if "," in s:
             s = s.replace(".", "").replace(",", ".")
-        elif s.count(".") > 1 or (s.count(".") == 1 and len(s.split(".")[1]) == 3):
+        elif s.count(".") > 1 or (s.count(".") == 1 and len(s.split(".")[1]) == 3 and s.split(".")[0].lstrip("-") not in ("", "0")):
             s = s.replace(".", "")
     try:
         d = Decimal(s)
@@ -281,25 +282,32 @@ def tablo_var(cur, *adlar: str) -> bool:
     return bool(dict(cur.fetchone() or {}).get("v"))
 
 
+def lock_timeout_ayarla(cur, deger: str) -> str:
+    """PUBLIC — işlemin lock_timeout'unu 'deger' yap (yalnız bu işlem), ÖNCEKİ değeri döndür (geri yüklemek için). Fable D4-4:
+    hazırlıklar 'SET LOCAL ... = DEFAULT' ile çağıranın (ör. panel 3 sn) korumasını siliyordu."""
+    cur.execute("SELECT current_setting('lock_timeout') AS v")
+    onceki = dict(cur.fetchone() or {}).get("v") or "0"
+    cur.execute("SELECT set_config('lock_timeout', %s, true)", (str(deger),))
+    return onceki
+
+
 def ddl_kur(cur, ad: str, fn, bekleme: str = "3s") -> None:
     """PUBLIC — TEK DDL modeli (19 Eki dersi + Codex P2): ÇAĞIRANIN işleminde savepoint + kısa lock_timeout; bitince çağıranın
     ÖNCEKİ lock_timeout değeri geri yüklenir ('DEFAULT' değil — iç içe hazırlıkta dıştaki 3 sn kayboluyordu). Hata → savepoint geri
     alınır (SET LOCAL de geri gider), istisna çağırana çıkar. Bayrağı çağıran ancak nesneleri SONRAKİ çağrıda görünce açmalı."""
-    cur.execute("SELECT current_setting('lock_timeout') AS v")
-    onceki = dict(cur.fetchone() or {}).get("v") or "0"
     with savepoint(cur, ad):
-        cur.execute("SELECT set_config('lock_timeout', %s, true)", (bekleme,))
+        onceki = lock_timeout_ayarla(cur, bekleme)
         fn(cur)
-        cur.execute("SELECT set_config('lock_timeout', %s, true)", (onceki,))
+        lock_timeout_ayarla(cur, onceki)
 
 
 def bir_kez(cur, anahtar: str, is_fn, ad: str) -> bool:
     """PUBLIC — "İÇERİK bir kez" (köprü değil) kalıbı: ayar defterinde 'anahtar' yoksa is_fn(cur) savepoint içinde çalışır, BAŞARILIYSA
     işaretlenir (başarısızsa bir sonraki hazırlıkta yeniden denenir; hata yutulur, loglanır). Dalga 4 (K5): Tanımlar 2, Yoklama 2,
     Toptancı 1 ayrı yazıyordu (Yoklama başarısızlıkta da işaretliyordu). Dönüş: bu çağrıda çalıştı mı."""
-    if ayar_oku(cur, anahtar) is not None:
-        return False
     try:
+        if ayar_oku(cur, anahtar) is not None:
+            return False
         with savepoint(cur, "sp_bir_kez"):
             is_fn(cur)
         ayar_yaz(cur, anahtar, "1", "kurulum")
@@ -428,7 +436,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "bir_kez", "ddl_kur", "KuruGeriAl",
+__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "bir_kez", "ddl_kur", "lock_timeout_ayarla", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

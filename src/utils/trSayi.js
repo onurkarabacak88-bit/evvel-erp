@@ -6,7 +6,7 @@ export const sayiTR = (x, bos = 0) => {
   let t = String(x ?? '').trim().replace(/\s/g, '').replace('₺', '');
   if (!t) return bos;
   if (t.includes(',')) t = t.replace(/\./g, '').replace(',', '.');
-  else if ((t.match(/\./g) || []).length > 1 || /^-?\d+\.\d{3}$/.test(t)) t = t.replace(/\./g, '');
+  else if ((t.match(/\./g) || []).length > 1 || /^-?[1-9]\d*\.\d{3}$/.test(t)) t = t.replace(/\./g, '');
   const n = Number(t);
   return Number.isFinite(n) ? n : NaN;
 };

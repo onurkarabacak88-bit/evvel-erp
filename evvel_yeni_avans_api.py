@@ -41,14 +41,14 @@ def avans_hazirla(cur) -> None:
         return
     try:
         with savepoint(cur, "sp_ey_avans_hazirla"):
-            cur.execute("SET LOCAL lock_timeout = '3s'")
+            _onceki_lt = __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, "3s")
             cur.execute("""CREATE TABLE IF NOT EXISTS ey_avans_talep (
                 id TEXT PRIMARY KEY, personel_id TEXT NOT NULL, tutar BIGINT NOT NULL, donem TEXT NOT NULL, not_ TEXT,
                 durum TEXT NOT NULL DEFAULT 'talep', yontem TEXT, sube_id TEXT, istek_id TEXT UNIQUE,
                 talep_ts TIMESTAMPTZ NOT NULL DEFAULT NOW(), karar_ts TIMESTAMPTZ, karar_kim TEXT, karar_not TEXT,
                 odeme_ref TEXT, teslim_ts TIMESTAMPTZ, teslim_kim TEXT)""")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_avans_p ON ey_avans_talep (personel_id, donem)")
-            cur.execute("SET LOCAL lock_timeout = DEFAULT")
+            __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, _onceki_lt)   # çağıranın değeri geri (Fable D4-4)
     except Exception:  # noqa: BLE001
         log.warning("avans tablosu kurulamadı", exc_info=True)
         raise HTTPException(503, "Avans hazırlanıyor — birkaç saniye sonra tekrar dene")
@@ -279,11 +279,15 @@ def onayla(aid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(defa
                 from evvel_yeni_tanim_api import subeler as _subeler
                 if str(body.sube_id) not in {str(s["id"]) for s in _subeler(cur)}:
                     raise HTTPException(400, "Şube bulunamadı ya da pasif")
-                cur.execute("SELECT * FROM ey_avans_talep WHERE id=%s", (aid,))
+                kim = merkez_aktor(cur, x_evvel_oturum)
+                # Fable D4-10: denetim + karar TEK işlemde (talep satırı kilitli — havale yoluyla aynı)
+                cur.execute("SELECT * FROM ey_avans_talep WHERE id=%s FOR UPDATE", (aid,))
                 _t = cur.fetchone()
-                if _t:
-                    _onay_denetle(cur, dict(_t))   # Codex P1: aktiflik + güncel tavan
-            _karar(aid, "onaylandi", x_evvel_oturum, None, yontem="elden", sube_id=str(body.sube_id))
+                if not _t or dict(_t)["durum"] != "talep":
+                    raise HTTPException(409, "Talep bulunamadı ya da karar verilmiş — sayfayı yenile")
+                _onay_denetle(cur, dict(_t))   # Codex P1: aktiflik + güncel tavan
+                cur.execute("""UPDATE ey_avans_talep SET durum='onaylandi', karar_ts=NOW(), karar_kim=%s, yontem='elden', sube_id=%s
+                                WHERE id=%s""", (kim, str(body.sube_id), aid))
             return {"ok": True, "mesaj": "Avans onaylandı — şube panelinde 'teslim ettim' denince dükkân kasasından düşer"}
         if not body.cep:
             raise HTTPException(400, "Havale hangi bankadan? — cep seç")
