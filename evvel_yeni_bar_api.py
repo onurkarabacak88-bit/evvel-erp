@@ -128,7 +128,7 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
     from evvel_yeni_olay import olaylar
     from evvel_yeni_urun_api import katalog
     kat = katalog(cur, hepsi=True)   # Fable: sayımı yapılmış ürün sonradan pasife alınırsa kalem kaybolmasın
-    sayilan = [(str(u["id"]), u["ad"]) for k in kat for u in k["urunler"] if u.get("panel_sayim") and (u.get("takip") or "sayim") == "sayim"]
+    sayilan = [(str(u["id"]), u["ad"]) for k in kat for u in k["urunler"] if __import__("evvel_yeni_urun_api").tezgahta_sayilir(u)]
     sayilan_id = {i for i, _ in sayilan}
     # sahip P1 (20 Eki): katalogdaki 'gününde tüketilir' TEK GERÇEK; katalogda hiç işaretli yoksa (geçiş) eski ad tahmini
     pasta_id = {str(u["id"]) for k in kat for u in k["urunler"] if u.get("takip") == "gununde"}

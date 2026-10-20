@@ -178,6 +178,12 @@ def urun_bilgi(cur, idler) -> Dict[str, dict]:
             for r in cur.fetchall() or []}
 
 
+def tezgahta_sayilir(u: dict) -> bool:
+    """PUBLIC — TEK kural: ürün tezgahta (panel açılış/kapanış/devir sayımında) sayılır mı = takip 'sayim' VE 'panelde sayılır'.
+    Dalga 4 (F#7): Panel 5 yer, Bar, Yoklama, Gider ayrı yazıyordu; bir kısmı takibe bakmıyordu (ayrışma)."""
+    return (u.get("takip") or "sayim") == "sayim" and bool(u.get("panel_sayim"))
+
+
 def urun_ad(cur, uid: str) -> Optional[str]:
     return (urun_bilgi(cur, [uid]).get(str(uid)) or {}).get("ad")
 

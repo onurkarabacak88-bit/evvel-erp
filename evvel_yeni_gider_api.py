@@ -260,7 +260,7 @@ def _tuketim_satirlari_yeni(cur, bas: date, son: date) -> list:
         bil = urun_bilgi(cur, sorted({str(h["urun_id"]) for h in fire}))
         etiket = {"dışarı:fire": "fire", "dışarı:ikram": "ikram", "dışarı:personel": "personel kullanımı"}
         for h in fire:
-            if (bil.get(str(h["urun_id"])) or {}).get("panel_sayim"):
+            if __import__("evvel_yeni_urun_api").tezgahta_sayilir(bil.get(str(h["urun_id"])) or {}):
                 continue
             k = (h["kaynak"].split(":", 1)[1], h["is_gunu"], h["urun_id"], etiket[h["hedef"]])
             top.setdefault(k, [h["urun_ad"], 0])[1] += int(h["adet"])

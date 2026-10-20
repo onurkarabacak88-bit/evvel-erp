@@ -1152,7 +1152,7 @@ def devir_listesi(cur) -> dict:
     except Exception:  # noqa: BLE001
         log.warning("devir: katalog okunamadı", exc_info=True)
         return {"bardak": [], "urun": []}
-    hep = [{"id": str(x["id"]), "ad": x["ad"]} for k in kat for x in k["urunler"] if x.get("takip") == "sayim" and x.get("panel_sayim")]
+    hep = [{"id": str(x["id"]), "ad": x["ad"]} for k in kat for x in k["urunler"] if __import__("evvel_yeni_urun_api").tezgahta_sayilir(x)]
     bardak = [u for u in hep if re.search("bardak", u["ad"], re.I) and not _BARDAK_DISI.search(u["ad"])]
     bid = {u["id"] for u in bardak}
     return {"bardak": bardak, "urun": [u for u in hep if u["id"] not in bid]}

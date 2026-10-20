@@ -26,6 +26,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from database import db, savepoint
+from evvel_yeni_urun_api import tezgahta_sayilir   # TEK 'tezgahta sayılır' kuralı (Dalga 4, F#7)
 from evvel_yeni_cekirdek import merkez_aktor
 from evvel_yeni_cekirdek import bekleyen_is_kaydet, deneme_mi, is_gunu as _bugun, kurus as _kurus   # şube İŞ GÜNÜ (gece 02:00'ye kadar önceki gün)
 
@@ -118,7 +119,7 @@ def _urunler(cur, idler: List[str], takip: Optional[str] = None, pasif_olur: boo
             raise HTTPException(400, "Ürün bulunamadı — listeyi yenileyin")
         if takip and (b[i].get("takip") or "sayim") != takip:
             raise HTTPException(400, f"{b[i]['ad']}: bu listede yok — listeyi yenileyin")
-        if takip == "sayim" and not b[i].get("panel_sayim"):
+        if takip == "sayim" and not tezgahta_sayilir(b[i]):
             raise HTTPException(400, f"{b[i]['ad']}: sayım listesinde yok — listeyi yenileyin")
     return b
 
@@ -333,7 +334,7 @@ def panel_durum(sube_id: str):
         return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici")}
     return {"sube": {"id": s["id"], "ad": s["ad"], "depo": depo_mu}, "depo_acik": depo_acik, "depo_yolda": depo_yolda, "avans_elden": avans_elden, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
             "personel": per, "teslim_alanlar": [{"id": c, "ad": a} for a, c in _TH.items()],
-            "sayilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "sayim" and x.get("panel_sayim")]}
+            "sayilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if tezgahta_sayilir(x)]}
                         for k in kat],
             "acilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if x.get("takip") == "acilinca"]} for k in kat],
             # Basamak 5 Ürün Aç: BÜTÜN katalog (aktif kategoriler; ürünlerde aktif bayrağı — "Pasifleri göster")
@@ -423,7 +424,7 @@ def _sayim_satirlari(cur, sayim: List[SayimSatir]) -> list:
 def _acilis_tam(cur, b: "AcilisBody") -> None:
     """Eski sihirbaz: her alan dolu (boş → 'X adedini girin'), 0 yazılabilir. Liste = katalogda panelde sayılan ürünler (S5)."""
     from evvel_yeni_urun_api import katalog
-    gerek = {str(x["id"]): x["ad"] for k in katalog(cur) for x in k["urunler"] if x.get("takip") == "sayim" and x.get("panel_sayim")}
+    gerek = {str(x["id"]): x["ad"] for k in katalog(cur) for x in k["urunler"] if tezgahta_sayilir(x)}
     gelen = {}
     for x in b.sayim:
         if x.urun_id in gelen:
@@ -534,7 +535,7 @@ def _kapanis_tam(cur, b: "KapanisBody", merkez: bool = False) -> None:
     if b.birakilan is None:
         raise HTTPException(400, "Kasada bırakılan (devir) tutarı zorunlu")
     _tl(b.birakilan, "Bırakılan")
-    gerek = {str(x["id"]): x["ad"] for k in katalog(cur) for x in k["urunler"] if x.get("takip") == "sayim" and x.get("panel_sayim")}
+    gerek = {str(x["id"]): x["ad"] for k in katalog(cur) for x in k["urunler"] if tezgahta_sayilir(x)}
     gelen = {}
     for x in b.sayim:
         if x.urun_id in gelen:
@@ -625,8 +626,7 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
             from evvel_yeni_urun_api import urun_bilgi   # merkez geç kapanış: personelin o gün saydığı ürün sonradan değiştiyse
             bil = urun_bilgi(cur, [x.urun_id for x in b.sayim])
             satir = [{"urun_id": x.urun_id, "sayilan": _tam(x.sayilan, "Sayım")} for x in b.sayim
-                     if x.sayilan is not None and x.urun_id in bil and (bil[x.urun_id].get("takip") or "sayim") == "sayim"
-                     and bil[x.urun_id].get("panel_sayim")]
+                     if x.sayilan is not None and x.urun_id in bil and tezgahta_sayilir(bil[x.urun_id])]
             dusen = [(bil.get(x.urun_id) or {}).get("ad") or x.urun_id for x in b.sayim
                      if x.sayilan is not None and x.urun_id not in {s_["urun_id"] for s_ in satir}]
         kok = f"panel:kapanis:{sube_id}:{gun}"
@@ -808,7 +808,7 @@ def _kalemler(cur, kalemler: List[Kalem], takip: Optional[str] = None, pasif_olu
     for x in k:
         x["ad"] = b[x["urun_id"]]["ad"]
         x["takip"] = b[x["urun_id"]].get("takip") or "sayim"
-        x["panel_sayim"] = bool(b[x["urun_id"]].get("panel_sayim"))
+        x["panel_sayim"] = tezgahta_sayilir(b[x["urun_id"]])   # TEK kural (F#7)
     return k
 
 
@@ -1232,7 +1232,7 @@ def fire(sube_id: str, b: FireBody):
         for i, x in enumerate(k):
             # Sahip (20 Eki, Fable D-4): tezgahta sayılan ürünün (süt / su / bardak) firesi BARDAN düşer — depodan düşerse bir sonraki
             # depo sayımında sahte fazla çıkıyordu. Maliyeti bar sayım farkında (Gider bu satırı ayrıca yazmaz — kaynak 'bar:').
-            tezgah = x.get("panel_sayim") and x.get("takip") == "sayim"
+            tezgah = x.get("panel_sayim")   # _kalemler tezgahta_sayilir ile doldurur (TEK kural)
             hareket_yaz(cur, kaynak_ref=f"{kok}:{i}", tur="fire", urun_id=x["urun_id"], urun_ad=x["ad"], adet=x["adet"],
                         kaynak=f"{'bar' if tezgah else 'depo'}:{sube_id}", hedef=hedef, kim=f"{KIM} · {p['ad']}",
                         aciklama=sebep_ad + (f" — {aciklama}" if aciklama else "") + (f" · fiş {iade['fis_no']}" if iade else ""),
