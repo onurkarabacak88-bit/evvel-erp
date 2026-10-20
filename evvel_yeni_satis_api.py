@@ -41,8 +41,7 @@ DEVIR_SINIR = 5       # bardak devir farkı bundan büyükse gün temiz değil
 
 
 def _ay_onceki(ay: str) -> str:
-    y, m = int(ay[:4]), int(ay[5:7]) - 1
-    return f"{y - 1:04d}-12" if m == 0 else f"{y:04d}-{m:02d}"
+    return __import__("evvel_yeni_cekirdek").ay_kaydir(ay, -1)   # ay aritmetiği TEK yerde (Codex T1-22)
 
 
 def _gunluk(ay: str) -> dict:

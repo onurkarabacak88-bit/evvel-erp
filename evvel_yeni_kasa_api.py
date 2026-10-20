@@ -74,8 +74,7 @@ FARK_ESIK_KURUS = 2000      # 20 ₺ — (eski: Bekleyen işler eşiği; 2026-10
 DUZELTME_SURESI_GUN = 7
 ACIK = "__acik"                          # açık fark kovası (cep değil)
 YOLDA = "__yolda"                        # teslim edildi, "aldım" bekleniyor (cep değil)
-KILIT_ANAHTARI = 7_012_026               # pg_advisory_xact_lock — modülün tek yazma kilidi
-MAKS_KURUS = 10 ** 12                    # 10 milyar ₺ — saçma girişe karşı sınır
+# Kasa kilidi + para üst sınırı ÇEKİRDEKTE (KASA_KILIT · MAKS_KURUS) — yerel kopya kalktı (Codex T1-35)
 
 PATRON_CEPLERI = [
     ("ev:onur", "Onur'un evi", "Onur", "ev", 10),
@@ -2152,7 +2151,7 @@ def panel_kapanis_sayim(cur, sube_id, gun, kasa_sayim, gun_sonu_teslim=0) -> Non
 # kayıt otomatik köprüde (aynı kaynak_ref) yakalanır. Kaynak kimlikleri köprüyle
 # AYNIDIR → ikisi aynı kaydı iki kez yazamaz.
 def _try_kilit(cur) -> bool:
-    cur.execute("SELECT pg_try_advisory_xact_lock(%s) AS ok", (KILIT_ANAHTARI,))
+    cur.execute("SELECT pg_try_advisory_xact_lock(%s) AS ok", (KASA_KILIT,))
     return bool(dict(cur.fetchone() or {}).get("ok"))
 
 

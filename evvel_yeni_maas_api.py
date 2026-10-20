@@ -59,13 +59,7 @@ def _ay_sinir(ay: str):
     return b, s
 
 
-def _ay_kaydir(ay: str, n: int) -> str:
-    y, m = int(ay[:4]), int(ay[5:7]) + n
-    while m < 1:
-        y, m = y - 1, m + 12
-    while m > 12:
-        y, m = y + 1, m - 12
-    return f"{y:04d}-{m:02d}"
+from evvel_yeni_cekirdek import ay_kaydir as _ay_kaydir  # noqa: E402 — ay aritmetiği TEK yerde (Codex T1-22)
 
 
 def _hazirla(cur):

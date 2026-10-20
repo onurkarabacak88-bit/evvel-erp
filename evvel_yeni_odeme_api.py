@@ -137,6 +137,11 @@ def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
     if not body.parcalar:
         raise HTTPException(400, "Nasıl ödendiğini seç (nakit / havale / kart)")
     _kilit(cur)
+    if body.istek_id:   # Codex T1-28: TEKRAR önce — başarılı ödemenin tekrarı "yetersiz bakiye / benzer kayıt" hatası almasın
+        from evvel_yeni_kasa_api import kaynak_refleri
+        _ref = f"odeme_formu:{body.istek_id[:64]}"
+        if any(r["kaynak_ref"] == _ref and not r["iptal"] for r in kaynak_refleri(cur, _ref)):
+            return {"ok": True, "id": None, "tekrar": True, "mesaj": "Bu ödeme zaten kaydedilmişti (ikinci kez yazılmadı)"}
     bas = _baslangic(cur)
     if gd < bas:
         raise HTTPException(400, f"Bu dönem {bas.strftime('%d.%m.%Y')} tarihinde başladı")

@@ -102,8 +102,7 @@ def odeme_ayi(kart: dict, tarih, donem: Optional[str], teyit_son: dict, teyit_ta
         son = teyit_son.get(a) or _son_gun(y, m, kart.get("son_odeme_gunu") or 31)
         if son >= t:
             if teyit_tarih.get(a) and t <= teyit_tarih[a]:
-                py, pm = (y - (m == 1), 12 if m == 1 else m - 1)
-                return f"{py}-{pm:02d}"   # ekstre ondan sonra kesildi → önceki ayın geç ödemesi
+                return __import__("evvel_yeni_cekirdek").ay_kaydir(a, -1)   # ekstre ondan sonra kesildi → önceki ayın geç ödemesi (T1-22)
             return a
         y, m = y + (m == 12), m % 12 + 1
     return t.strftime("%Y-%m")
