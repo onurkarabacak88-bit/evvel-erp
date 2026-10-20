@@ -710,8 +710,7 @@ def _telefon_teslim(cur, request_headers, method, yol, govde: bytes, tid: str, s
     if not _acik("yoklama"):
         raise HTTPException(503, "Telefon onayı kapalı — merkez PDF ekler")
     import evvel_yeni_yoklama_api as y
-    c = y.cihaz_coz(cur, request_headers, method, yol, govde, tur="telefon")
-    p = y.personel_oku(cur, c["personel_id"])
+    _c, p = y.telefon_kisisi(cur, request_headers, method, yol, govde)   # Yoklama'nın tek kapısı (K4)
     cur.execute("SELECT id, sube_id, toptanci_ad, tarih, kesin_tutar, tahmini, fatura_geldi FROM ey_toptanci_teslim WHERE id=%s AND NOT iptal", (tid,))
     t = cur.fetchone()
     if not t:

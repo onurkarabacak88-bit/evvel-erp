@@ -1445,8 +1445,7 @@ async def onay_ozet_telefon(oid: str, request: Request):
 
     def _is():
         with db() as (conn, cur):
-            c = y.cihaz_coz(cur, request.headers, "GET", request.url.path, b"", tur="telefon")
-            p = y.personel_oku(cur, c["personel_id"])
+            _c, p = y.telefon_kisisi(cur, request.headers, "GET", request.url.path, b"")   # Yoklama'nın tek kapısı (K4)
             o = _onay_oku(cur, oid)
             sube_ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube", [o["sube_id"]]).get(str(o["sube_id"]))   # F#27
         return {"tur": o["tur"], "ad": ONAY_TURLERI.get(o["tur"], (None, None, o["tur"]))[2], "ozet": o["ozet"], "sube": o["sube_id"],
@@ -1466,12 +1465,11 @@ async def onay_onayla(oid: str, request: Request):
 
     def _dogrula():
         with db() as (conn, cur):
-            c = y.cihaz_coz(cur, request.headers, "POST", request.url.path, ham, tur="telefon")
+            c, p = y.telefon_kisisi(cur, request.headers, "POST", request.url.path, ham)   # Yoklama'nın tek kapısı (K4)
             try:
                 v = json.loads(ham) if ham else {}
             except ValueError:
                 raise HTTPException(400, "İstek okunamadı")
-            p = y.personel_oku(cur, c["personel_id"])
             cur.execute("SELECT sube_id, tur FROM ey_panel_onay WHERE id=%s", (oid,))
             _sk = cur.fetchone()
             if _sk:   # onay-iste ile aynı sıra kilidi (yeni QR istenirken eski onay işlenmeye başlayamaz)

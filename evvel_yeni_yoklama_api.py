@@ -275,6 +275,13 @@ def _personel(cur, pid: str) -> dict:
     return {k: r[k] for k in ("id", "ad", "sube_id", "aktif", "konum_muaf")} | {"mudur": mudur_mu(r.get("gorev"))}
 
 
+def telefon_kisisi(cur, basliklar, method: str, yol: str, govde: bytes) -> tuple:
+    """PUBLIC — imzalı TELEFON isteği → (cihaz, aktif personel). Yoklama telefon uçları, Toptancı belge, panel QR onay özeti AYNI
+    iki adımı ayrı yazıyordu (Dalga 4, K4). Kimlik istemciden gelmez — cihazdan çözülür."""
+    c = cihaz_coz(cur, basliklar, method, yol, govde, tur="telefon")
+    return c, _personel(cur, c["personel_id"])
+
+
 def personel_oku(cur, pid: str) -> dict:
     """PUBLIC: aktif personel (konum muafiyeti dahil) — telefon kimliğinden gelen kişi."""
     return _personel(cur, pid)
@@ -720,8 +727,7 @@ async def _telefon(request: Request, fn):
 
     def _is():
         with db() as (conn, cur):
-            c = cihaz_coz(cur, request.headers, request.method, request.url.path, govde, tur="telefon")
-            p = _personel(cur, c["personel_id"])
+            c, p = telefon_kisisi(cur, request.headers, request.method, request.url.path, govde)
             gece_kapat(cur)   # sahip: dünkü girişi kapanmamış kişi bugün "Giriş yap" görsün
             try:
                 veri = json.loads(govde) if govde else {}
