@@ -5,7 +5,7 @@
 // Sunucu: evvel_yeni_panel_api.depodan_kabul → Depo kabul_yaz (tek işlem). Sök-tak: Depo modülü kapalıysa ekran "kapalı" der.
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, Modal, yeniIstek } from './ortak';
+import { C, KisiPin, Modal, panelHata, yeniIstek } from './ortak';
 
 export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
   const paketler = useMemo(() => d.depo_yolda || [], [d.depo_yolda]);
@@ -56,12 +56,10 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
       setOnay(0); setPin(''); setKisi(''); setSay({}); setSecPid(null);
       bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : (r.mesaj || 'Paket kabul edildi'), !!r.kuru);
     } catch (e) {
-      if (e instanceof TypeError) setHata('İnternet yok — bağlantı gelince yeniden gönder (saydıkların duruyor)');
-      else {
-        setHata(e?.message || 'Kaydedilemedi');
-        if (e?.status === 403 || e?.status === 429) { setPin(''); setOnay(1); }
-        if (e?.status === 409) { setOnay(0); setPin(''); bitti(e?.message || 'Sayfa yenilendi', false); }   // Fable: gün değişti / paket düştü → yenile (taslak durur)
-      }
+      // TEK hata kuralı (Dalga 5, F#54): internet · PIN · 409 'zaten' (farklı içerik → yeni istek, form durur)
+      const t = panelHata(e, { setHata, pinSifirla: () => { setPin(''); setOnay(1); }, yeniIstekVer: () => setIstek(yeniIstek()) });
+      if (t === 'internet') setHata('İnternet yok — bağlantı gelince yeniden gönder (saydıkların duruyor)');
+      if (t === 'hata' && e?.status === 409) { setOnay(0); setPin(''); bitti(e?.message || 'Sayfa yenilendi', false); }   // Fable: gün değişti / paket düştü → yenile (taslak durur)
     }
     setMesgul(false);
   };
@@ -124,20 +122,8 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
       {onay > 0 && p && (
         <Modal baslik={onay === 1 ? '🚚 Kabul onayı' : `🚚 ${p.nereden} · ${kalemler.length} ürün`} kapat={() => { setOnay(0); setPin(''); }}>
           {onay === 1 && (<>
-            <b>Kim saydı / teslim aldı?</b>
-            {adaylar.length === 0 ? <div style={{ color: C.sari, fontWeight: 700 }}>İçeride kimse yok — önce telefonundan QR ile giriş yap.</div> : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 8 }}>
-                {adaylar.map((x) => <button key={x.id} type="button" className={'sp-btn' + (kisi === x.id ? ' sp-ana' : '')} onClick={() => { setKisi(x.id); setPin(''); }}>{x.ad}</button>)}
-              </div>
-            )}
-            {kisi && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}><b>🔑 PIN</b>
-                <input className="sp-in" style={{ width: 140, textAlign: 'center', letterSpacing: 8 }} type="password" inputMode="numeric" data-pin="1" autoComplete="off"
-                  maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="••••"
-                  onKeyDown={(e) => { if (e.key === 'Enter' && kisi && pin.length === 4) { e.preventDefault(); setHata(''); setOnay(2); } }} /></label>
-            )}
-            {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
-            <button className="sp-btn sp-ana" disabled={!kisi || pin.length !== 4} onClick={() => { setHata(''); setOnay(2); }}>Devam → özet</button>
+            <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim saydı / teslim aldı?"
+              devam={() => { setHata(''); setOnay(2); }} />   {/* ortak Kişi + PIN (Dalga 5, F#48) */}
           </>)}
           {onay === 2 && (<>
             <div style={{ color: C.soluk }}>Sayan: <b style={{ color: C.yazi }}>{kisiAd || '—'}</b></div>

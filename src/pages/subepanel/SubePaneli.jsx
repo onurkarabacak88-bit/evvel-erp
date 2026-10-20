@@ -14,7 +14,7 @@ import DepodanGelen from './DepodanGelen';
 import AnlikGider, { AvansTeslim } from './AnlikGider';
 import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
-import { AdetListesi, C, CSS, kalemGovde, Modal, SayiTusTakimi, TabletQR, tutar, tutarNum, yeniIstek } from './ortak';
+import { AdetListesi, C, CSS, KisiPin, Modal, SayiTusTakimi, TabletQR, kalemGovde, panelHata, tutar, tutarNum, yeniIstek } from './ortak';
 import { gunKaydir } from '../../utils/trTarih';
 
 export default function SubePaneli({ subeId }) {
@@ -177,8 +177,9 @@ export default function SubePaneli({ subeId }) {
       } else {
         // Codex: devir formu sunucudakinden eskiyse (409) aynı kimlikle tekrar gönderim hep reddedilir → yeni kimlik + güncel durum
         if (e?.status === 409 && yol === 'devir') { setIstek(yeniIstek()); yukle(); }
-        if (pinli && (e?.status === 403 || e?.status === 429)) setPin('');   // yanlış / kilitli PIN → kutu boşalır
-        setAnladim(e?.message && e.message.length < 160 ? e.message : 'Kaydedilemedi — tekrar deneyin');
+        // TEK hata kuralı (Dalga 5, F#54): PIN → kutu boşalır · 409 'zaten' (farklı içerik) → yeni istek kimliği, form durur
+        panelHata(e, { setHata: (m) => setAnladim(m && m.length < 400 ? m : 'Kaydedilemedi — tekrar deneyin'),
+          pinSifirla: pinli ? () => setPin('') : undefined, yeniIstekVer: () => setIstek(yeniIstek()) });
       }
     }
     setMesgul(false);
@@ -208,21 +209,10 @@ export default function SubePaneli({ subeId }) {
   if (!d) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style>Yükleniyor…</div>;
   // sahip: PIN/kişi seçilen her yerde YALNIZ QR ile girmiş (şu an içeride) personel — tüm personel listesi yedeği YOK
   const kisiAdaylari = (yok.girenler || []).filter((g) => g.acik).map((g) => ({ id: g.personel_id, ad: g.ad }));
-  // bileşen DEĞİL düz fonksiyon (odağı kaybetmesin) — "Kim yapıyor?" yalnız QR ile girmiş personel; PIN kendi basamağında eklenecek
+  // ortak Kişi + PIN parçası (Dalga 5, F#48 — burada ayrı 'kimSec' kopyası vardı); gönder düğmesi formun kendisinde
   const kimSec = (baslik = 'Kim yapıyor?', pinIste = false) => (
     <div style={{ display: 'grid', gap: 6 }}>
-      <b>{baslik}</b>
-      {kisiAdaylari.length === 0
-        ? <div style={{ color: C.sari, fontWeight: 700 }}>İçeride kimse yok — önce telefonundan QR ile giriş yap.</div>
-        : <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 8 }}>
-            {kisiAdaylari.map((p) => <button key={p.id} type="button" className={'sp-btn' + (kisi === p.id ? ' sp-ana' : '')} onClick={() => { setKisi(p.id); setPin(''); }}>{p.ad}</button>)}
-          </div>}
-      {kisi && !kisiAdaylari.some((p) => p.id === kisi) && <div style={{ color: C.sari, fontWeight: 700 }}>Seçili kişi çıkış yapmış — adını yeniden seç</div>}
-      {pinIste && kisi && (
-        <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}><b>🔑 PIN</b>
-          <input className="sp-in" style={{ width: 140, textAlign: 'center', letterSpacing: 8 }} type="password" inputMode="numeric" data-pin="1"
-            autoComplete="off" maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="••••" /></label>
-      )}
+      <KisiPin adaylar={kisiAdaylari} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} soru={baslik} pinIste={pinIste} />
     </div>
   );
   // Codex: bugün mühürlense de DÜNÜN gönderilmemiş kapanış formu kurtarılabilsin (Günü Kapat açık kalır → yalnız o form)

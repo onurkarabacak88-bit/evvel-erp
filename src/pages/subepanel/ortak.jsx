@@ -71,9 +71,11 @@ export const panelHata = (e, { setHata, pinSifirla, yeniIstekVer }) => {
   return 'hata';
 };
 
-// 🔑 KİM + PIN (sahip R1b: QR'la içeride olan + kendi 4 haneli PIN'i) — TEK parça; sipariş / gönderilecek / depodan gelen bunu kullanır
-// (Tedarikçi teslim + Ürün aç'taki eski kopyalar sonraki temizlikte buna geçer). PIN yalnız bellekte.
-export function KisiPin({ adaylar, kisi, setKisi, pin, setPin, hata, devam, devamYazi = 'Devam → özet', soru = 'Kim?' }) {
+// 🔑 KİM + PIN (sahip R1b: QR'la içeride olan + kendi 4 haneli PIN'i) — TEK parça (Dalga 5, F#48: Ürün aç · Tedarikçi teslim ·
+// Depodan gelen · panel ana pencereleri 'kimSec' ayrı kopyaydı). PIN yalnız bellekte. pinIste=false → yalnız kişi seçimi.
+// devam verilmezse düğme çizilmez (gönder düğmesi formun kendisinde).
+export function KisiPin({ adaylar, kisi, setKisi, pin, setPin, hata, devam, devamYazi = 'Devam → özet', soru = 'Kim?', pinIste = true }) {
+  const gecerli = !kisi || adaylar.some((x) => x.id === kisi);
   return (<>
     <b>{soru}</b>
     {adaylar.length === 0 ? <div style={{ color: C.sari, fontWeight: 700 }}>İçeride kimse yok — önce telefonundan QR ile giriş yap.</div> : (
@@ -81,14 +83,15 @@ export function KisiPin({ adaylar, kisi, setKisi, pin, setPin, hata, devam, deva
         {adaylar.map((x) => <button key={x.id} type="button" className={'sp-btn' + (kisi === x.id ? ' sp-ana' : '')} onClick={() => { setKisi(x.id); setPin(''); }}>{x.ad}</button>)}
       </div>
     )}
-    {kisi && (
+    {!gecerli && <div style={{ color: C.sari, fontWeight: 700 }}>Seçili kişi çıkış yapmış — adını yeniden seç</div>}
+    {pinIste && kisi && (
       <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}><b>🔑 PIN</b>
         <input className="sp-in" style={{ width: 140, textAlign: 'center', letterSpacing: 8 }} type="password" inputMode="numeric" data-pin="1" autoComplete="off"
           maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="••••"
-          onKeyDown={(e) => { if (e.key === 'Enter' && kisi && pin.length === 4) { e.preventDefault(); devam(); } }} /></label>
+          onKeyDown={(e) => { if (devam && e.key === 'Enter' && kisi && pin.length === 4) { e.preventDefault(); devam(); } }} /></label>
     )}
     {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
-    <button className="sp-btn sp-ana" disabled={!kisi || pin.length !== 4} onClick={devam}>{devamYazi}</button>
+    {devam && <button className="sp-btn sp-ana" disabled={!kisi || !gecerli || (pinIste && pin.length !== 4)} onClick={devam}>{devamYazi}</button>}
   </>);
 }
 

@@ -4,7 +4,7 @@
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, Modal, panelHata, yeniIstek } from './ortak';
+import { C, KisiPin, Modal, panelHata, yeniIstek } from './ortak';
 
 const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 
@@ -192,20 +192,8 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
       {onay > 0 && (
         <Modal baslik={onay === 1 ? '🔓 Ürün Aç onayı' : `🔓 ${toplam} adet ürün açılacak`} kapat={() => { setOnay(0); setPin(''); }}>
           {onay === 1 && (<>
-            <b>Kim açıyor?</b>
-            {adaylar.length === 0 ? <div style={{ color: C.sari, fontWeight: 700 }}>İçeride kimse yok — önce telefonundan QR ile giriş yap.</div> : (
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(150px,1fr))', gap: 8 }}>
-                {adaylar.map((p) => <button key={p.id} type="button" className={'sp-btn' + (kisi === p.id ? ' sp-ana' : '')} onClick={() => { setKisi(p.id); setPin(''); }}>{p.ad}</button>)}
-              </div>
-            )}
-            {kisi && (
-              <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}><b>🔑 PIN</b>
-                <input className="sp-in" style={{ width: 140, textAlign: 'center', letterSpacing: 8 }} type="password" inputMode="numeric" data-pin="1" autoComplete="off"
-                  maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="••••"
-                  onKeyDown={(e) => { if (e.key === 'Enter' && kisi && pin.length === 4) { e.preventDefault(); setHata(''); setOnay(2); } }} /></label>
-            )}
-            {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
-            <button className="sp-btn sp-ana" disabled={!kisi || pin.length !== 4} onClick={() => { setHata(''); setOnay(2); }}>Devam → özet</button>
+            <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim açıyor?"
+              devam={() => { setHata(''); setOnay(2); }} />   {/* ortak Kişi + PIN (Dalga 5, F#48) */}
           </>)}
           {onay === 2 && (<>
             <div style={{ color: C.soluk }}>Açan: <b style={{ color: C.yazi }}>{kisiAd || '—'}</b></div>
