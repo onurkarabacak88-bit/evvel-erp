@@ -101,8 +101,7 @@ def siparis_yaz(cur, *, sube_id: str, kalemler: List[dict], kim: str, personel_i
     Aynı istek_id → tekrar; farklı içerik → 409. Her gönderim AYRI talep (D1)."""
     siparis_hazirla(cur)
     from evvel_yeni_urun_api import urun_bilgi
-    if not istek_id or len(str(istek_id)) > 80:
-        raise HTTPException(400, "istek_id gerekli")
+    istek_id = __import__("evvel_yeni_cekirdek").istek_dogrula(istek_id)   # TEK kural (F#15)
     top, oneriler = kalem_topla(kalemler, oneri_olur=True, birim="siparişte")   # Sevk ile TEK kalem kuralı (F#22)
     b = urun_bilgi(cur, list(top))
     yok = [u for u in top if u not in b or not b[u].get("aktif", True)]

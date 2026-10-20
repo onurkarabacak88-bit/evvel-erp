@@ -888,8 +888,7 @@ def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], ki
         raise HTTPException(400, "Şube bulunamadı")
     if kaynak_sube == hedef_sube:
         raise HTTPException(400, "Kaynak ile hedef aynı şube olamaz")
-    if not istek_id or len(str(istek_id)) > 80:
-        raise HTTPException(400, "istek_id gerekli")
+    istek_id = __import__("evvel_yeni_cekirdek").istek_dogrula(istek_id)   # TEK kural (F#15)
     top, _ = kalem_topla(kalemler, birim="pakette")   # Sipariş ile TEK kalem kuralı (F#22) — adet kabul üst sınırıyla aynı
     b = _ey_urun_dogrula(cur, list(top))
     pasta = [b[u]["ad"] for u in top if (b[u].get("takip") or "sayim") == "gununde"]

@@ -75,8 +75,7 @@ def avans_durumu(cur, personel_id: str) -> dict:
 def talep_yaz(cur, *, personel_id: str, tutar: int, not_: Optional[str], istek_id: str) -> dict:
     """PUBLIC (telefon talebi): açık talep varken ikinci talep yok (eski kural) · tavanı aşan talep yok (eski oran)."""
     avans_hazirla(cur)
-    if not istek_id or len(str(istek_id)) > 80:
-        raise HTTPException(400, "istek_id gerekli")
+    istek_id = __import__("evvel_yeni_cekirdek").istek_dogrula(istek_id)   # TEK kural (F#15)
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_avans:" + str(personel_id),))
     cur.execute("SELECT id, tutar FROM ey_avans_talep WHERE istek_id=%s", (str(istek_id),))
     r = cur.fetchone()

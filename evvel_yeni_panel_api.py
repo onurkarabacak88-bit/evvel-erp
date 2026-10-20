@@ -250,8 +250,8 @@ def _calistir(sube_id: str, istek_id: Optional[str], is_fn, tur: Optional[str] =
 def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez: Optional[str] = None,
                  isle_deneme: Optional[str] = None) -> dict:
     """Hazırlık → tek işlem → (deneme modunda geri al). is_fn(cur, ctx) yazar ve özet döner."""
-    if istek_id is not None and not re.fullmatch(r"[A-Za-z0-9-]{8,64}", istek_id):   # Codex: '#', '%', '_' ref çakışması üretmesin
-        raise HTTPException(400, "İstek kimliği geçersiz")
+    if istek_id is not None:
+        __import__("evvel_yeni_cekirdek").istek_dogrula(istek_id)   # TEK kural (F#15) — '#', '%', '_' ref çakışması üretmesin
     from evvel_yeni_depo_api import depo_hazirla
     from evvel_yeni_kasa_api import kasa_hazirla
     from evvel_yeni_olay import olay_tablosu_kur

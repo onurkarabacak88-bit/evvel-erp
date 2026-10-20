@@ -838,10 +838,7 @@ async def avans_talep_tel(request: Request):
 
 
 def _istek(v) -> str:
-    i = str(v.get("istek_id") or "")
-    if not (8 <= len(i) <= 64) or not all(ch.isalnum() or ch == "-" for ch in i):
-        raise HTTPException(400, "İstek kimliği geçersiz")
-    return i
+    return __import__("evvel_yeni_cekirdek").istek_dogrula(v.get("istek_id"))   # TEK kural (F#15; isalnum Türkçe harfi de geçiriyordu)
 
 
 @router.post("/giris")
