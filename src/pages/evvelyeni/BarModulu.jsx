@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, num, Dugme, Cip, Cekmece, fmt, tUzun, tKisa } from './KasaModulu';
+import { ayTR } from '../../utils/trTarih';
 
 export const BAR_SAYFALAR = [
   { id: 'bar_sayim', ad: 'Bar sayımı', alt: 'Devir farkı · ürün aç eksik' },
@@ -22,7 +23,7 @@ const DURUM = {
 const isaret = (x) => (x == null ? '—' : x > 0 ? `+${fmt(x)}` : fmt(x));
 
 export default function BarModulu() {
-  const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  const [ay, setAy] = useState(ayTR);
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [ck, setCk] = useState(null);

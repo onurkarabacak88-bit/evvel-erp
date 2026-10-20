@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { PATRONLAR, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, odemeFisi, fmt, tl, tKisa } from './KasaModulu';
+import { ayKaydir, ayTR, bugunTR, gunKaydir as trGunKaydir } from '../../utils/trTarih';
 
 export const ODEME_SAYFALAR = [
   { id: 'odemeler', ad: 'Ödeme / gider gir', alt: 'Nakit · havale · kart' },
@@ -21,8 +22,8 @@ const alan = {
   width: '100%', padding: '10px 12px', borderRadius: 10, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)',
   color: 'var(--pi-ink)', font: 'inherit', fontSize: 15, minWidth: 0,
 };
-const ayBugun = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; };
-const gunBugun = () => { const d = new Date(); return `${ayBugun()}-${String(d.getDate()).padStart(2, '0')}`; };
+const ayBugun = ayTR;   // Dalga 5 (C-T4-02): tarih tek kaynaktan
+const gunBugun = bugunTR;
 
 function Etiket({ ad, children, ipucu }) {
   return (
@@ -55,7 +56,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
   const [liste, setListe] = useState(null);
   const [gun, setGun] = useState(gunBugun());      // Ödeme defteri: seçili gün
   const [tumAy, setTumAy] = useState(false);       // Ödeme defteri: bütün ay
-  const gunKaydir = (n) => { const d = new Date(`${gun}T12:00:00`); d.setDate(d.getDate() + n); const g = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; setGun(g); setAy(g.slice(0, 7)); };
+  const gunKaydir = (n) => { const g = trGunKaydir(gun, n); setGun(g); setAy(g.slice(0, 7)); };
   // Codex: 'Bütün ay'da ay değişip 'Gün gün'e dönülünce gün o ayın içinde olsun (yoksa liste 0 görünüyordu)
   const modDegis = () => setTumAy((x) => { if (x && gun.slice(0, 7) !== ay) setGun(ay === ayBugun() ? gunBugun() : `${ay}-01`); return !x; });
   // 🏦 Krediler modülü açıksa: 'Kredi taksiti' hangi krediye (takvimde 'ödendi'). Kapalıysa liste gelmez, alan görünmez (tak-çıkar).
@@ -239,7 +240,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
               </select></Etiket>
               {f.personel_kalemi === 'Maaş' && f.ait_ay === ayBugun() && (
                 <div style={{ gridColumn: '1 / -1', fontSize: 13 }}>Maaş genelde bir önceki ayın maaşıdır.{' '}
-                  <Dugme kucuk onClick={() => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); set('ait_ay', `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); }}>Geçen ayın maaşı</Dugme>
+                  <Dugme kucuk onClick={() => set('ait_ay', ayKaydir(ayTR(), -1))}>Geçen ayın maaşı</Dugme>
                 </div>
               )}
               {pd && (

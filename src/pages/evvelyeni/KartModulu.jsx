@@ -11,6 +11,7 @@ import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { PI_CSS, R, kart, num, Dugme, Cip, fmt, tUzun, tKisa } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici, tutarYaz } from './AyTakvim';
+import { bugunTR } from '../../utils/trTarih';
 
 export const KART_SAYFALAR = [
   { id: 'kartlar', ad: 'Kartlar', alt: 'Kullanılabilir limit · son ödeme' },
@@ -22,7 +23,7 @@ const alan = {
   color: 'var(--pi-ink)', font: 'inherit', fontSize: 15, minWidth: 0,
 };
 const sayi = (x) => sayiTR(x, null);   // tek kaynak utils/trSayi
-const gunBugun = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const gunBugun = bugunTR;   // Dalga 5 (C-T4-02): tarih tek kaynaktan
 
 export default function KartModulu({ onToast }) {
   const [v, setV] = useState(null);

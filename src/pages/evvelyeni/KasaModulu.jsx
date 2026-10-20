@@ -23,6 +23,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
+import { ayTR } from '../../utils/trTarih';
 
 // Kadife (v2) bileşenlerine BAĞIMLILIK YOK — sahip: "kadife tasarımda değil ayrı bir
 // alanda yap, sonra (eskiyi) tamamen kaldırsak". Bu dosya src/pages/evvelyeni altında,
@@ -830,7 +831,7 @@ function TeslimSekmesi({ onToast, onDegisti }) {
 // ─── BANKA MUTABAKATI sekmesi (sahip: "her ay ekstreyi senin mantığınla kontrol eder,
 // programdan karşılaştırmasını yaparız") — rakamların hepsi sunucudan; ekran yalnız dizer.
 function BankaSekmesi({ onToast, onDegisti }) {
-  const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  const [ay, setAy] = useState(ayTR);
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [ekstre, setEkstre] = useState({});

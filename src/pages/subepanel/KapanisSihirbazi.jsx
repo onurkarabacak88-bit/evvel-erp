@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { CSS_AW, trSaat } from './AcilisSihirbazi';
 import { C, sayi, TabletQR, tl, tutar, tutarNum, yeniIstek } from './ortak';
+import { gunKaydir } from '../../utils/trTarih';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
 const BASLIK = ['', 'Kasa & Ciro', 'Bardak Sayımı', 'Ürün Sayımı', 'Değirmen & Pasta', 'QR ile Mühürle'];
@@ -34,7 +35,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   const ilk = (() => { try { return JSON.parse(localStorage.getItem(anahtar) || 'null'); } catch { return null; } })();
   useEffect(() => {   // eski günlerin taslakları birikmesin — DÜNÜNKÜ silinmez (gece yarısı gönderilmemiş kapanış kurtarılır)
     try {
-      const dun = new Date(new Date(gun + 'T12:00').getTime() - 864e5).toISOString().slice(0, 10);
+      const dun = gunKaydir(gun, -1);   // Dalga 5 (F#56)
       Object.keys(localStorage).filter((k) => k.startsWith(`sp_taslak:${subeId}:`) && k.endsWith(':kapanis_sihirbaz') && k !== anahtar
         && (k.split(':')[2] || '') < dun)
         .forEach((k) => localStorage.removeItem(k));

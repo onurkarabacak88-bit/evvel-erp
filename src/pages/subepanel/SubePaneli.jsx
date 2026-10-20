@@ -15,6 +15,7 @@ import AnlikGider, { AvansTeslim } from './AnlikGider';
 import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
 import { AdetListesi, C, CSS, kalemGovde, Modal, SayiTusTakimi, TabletQR, tutar, tutarNum, yeniIstek } from './ortak';
+import { gunKaydir } from '../../utils/trTarih';
 
 export default function SubePaneli({ subeId }) {
   const [d, setD] = useState(null);
@@ -132,7 +133,7 @@ export default function SubePaneli({ subeId }) {
     if (m === 'gider') { setGiderAcik(true); return; }   // 💸 anlık gider (alt bar + ana sayfa kartı aynı pencere)
     if (['siparis', 'siparisTakip', 'gonderilecek'].includes(m)) { sekmeyeGec(m); return; }   // S5 sipariş (orta alanda sekme)       // Basamak 5 S3: Depodan gelen (orta alanda sekme; gün kapalıyken de açık)
     if (m === 'kapanis') {   // Codex: gece yarısından sonra sayfa yenilense de dünün GÖNDERİLMEMİŞ kapanışı kaybolmasın
-      const dun = new Date(new Date(d.gun + 'T12:00').getTime() - 864e5).toISOString().slice(0, 10);
+      const dun = gunKaydir(d.gun, -1);   // Dalga 5 (F#56)
       let var_ = false;
       try { var_ = !!localStorage.getItem(`sp_taslak:${subeId}:${dun}:kapanis_sihirbaz`); } catch { var_ = false; }
       const g = var_ && (d.kapanis_var || window.confirm(`${dun} gününün GÖNDERİLMEMİŞ kapanış formu duruyor. Onu açıp merkeze gönderelim mi?
@@ -227,7 +228,7 @@ export default function SubePaneli({ subeId }) {
   // Codex: bugün mühürlense de DÜNÜN gönderilmemiş kapanış formu kurtarılabilsin (Günü Kapat açık kalır → yalnız o form)
   const dunTaslak = (() => {
     try {
-      const dun = new Date(new Date(d.gun + 'T12:00').getTime() - 864e5).toISOString().slice(0, 10);
+      const dun = gunKaydir(d.gun, -1);   // Dalga 5 (F#56)
       return !!localStorage.getItem(`sp_taslak:${subeId}:${dun}:kapanis_sihirbaz`);
     } catch { return false; }
   })();

@@ -8,13 +8,14 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun } from './KasaModulu';
+import { ayTR } from '../../utils/trTarih';
 
 export const KAZANC_SAYFALAR = [
   { id: 'kazanc', ad: 'Şube kazancı', alt: 'Gelir − gider · kim kimi taşıyor' },
 ];
 
 export default function KazancModulu() {
-  const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  const [ay, setAy] = useState(ayTR);
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [ck, setCk] = useState(null);

@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, fmt, tl } from './KasaModulu';
+import { ayKaydir, ayTR } from '../../utils/trTarih';
 
 export const MAAS_SAYFALAR = [
   { id: 'maaslar', ad: 'Maaşlar', alt: 'Hak ediş · avans · kalan' },
@@ -18,7 +19,7 @@ export const MAAS_SAYFALAR = [
 
 const alan = { padding: '8px 10px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-bg)', color: 'var(--pi-ink)', font: 'inherit', fontSize: 14, width: 110 };
 // Varsayılan: ödenecek ay = geçen ay; ama Evvel Yeni öncesi (kapanmış) aylar varsayılan olmaz → en erken Ekim 2026
-const gecenAy = () => { const d = new Date(); d.setDate(1); d.setMonth(d.getMonth() - 1); const a = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; return a < '2026-10' ? '2026-10' : a; };
+const gecenAy = () => { const a = ayKaydir(ayTR(), -1); return a < '2026-10' ? '2026-10' : a; };
 const sayi = (x) => sayiTR(x, null);   // tek kaynak utils/trSayi
 
 export default function MaasModulu({ onToast, onSekme }) {
@@ -172,7 +173,7 @@ export default function MaasModulu({ onToast, onSekme }) {
 // ── 👥 PERSONEL TAKVİMİ — sahip: "panel verilerinden bulundukları şubeler gün gün; QR girişi yoksa izinli" ──
 const SUBE_RENK = ['#9A5F2E', '#2E7D6B', '#5B5FB5', '#B5465B', '#7A7A2E', '#2E6E9A'];
 export function PersonelTakvim({ onToast }) {
-  const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  const [ay, setAy] = useState(ayTR);
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [yenile, setYenile] = useState(0);

@@ -11,6 +11,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa } from './KasaModulu';
+import { ayTR } from '../../utils/trTarih';
 
 export const GIDER_SAYFALAR = [
   { id: 'giderler', ad: 'Giderlerim', alt: 'Şube şube · mal · kira · personel' },
@@ -21,7 +22,7 @@ const TUR_RENK = { mal: 'var(--pi-accent)', kira: '#7a5c3e', personel: '#4f6d7a'
 const TUR_AD = { mal: 'Mal (ürün aç)', kira: 'Kira', personel: 'Personel', fatura: 'Fatura', dukkan: 'Dükkân küçük', anlik: 'Anlık', diger: 'Diğer', komisyon: 'Komisyon', sevk: 'Depodan sevk (gider DEĞİL)' };
 
 export default function GiderModulu({ onToast }) {
-  const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  const [ay, setAy] = useState(ayTR);
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [ck, setCk] = useState(null);

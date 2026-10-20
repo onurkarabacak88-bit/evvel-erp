@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, num, Dugme, Cip, fmt, tKisa } from './KasaModulu';
+import { ayTR, gunKaydir, tarihKaydir } from '../../utils/trTarih';
 
 // Sahip: "Beklenen satışı AYRI sekme yap; ilk alanda KESİN veriler (satılan, fire, kasa açığı) olsun."
 export const SATIS_SAYFALAR = [
@@ -74,7 +75,7 @@ function KasaAcigi({ m, ciro, teslimler = [] }) {
 
 // ── GÜNLÜK DÖKÜM — sahip: "bugün 14 adet 8oz vs. görmek istiyorum; kasada açık var mı, satıştan açık var mı; fire" ──
 function GunlukDokum() {
-  const [gun, setGun] = useState(() => { const d = new Date(); d.setDate(d.getDate() - 1); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; });
+  const [gun, setGun] = useState(() => tarihKaydir(-1));   // dün (TR) — Dalga 5
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const no = useRef(0);
@@ -84,7 +85,7 @@ function GunlukDokum() {
     api(`/evvel-yeni/satis/gun?gun=${gun}`).then((r) => { if (n === no.current) { setV(r); setHata(null); } })
       .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
   }, [gun]);
-  const kaydir = (k) => { const d = new Date(`${gun}T12:00:00`); d.setDate(d.getDate() + k); setGun(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`); };
+  const kaydir = (k) => setGun(gunKaydir(gun, k));
   const acikYaz = (x) => (x == null ? '—' : Math.abs(x) < 1 ? 'yok' : x > 0 ? `${fmt(Math.round(x))} ₺ AÇIK` : `${fmt(Math.round(-x))} ₺ fazla`);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
@@ -160,7 +161,7 @@ export default function SatisModulu({ gorunum }) {
 }
 
 function BeklenenSatis() {
-  const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  const [ay, setAy] = useState(ayTR);
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [hepsi, setHepsi] = useState(false);
@@ -231,7 +232,7 @@ function BeklenenSatis() {
 
 // ── 🔁 KASA DEVİR DEFTERİ — sahip: "açılış ve kapanış sayımlarını, devrin kimden kime yapıldığını takip etmek" ──
 export function DevirDefteri() {
-  const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  const [ay, setAy] = useState(ayTR);
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [sube, setSube] = useState(null);

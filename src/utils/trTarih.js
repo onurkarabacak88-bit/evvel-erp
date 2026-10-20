@@ -63,3 +63,18 @@ export function ayBasiTR() {
 export function ayTR() {
   return bugunTR().slice(0, 7);
 }
+
+/** 'YYYY-MM-DD' + n gün → 'YYYY-MM-DD' (takvim aritmetiği, saat dilimi bağımsız — öğlen UTC üzerinden). Dalga 5 (F#56, C-T4-05):
+ *  panel "dün", Ödeme / Satış gün oklarında ayrı ayrı yazılıydı. */
+export function gunKaydir(ymd, n) {
+  const d = new Date(`${String(ymd).slice(0, 10)}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + Number(n || 0));
+  return d.toISOString().slice(0, 10);
+}
+
+/** 'YYYY-MM' + n ay → 'YYYY-MM'. */
+export function ayKaydir(ay, n) {
+  const t = Number(String(ay).slice(0, 4)) * 12 + Number(String(ay).slice(5, 7)) - 1 + Number(n || 0);
+  return `${String(Math.floor(t / 12)).padStart(4, '0')}-${String((t % 12) + 1).padStart(2, '0')}`;
+}
+

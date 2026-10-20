@@ -9,6 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi } from './KasaModulu';
+import { ayTR } from '../../utils/trTarih';
 
 export const GELIR_SAYFALAR = [
   { id: 'gelirler', ad: 'Gelirlerim', alt: 'Şube şube · gün gün satış' },
@@ -37,7 +38,7 @@ function Lejant() {
 }
 
 export default function GelirModulu() {
-  const [ay, setAy] = useState(() => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`; });
+  const [ay, setAy] = useState(ayTR);
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [ck, setCk] = useState(null);
