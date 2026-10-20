@@ -101,12 +101,12 @@ def talep_yaz(cur, *, personel_id: str, tutar: int, not_: Optional[str], istek_i
 def _yeni_talepler(cur, acik: bool = True) -> list:
     if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_avans_talep"):
         return []
-    from evvel_yeni_tanim_api import adlar, subeler   # personel / şube adı Tanımlar'ın kapısından (C-T2-11)
+    from evvel_yeni_tanim_api import adlar   # personel / şube adı Tanımlar'ın kapısından (C-T2-11)
     cur.execute(f"""SELECT a.* FROM ey_avans_talep a
                      WHERE {"a.durum IN ('talep','onaylandi')" if acik else "a.durum IN ('reddedildi','kapatildi') AND a.talep_ts >= NOW() - INTERVAL '60 days'"}
                      ORDER BY a.talep_ts""")
     rows = [dict(x) for x in cur.fetchall() or []]
-    sad = {x["id"]: x["ad"] for x in subeler(cur, hepsi=True)}
+    sad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
     pad = adlar(cur, "ey_personel", {r["personel_id"] for r in rows})
     return [{"id": r["id"], "personel_id": r["personel_id"], "ad": pad.get(str(r["personel_id"])) or "—", "tutar": int(r["tutar"]) / 100, "durum": r["durum"],
              "yontem": r.get("yontem"), "sube": sad.get(r.get("sube_id")), "sube_id": r.get("sube_id"), "donem": r["donem"],

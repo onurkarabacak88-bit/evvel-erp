@@ -1040,8 +1040,7 @@ def yoldakiler(cur, hedef_sube: str) -> list:
     cur.execute("""SELECT bag FROM ey_stok_hareket WHERE NOT iptal AND tur='kabul' AND kaynak_ref LIKE 'sevk:%%:kabul'
                     AND bag LIKE ANY(%s)""", ([f"sevk:{p['id']}:%" for p in partiler],))
     kabul = {dict(r)["bag"] for r in cur.fetchall() or []}
-    from evvel_yeni_tanim_api import subeler as _ey_subeler
-    ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
+    ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
     out = []
     for p in partiler:
         kal = [{"bag": f"sevk:{p['id']}:{i}", "urun_id": k["urun_id"], "ad": k["ad"]} for i, k in enumerate(p["kalemler"] or [])
@@ -1136,8 +1135,7 @@ def sevkler(gun_sayisi: int = 14):
                         WHERE zaman > NOW() - make_interval(days => %s) ORDER BY zaman DESC LIMIT 200""", (max(1, min(gun_sayisi, 90)),))
         ps = [dict(r) for r in cur.fetchall() or []]
         T = sevk_kalem_durumlari(cur, [f"sevk:{p['id']}:{i}" for p in ps for i in range(len(p["kalemler"] or []))])
-        from evvel_yeni_tanim_api import subeler as _ey_subeler
-        ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
+        ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
     out = []
     for p in ps:
         kal = []

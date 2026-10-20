@@ -64,8 +64,7 @@ def _kilit(cur, sid: str) -> None:
 
 
 def _sube_adlari(cur) -> dict:
-    from evvel_yeni_tanim_api import subeler
-    return {s["id"]: s["ad"] for s in subeler(cur, hepsi=True)}
+    return __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
 
 
 def _toptanci_adlari(cur) -> dict:

@@ -409,8 +409,7 @@ def _hesap(cur, bugun: date):
             bilinen.add(x["toptanci_id"])
             tlar.append({"id": x["toptanci_id"], "ad": f"{x.get('toptanci_ad') or x['toptanci_id']} (Tanımlarda yok)", "kategori": None,
                          "telefon": None, "acilis_bakiye": 0, "aktif": True, "vade_gun": None})
-    from evvel_yeni_tanim_api import subeler as _ey_subeler
-    sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
+    sube_ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
     _, C, kayit, _ = _yukle(cur, tum_donemler=True)
     from evvel_yeni_odeme_api import konu_odemeleri   # Ödeme'nin tek okuyucusu (Kaçırılan #1) — 'nereden' de orada
     odemeler = {}

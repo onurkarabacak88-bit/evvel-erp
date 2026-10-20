@@ -428,8 +428,7 @@ def maas_liste(ay: Optional[str] = None):
     a_ = (ay or _ay_kaydir(_bugun().strftime("%Y-%m"), -1))[:7]   # varsayılan: ödenecek ay = geçen ay
     with db() as (conn, cur):
         _hazirla(cur)
-        from evvel_yeni_tanim_api import subeler
-        sube_ad = {s["id"]: s["ad"] for s in subeler(cur, hepsi=True)}
+        sube_ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
         rows = hesapla(cur, a_)
         yh = _yeni_hesap(cur)
     for r in rows:
@@ -531,13 +530,12 @@ def personel_takvim(ay: Optional[str] = None):
     panelde QR girişi olmadıysa izinlidir." Kaynak: 1 Kasım'dan önce eski panel QR'ı (gorev_yoklama), sonra yeni yoklama (Y3). Okurken yoklamanın gece kapatması çalışır.
     Gün: QR girişi varsa şube(ler) + giriş saati; yoksa 'izinli'; işe girişinden önce / ayrılışından sonra '—'."""
     from evvel_yeni_cekirdek import bugun as _bugun
-    from evvel_yeni_tanim_api import subeler as _ey_subeler
     bugun = _bugun()
     a_ = (ay or bugun.strftime("%Y-%m"))[:7]
     ay_bas, ay_son = _ay_sinir(a_)
     with db() as (conn, cur):
         _hazirla(cur)
-        sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
+        sube_ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
         from evvel_yeni_tanim_api import tanim_listesi
         kisiler = tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "gorev", "giris", "cikis", "calisma_turu", "aktif"))
         cur.execute("SELECT personel_id, tarih, karar, izin_bitis FROM ey_personel_yoklama_karar ORDER BY zaman")
@@ -756,7 +754,7 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
     bas = son - timedelta(days=gun_sayisi - 1)
     with db() as (conn, cur):
         _hazirla(cur)
-        sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
+        sube_ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
         aktif_sube = {s["id"] for s in _ey_subeler(cur)}
         from evvel_yeni_tanim_api import tanim_listesi
         pad = {r["id"]: r for r in tanim_listesi(cur, "ey_personel", ("ad", "gorev"))}
