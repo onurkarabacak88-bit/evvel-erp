@@ -89,23 +89,56 @@ def _hazirla(cur):
     _HAZIR = True
 
 
-def _vardiya_onerisi(ay: str) -> dict:
-    """Panel vardiya planından öneri: {pid: {mesai_saat, calisma_saat, planli_gun}} — eski uç, okuma."""
+FM_GUNLUK_ESIK = 9.5   # günlük fazla mesai eşiği (eski vardiya_takip'in varsayılanı — fm_gunluk_esik)
+
+
+def _yeni_oneri(cur, ay: str) -> dict:
+    """YENİ DÖNEM öneri (tekrar denetimi C-T3-13: eski vardiya_takip eski QR'ı okuyordu). Sahip (2026-10-20): saat ÖNCE vardiya
+    PLANINDAN; o gün plan yoksa QR giriş–çıkışından; çıkışı okutulmamış / gece sistemin kapattığı gün GÜVENİLMEZ → sayılmaz, uyarı.
+    {pid: {calisma_saat, planli_gun, mesai_saat, guvenilmez_gun}} · mesai = güvenilir QR günü − FM_GUNLUK_ESIK (gerçek süre gerekir)."""
+    y_, m_ = int(ay[:4]), int(ay[5:7])
+    bas = date(y_, m_, 1)
+    son = (date(y_ + (m_ == 12), m_ % 12 + 1, 1) - timedelta(days=1))
+    plan = {}
     try:
-        from gorev_api import vardiya_takip
-        r = vardiya_takip(int(ay[:4]), int(ay[5:7]))
-        out = {}
-        for p in (r or {}).get("personeller") or []:
-            u = p.get("ucret_detay") or {}
-            out[str(p.get("personel_id"))] = {
-                "mesai_saat": float(p.get("toplam_fazla_mesai_saat") or 0),
-                "calisma_saat": float(u.get("calisma_saati") or p.get("toplam_planlanan_saat") or 0),
-                "planli_gun": int(p.get("planli_gun") or 0),
-            }
-        return out
-    except Exception as e:  # noqa: BLE001 — vardiya okunamazsa öneri yok; elle girilir
-        log.info("evvel-yeni maaş: vardiya önerisi alınamadı: %s", str(e)[:160])
-        return {}
+        with savepoint(cur, "sp_ey_maas_plan"):
+            cur.execute("""SELECT a.personel_id::text AS pid, a.tarih,
+                                  EXTRACT(EPOCH FROM (CASE WHEN a.bitis_saat <= a.baslangic_saat
+                                        THEN (a.bitis_saat::time + INTERVAL '24h') - a.baslangic_saat::time
+                                        ELSE a.bitis_saat::time - a.baslangic_saat::time END))/3600.0 AS saat
+                             FROM vardiya_atama a WHERE a.tarih BETWEEN %s AND %s AND COALESCE(a.durum,'') <> 'iptal'""", (bas, son))
+            for x in cur.fetchall() or []:
+                x = dict(x)
+                k = (x["pid"], x["tarih"])
+                plan[k] = plan.get(k, 0.0) + float(x["saat"] or 0)
+    except Exception as e:  # noqa: BLE001
+        log.info("evvel-yeni maaş: vardiya planı okunamadı: %s", str(e)[:160])
+    _, rows = _yeni_yoklama(cur, bas, son)
+    qr, bozuk = {}, set()
+    for x in rows or []:
+        k = (x["pid"], x["tarih"])
+        if not x.get("cikis_ts") or x.get("cikis_tur") == "gece_otomatik":
+            bozuk.add(k)   # çıkış okutulmamış → süre bilinmiyor
+            continue
+        qr[k] = qr.get(k, 0.0) + max(0.0, (x["cikis_ts"] - x["giris_ts"]).total_seconds() / 3600.0)
+    out = {}
+    for k in set(plan) | set(qr) | bozuk:
+        pid, _g = k
+        o = out.setdefault(pid, {"calisma_saat": 0.0, "planli_gun": 0, "mesai_saat": 0.0, "guvenilmez_gun": 0})
+        if k in plan:
+            o["calisma_saat"] += plan[k]
+            o["planli_gun"] += 1
+        elif k in qr and k not in bozuk:
+            o["calisma_saat"] += qr[k]
+            o["planli_gun"] += 1
+        else:
+            o["guvenilmez_gun"] += 1
+        if k in qr and k not in bozuk:
+            o["mesai_saat"] += max(0.0, qr[k] - FM_GUNLUK_ESIK)
+    for o in out.values():
+        o["calisma_saat"] = round(o["calisma_saat"], 2)
+        o["mesai_saat"] = round(o["mesai_saat"], 2)
+    return out
 
 
 def _odemeler(cur) -> dict:
@@ -232,7 +265,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
     eski = _eski_ekim(cur, ay) if eski_mod else {}
     eski_od = _eski_odenen(cur, ay) if eski_mod else {}
     ucret = _ucretler(cur, ay)
-    oneri = _vardiya_onerisi(ay) if not eski_mod else {}
+    oneri = _yeni_oneri(cur, ay) if not eski_mod else {}   # C-T3-13: yeni dönem plan > QR (eski vardiya_takip değil)
     yemek_k = _yemek_kaynagi(cur, ay, ay_bas, ay_son) if not eski_mod else None
     # önceki aydan avans devri (yeni hesap başlangıcından itibaren zincir)
     devir_in = {}
@@ -276,6 +309,8 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         gun, acik = _gecen_gun(p.get("giris"), p.get("cikis"), ay_bas, ay_son, bugun)
         o = oneri.get(pid) or {}
         uyari = []
+        if o.get("guvenilmez_gun") and e.get("calisma_saat") is None:
+            uyari.append(f"{o['guvenilmez_gun']} günde plan yok ve QR çıkışı okutulmamış — o günlerin saati sayılmadı, elle kontrol et")
         yari = (p.get("calisma_turu") or "tam") == "yari"
         maas = int(u["maas"] or 0)
         kalemler = []
