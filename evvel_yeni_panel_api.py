@@ -153,9 +153,8 @@ def _saat_kurali(tur: str, personel: dict) -> Optional[str]:
 
 def _gun_kapali(cur, sube_id: str, gun) -> bool:
     """Bugünün kapanışı yapıldıysa gün kapalıdır (D7): ürün aç / fire / ara teslim / kasa devri yazılmaz."""
-    from evvel_yeni_olay import olaylar
-    return any(not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"
-               for o in olaylar(cur, sube_id=sube_id, bas=gun, son=gun, turler={"kapanis"}))
+    from evvel_yeni_olay import gun_kapandi
+    return gun_kapandi(cur, sube_id, gun)   # Olay'ın kapısı (F#11)
 
 
 def _gun_acik_mi(cur, c: dict, sube_id: str) -> None:
@@ -556,9 +555,8 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
     kasa_uyarilari). SAHİP (2026-10-19): KASA UYARISI PANELE VERİLMEZ (kör sayım — personel tuttu mu bilmez) → ek["kasa_uyarilari"]
     yalnız merkeze (olay + Bekleyen işler)."""
     from evvel_yeni_moduller import acik as _acik
-    from evvel_yeni_olay import olaylar
     u, ek, ku = [], {}, []
-    bugun = [o for o in olaylar(cur, sube_id=sube_id, bas=gun, son=gun) if not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"]
+    bugun = __import__("evvel_yeni_olay").panel_olaylari(cur, sube_id=sube_id, bas=gun, son=gun)   # F#12
     if not any(o["tur"] == "acilis" for o in bugun):
         u.append("Bugün açılış kaydı yok")
     if not any(o["tur"] == "urun_ac" for o in bugun):
@@ -1565,7 +1563,6 @@ def gec_kapanis(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default
 
 def _kapanis_isleri(cur) -> list:
     """Son 7 gün: kapanış denemesi reddedilmiş / hata vermiş ve o gün için başarılı panel kapanışı YOK → merkez işi."""
-    from evvel_yeni_olay import olaylar
     from evvel_yeni_tanim_api import subeler
     if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_panel_deneme"):
         return []
@@ -1579,8 +1576,7 @@ def _kapanis_isleri(cur) -> list:
     adlar = {str(s["id"]): s["ad"] for s in subeler(cur)}
     out = []
     for r in satirlar:
-        kapali = any(not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"
-                     for o in olaylar(cur, sube_id=r["sube_id"], bas=r["is_gunu"], son=r["is_gunu"], turler={"kapanis"}))
+        kapali = __import__("evvel_yeni_olay").gun_kapandi(cur, r["sube_id"], r["is_gunu"])   # F#11
         if kapali:
             continue
         out.append({"tur": "kapanis_red", "merkeze": (r.get("sebep") or "").startswith("Telefonsuz"),

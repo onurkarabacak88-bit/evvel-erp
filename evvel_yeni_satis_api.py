@@ -204,14 +204,8 @@ def _kr_tl(k):
 def _panel_olaylari(cur, bas, son, turler) -> list:
     """Yeni panelin (kaynak 'panel') iptal edilmemiş olayları, verisi açılmış ('v'). Mutabakat / fire / devir defteri TEK okuyucu
     (Fable T-1: üç yerde ayrı ayrı süzgeç + JSON açma vardı)."""
-    import json as _json
-    from evvel_yeni_olay import olaylar
-    out = []
-    for o in olaylar(cur, bas=bas, son=son, turler=set(turler)):
-        if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel":
-            continue
-        out.append({**o, "v": o["veri"] if isinstance(o["veri"], dict) else _json.loads(o["veri"] or "{}")})
-    return out
+    from evvel_yeni_olay import panel_olaylari   # süzgeç + veri açma Olay'da TEK (F#12)
+    return panel_olaylari(cur, bas=bas, son=son, turler=set(turler))
 
 
 def _elle_teslimler() -> dict:

@@ -125,7 +125,6 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
     DEVİR FARKI = bugün açılış − (dün kapanış + gece bara giren) · NET EKSİLME = açılış + gün içi bara giren − kapanış.
     Kalemler = katalogda 'panelde sayılır' ürünler (ey_urun kimliği) + PASTA TOPLAM. Bara giren = Ürün Aç'ta açılan tezgah ürünü
     (olay saati) + pasta sevk kabulü (Depo defteri, yeni evren). Sahip (2026-10-19): açılış/kapanışta YALNIZ tezgah sayılır."""
-    from evvel_yeni_olay import olaylar
     from evvel_yeni_urun_api import katalog
     kat = katalog(cur, hepsi=True)   # Fable: sayımı yapılmış ürün sonradan pasife alınırsa kalem kaybolmasın
     sayilan = [(str(u["id"]), u["ad"]) for k in kat for u in k["urunler"] if __import__("evvel_yeni_urun_api").tezgahta_sayilir(u)]
@@ -139,8 +138,8 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
     anahtar_of = {k: ("pasta" if k == "pasta" else _anahtar_ad(ad)) for k, ad in kalemler}
     sids = {s_["id"] for s_ in subeler}
     ev, ac = {}, {}
-    for o in olaylar(cur, bas=bas, son=son + timedelta(days=1), turler={"acilis", "kapanis", "urun_ac"}):
-        if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel" or str(o["sube_id"]) not in sids:
+    for o in __import__("evvel_yeni_olay").panel_olaylari(cur, bas=bas, son=son + timedelta(days=1), turler={"acilis", "kapanis", "urun_ac"}):
+        if str(o["sube_id"]) not in sids:   # F#12: iptal/panel süzgeci Olay'da
             continue
         sid = str(o["sube_id"])
         v = o["veri"] if isinstance(o["veri"], dict) else json.loads(o["veri"] or "{}")

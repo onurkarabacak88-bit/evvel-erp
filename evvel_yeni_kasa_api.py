@@ -2023,11 +2023,9 @@ def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dic
     # ikisinde de varsa ref ('sayim_acilis:{şube}:{gün}') aynı olduğundan bir kez yazılır (Codex: açılış nakdi Kasa'ya ulaşsın)
     try:
         with savepoint(cur, "sp_pi_panel_sayim_yeni"):
-            from evvel_yeni_olay import olaylar as _ey_olaylar
-            for o in _ey_olaylar(cur, bas=bas, son=_bugun(), turler={"acilis"}):
-                if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel":
-                    continue
-                v = o["veri"] if isinstance(o["veri"], dict) else json.loads(o["veri"] or "{}")
+            from evvel_yeni_olay import panel_olaylari   # F#12
+            for o in panel_olaylari(cur, bas=bas, son=_bugun(), turler={"acilis"}):
+                v = o["v"]
                 if v.get("kasa_sayim") is None:
                     continue
                 g = o["is_gunu"] if hasattr(o["is_gunu"], "isoformat") else date.fromisoformat(str(o["is_gunu"])[:10])

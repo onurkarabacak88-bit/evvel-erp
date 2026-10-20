@@ -872,19 +872,19 @@ def _yeni_panel_izi(cur, bas: date, son: date, pb: date) -> list:
     if son < pb:
         return []
     try:
-        from evvel_yeni_olay import olaylar
+        from evvel_yeni_olay import panel_olaylari   # F#12
     except Exception:  # noqa: BLE001
         return []
     ad = {"acilis": "panel: açılış", "kapanis": "panel: kapanış", "teslim": "panel: teslim", "teslim_al": "panel: teslim al"}
     out = []
     try:
         with savepoint(cur, "sp_ey_maas_panel_izi"):
-            ol = olaylar(cur, bas=max(bas, pb), son=son, turler=set(ad))
+            ol = panel_olaylari(cur, bas=max(bas, pb), son=son, turler=set(ad))
     except Exception:  # noqa: BLE001
         log.warning("maaş: panel izi okunamadı", exc_info=True)
         return []
     for o in ol:
-        if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel" or not o.get("personel_id"):
+        if not o.get("personel_id"):
             continue
         out.append({"pid": str(o["personel_id"]), "ad": o.get("personel_ad"), "tarih": o["is_gunu"], "sid": str(o["sube_id"]),
                     "ts": o["olay_zamani"], "tip_ad": ad[o["tur"]]})

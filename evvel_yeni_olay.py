@@ -225,3 +225,21 @@ def olay_kontrol(gun: str, baslangic_ts: Optional[str] = None):
     for k, v in sonuc.items():
         v["tutuyor"] = v["eski"] is None or v["eski"]["adet"] == v["yeni"]["adet"]
     return {"gun": gun, "karsilastirma": sonuc, "not": "Eski tablo satırı (çift yazım başladıktan sonra) = yeni defter kökü olmalı."}
+
+
+# ── PUBLIC (Dalga 4, F#11/F#12): "yeni panelin iptal edilmemiş olayları" süzgeci 10 yerde, "gün kapandı mı" 3 yerde ayrı yazılıydı ──
+def panel_olaylari(cur, sube_id: Optional[str] = None, bas: Any = None, son: Any = None, turler=None) -> list:
+    """Yeni şube panelinin (kaynak 'panel') İPTAL EDİLMEMİŞ olayları; her birine açılmış veri 'v' (sözlük) eklenir."""
+    out = []
+    for o in olaylar(cur, sube_id=sube_id, bas=bas, son=son, turler=turler):
+        if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel":
+            continue
+        v = o.get("veri")
+        out.append({**o, "v": v if isinstance(v, dict) else json.loads(v or "{}")})
+    return out
+
+
+def gun_kapandi(cur, sube_id: str, gun) -> bool:
+    """Şubenin o iş günü için panel KAPANIŞ olayı var mı (iptal edilmemiş) — gün kapalıysa ürün aç / fire / devir yazılmaz (D7)."""
+    return bool(panel_olaylari(cur, sube_id=sube_id, bas=gun, son=gun, turler={"kapanis"}))
+

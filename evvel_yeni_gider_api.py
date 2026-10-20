@@ -225,9 +225,8 @@ def _modul_acik(kod: str) -> bool:
 def _yeni_kesin_gunler(cur, bas: date, son: date) -> set:
     """(şube, gün) — yeni panelin kapanış olayı yazılmış günler (iptal edilmemiş)."""
     try:
-        from evvel_yeni_olay import olaylar
-        return {(str(o["sube_id"]), o["is_gunu"]) for o in olaylar(cur, bas=bas, son=son, turler={"kapanis"})
-                if not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"}
+        from evvel_yeni_olay import panel_olaylari   # F#12
+        return {(str(o["sube_id"]), o["is_gunu"]) for o in panel_olaylari(cur, bas=bas, son=son, turler={"kapanis"})}
     except Exception:  # noqa: BLE001
         log.warning("evvel-yeni gider: kapanış olayları okunamadı", exc_info=True)
         return set()

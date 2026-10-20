@@ -481,9 +481,9 @@ def yemek_ozet(cur, bas: date, son: date) -> dict:
     for r in [dict(x) for x in cur.fetchall() or []]:
         gunler.setdefault(r["personel_id"], set()).add(r["is_gunu"])
     try:
-        from evvel_yeni_olay import olaylar
-        for o in olaylar(cur, bas=bas, son=son):
-            if (o.get("kaynak_tablo") or "") == "panel" and not o.get("iptal") and o.get("personel_id"):
+        from evvel_yeni_olay import panel_olaylari
+        for o in panel_olaylari(cur, bas=bas, son=son):   # F#12
+            if o.get("personel_id"):
                 gunler.setdefault(str(o["personel_id"]), set()).add(o["is_gunu"])
     except Exception:  # noqa: BLE001
         log.warning("yemek özeti: panel izi okunamadı", exc_info=True)
@@ -1284,9 +1284,8 @@ async def devir_baslat_uc(request: Request):
             if not c.get("sube_id"):
                 raise HTTPException(403, "Bu bilgisayar bir şubeye bağlı değil — merkezden bağlantı iste")
             try:
-                from evvel_yeni_olay import olaylar
-                if any(not o.get("iptal") and (o.get("kaynak_tablo") or "") == "panel"
-                       for o in olaylar(cur, sube_id=c["sube_id"], bas=is_gunu(), son=is_gunu(), turler={"kapanis"})):
+                from evvel_yeni_olay import gun_kapandi
+                if gun_kapandi(cur, c["sube_id"], is_gunu()):   # Olay'ın kapısı (F#11)
                     raise HTTPException(409, "Gün kapandı — devir başlatılamaz")
             except HTTPException:
                 raise
