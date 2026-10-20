@@ -4,9 +4,8 @@
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
+import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek } from './ortak';
 
-const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 
 export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir }) {
   const anahtar = `sp_taslak:${subeId}:${d.gun}:urun_ac`;
@@ -49,7 +48,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   // pasta ('gununde') açılmaz — girişte tüketildi (sunucu da reddeder); liste Tedarikçi / Sipariş ile ortak olduğu için burada süzülür
   const katalog = useMemo(() => (d.ac_katalog || []).map((k) => ({ ...k, urunler: k.urunler.filter((u) => u.takip !== 'gununde') }))
     .filter((k) => k.urunler.length), [d.ac_katalog]);
-  const urunMap = useMemo(() => Object.fromEntries(katalog.flatMap((k) => k.urunler.map((u) => [u.id, { ...u, kategori: k.kategori }]))), [katalog]);
+  const urunMap = useMemo(() => urunHaritasi(katalog), [katalog]);
   const secili = Object.entries(adet).filter(([id, n]) => n > 0 && urunMap[id]);
   const kalem = secili.length;
   const toplam = secili.reduce((a, [, n]) => a + n, 0);
@@ -69,7 +68,6 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
     if (!kisi && son && adaylar.some((p) => p.id === son)) setKisi(son);
     setOnay(1);
   };
-  const katSecili = (k) => k.urunler.filter((u) => (adet[u.id] || 0) > 0).length;
   const degis = (id, n) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(9999, n)) }));
   const art = (id, dlt) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(9999, (o[id] || 0) + dlt)) }));   // hızlı dokunuşta kaybolmasın
   const temizle = () => {
@@ -131,22 +129,8 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
         </div>
       )}
       {/* kategori kartları */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(170px,1fr))', gap: 10 }}>
-        {katalog.filter((k) => k.urunler.some((u) => u.aktif || pasif)).map((k, i) => {
-          const n = katSecili(k);
-          const aktifN = k.urunler.filter((u) => u.aktif).length;
-          return (
-            <button key={k.id} type="button" onClick={() => setAcikKat(k.id)} disabled={kapali}
-              style={{ position: 'relative', minHeight: 96, borderRadius: 14, opacity: kapali ? 0.45 : 1, border: n ? `2px solid ${C.yesil}` : '1px solid transparent', background: TONLAR[i % 4],
-                color: '#fff', textAlign: 'left', padding: 12, cursor: 'pointer', display: 'grid', gap: 4, font: 'inherit' }}>
-              {n > 0 && <span style={{ position: 'absolute', top: 8, right: 8, background: C.yesil, color: '#05210f', borderRadius: 999, minWidth: 24, padding: '2px 7px', fontWeight: 900, fontSize: 13, textAlign: 'center' }}>{n}</span>}
-              <span style={{ fontSize: 22 }}>{k.emoji || '📦'}</span>
-              <b style={{ fontSize: 15 }}>{k.kategori}</b>
-              <span style={{ fontSize: 12, opacity: 0.85 }}>{aktifN} aktif · Dokun → liste</span>
-            </button>
-          );
-        })}
-      </div>
+      <KategoriKartlari katalog={katalog.filter((k) => k.urunler.some((u) => u.aktif || pasif))} adet={adet} kapali={kapali} onSec={setAcikKat}
+        enAz={170} yukseklik={96} alt={(k) => `${k.urunler.filter((u) => u.aktif).length} aktif · Dokun → liste`} />
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', color: C.soluk, fontSize: 13 }}>
         <span style={{ flex: 1 }}>Kategoriye dokunun, adet girin, Tamam deyin.</span>
         <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}><input type="checkbox" checked={pasif} onChange={(e) => setPasif(e.target.checked)} /> Pasifleri göster</label>
@@ -175,10 +159,8 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
                 return (
                   <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 6, borderRadius: 10, background: n ? 'rgba(34,197,94,.1)' : C.bg2, opacity: u.aktif ? 1 : 0.6 }}>
                     <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad}{!u.aktif && ' 🚫'} <span style={{ color: C.soluk, fontSize: 12, fontWeight: 500 }}>{u.birim}</span></span>
-                    <button type="button" className="sp-pm" onClick={() => art(u.id, -1)}>−</button>
-                    <input className="sp-in" style={{ width: 90, textAlign: 'center', fontSize: 32, fontWeight: 800, padding: '4px 6px' }} inputMode="numeric" value={n || ''} placeholder="0"
-                      onChange={(e) => degis(u.id, Number(e.target.value.replace(/\D/g, '') || 0))} />
-                    <button type="button" className="sp-pm" onClick={() => art(u.id, 1)}>+</button>
+                    <AdetGirdi n={n} azalt={() => art(u.id, -1)} artir={() => art(u.id, 1)} genislik={90} font={32}
+                      yaz={(v) => degis(u.id, v)} />   {/* ortak − adet + (F#51) */}
                   </div>
                 );
               })}

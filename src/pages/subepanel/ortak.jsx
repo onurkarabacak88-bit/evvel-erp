@@ -90,6 +90,41 @@ export const panelHata = (e, { setHata, pinSifirla, yeniIstekVer }) => {
   return 'hata';
 };
 
+// ➖ ADET GİRDİSİ "− [adet] +" — Ürün aç · Tedarikçi teslim · Sipariş ver · Depodan gelen ORTAK (Dalga 5, F#51: 4 kopya). Koli
+// yardımcıları ekranına göre farklı kalır (teslim: "koli × N + tek" izli; sipariş: "+1/+2/+3 koli" hızlı) — amaçları ayrı.
+export function AdetGirdi({ n, azalt, artir, yaz, genislik = 96, font = 30 }) {
+  return (<>
+    <button type="button" className="sp-pm" onClick={azalt}>−</button>
+    <input className="sp-in" style={{ width: genislik, textAlign: 'center', fontSize: font, fontWeight: 800, padding: '4px 6px' }} inputMode="numeric" value={n || ''} placeholder="0"
+      onChange={(e) => yaz(Number(e.target.value.replace(/\D/g, '') || 0))} />
+    <button type="button" className="sp-pm" onClick={artir}>+</button>
+  </>);
+}
+
+// 🗂 KATEGORİ KARTLARI — Ürün aç · Tedarikçi teslim · Sipariş ver ORTAK (Dalga 5, F#49/50/52: renk dizisi, kart, ürün haritası 3 kopyaydı).
+// Kartta seçili ürün sayısı rozeti; 'alt' verilirse kartın altına küçük yazı (ör. "12 aktif · Dokun → liste").
+export const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
+export const urunHaritasi = (katalog) => Object.fromEntries((katalog || []).flatMap((k) => k.urunler.map((u) => [u.id, { ...u, kategori: k.kategori }])));
+export function KategoriKartlari({ katalog, adet, kapali, onSec, alt, enAz = 160, yukseklik = 90 }) {
+  return (
+    <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill,minmax(${enAz}px,1fr))`, gap: 10 }}>
+      {katalog.map((k, i) => {
+        const n = k.urunler.filter((u) => (adet[u.id] || 0) > 0).length;
+        return (
+          <button key={k.id} type="button" onClick={() => onSec(k.id)} disabled={kapali}
+            style={{ position: 'relative', minHeight: yukseklik, borderRadius: 14, opacity: kapali ? 0.45 : 1, border: n ? `2px solid ${C.yesil}` : '1px solid transparent', background: TONLAR[i % 4],
+              color: '#fff', textAlign: 'left', padding: 12, cursor: 'pointer', display: 'grid', gap: 4, font: 'inherit' }}>
+            {n > 0 && <span style={{ position: 'absolute', top: 8, right: 8, background: C.yesil, color: '#05210f', borderRadius: 999, minWidth: 24, padding: '2px 7px', fontWeight: 900, fontSize: 13, textAlign: 'center' }}>{n}</span>}
+            <span style={{ fontSize: 22 }}>{k.emoji || '📦'}</span>
+            <b style={{ fontSize: 15 }}>{k.kategori}</b>
+            {alt && <span style={{ fontSize: 12, opacity: 0.85 }}>{alt(k)}</span>}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // 🔑 KİM + PIN (sahip R1b: QR'la içeride olan + kendi 4 haneli PIN'i) — TEK parça (Dalga 5, F#48: Ürün aç · Tedarikçi teslim ·
 // Depodan gelen · panel ana pencereleri 'kimSec' ayrı kopyaydı). PIN yalnız bellekte. pinIste=false → yalnız kişi seçimi.
 // devam verilmezse düğme çizilmez (gönder düğmesi formun kendisinde).

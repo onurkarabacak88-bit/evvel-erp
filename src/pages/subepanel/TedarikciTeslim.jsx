@@ -5,9 +5,8 @@
 // Sök-tak: Toptancılar modülü kapalıysa ekran "kapalı" der. Sipariş modu / eksik bildirimi sipariş basamağıyla (ertelendi). Bip YOK (sahip).
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, KisiPin, Modal, TabletQR, panelHata, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, yeniIstek } from './ortak';
+import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, TabletQR, panelHata, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
 
-const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 
 export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, secimBildir, tabletVar }) {
   const anahtar = `sp_taslak:${subeId}:${d.gun}:teslim_al`;
@@ -33,7 +32,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   }, [adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek, anahtar]);
 
   const katalog = d.ac_katalog || [];
-  const urunMap = useMemo(() => Object.fromEntries(katalog.flatMap((k) => k.urunler.map((u) => [u.id, { ...u, kategori: k.kategori }]))), [katalog]);
+  const urunMap = useMemo(() => urunHaritasi(katalog), [katalog]);
   const secili = Object.entries(adet).filter(([id, n]) => n > 0 && urunMap[id]);
   const kalem = secili.length;
   const toplam = secili.reduce((a, [, n]) => a + n, 0);
@@ -98,20 +97,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
 
       <div className="sp-teslim" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(260px,340px)', gap: 12, alignItems: 'start' }}>
         <div style={{ display: 'grid', gap: 10 }}>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(160px,1fr))', gap: 10 }}>
-            {katalog.filter((k) => k.urunler.some((u) => u.aktif || pasif)).map((k, i) => {
-              const n = k.urunler.filter((u) => (adet[u.id] || 0) > 0).length;
-              return (
-                <button key={k.id} type="button" onClick={() => setAcikKat(k.id)} disabled={kapali}
-                  style={{ position: 'relative', minHeight: 90, borderRadius: 14, opacity: kapali ? 0.45 : 1, border: n ? `2px solid ${C.yesil}` : '1px solid transparent', background: TONLAR[i % 4],
-                    color: '#fff', textAlign: 'left', padding: 12, cursor: 'pointer', display: 'grid', gap: 4, font: 'inherit' }}>
-                  {n > 0 && <span style={{ position: 'absolute', top: 8, right: 8, background: C.yesil, color: '#05210f', borderRadius: 999, minWidth: 24, padding: '2px 7px', fontWeight: 900, fontSize: 13, textAlign: 'center' }}>{n}</span>}
-                  <span style={{ fontSize: 22 }}>{k.emoji || '📦'}</span>
-                  <b style={{ fontSize: 15 }}>{k.kategori}</b>
-                </button>
-              );
-            })}
-          </div>
+          <KategoriKartlari katalog={katalog.filter((k) => k.urunler.some((u) => u.aktif || pasif))} adet={adet} kapali={kapali} onSec={setAcikKat} />
           <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer', color: C.soluk, fontSize: 13, justifySelf: 'end' }}>
             <input type="checkbox" checked={pasif} onChange={(e) => setPasif(e.target.checked)} /> Pasifleri göster</label>
         </div>
@@ -171,10 +157,8 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
               <div key={u.id} style={{ display: 'grid', gap: 4, padding: 6, borderRadius: 10, background: n ? 'rgba(34,197,94,.1)' : C.bg2, opacity: u.aktif ? 1 : 0.6 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad}{!u.aktif && ' 🚫'} <span style={{ color: C.soluk, fontSize: 12, fontWeight: 500 }}>{u.birim}</span></span>
-                  <button type="button" className="sp-pm" onClick={() => art(u.id, -1)}>−</button>
-                  <input className="sp-in" style={{ width: 96, textAlign: 'center', fontSize: 30, fontWeight: 800, padding: '4px 6px' }} inputMode="numeric" value={n || ''} placeholder="0"
-                    onChange={(e) => { setKoli((o) => { const x = { ...o }; delete x[u.id]; return x; }); degis(u.id, Number(e.target.value.replace(/\D/g, '') || 0)); }} />
-                  <button type="button" className="sp-pm" onClick={() => art(u.id, 1)}>+</button>
+                  <AdetGirdi n={n} azalt={() => art(u.id, -1)} artir={() => art(u.id, 1)} genislik={96} font={30}
+                    yaz={(v) => { setKoli((o) => { const x = { ...o }; delete x[u.id]; return x; }); degis(u.id, v); }} />   {/* ortak − adet + (F#51) */}
                 </div>
                 {ki > 1 && (
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: C.soluk, justifyContent: 'flex-end' }}>
