@@ -626,6 +626,23 @@ def _isler(kayitlar: List[dict], C: dict, fl: List[dict]) -> List[dict]:
     return out
 
 
+def kapanissiz_gunler(kayitlar: List[dict], C: dict, bas: str, son: str) -> dict:
+    """PUBLIC — TEK KURAL (tekrar denetimi C-T1-16: Gelir, Kasa, Panel ayrı hesaplıyordu): [bas, son] aralığında kapanış kaydı
+    OLMAYAN aktif şube günleri {cep_id: [gün…]}. Kapanış = Kasa'daki 'kapanis' kaydı (yeni panel kapanışı da buraya yazar)."""
+    var = {(h["cep"], h["is_gunu"]) for h in kayitlar if h["tur"] == "kapanis"}
+    subeler = [c for c in C.values() if c["tur"] == "sube" and c.get("aktif", True)]
+    out = {c["id"]: [] for c in subeler}
+    if not bas or not son or bas > son:
+        return out
+    g = date.fromisoformat(bas)
+    while g.isoformat() <= son:
+        for c in subeler:
+            if (c["id"], g.isoformat()) not in var:
+                out[c["id"]].append(g.isoformat())
+        g += timedelta(days=1)
+    return out
+
+
 def _eksik_kapanislar(kayitlar: List[dict], C: dict) -> List[dict]:
     """Sahip (2026-10-16): "Girilmemiş ciro uyarı versin; o günün girişi şubeden yeniden istensin."
     Dönem başından DÜNE kadar her aktif şube × gün: kapanış YOKSA → 'eksik_kapanis';
@@ -640,14 +657,15 @@ def _eksik_kapanislar(kayitlar: List[dict], C: dict) -> List[dict]:
             var[(h["cep"], h["is_gunu"])] = h
     out = []
     subeler = [c for c in C.values() if c["tur"] == "sube" and c.get("aktif", True)]
+    for cid, gunler in kapanissiz_gunler(kayitlar, C, bas, dun).items():
+        for gi in gunler:
+            out.append({"tur": "eksik_kapanis", "id": f"eksik:{cid}:{gi}", "tarih": gi, "cep": cid, "ad": C[cid]["kisa"]})
     g = date.fromisoformat(bas)
     while g.isoformat() <= dun:
         gi = g.isoformat()
         for c in subeler:
             h = var.get((c["id"], gi))
-            if not h:
-                out.append({"tur": "eksik_kapanis", "id": f"eksik:{c['id']}:{gi}", "tarih": gi, "cep": c["id"], "ad": c["kisa"]})
-            elif h["veri"].get("eski_kaynak") == "evo_taslak" and not h["veri"].get("evo_kabul"):
+            if h and h["veri"].get("eski_kaynak") == "evo_taslak" and not h["veri"].get("evo_kabul"):
                 out.append({"tur": "evo_kapanis", "id": h["id"], "tarih": gi, "cep": c["id"], "ad": c["kisa"],
                             "nakit": _tl_sayi(h["tutar"]), "kart": _tl_sayi(int(h["veri"].get("kart", 0)))})
         g += timedelta(days=1)

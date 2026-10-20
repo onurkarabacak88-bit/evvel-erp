@@ -17,7 +17,7 @@ import json
 import logging
 import re
 import uuid
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal, InvalidOperation
 from typing import List, Optional
 
@@ -1575,17 +1575,8 @@ def _bekleyen(cur, baglam: dict) -> list:
         out.extend(_kapanis_isleri(cur))   # 🛟 reddedilen kapanış — panel açılmadan da (deneme dışı) görünür
     except Exception as e:  # noqa: BLE001
         log.warning("panel kapanış denemeleri okunamadı: %s", str(e)[:150])
-    if _bugun() <= _baslangic(cur):
-        return out
-    from evvel_yeni_olay import olaylar
-    from evvel_yeni_tanim_api import subeler
-    dun = _bugun() - timedelta(days=1)
-    kapanan = {str(o["sube_id"]) for o in olaylar(cur, bas=dun, son=dun, turler={"kapanis"}) if not o.get("iptal")}
-    for s in subeler(cur):
-        if str(s["id"]) not in kapanan:
-            out.append({"tur": "panel_kapanis_yok", "genel": True, "grup": "kasa", "id": f"panel_kapanis:{s['id']}:{dun}",
-                        "tarih": dun.isoformat(), "etiket": "🧾 Kapanış yok", "ad": f"{s['ad']} — {dun.strftime('%d.%m')} kapanışı yapılmadı",
-                        "alt": "Şube panelinden kapanış gelmedi", "sayfa": None, "dugme": None})
+    # C-T1-16: "dün kapanış yok" satırı artık yalnız Kasa'dan (eksik_kapanis — yeni panel kapanışı Kasa'ya yazar); burada ikinci
+    # kopya üretilmez (aynı gün iki bekleyen iş çıkıyordu).
     return out
 
 

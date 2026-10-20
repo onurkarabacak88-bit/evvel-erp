@@ -17,7 +17,8 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from database import db
-from evvel_yeni_kasa_api import (DIS_TURLERI, KIRA_CEPLERI, kasa_baslangic as _baslangic, kasa_hazirla as _hazirla, pos_oranlari as _oranlar, kasa_kayitlari as _yukle)
+from evvel_yeni_kasa_api import (DIS_TURLERI, KIRA_CEPLERI, kasa_baslangic as _baslangic, kasa_hazirla as _hazirla, pos_oranlari as _oranlar, kasa_kayitlari as _yukle,
+                                 kapanissiz_gunler)
 from evvel_yeni_cekirdek import bugun as _bugun, tl_sayi as _tl_sayi
 
 router = APIRouter(prefix="/api/evvel-yeni/gelir", tags=["evvel-yeni-gelir"])
@@ -85,9 +86,9 @@ def gelir_ozet(ay: Optional[str] = None):
     G = _toplamla(kayit, C, gecen_bas.isoformat(), gecen_son.isoformat(), kesim_gun=kesim)
 
     # Eksik gün: takip başlangıcından (dönem/ilk kapanış) dün'e kadar kapanışı olmayan günler
-    takip_bas = max(ay_bas, date(2026, 10, 1))
+    takip_bas = max(ay_bas, donem_bas)   # C-T1-16: sabit 1 Ekim değil, Kasa'nın dönem başlangıcı
     takip_son = min(ay_son, date.fromordinal(bugun.toordinal() - 1))
-    gun_listesi = [date.fromordinal(d).isoformat() for d in range(takip_bas.toordinal(), takip_son.toordinal() + 1)] if takip_son >= takip_bas else []
+    eksik_gun = kapanissiz_gunler(kayit, C, takip_bas.isoformat(), takip_son.isoformat())   # TEK kural (Kasa)
 
     subeler = []
     for c in sube_cep:
@@ -95,7 +96,7 @@ def gelir_ozet(ay: Optional[str] = None):
         g = G.get(c["id"], {"nakit": 0, "pos": 0, "online": 0})
         top = s["nakit"] + s["pos"] + s["online"]
         gtop = g["nakit"] + g["pos"] + g["online"]
-        eksik = [d for d in gun_listesi if d not in s["gunler"]]
+        eksik = eksik_gun.get(c["id"], [])
         oran = oranlar.get(str(c.get("sube_id"))) or (0, 0)
         gun_sayisi = len(s["gunler"])
         subeler.append({
@@ -110,7 +111,7 @@ def gelir_ozet(ay: Optional[str] = None):
         })
 
     # Gün × şube matrisi (Excel)
-    tum_gunler = sorted({d for x in subeler for d in (g["gun"] for g in x["gunler"])} | set(gun_listesi))
+    tum_gunler = sorted({d for x in subeler for d in (g["gun"] for g in x["gunler"])} | {d for g_ in eksik_gun.values() for d in g_})
     matris = []
     for d in tum_gunler:
         satir = {"gun": d, "subeler": {}, "toplam": 0.0}
