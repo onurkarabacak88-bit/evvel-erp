@@ -1687,12 +1687,17 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
             cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim
                             WHERE tarih >= %s ORDER BY tarih, olusturma""", (bas,))
             teslimler = [dict(r) for r in cur.fetchall() or []]
+        yetim = _yetim_teslimler(cur, {"kasa_teslim:" + str(x["id"]) for x in teslimler}, bas)   # C-T1-05: panel yoluyla AYNI koruma
         for r in teslimler:
             ref = "kasa_teslim:" + str(r["id"])
             kaynak = sube_cep.get(str(r["sube_id"]))
             hedef = _patron_bul(r.get("teslim_alan_ad"))
             if ref in var:
                 rapor["atlanan"] += 1
+                continue
+            if kaynak and hedef and (kaynak, hedef, r["tarih"].isoformat(), _kurus(r["tutar"])) in yetim:
+                yetim.discard((kaynak, hedef, r["tarih"].isoformat(), _kurus(r["tutar"])))
+                rapor["atlanan"] += 1   # geri alınıp iptal edilemeyen teslimin yeniden kapanış kopyası — çift çıkış olmaz
                 continue
             g = r["tarih"].isoformat()
             satir = {"gun": g, "sube": C[kaynak]["kisa"] if kaynak else r["sube_id"],
@@ -2042,9 +2047,14 @@ def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None,
                 return
             r = dict(r)
             veri = r["veri"] if isinstance(r["veri"], dict) else json.loads(r["veri"] or "{}")
-            if r["tutar"] == n and int(veri.get("kart", 0)) == k:
+            ayni_ayrim = not ayrim or (int(veri.get("pos", -1)) == ayrim["pos"] and int(veri.get("online", -1)) == ayrim["online"])
+            if r["tutar"] == n and int(veri.get("kart", 0)) == k and ayni_ayrim:   # C-T1-04: POS/online kayması da değişikliktir
                 return
-            if r["durum"] != "onaylandi":
+            cur.execute(f"""SELECT MAX(is_gunu) AS s FROM para_izi_hareket WHERE tur='sayim' AND cep=%s
+                             AND id NOT IN ({iptal_edilen})""", (cep,))
+            son_sayim = dict(cur.fetchone() or {}).get("s")
+            sayimli = son_sayim is not None and str(son_sayim)[:10] >= g   # C-T1-03: kasa_yaz ile AYNI sayım kilidi
+            if r["durum"] != "onaylandi" and not sayimli:
                 veri["kart"] = k
                 veri.update(ayrim)
                 cur.execute("UPDATE para_izi_hareket SET tutar=%s, veri=%s::jsonb WHERE id=%s",
@@ -2053,9 +2063,25 @@ def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None,
                 veri.setdefault("panel_sonradan", []).append({"nakit": n, "kart": k})
                 cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s",
                             (json.dumps(veri, ensure_ascii=False), r["id"]))
-                log.warning("evvel-yeni kasa: onaylı kapanış panelde değişti %s %s", cep, g)
+                log.warning("evvel-yeni kasa: %s kapanış panelde değişti %s %s — tutar değişmedi, not düştü",
+                            "sayımlı" if sayimli else "onaylı", cep, g)
     except Exception as e:  # noqa: BLE001 — panel ASLA durmaz
         log.warning("evvel-yeni kasa panel kapanış yazılamadı: %s", str(e)[:200])
+
+
+def _yetim_teslimler(cur, canli: set, bas) -> set:
+    """TEK KURAL (C-T1-05: yalnız panel_teslim_esle'de vardı, gece _aktar'da yoktu): panelde geri alınmış ama (sayım yüzünden)
+    iptal EDİLEMEMİŞ etkin teslim → {(kaynak, hedef, gün, tutar)}. Aynı anahtarlı YENİ kasa_teslim ikinci kez yazılmaz (çift çıkış)."""
+    cur.execute("""SELECT kaynak_ref, kaynak, hedef, tutar, is_gunu FROM para_izi_hareket
+                    WHERE tur='teslim' AND kaynak_ref LIKE 'kasa_teslim:%%' AND is_gunu >= %s
+                      AND id NOT IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal')""", (bas,))
+    out = set()
+    for h in [dict(x) for x in cur.fetchall() or []]:
+        if h["kaynak_ref"] in canli:
+            continue
+        g = h["is_gunu"].isoformat() if hasattr(h["is_gunu"], "isoformat") else str(h["is_gunu"])
+        out.add((h["kaynak"], h["hedef"], g, int(h["tutar"])))
+    return out
 
 
 def panel_teslim_esle(cur) -> None:
@@ -2085,9 +2111,7 @@ def panel_teslim_esle(cur) -> None:
             her_zaman = {dict(x)["kaynak_ref"] for x in cur.fetchall() or []}
             # Codex 2. tur: panelde geri alınmış ama sayım yüzünden iptal EDİLEMEYEN teslim (yetim) varken, yeniden kapanışın
             # ürettiği AYNI teslim (aynı dükkân, alan, gün, tutar) ikinci kez yazılmaz → çift çıkış olmaz.
-            def _g(v):
-                return v.isoformat() if hasattr(v, "isoformat") else str(v)
-            yetim = {(h["kaynak"], h["hedef"], _g(h["is_gunu"]), int(h["tutar"])) for r_, h in var.items() if r_ not in canli}
+            yetim = _yetim_teslimler(cur, canli, bas)   # TEK kural (gece _aktar da aynısını kullanır)
             for x in kaynak:
                 ref = "kasa_teslim:" + str(x["id"])
                 cep, hedef = sube_cep.get(str(x["sube_id"])), _patron_bul(x.get("teslim_alan_ad"))
