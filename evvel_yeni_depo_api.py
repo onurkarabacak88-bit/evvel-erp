@@ -919,7 +919,7 @@ def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], ki
             sorted((k["urun_id"], k["adet"]) for k in (r["kalemler"] or [])) == sorted((k["urun_id"], k["adet"]) for k in ozet)
         if not ayni:
             raise HTTPException(409, "Bu istek başka içerikle zaten gönderilmiş — sayfayı yenile")
-        return {"parti_id": r["id"], "tekrar": True, "kalem": len(ozet), "eksi": []}
+        return {"parti_id": r["id"], "tekrar": True, "kalem": len(ozet), "eksi": [], "kalemler": r["kalemler"] or []}
     pid = uuid.uuid4().hex[:12]
     g = gun or _is_gunu()
     cur.execute("""INSERT INTO ey_sevk_parti (id, kaynak, hedef, kim, istek_id, notu, is_gunu, kalemler)
@@ -932,7 +932,7 @@ def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], ki
                     aciklama=(notu or "").strip()[:200] or None)
     B = _bakiyeler(cur, yeni=True)
     eksi = [x["ad"] for x in ozet if B.get((x["urun_id"], f"depo:{kaynak_sube}"), 0) < 0]
-    return {"parti_id": pid, "tekrar": False, "kalem": len(ozet), "eksi": eksi}
+    return {"parti_id": pid, "tekrar": False, "kalem": len(ozet), "eksi": eksi, "kalemler": ozet}   # sıralı — i = paket kalem indeksi
 
 
 def kabul_yaz(cur, *, bag: str, sayilan: int, hasarli: int = 0, kim: str, gun: Optional[date] = None,

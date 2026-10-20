@@ -256,7 +256,7 @@ def _calistir(sube_id: str, istek_id: Optional[str], is_fn, tur: Optional[str] =
         raise
     mu = sonuc.pop("merkez_uyarilari", None)   # sahip: kasa uyarısı panele / telefona GİTMEZ — yalnız merkez kaydına
     mu = sonuc.get("uyarilar") if mu is None else mu
-    _deneme_kapat(did, "deneme" if sonuc.get("kuru") else ("ok_uyarili" if mu else "ok"), uyarilar=mu)
+    _deneme_kapat(did, "deneme" if sonuc.get("kuru") and not sonuc.get("kalici") else ("ok_uyarili" if mu else "ok"), uyarilar=mu)
     if merkez and isle_deneme and mu and not sonuc.get("kuru"):   # Codex P2-3: geç kapanış uyarısı Bekleyen işler'e
         _deneme_kapat(isle_deneme, "ok_uyarili", f"geç kapanış merkezde işlendi · {merkez}", uyarilar=mu)
     return sonuc
@@ -287,7 +287,7 @@ def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez:
             sonuc = is_fn(cur, ctx)
             if isle_deneme and not ctx["kuru"]:   # Codex: geç kapanış ile 'işlendi' işareti AYNI işlemde (yarıda kalmaz)
                 cur.execute("UPDATE ey_panel_deneme SET islendi=TRUE, isleyen=%s WHERE id=%s", (merkez, isle_deneme))
-            sonuc = {"ok": True, "kuru": ctx["kuru"], **sonuc}
+            sonuc = {"ok": True, "kuru": ctx["kuru"], "kalici": bool(ctx.get("kalici")), **sonuc}
             if ctx["kuru"] and not ctx.get("kalici"):   # sahip D2 (S5): stok yazmayan sipariş talebi/hazırlığı denemede de kalır
                 raise _Kuru(sonuc)
             return sonuc
@@ -949,11 +949,12 @@ def panel_siparisler(sube_id: str):
     with db() as (conn, cur):
         S.siparis_hazirla(cur)
         _sube(cur, sube_id)
-        from evvel_yeni_depo_api import _depo_sube
-        depo_mu = _depo_sube(cur) == str(sube_id)
-        return {"siparisler": S.subenin_siparisleri(cur, str(sube_id)), "rozet": S.bekleyen_urunler(cur, str(sube_id)),
+        from evvel_yeni_tanim_api import depo_sube_id
+        depo_mu = depo_sube_id(cur) == str(sube_id)
+        sip = S.subenin_siparisleri(cur, str(sube_id))
+        return {"siparisler": sip, "rozet": S.bekleyen_urunler(cur, str(sube_id), sip),   # Fable #8: ikinci türetme yok
                 "gonderilecek": S.gonderilecek(cur, str(sube_id)) if depo_mu else [], "depo": depo_mu,
-                "toptanci_beklenen": S.toptanci_beklenen(cur, str(sube_id))}
+                "toptanci_beklenen": S.toptanci_beklenen(cur, str(sube_id)) if _modul_acik("toptanci") else []}   # #16
 
 
 class SiparisIptalBody(BaseModel):
@@ -972,7 +973,6 @@ def panel_siparis_iptal(sube_id: str, sid: str, b: SiparisIptalBody):
         p = _personel(cur, sube_id, b.personel_id)
         _pin(cur, p, b.pin)
         S.siparis_hazirla(cur)
-        S._kilit(cur, sid)
         S.siparis_iptal(cur, sid=sid, kim=f"{KIM} · {p['ad']}", sebep="şube geri çekti", sube_id=str(sube_id))
         c["kalici"] = True
         return {"mesaj": "Sipariş geri çekildi"}
@@ -1004,8 +1004,8 @@ def panel_gonderilecek(sube_id: str, b: GonderBody):
     S = _siparis()
 
     def is_(cur, c):
-        from evvel_yeni_depo_api import _depo_sube
-        if _depo_sube(cur) != str(sube_id):
+        from evvel_yeni_tanim_api import depo_sube_id
+        if depo_sube_id(cur) != str(sube_id):
             raise HTTPException(403, "Gönderilecek yalnız merkez depo şubesinde")
         p = _personel(cur, sube_id, b.personel_id)
         _pin(cur, p, b.pin)
@@ -1016,11 +1016,12 @@ def panel_gonderilecek(sube_id: str, b: GonderBody):
             return {"mesaj": f"Hazırlık kaydedildi ({n} kalem)"}
         if any(x.gonderilen is None for x in b.satirlar):
             raise HTTPException(400, "Her kalem için VAR / KISMİ / YOK seç")
-        r = S.yola_cikar(cur, depo_sube=str(sube_id), hedef_sube=b.hedef, kim=kim, istek_id=b.istek_id,
+        r = S.yola_cikar(cur, depo_sube=str(sube_id), hedef_sube=b.hedef, kim=kim, istek_id=b.istek_id[:58],
                          satirlar=[{"yon_id": x.yon_id, "siparis_id": x.siparis_id, "surum": x.surum, "gonderilen": x.gonderilen} for x in b.satirlar])
         _olay(cur, sube_id=sube_id, tur="sevk_cikis", is_gunu=c["gun"], kok=f"panel:sevk:{sube_id}:{b.istek_id}", kaynak_tablo="panel",
               personel_id=p["id"], personel_ad=p["ad"], veri={"hedef": b.hedef, "parti_id": r.get("parti_id"), "istek_id": b.istek_id})
         return {"parti_id": r.get("parti_id"), "mesaj": (f"🚚 {r['kalem']} ürün yola çıktı" if r.get("kalem") else "Gönderilen ürün yok")
+                + (f" ({r['paket']} paket — aynı ürün iki siparişte)" if r.get("paket", 1) > 1 else "")
                 + (f" · {r['yok']} kalem YOK — merkez yeniden karar verecek" if r.get("yok") else "")
                 + (f" · {r['kismi']} kalem kısmi — kalanı merkeze döndü" if r.get("kismi") else "")}
     return _calistir(sube_id, b.istek_id, is_, tur="gonderilecek", govde=b.model_dump(mode="json"))
