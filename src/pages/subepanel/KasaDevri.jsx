@@ -4,7 +4,7 @@
 // Devir mantığı yoklama modülünde (tak-çıkar: panel yalnız PUBLIC uçları çağırır). Kayıtlı PC imzası (cihazImza 'tablet').
 import React, { useState } from 'react';
 import { imzaliJson } from '../../utils/cihazImza';
-import { C, Modal, TabletQR, tl, yeniIstek } from './ortak';
+import { C, Modal, qrBoyut, TabletQR, tl, yeniIstek } from './ortak';
 
 export const DEVIR_ACIK = ['baslatildi', 'dolduruluyor', 'hazir', 'devreden_onayladi'];
 
@@ -46,7 +46,7 @@ export default function KasaDevri({ devir, tabletVar, kapali, kapat, yukle, ipta
     catch (e) { setHata(e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || 'Devir başlatılamadı')); }
     setMesgul(false);
   };
-  const qrBoyut = Math.min(300, Math.max(200, (window.innerWidth || 600) - 160));
+  const qrB = qrBoyut(300, 200, 160);
   const et = devirEtiket(devir);
   return (
     <Modal baslik="💵 Kasa Devri" kapat={kapat}>
@@ -65,7 +65,7 @@ export default function KasaDevri({ devir, tabletVar, kapali, kapat, yukle, ipta
       {acik && devir.durum === 'baslatildi' && (
         <div style={{ display: 'grid', justifyItems: 'center', gap: 10, textAlign: 'center' }}>
           <b style={{ fontSize: 18 }}>1 · Kasayı DEVREDEN QR'ı okutsun</b>
-          {tabletVar && <TabletQR boyut={qrBoyut} devir={devir.id} />}
+          {tabletVar && <TabletQR boyut={qrB} devir={devir.id} />}
           <span style={{ color: C.soluk, fontSize: 13 }}>Okutan kişi devreden olur; sayımı kendi telefonunda yapar (15 dk). Başlatıldı {devir.panel}.</span>
         </div>
       )}
@@ -73,7 +73,7 @@ export default function KasaDevri({ devir, tabletVar, kapali, kapat, yukle, ipta
         <div style={{ display: 'grid', justifyItems: 'center', gap: 10, textAlign: 'center' }}>
           <b style={{ fontSize: 18, color: C.sari }}>⏳ {devir.ustlenen || 'Devreden'} telefonunda sayıyor · {devir.ustlen_saat}'den beri</b>
           <span style={{ color: C.soluk, fontSize: 13 }}>Gönderince burada özet ve devralan QR'ı çıkar. Telefonu bozulursa başka biri bu QR'ı okutup {devir.pencere ? '15 dk dolunca' : 'şimdi'} devralabilir.</span>
-          {tabletVar && <TabletQR boyut={Math.min(220, qrBoyut)} devir={devir.id} />}
+          {tabletVar && <TabletQR boyut={Math.min(220, qrB)} devir={devir.id} />}
         </div>
       )}
       {acik && devir.durum === 'devreden_onayladi' && (<>
@@ -81,7 +81,7 @@ export default function KasaDevri({ devir, tabletVar, kapali, kapat, yukle, ipta
         <DevirOzet devir={devir} />
         <div style={{ display: 'grid', justifyItems: 'center', gap: 10, textAlign: 'center' }}>
           <b style={{ fontSize: 18 }}>2 · DEVRALAN QR'ı okutsun</b>
-          {tabletVar && <TabletQR boyut={qrBoyut} devir={devir.id} />}
+          {tabletVar && <TabletQR boyut={qrB} devir={devir.id} />}
           <span style={{ color: C.soluk, fontSize: 13 }}>Telefonda özeti görür → "Kabul ediyorum" (girişi açılır) ya da "Tutmuyor" + kendi saydığı tutar.</span>
         </div>
       </>)}

@@ -6,8 +6,8 @@
 // Satış'ın TEK hesabıyla (kasa_mutabakat). Tak-çıkar: yalnız props; sunucu uçları panel modülünde.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { CSS_AW, trSaat } from './AcilisSihirbazi';
-import { C, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, yeniIstek } from './ortak';
+import { CSS_AW, saatOncesi, trSaat } from './AcilisSihirbazi';
+import { C, qrBoyut, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, yeniIstek } from './ortak';
 import { gunKaydir } from '../../utils/trTarih';
 import { paraGecerli } from '../../utils/trSayi';
 
@@ -16,11 +16,7 @@ const BASLIK = ['', 'Kasa & Ciro', 'Bardak Sayımı', 'Ürün Sayımı', 'Değir
 const PARA = { test: paraGecerli };   // TEK para kuralı (F#57)
 
 // 22:30 kuralı (sunucu kesin karar verir): 02:00–22:30 arası kapanış yapılamaz
-const kapanisErken = (hhmm) => {
-  const [h, m] = String(hhmm || '22:30').split(':').map(Number);
-  const [sh, sm] = trSaat(new Date()).split(':').map(Number);
-  return sh >= 2 && sh * 60 + sm < h * 60 + (m || 0);
-};
+const kapanisErken = (hhmm) => Number(trSaat(new Date()).split(':')[0]) >= 2 && saatOncesi(hhmm, '22:30');   // K10: ortak yardımcı
 
 export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, urunAcaGit, gun: formGunu }) {
   const gun = formGunu || d.gun;   // Codex P1: formun iş günü AÇILDIĞI an sabit — 02:00'de yeniden kurulup rakamlar silinmez
@@ -306,13 +302,13 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
                 ) : onay.durum === 'isleniyor' ? (
                   <b style={{ color: C.sari }}>⏳ Onay telefondan işleniyor… birazdan geçer</b>
                 ) : onay.durum === 'bekliyor' ? (<>
-                  <TabletQR boyut={Math.min(260, Math.max(200, (window.innerWidth || 600) - 140))} onay={onay.id} />
+                  <TabletQR boyut={qrBoyut(260, 200, 140)} onay={onay.id} />
                   <span style={{ color: C.soluk, fontSize: 13 }}>Kapanışı yapan telefonuyla okutur → özeti görür → <b>ONAYLA</b>. Kapanışçı o kaydedilir ve çıkışı yazılır.<br />⏳ Onay bekleniyor… (10 dk geçerli)</span>
                   {agHata >= 3 && <b style={{ color: C.sari }}>📶 Bağlantı yok — QR geçerli, bağlantı gelince onay görünür</b>}
                 </>) : onay.durum === 'hata' ? (<>
                   <b style={{ color: C.kirmizi }}>{onay.mesaj || 'Onay kaydedilemedi'}</b>
                   <span style={{ color: C.soluk, fontSize: 13 }}>Sorun giderilince aynı QR ile telefondan yeniden onaylanabilir.</span>
-                  <TabletQR boyut={Math.min(220, Math.max(180, (window.innerWidth || 600) - 160))} onay={onay.id} />
+                  <TabletQR boyut={qrBoyut(220, 180, 160)} onay={onay.id} />
                 </>) : (
                   <b style={{ color: C.kirmizi }}>{onay.durum === 'sure_doldu' ? 'Onayın süresi doldu' : 'Onay iptal edildi'} — aşağıdan yeniden QR iste</b>
                 )}

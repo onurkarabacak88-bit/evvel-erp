@@ -181,6 +181,9 @@ export function useQrOnay({ subeId, tur, govde, mesgul, setMesgul, setHata, onay
   return { onay, setOnay, agHata, onayRef, onayIste, onayIptal };
 }
 
+// QR boyutu: ekran genişliğinden (pay kadar boşluk bırak), [enAz, enCok] arasında — TEK hesap (Dalga 5, K11: 8 kopya)
+export const qrBoyut = (enCok, enAz, pay) => Math.min(enCok, Math.max(enAz, (window.innerWidth || 600) - pay));
+
 // 🔑 KİM + PIN (sahip R1b: QR'la içeride olan + kendi 4 haneli PIN'i) — TEK parça (Dalga 5, F#48: Ürün aç · Tedarikçi teslim ·
 // Depodan gelen · panel ana pencereleri 'kimSec' ayrı kopyaydı). PIN yalnız bellekte. pinIste=false → yalnız kişi seçimi.
 // devam verilmezse düğme çizilmez (gönder düğmesi formun kendisinde).

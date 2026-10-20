@@ -5,7 +5,7 @@
 // Sök-tak: Toptancılar modülü kapalıysa ekran "kapalı" der. Sipariş modu / eksik bildirimi sipariş basamağıyla (ertelendi). Bip YOK (sahip).
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, TabletQR, panelHata, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
+import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, panelHata, qrBoyut, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
 
 
 export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, secimBildir, tabletVar }) {
@@ -140,7 +140,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
         <Modal baslik="📷 Faturayı çek" kapat={() => setFoto(null)}>
           <div style={{ display: 'grid', justifyItems: 'center', gap: 10, textAlign: 'center' }}>
             <b>{foto.toptanci} teslimi kaydedildi ✓</b>
-            {tabletVar ? <TabletQR boyut={Math.min(300, Math.max(220, (window.innerWidth || 600) - 120))} teslim={foto.teslim_id} />
+            {tabletVar ? <TabletQR boyut={qrBoyut(300, 220, 120)} teslim={foto.teslim_id} />
               : <b style={{ color: C.sari }}>Bu bilgisayar kayıtlı değil — QR çıkamaz; faturayı merkez ekler.</b>}
             <span style={{ color: C.soluk }}>{foto.fatura ? 'Teslim alan kişi telefonuyla okutsun → faturanın her sayfasını çeksin (en çok 6).' : 'Kâğıt (irsaliye / fiş) varsa telefonla okutup çekin.'}
               <br />Fotoğraf teslime eklenir — merkez Toptancılar'da sayfa sayfa görür.</span>

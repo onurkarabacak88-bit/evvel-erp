@@ -3,7 +3,7 @@
 // sunucu açılışı ONAYLAYANIN adına yazar (S17: girişli herhangi bir personel). Tak-çıkar: yalnız props; sunucu uçları panel modülünde.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, yeniIstek } from './ortak';
+import { C, qrBoyut, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, yeniIstek } from './ortak';
 import { paraGecerli } from '../../utils/trSayi';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
@@ -46,11 +46,13 @@ export const CSS_AW = `
 
 // Bugünün saat dakikası "07:00" ile karşılaştırma (Türkiye saati — panel PC'si TR'de; asıl karar sunucuda)
 export const trSaat = (t) => t.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' });
-const saatOnce = (hhmm) => {
-  const [h, m] = String(hhmm || '07:00').split(':').map(Number);
+// TR saati şu an 'hhmm'den önce mi — TEK yardımcı (Dalga 5, K10: açılış + kapanış ayrı yazıyordu; sınırlar sunucudan d.saat)
+export const saatOncesi = (hhmm, varsayilan) => {
+  const [h, m] = String(hhmm || varsayilan).split(':').map(Number);
   const [sh, sm] = trSaat(new Date()).split(':').map(Number);
   return sh * 60 + sm < h * 60 + (m || 0);
 };
+const saatOnce = (hhmm) => saatOncesi(hhmm, '07:00');
 
 export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, kapat, bitti, basladi }) {
   const urunler = d.sayilan.flatMap((g) => g.urunler);
@@ -211,13 +213,13 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
                 ) : onay.durum === 'isleniyor' ? (
                   <b style={{ color: C.sari }}>⏳ Onay telefondan işleniyor… birazdan geçer</b>
                 ) : onay.durum === 'bekliyor' ? (<>
-                  <TabletQR boyut={Math.min(280, Math.max(200, (window.innerWidth || 600) - 140))} onay={onay.id} />
+                  <TabletQR boyut={qrBoyut(280, 200, 140)} onay={onay.id} />
                   <span style={{ color: C.soluk, fontSize: 13 }}>Telefonunla okut → özeti gör → <b>ONAYLA</b>. Girişin yoksa önce telefonda "Giriş yap" çıkar (aynı QR).<br />⏳ Onay bekleniyor… (10 dk geçerli)</span>
                   {agHata >= 3 && <b style={{ color: C.sari }}>📶 Bağlantı yok — QR geçerli, bağlantı gelince onay görünür</b>}
                 </>) : onay.durum === 'hata' ? (<>
                   <b style={{ color: C.kirmizi }}>{onay.mesaj || 'Onay kaydedilemedi'}</b>
                   <span style={{ color: C.soluk, fontSize: 13 }}>Sorun giderilince aynı QR ile telefondan yeniden onaylanabilir.</span>
-                  <TabletQR boyut={Math.min(220, Math.max(180, (window.innerWidth || 600) - 160))} onay={onay.id} />
+                  <TabletQR boyut={qrBoyut(220, 180, 160)} onay={onay.id} />
                 </>) : (<>
                   <b style={{ color: C.kirmizi }}>{onay.durum === 'sure_doldu' ? 'Onayın süresi doldu' : 'Onay iptal edildi'} — aşağıdan yeniden QR iste</b>
                 </>)}

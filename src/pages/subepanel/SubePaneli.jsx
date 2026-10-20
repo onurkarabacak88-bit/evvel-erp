@@ -14,7 +14,7 @@ import DepodanGelen from './DepodanGelen';
 import AnlikGider, { AvansTeslim } from './AnlikGider';
 import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
-import { AdetListesi, C, CSS, KisiPin, Modal, SayiTusTakimi, TabletQR, kalemGovde, panelHata, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek } from './ortak';
+import { AdetListesi, C, CSS, kalemGovde, KisiPin, Modal, panelHata, qrBoyut, SayiTusTakimi, TabletQR, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek } from './ortak';
 import { gunKaydir } from '../../utils/trTarih';
 
 export default function SubePaneli({ subeId }) {
@@ -351,7 +351,7 @@ export default function SubePaneli({ subeId }) {
               <div style={{ fontSize: 40 }}>📱</div>
               <b style={{ fontSize: 22 }}>Personel Girişi Gerekli</b>
               <div style={{ color: C.soluk }}>Kasa açılışından önce bir personelin bu QR'ı kendi telefonuyla okutması gerekiyor. Personel okutunca bu ekran kendiliğinden geçer.</div>
-              <TabletQR boyut={Math.min(320, Math.max(220, (window.innerWidth || 600) - 120))} />
+              <TabletQR boyut={qrBoyut(320, 220, 120)} />
               <span style={{ color: C.soluk }}>⏳ Bekleniyor… · QR 60 saniyede bir değişir</span>
             </>) : (<>
               <div style={{ fontSize: 40 }}>🖥️</div>
@@ -383,7 +383,7 @@ export default function SubePaneli({ subeId }) {
       {(qrBuyuk || molaQr) && (
         <Modal baslik={molaQr ? '🍽️ Yemek Molası' : '📱 Giriş / çıkış QR'} kapat={() => { setQrBuyuk(false); setMolaQr(false); }}>
           <div style={{ display: 'grid', justifyItems: 'center', gap: 10, textAlign: 'center' }}>
-            {tabletVar ? <TabletQR boyut={Math.min(420, Math.max(240, (window.innerWidth || 600) - 80))} /> : <b>Bu bilgisayar kayıtlı değil — merkezden bağlantı iste</b>}
+            {tabletVar ? <TabletQR boyut={qrBoyut(420, 240, 80)} /> : <b>Bu bilgisayar kayıtlı değil — merkezden bağlantı iste</b>}
             <span style={{ color: C.soluk }}>{molaQr ? 'Telefonundan okut → "Yemek molası başlat" ya da "Molayı bitir". Konum doğrulamalı — şube dışından mola açılamaz.' : 'Telefonundan okut — 60 saniyede bir değişir'}</span>
           </div>
         </Modal>

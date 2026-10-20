@@ -145,10 +145,10 @@ def _saat_kurali(tur: str, personel: dict) -> Optional[str]:
     n = _simdi_tr()
     hm = (n.hour, n.minute)
     if tur == "acilis" and hm < ACILIS_SAAT and not personel.get("erken_acilis"):
-        return ("Açılış onayı yalnızca 07:00 ve sonrasında yapılabilir (Türkiye saati). "
+        return (f"Açılış onayı yalnızca {ACILIS_SAAT[0]:02d}:{ACILIS_SAAT[1]:02d} ve sonrasında yapılabilir (Türkiye saati). "
                 "Bu personelin erken açılış izni yok — izin merkezden verilir.")
     if tur == "kapanis" and 2 <= n.hour and hm < KAPANIS_SAAT:
-        return "Kapanış 22:30'dan önce yapılamaz"
+        return f"Kapanış {KAPANIS_SAAT[0]:02d}:{KAPANIS_SAAT[1]:02d}'dan önce yapılamaz"   # sınır TEK sabitte (K10)
     return None
 
 
