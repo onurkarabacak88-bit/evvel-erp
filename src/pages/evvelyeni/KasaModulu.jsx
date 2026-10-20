@@ -23,7 +23,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ayTR } from '../../utils/trTarih';
+import { AY_UZUN, ayTR, GUN_UZUN } from '../../utils/trTarih';
 
 // Kadife (v2) bileşenlerine BAĞIMLILIK YOK — sahip: "kadife tasarımda değil ayrı bir
 // alanda yap, sonra (eskiyi) tamamen kaldırsak". Bu dosya src/pages/evvelyeni altında,
@@ -90,8 +90,8 @@ button.pi-kapi:hover{border-color:var(--pi-accent)}
 .pi-excel tbody tr:hover td{background:var(--pi-accent-soft)}
 `;
 
-const AY = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
-const GUNLER = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
+const AY = AY_UZUN;   // ay / gün adları TEK kaynak utils/trTarih (T4-03)
+const GUNLER = GUN_UZUN;
 // Kuruş görünür (Codex): 999,75 ₺ "1.000" diye yuvarlanmaz.
 // TR tutar okuyucu: src/utils/trSayi.js (tek kaynak; burada yeniden dışa verilir)
 // Patronlar — TEK liste (sunucuda evvel_yeni_kasa_api.PATRONLAR ile aynı; C-T1-34)
@@ -177,7 +177,7 @@ function CepKart({ c, onAc, serit }) {
 // ─── Hareket satırı (sağ akış) ───
 const TUR_AD = { acilis: 'Açılış', kapanis: 'Kapanış', dis: 'Dış giriş', teslim: 'Teslim', tasima: 'Taşıma', odeme: 'Ödeme', sayim: 'Sayım', cozum: 'Fark çözüldü', pos_yatis: 'POS yatışı' };
 // 🧾 ÖDEME FİŞİ — "parayı kim verdi" (Kasa) ile "gider kimin" (Gider) aynı kâğıtta
-const AY_AD = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+const AY_AD = AY_UZUN;
 function odemeFisi(h, cepAd) {
   const kasadan = h.parcalar.reduce((a, p) => a + p.tutar, 0);
   const karttan = (h.kart_parcalar || []).reduce((a, p) => a + p.tutar, 0);

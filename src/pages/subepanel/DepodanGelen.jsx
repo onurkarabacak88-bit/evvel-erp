@@ -6,6 +6,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
 import { C, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
+import { tarihNokta } from '../../utils/trTarih';
 
 export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
   const paketler = useMemo(() => d.depo_yolda || [], [d.depo_yolda]);
@@ -78,7 +79,7 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
             <button key={x.parti_id} type="button" onClick={() => setSecPid(x.parti_id)} className="sp-kart"
               style={{ textAlign: 'left', cursor: 'pointer', display: 'grid', gap: 4, font: 'inherit', color: C.yazi }}>
               <b style={{ fontSize: 17 }}>📦 {x.nereden}</b>
-              <span style={{ color: C.soluk, fontSize: 13 }}>{x.gun.split('-').reverse().join('.')} · {x.kalemler.length} ürün{x.kalemler.length < x.toplam_kalem ? ` (${x.toplam_kalem - x.kalemler.length} kabul edildi)` : ''}</span>
+              <span style={{ color: C.soluk, fontSize: 13 }}>{tarihNokta(x.gun)} · {x.kalemler.length} ürün{x.kalemler.length < x.toplam_kalem ? ` (${x.toplam_kalem - x.kalemler.length} kabul edildi)` : ''}</span>
               {x.not && <span style={{ fontSize: 13 }}>📝 {x.not}</span>}
               <span style={{ color: C.yesil, fontWeight: 800, marginTop: 4 }}>Aç ve say →</span>
             </button>
@@ -89,7 +90,7 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
         <div className="sp-kart" style={{ display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <button type="button" className="sp-btn" style={{ minHeight: 40 }} onClick={() => setSecPid(null)}>« Paketler</button>
-            <b style={{ fontSize: 17 }}>📦 {p.nereden} · {p.gun.split('-').reverse().join('.')}</b>
+            <b style={{ fontSize: 17 }}>📦 {p.nereden} · {tarihNokta(p.gun)}</b>
             {p.not && <span style={{ color: C.soluk }}>📝 {p.not}</span>}
           </div>
           <div style={{ height: 10, borderRadius: 999, background: C.bg3, overflow: 'hidden' }}>

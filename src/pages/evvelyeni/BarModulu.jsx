@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, num, Dugme, Cip, Cekmece, fmt, tUzun, tKisa } from './KasaModulu';
-import { ayTR } from '../../utils/trTarih';
+import { ayTR, gunKisa } from '../../utils/trTarih';
 
 export const BAR_SAYFALAR = [
   { id: 'bar_sayim', ad: 'Bar sayımı', alt: 'Devir farkı · ürün aç eksik' },
@@ -87,7 +87,7 @@ export default function BarModulu() {
                 width: 42, padding: '5px 0', borderRadius: 8, cursor: 'pointer', font: 'inherit', fontSize: 11.5, lineHeight: 1.25,
                 border: `2px solid ${DURUM[g.durum].renk}`, background: 'var(--pi-bg)', color: R.krem,
               }}>
-                <b style={num}>{tKisa(g.gun).split(' ')[0]}</b><br /><span style={{ color: R.not }}>{['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'][new Date(`${g.gun}T12:00:00`).getDay()]}</span>
+                <b style={num}>{tKisa(g.gun).split(' ')[0]}</b><br /><span style={{ color: R.not }}>{gunKisa(g.gun)}</span>
                 {(g.devir_fark > 0 || g.ac_eksik > 0) && <><br /><span style={{ fontWeight: 700, color: g.ac_eksik ? R.kirmizi : R.amber }}>{g.devir_fark + g.ac_eksik}</span></>}
               </button>
             ))}

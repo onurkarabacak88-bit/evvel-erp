@@ -78,3 +78,15 @@ export function ayKaydir(ay, n) {
   return `${String(Math.floor(t / 12)).padStart(4, '0')}-${String((t % 12) + 1).padStart(2, '0')}`;
 }
 
+// Ay / gün ADLARI ve gün yazımı — TEK kaynak (Dalga 5, T4-03/T4-04/F#65: Kasa 3, AyTakvim, Ödeme, Bar, panel ayrı dizi / split tutuyordu)
+export const AY_UZUN = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+export const AY_KISA = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
+export const GUN_UZUN = ['Pazar', 'Pazartesi', 'Salı', 'Çarşamba', 'Perşembe', 'Cuma', 'Cumartesi'];
+export const GUN_KISA = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
+/** 'YYYY-MM' → 'Ekim 2026' */
+export const ayAdi = (ym) => { const [y, m] = String(ym || '').split('-'); return m ? `${AY_UZUN[Number(m) - 1]} ${y}` : ''; };
+/** 'YYYY-MM-DD' → '20.10.2026' */
+export const tarihNokta = (ymd) => String(ymd || '').slice(0, 10).split('-').reverse().join('.');
+/** 'YYYY-MM-DD' → haftanın günü kısa adı (öğlen üzerinden — saat dilimi kaymaz) */
+export const gunKisa = (ymd) => GUN_KISA[new Date(`${String(ymd).slice(0, 10)}T12:00:00`).getDay()];
+

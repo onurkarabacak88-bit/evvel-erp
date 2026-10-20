@@ -6,12 +6,13 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
 import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
+import { tarihNokta } from '../../utils/trTarih';
 
 const DURUM = {
   oneri: ['💡 merkez kararı bekliyor', C.sari], yonlendirilmedi: ['⏳ merkez bakıyor', C.sari], hazirlaniyor: ['📦 hazırlanıyor', C.mavi],
   bekleniyor: ['🚚 toptancıdan bekleniyor', C.mavi], yolda: ['🚚 yolda', C.mavi], karsilandi: ['✓ geldi', C.yesil], iptal: ['iptal', C.soluk],
 };
-const tarih = (g) => (g || '').split('-').reverse().join('.');
+const tarih = tarihNokta;   // gün yazımı TEK kaynak (F#65)
 
 export function useSiparisler(subeId) {
   const [v, setV] = useState(null);

@@ -9,7 +9,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { ALAN, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, odemeFisi, PATRONLAR, PI_CSS, R, sayfayaGit, tKisa, tl } from './KasaModulu';
-import { ayKaydir, ayTR, bugunTR, gunKaydir as trGunKaydir } from '../../utils/trTarih';
+import { ayAdi, ayKaydir, ayTR, bugunTR, gunKaydir as trGunKaydir } from '../../utils/trTarih';
 
 export const ODEME_SAYFALAR = [
   { id: 'odemeler', ad: 'Ödeme / gider gir', alt: 'Nakit · havale · kart' },
@@ -172,7 +172,6 @@ export default function OdemeModulu({ onToast, gorunum }) {
     : f.konu === 'personel' ? (secPer ? (subeAd(secPer.sube_id) || 'Ortak') : null)
       : f.konu === 'diger' ? ({ ortak: 'Ortak', patron: 'Patron şahsi' }[f.kimin] || subeAd(f.kimin))
         : (f.konu === 'vergi' || f.konu === 'sgk') ? (f.kimin === 'ortak' ? 'Ortak' : subeAd(f.kimin)) : null;
-  const ayAdi = (a) => { const [y, m] = (a || '').split('-'); return m ? `${['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'][Number(m) - 1]} ${y}` : ''; };
   const giderAyi = ['kira', 'fatura', 'personel', 'vergi', 'sgk'].includes(f.konu) ? f.ait_ay : (f.tarih || '').slice(0, 7);
   const konuObj = L.konular.find((k) => k.kod === f.konu);
   const izgara = { display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 12 };

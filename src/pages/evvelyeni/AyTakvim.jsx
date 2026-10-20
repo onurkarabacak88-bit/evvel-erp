@@ -4,8 +4,8 @@
 import React from 'react';
 import { R, kart, num, Dugme, fmt } from './KasaModulu';
 
-export const AY = ['Oca', 'Şub', 'Mar', 'Nis', 'May', 'Haz', 'Tem', 'Ağu', 'Eyl', 'Eki', 'Kas', 'Ara'];
-export const AY_UZUN = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+export { AY_KISA as AY, AY_UZUN } from '../../utils/trTarih';   // ay adları TEK kaynak (T4-03)
+import { AY_KISA as AY, AY_UZUN } from '../../utils/trTarih';
 const GRI = 'var(--pi-ink3, #7F6C57)';
 export const DURUM = {
   odendi: { renk: R.yesil, ad: 'ödendi', ikon: '✓' },
