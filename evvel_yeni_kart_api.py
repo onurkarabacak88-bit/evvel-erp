@@ -45,7 +45,7 @@ def kart_hazirla(cur) -> None:
         girilen TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     try:
         with savepoint(cur, "sp_ey_kart_cipa"):
-            cur.execute("SELECT DISTINCT kart_id FROM ey_kart_teyit")
+            cur.execute("SELECT DISTINCT kart_id FROM ey_kart_teyit WHERE kaynak <> 'geri_alindi'")
             teyitli = {dict(x)["kart_id"] for x in cur.fetchall() or []}
             limit = {k["id"]: k.get("limit_tutar") for k in _kartlar(cur) if k["id"] not in teyitli}
             cur.execute("""SELECT DISTINCT ON (kart_id) kart_id::text AS id, kesim_tarihi, son_odeme_tarihi, donem_borcu, kullanilabilir_limit
@@ -134,7 +134,7 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
     kart_hazirla(cur)
     bugun = bugun or _bugun()
     kartlar = __import__("evvel_yeni_tanim_api").kartlar(cur)   # Tanımlar'ın kapısı (F#31)
-    cur.execute("SELECT * FROM ey_kart_teyit ORDER BY tarih DESC, zaman DESC")
+    cur.execute("SELECT * FROM ey_kart_teyit WHERE kaynak <> 'geri_alindi' ORDER BY tarih DESC, zaman DESC")
     teyitler = {}
     for r in cur.fetchall() or []:
         teyitler.setdefault(dict(r)["kart_id"], []).append(dict(r))
@@ -266,7 +266,7 @@ def kart_takvimi(yil: Optional[int] = None):
         kartlar = __import__("evvel_yeni_tanim_api").kartlar(cur)   # Tanımlar'ın kapısı (F#31)
         # Codex: aynı aya birden çok teyit → EN SON girilen kazanır (sıralı okuma); teyitteki gerçek son ödeme tarihi korunur
         cur.execute("""SELECT kart_id, ekstre_borc, son_odeme, tarih FROM ey_kart_teyit
-                        WHERE ekstre_borc IS NOT NULL AND son_odeme IS NOT NULL ORDER BY tarih, zaman""")
+                        WHERE ekstre_borc IS NOT NULL AND son_odeme IS NOT NULL AND kaynak <> 'geri_alindi' ORDER BY tarih, zaman""")
         teyit = {}
         for r in cur.fetchall() or []:
             r = dict(r)
@@ -393,12 +393,15 @@ def kart_teyit(kid: str, body: TeyitBody, x_evvel_oturum: Optional[str] = Header
 
 
 @router.post("/teyit/{tid}/sil")
-def teyit_sil(tid: str):
-    """Yanlış girilen teyidi geri al (önceki çıpa geçerli olur)."""
+def teyit_sil(tid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Yanlış girilen teyidi geri al (önceki çıpa geçerli olur). E2E #19: SİLİNMEZ — 'geri_alindi' damgası + kim/ne zaman notu (iz)."""
     _hazirla()
     with db() as (conn, cur):
         kart_hazirla(cur)
-        cur.execute("DELETE FROM ey_kart_teyit WHERE id=%s AND kaynak='elle' RETURNING id", (tid,))
+        kim = __import__("evvel_yeni_cekirdek").merkez_aktor(cur, x_evvel_oturum)
+        cur.execute("""UPDATE ey_kart_teyit SET kaynak='geri_alindi',
+                              not_ = LEFT(COALESCE(not_ || ' · ', '') || 'geri alındı: ' || %s || ' ' || to_char(NOW() AT TIME ZONE 'Europe/Istanbul', 'DD.MM HH24:MI'), 400)
+                        WHERE id=%s AND kaynak='elle' RETURNING id""", (kim, tid))
         if not cur.fetchone():
             raise HTTPException(404, "Teyit bulunamadı")
     return {"ok": True}

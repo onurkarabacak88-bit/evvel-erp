@@ -275,6 +275,8 @@ def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
         for h in kayit:
             if h["tur"] != "odeme" or h["is_gunu"] != gun:
                 continue
+            if (h["veri"].get("konu") or {}) != (konu or {}):
+                continue   # E2E #13: farklı konu (ör. kart borcu ↔ toptancı) aynı tutarda olabilir — mükerrer değil
             eski = {(p["cep"], int(p["tutar"])) for p in h["veri"].get("parcalar", [])}
             if any((x["cep"], x["tutar"]) in eski for x in nakit_parca):
                 raise HTTPException(409, f"BENZER KAYIT: aynı gün, aynı yerden, aynı tutarda bir ödeme zaten var — "

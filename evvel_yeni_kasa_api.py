@@ -38,6 +38,8 @@ import logging
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (E2E #10)
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -736,8 +738,9 @@ def _eksik_kapanislar(kayitlar: List[dict], C: dict, donem_bas: Optional[date] =
     out = []
     subeler = [c for c in C.values() if c["tur"] == "sube" and c.get("aktif", True)]
     for cid, gunler in kapanissiz_gunler(kayitlar, C, bas, dun).items():
-        for gi in gunler:
-            out.append({"tur": "eksik_kapanis", "id": f"eksik:{cid}:{gi}", "tarih": gi, "cep": cid, "ad": C[cid]["kisa"]})
+        if gunler:   # E2E #18: şube × gün ayrı satır 113 satıra çıkıyordu → şube başına TEK satır; 'Kapanışı gir' en eski günü açar
+            out.append({"tur": "eksik_kapanis", "id": f"eksik:{cid}:{gunler[0]}", "tarih": gunler[0], "cep": cid, "ad": C[cid]["kisa"],
+                        "gun_sayisi": len(gunler), "gunler": gunler[:31]})
     g = date.fromisoformat(bas)
     while g.isoformat() <= dun:
         gi = g.isoformat()
@@ -1084,7 +1087,7 @@ def fark_detay(fark_id: str):
 # ─────────────────────────── UÇLAR: YAZMA ───────────────────────────
 class Parca(BaseModel):
     cep: str
-    tutar: Decimal
+    tutar: TrTutar
 
 
 class HareketBody(BaseModel):
@@ -1094,20 +1097,20 @@ class HareketBody(BaseModel):
     cep: Optional[str] = None
     kaynak: Optional[str] = None
     hedef: Optional[str] = None
-    tutar: Optional[Decimal] = None
-    kart: Optional[Decimal] = None
+    tutar: Optional[TrTutar] = None
+    kart: Optional[TrTutar] = None
     alt: Optional[str] = None
     kimden: Optional[str] = None
     not_: Optional[str] = Field(None, alias="not")
     aciklama: Optional[str] = None
     kimin: Optional[str] = None
     parcalar: Optional[List[Parca]] = None
-    sayilan: Optional[Decimal] = None
+    sayilan: Optional[TrTutar] = None
     fark_id: Optional[str] = None
     sebep: Optional[str] = None
     sorumlu: Optional[str] = None
     teslim_eden: Optional[str] = None
-    online: Optional[Decimal] = None
+    online: Optional[TrTutar] = None
     bag: Optional[dict] = None          # 🧩 tak-çıkar: bu kaydı hangi modülün neyine bağlar (ör. {"modul":"mulk","id":..,"ay":..}) — Kasa yorumlamaz
     istek_id: Optional[str] = None      # formun tek kimliği — tekrar gönderilirse İKİNCİ KEZ yazılmaz
 
@@ -1338,7 +1341,7 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
 
 
 class OnayBody(BaseModel):
-    alinan: Optional[Decimal] = None
+    alinan: Optional[TrTutar] = None
 
 
 @router.post("/hareket/{hid}/onay")
@@ -1548,7 +1551,7 @@ def _pos_otomatik(cur) -> int:
 
 
 class DuzeltBody(BaseModel):
-    alinan: Decimal
+    alinan: TrTutar
 
 
 @router.post("/hareket/{hid}/teslim-duzelt")
@@ -1638,8 +1641,10 @@ def toplu_onay(body: TopluOnayBody, x_evvel_oturum: Optional[str] = Header(defau
     with db() as (conn, cur):
         _kilit(cur)
         kim = _aktor(cur, x_evvel_oturum)
-        cur.execute("""UPDATE para_izi_hareket SET durum='onaylandi', onay_zamani=NOW(), onaylayan=%s
-                        WHERE id = ANY(%s) AND tur='kapanis' AND COALESCE(durum,'') <> 'onaylandi'""", (kim, idler))
+        cur.execute("""UPDATE para_izi_hareket h SET durum='onaylandi', onay_zamani=NOW(), onaylayan=%s
+                        WHERE h.id = ANY(%s) AND h.tur='kapanis' AND COALESCE(h.durum,'') <> 'onaylandi'
+                          AND NOT EXISTS (SELECT 1 FROM para_izi_hareket i WHERE i.tur='iptal' AND i.veri->>'hedef_id' = h.id)""",
+                    (kim, idler))   # E2E #14: iptal edilmiş kapanış onaylanmaz
         n = cur.rowcount
     return {"ok": True, "onaylanan": n}
 

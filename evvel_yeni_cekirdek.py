@@ -14,9 +14,10 @@ import logging
 import math
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Callable, Dict, List, Optional
+from typing import Annotated, Callable, Dict, List, Optional
 
 from fastapi import HTTPException
+from pydantic import BeforeValidator
 
 from database import db, savepoint
 
@@ -268,6 +269,21 @@ def tutar_oku(x, ad: str = "Tutar") -> Decimal:
     return d
 
 
+def _tr_tutar_once(x):
+    """pydantic ön-dönüştürücü: METİN tutar Türkçe kuralla (tutar_oku) okunur; sayı olduğu gibi geçer."""
+    if isinstance(x, str):
+        try:
+            return tutar_oku(x)
+        except HTTPException as e:
+            raise ValueError(e.detail)
+    return x
+
+
+# PUBLIC — form gövdelerinde para alanı tipi: "1.250" = 1.250 ₺ (bin ayıracı), "1.250,50", "1250,5" (E2E #10: Kasa ve panel
+# gövdeleri düz Decimal alıyordu → "1.250" 1,25 ₺ yazılıyordu). TEK kural tutar_oku; ön yüzdeki karşılığı trSayi.sayiTR.
+TrTutar = Annotated[Decimal, BeforeValidator(_tr_tutar_once)]
+
+
 def tl(k: int) -> str:
     tam, kr = divmod(abs(int(k)), 100)
     s = f"{tam:,}".replace(",", ".") + (f",{kr:02d}" if kr else "")
@@ -454,7 +470,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "kolon_var", "bir_kez", "ddl_kur", "lock_timeout_ayarla", "KuruGeriAl",
+__all__ = ["TrTutar", "bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "kolon_var", "bir_kez", "ddl_kur", "lock_timeout_ayarla", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

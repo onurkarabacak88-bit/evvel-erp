@@ -530,8 +530,11 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
     if tur not in ("sube", "personel", "kart", "toptanci", "banka"):
         raise HTTPException(404, "Bilinmeyen tanım")
     from evvel_yeni_kasa_api import sube_cepleri_yaz
-    from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kilit as _kilit
+    from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kilit as _kilit, ad_anahtari
     yeni = tid is None
+    if tur in ("sube", "banka"):
+        from evvel_yeni_kasa_api import kasa_hazirla
+        kasa_hazirla()   # E2E #9: sıfırdan kurulumda şube cebi tablosu yoktu (500) — Kasa kendi kısa işleminde hazırlanır
     with db() as (conn, cur):
         tanim_hazirla(cur)
         _kilit(cur)
@@ -543,6 +546,15 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                                  slug=_slug(ad))
             return {"ok": True, "id": tid, "mesaj": f"Banka {'eklendi' if yeni else 'güncellendi'}"}
 
+        for o_, ad_ in ((b.pos_oran, "POS oranı"), (b.online_oran, "Online oranı")):
+            if o_ is not None and not 0 <= float(o_) <= 100:
+                raise HTTPException(400, f"{ad_} 0–100 arası olmalı (yüzde)")   # E2E #16: eksi / %150 sessizce komisyonu 0 yapıyordu
+        if b.limit_tutar is not None and _kurus(b.limit_tutar) < 0:
+            raise HTTPException(400, "Kart limiti eksi olamaz")
+        if not yeni and tur in ("sube", "personel", "kart", "toptanci"):
+            cur.execute(f"SELECT 1 FROM ey_{tur} WHERE id=%s", (tid,))
+            if not cur.fetchone():
+                raise HTTPException(404, "Kayıt bulunamadı")   # E2E #11: olmayan kaydı 'güncellendi' diyordu
         if tur == "sube":
             if yeni:
                 tid = "sube-" + _slug(ad)
@@ -580,6 +592,14 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                     giris = date.fromisoformat(b.giris[:10])
                 except ValueError:
                     raise HTTPException(400, "İşe giriş tarihi YYYY-AA-GG olmalı")
+            if not yeni and (giris or cikis):
+                cur.execute("SELECT giris, cikis FROM ey_personel WHERE id=%s", (tid,))
+                _e = dict(cur.fetchone() or {})
+                giris_, cikis_ = giris or _e.get("giris"), cikis or _e.get("cikis")
+            else:
+                giris_, cikis_ = giris, cikis
+            if giris_ and cikis_ and cikis_ < giris_:
+                raise HTTPException(400, "Ayrılış tarihi işe girişten önce olamaz")   # E2E #16
             if yeni:
                 if b.maas is None:
                     raise HTTPException(400, "Maaşı yaz (0 olabilir)")
@@ -634,9 +654,8 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
 
         # toptancı
         if yeni:
-            cur.execute("SELECT 1 FROM ey_toptanci WHERE LOWER(TRIM(ad)) = LOWER(TRIM(%s))", (ad,))
-            if cur.fetchone():
-                raise HTTPException(409, "Bu adla toptancı zaten var")
+            if any(ad_anahtari(x["ad"]) == ad_anahtari(ad) for x in tanim_listesi(cur, "ey_toptanci", ("ad",))):
+                raise HTTPException(409, "Bu adla toptancı zaten var")   # E2E #12: "ATA GIDA" ↔ "Ata Gıda" ayrı açılıyordu
             tid = "ey-" + uuid.uuid4().hex[:12]
             cur.execute("""INSERT INTO ey_toptanci (id, ad, kategori, telefon, acilis_bakiye, degistiren) VALUES (%s,%s,%s,%s,%s,%s)""",
                         (tid, ad, (b.kategori or "").strip()[:40] or None, (b.telefon or "").strip()[:20] or None, _kurus(b.acilis_bakiye or 0), kim))

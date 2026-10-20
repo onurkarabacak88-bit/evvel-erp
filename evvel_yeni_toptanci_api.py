@@ -121,7 +121,7 @@ def _toptanci_ddl(cur) -> None:
     if not _var(cur, "idx_ey_top_belge"):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_top_belge ON ey_toptanci_belge (teslim_id) WHERE NOT iptal")
     from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
-    if not ayar_oku(cur, "fiyat_gecmis_kopya"):   # bir kez: bugünkü fiyatlar 1 Ekim'den geçerli ilk satır olur
+    if not ayar_oku(cur, "fiyat_gecmis_kopya") and __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_urun", "ey_urun_fiyat", "ey_toptanci_fiyat"):   # bir kez (E2E #9: katalog yoksa bekler)
         _idler = __import__("evvel_yeni_urun_api").urun_idleri(cur)   # Ürün'ün PUBLIC kapısı (Codex P2: ey_urun JOIN'i kalktı)
         cur.execute("""INSERT INTO ey_urun_fiyat_gecmis (id, urun_id, tur, birim, tarih, kaynak, girilen)
                        SELECT 'fg-' || md5(f.urun_id || ':ilk'), f.urun_id, 'elle', f.birim, DATE '2026-10-01', 'ilk kopya (ey_urun_fiyat)', f.girilen
@@ -562,6 +562,8 @@ def merkez_teslim(body: TeslimBody, x_evvel_oturum: Optional[str] = Header(defau
         r = __import__("evvel_yeni_tanim_api").tanim_oku(cur, "ey_toptanci", body.toptanci_id, ("ad",))   # F#32
         if not r:
             raise HTTPException(404, "Toptancı bulunamadı")
+        if body.sube_id and not __import__("evvel_yeni_tanim_api").tanim_oku(cur, "ey_sube", body.sube_id, ("ad",)):
+            raise HTTPException(400, "Şube bulunamadı")   # E2E #15
         if t:
             cur.execute("""SELECT 1 FROM ey_toptanci_teslim WHERE toptanci_id=%s AND tarih=%s AND kesin_tutar=%s AND NOT iptal""",
                         (body.toptanci_id, gun, t))

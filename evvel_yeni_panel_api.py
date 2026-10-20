@@ -19,6 +19,8 @@ import re
 import uuid
 from datetime import date
 from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (E2E #10)
 from typing import List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -382,7 +384,7 @@ class SayimSatir(BaseModel):
 class AcilisBody(BaseModel):
     istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
-    kasa_sayim: Decimal                      # sabah kasadaki nakit (TL)
+    kasa_sayim: TrTutar                      # sabah kasadaki nakit (TL)
     sayim: List[SayimSatir] = []             # sayılan ürünler (boş bırakılan SAYILMAZ)
     pasta_toplam: Optional[Decimal] = None   # sahip: pasta yalnız TOPLAM adet (eski panel "Pasta adedi")
     istek_id: Optional[str] = None
@@ -504,18 +506,18 @@ def acilis(sube_id: str, b: AcilisBody):
 
 class TeslimSatir(BaseModel):
     alan: str          # ev:onur · ev:fethi · ev:fatma
-    tutar: Decimal
+    tutar: TrTutar
 
 
 class KapanisBody(BaseModel):
     istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
-    nakit: Decimal
-    pos: Decimal = Decimal(0)
-    online: Decimal = Decimal(0)
-    kor_sayim: Optional[Decimal] = None      # kasada sayılan (sağlama — Kasa'ya SAYIM yazılmaz, mevcut karar)
+    nakit: TrTutar
+    pos: TrTutar = Decimal(0)
+    online: TrTutar = Decimal(0)
+    kor_sayim: Optional[TrTutar] = None      # kasada sayılan (sağlama — Kasa'ya SAYIM yazılmaz, mevcut karar)
     teslimler: List[TeslimSatir] = []
-    birakilan: Optional[Decimal] = None      # kasada bırakılan
+    birakilan: Optional[TrTutar] = None      # kasada bırakılan
     degirmen: Optional[dict] = None          # değirmen sayaçları (sahip: kalır) — {gunluk, doz1, doz2, doz3} (eski panelle aynı 4 alan)
     sayim: List[SayimSatir] = []
     pasta_toplam: Optional[Decimal] = None   # sahip: pasta yalnız TOPLAM adet
@@ -751,7 +753,7 @@ class AraTeslimBody(BaseModel):
     personel_id: str
     pin: Optional[str] = None          # 4 hane — doğrulanır, hiçbir yere yazılmaz
     alan: str
-    tutar: Decimal
+    tutar: TrTutar
     istek_id: str
 
 
@@ -907,7 +909,7 @@ class GiderBody(BaseModel):
     istemci_gunu: Optional[str] = None
     personel_id: str
     pin: Optional[str] = None
-    tutar: Decimal
+    tutar: TrTutar
     aciklama: str
     kategori: Optional[str] = None
     fis: Optional[bool] = None        # fiş / fatura alındı mı (Fiş kontrol merkezde)
@@ -1081,7 +1083,7 @@ class TeslimAlBody(BaseModel):
     toptanci_id: str
     kalemler: List[Kalem]
     fatura_geldi: Optional[bool] = None   # zorunlu soru (eski "🧾 FATURA GELDİ Mİ?")
-    tutar: Optional[Decimal] = None       # EVET → faturadaki TOPLAM (zorunlu) · HAYIR → kâğıtta yazıyorsa
+    tutar: Optional[TrTutar] = None       # EVET → faturadaki TOPLAM (zorunlu) · HAYIR → kâğıtta yazıyorsa
     fatura_no: Optional[str] = None
     aciklama: Optional[str] = None
     koli: Optional[dict] = None           # yalnız iz: {urun_id: {koli, koli_ici, tek}} (hesap ekranda)
