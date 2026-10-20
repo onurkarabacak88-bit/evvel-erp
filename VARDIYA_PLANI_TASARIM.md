@@ -235,4 +235,11 @@ Durum: Fable yeni kurguyu verdi (25-28 özellik envanteri: KORU 7 · SADELEŞTİ
 | R9 | V1 kod düzeltmesi: `_yeni_oneri` mesai'yi plandan da hesaplasın (K1: plan varsa plan − 9,5; bugün yalnız QR − 9,5) |
 | R10 | B8'deki 4 bekleyen türünden yalnız `plan_yok` + `gelmedi` kalır (K4); `kalip_eksik`, `plansiz_calisti` → Uyarılar |
 | R11 | İzinli hücre yeni tablo AÇMAZ: mevcut `takvim-karar` (`ey_personel_yoklama_karar` karar=izin) yazılır; rapor/ücretsiz maaşta elle |
-Açık sahip soruları: yayın yetkisi tek mi · yetki kapısı zamanı · Ay özeti sekmesi (Fable 2 'gerek yok' dedi) · 7 gün ardışık çalışma uyarısı.
+### Son sahip kararları (20 Eki)
+| # | Karar |
+|---|---|
+| Y7 (değişti) | Ayrı 'Ay özeti' sekmesi YOK — maaş satırında "plan 88 sa · QR 84 sa · 2 gelmedi" |
+| Y9 | Yayını planı YAZAN basar (sahip: "yapan bassın") — tek yetki, ayrı onay kuyruğu yok |
+| Y10 | V0'da merkez oturumu olan herkes yazar; kişiye özel "vardiya yazabilir" yetkisi giriş kapısıyla (en sonda) |
+| Y11 | 7 gün ardışık planlı kişi → kişi görünümünde sarı hücre + Uyarılar satırı (Bekleyen işe düşmez) |
+✅ Vardiya kurgusu KAPANDI — kodlamaya hazır (V0 24–27 Eki).
