@@ -333,6 +333,21 @@ def ddl_kur(cur, ad: str, fn, bekleme: str = "3s") -> None:
         onceki = lock_timeout_ayarla(cur, bekleme)
         fn(cur)
         lock_timeout_ayarla(cur, onceki)
+    cur.execute("SELECT txid_current() AS t")
+    _DDL_ISLEM.add(int(dict(cur.fetchone())["t"]))
+
+
+_DDL_ISLEM: set = set()   # ddl_kur'un nesne kurduğu işlemler (txid) — bayrak kararı için
+
+
+def ddl_bu_islemde(cur) -> bool:
+    """PUBLIC — bu işlemde ddl_kur ile nesne kuruldu mu? Hazırlık bayrağını (_HAZIR) AÇMADAN önce sorulur (Codex #19: ilk kuran işlem
+    sonradan 404 ile geri alınınca bayrak açık kalıyor, sonraki istek 'tablo yok' 500 veriyordu). Kuran işlemde tablolar görünür ama
+    kalıcı değildir → bayrak ancak SONRAKİ bir işlemde açılır."""
+    if not _DDL_ISLEM:
+        return False
+    cur.execute("SELECT txid_current() AS t")
+    return int(dict(cur.fetchone())["t"]) in _DDL_ISLEM
 
 
 def bir_kez(cur, anahtar: str, is_fn, ad: str) -> bool:
@@ -470,7 +485,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["TrTutar", "bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "kolon_var", "bir_kez", "ddl_kur", "lock_timeout_ayarla", "KuruGeriAl",
+__all__ = ["TrTutar", "bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "kolon_var", "bir_kez", "ddl_kur", "ddl_bu_islemde", "lock_timeout_ayarla", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

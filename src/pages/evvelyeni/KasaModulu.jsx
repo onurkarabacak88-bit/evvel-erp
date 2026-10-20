@@ -980,7 +980,7 @@ export const IS_GRUPLARI = [
   { id: 'isler_kasa', grup: 'kasa', ad: 'Kasa & kapanış', alt: 'Kapanış · teslim · fark' },
   { id: 'isler_odeme', grup: 'odeme', ad: 'Ödemeler', alt: 'Kart son ödeme · toptancı vadesi' },
   { id: 'isler_tedarik', grup: 'tedarik', ad: 'Tedarik & depo', alt: 'Yolda kalan · fatura tutarı' },
-  { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri', mod: 'avans' },
+  { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri · vardiya planı yok', mod: ['avans', 'vardiya'] },   // biri açıksa görünür
   { id: 'isler_kira', grup: 'kira', ad: 'Kira hesabı', alt: 'Gelmeyen kira · şahsi mi borç mu', mod: 'mulk' },
 ];
 const GRUPLAR = new Set(['kasa', 'odeme', 'tedarik', 'personel', 'kira']);
@@ -1362,7 +1362,8 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
 (Reddin sebebi: ${x.sebep})`)) return;
                 try { const r = await api(x.islem || '/evvel-yeni/kasa/gec-kapanis', { method: 'POST', body: { deneme_id: x.id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); }
               }}
-              onKapanisGordum={async (x) => { try { await api(x.gordum || '/evvel-yeni/kasa/kapanis-uyari-gordum', { method: 'POST', body: { deneme_id: x.id } }); yukle(); } catch (e) { onToast?.(e.message); } }} />)}
+              onKapanisGordum={async (x) => { try { await api(x.gordum || '/evvel-yeni/kasa/kapanis-uyari-gordum', { method: 'POST', body: { deneme_id: x.id } }); yukle(); } catch (e) { onToast?.(e.message); } }}
+              onGenelGordum={async (x) => { try { await api(x.gordum.yol, { method: 'POST', body: x.gordum.govde }); yukle(); } catch (e) { onToast?.(e.message); } }} />)}
           </div>
           ); })()
       )}
@@ -1483,7 +1484,7 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
   );
 }
 
-function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, onGecKapanis, onKapanisGordum }) {
+function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, onGecKapanis, onKapanisGordum, onGenelGordum }) {
   const [say, setSay] = useState('');   // Codex: dolu gelirse saymadan onaylanır — boş başlar
   const g = Math.max(0, Math.round((new Date(`${bugun}T12:00:00`) - new Date(`${x.tarih}T12:00:00`)) / 864e5));
   const yas = g === 0 ? 'bugün' : `${g} gündür`;
@@ -1502,7 +1503,7 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(R.kirmizi, 55)}` }}>
         <Cip tur="kirmizi">Kapanış YOK</Cip>
-        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}<div style={{ fontSize: 11.5, color: R.not }}>Şube o günün kapanışını girmedi — gelir eksik. Şubeden iste; X/Z raporu geldiyse buradan gir · {yas}</div></div>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)}{x.gun_sayisi > 1 && <b style={{ color: R.kirmizi }}> · toplam {x.gun_sayisi} gün</b>}<div style={{ fontSize: 11.5, color: R.not }}>Şube {x.gun_sayisi > 1 ? `bu günlerin kapanışını girmedi (${x.gunler.map((g) => g.slice(8, 10) + '.' + g.slice(5, 7)).join(', ')})` : 'o günün kapanışını girmedi'} — gelir eksik. Şubeden iste; X/Z raporu geldiyse buradan gir (en eski günden başlar) · {yas}</div></div>
         <Dugme ana kucuk onClick={() => onKapanis?.(x)}>Kapanışı gir</Dugme>
       </div>
     );
@@ -1594,7 +1595,8 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
       <div style={{ ...satir, border: `1px solid ${alfa(R.amber, 55)}` }}>
         <Cip tur="sari">{x.etiket}</Cip>
         <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.alt} · {yas}</div></div>
-        {x.sayfa ? <Dugme kucuk onClick={git}>{x.dugme || 'Aç'}</Dugme> : <span />}
+        {x.gordum ? <Dugme kucuk onClick={() => onGenelGordum?.(x)}>Gördüm</Dugme>
+          : x.sayfa ? <Dugme kucuk onClick={git}>{x.dugme || 'Aç'}</Dugme> : <span />}
       </div>
     );
   }
