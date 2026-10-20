@@ -369,8 +369,8 @@ def liste():
                  "limit_tutar": _tl(dict(r)["limit_tutar"]) if dict(r).get("limit_tutar") is not None else None} for r in cur.fetchall() or []]
         cur.execute("SELECT * FROM ey_toptanci ORDER BY aktif DESC, ad")
         top = [{**{k: v for k, v in dict(r).items() if k not in ("zaman", "acilis_bakiye")}, "acilis_bakiye": _tl(dict(r)["acilis_bakiye"])} for r in cur.fetchall() or []]
-        cur.execute("SELECT id, ad, kisa, tur, sube_id, aktif FROM para_izi_cep WHERE tur IN ('banka','hesap') ORDER BY aktif DESC, sira, ad")
-        banka = [{**dict(r), "sube_ad": sube_ad.get(dict(r)["sube_id"])} for r in cur.fetchall() or []]
+        from evvel_yeni_kasa_api import banka_cepleri   # cep tablosu Kasa'nın (F#35)
+        banka = [{**r, "sube_ad": sube_ad.get(r["sube_id"])} for r in banka_cepleri(cur)]
     return {
         "subeler": [{"id": s["id"], "ad": s["ad"], "pos_oran": float(s["pos_oran"]), "online_oran": float(s["online_oran"]), "aktif": s["aktif"],
                      "kira": (kira_t.get(s["id"]) or {}).get("kira"), "kira_artis_ayi": (kira_t.get(s["id"]) or {}).get("artis_ayi"),
@@ -451,21 +451,9 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
         kim = _aktor(cur, jeton)
         ad = _ad(b, yeni)
         if tur == "banka":
-            if yeni:
-                if b.tur not in ("banka", "hesap"):
-                    raise HTTPException(400, "Türü seç: şube/patron bankası ya da geçiş hesabı")
-                tid = f"{b.tur}:{_slug(ad)}"
-                cur.execute("SELECT 1 FROM para_izi_cep WHERE id=%s", (tid,))
-                if cur.fetchone():
-                    tid += "-" + uuid.uuid4().hex[:4]
-                cur.execute("INSERT INTO para_izi_cep (id, ad, kisa, tur, sube_id, sira) VALUES (%s,%s,%s,%s,%s,90)",
-                            (tid, ad, ad, b.tur, b.sube_id or None))
-            else:
-                cur.execute("SELECT id FROM para_izi_cep WHERE id=%s AND tur IN ('banka','hesap')", (tid,))
-                if not cur.fetchone():
-                    raise HTTPException(404, "Banka bulunamadı")
-                cur.execute("UPDATE para_izi_cep SET ad=COALESCE(%s,ad), kisa=COALESCE(%s,kisa), aktif=COALESCE(%s,aktif) WHERE id=%s",
-                            (ad, ad, b.aktif, tid))
+            from evvel_yeni_kasa_api import banka_cebi_yaz   # cep tablosu Kasa'nın — Tanımlar yazmaz, Kasa'nın kapısını çağırır (F#35)
+            tid = banka_cebi_yaz(cur, cid=None if yeni else tid, tur=b.tur, ad=ad, sube_id=b.sube_id, aktif=None if yeni else b.aktif,
+                                 slug=_slug(ad))
             return {"ok": True, "id": tid, "mesaj": f"Banka {'eklendi' if yeni else 'güncellendi'}"}
 
         if tur == "sube":

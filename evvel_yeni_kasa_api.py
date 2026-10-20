@@ -201,6 +201,31 @@ def sube_cepleri_yaz(cur) -> None:
             ("banka:" + str(r["id"]), ad + " bankası", ad + " banka", str(r["id"]), 50 + i))
 
 
+def banka_cepleri(cur) -> list:
+    """PUBLIC (Tanımlar › Bankalar): banka + geçiş hesabı cepleri (tablo Kasa'nın — F#35 / C-T2-03)."""
+    cur.execute("SELECT id, ad, kisa, tur, sube_id, aktif FROM para_izi_cep WHERE tur IN ('banka','hesap') ORDER BY aktif DESC, sira, ad")
+    return [dict(r) for r in cur.fetchall() or []]
+
+
+def banka_cebi_yaz(cur, *, cid: Optional[str], tur: Optional[str], ad: str, sube_id: Optional[str] = None,
+                   aktif: Optional[bool] = None, slug: Optional[str] = None) -> str:
+    """PUBLIC (Tanımlar › Bankalar): yeni banka / geçiş hesabı cebi aç (cid None) ya da adını / aktifliğini değiştir. Dönüş: cep id."""
+    if cid is None:
+        if tur not in ("banka", "hesap"):
+            raise HTTPException(400, "Türü seç: şube/patron bankası ya da geçiş hesabı")
+        cid = f"{tur}:{slug or uuid.uuid4().hex[:8]}"
+        cur.execute("SELECT 1 FROM para_izi_cep WHERE id=%s", (cid,))
+        if cur.fetchone():
+            cid += "-" + uuid.uuid4().hex[:4]
+        cur.execute("INSERT INTO para_izi_cep (id, ad, kisa, tur, sube_id, sira) VALUES (%s,%s,%s,%s,%s,90)", (cid, ad, ad, tur, sube_id or None))
+        return cid
+    cur.execute("SELECT id FROM para_izi_cep WHERE id=%s AND tur IN ('banka','hesap')", (cid,))
+    if not cur.fetchone():
+        raise HTTPException(404, "Banka bulunamadı")
+    cur.execute("UPDATE para_izi_cep SET ad=COALESCE(%s,ad), kisa=COALESCE(%s,kisa), aktif=COALESCE(%s,aktif) WHERE id=%s", (ad, ad, aktif, cid))
+    return cid
+
+
 def defter_ozeti(cur) -> dict:
     """PUBLIC servis (Kira hesabı modülü vb.): iptaller düşülmüş BÜTÜN kayıtlar (hafif) + cepler. Tek okuma.
     {"cepler": {id: {ad, kisa, tur, sube_id, kira}}, "kayitlar": [{id, tur, is_gunu, cep, kaynak, hedef, tutar, veri}]}"""
