@@ -32,8 +32,40 @@ router = APIRouter(prefix="/api/evvel-yeni/tanim", tags=["evvel-yeni-tanim"])
 _HAZIR = False
 
 
-_TANIM_NESNE = {"ey_sube": ("depo",), "ey_personel": ("cikis", "calisma_turu", "kisi_id", "erken_acilis", "pin_salt", "pin_hash", "yetki_geri_alma"),
-                "ey_kart": (), "ey_toptanci": (), "ey_personel_ucret": ("saatlik", "yol"), "ey_pin_deneme": ()}
+# Dalga 3 (F#31, C-T2-05/06): Yoklama/Kira/Kart/Toptancı'nın Tanımlar tablolarına eklediği kolonlar artık BURADA tanımlı (tek şema sahibi);
+# o modüller ALTER atmaz, yazarken tanim_guncelle'yi çağırır.
+_TANIM_NESNE = {"ey_sube": ("depo", "lat", "lng", "yaricap_m", "kira_artis_ayi", "kira_odeme_gunu", "kira_yok"),
+                "ey_personel": ("cikis", "calisma_turu", "kisi_id", "erken_acilis", "pin_salt", "pin_hash", "yetki_geri_alma", "konum_muaf"),
+                "ey_kart": ("limit_tutar", "kesim_gunu", "son_odeme_gunu", "limit_grup"), "ey_toptanci": ("vade_gun",),
+                "ey_personel_ucret": ("saatlik", "yol"), "ey_pin_deneme": ()}
+_GUNCELLENIR = {"ey_sube": {"lat", "lng", "yaricap_m", "kira_artis_ayi", "kira_odeme_gunu", "kira_yok"},
+                "ey_personel": {"konum_muaf", "aktif", "cikis"},
+                "ey_kart": {"limit_tutar", "kesim_gunu", "son_odeme_gunu", "limit_grup"}, "ey_toptanci": {"vade_gun"}}
+
+
+def tanim_guncelle(cur, tablo: str, kid: str, alanlar: Optional[dict] = None, bos_ise: Optional[dict] = None,
+                   kim: Optional[str] = None) -> Optional[dict]:
+    """PUBLIC — başka modüllerin Tanımlar tablosuna yazdığı alanların TEK kapısı (beyaz listeli). alanlar: koşulsuz; bos_ise: yalnız
+    alan boşsa (COALESCE). Dönüş: güncellenen satır {id, ad} ya da None (bulunamadı)."""
+    tanim_hazirla(cur)
+    alanlar, bos_ise = dict(alanlar or {}), dict(bos_ise or {})
+    izin = _GUNCELLENIR.get(tablo) or set()
+    hepsi = set(alanlar) | set(bos_ise)
+    if not hepsi or not hepsi <= izin:
+        raise HTTPException(400, "Bu alan buradan değiştirilemez")
+    parca, deg = [], []
+    for k, v in alanlar.items():
+        parca.append(f"{k}=%s")
+        deg.append(v)
+    for k, v in bos_ise.items():
+        parca.append(f"{k}=COALESCE({k}, %s)")
+        deg.append(v)
+    if kim is not None:
+        parca.append("degistiren=%s")
+        deg.append(kim)
+    cur.execute(f"UPDATE {tablo} SET {', '.join(parca)}, zaman=NOW() WHERE id=%s RETURNING id, ad", tuple(deg) + (str(kid),))
+    r = cur.fetchone()
+    return dict(r) if r else None
 
 
 def _tanim_tam(cur) -> bool:
@@ -52,6 +84,13 @@ def _tanim_ddl(cur) -> None:
         id TEXT PRIMARY KEY, ad TEXT NOT NULL, pos_oran NUMERIC(6,3) NOT NULL DEFAULT 0, online_oran NUMERIC(6,3) NOT NULL DEFAULT 0,
         aktif BOOLEAN NOT NULL DEFAULT TRUE, kaynak TEXT NOT NULL DEFAULT 'evvel_yeni', degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS depo BOOLEAN NOT NULL DEFAULT FALSE")   # merkez depo (Tema) — SIPARIS_TASARIM §1
+    # Yoklama (konum) + Kira kolonları — tek şema sahibi Tanımlar (Dalga 3)
+    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION")
+    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION")
+    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS yaricap_m INT NOT NULL DEFAULT 150")
+    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_artis_ayi INT")
+    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_odeme_gunu INT")
+    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_yok BOOLEAN NOT NULL DEFAULT FALSE")
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel (
         id TEXT PRIMARY KEY, ad TEXT NOT NULL, sube_id TEXT, gorev TEXT, giris DATE,
         aktif BOOLEAN NOT NULL DEFAULT TRUE, kaynak TEXT NOT NULL DEFAULT 'evvel_yeni', degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
@@ -73,6 +112,10 @@ def _tanim_ddl(cur) -> None:
     cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS pin_salt TEXT")
     cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS pin_hash TEXT")
     cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS yetki_geri_alma BOOLEAN NOT NULL DEFAULT FALSE")   # S9
+    cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS konum_muaf BOOLEAN NOT NULL DEFAULT FALSE")   # Yoklama K2
+    for x in ("limit_tutar BIGINT", "kesim_gunu INT", "son_odeme_gunu INT", "limit_grup TEXT"):   # Kart
+        cur.execute(f"ALTER TABLE ey_kart ADD COLUMN IF NOT EXISTS {x}")
+    cur.execute("ALTER TABLE ey_toptanci ADD COLUMN IF NOT EXISTS vade_gun INT")   # Toptancı
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_pin_deneme (
         personel_id TEXT PRIMARY KEY, yanlis INT NOT NULL DEFAULT 0, kilit_bitis TIMESTAMPTZ, son TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
 

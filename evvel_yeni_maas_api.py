@@ -714,8 +714,8 @@ def takvim_karar(b: YoklamaKararBody, x_evvel_oturum: Optional[str] = Header(def
             except Exception:  # noqa: BLE001
                 pass
             cikis = son or (date.fromisoformat(t) - timedelta(days=1))
-            cur.execute("UPDATE ey_personel SET aktif=FALSE, cikis=COALESCE(cikis, %s), degistiren=%s, zaman=NOW() WHERE id=%s",
-                        (cikis, kim, b.personel_id))
+            from evvel_yeni_tanim_api import tanim_guncelle
+            tanim_guncelle(cur, "ey_personel", b.personel_id, {"aktif": False}, bos_ise={"cikis": cikis}, kim=kim)   # Tanımlar'ın kapısı (C-T2-07)
             mesaj = f"Ayrıldı olarak işaretlendi — ayrılış {cikis}"
     return {"ok": True, "mesaj": mesaj}
 

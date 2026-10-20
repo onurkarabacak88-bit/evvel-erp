@@ -37,8 +37,7 @@ def kart_hazirla(cur) -> None:
         return
     from evvel_yeni_tanim_api import tanim_hazirla
     tanim_hazirla(cur)
-    for x in ("limit_tutar BIGINT", "kesim_gunu INT", "son_odeme_gunu INT", "limit_grup TEXT"):
-        cur.execute(f"ALTER TABLE ey_kart ADD COLUMN IF NOT EXISTS {x}")
+    # kart kolonları Tanımlar'da tanımlı (tek şema sahibi — Dalga 3)
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_kart_teyit (
         id TEXT PRIMARY KEY, kart_id TEXT NOT NULL, tarih DATE NOT NULL,
         kullanilabilir BIGINT NOT NULL, ekstre_borc BIGINT, son_odeme DATE,

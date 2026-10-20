@@ -55,10 +55,7 @@ def yoklama_hazirla() -> None:
         cur.execute("SELECT pg_advisory_xact_lock(7012047)")
         tanim_hazirla(cur)
         cur.execute("SET LOCAL lock_timeout = '3s'")
-        cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS lat DOUBLE PRECISION")
-        cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS lng DOUBLE PRECISION")
-        cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS yaricap_m INT NOT NULL DEFAULT 150")
-        cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS konum_muaf BOOLEAN NOT NULL DEFAULT FALSE")   # K2
+        # lat / lng / yaricap_m / konum_muaf Tanımlar'da tanımlı — tek şema sahibi (Dalga 3, F#31)
         # F1b müdür: AYRI İŞARET YOK — tek gerçek Tanımlar › Personel'deki görev ("MÜDÜR"); Maaş da aynı kuralı okur (MUDUR_SQL)
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_cihaz (
             id TEXT PRIMARY KEY, tur TEXT NOT NULL, personel_id TEXT, sube_id TEXT, acik_anahtar JSONB, jeton_hash TEXT,
@@ -663,8 +660,8 @@ def konum_muaf_ayarla(pid: str, b: IsaretBody, x_evvel_oturum: Optional[str] = H
     yoklama_hazirla()
     with db() as (conn, cur):
         _merkez(cur, x_evvel_oturum)
-        cur.execute("UPDATE ey_personel SET konum_muaf=%s WHERE id=%s RETURNING ad", (b.konum_muaf, pid))
-        r = cur.fetchone()
+        from evvel_yeni_tanim_api import tanim_guncelle
+        r = tanim_guncelle(cur, "ey_personel", pid, {"konum_muaf": bool(b.konum_muaf)})   # Tanımlar'ın kapısı (F#31)
         if not r:
             raise HTTPException(404, "Personel bulunamadı")
     return {"ok": True, "mesaj": f"{dict(r)['ad']}: konum " + ("muaf" if b.konum_muaf else "kontrol edilir")}

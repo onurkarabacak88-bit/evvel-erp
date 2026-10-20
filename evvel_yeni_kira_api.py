@@ -36,9 +36,7 @@ def kira_hazirla(cur) -> None:
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_sube_kira (
         sube_id TEXT NOT NULL, gecerli_ay TEXT NOT NULL, tutar BIGINT NOT NULL,
         degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (sube_id, gecerli_ay))""")
-    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_artis_ayi INT")
-    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_odeme_gunu INT")
-    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_yok BOOLEAN NOT NULL DEFAULT FALSE")   # mülk bizim
+    # kira kolonları (kira_artis_ayi / kira_odeme_gunu / kira_yok) Tanımlar'da tanımlı — tek şema sahibi (Dalga 3)
     try:
         with savepoint(cur, "sp_ey_kira_es"):
             cur.execute("""SELECT sube_id::text AS sid, tutar, odeme_gunu, baslangic_tarihi FROM sabit_giderler
@@ -86,7 +84,8 @@ def kira_tanimlari(cur) -> dict:
 def kira_yaz(cur, sube_id: str, kim: str, tutar=None, gecerli_ay=None, artis_ayi=None, odeme_gunu=None, kira_yok=None) -> None:
     kira_hazirla(cur)
     if kira_yok is not None:
-        cur.execute("UPDATE ey_sube SET kira_yok=%s WHERE id=%s", (bool(kira_yok), sube_id))
+        from evvel_yeni_tanim_api import tanim_guncelle
+        tanim_guncelle(cur, "ey_sube", sube_id, {"kira_yok": bool(kira_yok)})
     for g, ad in ((artis_ayi, "Artış ayı 1–12"), (odeme_gunu, "Kira ödeme günü 1–31")):
         if g is not None and not 1 <= int(g) <= (12 if ad.startswith("Artış") else 31):
             raise HTTPException(400, f"{ad} olmalı")
@@ -100,8 +99,8 @@ def kira_yaz(cur, sube_id: str, kim: str, tutar=None, gecerli_ay=None, artis_ayi
                        ON CONFLICT (sube_id, gecerli_ay) DO UPDATE SET tutar=EXCLUDED.tutar, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
                     (sube_id, ay, _kurus(tutar), kim))
     if artis_ayi is not None or odeme_gunu is not None:
-        cur.execute("UPDATE ey_sube SET kira_artis_ayi=COALESCE(%s,kira_artis_ayi), kira_odeme_gunu=COALESCE(%s,kira_odeme_gunu) WHERE id=%s",
-                    (artis_ayi, odeme_gunu, sube_id))
+        from evvel_yeni_tanim_api import tanim_guncelle
+        tanim_guncelle(cur, "ey_sube", sube_id, {k: v for k, v in (("kira_artis_ayi", artis_ayi), ("kira_odeme_gunu", odeme_gunu)) if v is not None})
 
 
 def _eski_odenenler(cur) -> dict:

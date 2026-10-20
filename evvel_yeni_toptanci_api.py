@@ -87,8 +87,9 @@ def _toptanci_ddl(cur) -> None:
     if not _var(cur, "ey_toptanci"):
         from evvel_yeni_tanim_api import tanim_hazirla
         tanim_hazirla(cur)
-    if not _kolon_var(cur, "ey_toptanci", "vade_gun"):
-        cur.execute("ALTER TABLE ey_toptanci ADD COLUMN IF NOT EXISTS vade_gun INT")
+    if not _kolon_var(cur, "ey_toptanci", "vade_gun"):   # vade_gun Tanımlar'da tanımlı (tek şema sahibi — Dalga 3)
+        from evvel_yeni_tanim_api import tanim_hazirla
+        tanim_hazirla(cur)
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_toptanci_teslim (
         id TEXT PRIMARY KEY, kaynak_ref TEXT UNIQUE, toptanci_id TEXT NOT NULL, toptanci_ad TEXT,
         sube_id TEXT, tarih DATE NOT NULL, kalemler JSONB NOT NULL DEFAULT '[]'::jsonb,
