@@ -187,9 +187,9 @@ def kasa_mutabakat(cur, gun: str, evren: Optional[str] = None) -> dict:
     """PUBLIC (tek kapı): şube → kasa mutabakatı. Yeni dönemde (panel_baslangic) yeni panelin olay defterinden, öncesinde eski
     panel tablolarından toplar; HESAP tek (mutabakat_hesapla) — kapanış uyarısı da aynı hesabı kullanır (sahip: "tekrar yazma")."""
     from datetime import date as _date
-    from evvel_yeni_cekirdek import panel_baslangic
-    # Fable B2: evren bakılan GÜNE göre (1 Kasım sonrası eski bir güne bakınca eski panel verisi okunur)
-    yeni = (evren == "yeni") if evren in ("yeni", "eski") else _date.fromisoformat(gun[:10]) >= panel_baslangic(cur)
+    from evvel_yeni_cekirdek import yeni_donem
+    # Fable B2: evren bakılan GÜNE göre (1 Kasım sonrası eski bir güne bakınca eski panel verisi okunur) — tek kural (Fable D-1)
+    yeni = (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur, _date.fromisoformat(gun[:10]))
     out = _mut_veri_yeni(cur, gun) if yeni else _mut_veri_eski(cur, gun)
     for x in out.values():
         mutabakat_hesapla(x)
@@ -199,13 +199,13 @@ def kasa_mutabakat(cur, gun: str, evren: Optional[str] = None) -> dict:
 def _mut_veri_yeni(cur, gun: str) -> dict:
     """YENİ DÖNEM toplayıcısı — yeni şube panelinin olay defteri (ey_sube_olay, kaynak 'panel'; kuruş → ₺):
     açılış kasa_sayim · kapanış nakit / kor_sayim / teslimler / birakilan · gün içi 'teslim' (ara teslim) · dünün kapanış bırakılanı.
-    Nakit gider: yeni panelin 'gider' olayı (anlık gider — madde 7, 20 Eki) → giderler; gider_kaynak_yok KALKTI."""
+    Çekmeceden çıkan nakit (anlık gider + elden avans): Kasa PUBLIC cekmece_cikislari — tek gerçek Kasa (Fable O-5), ekranda 'ad' (B-1)."""
     from datetime import date as _date
     from evvel_yeni_olay import olaylar
     g = _date.fromisoformat(gun)
     dun = g - timedelta(days=1)
     out = {}
-    for o in olaylar(cur, bas=dun, son=g, turler={"acilis", "kapanis", "teslim", "gider"}):
+    for o in olaylar(cur, bas=dun, son=g, turler={"acilis", "kapanis", "teslim"}):
         if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel":
             continue
         v = o["veri"] if isinstance(o["veri"], dict) else __import__("json").loads(o["veri"] or "{}")
@@ -225,8 +225,9 @@ def _mut_veri_yeni(cur, gun: str) -> dict:
             x["devir"] = tl(v.get("birakilan"))
         elif o["tur"] == "teslim":
             x["ara_teslimler"].append({"tutar": tl(v.get("tutar")) or 0.0, "alan": v.get("alan"), "eden": o.get("personel_ad")})
-        elif o["tur"] == "gider" and o["is_gunu"] == g:   # anlık gider (çekmeceden nakit)
-            x["giderler"].append({"tutar": tl(v.get("tutar")) or 0.0, "aciklama": v.get("aciklama"), "kim": o.get("personel_ad")})
+    from evvel_yeni_kasa_api import cekmece_cikislari
+    for c in cekmece_cikislari(cur, gun):
+        out.setdefault(c["sube_id"], {**mut_bos(), "kor_ara_dahil": False})["giderler"].append({"tutar": c["tutar"], "ad": c["ad"], "kim": c["kim"], "bekliyor": False})
     return out
 
 

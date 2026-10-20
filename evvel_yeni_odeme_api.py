@@ -116,6 +116,14 @@ class OdemeBody(BaseModel):
 
 @router.post("")
 def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    _hazirla()
+    with db() as (conn, cur):
+        return odeme_yaz(cur, body, _aktor(cur, x_evvel_oturum))
+
+
+def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
+    """PUBLIC — Ödeme formunun yazma çekirdeği, ÇAĞIRANIN işleminde (Kasa kilidini kendisi alır). Route ve Avans havalesi
+    (talep kilidi + para + talep durumu TEK işlem — Fable O-1) bunu çağırır; ikinci yazıcı yok. Önce kasa_hazirla() çağrılmış olmalı."""
     if body.konu not in KONULAR:
         raise HTTPException(400, "Ne için ödendiğini seç")
     bugun = _bugun()
@@ -128,163 +136,160 @@ def odeme_gir(body: OdemeBody, x_evvel_oturum: Optional[str] = Header(default=No
         raise HTTPException(400, "Gelecek tarihli ödeme girilemez")
     if not body.parcalar:
         raise HTTPException(400, "Nasıl ödendiğini seç (nakit / havale / kart)")
-    _hazirla()
-    with db() as (conn, cur):
-        _kilit(cur)
-        kim = _aktor(cur, x_evvel_oturum)
-        bas = _baslangic(cur)
-        if gd < bas:
-            raise HTTPException(400, f"Bu dönem {bas.strftime('%d.%m.%Y')} tarihinde başladı")
-        cep_list, C, kayit, _ = _yukle(cur)
-        L = _listeler(cur)
-        subeler = {c["sube_id"]: c for c in cep_list if c["tur"] == "sube"}
+    _kilit(cur)
+    bas = _baslangic(cur)
+    if gd < bas:
+        raise HTTPException(400, f"Bu dönem {bas.strftime('%d.%m.%Y')} tarihinde başladı")
+    cep_list, C, kayit, _ = _yukle(cur)
+    L = _listeler(cur)
+    subeler = {c["sube_id"]: c for c in cep_list if c["tur"] == "sube"}
 
-        # ── KONU ve KİMİN ──
-        konu = {"tip": body.konu, "ad": KONULAR[body.konu]["ad"]}
-        kimin = None
-        etiket = KONULAR[body.konu]["ad"]
-        if body.konu == "toptanci":
-            t = next((x for x in L["toptancilar"] if str(x["id"]) == str(body.toptanci_id)), None)
-            if not t:
-                raise HTTPException(400, "Kayıtlı toptancı seç")
-            konu.update(toptanci_id=t["id"], toptanci_ad=t["ad"])
-            etiket = f"Toptancı · {t['ad']}"
-        elif body.konu == "anlik" and body.kimin == "patron":
+    # ── KONU ve KİMİN ──
+    konu = {"tip": body.konu, "ad": KONULAR[body.konu]["ad"]}
+    kimin = None
+    etiket = KONULAR[body.konu]["ad"]
+    if body.konu == "toptanci":
+        t = next((x for x in L["toptancilar"] if str(x["id"]) == str(body.toptanci_id)), None)
+        if not t:
+            raise HTTPException(400, "Kayıtlı toptancı seç")
+        konu.update(toptanci_id=t["id"], toptanci_ad=t["ad"])
+        etiket = f"Toptancı · {t['ad']}"
+    elif body.konu == "anlik" and body.kimin == "patron":
+        if not (body.aciklama or "").strip():
+            raise HTTPException(400, "Anlık gider için ne alındığını yaz")
+        kimin = "patron"
+        etiket = f"Anlık · şahsi{(' · ' + body.patron) if body.patron in PATRONLAR else ''} · {body.aciklama.strip()[:60]}"
+    elif body.konu in ("kira", "fatura", "anlik"):
+        if body.sube_id not in subeler:
+            raise HTTPException(400, "Şube seç")
+        kimin = body.sube_id
+        konu["sube_id"] = body.sube_id
+        if body.konu == "fatura":
+            if body.fatura_turu not in FATURA_TURLERI:
+                raise HTTPException(400, "Fatura türünü seç")
+            konu["fatura_turu"] = body.fatura_turu
+            etiket = f"{body.fatura_turu} · {subeler[body.sube_id]['kisa']}"
+        elif body.konu == "kira":
+            etiket = f"Kira · {subeler[body.sube_id]['kisa']}"
+        else:
             if not (body.aciklama or "").strip():
                 raise HTTPException(400, "Anlık gider için ne alındığını yaz")
-            kimin = "patron"
-            etiket = f"Anlık · şahsi{(' · ' + body.patron) if body.patron in PATRONLAR else ''} · {body.aciklama.strip()[:60]}"
-        elif body.konu in ("kira", "fatura", "anlik"):
-            if body.sube_id not in subeler:
-                raise HTTPException(400, "Şube seç")
-            kimin = body.sube_id
-            konu["sube_id"] = body.sube_id
-            if body.konu == "fatura":
-                if body.fatura_turu not in FATURA_TURLERI:
-                    raise HTTPException(400, "Fatura türünü seç")
-                konu["fatura_turu"] = body.fatura_turu
-                etiket = f"{body.fatura_turu} · {subeler[body.sube_id]['kisa']}"
-            elif body.konu == "kira":
-                etiket = f"Kira · {subeler[body.sube_id]['kisa']}"
-            else:
-                if not (body.aciklama or "").strip():
-                    raise HTTPException(400, "Anlık gider için ne alındığını yaz")
-                etiket = f"Anlık gider · {subeler[body.sube_id]['kisa']} · {body.aciklama.strip()[:60]}"
-        elif body.konu == "personel":
-            p = next((x for x in L["personel"] if str(x["id"]) == str(body.personel_id)), None)
-            if not p:
-                raise HTTPException(400, "Personel seç")
-            if body.personel_kalemi == "SGK / vergi":
-                raise HTTPException(400, "SGK Ödeme → 'SGK', vergi Ödeme → 'Vergi' konusundan girilir (tek yol)")
-            if body.personel_kalemi not in PERSONEL_KALEMLERI:
-                raise HTTPException(400, "Ödeme kalemini seç (maaş, avans, yemek ücreti…)")
-            kimin = p.get("sube_id") if p.get("sube_id") in subeler else "ortak"
-            konu.update(personel_id=p["id"], personel_ad=p["ad"], kalem=body.personel_kalemi)
-            etiket = f"{body.personel_kalemi} · {p['ad']}"
-        elif body.konu in ("vergi", "sgk"):
-            if body.konu == "vergi" and body.vergi_turu not in VERGI_TURLERI:
-                raise HTTPException(400, "Vergi türünü seç")
-            if body.kimin not in list(subeler) + ["ortak"]:
-                raise HTTPException(400, "Hangi şubenin (ya da Ortak)")
-            kimin = body.kimin
-            konu.update(sube_id=kimin if kimin in subeler else None)
-            if body.konu == "vergi":
-                konu["vergi_turu"] = body.vergi_turu
-            etiket = (f"Vergi · {body.vergi_turu}" if body.konu == "vergi" else "SGK") + f" · {subeler[kimin]['kisa'] if kimin in subeler else 'Ortak'}"
-        elif body.konu in ("kredi", "kart_borcu"):
-            kimin = "patron"
-            if body.konu == "kredi" and body.kredi_id:
-                konu.update(kredi_id=str(body.kredi_id)[:64], kredi_ad=(body.kredi_ad or "").strip()[:120] or None)
-                etiket = f"Kredi taksiti · {konu['kredi_ad']}" if konu.get("kredi_ad") else etiket
-            if body.konu == "kart_borcu":
-                k = next((x for x in L["kartlar"] if str(x["id"]) == str(body.toptanci_id or body.kimin or "")), None)
-                if not k:
-                    raise HTTPException(400, "Hangi kartın borcu ödendi? Kartı seç")
-                konu.update(kart_id=k["id"], kart_ad=k["ad"])
-                etiket = f"Kart borcu · {k['ad']}"
-        else:   # diğer
-            if body.kimin not in list(subeler) + ["ortak", "patron"]:
-                raise HTTPException(400, "Kimin gideri: şube, Ortak ya da Patron şahsi seç")
-            if not (body.aciklama or "").strip():
-                raise HTTPException(400, "Açıklama yaz")
-            kimin = body.kimin
-            etiket = f"{body.aciklama.strip()[:60]}"
-        # Codex (2026-10-17): kredi taksiti / kart borcu da HANGİ AYIN borcunu kapattığını taşır (Eylül taksiti Ekim'de ödenirse Eylül kapanır)
-        AYLI = ("kira", "fatura", "personel", "kredi", "kart_borcu", "vergi", "sgk")
-        ait_ay = (body.ait_ay or gun[:7])[:7] if body.konu in AYLI else gun[:7]
-        if body.konu in ("kredi", "kart_borcu") and body.ait_ay:
-            konu["donem"] = ait_ay      # açıkça seçilen dönem (takvimden 'öde'); yoksa takvim ödeme gününe göre yerleştirir
-        if body.konu in AYLI:
-            try:
-                date.fromisoformat(ait_ay + "-01")
-            except ValueError:
-                raise HTTPException(400, "Ait olduğu ay YYYY-AA olmalı")
-        gider_mi = KONULAR[body.konu]["gider"] and kimin not in ("patron",)
-        if body.aciklama and body.konu not in ("anlik", "diger"):
-            etiket += f" · {body.aciklama.strip()[:60]}"
+            etiket = f"Anlık gider · {subeler[body.sube_id]['kisa']} · {body.aciklama.strip()[:60]}"
+    elif body.konu == "personel":
+        p = next((x for x in L["personel"] if str(x["id"]) == str(body.personel_id)), None)
+        if not p:
+            raise HTTPException(400, "Personel seç")
+        if body.personel_kalemi == "SGK / vergi":
+            raise HTTPException(400, "SGK Ödeme → 'SGK', vergi Ödeme → 'Vergi' konusundan girilir (tek yol)")
+        if body.personel_kalemi not in PERSONEL_KALEMLERI:
+            raise HTTPException(400, "Ödeme kalemini seç (maaş, avans, yemek ücreti…)")
+        kimin = p.get("sube_id") if p.get("sube_id") in subeler else "ortak"
+        konu.update(personel_id=p["id"], personel_ad=p["ad"], kalem=body.personel_kalemi)
+        etiket = f"{body.personel_kalemi} · {p['ad']}"
+    elif body.konu in ("vergi", "sgk"):
+        if body.konu == "vergi" and body.vergi_turu not in VERGI_TURLERI:
+            raise HTTPException(400, "Vergi türünü seç")
+        if body.kimin not in list(subeler) + ["ortak"]:
+            raise HTTPException(400, "Hangi şubenin (ya da Ortak)")
+        kimin = body.kimin
+        konu.update(sube_id=kimin if kimin in subeler else None)
+        if body.konu == "vergi":
+            konu["vergi_turu"] = body.vergi_turu
+        etiket = (f"Vergi · {body.vergi_turu}" if body.konu == "vergi" else "SGK") + f" · {subeler[kimin]['kisa'] if kimin in subeler else 'Ortak'}"
+    elif body.konu in ("kredi", "kart_borcu"):
+        kimin = "patron"
+        if body.konu == "kredi" and body.kredi_id:
+            konu.update(kredi_id=str(body.kredi_id)[:64], kredi_ad=(body.kredi_ad or "").strip()[:120] or None)
+            etiket = f"Kredi taksiti · {konu['kredi_ad']}" if konu.get("kredi_ad") else etiket
+        if body.konu == "kart_borcu":
+            k = next((x for x in L["kartlar"] if str(x["id"]) == str(body.toptanci_id or body.kimin or "")), None)
+            if not k:
+                raise HTTPException(400, "Hangi kartın borcu ödendi? Kartı seç")
+            konu.update(kart_id=k["id"], kart_ad=k["ad"])
+            etiket = f"Kart borcu · {k['ad']}"
+    else:   # diğer
+        if body.kimin not in list(subeler) + ["ortak", "patron"]:
+            raise HTTPException(400, "Kimin gideri: şube, Ortak ya da Patron şahsi seç")
+        if not (body.aciklama or "").strip():
+            raise HTTPException(400, "Açıklama yaz")
+        kimin = body.kimin
+        etiket = f"{body.aciklama.strip()[:60]}"
+    # Codex (2026-10-17): kredi taksiti / kart borcu da HANGİ AYIN borcunu kapattığını taşır (Eylül taksiti Ekim'de ödenirse Eylül kapanır)
+    AYLI = ("kira", "fatura", "personel", "kredi", "kart_borcu", "vergi", "sgk")
+    ait_ay = (body.ait_ay or gun[:7])[:7] if body.konu in AYLI else gun[:7]
+    if body.konu in ("kredi", "kart_borcu") and body.ait_ay:
+        konu["donem"] = ait_ay      # açıkça seçilen dönem (takvimden 'öde'); yoksa takvim ödeme gününe göre yerleştirir
+    if body.konu in AYLI:
+        try:
+            date.fromisoformat(ait_ay + "-01")
+        except ValueError:
+            raise HTTPException(400, "Ait olduğu ay YYYY-AA olmalı")
+    gider_mi = KONULAR[body.konu]["gider"] and kimin not in ("patron",)
+    if body.aciklama and body.konu not in ("anlik", "diger"):
+        etiket += f" · {body.aciklama.strip()[:60]}"
 
-        # ── PARÇALAR ──
-        nakit_parca, kart_parca = [], []
-        for p in body.parcalar:
-            t = _kurus(p.tutar)
-            if t < 0:
-                raise HTTPException(400, "Tutar eksi olamaz")
-            if t == 0:
-                raise HTTPException(400, "Tutarı boş bir ödeme satırı var — doldur ya da sil")
-            if p.yontem in ("nakit", "havale"):
-                tur_izin = ("ev",) if p.yontem == "nakit" else ("banka", "hesap")
-                if p.cep in C and C[p.cep]["tur"] == "sube":
-                    raise HTTPException(400, "Dükkân nakdinden yapılan harcamayı şube PANELDEN girer. Dükkândaki parayı patron aldıysa "
-                                             "önce Kasa'da teslim alın (dükkân → ev), sonra evden ödeyin.")
-                if p.cep not in C or C[p.cep]["tur"] not in tur_izin:
-                    raise HTTPException(400, f"{'Nakit için cep' if p.yontem == 'nakit' else 'Havale için banka'} seç")
-                nakit_parca.append({"cep": p.cep, "tutar": t, "yontem": p.yontem})
-            elif p.yontem == "kart":
-                k = next((x for x in L["kartlar"] if str(x["id"]) == str(p.kart_id)), None)
-                if not k:
-                    raise HTTPException(400, "Kart seç")
-                kart_parca.append({"kart_id": k["id"], "kart_ad": k["ad"], "tutar": t})
-            else:
-                raise HTTPException(400, "Ödeme yöntemi: nakit / havale / kart")
-        if not nakit_parca and not kart_parca:
-            raise HTTPException(400, "Tutar gir")
-        if body.konu == "kart_borcu" and kart_parca:
-            raise HTTPException(400, "Kart borcu kartla ödenemez — nakit ya da havale seç")
-        if len({x["cep"] for x in nakit_parca}) != len(nakit_parca):
-            raise HTTPException(400, "Aynı cep iki kez seçilemez")
-        toplam = sum(x["tutar"] for x in nakit_parca) + sum(x["tutar"] for x in kart_parca)
+    # ── PARÇALAR ──
+    nakit_parca, kart_parca = [], []
+    for p in body.parcalar:
+        t = _kurus(p.tutar)
+        if t < 0:
+            raise HTTPException(400, "Tutar eksi olamaz")
+        if t == 0:
+            raise HTTPException(400, "Tutarı boş bir ödeme satırı var — doldur ya da sil")
+        if p.yontem in ("nakit", "havale"):
+            tur_izin = ("ev",) if p.yontem == "nakit" else ("banka", "hesap")
+            if p.cep in C and C[p.cep]["tur"] == "sube":
+                raise HTTPException(400, "Dükkân nakdinden yapılan harcamayı şube PANELDEN girer. Dükkândaki parayı patron aldıysa "
+                                         "önce Kasa'da teslim alın (dükkân → ev), sonra evden ödeyin.")
+            if p.cep not in C or C[p.cep]["tur"] not in tur_izin:
+                raise HTTPException(400, f"{'Nakit için cep' if p.yontem == 'nakit' else 'Havale için banka'} seç")
+            nakit_parca.append({"cep": p.cep, "tutar": t, "yontem": p.yontem})
+        elif p.yontem == "kart":
+            k = next((x for x in L["kartlar"] if str(x["id"]) == str(p.kart_id)), None)
+            if not k:
+                raise HTTPException(400, "Kart seç")
+            kart_parca.append({"kart_id": k["id"], "kart_ad": k["ad"], "tutar": t})
+        else:
+            raise HTTPException(400, "Ödeme yöntemi: nakit / havale / kart")
+    if not nakit_parca and not kart_parca:
+        raise HTTPException(400, "Tutar gir")
+    if body.konu == "kart_borcu" and kart_parca:
+        raise HTTPException(400, "Kart borcu kartla ödenemez — nakit ya da havale seç")
+    if len({x["cep"] for x in nakit_parca}) != len(nakit_parca):
+        raise HTTPException(400, "Aynı cep iki kez seçilemez")
+    toplam = sum(x["tutar"] for x in nakit_parca) + sum(x["tutar"] for x in kart_parca)
 
-        veri = {"aciklama": etiket[:120], "kimin": (subeler[kimin]["kisa"] if kimin in subeler else {"ortak": "Ortak", "patron": "Patron"}.get(kimin, "Ortak")),
-                "kimin_kod": kimin, "parcalar": [{"cep": x["cep"], "tutar": x["tutar"]} for x in nakit_parca],
-                "yontemler": [x["yontem"] for x in nakit_parca] + ["kart"] * len(kart_parca),
-                "kart_parcalar": kart_parca, "konu": konu, "gider": gider_mi, "ait_ay": ait_ay,
-                "toplam": toplam, "kaynak": "odeme_formu", "not": (body.aciklama or "").strip()[:200]}
-        if kimin == "patron" and body.patron in PATRONLAR:
-            veri["patron"] = body.patron
-        if not body.tekrar_onay:
-            for h in kayit:
-                if h["tur"] != "odeme" or h["is_gunu"] != gun:
-                    continue
-                eski = {(p["cep"], int(p["tutar"])) for p in h["veri"].get("parcalar", [])}
-                if any((x["cep"], x["tutar"]) in eski for x in nakit_parca):
-                    raise HTTPException(409, f"BENZER KAYIT: aynı gün, aynı yerden, aynı tutarda bir ödeme zaten var — "
-                                             f"\"{h['veri'].get('aciklama') or 'Ödeme'}\". Aynı harcamayı iki kez girmiyorsan yine de kaydedebilirsin.")
-        if body.konu == "personel" and body.personel_kalemi in ("Maaş", "Yemek ücreti") and not body.tekrar_onay:
-            try:
-                from evvel_yeni_maas_api import hesapla as _maas_hesapla
-                ms = next(iter(_maas_hesapla(cur, ait_ay, sadece=str(body.personel_id))), None)
-            except Exception:  # noqa: BLE001
-                ms = None
-            if ms is not None:
-                sinir = _kurus(ms["oneri"].get(body.personel_kalemi, 0))
-                if toplam > sinir + 100:
-                    raise HTTPException(409, f"KALANI AŞIYOR: {ms['ad']} · {ait_ay} için kalan {body.personel_kalemi.lower()} "
-                                             f"{_tl(sinir)} — girilen {_tl(toplam)}. Doğruysa yine de kaydedebilirsin.")
-        ref = f"odeme_formu:{body.istek_id[:64]}" if body.istek_id else None
-        hid = hareket_kaydet(cur, tur="odeme", gun=gun, tutar=toplam, veri=veri, kim=kim, kaynak_ref=ref,
-                             para_cepleri={x["cep"] for x in nakit_parca}, kayit=kayit, C=C)   # Kasa'nın korumalı yolu
-        if ref and not hid:
-            return {"ok": True, "id": None, "tekrar": True, "mesaj": "Bu ödeme zaten kaydedilmişti (ikinci kez yazılmadı)"}
+    veri = {"aciklama": etiket[:120], "kimin": (subeler[kimin]["kisa"] if kimin in subeler else {"ortak": "Ortak", "patron": "Patron"}.get(kimin, "Ortak")),
+            "kimin_kod": kimin, "parcalar": [{"cep": x["cep"], "tutar": x["tutar"]} for x in nakit_parca],
+            "yontemler": [x["yontem"] for x in nakit_parca] + ["kart"] * len(kart_parca),
+            "kart_parcalar": kart_parca, "konu": konu, "gider": gider_mi, "ait_ay": ait_ay,
+            "toplam": toplam, "kaynak": "odeme_formu", "not": (body.aciklama or "").strip()[:200]}
+    if kimin == "patron" and body.patron in PATRONLAR:
+        veri["patron"] = body.patron
+    if not body.tekrar_onay:
+        for h in kayit:
+            if h["tur"] != "odeme" or h["is_gunu"] != gun:
+                continue
+            eski = {(p["cep"], int(p["tutar"])) for p in h["veri"].get("parcalar", [])}
+            if any((x["cep"], x["tutar"]) in eski for x in nakit_parca):
+                raise HTTPException(409, f"BENZER KAYIT: aynı gün, aynı yerden, aynı tutarda bir ödeme zaten var — "
+                                         f"\"{h['veri'].get('aciklama') or 'Ödeme'}\". Aynı harcamayı iki kez girmiyorsan yine de kaydedebilirsin.")
+    if body.konu == "personel" and body.personel_kalemi in ("Maaş", "Yemek ücreti") and not body.tekrar_onay:
+        try:
+            from evvel_yeni_maas_api import hesapla as _maas_hesapla
+            ms = next(iter(_maas_hesapla(cur, ait_ay, sadece=str(body.personel_id))), None)
+        except Exception:  # noqa: BLE001
+            ms = None
+        if ms is not None:
+            sinir = _kurus(ms["oneri"].get(body.personel_kalemi, 0))
+            if toplam > sinir + 100:
+                raise HTTPException(409, f"KALANI AŞIYOR: {ms['ad']} · {ait_ay} için kalan {body.personel_kalemi.lower()} "
+                                         f"{_tl(sinir)} — girilen {_tl(toplam)}. Doğruysa yine de kaydedebilirsin.")
+    ref = f"odeme_formu:{body.istek_id[:64]}" if body.istek_id else None
+    hid = hareket_kaydet(cur, tur="odeme", gun=gun, tutar=toplam, veri=veri, kim=kim, kaynak_ref=ref,
+                         para_cepleri={x["cep"] for x in nakit_parca}, kayit=kayit, C=C)   # Kasa'nın korumalı yolu
+    if ref and not hid:
+        return {"ok": True, "id": None, "tekrar": True, "mesaj": "Bu ödeme zaten kaydedilmişti (ikinci kez yazılmadı)"}
     return {"ok": True, "id": hid, "gider": gider_mi, "kimin": veri["kimin"], "toplam": _tl_sayi(toplam),
             "mesaj": f"{etiket} · {_tl(toplam)}" + (" · gider olarak yazıldı" if gider_mi else " · gider değil")}
 

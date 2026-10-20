@@ -1805,6 +1805,27 @@ def dukkan_giderleri(cur, bas_gun: str) -> List[dict]:
     return out
 
 
+def cekmece_cikislari(cur, gun: str) -> List[dict]:
+    """PUBLIC (Satış mutabakatı): o gün şube ÇEKMECESİNDEN çıkan nakit — anlık gider + elden avans, iptaller düşülmüş.
+    Tek gerçek Kasa: merkez burada iptal ederse mutabakat da görür (Fable O-5; önce panel olayından okunuyordu).
+    Her satır: sube_id, tutar (₺), ad (ekranda), tur ('gider' | 'avans'), kim (giren)."""
+    _, C, kayit, _ = _yukle(cur, tum_donemler=True)
+    out = []
+    for h in kayit:
+        v = h["veri"]
+        if h["tur"] != "odeme" or h["is_gunu"] != gun or v.get("kaynak") not in ("dukkan_gideri", "sube_avansi"):
+            continue
+        cep = (v.get("parcalar") or [{}])[0].get("cep") or ""
+        if not cep.startswith("sube:"):
+            continue
+        avans = v.get("kaynak") == "sube_avansi"
+        ad = (f"Avans · {(v.get('konu') or {}).get('personel_ad') or ''}".strip(" ·") if avans
+              else " · ".join(x for x in [v.get("kategori"), v.get("aciklama")] if x) or "Gider")
+        out.append({"sube_id": cep[len("sube:"):], "tutar": _tl_sayi(h["tutar"]), "ad": ad, "tur": "avans" if avans else "gider",
+                    "kim": v.get("giren")})
+    return out
+
+
 def _sube_cekmece_odeme(cur, *, sube_id: str, gun: str, tutar: int, veri: dict, kim: str, kaynak_ref: str) -> dict:
     """Şube çekmecesinden çıkan nakit (anlık gider · elden avans) — ORTAK yazım: Kasa kilidi, sayılmış güne yazılmaz, eksiye düşse
     de yazılır (sahip 20 Eki; merkez Kasa'da görür). Dönüş {id|None (tekrar), eksi}."""

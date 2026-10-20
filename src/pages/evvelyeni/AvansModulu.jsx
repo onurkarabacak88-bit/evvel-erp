@@ -77,6 +77,10 @@ export default function AvansModulu({ onToast }) {
           {elden.map((t) => (
             <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', borderTop: `1px solid ${R.cizgi}`, padding: '6px 0', fontSize: 13.5 }}>
               <span style={{ flex: 1 }}><b>{t.ad}</b> · {t.sube || '—'}</span><b style={num}>{fmt(t.tutar)} ₺</b><Cip tur="sari">{t.durum === 'teslim_edildi' ? 'personel onayı bekliyor' : 'elden verilecek — şube panelinde "teslim ettim"'}</Cip>
+              {/* Fable O-2: şube teslim etmediyse (kişi ayrıldı, yanlış şube) talep merkezden kapatılır — yoksa kişi yeni talep açamaz */}
+              {String(t.id).startsWith('av-') && t.durum === 'onaylandi' && (
+                <Dugme kucuk disabled={mesgul[t.id]} onClick={() => { if (window.confirm(`${t.ad} · ${fmt(t.tutar)} ₺ — şube teslim etmedi, talep kapatılsın mı? (para hareketi yok)`)) yap(t, 'kapat', { not_: 'şube teslim etmedi — merkez kapattı' }); }}>Kapat</Dugme>
+              )}
             </div>
           ))}
         </div>

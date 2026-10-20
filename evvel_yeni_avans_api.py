@@ -23,6 +23,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 import uuid
+from decimal import Decimal
 from datetime import date
 
 from database import db, savepoint
@@ -214,7 +215,7 @@ def kapat(aid: str, body: KapatBody, x_evvel_oturum: Optional[str] = Header(defa
     """Sahip (2026-10-17): "Bu avanslar Eylül'de verilmişti, kapatıldı — grileştir." Talep PARA HAREKETİ OLMADAN kapanır
     (eski sistemde 'iptal' — para çıkmamış kayıt; maaş mahsubu oluşturmaz). Açık talep kalırsa personel yeni talep açamıyordu."""
     if aid.startswith("av-"):
-        _karar(aid, "kapatildi", x_evvel_oturum, (body.not_ or "daha önce verildi")[:200])
+        _karar(aid, "kapatildi", x_evvel_oturum, (body.not_ or "daha önce verildi")[:200], onceki=("talep", "onaylandi"))
         return {"ok": True, "mesaj": "Talep kapatıldı (para hareketi yok)"}
     import avans_service as eski
     with db() as (conn, cur):
@@ -223,8 +224,9 @@ def kapat(aid: str, body: KapatBody, x_evvel_oturum: Optional[str] = Header(defa
     return {"ok": True, "mesaj": "Talep kapatıldı (para hareketi yok)"}
 
 
-def _karar(aid: str, durum: str, jeton: Optional[str], notu: Optional[str] = None, **alan) -> dict:
-    """Yeni defterde talebin kararı (yalnız 'talep' durumundaki)."""
+def _karar(aid: str, durum: str, jeton: Optional[str], notu: Optional[str] = None, onceki: tuple = ("talep",), **alan) -> dict:
+    """Yeni defterde talebin kararı (yalnız 'onceki' durumdaki — varsayılan 'talep'). Teslim edilmemiş onaylı-elden talep de
+    kapatılır/reddedilir (Fable O-2: kişi ayrıldı, şube teslim etmedi → talep sonsuza kadar açık kalıyor, yenisi açılamıyordu)."""
     with db() as (conn, cur):
         avans_hazirla(cur)
         kim = _aktor(cur, jeton)
@@ -232,7 +234,7 @@ def _karar(aid: str, durum: str, jeton: Optional[str], notu: Optional[str] = Non
             raise HTTPException(401, "Merkez oturumu gerekli")
         ek = "".join(f", {k}=%s" for k in alan)
         cur.execute(f"""UPDATE ey_avans_talep SET durum=%s, karar_ts=NOW(), karar_kim=%s, karar_not=%s{ek}
-                         WHERE id=%s AND durum='talep' RETURNING *""", (durum, kim, notu, *alan.values(), aid))
+                         WHERE id=%s AND durum = ANY(%s) RETURNING *""", (durum, kim, notu, *alan.values(), aid, list(onceki)))
         t = cur.fetchone()
         if not t:
             raise HTTPException(409, "Talep bulunamadı ya da karar verilmiş — sayfayı yenile")
@@ -257,22 +259,34 @@ def onayla(aid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(defa
         raise HTTPException(400, "Elden verilecekse şubeyi seç")
     if aid.startswith("av-"):
         if body.yontem == "elden":
-            _karar(aid, "onaylandi", x_evvel_oturum, None, yontem="elden", sube_id=body.sube_id)
+            with db() as (conn, cur):   # Fable D-5: olmayan / pasif şubeye onay verilirse talep hiçbir panelde görünmez
+                from evvel_yeni_tanim_api import subeler as _subeler
+                if str(body.sube_id) not in {str(s["id"]) for s in _subeler(cur)}:
+                    raise HTTPException(400, "Şube bulunamadı ya da pasif")
+            _karar(aid, "onaylandi", x_evvel_oturum, None, yontem="elden", sube_id=str(body.sube_id))
             return {"ok": True, "mesaj": "Avans onaylandı — şube panelinde 'teslim ettim' denince dükkân kasasından düşer"}
         if not body.cep:
             raise HTTPException(400, "Havale hangi bankadan? — cep seç")
+        import evvel_yeni_odeme_api as o   # Ödeme formunun KENDİ yazma çekirdeği (konu personel · kalem Avans) — ikinci yazıcı yok
+        from evvel_yeni_kasa_api import kasa_hazirla
+        kasa_hazirla()
+        # Fable O-1: talep kilidi → para → durum TEK işlemde (önce üç ayrı işlemdi: aynı anda 'elden' onayı gelirse para bankadan
+        # çıkıp talep 'onaylandı-elden' kalıyor, şube de verince ÇİFT avans). Kilit sırası panel teslimiyle aynı: talep → Kasa.
         with db() as (conn, cur):
             avans_hazirla(cur)
-            cur.execute("SELECT * FROM ey_avans_talep WHERE id=%s", (aid,))
+            kim = _aktor(cur, x_evvel_oturum)
+            if kim in ("oturumsuz", "bilinmiyor"):
+                raise HTTPException(401, "Merkez oturumu gerekli")
+            cur.execute("SELECT * FROM ey_avans_talep WHERE id=%s FOR UPDATE", (aid,))
             t = cur.fetchone()
-        if not t or dict(t)["durum"] != "talep":
-            raise HTTPException(409, "Talep bulunamadı ya da karar verilmiş — sayfayı yenile")
-        t = dict(t)
-        import evvel_yeni_odeme_api as o   # Ödeme formunun KENDİ yolu (konu personel · kalem Avans) — ikinci yazıcı yok
-        o.odeme_gir(o.OdemeBody(konu="personel", personel_id=t["personel_id"], personel_kalemi="Avans", ait_ay=t["donem"],
-                                aciklama=f"Avans (havale) · talep {aid}", istek_id=f"avans-{aid}", tekrar_onay=True,
-                                parcalar=[o.Parca(yontem="havale", cep=body.cep, tutar=__import__("decimal").Decimal(int(t["tutar"])) / 100)]), x_evvel_oturum)
-        _karar(aid, "odendi", x_evvel_oturum, None, yontem="havale", odeme_ref=f"odeme_formu:avans-{aid}")
+            if not t or dict(t)["durum"] != "talep":
+                raise HTTPException(409, "Talep bulunamadı ya da karar verilmiş — sayfayı yenile")
+            t = dict(t)
+            o.odeme_yaz(cur, o.OdemeBody(konu="personel", personel_id=t["personel_id"], personel_kalemi="Avans", ait_ay=t["donem"],
+                                         aciklama=f"Avans (havale) · talep {aid}", istek_id=f"avans-{aid}", tekrar_onay=True,
+                                         parcalar=[o.Parca(yontem="havale", cep=body.cep, tutar=Decimal(int(t["tutar"])) / 100)]), kim)
+            cur.execute("""UPDATE ey_avans_talep SET durum='odendi', karar_ts=NOW(), karar_kim=%s, yontem='havale', odeme_ref=%s
+                            WHERE id=%s""", (kim, f"odeme_formu:avans-{aid}", aid))
         return {"ok": True, "mesaj": "Avans havaleyle ödendi (bankadan düştü, maaştan mahsup edilir)"}
     import avans_service as eski
     with db() as (conn, cur):
@@ -289,7 +303,7 @@ class RedBody(BaseModel):
 @router.post("/{aid}/reddet")
 def reddet(aid: str, body: RedBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     if aid.startswith("av-"):
-        _karar(aid, "reddedildi", x_evvel_oturum, (body.neden or "Merkez reddetti")[:200])
+        _karar(aid, "reddedildi", x_evvel_oturum, (body.neden or "Merkez reddetti")[:200], onceki=("talep", "onaylandi"))
         return {"ok": True, "mesaj": "Talep reddedildi"}
     import avans_service as eski
     eski.avans_reddet(aid, eski.AvansRedModel(neden=(body.neden or "Merkez reddetti")[:200]))
