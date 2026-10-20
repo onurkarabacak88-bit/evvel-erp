@@ -17,6 +17,7 @@ from typing import Optional
 from fastapi import APIRouter, HTTPException
 
 from database import db
+from evvel_yeni_kasa_api import komisyon as _komisyon
 from evvel_yeni_kasa_api import (DIS_TURLERI, KIRA_CEPLERI, kasa_baslangic as _baslangic, kasa_hazirla as _hazirla, pos_oranlari as _oranlar, kasa_kayitlari as _yukle,
                                  kapanissiz_gunler)
 from evvel_yeni_cekirdek import bugun as _bugun, tl_sayi as _tl_sayi
@@ -105,7 +106,8 @@ def gelir_ozet(ay: Optional[str] = None):
             "gun_sayisi": gun_sayisi, "gunluk_ort": _tl_sayi(round(top / gun_sayisi)) if gun_sayisi else 0,
             "gecen_ay_ayni_gunler": _tl_sayi(gtop), "degisim_yuzde": round((top - gtop) * 100 / gtop, 1) if gtop else None,
             "eksik_gunler": eksik, "onaysiz": s["onaysiz"], "ayrimsiz": s["ayrimsiz"],
-            "tahmini_komisyon": _tl_sayi(round(s["pos"] * oran[0] / 100 + s["online"] * oran[1] / 100)),
+            # T1-12: aylık toplam × oran (float) değil — GÜNLÜK komisyonların toplamı (Gider raporuyla aynı rakam)
+            "tahmini_komisyon": _tl_sayi(sum(_komisyon(x["pos"], oran[0]) + _komisyon(x["online"], oran[1]) for x in s["gunler"].values())),
             "gunler": [{"gun": d, **{k: (_tl_sayi(v) if isinstance(v, int) and not isinstance(v, bool) else v) for k, v in x.items()},
                         "toplam": _tl_sayi(x["nakit"] + x["pos"] + x["online"])} for d, x in sorted(s["gunler"].items())],
         })

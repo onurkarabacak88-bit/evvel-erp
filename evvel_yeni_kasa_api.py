@@ -468,9 +468,21 @@ def _pos_durumu(ol: List[dict], C: dict, oranlar: Dict[str, tuple], ref: str) ->
             oran = (oranlar.get(sid) or (0, 0))[0 if kanal == "pos" else 1]
             out.append({"sube_cep": c["id"], "sube": c["kisa"], "banka_cep": "banka:" + str(sid), "kanal": kanal,
                         "brut_satis": _tl_sayi(brut), "yatan_brut": _tl_sayi(yatan), "bekleyen_brut": _tl_sayi(bekleyen),
-                        "oran": float(oran or 0), "beklenen_net": _tl_sayi(round(bekleyen * (1 - float(oran or 0) / 100))),
+                        "oran": float(oran or 0), "beklenen_net": _tl_sayi(bekleyen - komisyon(bekleyen, oran)),
                         "en_eski_gun": en_eski, "gun_sayisi": _gun_fark(en_eski, ref) if en_eski else 0})
     return out
+
+
+def komisyon(brut: int, oran) -> int:
+    """PUBLIC — TEK komisyon kuralı (Codex T1-12): GÜNLÜK brüt (kuruş) × oran% → kuruş (Decimal, kuruşa yuvarlanır). Gelir aylık toplamı float ile, Gider günlük Decimal ile, Kasa neti ayrı yuvarlıyordu → bütün raporlar
+    GÜNLÜK sonucu toplar. Oran 0..100 dışıysa 0 (komisyon yok)."""
+    try:
+        o = Decimal(str(oran or 0))
+    except Exception:  # noqa: BLE001
+        return 0
+    if not (0 <= o < 100) or not brut:
+        return 0
+    return int((Decimal(int(brut)) * o / 100).quantize(Decimal("1")))
 
 
 def _oranlar(cur) -> Dict[str, tuple]:
@@ -1472,7 +1484,7 @@ def _pos_otomatik(cur) -> int:
         if banka not in C or sid not in oranlar:
             continue
         oran = oranlar[sid][0]
-        net = int((Decimal(pos) * (Decimal(100) - Decimal(str(oran))) / Decimal(100)).quantize(Decimal("1"))) if 0 <= oran < 100 else pos
+        net = pos - komisyon(pos, oran)   # TEK komisyon kuralı (T1-12)
         kilitli = banka in kilit and g <= kilit[banka]
         if ref in var:
             # Kapanış sonradan düzeltildiyse otomatik yatış da düzelir (kilitli değilse)

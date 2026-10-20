@@ -457,7 +457,8 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
             continue
         _, pos, onl, _ = _kapanis_kanallari(h)
         po, oo = oranlar.get(str(sid)) or (0, 0)
-        k = int((Decimal(pos) * Decimal(str(po)) / 100 + Decimal(onl) * Decimal(str(oo)) / 100).quantize(Decimal("1")))
+        from evvel_yeni_kasa_api import komisyon   # TEK komisyon kuralı — günlük, kanal kanal (T1-12)
+        k = komisyon(pos, po) + komisyon(onl, oo)
         if k:
             S[sid]["komisyon"] += k
             S[sid]["satirlar"].append({"gun": h["is_gunu"], "tur": "komisyon", "aciklama": f"POS %{po} · online %{oo} (tahmini)",
