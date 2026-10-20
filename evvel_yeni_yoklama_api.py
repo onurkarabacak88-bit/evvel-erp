@@ -1212,9 +1212,8 @@ def kapanis_sorumlusu(cur, sube_id: str, gun: Optional[date] = None) -> Optional
 def _devir_olay(cur, d: dict, veri_ek: dict) -> Optional[str]:
     """'vardiya' olayı — Satış › Devir defteri / kasa sağlaması bunu okur (var olan okuyucu; kaynak değişmez)."""
     from evvel_yeni_olay import olay_yaz
-    from evvel_yeni_cekirdek import panel_baslangic as _pb
-    bas = _pb(cur).isoformat()   # Fable: tek yerde ayrıştırılır
-    if str(d["is_gunu"])[:10] < bas:   # deneme dönemi: telefon onayları denenir, vardiya olayı (Satış › Devir defteri) yazılmaz
+    from evvel_yeni_cekirdek import deneme_mi
+    if deneme_mi(cur, date.fromisoformat(str(d["is_gunu"])[:10])):   # tek kural (F#1) — deneme dönemi: telefon onayları denenir, vardiya olayı (Satış › Devir defteri) yazılmaz
         return None
     cur.execute("SELECT id, ad FROM ey_personel WHERE id = ANY(%s)", ([x for x in (d.get("devreden_id"), d.get("devralan_id")) if x],))
     ad = {dict(x)["id"]: dict(x)["ad"] for x in cur.fetchall() or []}

@@ -99,7 +99,7 @@ def _yeni_oneri(cur, ay: str) -> dict:
     y_, m_ = int(ay[:4]), int(ay[5:7])
     bas = date(y_, m_, 1)
     son = (date(y_ + (m_ == 12), m_ % 12 + 1, 1) - timedelta(days=1))
-    plan = {}
+    plan, plan_yok = {}, False
     try:
         with savepoint(cur, "sp_ey_maas_plan"):
             cur.execute("""SELECT a.personel_id::text AS pid, a.tarih,
@@ -112,7 +112,9 @@ def _yeni_oneri(cur, ay: str) -> dict:
                 k = (x["pid"], x["tarih"])
                 plan[k] = plan.get(k, 0.0) + float(x["saat"] or 0)
     except Exception as e:  # noqa: BLE001
-        log.info("evvel-yeni maaş: vardiya planı okunamadı: %s", str(e)[:160])
+        # Fable O-4: plan ESKİ vardiya_atama tablosunda (yeni sistemde plan tablosu yok) — kalkarsa sessizce "yalnız QR"a düşmesin
+        plan_yok = True
+        log.warning("evvel-yeni maaş: vardiya planı okunamadı: %s", str(e)[:160])
     _, rows = _yeni_yoklama(cur, bas, son)
     qr, bozuk = {}, set()
     for x in rows or []:
@@ -138,6 +140,7 @@ def _yeni_oneri(cur, ay: str) -> dict:
     for o in out.values():
         o["calisma_saat"] = round(o["calisma_saat"], 2)
         o["mesai_saat"] = round(o["mesai_saat"], 2)
+        o["plan_yok"] = plan_yok
     return out
 
 
@@ -315,6 +318,8 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         gun, acik = _gecen_gun(p.get("giris"), p.get("cikis"), ay_bas, ay_son, bugun)
         o = oneri.get(pid) or {}
         uyari = []
+        if o.get("plan_yok") and e.get("calisma_saat") is None and (p.get("calisma_turu") or "tam") == "yari":
+            uyari.append("Vardiya planı okunamadı — saat yalnız QR giriş–çıkışından, elle kontrol et")
         if o.get("guvenilmez_gun") and e.get("calisma_saat") is None:
             uyari.append(f"{o['guvenilmez_gun']} günde plan yok ve QR çıkışı okutulmamış — o günlerin saati sayılmadı, elle kontrol et")
         yari = (p.get("calisma_turu") or "tam") == "yari"
@@ -325,7 +330,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
             sat = int(u.get("saatlik") or 0)
             if not sat:
                 uyari.append("Saatlik ücret tanımsız — Tanımlar → Personel")
-            kalemler.append({"kod": "saat", "ad": f"Çalışma {saat:g} saat × {_tl(sat):g} ₺" + (" (elle)" if e.get("calisma_saat") is not None else " (vardiya planı)"),
+            kalemler.append({"kod": "saat", "ad": f"Çalışma {saat:g} saat × {_tl(sat):g} ₺" + (" (elle)" if e.get("calisma_saat") is not None else " (plan / QR)"),
                              "tutar": _tl(int(Decimal(str(saat)) * sat))})
             if e.get("bayram_saat"):
                 kalemler.append({"kod": "bayram", "ad": f"Bayram {float(e['bayram_saat']):g} saat × 2",
@@ -360,6 +365,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         din = devir_in.get(pid, 0)
         mahsup = min(avans + din, max(hak, 0))
         ek = {"gun": gun, "ay_acik": acik, "uyari": uyari, "avans_devir_onceki": _tl(din),
+              "hesap_saat": saat if yari else None,   # avans tavanı bunu okur (Fable O-3: _yeni_oneri ikinci kez çalışmasın)
               "yemek_hak": next((k["tutar"] for k in kalemler if k["kod"] == "yemek"), 0), "yemek_dusen": yemek_dusen}
         satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, din, odenen, od, e, u, "evvel_yeni", ek, yari))
     satir.sort(key=lambda x: (not x["aktif"], x["ad"]))
@@ -400,7 +406,9 @@ def avans_tavani(cur, personel_id: str, gun: Optional[date] = None) -> dict:
     hak = _kurus(r["hak_edis"]) if r else 0
     u = _ucretler(cur, ay).get(str(personel_id)) or {}
     if r and r.get("calisma_turu") == "yari":
-        saat = (_yeni_oneri(cur, ay).get(str(personel_id)) or {}).get("calisma_saat", 0)
+        saat = r.get("hesap_saat")
+        if saat is None:   # eski dönem satırı (1 Kasım öncesi) — hesapla saat üretmedi
+            saat = (_yeni_oneri(cur, ay).get(str(personel_id)) or {}).get("calisma_saat", 0)
         bek = int(Decimal(str(saat)) * int(u.get("saatlik") or 0))
     else:
         bek = int(u.get("maas") or 0) + int(u.get("yemek") or 0) + int(u.get("yol") or 0)

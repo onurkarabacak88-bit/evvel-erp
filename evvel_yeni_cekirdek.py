@@ -234,7 +234,7 @@ def bekleyen_saglayicilar() -> List[str]:
 
 __all__ = ["bugun", "tr_saat", "tr_gun", "ay_kaydir", "tr_baslik", "kurus", "kurus_yuvarla", "tl_sayi", "tl", "kilit", "aktor",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
-           "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem"]
+           "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 
 
 def takvim_durumu(beklenen, odenen, vade, bugun, once: bool = False, tolerans=100) -> str:
