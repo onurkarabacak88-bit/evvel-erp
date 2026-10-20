@@ -81,6 +81,7 @@ export default function VardiyaModulu({ onToast }) {
   const seciliKisi = secili && bosta.find((p) => p.id === secili);
   // '+' : soldan kişi seçiliyse ve o gün boştaysa PENCERE AÇMADAN yazılır; değilse seçim penceresi
   const arti_ = (o) => {
+    setGunSec(o.gun);   // sol liste eklenen güne geçer → eklenen kişinin listeden düştüğü görünür (sahip: 'Elif soldan kaybolmadı')
     if (secili && o.gun === gun && seciliKisi && o.kalip_id) {
       yap('plan', { personel_id: secili, gun: o.gun, sube_id: o.sube_id, bas: o.bas, bit: o.bit, kalip_id: o.kalip_id }, () => setSecili(null));
       return;
@@ -127,7 +128,7 @@ export default function VardiyaModulu({ onToast }) {
                   border: `1px solid ${R.cizgi}`, borderRadius: 7, padding: '6px 7px', minHeight: 36, cursor: 'pointer', font: 'inherit', fontSize: 12,
                   background: g === gun ? 'var(--pi-accent)' : 'transparent', color: g === gun ? 'var(--pi-on-accent)' : R.metin2 }}>{gunKisa(g)}</button>))}
             </div>
-            <div style={{ fontSize: 12, color: R.not }}>{gunBaslik(gun)} · {bosta.length} kişi boşta</div>
+            <div style={{ fontSize: 13.5, fontWeight: 700, color: R.bakirAcik }}>{gunBaslik(gun)}{gun === bugun ? ' (bugün)' : ''} · {bosta.length} kişi boşta</div>
             {bosta.map((p) => (
               <button key={p.id} type="button" onClick={() => setSecili(secili === p.id ? null : p.id)} style={{
                 textAlign: 'left', padding: '9px 10px', minHeight: 42, borderRadius: 9, cursor: 'pointer', font: 'inherit', fontSize: 13.5,
@@ -186,7 +187,7 @@ export default function VardiyaModulu({ onToast }) {
                       <td key={g} style={hucre}>
                         {diger.filter((p) => p.gun === g).map((p) => <Rozet key={p.id} p={p} ad={pad[p.personel_id] || '—'} onClick={() => duzenleAc(p)} />)}
                         <button type="button" className="vd-arti" disabled={mesgul} onClick={() => arti_({ sube_id: s.id, gun: g, kalip_id: null })}
-                          style={{ ...arti, color: R.not }}>+</button>
+                          style={{ ...arti, color: R.not, background: seciliKisi && g === gun ? 'var(--pi-accent-soft)' : 'none' }}>{seciliKisi && g === gun ? `+ ${seciliKisi.ad}` : '+'}</button>
                       </td>
                     ))}
                   </tr>
