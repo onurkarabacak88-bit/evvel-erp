@@ -27,6 +27,7 @@ from starlette.concurrency import run_in_threadpool
 
 from database import db, savepoint
 from evvel_yeni_urun_api import tezgahta_sayilir   # TEK 'tezgahta sayılır' kuralı (Dalga 4, F#7)
+from evvel_yeni_olay import panel_kok   # kök biçimi tek yerde (K9)
 from evvel_yeni_cekirdek import merkez_aktor
 from evvel_yeni_cekirdek import bekleyen_is_kaydet, deneme_mi, is_gunu as _bugun, kurus as _kurus   # şube İŞ GÜNÜ (gece 02:00'ye kadar önceki gün)
 
@@ -489,7 +490,7 @@ def acilis(sube_id: str, b: AcilisBody):
             raise HTTPException(409, engel)
         kasa = _tl(b.kasa_sayim, "Kasadaki para")
         satir = _sayim_satirlari(cur, b.sayim)
-        kok = f"panel:acilis:{sube_id}:{c['gun'].isoformat()}"
+        kok = panel_kok("acilis", sube_id, c['gun'].isoformat())
         oid = _olay(cur, sube_id=sube_id, tur="acilis", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(kasa) / 100,
                        veri={"kasa_sayim": kasa, "sayim": satir, "istek_id": b.istek_id,
@@ -623,7 +624,7 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
                      if x.sayilan is not None and x.urun_id in bil and tezgahta_sayilir(bil[x.urun_id])]
             dusen = [(bil.get(x.urun_id) or {}).get("ad") or x.urun_id for x in b.sayim
                      if x.sayilan is not None and x.urun_id not in {s_["urun_id"] for s_ in satir}]
-        kok = f"panel:kapanis:{sube_id}:{gun}"
+        kok = panel_kok("kapanis", sube_id, gun)
         oid = _olay(cur, sube_id=sube_id, tur="kapanis", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(nakit) / 100,
                        veri={"nakit": nakit, "pos": pos, "online": onl, "teslimler": tes, "sayim": satir,
@@ -767,7 +768,7 @@ def ara_teslim(sube_id: str, b: AraTeslimBody):
         k = _tl(b.tutar, "Tutar")
         if not k:
             raise HTTPException(400, "Tutarı yaz")
-        kok = f"panel:ara:{sube_id}:{b.istek_id}"
+        kok = panel_kok("ara", sube_id, b.istek_id)
         oid = _olay(cur, sube_id=sube_id, tur="teslim", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(k) / 100, veri={"alan": b.alan, "tutar": k})
         r = kasa_yaz(cur, HareketBody(tur="teslim", is_gunu=c["gun"].isoformat(), kaynak=f"sube:{sube_id}", hedef=b.alan,
@@ -839,7 +840,7 @@ def depodan_kabul(sube_id: str, b: DepoKabulBody):
         p = _personel(cur, sube_id, b.personel_id)
         _pin(cur, p, b.pin)
         bek = next((x for x in yoldakiler(cur, str(sube_id)) if x["parti_id"] == b.parti_id), None)
-        kok = f"panel:depo_kabul:{sube_id}:{b.istek_id}"
+        kok = panel_kok("depo_kabul", sube_id, b.istek_id)
         if bek is None:   # tekrar gönderim (aynı istek) ya da başka yerden kabul edildi / merkez geri aldı
             if __import__("evvel_yeni_olay").kok_var(cur, kok):
                 return {"tekrar": True, "mesaj": "Bu paket zaten kabul edilmişti ✓"}
@@ -887,7 +888,7 @@ def avans_teslim(sube_id: str, b: AvansTeslimBody):
         _gun_acik_mi(cur, c, sube_id)
         p = _personel(cur, sube_id, b.personel_id)
         _pin(cur, p, b.pin)
-        kok = f"panel:avans:{sube_id}:{b.talep_id}"
+        kok = panel_kok("avans", sube_id, b.talep_id)
         oid = _olay(cur, sube_id=sube_id, tur="avans", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                     personel_id=p["id"], personel_ad=p["ad"], veri={"talep_id": b.talep_id})   # kök talep başına — aynı talep iki kez teslim edilemez
         if oid is None:
@@ -927,7 +928,7 @@ def gider_gir(sube_id: str, b: GiderBody):
             raise HTTPException(400, "Açıklama zorunlu — neye ödendiğini yaz")
         if b.fis is None:
             raise HTTPException(400, "Fiş / fatura alındı mı? — EVET ya da HAYIR seç")
-        kok = f"panel:gider:{sube_id}:{b.istek_id}"
+        kok = panel_kok("gider", sube_id, b.istek_id)
         oid = _olay(cur, sube_id=sube_id, tur="gider", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                     personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(t) / 100,
                     veri={"tutar": t, "aciklama": ac[:120], "kategori": (b.kategori or "").strip()[:40] or None, "fis": bool(b.fis)})
@@ -974,7 +975,7 @@ def siparis_ver(sube_id: str, b: SiparisBody):
         r = S.siparis_yaz(cur, sube_id=str(sube_id), kalemler=[x.model_dump() for x in b.kalemler], kim=f"{KIM} · {p['ad']}",
                           personel_id=p["id"], istek_id=b.istek_id, notu=b.notu, deneme=c["kuru"], gun=c["gun"])
         if not c["kuru"]:   # olay defteri yalnız gerçek dönemde (deneme siparişi okuyuculara karışmasın)
-            _olay(cur, sube_id=sube_id, tur="siparis", is_gunu=c["gun"], kok=f"panel:siparis:{sube_id}:{b.istek_id}", kaynak_tablo="panel",
+            _olay(cur, sube_id=sube_id, tur="siparis", is_gunu=c["gun"], kok=panel_kok("siparis", sube_id, b.istek_id), kaynak_tablo="panel",
                   personel_id=p["id"], personel_ad=p["ad"], veri={"siparis_id": r["siparis_id"], "kalem": r["kalem"], "istek_id": b.istek_id})
         c["kalici"] = True
         return {"siparis_id": r["siparis_id"], "tekrar": r["tekrar"],
@@ -1060,7 +1061,7 @@ def panel_gonderilecek(sube_id: str, b: GonderBody):
             raise HTTPException(400, "Her kalem için VAR / KISMİ / YOK seç")
         r = S.yola_cikar(cur, depo_sube=str(sube_id), hedef_sube=b.hedef, kim=kim, istek_id=b.istek_id[:58],
                          satirlar=[{"yon_id": x.yon_id, "siparis_id": x.siparis_id, "surum": x.surum, "gonderilen": x.gonderilen} for x in b.satirlar])
-        _olay(cur, sube_id=sube_id, tur="sevk_cikis", is_gunu=c["gun"], kok=f"panel:sevk:{sube_id}:{b.istek_id}", kaynak_tablo="panel",
+        _olay(cur, sube_id=sube_id, tur="sevk_cikis", is_gunu=c["gun"], kok=panel_kok("sevk", sube_id, b.istek_id), kaynak_tablo="panel",
               personel_id=p["id"], personel_ad=p["ad"], veri={"hedef": b.hedef, "parti_id": r.get("parti_id"), "istek_id": b.istek_id})
         return {"parti_id": r.get("parti_id"), "mesaj": (f"🚚 {r['kalem']} ürün yola çıktı" if r.get("kalem") else "Gönderilen ürün yok")
                 + (f" ({r['paket']} paket — aynı ürün iki siparişte)" if r.get("paket", 1) > 1 else "")
@@ -1117,7 +1118,7 @@ def teslim_al(sube_id: str, b: TeslimAlBody):
             if __import__("evvel_yeni_olay").yakin_ayni_olay(cur, sube_id=str(sube_id), tur="teslim_al", veri_alan="ozet", deger=ozet,
                                                              dakika=3, istek_haric=b.istek_id):
                 raise HTTPException(409, "Bu teslim az önce kaydedildi — tekrar gönderme. Gerçekten ikinci teslimse 3 dk sonra dene.")
-        kok = f"panel:teslim:{sube_id}:{b.istek_id}"
+        kok = panel_kok("teslim", sube_id, b.istek_id)
         kalem_veri = [{"urun_id": x["urun_id"], "ad": x["ad"], "adet": x["adet"]} for x in k]
         oid = _olay(cur, sube_id=sube_id, tur="teslim_al", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                     personel_id=p["id"], personel_ad=p["ad"], tutar=(Decimal(tutar) / 100 if tutar else None),
@@ -1159,7 +1160,7 @@ def urun_ac(sube_id: str, b: UrunAcBody):
         k = _kalemler(cur, b.kalemler, pasif_olur=True)
         if any(__import__("evvel_yeni_urun_api").gununde_tuketilir(x) for x in k):   # sahip P1: pasta depoya girerken tüketildi — açılırsa çift gider
             raise HTTPException(400, "Pasta gibi gününde tüketilen ürün Ürün Aç'ta açılmaz — listeyi yenileyin")
-        kok = f"panel:ac:{sube_id}:{b.istek_id}"
+        kok = panel_kok("ac", sube_id, b.istek_id)
         oid = _olay(cur, sube_id=sube_id, tur="urun_ac", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], veri={"kalemler": k, "aciklama": (b.aciklama or "").strip()[:200] or None})
         for i, x in enumerate(k):
@@ -1217,7 +1218,7 @@ def fire(sube_id: str, b: FireBody):
                     "musteri_tel": re.sub(r"[^\d+]", "", b.iade.musteri_tel or "")[:20] or None}
         sebep_ad = FIRE_SEBEPLERI[b.sebep]
         k = _kalemler(cur, b.kalemler)
-        kok = f"panel:fire:{sube_id}:{b.istek_id}"
+        kok = panel_kok("fire", sube_id, b.istek_id)
         oid = _olay(cur, sube_id=sube_id, tur="fire", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                     personel_id=p["id"], personel_ad=p["ad"],
                     veri={"kalemler": k, "sebep": b.sebep, "sebep_ad": sebep_ad, "aciklama": aciklama or None, "iade": iade})

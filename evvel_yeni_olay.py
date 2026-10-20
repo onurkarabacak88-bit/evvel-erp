@@ -243,3 +243,9 @@ def gun_kapandi(cur, sube_id: str, gun) -> bool:
     """Şubenin o iş günü için panel KAPANIŞ olayı var mı (iptal edilmemiş) — gün kapalıysa ürün aç / fire / devir yazılmaz (D7)."""
     return bool(panel_olaylari(cur, sube_id=sube_id, bas=gun, son=gun, turler={"kapanis"}))
 
+
+def panel_kok(tur: str, sube_id, anahtar) -> str:
+    """PUBLIC — yeni panel olayının KÖK biçimi TEK yerde: 'panel:{tür}:{şube}:{anahtar}' (anahtar = istek kimliği / iş günü / talep).
+    Dalga 4 (K9): 12 yerde satır içi yazılıydı; Toptancı/Gider 'panel:teslim:' önekiyle, merkez geç kapanışı bu biçimle okur."""
+    return f"panel:{tur}:{sube_id}:{anahtar}"
+

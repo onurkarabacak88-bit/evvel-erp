@@ -31,6 +31,7 @@ from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
 from database import db, savepoint
+from evvel_yeni_olay import panel_kok   # kök biçimi tek yerde (K9)
 from evvel_yeni_cekirdek import merkez_aktor
 from evvel_yeni_cekirdek import adet_oku, ayar_oku, ayar_yaz, bekleyen_is_kaydet, is_gunu
 
@@ -1226,7 +1227,7 @@ def _devir_olay(cur, d: dict, veri_ek: dict) -> Optional[str]:
     ad = adlar(cur, "ey_personel", [d.get("devreden_id"), d.get("devralan_id")])
     a = {"id": d.get("devreden_id"), "ad": ad.get(d.get("devreden_id"))}
     v = {"id": d.get("devralan_id"), "ad": ad.get(d.get("devralan_id"))}
-    return olay_yaz(cur, sube_id=d["sube_id"], tur="vardiya", is_gunu=d["is_gunu"], kok=f"panel:vardiya:{d['sube_id']}:{d['id']}",
+    return olay_yaz(cur, sube_id=d["sube_id"], tur="vardiya", is_gunu=d["is_gunu"], kok=panel_kok("vardiya", d['sube_id'], d['id']),
                     kaynak_tablo="panel", kaynak_id=d["id"], personel_id=a["id"], personel_ad=a["ad"],
                     tutar=__import__("decimal").Decimal(int(d.get("sayilan_kurus") or 0)) / 100,
                     veri={"devreden": a, "devralan": v, "sayilan": int(d.get("sayilan_kurus") or 0), "bardak": d.get("bardak") or [],
