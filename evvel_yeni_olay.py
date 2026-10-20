@@ -235,7 +235,7 @@ def panel_olaylari(cur, sube_id: Optional[str] = None, bas: Any = None, son: Any
         if o.get("iptal") or (o.get("kaynak_tablo") or "") != "panel":
             continue
         v = o.get("veri")
-        out.append({**o, "v": v if isinstance(v, dict) else json.loads(v or "{}")})
+        out.append({**o, "v": __import__("evvel_yeni_cekirdek").json_ac(v, {})})
     return out
 
 

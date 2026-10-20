@@ -241,7 +241,7 @@ def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
 
 def _fiyat_ogren(cur, t: dict, gun: date) -> None:
     """Kesin tutar gelince bu toptancı için birim fiyatları öğren (tahmin oranına göre dağıt; tek ürünse tutar ÷ adet)."""
-    kal = t["kalemler"] if isinstance(t["kalemler"], list) else json.loads(t["kalemler"] or "[]")
+    kal = __import__("evvel_yeni_cekirdek").json_ac(t["kalemler"], [])
     kesin = t.get("kesin_tutar")
     if not kal or not kesin:
         return
@@ -318,7 +318,7 @@ def teslim_kalemleri(cur, teslim_idler: List[str]) -> dict:
     out = {}
     for r in cur.fetchall() or []:
         r = dict(r)
-        ks = r["kalemler"] if isinstance(r["kalemler"], list) else json.loads(r["kalemler"] or "[]")
+        ks = __import__("evvel_yeni_cekirdek").json_ac(r["kalemler"], [])
         d = out.setdefault(r["id"], {})
         for k in ks:
             d[str(k.get("urun_id"))] = d.get(str(k.get("urun_id")), 0) + int(k.get("adet") or 0)
@@ -432,7 +432,7 @@ def _hesap(cur, bugun: date):
         borclar = ([{"tarih": None, "vade": None, "tutar": acilis, "ad": "açılış"}] if acilis > 0 else [])
         har = []
         for x in ts:
-            kal = x["kalemler"] if isinstance(x["kalemler"], list) else json.loads(x["kalemler"] or "[]")
+            kal = __import__("evvel_yeni_cekirdek").json_ac(x["kalemler"], [])
             borc = int(x["kesin_tutar"]) if x.get("kesin_tutar") is not None else (int(x["tahmini"]) if x.get("tahmini") is not None else None)
             sapma = None
             if x.get("kesin_tutar") and x.get("tahmini"):
@@ -828,19 +828,29 @@ def teslim_iptal(tid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Head
 
 
 # ─────────────── ÜRÜN FİYATLARI (panel kataloğu şeklinde) ───────────────
+def _elle_ve_toptanci_fiyatlari(cur, idler: Optional[List[str]] = None) -> tuple:
+    """(elle girilen fiyat {urun_id: satır}, toptancı fiyatları {anahtar: [{toptanci, birim, tarih}]}) — yeni ve eski fiyat ekranı
+    ORTAK (Dalga 4, K8: iki birebir kopya). idler None → hepsi."""
+    kos, prm = ("WHERE urun_id = ANY(%s)", (idler,)) if idler is not None else ("", ())
+    cur.execute(f"SELECT urun_id, birim, girilen, zaman FROM ey_urun_fiyat {kos}", prm)
+    elle = {dict(r)["urun_id"]: dict(r) for r in cur.fetchall() or []}
+    tad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_toptanci")   # toptancı adı Tanımlar'dan (F#32)
+    kos2 = "WHERE f.urun_anahtar = ANY(%s)" if idler is not None else ""
+    cur.execute(f"SELECT f.urun_anahtar, f.birim, f.tarih, f.toptanci_id FROM ey_toptanci_fiyat f {kos2}", prm)
+    top_f = {}
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        top_f.setdefault(r["urun_anahtar"], []).append({"toptanci": tad.get(str(r["toptanci_id"])), "birim": _tl_sayi(int(r["birim"])),
+                                                        "tarih": r["tarih"].isoformat()})
+    return elle, top_f
+
+
 def _fiyatlar_yeni(cur) -> dict:
     """Yeni katalog (ey_urun) × o gün geçerli fiyat (fiyat_bilgi). 1 SAYIM birimi, KDV dahil."""
     from evvel_yeni_urun_api import katalog as _ey_katalog
     kat = _ey_katalog(cur)
     idler = [str(u["id"]) for k in kat for u in k["urunler"]]
-    cur.execute("SELECT urun_id, birim, girilen, zaman FROM ey_urun_fiyat WHERE urun_id = ANY(%s)", (idler,))
-    elle = {dict(r)["urun_id"]: dict(r) for r in cur.fetchall() or []}
-    tad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_toptanci")   # toptancı adı Tanımlar'dan (F#32)
-    cur.execute("SELECT f.urun_anahtar, f.birim, f.tarih, f.toptanci_id FROM ey_toptanci_fiyat f WHERE f.urun_anahtar = ANY(%s)", (idler,))
-    top_f = {}
-    for r in cur.fetchall() or []:
-        r = {**dict(r), "ad": tad.get(str(dict(r)["toptanci_id"]))}
-        top_f.setdefault(r["urun_anahtar"], []).append({"toptanci": r["ad"], "birim": _tl_sayi(int(r["birim"])), "tarih": r["tarih"].isoformat()})
+    elle, top_f = _elle_ve_toptanci_fiyatlari(cur, idler)
     out = []
     for k in kat:
         satir = []
@@ -896,14 +906,7 @@ def urun_fiyatlari(evren: Optional[str] = None):
                 ko = {dict(r)["kalem_kodu"]: Decimal(dict(r)["kdv_oran"] or 0) for r in cur.fetchall() or []}
         except Exception as e:  # noqa: BLE001
             log.warning("ürün fiyatları: alış fiyatı okunamadı: %s", str(e)[:150])
-        cur.execute("SELECT urun_id, birim, girilen, zaman FROM ey_urun_fiyat")
-        elle = {dict(r)["urun_id"]: dict(r) for r in cur.fetchall() or []}
-        tad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_toptanci")   # toptancı adı Tanımlar'dan (F#32)
-        cur.execute("SELECT f.urun_anahtar, f.birim, f.tarih, f.toptanci_id FROM ey_toptanci_fiyat f")
-        top_f = {}
-        for r in cur.fetchall() or []:
-            r = {**dict(r), "ad": tad.get(str(dict(r)["toptanci_id"]))}
-            top_f.setdefault(r["urun_anahtar"], []).append({"toptanci": r["ad"], "birim": _tl_sayi(int(r["birim"])), "tarih": r["tarih"].isoformat()})
+        elle, top_f = _elle_ve_toptanci_fiyatlari(cur)
     out = []
     for k in kats:
         satir = []
@@ -949,7 +952,7 @@ def tahminleri_tazele(cur) -> int:
     cur.execute("SELECT id, toptanci_id, tarih, kalemler FROM ey_toptanci_teslim WHERE kesin_tutar IS NULL AND NOT iptal")
     n = 0
     for x in [dict(r) for r in cur.fetchall() or []]:
-        kal = x["kalemler"] if isinstance(x["kalemler"], list) else json.loads(x["kalemler"] or "[]")
+        kal = __import__("evvel_yeni_cekirdek").json_ac(x["kalemler"], [])
         if not kal:
             continue
         satir, tahmini, eksik = _tahmin(cur, x["toptanci_id"], [{"urun_id": k.get("urun_id"), "urun_ad": k.get("ad"), "adet": k.get("adet")} for k in kal], x["tarih"])

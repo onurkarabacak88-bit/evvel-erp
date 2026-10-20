@@ -297,7 +297,7 @@ def senkron(cur) -> dict:
                             WHERE tarih >= %s""", (BASLANGIC,))
             rows = []
             for r in [dict(x) for x in cur.fetchall() or []]:
-                kal = r["kalemler"] if isinstance(r["kalemler"], list) else json.loads(r["kalemler"] or "[]")
+                kal = __import__("evvel_yeni_cekirdek").json_ac(r["kalemler"], [])
                 for i, k in enumerate(kal):
                     try:
                         adet = int(float(k.get("miktar") or 0))

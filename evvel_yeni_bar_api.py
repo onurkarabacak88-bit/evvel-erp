@@ -142,7 +142,7 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
         if str(o["sube_id"]) not in sids:   # F#12: iptal/panel süzgeci Olay'da
             continue
         sid = str(o["sube_id"])
-        v = o["veri"] if isinstance(o["veri"], dict) else json.loads(o["veri"] or "{}")
+        v = o["v"]   # panel_olaylari açtı
         if o["tur"] == "urun_ac":
             for x in v.get("kalemler") or []:
                 if str(x.get("urun_id")) in sayilan_id:

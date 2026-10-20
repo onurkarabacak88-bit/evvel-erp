@@ -265,7 +265,7 @@ def cihaz_coz(cur, basliklar, method: str, yol: str, govde: bytes, tur: Optional
         nonce = (basliklar.get("x-evvel-nonce") or "").strip()[:64]
         imza = (basliklar.get("x-evvel-imza") or "").strip()
         mesaj = f"{cid}|{z}|{nonce}|{method.upper()}|{yol}|{hashlib.sha256(govde or b'').hexdigest()}".encode("utf-8")
-        jwk = c["acik_anahtar"] if isinstance(c["acik_anahtar"], dict) else json.loads(c["acik_anahtar"] or "{}")
+        jwk = __import__("evvel_yeni_cekirdek").json_ac(c["acik_anahtar"], {})
         if not nonce or not _imza_dogru(jwk, mesaj, imza):
             raise HTTPException(403, "Cihaz doğrulanamadı")
         cur.execute("INSERT INTO ey_cihaz_nonce (cihaz_id, nonce) VALUES (%s,%s) ON CONFLICT DO NOTHING RETURNING nonce", (cid, nonce))

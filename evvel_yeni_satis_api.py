@@ -417,7 +417,6 @@ def satis_gun(gun: Optional[str] = None):
     """GÜNLÜK DÖKÜM (sahip: "bugün 14 adet 8oz vs. görmek istiyorum; kasada açık var mı, satıştan gelen açık var mı;
     satıştan kaynaklı fireyi de görmeli"). Şube şube: kalem kalem sabah · giren · akşam · KULLANILAN · FİRE · SATILAN,
     fire listesi (sebep), ciro, bardaktan BEKLENEN ciro → SATIŞTAN AÇIK, kör kasa sayımı → KASA AÇIĞI."""
-    import json as _json
     from evvel_yeni_bar_api import bar_ozet, kod_anahtar as _kod_anahtar, anahtar_ad as _anahtar_ad, KALEMLER
     from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
     from evvel_yeni_cekirdek import bugun as _bugun
@@ -440,7 +439,7 @@ def satis_gun(gun: Optional[str] = None):
                              FROM sube_fire_bildirim WHERE tarih = %s ORDER BY olusturma""", (g_,))
             for r in cur.fetchall() or []:
                 r = dict(r)
-                kal = r["kalemler"] if isinstance(r["kalemler"], list) else _json.loads(r["kalemler"] or "[]")
+                kal = __import__("evvel_yeni_cekirdek").json_ac(r["kalemler"], [])
                 for k in kal:
                     kod = _kod_anahtar(k.get("kalem_kodu")) or _anahtar_ad(k.get("label"))
                     try:
@@ -607,7 +606,6 @@ def _devir_defteri_eski(ay: Optional[str] = None):
       VARDİYA DEVRİ: sabahçı → akşamcı, devredilen nakit / teslim / bırakılan
       AKŞAM: kim kapattı, kör toplam, kime ne teslim, ne bıraktı → ERTESİ SABAH kim devraldı, ne saydı
     Kopukluk (bırakılan ≠ ertesi sabah sayılan) kırmızı. YALNIZ OKUR (panel tabloları)."""
-    import json as _json
     from evvel_yeni_cekirdek import bugun as _bugun
     from evvel_yeni_tanim_api import subeler as _ey_subeler
     bugun = _bugun()
@@ -672,7 +670,7 @@ def _devir_defteri_eski(ay: Optional[str] = None):
             a, k, ka = ev.get((sid, gi, "ACILIS")), ev.get((sid, gi, "KAPANIS")), ev.get((sid, ert, "ACILIS"))
             dun_k = ev.get((sid, (g - timedelta(days=1)).isoformat(), "KAPANIS"))
             vd = devir.get((sid, gi))
-            km = (k["meta"] if isinstance(k["meta"], dict) else _json.loads(k["meta"] or "{}")) if k else {}
+            km = (__import__("evvel_yeni_cekirdek").json_ac(k["meta"], {})) if k else {}
             dun_birak = f(dun_k["devir"]) if dun_k else None
             sabah = {"kim": a.get("personel_ad") if a else None, "saat": saat(a["cevap_ts"], g) if a else None,
                      "sayilan": f(a["kasa_sayim"]) if a else None, "dun_birakilan": dun_birak,

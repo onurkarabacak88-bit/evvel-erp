@@ -247,7 +247,7 @@ def dis_giris_bagla(cur, hid: str, bag: dict, alt: str) -> bool:
     if not r:
         return False
     v = dict(r)["veri"]
-    v = v if isinstance(v, dict) else json.loads(v or "{}")
+    v = __import__("evvel_yeni_cekirdek").json_ac(v, {})
     if v.get("alt") != alt or v.get("bag"):
         return False
     v["bag"] = {str(k)[:20]: (str(x)[:80] if x is not None else None) for k, x in list(bag.items())[:6]}
@@ -2153,7 +2153,7 @@ def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None,
                      durum="bekliyor", veri={"kart": k, "eski_kaynak": "panel", **ayrim}, kaynak_ref=ref)
                 return
             r = dict(r)
-            veri = r["veri"] if isinstance(r["veri"], dict) else json.loads(r["veri"] or "{}")
+            veri = __import__("evvel_yeni_cekirdek").json_ac(r["veri"], {})
             ayni_ayrim = not ayrim or (int(veri.get("pos", -1)) == ayrim["pos"] and int(veri.get("online", -1)) == ayrim["online"])
             if r["tutar"] == n and int(veri.get("kart", 0)) == k and ayni_ayrim:   # C-T1-04: POS/online kayması da değişikliktir
                 return
@@ -2305,7 +2305,7 @@ def gec_kapanis(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default
     r = dict(r)
     if r["tip"] != "KAPANIS":
         raise HTTPException(400, "Yalnız kapanış denemesi işlenebilir")
-    govde = r["govde"] if isinstance(r["govde"], dict) else json.loads(r["govde"] or "{}")
+    govde = __import__("evvel_yeni_cekirdek").json_ac(r["govde"], {})
     try:
         tb = so.OperasyonTamamla(**{k: v for k, v in govde.items() if k in so.OperasyonTamamla.model_fields})
     except Exception as e:  # noqa: BLE001

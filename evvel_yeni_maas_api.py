@@ -355,7 +355,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
             kalemler.append({"kod": "duzeltme", "ad": "Düzeltme" + (f" — {e.get('aciklama')}" if e.get("aciklama") else ""), "tutar": _tl(e["duzeltme"])})
         # Onaylı ay: kalemler dondurulur (sonradan değişen ücret/vardiya geçmişi bozmaz)
         if e.get("onay") and e.get("kalemler"):
-            kalemler = e["kalemler"] if isinstance(e["kalemler"], list) else json.loads(e["kalemler"])
+            kalemler = __import__("evvel_yeni_cekirdek").json_ac(e["kalemler"], [])
         hak = sum(_kurus(k["tutar"]) for k in kalemler)
         din = devir_in.get(pid, 0)
         mahsup = min(avans + din, max(hak, 0))

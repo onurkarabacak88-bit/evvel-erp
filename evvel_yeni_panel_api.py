@@ -291,10 +291,11 @@ def panel_durum(sube_id: str):
     with db() as (conn, cur):
         s = _sube(cur, sube_id)
         gun = _bugun()
-        per = [{"id": str(p["id"]), "ad": p["ad"]} for p in secim_listeleri(cur)["personel"]
+        sl = secim_listeleri(cur)   # K13: aynı istekte iki kez çağrılıyordu
+        per = [{"id": str(p["id"]), "ad": p["ad"]} for p in sl["personel"]
                if p["aktif"] and str(p.get("sube_id") or "") == str(sube_id)]
         kat_hepsi = katalog(cur, hepsi=True)   # Fable: tek sorgu — aktif liste bundan süzülür
-        toptancilar = [{"id": str(t["id"]), "ad": t["ad"], "kategori": t.get("kategori")} for t in secim_listeleri(cur).get("toptancilar") or []]
+        toptancilar = [{"id": str(t["id"]), "ad": t["ad"], "kategori": t.get("kategori")} for t in sl.get("toptancilar") or []]
         kat = [{**k, "urunler": [x for x in k["urunler"] if x.get("aktif", True)]} for k in kat_hepsi if k.get("aktif", True)]
         bugunku = [{"id": o["id"], "tur": o["tur"], "zaman": str(o["olay_zamani"])[11:16], "kim": o.get("personel_ad"),
                     "iptal": o.get("iptal", False)}
@@ -1504,7 +1505,7 @@ async def onay_onayla(oid: str, request: Request):
         return {"ok": True, "tekrar": True, "mesaj": r["mesaj"] or "Zaten onaylandı"}
     o, p = r["o"], r["p"]
     Body, fn, ad = ONAY_TURLERI[o["tur"]]
-    govde = dict(o["govde"] if isinstance(o["govde"], dict) else json.loads(o["govde"]))
+    govde = dict(__import__("evvel_yeni_cekirdek").json_ac(o["govde"], {}))
     govde["personel_id"] = p["id"]   # kimlik KAYNAKTA: telefonun sahibi
     try:
         sonuc = await run_in_threadpool(lambda: fn(o["sube_id"], Body(**govde)))
@@ -1543,7 +1544,7 @@ def gec_kapanis(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default
         r = dict(r)
         if r["tur"] != "kapanis" or r["sonuc"] not in ("ret", "hata", "bekliyor") or r["islendi"]:
             raise HTTPException(409, "Bu deneme işlenemez (kapanış değil, başarılı ya da zaten işlendi)")
-    govde = r["govde"] if isinstance(r["govde"], dict) else json.loads(r["govde"] or "{}")
+    govde = __import__("evvel_yeni_cekirdek").json_ac(r["govde"], {})
     govde["istek_id"] = "gec-" + body.deneme_id.replace("-", "")[:32]   # sabit: yarıda kalırsa tekrar = aynı kayıt (çift yazım yok)
     govde.pop("istemci_gunu", None)
     try:
