@@ -1892,7 +1892,8 @@ def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dic
         rapor["ozet"] = {"sayim": 0, "farkli": 0, "not": f"{bas.isoformat()} sabahından itibaren başlayacak"}
         return rapor
     cep_list, C, kayit, _ = _yukle(cur)
-    try:
+    olaylar = []
+    try:   # ESKİ panel olayları (kesimde kalkar) — tablo yoksa / okunamazsa YENİ panel sayımları yine işlenir (C-T3-04: erken dönüş vardı)
         with savepoint(cur, "sp_pi_panel_sayim"):
             cur.execute("""SELECT sube_id::text AS sube_id, tarih, tip, kasa_sayim, COALESCE(teslim,0) AS teslim, devir, cevap_ts
                              FROM sube_operasyon_event
@@ -1901,7 +1902,7 @@ def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dic
                             ORDER BY tarih, cevap_ts NULLS LAST""", (bas, _bugun()))
             olaylar = [dict(r) for r in cur.fetchall() or []]
     except Exception as e:  # noqa: BLE001
-        return {**rapor, "hata": str(e)[:200]}
+        rapor["eski_hata"] = str(e)[:200]
     # 🧾 YENİ ŞUBE PANELİ açılışları (ey_sube_olay, kaynak_tablo='panel') — eski olayla aynı biçime çevrilir; aynı şube+gün
     # ikisinde de varsa ref ('sayim_acilis:{şube}:{gün}') aynı olduğundan bir kez yazılır (Codex: açılış nakdi Kasa'ya ulaşsın)
     try:
