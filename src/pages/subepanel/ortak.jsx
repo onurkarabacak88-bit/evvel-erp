@@ -55,8 +55,8 @@ export const taslakTemizle = (subeId, gun, yoldakiPartiler = []) => {
   } catch { /* yok say */ }
 };
 
-export const yeniIstek = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).slice(0, 60);
-export const tl = (x) => (Number(x || 0)).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
+export { yeniIstekId as yeniIstek } from '../../utils/cihazImza';   // istek kimliği TEK üretici (Dalga 5, F#59)
+export { tlYaz as tl } from '../../utils/trSayi';   // ₺ biçimi TEK kaynak (F#58)
 export const sayi = (s) => String(s ?? '').replace(/[^\d]/g, '');
 export const tutar = (s) => String(s ?? '').replace(/[^\d,.]/g, '').replace('.', ',');
 export const tutarNum = (s) => { const n = sayiTR(s, 0); return Number.isNaN(n) ? 0 : n; };   // tek kaynak utils/trSayi ("12.50" artık 12,5)

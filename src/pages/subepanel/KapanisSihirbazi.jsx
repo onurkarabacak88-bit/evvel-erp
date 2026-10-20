@@ -9,10 +9,11 @@ import { api } from '../../utils/api';
 import { CSS_AW, trSaat } from './AcilisSihirbazi';
 import { C, TabletQR, sayi, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, yeniIstek } from './ortak';
 import { gunKaydir } from '../../utils/trTarih';
+import { paraGecerli } from '../../utils/trSayi';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
 const BASLIK = ['', 'Kasa & Ciro', 'Bardak Sayımı', 'Ürün Sayımı', 'Değirmen & Pasta', 'QR ile Mühürle'];
-const PARA = /^\d{1,8}(,\d{1,2})?$/;
+const PARA = { test: paraGecerli };   // TEK para kuralı (F#57)
 
 // 22:30 kuralı (sunucu kesin karar verir): 02:00–22:30 arası kapanış yapılamaz
 const kapanisErken = (hhmm) => {

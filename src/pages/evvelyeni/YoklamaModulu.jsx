@@ -8,6 +8,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import { ayTR, bugunTR } from '../../utils/trTarih';
 import { PI_CSS, R, kart, num, Dugme, Cip } from './KasaModulu';
+import { tlYaz } from '../../utils/trSayi';
 
 export const YOKLAMA_SAYFALAR = [
   { id: 'personel_telefon', ad: 'Telefonlar', alt: 'Telefon bağla · tablet onayı · çıkış düzelt' },
@@ -306,7 +307,7 @@ export function YemekMolalari({ onToast }) {
 // Ay seçimi → /devirler?bas&son tablosu (tarih · şube · devreden → devralan · sayılan · bardak · saatler · durum çipi · not).
 // "Bekleyenler" /devirler?acik=1: tamamlanmamış (hazir / devreden_onayladi, gün geçti ya da 2 saat) → "İptal" / "Devir sayıldı" (açıklama zorunlu,
 // merkez-kapat); görülmemiş "tutmuyor" → "Gördüm". "Merkez kapattı" satırı AYRI çip — asla kişi onayı gibi görünmez (D5).
-const tlYazi = (x) => (Number(x || 0)).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
+const tlYazi = (x) => tlYaz(x);   // ₺ biçimi TEK kaynak (F#58)
 const bardakOzet = (b) => (b || []).map((x) => `${String(x.ad || '').replace(/^bardak\s*/i, '') || 'bardak'} ${x.sayilan}`).join(' / ');
 
 function devirCip(s) {

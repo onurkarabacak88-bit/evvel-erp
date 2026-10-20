@@ -5,6 +5,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import tulipiLogo from '../../assets/tulipi-logo.jpg';
 import { cihazBagla, cihazId, imzaliJson, yeniIstekId } from '../../utils/cihazImza';
+import { paraGecerli, sayiTR, tlYaz } from '../../utils/trSayi';
 
 const T = { zemin: '#F4EFE9', kart: '#FFFFFF', kenar: '#E6DED4', yuzey: '#F7F2EC', metin: '#2A241E', metin2: '#6B5E50', silik: '#9C8E7E',
   aksan: '#C8956A', yesil: '#25794F', kirmizi: '#C03A2B', golge: '0 8px 30px rgba(120,90,60,.10)' };
@@ -203,7 +204,7 @@ function QrIslem({ sube, jeton }) {
                 <div className="tq-not">Kasada kendi saydığın tutarı yaz (zorunlu) — devir yine sende kalır, fark merkeze gider.</div>
                 <input value={sayYazi} onChange={(e) => setSayYazi(e.target.value.replace(/[^\d,]/g, '').slice(0, 12))} placeholder="Saydığım tutar (₺)" inputMode="decimal" autoFocus style={GIRDI} />
                 <input value={notYazi} onChange={(e) => setNotYazi(e.target.value.slice(0, 200))} placeholder="Not (isteğe bağlı)" style={GIRDI} />
-                <button className="tq-btn tq-ana" disabled={mesgul || !konumHazir || !sayYazi} onClick={() => yap('kabul', { tutuyor: false, sayilan: sayYazi.replace(',', '.'), not: notYazi.trim() })}>
+                <button className="tq-btn tq-ana" disabled={mesgul || !konumHazir || !sayYazi} onClick={() => yap('kabul', { tutuyor: false, sayilan: sayYazi, not: notYazi.trim() })}>
                   {mesgul ? 'Gönderiliyor…' : isHata?.tekrar && isHata.islem === 'kabul' ? '🔁 TEKRAR DENE' : '⚠ TUTMUYOR — GÖNDER'}
                 </button>
                 <button className="tq-btn tq-kucuk" disabled={mesgul} onClick={() => setTutmuyorAc(false)}>Vazgeç</button>
@@ -241,13 +242,13 @@ function AvansKart() {
   const yukle = () => imzaliJson('telefon', 'GET', '/api/evvel-yeni/yoklama/avans').then(setD).catch(() => setD(null));
   useEffect(() => { yukle(); }, []);
   if (!d || d.kapali) return null;
-  const para = (x) => `${Number(x || 0).toLocaleString('tr-TR', { maximumFractionDigits: 0 })} ₺`;
+  const para = (x) => tlYaz(x, 0);   // ₺ biçimi TEK kaynak (F#58)
   const gonder = async () => {
     if (mesgul) return;
     setMesgul(true); setMsj(null);
     if (!istek.current) istek.current = yeniIstekId();
     try {
-      const r = await imzaliJson('telefon', 'POST', '/api/evvel-yeni/yoklama/avans', { tutar: tut.replace(',', '.'), not: not.trim(), istek_id: istek.current });
+      const r = await imzaliJson('telefon', 'POST', '/api/evvel-yeni/yoklama/avans', { tutar: tut, not: not.trim(), istek_id: istek.current });
       setMsj({ ok: true, metin: r.mesaj }); istek.current = null; setAc(false); setTut(''); setNot(''); yukle();
     } catch (e) {
       setMsj({ ok: false, metin: e instanceof TypeError ? 'İnternet yok — tekrar dene (talebin bekliyor)' : (e?.message || 'Gönderilemedi') });
@@ -561,9 +562,9 @@ function DevirIslem({ sube, jeton, did }) {
   if (!bagli) return <TanimliDegil />;
   const d = b?.devir;
   const liste = b?.liste || { bardak: [], urun: [] };
-  const tl = (x) => (Number(x || 0)).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
+  const tl = (x) => tlYaz(x);
   const kalemDolu = (l) => l.every((u) => f.s[u.id] !== undefined && f.s[u.id] !== '');
-  const kasaGecerli = /^\d{1,7}(,\d{1,2})?$/.test(f.kasa || '');
+  const kasaGecerli = paraGecerli(f.kasa);   // TEK para kuralı (F#57; sunucu ayrıca 1.000.000 üst sınırı uygular)
   const sayiKutu = (u) => (
     <label key={u.id} style={{ display: 'grid', gap: 4 }}><span className="tq-not">{u.ad}</span>
       <input style={GIRDI} inputMode="numeric" placeholder="0" value={f.s[u.id] ?? ''}
@@ -578,12 +579,12 @@ function DevirIslem({ sube, jeton, did }) {
     </div>
   );
   const formOzet = {
-    kasa: Number((f.kasa || '0').replace(',', '.')),
+    kasa: sayiTR(f.kasa || '0', 0),
     bardak: liste.bardak.map((u) => ({ ad: u.ad, sayilan: f.s[u.id] })), urunler: liste.urun.map((u) => ({ ad: u.ad, sayilan: f.s[u.id] })), pasta: f.pasta,
   };
   const devret = async () => {
     const r = await gonder(`/api/evvel-yeni/yoklama/devir/${encodeURIComponent(did)}/devret`, {
-      kasa: (f.kasa || '').replace(',', '.'), pasta: f.pasta, dogruladim: !!f.dogru, adina: f.adina || null,
+      kasa: f.kasa || '', pasta: f.pasta, dogruladim: !!f.dogru, adina: f.adina || null,
       bardak: liste.bardak.map((u) => ({ urun_id: u.id, sayilan: f.s[u.id] })), urunler: liste.urun.map((u) => ({ urun_id: u.id, sayilan: f.s[u.id] })),
     }, 'devret');
     if (r) { try { localStorage.removeItem(tKey); } catch { /* yok */ } setSonuc({ baslik: 'Devrettin', mesaj: r.mesaj }); }
@@ -591,7 +592,7 @@ function DevirIslem({ sube, jeton, did }) {
   };
   const kabul = async (tutuyor) => {
     const r = await gonder(`/api/evvel-yeni/yoklama/devir/${encodeURIComponent(did)}/kabul`,
-      { qr: jeton, surum: d?.surum, tutuyor, ...(tutuyor ? {} : { sayilan: say.replace(',', '.'), not: notY.trim() }) }, tutuyor ? 'kabul' : 'kabul-tutmuyor');
+      { qr: jeton, surum: d?.surum, tutuyor, ...(tutuyor ? {} : { sayilan: say, not: notY.trim() }) }, tutuyor ? 'kabul' : 'kabul-tutmuyor');
     if (r) { try { localStorage.removeItem(tKey); } catch { /* yok */ } setSonuc({ baslik: tutuyor ? 'Devir tamam' : 'Devir kaydedildi', mesaj: r.mesaj }); }
     else yukle();
   };
@@ -698,7 +699,7 @@ function DevirIslem({ sube, jeton, did }) {
 }
 
 // ── Kasa devri kartı (§A2): "Kasa: 1.250 ₺ · bardak küçük 40 / büyük 30 / plastik 20 → Mehmet"; devralanda "girişin bununla açılır" ──
-const tlYazi = (x) => (Number(x || 0)).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
+const tlYazi = (x) => tlYaz(x);
 const bardakOzet = (b) => (b || []).map((x) => `${String(x.ad || '').replace(/^bardak\s*/i, '') || 'bardak'} ${x.sayilan}`).join(' / ');
 function DevirKarti({ devir }) {
   const devralan = devir.rol === 'devralan';

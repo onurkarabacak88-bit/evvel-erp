@@ -8,6 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, num, Dugme, Cip, Cekmece, tKisa } from './KasaModulu';
+import { yeniIstekId as yeniIstek } from '../../utils/cihazImza';
 
 export const DEPO_SAYFALAR = [
   { id: 'depo_nerede', ad: 'Depo — Nerede?', alt: 'Ürün × konum · tıkla → iz' },
@@ -228,7 +229,6 @@ function Yoldakiler({ onToast, mod }) {
 }
 
 // 🚚 SEVK ET (Basamak 5 S2 — sahip P2: depoda görünmese de yazılır + uyarı; pasta seçilemez: pastane şubeye doğrudan getirir)
-const yeniIstek = () => (window.crypto?.randomUUID ? window.crypto.randomUUID() : String(Date.now()) + Math.random().toString(16).slice(2)).slice(0, 60);
 const DURUM_AD = { yolda: ['🚚 yolda', 'sari'], kismi: ['◐ kısmen kabul', 'sari'], kabul: ['✓ kabul edildi', 'yesil'], iptal: ['geri alındı', undefined] };
 
 function SevkEt({ onToast }) {

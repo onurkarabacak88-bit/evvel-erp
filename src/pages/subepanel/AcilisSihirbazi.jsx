@@ -4,6 +4,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { C, TabletQR, sayi, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, yeniIstek } from './ortak';
+import { paraGecerli } from '../../utils/trSayi';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
 const BASLIK = ['', 'Kasa Sayımı', 'Bardak Stoku', 'Ürün Stoku', 'Pasta Stoku', 'QR ile Onay'];
@@ -160,7 +161,7 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
     setHata('');
     if (adim === 1) {
       if (kasa === '') { setHata('Kasa sayımı girin'); return; }
-      if (!/^\d{1,8}(,\d{1,2})?$/.test(kasa)) { setHata('Kasa sayımı için geçerli değer girin'); return; }
+      if (!paraGecerli(kasa)) { setHata('Kasa sayımı için geçerli değer girin'); return; }
       git(2); return;
     }
     if (adim === 2) { if (zorunlu(bardaklar)) git(3); return; }

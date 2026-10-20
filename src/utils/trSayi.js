@@ -10,3 +10,11 @@ export const sayiTR = (x, bos = 0) => {
   const n = Number(t);
   return Number.isFinite(n) ? n : NaN;
 };
+
+// ₺ biçimi — TEK kaynak (Dalga 5, F#58: panel ortak, telefon 3, Yoklama ayrı yazıyordu). ondalik: 2 (varsayılan) ya da 0.
+export const tlYaz = (x, ondalik = 2) => `${Number(x || 0).toLocaleString('tr-TR', { minimumFractionDigits: ondalik, maximumFractionDigits: ondalik })} ₺`;
+
+// Para alanı geçerli mi — TEK kural (Dalga 5, F#57: açılış / kapanış / telefon devir ayrı regex, {1,7} ↔ {1,8} ayrışmıştı).
+// Tam kısım en çok 8 hane, kuruş en çok 2 hane, virgülle. Sunucu tutar_oku ile aynı yazımı okur.
+export const paraGecerli = (s) => /^\d{1,8}(,\d{1,2})?$/.test(String(s ?? '').trim());
+
