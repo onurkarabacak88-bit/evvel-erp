@@ -1790,18 +1790,33 @@ def _giren_adlari(cur, idler: set) -> Dict[str, str]:
     return out
 
 
-def dukkan_giderleri(cur, bas_gun: str, son_gun: Optional[str] = None, kayit: Optional[list] = None) -> List[dict]:
+def _cekmece_satirlari(kayit: list, kaynaklar: tuple, bas_gun: str, son_gun: Optional[str]):
+    """Şube çekmecesinden çıkan 'odeme' hareketleri (kaynak ∈ kaynaklar, gün bas..son) → (hareket, veri, cep). Dükkân giderleri ve
+    çekmece çıkışları AYNI süzgeçten (Fable Dalga 3 T2)."""
+    for h in kayit:
+        v = h["veri"]
+        if h["tur"] != "odeme" or v.get("kaynak") not in kaynaklar or h["is_gunu"] < bas_gun or (son_gun and h["is_gunu"] > son_gun):
+            continue
+        yield h, v, (v.get("parcalar") or [{}])[0].get("cep") or ""
+
+
+def _kayit_ve_cepler(cur, bas_gun: str, kayit: Optional[list], C: Optional[dict]):
+    """Verilen kayıt/cep sözlüğünü kullan; yoksa yükle — dönem içi yeterliyse YALNIZ dönem (Fable H1/H2: tam defter iki kez yükleniyordu)."""
+    if kayit is not None and C is not None:
+        return kayit, C
+    _, C_, kayit_, _ = _yukle(cur, tum_donemler=bas_gun < _baslangic(cur).isoformat())
+    return (kayit if kayit is not None else kayit_), (C if C is not None else C_)
+
+
+def dukkan_giderleri(cur, bas_gun: str, son_gun: Optional[str] = None, kayit: Optional[list] = None,
+                     C: Optional[dict] = None) -> List[dict]:
     """PUBLIC servis (Fiş kontrolü + Gider raporu): şube PANELİNDEN girilmiş dükkân giderleri (avans hariç), iptaller düşülmüş.
     Her satır: ref (kaynak_ref), id, tarih, cep, sube_id, şube kısa adı, tutar (TL), kr (kuruş), açıklama, giren, fiş bilgisi.
     Gider raporu aynı süzgeci kendisi yazıyordu (Kaçırılan #1) — tek okuyucu burası."""
-    _, C, kayit_, _ = _yukle(cur, tum_donemler=True)
-    kayit = kayit if kayit is not None else kayit_
+    kayit, C = _kayit_ve_cepler(cur, bas_gun, kayit, C)
     out = []
-    for h in kayit:
-        v = h["veri"]
-        if h["tur"] != "odeme" or v.get("kaynak") != "dukkan_gideri" or h["is_gunu"] < bas_gun or (son_gun and h["is_gunu"] > son_gun):
-            continue
-        cep = (v.get("parcalar") or [{}])[0].get("cep")
+    for h, v, cep in _cekmece_satirlari(kayit, ("dukkan_gideri",), bas_gun, son_gun):
+        cep = cep or None
         out.append({"ref": h.get("kaynak_ref"), "id": h["id"], "tarih": h["is_gunu"], "cep": cep, "sube": C.get(cep, {}).get("kisa"),
                     "sube_id": (cep or "").replace("sube:", "", 1), "kr": int(h["tutar"]), "tutar": _tl_sayi(h["tutar"]), "aciklama": v.get("aciklama"), "giren": v.get("giren"), "giren_id": v.get("giren_id"),
                     "fis_gonderildi": v.get("fis_gonderildi")})
@@ -1812,20 +1827,16 @@ def cekmece_cikislari(cur, gun: str) -> List[dict]:
     """PUBLIC (Satış mutabakatı): o gün şube ÇEKMECESİNDEN çıkan nakit — anlık gider + elden avans, iptaller düşülmüş.
     Tek gerçek Kasa: merkez burada iptal ederse mutabakat da görür (Fable O-5; önce panel olayından okunuyordu).
     Her satır: sube_id, tutar (₺), ad (ekranda), tur ('gider' | 'avans'), kim (giren)."""
-    _, C, kayit, _ = _yukle(cur, tum_donemler=True)
+    kayit, _C = _kayit_ve_cepler(cur, gun, None, None)
     out = []
-    for h in kayit:
-        v = h["veri"]
-        if h["tur"] != "odeme" or h["is_gunu"] != gun or v.get("kaynak") not in ("dukkan_gideri", "sube_avansi"):
-            continue
-        cep = (v.get("parcalar") or [{}])[0].get("cep") or ""
+    for h, v, cep in _cekmece_satirlari(kayit, ("dukkan_gideri", "sube_avansi"), gun, gun):
         if not cep.startswith("sube:"):
             continue
         avans = v.get("kaynak") == "sube_avansi"
         ad = (f"Avans · {(v.get('konu') or {}).get('personel_ad') or ''}".strip(" ·") if avans
               else " · ".join(x for x in [v.get("kategori"), v.get("aciklama")] if x) or "Gider")
         out.append({"sube_id": cep[len("sube:"):], "tutar": _tl_sayi(h["tutar"]), "ad": ad, "tur": "avans" if avans else "gider",
-                    "kim": v.get("giren")})
+                    "kim": v.get("giren") or h.get("kaydeden")})   # Fable B5: elden avansta 'giren' yok → kaydeden (panelde veren)
     return out
 
 

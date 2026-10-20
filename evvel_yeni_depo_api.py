@@ -131,7 +131,10 @@ def _urun_haritasi(cur):
 def _depo_sube(cur) -> str:
     """Merkez depo = Tanım'daki şube 'depo' bayrağı (PUBLIC). Eski tablolardan tahmin YOK."""
     from evvel_yeni_tanim_api import depo_sube_id
-    return depo_sube_id(cur) or "sube-tema"
+    d = depo_sube_id(cur)   # TEK kural Tanımlar'da (Fable T1: burada ayrı "sube-tema" yedeği vardı — panel None görürken Depo Tema sanıyordu)
+    if not d:
+        raise HTTPException(409, "Merkez depo şubesi tanımlı değil — Tanımlar › Şubeler'de depoyu işaretle")
+    return d
 
 
 def _yaz(cur, rows: List[tuple], yeni: bool = False) -> int:

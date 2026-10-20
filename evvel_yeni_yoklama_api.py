@@ -664,7 +664,8 @@ def cihazlar(x_evvel_oturum: Optional[str] = Header(default=None)):
         per = [{"id": p["id"], "ad": p["ad"], "sube_id": p["sube_id"], "sube_ad": sad.get(str(p["sube_id"])), "konum_muaf": p["konum_muaf"],
                 "mudur": mudur_mu(p.get("gorev"))}
                for p in tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "konum_muaf", "gorev"), aktif=True)]
-        per.sort(key=lambda p: (p["sube_ad"] is None, p["sube_ad"] or "", p["ad"]))
+        from evvel_yeni_cekirdek import tr_sira
+        per.sort(key=lambda p: (p["sube_ad"] is None, tr_sira(p["sube_ad"]), tr_sira(p["ad"])))   # Türkçe sıra (Fable B6)
         cur.execute("""SELECT id, tur, personel_id, sube_id, guc, etiket, durum, davet_son, olusturma, son_kullanim
                          FROM ey_cihaz WHERE durum<>'iptal' ORDER BY olusturma DESC""")
         cz = [dict(r) for r in cur.fetchall() or []]
@@ -1331,7 +1332,7 @@ async def devir_telefon(did: str, request: Request, sube: Optional[str] = None):
                     (s, is_gunu(), p["id"]))
         _ic = [dict(x)["personel_id"] for x in cur.fetchall() or []]
         _ad = adlar(cur, "ey_personel", _ic)
-        digerleri = sorted(({"id": i, "ad": _ad[i]} for i in _ic if i in _ad), key=lambda x: x["ad"])   # "başka personel adına" adayları
+        digerleri = sorted(({"id": i, "ad": _ad[i]} for i in _ic if i in _ad), key=lambda x: __import__("evvel_yeni_cekirdek").tr_sira(x["ad"]))   # "başka personel adına" adayları
         cur.execute("SELECT sube_id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL", (p["id"],))
         ac = cur.fetchone()
         return {"kisi": p["ad"], "muaf": bool(p.get("konum_muaf")), "sube": s, "sube_ad": sube_ad, "gun": is_gunu().isoformat(),

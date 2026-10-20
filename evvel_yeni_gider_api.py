@@ -47,11 +47,15 @@ def _sinif_tablosu(cur):
     global _SINIF_HAZIR
     if _SINIF_HAZIR:
         return
-    cur.execute("SET LOCAL lock_timeout = '3s'")
-    cur.execute("""CREATE TABLE IF NOT EXISTS ey_gider_sinif (
-                     kaynak_ref TEXT PRIMARY KEY, tur TEXT NOT NULL, kimin TEXT,
-                     degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
-    _SINIF_HAZIR = True
+    if __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_gider_sinif"):   # 19 Eki dersi: yalnız eksikse DDL
+        _SINIF_HAZIR = True
+        return
+    with savepoint(cur, "sp_ey_gider_sinif"):   # Fable: SET LOCAL çağıranın (Ödeme) işlemine sızıyordu → savepoint + DEFAULT
+        cur.execute("SET LOCAL lock_timeout = '3s'")
+        cur.execute("""CREATE TABLE IF NOT EXISTS ey_gider_sinif (
+                         kaynak_ref TEXT PRIMARY KEY, tur TEXT NOT NULL, kimin TEXT,
+                         degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+        cur.execute("SET LOCAL lock_timeout = DEFAULT")
 
 
 def _depo_id(cur) -> Optional[str]:
@@ -432,7 +436,7 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
     # 2) DÜKKÂN KÜÇÜK GİDERLERİ (Kasa'daki 'dukkan_gideri' ödemeleri) + patron şahsi ayrımı
     cekisler = []
     from evvel_yeni_kasa_api import dukkan_giderleri   # Kasa'nın tek okuyucusu (Kaçırılan #1 — süzgeç iki yerdeydi)
-    for g in dukkan_giderleri(cur, bas_i, son_i, kayit=kayit):
+    for g in dukkan_giderleri(cur, bas_i, son_i, kayit=kayit, C=C):
         sid = g["sube_id"]
         ref = g["ref"] or g["id"]
         sn = sinif.get(ref)
