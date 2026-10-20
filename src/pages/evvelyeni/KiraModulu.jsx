@@ -5,7 +5,7 @@
 // "Kira artış periyotları takvimde ayı farklı renk olsun."
 // Rakamlar /api/evvel-yeni/kira/takvim'den; ekran yalnız dizer.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { api } from '../../utils/api';
 import { fmt, num, PI_CSS, R, tKisa, useSonIstek } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici } from './AyTakvim';   // ortak takvim (Dalga 5, T4-08 — kopya kalktı)

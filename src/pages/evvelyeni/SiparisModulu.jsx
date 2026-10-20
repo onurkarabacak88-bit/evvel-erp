@@ -12,7 +12,6 @@ const alan = { ...ALAN, padding: '5px 8px', borderRadius: 8, fontSize: 13 };   /
 const DURUM = {
   yonlendirilmedi: ['Yönlendirilmedi', 'kirmizi'], hazirlaniyor: ['Depoda hazırlanıyor', 'sari'], bekleniyor: ['Toptancıdan bekleniyor', 'sari'],
   yolda: ['Yolda', 'bakir'], karsilandi: ['Karşılandı', 'yesil'], oneri: ['Katalog dışı öneri', 'kirmizi'], iptal: ['İptal', undefined],
-  geri_alindi: ['Sevk geri alındı', 'kirmizi'],
 };
 const kilitli = (y) => !['hazirlaniyor', 'bekleniyor'].includes(y.durum);   // yola çıkmış / teslime bağlanmış → değişmez
 
@@ -24,7 +23,10 @@ export default function SiparisModulu({ onToast }) {
   const [hata, setHata] = useState('');
   const [taslak, setTaslak] = useState({});   // sid → { i → [{kaynak, adet}] }
   const [mesgul, setMesgul] = useState({});
-  const yukle = useCallback(() => api(`/evvel-yeni/siparis/liste?gorunum=${gorunum}`).then((d) => { setV(d); setHata(''); setTaslak({}); })
+  const yukle = useCallback((temizSid) => api(`/evvel-yeni/siparis/liste?gorunum=${gorunum}`).then((d) => {
+    setV(d); setHata('');
+    setTaslak((o) => { if (!temizSid) return {}; const y_ = { ...o }; delete y_[temizSid]; return y_; });   // Fable D5-S2: öteki siparişlerin taslağı kalsın
+  })
     .catch((e) => setHata(e?.message || 'Siparişler okunamadı')), [gorunum]);
   useEffect(() => { yukle(); }, [yukle]);
   useEffect(() => {
@@ -39,7 +41,7 @@ export default function SiparisModulu({ onToast }) {
 
   const is_ = async (sid, yol, govde, mesaj) => {
     setMesgul((m) => ({ ...m, [sid]: true })); setHata('');
-    try { const d = await api(`/evvel-yeni/siparis/${sid}/${yol}`, { method: 'POST', body: govde }); onToast?.(mesaj || d?.mesaj || 'Kaydedildi'); await yukle(); }
+    try { const d = await api(`/evvel-yeni/siparis/${sid}/${yol}`, { method: 'POST', body: govde }); onToast?.(mesaj || d?.mesaj || 'Kaydedildi'); await yukle(sid); }
     catch (e) { setHata(e?.message || 'İşlenemedi'); }
     setMesgul((m) => { const y = { ...m }; delete y[sid]; return y; });
   };
@@ -62,6 +64,8 @@ export default function SiparisModulu({ onToast }) {
     const t = taslak[s.id] || {};
     const kalemler = Object.entries(t).map(([i, ys]) => ({ i: Number(i), yonler: ys.filter((y) => y.kaynak && Number(y.adet) > 0).map((y) => ({ kaynak: y.kaynak, adet: Number(y.adet) })) }));
     if (!kalemler.length) { setHata('Değişiklik yok'); return; }
+    const bosalan = kalemler.filter((k) => !k.yonler.length).map((k) => (s.kalemler.find((x) => x.i === k.i) || {}).ad);
+    if (bosalan.length && !window.confirm(`${bosalan.join(', ')}: bütün kaynaklar kaldırıldı — kalem 'Yönlendirilmedi'ye döner. Devam?`)) return;   // Fable D5-S1
     is_(s.id, 'yon', { surum: s.surum, kalemler }, 'Yönlendirildi');
   };
 

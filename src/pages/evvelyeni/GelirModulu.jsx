@@ -6,7 +6,7 @@
 // · "Bu ikisi (kasa ve gelir) ayrı ama sol alanda farklı isimlerde olmalı."
 // Bütün rakamlar /api/evvel-yeni/gelir'den gelir; ekran yalnız dizer.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { api } from '../../utils/api';
 import { AySecici, Cekmece, Cip, Dugme, etiketStil, fmt, gunAdi, kart, num, PI_CSS, R, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';

@@ -97,7 +97,7 @@ export default function SubePaneli({ subeId }) {
   }, [kuyruguGonder]);
 
   const yukle = useCallback(() => api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/durum`)
-    .then((x) => { setD(x); setHata(''); taslakTemizle(subeId, x.gun, (x.depo_yolda || []).map((p) => p.parti_id)); })   // F#53: eski taslak birikmesin
+    .then((x) => { setD(x); setHata(''); taslakTemizle(subeId, x.gun, x.depo_acik ? (x.depo_yolda || []).map((p) => p.parti_id) : null); })   // F#53: eski taslak birikmesin
     .catch((e) => setHata(e?.message || 'Panel açılamadı')), [subeId]);
   const [kapiGecildi, setKapiGecildi] = useState(false);   // yalnız DENEME'de "QR'sız geç" (saklanmaz — her yüklemede kapı yine görünür)
   const [sihirbazElle, setSihirbazElle] = useState(false);

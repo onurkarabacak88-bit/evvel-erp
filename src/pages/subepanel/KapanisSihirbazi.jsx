@@ -13,7 +13,6 @@ import { paraGecerli } from '../../utils/trSayi';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
 const BASLIK = ['', 'Kasa & Ciro', 'Bardak Sayımı', 'Ürün Sayımı', 'Değirmen & Pasta', 'QR ile Mühürle'];
-const PARA = { test: paraGecerli };   // TEK para kuralı (F#57)
 
 // 22:30 kuralı (sunucu kesin karar verir): 02:00–22:30 arası kapanış yapılamaz
 const kapanisErken = (hhmm) => Number(trSaat(new Date()).split(':')[0]) >= 2 && saatOncesi(hhmm, '22:30');   // K10: ortak yardımcı
@@ -102,10 +101,10 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
     setHata('');
     if (adim === 1) {   // eski kapNext1 doğrulamaları AYNEN
       for (const [k, ad] of [['nakit', 'Nakit'], ['pos', 'POS'], ['online', 'Online']]) {
-        if (v[k] !== '' && !PARA.test(v[k])) { setHata(`${ad} için geçerli tutar girin`); return; }
+        if (v[k] !== '' && !paraGecerli(v[k])) { setHata(`${ad} için geçerli tutar girin`); return; }
       }
-      if (v.kor === '' || !PARA.test(v.kor)) { setHata('Çekmecedeki TÜM parayı sayıp girin (teslim etmeden önce, kör sayım)'); return; }
-      if (v.birakilan === '' || !PARA.test(v.birakilan)) { setHata('Kasada bırakılan (devir) tutarı zorunlu'); return; }
+      if (v.kor === '' || !paraGecerli(v.kor)) { setHata('Çekmecedeki TÜM parayı sayıp girin (teslim etmeden önce, kör sayım)'); return; }
+      if (v.birakilan === '' || !paraGecerli(v.birakilan)) { setHata('Kasada bırakılan (devir) tutarı zorunlu'); return; }
       const n = tutarNum(v.nakit), p = tutarNum(v.pos), o = tutarNum(v.online);
       if (o > 0 && n > 0 && p > 0 && Math.abs(o - (n + p)) < 0.5) { setHata('Online alanı nakit+POS toplamına eşit olamaz. Online satış yoksa 0 bırakın.'); return; }
       if (n + p + o <= 0) { setHata('En az bir ciro tutarı girin'); return; }

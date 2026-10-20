@@ -396,7 +396,7 @@ export default function ToptanciModulu({ onToast }) {
 }
 
 function Pencere({ genis, ...p }) {   // ortak Pencere'nin Toptancı ayarı (T4-06): kendi Vazgeç düğmesi olan formlar
-  return <OrtakPencere {...p} genislik={genis ? 920 : 440} kapatDugmesi={false} aralik={12} />;
+  return <OrtakPencere genislik={genis ? 920 : 440} kapatDugmesi={false} aralik={12} {...p} />;   // çağıran verdiyse o geçer (Fable D5-B2)
 }
 function Butonlar({ mesgul, onVazgec, onKaydet }) {
   return (

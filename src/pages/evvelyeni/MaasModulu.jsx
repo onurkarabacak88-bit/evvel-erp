@@ -5,7 +5,7 @@
 // bir kez); maaş/avans ödemeleri yalnız kasadan düşer. Ekim eski sistemin hesabıyla kapanır, Kasım'dan yeni.
 // Rakamlar /api/evvel-yeni/maas'tan; ekran yalnız dizer.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { ALAN, AySecici, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tl, useSonIstek } from './KasaModulu';

@@ -1,6 +1,6 @@
 // 🏦 KREDİLER — tak-çıkar modül (sunucu: evvel_yeni_kredi_api.py). Sahip (2026-10-17): "Krediler içinde kredi takvimi" —
 // kredi × 12 ay (kira takvimi gibi). Borç = taksit; ödeme Ödeme ekranından (kredi seçilerek) → takvimde "ödendi".
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { api } from '../../utils/api';
 import { ALAN, Dugme, fmt, num, PI_CSS, R, sayiTR, tKisa, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';

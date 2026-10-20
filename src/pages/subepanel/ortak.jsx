@@ -43,6 +43,7 @@ export const taslakOku = (k) => { try { return k ? JSON.parse(localStorage.getIt
 export const taslakYaz = (k, v) => { try { if (k) localStorage.setItem(k, JSON.stringify(v)); } catch { /* yer yok / gizli pencere */ } };
 export const taslakKaldir = (k) => { try { if (k) localStorage.removeItem(k); } catch { /* yok say */ } };
 // Panel açılınca: DÜNDEN eski günlü taslaklar + artık yolda olmayan paketlerin 'depo_kabul' taslakları silinir (dünkü kapanış kurtarılabilsin diye dün kalır)
+// yoldakiPartiler null → Depo kapalı / okunamadı: paket taslaklarına DOKUNULMAZ (Fable D5-B1: yarım sayım siliniyordu)
 export const taslakTemizle = (subeId, gun, yoldakiPartiler = []) => {
   try {
     const dun = new Date(`${gun}T12:00:00Z`); dun.setUTCDate(dun.getUTCDate() - 1);
@@ -51,7 +52,7 @@ export const taslakTemizle = (subeId, gun, yoldakiPartiler = []) => {
     const on = `sp_taslak:${subeId}:`;
     Object.keys(localStorage).filter((k) => k.startsWith(on)).forEach((k) => {
       const parca = k.slice(on.length).split(':');
-      if (/^\d{4}-\d{2}-\d{2}$/.test(parca[0]) ? parca[0] < sinir : (parca[0] === 'depo_kabul' && !yolda.has(parca[1]))) localStorage.removeItem(k);
+      if (/^\d{4}-\d{2}-\d{2}$/.test(parca[0]) ? parca[0] < sinir : (parca[0] === 'depo_kabul' && yoldakiPartiler !== null && !yolda.has(parca[1]))) localStorage.removeItem(k);
     });
   } catch { /* yok say */ }
 };

@@ -5,7 +5,7 @@
 // İki soru: "Gece bir şey eksildi mi?" (devir farkı) · "Ürün aç girilmemiş mi?" (net eksilme < 0).
 // Net eksilme satış + fire + ikram birliktedir — KAYIP DENMEZ. Rakamlar /api/evvel-yeni/bar'dan.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { api } from '../../utils/api';
 import { AySecici, Cekmece, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, tUzun, useSonIstek } from './KasaModulu';
 import { ayTR, gunKisa } from '../../utils/trTarih';

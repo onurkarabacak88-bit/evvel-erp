@@ -8,7 +8,7 @@
 // AYRI gösterilir, gidere eklenmez — fark şubenin rafında bekleyen mal.
 // Bütün rakamlar /api/evvel-yeni/gider'den; ekran yalnız dizer.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { api } from '../../utils/api';
 import { AySecici, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';

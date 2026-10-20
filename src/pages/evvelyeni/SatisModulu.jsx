@@ -5,7 +5,7 @@
 // Codex: sayım–ciro UYUMUNU izler; satış adedi ya da kayıp para ölçümü DEĞİL. Medyan + yayılım + TL tabanı;
 // 14 temiz gün birikmeden uyarı yok. Kör kasa farkı yan yana — toplanmaz. Kimseye suç yazılmaz.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { AySecici, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, useSonIstek } from './KasaModulu';
 import { ayTR, gunKaydir, tarihKaydir } from '../../utils/trTarih';

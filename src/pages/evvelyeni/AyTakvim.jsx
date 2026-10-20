@@ -19,7 +19,7 @@ export const DURUM = {
   tanimsiz: { renk: GRI, ad: 'kira tanımsız', ikon: '—' },
   mulk: { renk: GRI, ad: 'mülk bizim', ikon: '🏠' },
 };
-const SADE = new Set(['gelecek', 'once', 'yok', 'tanimsiz', 'mulk']);
+const SADE = new Set(['gelecek', 'once', 'yok', 'tanimsiz']);   // 'mulk' eski Kira görünüşüyle tonlu kalır (Fable D5-B3)
 
 export function YilSecici({ yil, setYil }) {
   return (

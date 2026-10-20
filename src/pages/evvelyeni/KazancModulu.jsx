@@ -5,7 +5,7 @@
 // gibi." · "Zarar eden şubenin yükü hangi kâr eden şubenin üstünde, bunu anlamalıyım."
 // Bütün rakamlar /api/evvel-yeni/kazanc'tan; ekran yalnız dizer.
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useCallback, useEffect, useRef, useState } from 'react';
+import React, { useState } from 'react';
 import { api } from '../../utils/api';
 import { AySecici, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tl, tUzun, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';
