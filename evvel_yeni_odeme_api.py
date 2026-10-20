@@ -379,38 +379,7 @@ def odeme_listesi(ay: Optional[str] = None):
             "kart_toplam": round(sum(k["tutar"] for x in out for k in x["kart"]), 2)}
 
 
-# ── PERSONEL ÜCRETİ — Evvel Yeni'nin KENDİ tanımı (sahip: "sistem kendi bilsin, yeni sisteme tanınsın") ──
-# Ay ay geçerli: bir ay için geçerli tanım = o aya kadar girilmiş EN SON tanım. Hiç tanım yoksa
-# başlangıç değeri eski personel kartından (maas, yemek_ucreti) okunur ve "eski sistemden" diye işaretlenir.
-_UCRET_HAZIR = False
-
-
-def _ucret_tablosu(cur):
-    global _UCRET_HAZIR
-    if _UCRET_HAZIR:
-        return
-    cur.execute("SET LOCAL lock_timeout = '3s'")
-    cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel_ucret (
-                     personel_id TEXT NOT NULL, gecerli_ay TEXT NOT NULL,
-                     maas BIGINT NOT NULL DEFAULT 0, yemek BIGINT NOT NULL DEFAULT 0,
-                     degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                     PRIMARY KEY (personel_id, gecerli_ay))""")
-    _UCRET_HAZIR = True
-
-
-def _ucret(cur, personel_id: str, ay: str) -> dict:
-    from evvel_yeni_tanim_api import tanim_hazirla
-    tanim_hazirla(cur)   # ey_personel_ucret + eski sistemden ilk kopya ("eski sistem kopyası")
-    _ucret_tablosu(cur)
-    cur.execute("""SELECT maas, yemek, gecerli_ay, degistiren FROM ey_personel_ucret
-                    WHERE personel_id=%s AND gecerli_ay <= %s ORDER BY gecerli_ay DESC LIMIT 1""", (str(personel_id), ay[:7]))
-    r = cur.fetchone()
-    if not r:
-        return {"maas": 0, "yemek": 0, "kaynak": "tanimsiz", "gecerli_ay": None, "degistiren": None}
-    r = dict(r)
-    eski = r["degistiren"] == "eski sistem kopyası"
-    return {"maas": int(r["maas"]), "yemek": int(r["yemek"]), "kaynak": "eski_sistem" if eski else "evvel_yeni",
-            "gecerli_ay": None if eski else r["gecerli_ay"], "degistiren": r["degistiren"]}
+# ── PERSONEL ÜCRETİ — tanım Tanımlar'ın (TEK yazıcı `ucret_yaz`); Ödeme formu yalnız onu çağırır (tekrar denetimi C-T1-01). ──
 
 
 @router.get("/personel-durum")
@@ -439,7 +408,7 @@ class UcretBody(BaseModel):
 
 @router.post("/personel-ucret")
 def personel_ucret(body: UcretBody, x_evvel_oturum: Optional[str] = Header(default=None)):
-    """Maaş / yemek tanımı — o aydan İTİBAREN geçerli. Eski aylar etkilenmez; silme yok, aynı ay üzerine yazılır."""
+    """Maaş / yemek tanımı — o aydan İTİBAREN geçerli. Eski aylar etkilenmez; saatlik ücret + yol önceki tanımdan taşınır."""
     try:
         date.fromisoformat(body.ay[:7] + "-01")
     except ValueError:
@@ -448,11 +417,9 @@ def personel_ucret(body: UcretBody, x_evvel_oturum: Optional[str] = Header(defau
     if m < 0 or y < 0:
         raise HTTPException(400, "Tutar eksi olamaz")
     with db() as (conn, cur):
-        _ucret_tablosu(cur)
+        from evvel_yeni_tanim_api import ucret_yaz
         kim = _aktor(cur, x_evvel_oturum)
-        cur.execute("""INSERT INTO ey_personel_ucret (personel_id, gecerli_ay, maas, yemek, degistiren) VALUES (%s,%s,%s,%s,%s)
-                       ON CONFLICT (personel_id, gecerli_ay) DO UPDATE SET maas=EXCLUDED.maas, yemek=EXCLUDED.yemek,
-                         degistiren=EXCLUDED.degistiren, zaman=NOW()""", (str(body.personel_id), body.ay[:7], m, y, kim))
+        ucret_yaz(cur, personel_id=str(body.personel_id), ay=body.ay[:7], kim=kim, maas=m, yemek=y)   # saatlik / yol TAŞINIR
     return {"ok": True, "mesaj": f"Ücret tanımı kaydedildi · {body.ay[:7]} ayından itibaren · maaş {_tl(m)} · yemek {_tl(y)}"}
 
 

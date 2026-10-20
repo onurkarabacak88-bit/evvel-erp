@@ -139,6 +139,27 @@ def _pin_hash(salt: str, pin: str) -> str:
     return hashlib.sha256(f"{salt}:{pin}".encode()).hexdigest()
 
 
+def ucret_yaz(cur, *, personel_id: str, ay: str, kim: str, maas: Optional[int] = None, yemek: Optional[int] = None,
+              saatlik: Optional[int] = None, yol: Optional[int] = None) -> dict:
+    """PUBLIC — personel ücretinin TEK yazıcısı (tekrar denetimi C-T1-01: Ödeme formu ayrı yazıp saatlik/yolu SIFIRLIYORDU).
+    Kuruş. O aydan İTİBAREN geçerli; verilmeyen alan (None) o aya kadarki en son tanımdan TAŞINIR — hiçbir alan sessizce 0 olmaz."""
+    tanim_hazirla(cur)
+    ay = str(ay)[:7]
+    yeni = {"maas": maas, "yemek": yemek, "saatlik": saatlik, "yol": yol}
+    if any(v is not None and v < 0 for v in yeni.values()):
+        raise HTTPException(400, "Tutar eksi olamaz")
+    cur.execute("""SELECT maas, yemek, saatlik, yol FROM ey_personel_ucret WHERE personel_id=%s AND gecerli_ay <= %s
+                    ORDER BY gecerli_ay DESC LIMIT 1""", (str(personel_id), ay))
+    o = dict(cur.fetchone() or {"maas": 0, "yemek": 0, "saatlik": 0, "yol": 0})
+    yu = {k: (int(v) if v is not None else int(o[k] or 0)) for k, v in yeni.items()}
+    cur.execute("""INSERT INTO ey_personel_ucret (personel_id, gecerli_ay, maas, yemek, saatlik, yol, degistiren)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s)
+                   ON CONFLICT (personel_id, gecerli_ay) DO UPDATE SET maas=EXCLUDED.maas, yemek=EXCLUDED.yemek,
+                     saatlik=EXCLUDED.saatlik, yol=EXCLUDED.yol, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
+                (str(personel_id), ay, yu["maas"], yu["yemek"], yu["saatlik"], yu["yol"], kim))
+    return yu
+
+
 def pin_dogrula(cur, personel_id: str, pin: Optional[str]) -> None:
     """PUBLIC (panel): 4 haneli PIN doğru değilse HTTPException. Yanlış sayacı AYRI bağlantıda atomik yazılır
     (asıl işlem geri alınsa / deneme modu olsa da sayılır). 5 yanlış → 15 dk kilit. PIN hiçbir yere yazılmaz."""
@@ -436,15 +457,8 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                 cur.execute("DELETE FROM ey_pin_deneme WHERE personel_id=%s", (tid,))
             if any(x is not None for x in (b.maas, b.yemek, b.saatlik, b.yol)):
                 ay = (b.ucret_ay or (giris.isoformat() if giris else _bugun().isoformat()))[:7]
-                cur.execute("""SELECT maas, yemek, saatlik, yol FROM ey_personel_ucret WHERE personel_id=%s AND gecerli_ay <= %s
-                                ORDER BY gecerli_ay DESC LIMIT 1""", (tid, ay))
-                o = dict(cur.fetchone() or {"maas": 0, "yemek": 0, "saatlik": 0, "yol": 0})
-                yu = {k: (_kurus(getattr(b, k)) if getattr(b, k) is not None else o[k]) for k in ("maas", "yemek", "saatlik", "yol")}
-                cur.execute("""INSERT INTO ey_personel_ucret (personel_id, gecerli_ay, maas, yemek, saatlik, yol, degistiren)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s)
-                               ON CONFLICT (personel_id, gecerli_ay) DO UPDATE SET maas=EXCLUDED.maas, yemek=EXCLUDED.yemek,
-                                 saatlik=EXCLUDED.saatlik, yol=EXCLUDED.yol, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
-                            (tid, ay, yu["maas"], yu["yemek"], yu["saatlik"], yu["yol"], kim))
+                ucret_yaz(cur, personel_id=tid, ay=ay, kim=kim,
+                          **{k: (_kurus(getattr(b, k)) if getattr(b, k) is not None else None) for k in ("maas", "yemek", "saatlik", "yol")})
             return {"ok": True, "id": tid, "mesaj": f"Personel {'eklendi' if yeni else 'güncellendi'}"}
 
         if tur == "kart":
