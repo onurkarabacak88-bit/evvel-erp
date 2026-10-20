@@ -150,6 +150,49 @@ def kurus_yuvarla(x) -> int:
     return kurus(Decimal(str(x)).quantize(Decimal("0.01")))
 
 
+MAKS_ADET = 99_999   # tek adet üst sınırı (sevk / kabul / sipariş / sayım aynı — önce 99.999 ile 100.000 ayrışmıştı)
+
+
+def adet_oku(v, ad: str = "Adet", en_az: int = 0, en_cok: int = MAKS_ADET) -> int:
+    """PUBLIC — TEK adet kuralı (Dalga 4, F#17): tam sayı, en_az..en_cok; "12" ve "12,0" kabul, 1,5 / eksi / boş / True reddedilir.
+    Önce 4 ayrı yazım vardı (biri float ile, biri Decimal ile, ikisi yalnız int; sınırlar farklı)."""
+    if isinstance(v, bool) or v is None or (isinstance(v, str) and not v.strip()):
+        raise HTTPException(400, f"{ad}: sayı yaz")
+    try:
+        d = Decimal(str(v).strip().replace(",", "."))
+    except (InvalidOperation, ValueError):
+        raise HTTPException(400, f"{ad}: sayı yaz")
+    if not d.is_finite() or d != d.to_integral_value():
+        raise HTTPException(400, f"{ad}: tam sayı yaz")
+    if d < en_az or d > en_cok:
+        raise HTTPException(400, f"{ad}: {en_az} – {en_cok:,} arası yaz".replace(",", "."))
+    return int(d)
+
+
+def kalem_topla(kalemler, oneri_olur: bool = False, en_cok_kalem: int = 80, birim: str = "pakette") -> tuple:
+    """PUBLIC — [{urun_id, adet}] listesini doğrula + aynı ürünü topla → ({urun_id: adet}, öneriler). oneri_olur: ürün kimliği yoksa
+    katalog dışı {ad, adet} öneri (Sipariş D4). Sipariş ve Sevk aynı döngüyü ayrı yazıyordu (Dalga 4, F#22)."""
+    top, oneriler = {}, []
+    for x in kalemler or []:
+        x = x if isinstance(x, dict) else {}
+        a = adet_oku(x.get("adet"), "Adet", en_az=1)
+        u = str(x.get("urun_id") or "").strip()
+        if u:
+            top[u] = top.get(u, 0) + a
+        elif oneri_olur:
+            ad = " ".join(str(x.get("ad") or "").split())[:80]
+            if len(ad) < 2:
+                raise HTTPException(400, "Katalogda olmayan ürünün adını yaz")
+            oneriler.append({"ad": ad, "adet": a})
+        else:
+            raise HTTPException(400, "Ürün seçilmemiş kalem var — listeyi yenile")
+    if not top and not oneriler:
+        raise HTTPException(400, "En az bir ürün seç")
+    if len(top) + len(oneriler) > en_cok_kalem:
+        raise HTTPException(400, f"Bir {birim} en çok {en_cok_kalem} kalem")
+    return top, oneriler
+
+
 def tl_sayi(k) -> float:
     """Kuruş → ₺ sayı (ekrana / JSON). None → 0."""
     return round(int(k or 0) / 100.0, 2)
@@ -323,7 +366,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_kaydir", "tr_baslik", "tr_sira", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "KuruGeriAl",
+__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_kaydir", "tr_baslik", "tr_sira", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

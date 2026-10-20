@@ -25,7 +25,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_cekirdek import merkez_aktor
+from evvel_yeni_cekirdek import adet_oku, kalem_topla, merkez_aktor
 from evvel_yeni_cekirdek import aktor as _aktor, bekleyen_is_kaydet, deneme_mi, is_gunu as _is_gunu   # K1/F#23: Depo'da tek gün = İŞ GÜNÜ
 
 router = APIRouter(prefix="/api/evvel-yeni/depo", tags=["evvel-yeni-depo"])
@@ -481,17 +481,7 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
         v = s.get("sayilan")
         if v in (None, ""):
             continue
-        if isinstance(v, bool):
-            raise HTTPException(400, f"Sayı yaz: {s.get('urun_id')}")
-        try:   # Codex: 1.9 sessizce 1 olmasın — yalnız tam sayı
-            f = float(str(v).replace(",", "."))
-        except (TypeError, ValueError):
-            raise HTTPException(400, f"Sayı yaz: {s.get('urun_id')}")
-        if f != int(f):
-            raise HTTPException(400, f"Tam sayı yaz: {s.get('urun_id')}")
-        say = int(f)
-        if say < 0:
-            raise HTTPException(400, "Sayılan eksi olamaz")
+        say = adet_oku(v, f"Sayılan ({(ad_coz(s.get('urun_id')) if ad_coz else None) or s.get('urun_id')})")   # Codex: 1.9 sessizce 1 olmasın — TEK adet kuralı (F#17)
         if not s.get("urun_id"):
             raise HTTPException(400, "Ürün kimliği eksik — listeyi yenileyin")
         uid = str(s["urun_id"])
@@ -900,19 +890,7 @@ def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], ki
         raise HTTPException(400, "Kaynak ile hedef aynı şube olamaz")
     if not istek_id or len(str(istek_id)) > 80:
         raise HTTPException(400, "istek_id gerekli")
-    top = {}
-    for x in kalemler or []:
-        a = x.get("adet") if isinstance(x, dict) else None
-        if not isinstance(a, int) or isinstance(a, bool) or a <= 0 or a > 99999:   # Codex 2.tur: kabul üst sınırıyla aynı
-            raise HTTPException(400, "Adet 1 – 99.999 arası tam sayı olmalı")
-        u = str(x.get("urun_id") or "").strip()
-        if not u:
-            raise HTTPException(400, "Ürün seçilmemiş kalem var — listeyi yenile")
-        top[u] = top.get(u, 0) + a
-    if not top:
-        raise HTTPException(400, "En az bir ürün seç")
-    if len(top) > 80:
-        raise HTTPException(400, "Bir pakette en çok 80 ürün")
+    top, _ = kalem_topla(kalemler, birim="pakette")   # Sipariş ile TEK kalem kuralı (F#22) — adet kabul üst sınırıyla aynı
     b = _ey_urun_dogrula(cur, list(top))
     pasta = [b[u]["ad"] for u in top if (b[u].get("takip") or "sayim") == "gununde"]
     if pasta:   # sahip (20 Eki): pastane her şubeye DOĞRUDAN getirir — pasta sevk edilmez (girişte tüketildi; çift gider olmasın)
@@ -953,9 +931,7 @@ def kabul_yaz(cur, *, bag: str, sayilan: int, hasarli: int = 0, kim: str, gun: O
     _sevk_hazirla(cur)
     if not str(bag).startswith("sevk:"):
         raise HTTPException(400, "Bu paket eski sistemden — merkez Yoldakiler'den kapatır")
-    for v in (sayilan, hasarli):
-        if not isinstance(v, int) or isinstance(v, bool) or v < 0 or v > 100000:
-            raise HTTPException(400, "Sayı 0 ya da daha büyük tam sayı olmalı")
+    sayilan, hasarli = adet_oku(sayilan, "Sayılan"), adet_oku(hasarli, "Hasarlı")   # sevkle AYNI üst sınır (F#17: 99.999 ↔ 100.000)
     pid = _parti_id(bag)
     cur.execute("SELECT hedef, iptal FROM ey_sevk_parti WHERE id=%s", (pid,))
     p = cur.fetchone()

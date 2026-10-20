@@ -18,7 +18,7 @@ import logging
 import re
 import uuid
 from datetime import date
-from decimal import Decimal, InvalidOperation
+from decimal import Decimal
 from typing import List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -94,16 +94,9 @@ def _pin(cur, p: dict, pin: Optional[str]) -> None:
 
 
 def _tam(v, ad: str) -> int:
-    """Tam sayı adet (kesir / eksi yok)."""
-    if isinstance(v, bool) or v in (None, ""):
-        raise HTTPException(400, f"{ad}: sayı yaz")
-    try:
-        d = Decimal(str(v).replace(",", "."))
-    except InvalidOperation:
-        raise HTTPException(400, f"{ad}: sayı yaz")
-    if d != d.to_integral_value() or d < 0:
-        raise HTTPException(400, f"{ad}: tam sayı yaz")
-    return int(d)
+    """Tam sayı adet (kesir / eksi yok) — çekirdek adet_oku TEK kural (Dalga 4, F#17)."""
+    from evvel_yeni_cekirdek import adet_oku
+    return adet_oku(v, ad)
 
 
 def _tl(v, ad: str) -> int:
@@ -863,8 +856,8 @@ def depodan_kabul(sube_id: str, b: DepoKabulBody):
         if set(gelen) != set(gerek) or len(gelen) != len(b.satirlar):
             raise HTTPException(400, "Paketin bütün ürünleri sayılmalı — sayfayı yenile")
         for x in b.satirlar:
-            if x.sayilan < 0 or x.hasarli < 0 or x.sayilan > 99999 or x.hasarli > 99999:
-                raise HTTPException(400, "Sayılar 0 ya da daha büyük olmalı")
+            _tam(x.sayilan, "Sayılan")
+            _tam(x.hasarli, "Hasarlı")
         kim = f"{KIM} · {p['ad']}"
         oid = _olay(cur, sube_id=sube_id, tur="depo_kabul", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                     personel_id=p["id"], personel_ad=p["ad"],

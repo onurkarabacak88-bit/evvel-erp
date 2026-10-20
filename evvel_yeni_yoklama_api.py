@@ -33,7 +33,7 @@ from starlette.concurrency import run_in_threadpool
 
 from database import db, savepoint
 from evvel_yeni_cekirdek import merkez_aktor
-from evvel_yeni_cekirdek import ayar_oku, ayar_yaz, bekleyen_is_kaydet, is_gunu
+from evvel_yeni_cekirdek import adet_oku, ayar_oku, ayar_yaz, bekleyen_is_kaydet, is_gunu
 
 router = APIRouter(prefix="/api/evvel-yeni/yoklama", tags=["evvel-yeni-yoklama"])
 log = logging.getLogger(__name__)
@@ -1379,7 +1379,7 @@ async def devir_ustlen(did: str, request: Request):
 
 def _devir_sayilar(cur, v: dict) -> tuple:
     """Telefondan gelen form (eski 5 adım AYNEN): her kalem dolu (0 yazılabilir), tam sayı, eksi yok, katalog dışı yok."""
-    from decimal import Decimal, InvalidOperation
+    from decimal import Decimal
     if v.get("dogruladim") is not True:
         raise HTTPException(400, "Kasadaki nakit sayımını doğruladığını işaretle")
     from evvel_yeni_cekirdek import tutar_oku
@@ -1400,29 +1400,12 @@ def _devir_sayilar(cur, v: dict) -> tuple:
             raise HTTPException(400, "Listede olmayan ürün — formu yenile")
         out = []
         for u in gerek:
-            s = gelen.get(u["id"])
-            if s in (None, "") or isinstance(s, bool):
-                raise HTTPException(400, f"{u['ad']} adedini gir")
-            try:
-                n = Decimal(str(s))
-            except (InvalidOperation, ValueError):
-                raise HTTPException(400, f"{u['ad']}: sayı yaz")
-            if n < 0 or n != n.to_integral_value() or n > 100000:
-                raise HTTPException(400, f"{u['ad']}: tam sayı yaz")
-            out.append({"urun_id": u["id"], "ad": u["ad"], "sayilan": int(n)})
+            out.append({"urun_id": u["id"], "ad": u["ad"], "sayilan": adet_oku(gelen.get(u["id"]), u["ad"])})   # TEK adet kuralı (F#17)
         return out
     bardak = kalemler("bardak", liste["bardak"])
     urunler = kalemler("urunler", liste["urun"])
-    p = v.get("pasta")
-    if p in (None, "") or isinstance(p, bool):
-        raise HTTPException(400, "Pasta adedini gir")
-    try:
-        pn = Decimal(str(p))
-    except (InvalidOperation, ValueError):
-        raise HTTPException(400, "Pasta: sayı yaz")
-    if pn < 0 or pn != pn.to_integral_value() or pn > 10000:
-        raise HTTPException(400, "Pasta: tam sayı yaz")
-    return int(kasa * 100), bardak, urunler, int(pn)
+    pn = adet_oku(v.get("pasta"), "Pasta", en_cok=10000)
+    return int(kasa * 100), bardak, urunler, pn
 
 
 @router.post("/devir/{did}/devret")

@@ -20,7 +20,7 @@ from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
-from evvel_yeni_cekirdek import merkez_aktor
+from evvel_yeni_cekirdek import adet_oku, kalem_topla, merkez_aktor
 from evvel_yeni_cekirdek import bekleyen_is_kaydet, is_gunu as _is_gunu
 
 router = APIRouter(prefix="/api/evvel-yeni/siparis", tags=["evvel-yeni-siparis"])
@@ -103,23 +103,7 @@ def siparis_yaz(cur, *, sube_id: str, kalemler: List[dict], kim: str, personel_i
     from evvel_yeni_urun_api import urun_bilgi
     if not istek_id or len(str(istek_id)) > 80:
         raise HTTPException(400, "istek_id gerekli")
-    top, oneriler = {}, []
-    for x in kalemler or []:
-        a = x.get("adet") if isinstance(x, dict) else None
-        if not isinstance(a, int) or isinstance(a, bool) or a <= 0 or a > 99999:
-            raise HTTPException(400, "Adet 1 – 99.999 arası tam sayı olmalı")
-        u = str(x.get("urun_id") or "").strip()
-        if u:
-            top[u] = top.get(u, 0) + a
-        else:
-            ad = " ".join(str(x.get("ad") or "").split())[:80]
-            if len(ad) < 2:
-                raise HTTPException(400, "Katalogda olmayan ürünün adını yaz")
-            oneriler.append({"ad": ad, "adet": a})
-    if not top and not oneriler:
-        raise HTTPException(400, "En az bir ürün seç")
-    if len(top) + len(oneriler) > 80:
-        raise HTTPException(400, "Bir siparişte en çok 80 kalem")
+    top, oneriler = kalem_topla(kalemler, oneri_olur=True, birim="siparişte")   # Sevk ile TEK kalem kuralı (F#22)
     b = urun_bilgi(cur, list(top))
     yok = [u for u in top if u not in b or not b[u].get("aktif", True)]
     if yok:
@@ -339,8 +323,8 @@ def hazirlik_yaz(cur, *, depo_sube: str, satirlar: List[dict]) -> int:
     n = 0
     for x in satirlar:
         h = x.get("hazir")
-        if h is not None and (not isinstance(h, int) or isinstance(h, bool) or h < 0 or h > 99999):
-            raise HTTPException(400, "Hazır adet 0 ya da daha büyük tam sayı")
+        if h is not None:
+            h = adet_oku(h, "Hazır adet")
         cur.execute("""UPDATE ey_siparis_yon SET hazir=%s WHERE id=%s AND kaynak=%s AND parti_id IS NULL AND NOT iptal""",
                     (h, str(x.get("yon_id")), f"depo:{depo_sube}"))
         n += cur.rowcount
