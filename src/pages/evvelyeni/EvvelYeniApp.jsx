@@ -10,6 +10,7 @@
 import React, { useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import { MODULLER, TUM_SAYFALAR } from './moduller';
+import { kabukDegiskenleri } from './tema';   // renkler TEK kaynak (T4-16)
 import { IS_GRUPLARI, isGrubu } from './KasaModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
@@ -26,9 +27,9 @@ const sekmeAdresten = () => {
 };
 
 const KABUK_CSS = `
-.piapp{--bg:#F4EEE2;--paper:#FCFAF4;--line:#E0D4BE;--ink:#2A1E14;--ink3:#7F6C57;--accent:#9A5F2E;--on:#FFF8EC;--bad:#C03A2B;
+.piapp{${kabukDegiskenleri('acik')};
   min-height:100vh;background:var(--bg);color:var(--ink);font-family:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif}
-@media (prefers-color-scheme: dark){.piapp{--bg:#161009;--paper:#211710;--line:#3A2C1E;--ink:#F1E9DD;--ink3:#A3917B;--accent:#D29A5B;--on:#241A12;--bad:#E2604F}}
+@media (prefers-color-scheme: dark){.piapp{${kabukDegiskenleri('koyu')}}}
 .piapp-duzen{display:grid;grid-template-columns:220px minmax(0,1fr);min-height:100vh}
 .piapp-sol{background:var(--paper);border-right:1px solid var(--line);padding:18px 12px;display:flex;flex-direction:column;gap:4px;position:sticky;top:0;height:100vh;overflow:auto}
 .piapp-logo{font-family:'Fraunces',Georgia,serif;font-weight:600;font-size:22px;padding:0 10px 4px}

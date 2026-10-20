@@ -24,6 +24,7 @@ import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { AY_UZUN, ayTR, GUN_UZUN } from '../../utils/trTarih';
+import { piDegiskenleri } from './tema';   // renkler TEK kaynak (T4-16)
 
 // Kadife (v2) bileşenlerine BAĞIMLILIK YOK — sahip: "kadife tasarımda değil ayrı bir
 // alanda yap, sonra (eskiyi) tamamen kaldırsak". Bu dosya src/pages/evvelyeni altında,
@@ -49,15 +50,11 @@ const R = {
 };
 const alfa = (renk, yuzde) => `color-mix(in srgb, ${renk} ${yuzde}%, transparent)`;
 const PI_CSS = `
-.pi{--pi-bg:#F4EEE2;--pi-paper:#FCFAF4;--pi-line:#E0D4BE;--pi-ink:#2A1E14;--pi-ink2:#5E4C3A;--pi-ink3:#7F6C57;
-  --pi-accent:#9A5F2E;--pi-on-accent:#FFF8EC;--pi-accent-soft:#F1E3D0;--pi-good:#25794F;--pi-good-soft:#E1EFE4;
-  --pi-bad:#C03A2B;--pi-bad-soft:#F6E1DC;--pi-warn:#8A680E;--pi-warn-soft:#F4EBCF;
+.pi{${piDegiskenleri('acik')};
   --pi-f-display:'Fraunces',Georgia,serif;--pi-f-body:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif;--pi-f-num:'JetBrains Mono',ui-monospace,Consolas,monospace;
   background:var(--pi-bg);color:var(--pi-ink);font-family:var(--pi-f-body);font-size:14px;line-height:1.45;
   border-radius:16px;padding:18px 20px 28px;color-scheme:light}
-@media (prefers-color-scheme: dark){.pi{--pi-bg:#161009;--pi-paper:#211710;--pi-line:#3A2C1E;--pi-ink:#F1E9DD;--pi-ink2:#C4B5A2;--pi-ink3:#A3917B;
-  --pi-accent:#D29A5B;--pi-on-accent:#241A12;--pi-accent-soft:#3A2817;--pi-good:#5FBE8E;--pi-good-soft:#163020;
-  --pi-bad:#E2604F;--pi-bad-soft:#3A1B16;--pi-warn:#E5B84E;--pi-warn-soft:#33290F;color-scheme:dark}}
+@media (prefers-color-scheme: dark){.pi{${piDegiskenleri('koyu')};color-scheme:dark}}
 .pi h1,.pi .pi-baslik{font-family:var(--pi-f-display);font-weight:600;letter-spacing:-.01em;margin:0}
 .pi .pi-num,.pi [data-num]{font-family:var(--pi-f-num);font-variant-numeric:tabular-nums}
 .pi .pi-eyebrow{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--pi-ink3);font-weight:600}
