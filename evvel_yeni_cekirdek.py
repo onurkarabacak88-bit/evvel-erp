@@ -128,6 +128,13 @@ def tr_sira(s) -> tuple:
     return tuple((_TR_ABC.index(ch) if ch in _TR_ABC else 100 + ord(ch)) for ch in t)
 
 
+def ay_gunu(y: int, m: int, d) -> date:
+    """PUBLIC — ayın d. günü, ayın GERÇEK son gününe kırpılmış (31 → Şubat 28/29, Nisan 30). Vade günü TEK kural (Codex T1-10: Kira
+    her ayı 28'e kırpıyordu — Ekim 31 vadeli kira 28'inde 'gecikti' görünüyordu; Kredi/Mülk/Kart ay sonuna)."""
+    import calendar
+    return date(y, m, min(max(int(d or 1), 1), calendar.monthrange(y, m)[1]))
+
+
 def ay_kaydir(ay: str, n: int) -> str:
     """'2026-10', +1 → '2026-11'."""
     y, m = int(ay[:4]), int(ay[5:7])
@@ -406,7 +413,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "bir_kez", "KuruGeriAl",
+__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "bir_kez", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

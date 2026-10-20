@@ -50,9 +50,7 @@ def _hazirla():
     _HAZIR = True
 
 
-def _gun(y: int, m: int, d: int) -> date:
-    import calendar
-    return date(y, m, min(int(d or 1), calendar.monthrange(y, m)[1]))
+from evvel_yeni_cekirdek import ay_gunu as _gun  # noqa: E402 — vade günü TEK kural (T1-10)
 
 
 def _kalemler(cur, hepsi: bool = True) -> list:

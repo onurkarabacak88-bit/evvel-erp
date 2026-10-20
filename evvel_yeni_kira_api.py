@@ -188,8 +188,7 @@ def kira_aylari(cur, yil: int, bugun: date) -> list:
             yn = yeni.get((sid, ay), [])
             od_k, iki_yerde = gecis_odenen(sum(x["kr"] for x in yn), eski.get((sid, ay), 0))   # C-T1-08: toplanmaz
             od = _tl_sayi(od_k)
-            vade_gunu = min(t["odeme_gunu"] or 1, 28)
-            vade = date(yil, m, vade_gunu)
+            vade = __import__("evvel_yeni_cekirdek").ay_gunu(yil, m, t["odeme_gunu"] or 1)   # T1-10: 28'e değil AY SONUNA kırpılır
             if t.get("kira_yok"):
                 bek, durum = None, "mulk"
             elif bek is None:

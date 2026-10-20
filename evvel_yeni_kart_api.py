@@ -12,7 +12,7 @@ SADE MODEL — tek rakam: KULLANILABİLİR LİMİT (bankanın uygulamasında yaz
 """
 
 import uuid
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 from typing import Optional
 
@@ -112,9 +112,7 @@ def odeme_ayi(kart: dict, tarih, donem: Optional[str], teyit_son: dict, teyit_ta
 def _sonraki_son_odeme(kesim_gunu, son_odeme_gunu, bugun: date) -> Optional[date]:
     if not son_odeme_gunu:
         return None
-    def gun_yap(y, m, d):
-        son = ((date(y, m, 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)).day
-        return date(y, m, min(d, son))
+    from evvel_yeni_cekirdek import ay_gunu as gun_yap   # vade günü TEK kural (T1-10)
     aday = gun_yap(bugun.year, bugun.month, son_odeme_gunu)
     if aday < bugun:
         y, m = (bugun.year + (bugun.month == 12), bugun.month % 12 + 1)
@@ -223,9 +221,7 @@ def kart_isleri(cur, kayit) -> list:
     return out
 
 
-def _son_gun(y: int, m: int, d: int) -> date:
-    son = ((date(y, m, 28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)).day
-    return date(y, m, min(int(d), son))
+from evvel_yeni_cekirdek import ay_gunu as _son_gun  # noqa: E402 — vade günü TEK kural (T1-10)
 
 
 def _eski_plan(cur) -> dict:
