@@ -205,4 +205,20 @@ Sahip: "baştan ele alalım — daha iyi, daha işlevsel bir mekanizma; ama KULL
 | K4 | Bekleyen işler'e yalnız 2 satır: 'gelecek hafta plan yok' + 'gelmedi'; gerisi modülün Uyarılar sekmesi |
 | K5 | Eski planın taşınması: yeni kurguyla birlikte yeniden ele alınacak (açık) |
 | K6 | Personel planını görür: panel + telefonda "Bugün" satırı; sabah/akşam etiketi saatten türetilir |
-Durum: yeni kurgu Fable'da (özellik envanteri + yeni mekanizma + karar soruları).
+Durum: Fable yeni kurguyu verdi (25-28 özellik envanteri: KORU 7 · SADELEŞTİR 8 · ÇIKAR 10+; 9 tablo → 3, 40 uç → ~11). Sahip kararları aşağıda.
+
+### 20 Ekim — yeni kurgu karar soruları (sahip)
+| # | Soru | Karar |
+|---|---|---|
+| Y1 | Planı kim yazar | **Yetki verilen herkes** — ayrı "vardiya yazabilir" yetkisi (yetki en sonda bağlanır) |
+| Y2 | Taslak / Yayın | **Evet** — "Yayınla" denene kadar personel görmez, geç ölçülmez |
+| Y3 | Personel telefondan istek | **Hayır** — yalnız görür (ey_vardiya_istek KURULMAZ) |
+| Y4 | Eski kopya (K5 kapandı) | **Slotlar → kalıp + 27 Eki–9 Kas atamaları** (`kaynak='eski_kopya'`, bir kez) |
+| Y5 | Geçmiş haftayı değiştirmek | **Serbest ama izli** — kim/ne zaman/eski→yeni; maaş satırında "⚠ n gün sonradan yazıldı"; PIN kilidi yok |
+| Y6 | İzin | **Planda gri 'izinli' hücre**; rapor/ücretsiz maaşta elle; yarım gün = saat kısaltma; ayrı izin defteri yok |
+| Y7 | Ay sonu rapor | **Tek 'Ay özeti' sekmesi**: kişi × plan saat × QR saat × mesai × gelmedi |
+| Y8 | Geç kalma toleransı | **10 dk** (`ey_ayar vardiya_gec_tolerans_dk`, ayardan değişir) |
+| varsayılan | kişi sayısı | kalıp satırındaki `kisi` (eksik → Uyarılar) |
+| varsayılan | yayın sonrası değişiklik | telefonda "planın değişti" satırı |
+| varsayılan | WhatsApp "yarın açılışçı" + Beyin B43 | çıkar; panel/telefon "Bugün" satırı yerini tutar |
+Açık: Y1+Y2 birleşince "Yayınla"yı kim basar (yazan mı, ayrı yetki mi) — ikinci Fable görüşü bekleniyor.
