@@ -164,10 +164,9 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
             from evvel_yeni_moduller import DURUM
             if DURUM.get("depo") == "yuklendi":
                 # Fable #7 / sahip P1: şubeye DOĞRUDAN gelen pasta (Tedarikçiden teslim al = giris) da bara girer
-                cur.execute("""SELECT hedef, olay_zaman, is_gunu, adet FROM ey_stok_hareket WHERE yeni AND NOT iptal AND tur IN ('kabul','giris','fazla_onay')
-                                AND urun_id = ANY(%s) AND is_gunu BETWEEN %s AND %s AND hedef LIKE 'depo:%%'""",
-                            (list(pasta_id), bas, son + timedelta(days=1)))
-                for h in [dict(x) for x in cur.fetchall() or []]:
+                from evvel_yeni_depo_api import hareketler   # Depo'nun kapısı (F#34)
+                for h in hareketler(cur, turler=("kabul", "giris", "fazla_onay"), bas=bas, son=son + timedelta(days=1),
+                                    hedef_onek=["depo:"], urun_idler=list(pasta_id)):
                     ac.setdefault(h["hedef"].split(":", 1)[1], []).append((h["olay_zaman"], h["is_gunu"], "pasta", int(h["adet"])))
         except Exception:  # noqa: BLE001
             log.warning("bar: pasta kabulü okunamadı", exc_info=True)

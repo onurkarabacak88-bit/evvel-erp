@@ -31,7 +31,7 @@ def kira_hazirla(cur) -> None:
     global _HAZIR
     if _HAZIR:
         return
-    from evvel_yeni_tanim_api import tanim_hazirla
+    from evvel_yeni_tanim_api import tanim_guncelle, tanim_hazirla
     tanim_hazirla(cur)
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_sube_kira (
         sube_id TEXT NOT NULL, gecerli_ay TEXT NOT NULL, tutar BIGINT NOT NULL,
@@ -49,7 +49,8 @@ def kira_hazirla(cur) -> None:
                 ay = (r["baslangic_tarihi"] or date(2026, 1, 1)).strftime("%Y-%m")
                 cur.execute("INSERT INTO ey_sube_kira (sube_id, gecerli_ay, tutar, degistiren) VALUES (%s,%s,%s,'eski sistem kopyası') ON CONFLICT DO NOTHING",
                             (r["sid"], ay, _kurus(r["tutar"])))
-                cur.execute("UPDATE ey_sube SET kira_odeme_gunu = COALESCE(kira_odeme_gunu, %s) WHERE id=%s", (r["odeme_gunu"], r["sid"]))
+                if r["odeme_gunu"] is not None:   # Tanımlar'ın kapısı (F#31 — ham UPDATE değil)
+                    tanim_guncelle(cur, "ey_sube", r["sid"], bos_ise={"kira_odeme_gunu": r["odeme_gunu"]})
     except Exception:  # noqa: BLE001
         pass
     _HAZIR = True
@@ -67,10 +68,10 @@ def kira_tanimlari(cur) -> dict:
     """{sube_id: {"kira": tl (bugün geçerli), "artis_ayi", "odeme_gunu", "gecmis": [...]}} — Tanımlar listesi için."""
     kira_hazirla(cur)
     ay = _bugun().strftime("%Y-%m")
-    cur.execute("SELECT id, kira_artis_ayi, kira_odeme_gunu, kira_yok FROM ey_sube")
-    out = {dict(r)["id"]: {"artis_ayi": dict(r)["kira_artis_ayi"], "odeme_gunu": dict(r)["kira_odeme_gunu"], "kira": None, "gecmis": [],
-                           "kira_yok": bool(dict(r)["kira_yok"])}
-           for r in cur.fetchall() or []}
+    from evvel_yeni_tanim_api import tanim_listesi   # şube kira kolonları Tanımlar'ın (F#31)
+    out = {r["id"]: {"artis_ayi": r["kira_artis_ayi"], "odeme_gunu": r["kira_odeme_gunu"], "kira": None, "gecmis": [],
+                     "kira_yok": bool(r["kira_yok"])}
+           for r in tanim_listesi(cur, "ey_sube", ("kira_artis_ayi", "kira_odeme_gunu", "kira_yok"))}
     cur.execute("SELECT sube_id, gecerli_ay, tutar FROM ey_sube_kira ORDER BY gecerli_ay")
     for r in cur.fetchall() or []:
         r = dict(r)
@@ -226,8 +227,7 @@ def kira_tanimla(sube_id: str, body: KiraBody, x_evvel_oturum: Optional[str] = H
     _hazirla()
     with db() as (conn, cur):
         kira_hazirla(cur)
-        cur.execute("SELECT 1 FROM ey_sube WHERE id=%s", (sube_id,))
-        if not cur.fetchone():
+        if not __import__("evvel_yeni_tanim_api").tanim_oku(cur, "ey_sube", sube_id, ("ad",)):
             raise HTTPException(404, "Şube bulunamadı")
         kira_yaz(cur, sube_id, _aktor(cur, x_evvel_oturum), body.tutar, body.gecerli_ay, body.artis_ayi, body.odeme_gunu)
     return {"ok": True, "mesaj": "Kira kaydedildi"}
@@ -237,9 +237,8 @@ def kira_tanimla(sube_id: str, body: KiraBody, x_evvel_oturum: Optional[str] = H
 def kira_tahakkuk(cur, ay: str) -> dict:
     """GİDER için: {sube_id: kuruş | None (tanımsız) | 'yok' (mülk bizim)} — o ayın tanımlı kirası."""
     kira_hazirla(cur)
-    cur.execute("SELECT id, kira_yok FROM ey_sube")
+    from evvel_yeni_tanim_api import tanim_listesi
     out = {}
-    for r in cur.fetchall() or []:
-        r = dict(r)
+    for r in tanim_listesi(cur, "ey_sube", ("kira_yok",)):
         out[r["id"]] = "yok" if r["kira_yok"] else kira_tutari(cur, r["id"], ay)
     return out

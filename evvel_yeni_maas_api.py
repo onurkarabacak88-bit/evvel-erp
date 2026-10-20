@@ -198,9 +198,8 @@ def _eski_odenen(cur, ay: str) -> dict:
 
 
 def _ucretler(cur, ay: str) -> dict:
-    cur.execute("""SELECT DISTINCT ON (personel_id) personel_id, maas, yemek, saatlik, yol, degistiren FROM ey_personel_ucret
-                    WHERE gecerli_ay <= %s ORDER BY personel_id, gecerli_ay DESC""", (ay,))
-    return {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
+    from evvel_yeni_tanim_api import ay_ucretleri   # ücret tablosu Tanımlar'ın (C-T2-10)
+    return ay_ucretleri(cur, ay)
 
 
 def _yemek_kaynagi(cur, ay: str, ay_bas: date, ay_son: date):
@@ -259,8 +258,8 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
     bugun = _bugun()
     ay_bas, ay_son = _ay_sinir(ay)
     odemeler = odemeler if odemeler is not None else _odemeler(cur)
-    cur.execute("""SELECT id, ad, sube_id, gorev, giris, cikis, calisma_turu, aktif FROM ey_personel""")
-    kisiler = [dict(r) for r in cur.fetchall() or []]
+    from evvel_yeni_tanim_api import tanim_listesi   # personel tablosu Tanımlar'ın (C-T2-10)
+    kisiler = tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "gorev", "giris", "cikis", "calisma_turu", "aktif"))
     cur.execute("SELECT * FROM ey_maas_ay WHERE ay=%s", (ay,))
     elle = {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
     yh = _yeni_hesap(cur)
@@ -547,8 +546,8 @@ def personel_takvim(ay: Optional[str] = None):
     with db() as (conn, cur):
         _hazirla(cur)
         sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
-        cur.execute("SELECT id, ad, sube_id, giris, cikis, aktif, calisma_turu, gorev FROM ey_personel")
-        kisiler = [dict(r) for r in cur.fetchall() or []]
+        from evvel_yeni_tanim_api import tanim_listesi
+        kisiler = tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "gorev", "giris", "cikis", "calisma_turu", "aktif"))
         cur.execute("SELECT personel_id, tarih, karar, izin_bitis FROM ey_personel_yoklama_karar ORDER BY zaman")
         kararlar = {}
         for r in cur.fetchall() or []:
@@ -737,12 +736,9 @@ def takvim_karar(b: YoklamaKararBody, x_evvel_oturum: Optional[str] = Header(def
             except Exception:  # noqa: BLE001
                 son = None
             try:
-                with savepoint(cur, "sp_ey_son_qr_yeni"):   # yeni dönem QR'ı da (Y3) — eski okunamasa da
-                    cur.execute("SELECT to_regclass('ey_yoklama') IS NOT NULL AS v")
-                    if dict(cur.fetchone())["v"]:
-                        cur.execute("SELECT MAX(is_gunu) AS t FROM ey_yoklama WHERE personel_id=%s", (b.personel_id,))
-                        t2 = (dict(cur.fetchone() or {}) or {}).get("t")
-                        son = max([x for x in (son, t2) if x], default=None)
+                with savepoint(cur, "sp_ey_son_qr_yeni"):   # yeni dönem QR'ı da (Y3) — Yoklama'nın kapısı (F#36)
+                    from evvel_yeni_yoklama_api import son_yoklama_gunu
+                    son = max([x for x in (son, son_yoklama_gunu(cur, b.personel_id)) if x], default=None)
             except Exception:  # noqa: BLE001
                 pass
             cikis = son or (date.fromisoformat(t) - timedelta(days=1))
@@ -771,8 +767,8 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
         _hazirla(cur)
         sube_ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
         aktif_sube = {s["id"] for s in _ey_subeler(cur)}
-        cur.execute("SELECT id, ad, gorev FROM ey_personel")
-        pad = {dict(r)["id"]: dict(r) for r in cur.fetchall() or []}
+        from evvel_yeni_tanim_api import tanim_listesi
+        pad = {r["id"]: r for r in tanim_listesi(cur, "ey_personel", ("ad", "gorev"))}
         plan, qr = [], []
         try:
             with savepoint(cur, "sp_ey_yok_plan"):

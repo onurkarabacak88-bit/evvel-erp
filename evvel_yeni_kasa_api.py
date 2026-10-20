@@ -476,8 +476,9 @@ def _pos_durumu(ol: List[dict], C: dict, oranlar: Dict[str, tuple], ref: str) ->
 def _oranlar(cur) -> Dict[str, tuple]:
     try:
         with savepoint(cur, "sp_pi_oran"):
-            cur.execute("SELECT id, pos_oran, online_oran FROM ey_sube")
-            return {str(dict(r)["id"]): (float(dict(r)["pos_oran"] or 0), float(dict(r)["online_oran"] or 0)) for r in cur.fetchall() or []}
+            from evvel_yeni_tanim_api import tanim_listesi   # şube tablosu Tanımlar'ın (F#31)
+            return {str(r["id"]): (float(r["pos_oran"] or 0), float(r["online_oran"] or 0))
+                    for r in tanim_listesi(cur, "ey_sube", ("pos_oran", "online_oran"))}
     except Exception:  # noqa: BLE001
         return {}
 

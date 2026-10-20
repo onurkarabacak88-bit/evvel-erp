@@ -229,12 +229,10 @@ def _yeni_kesin_gunler(cur, bas: date, son: date) -> set:
         return set()
 
 
-def _yeni_hareketler(cur, bas: date, son: date, turler: tuple, hedef_kosul: str) -> list:
-    """Depo defteri (yeni evren) — hareket satırları. hedef_kosul: SQL parçası (sabit, kullanıcı girdisi değil)."""
-    cur.execute(f"""SELECT tur, urun_id, urun_ad, adet, kaynak, hedef, is_gunu, bag, kaynak_ref FROM ey_stok_hareket
-                     WHERE yeni AND NOT iptal AND tur = ANY(%s) AND is_gunu BETWEEN %s AND %s AND {hedef_kosul}""",
-                (list(turler), bas, son))
-    return [dict(x) for x in cur.fetchall() or []]
+def _yeni_hareketler(cur, bas: date, son: date, turler: tuple, **suzgec) -> list:
+    """Depo defteri (yeni evren) — Depo'nun PUBLIC kapısından (F#36: önce ey_stok_hareket'e kendi SQL'iyle uzanıyordu)."""
+    from evvel_yeni_depo_api import hareketler
+    return hareketler(cur, turler=turler, bas=bas, son=son, **suzgec)
 
 
 def _tuketim_satirlari_yeni(cur, bas: date, son: date) -> list:
@@ -246,13 +244,13 @@ def _tuketim_satirlari_yeni(cur, bas: date, son: date) -> list:
     fiyat = _yeni_fiyatci(cur)
     kesin = _yeni_kesin_gunler(cur, bas, son)
     top = {}
-    for h in _yeni_hareketler(cur, bas, son, ("ac", "tuketim"), "hedef = 'dışarı:tuketim' AND (kaynak LIKE 'depo:%%' OR kaynak LIKE 'bar:%%')"):
+    for h in _yeni_hareketler(cur, bas, son, ("ac", "tuketim"), hedefler=["dışarı:tuketim"], kaynak_onek=["depo:", "bar:"]):
         sid = h["kaynak"].split(":", 1)[1]
         k = (sid, h["is_gunu"], h["urun_id"], "gununde" if (h.get("kaynak_ref") or "").endswith(":gununde") else h["tur"])
         top.setdefault(k, [h["urun_ad"], 0])[1] += int(h["adet"])
     # Sahip (20 Eki, T3-19 kararı): FIRE / İKRAM / PERSONEL kullanımı ayrı gider satırı (sayım/panel hatası 'dışarı:sayim' gidere GİRMEZ).
     # Tezgahta sayılan (panel_sayim) ürünün firesi bar sayım farkının İÇİNDE zaten gider → ikinci kez yazılmaz (çift maliyet olmasın).
-    fire = _yeni_hareketler(cur, bas, son, ("fire",), "hedef IN ('dışarı:fire','dışarı:ikram','dışarı:personel') AND kaynak LIKE 'depo:%%'")
+    fire = _yeni_hareketler(cur, bas, son, ("fire",), hedefler=["dışarı:fire", "dışarı:ikram", "dışarı:personel"], kaynak_onek=["depo:"])
     if fire:
         from evvel_yeni_urun_api import urun_bilgi
         bil = urun_bilgi(cur, sorted({str(h["urun_id"]) for h in fire}))
@@ -280,13 +278,10 @@ def _mal_satirlari_yeni(cur, bas: date, son: date, depo: str) -> list:
         return []
     fiyat = _yeni_fiyatci(cur)
     satir = []
-    iptal_teslim = set()
-    cur.execute("SELECT to_regclass('ey_toptanci_teslim') IS NOT NULL AS v")
-    if dict(cur.fetchone())["v"]:   # Codex: teslimi iptal edilip stoğu sayımla kalan giriş sevk bedelinde sayılmasın (modül kapalı da olsa)
-        cur.execute("SELECT kaynak_ref FROM ey_toptanci_teslim WHERE iptal AND kaynak_ref LIKE 'panel:teslim:%%' AND tarih BETWEEN %s AND %s",
-                    (bas, son))
-        iptal_teslim = {dict(r)["kaynak_ref"] for r in cur.fetchall() or []}
-    for h in _yeni_hareketler(cur, bas, son, ("kabul", "giris"), "hedef LIKE 'depo:%%'"):
+    # Codex: teslimi iptal edilip stoğu sayımla kalan giriş sevk bedelinde sayılmasın (modül kapalı da olsa) — Toptancı'nın kapısı (F#36)
+    from evvel_yeni_toptanci_api import iptal_teslim_refleri
+    iptal_teslim = iptal_teslim_refleri(cur, bas, son)
+    for h in _yeni_hareketler(cur, bas, son, ("kabul", "giris"), hedef_onek=["depo:"]):
         if h.get("bag") in iptal_teslim:
             continue
         sid = h["hedef"].split(":", 1)[1]

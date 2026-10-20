@@ -19,7 +19,7 @@ import secrets
 import uuid
 from datetime import date
 from decimal import Decimal
-from typing import Optional
+from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
@@ -167,6 +167,11 @@ def tanim_hazirla(cur) -> None:
                               FROM personel p WHERE p.id::text = e.id"""),
         ("sp_ey_k_kisi", """UPDATE ey_personel e SET kisi_id = p.kisi_id::text FROM personel p
                               WHERE p.id::text = e.id AND e.kisi_id IS NULL AND p.kisi_id IS NOT NULL"""),
+        # kart limit/kesim/son ödeme/grup — önce Kart modülü ey_kart'a kendisi UPDATE atıyordu (F#31: tablo Tanımlar'ın)
+        ("sp_ey_k_kart2", """UPDATE ey_kart e SET limit_tutar = COALESCE(e.limit_tutar, ROUND(k.limit_tutar*100)::bigint),
+                                  kesim_gunu = COALESCE(e.kesim_gunu, k.kesim_gunu), son_odeme_gunu = COALESCE(e.son_odeme_gunu, k.son_odeme_gunu),
+                                  limit_grup = COALESCE(e.limit_grup, k.ortak_limit_grup)
+                             FROM kartlar k WHERE k.id::text = e.id"""),
         ("sp_ey_k_ucret2", """UPDATE ey_personel_ucret u SET saatlik = ROUND(COALESCE(p.saatlik_ucret,0)*100)::bigint,
                                      yol = ROUND(COALESCE(p.yol_ucreti,0)*100)::bigint
                                 FROM personel p WHERE p.id::text = u.personel_id AND u.degistiren = 'eski sistem kopyası'
@@ -278,6 +283,78 @@ def pin_dogrula(cur, personel_id: str, pin: Optional[str]) -> None:
 
 
 # ── OKUMA YARDIMCILARI (öbür modüller bunları kullanır) ──
+# Tekrar denetimi F#27/F#31 + C-T2-04/09/10/11: Yoklama, Maaş, Kira, Kart, Panel, Avans, Satış, Kasa, Toptancı Tanımlar tablolarına
+# (şube · personel · kart · toptancı · ücret) ~60 ayrı SQL atıyordu. Okuma TEK kapıdan: kolon adı yalnız burada bilinir.
+_OKUNUR = {"ey_sube", "ey_personel", "ey_kart", "ey_toptanci"}
+_KOLON = re.compile(r"^[a-z_][a-z0-9_]*$")
+
+
+def _tablo_kolon(tablo: str, alanlar) -> str:
+    if tablo not in _OKUNUR:
+        raise ValueError(f"Tanımlar okunamaz: {tablo}")
+    if alanlar in (None, "*"):
+        return "*"
+    al = list(alanlar)
+    if not al or not all(_KOLON.match(a) for a in al):
+        raise ValueError("Geçersiz kolon")
+    return ", ".join(dict.fromkeys(["id", *al]))
+
+
+def tanim_oku(cur, tablo: str, kid, alanlar=None) -> Optional[dict]:
+    """PUBLIC — tek Tanımlar kaydı (id ile) ya da None. alanlar verilmezse bütün kolonlar."""
+    if kid is None:
+        return None
+    tanim_hazirla(cur)
+    cur.execute(f"SELECT {_tablo_kolon(tablo, alanlar)} FROM {tablo} WHERE id=%s", (str(kid),))
+    r = cur.fetchone()
+    return dict(r) if r else None
+
+
+def tanim_listesi(cur, tablo: str, alanlar=None, aktif: bool = False, idler=None) -> List[dict]:
+    """PUBLIC — Tanımlar listesi (ada göre sıralı). aktif=True yalnız aktifler; idler verilirse yalnız onlar."""
+    tanim_hazirla(cur)
+    kos, prm = [], []
+    if aktif:
+        kos.append("aktif")
+    if idler is not None:
+        kos.append("id = ANY(%s)")
+        prm.append([str(x) for x in idler if x is not None])
+    cur.execute(f"SELECT {_tablo_kolon(tablo, alanlar)} FROM {tablo}" + (" WHERE " + " AND ".join(kos) if kos else "") + " ORDER BY ad",
+                tuple(prm))
+    return [dict(r) for r in cur.fetchall() or []]
+
+
+def adlar(cur, tablo: str, idler=None) -> Dict[str, str]:
+    """PUBLIC — {id: ad} (görüntü adı). idler verilmezse tablonun tamamı (pasifler dahil — eski kayıtların adı da çözülsün)."""
+    if idler is not None and not [x for x in idler if x is not None]:
+        return {}
+    return {str(r["id"]): r["ad"] for r in tanim_listesi(cur, tablo, ("ad",), idler=idler)}
+
+
+def ay_ucretleri(cur, ay: str) -> Dict[str, dict]:
+    """PUBLIC — {personel_id: {maas, yemek, saatlik, yol, degistiren}} o ay GEÇERLİ ücret (gecerli_ay <= ay, en yenisi; kuruş).
+    Tablo Tanımlar'ın (ucret_yaz ile yazılır) — Maaş buradan okur (C-T2-10)."""
+    tanim_hazirla(cur)
+    cur.execute("""SELECT DISTINCT ON (personel_id) personel_id, maas, yemek, saatlik, yol, degistiren FROM ey_personel_ucret
+                    WHERE gecerli_ay <= %s ORDER BY personel_id, gecerli_ay DESC""", (ay,))
+    return {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
+
+
+def toptanci_yoksa_ac(cur, tid: str, ad: Optional[str], kaynak: str) -> None:
+    """PUBLIC (Toptancı teslimi): eski sistemde sonradan açılmış toptancı Evvel Yeni'de yoksa tanımını aç (teslim görünmez kalmasın).
+    Tablo Tanımlar'ın — Toptancı modülü kendisi INSERT atmaz (F#32). Panel bunu ÇAĞIRMAZ (panel toptancı açmaz)."""
+    tanim_hazirla(cur)
+    cur.execute("""INSERT INTO ey_toptanci (id, ad, kaynak, degistiren) VALUES (%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING""",
+                (str(tid), ad or str(tid), kaynak, f"{kaynak} ile açıldı"))
+
+
+def kartlar(cur) -> List[dict]:
+    """PUBLIC (Kart modülü): aktif kartlar, ortak limit grubuna göre sıralı (grupsuzlar sonda)."""
+    tanim_hazirla(cur)
+    cur.execute("SELECT * FROM ey_kart WHERE aktif ORDER BY limit_grup NULLS LAST, ad")
+    return [dict(r) for r in cur.fetchall() or []]
+
+
 def subeler(cur, hepsi: bool = False):
     tanim_hazirla(cur)
     cur.execute(f"SELECT id, ad, pos_oran, online_oran, aktif, depo FROM ey_sube {'' if hepsi else 'WHERE aktif'} ORDER BY ad")

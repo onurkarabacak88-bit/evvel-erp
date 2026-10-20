@@ -306,6 +306,30 @@ def bugun_girenler(cur, sube_id: str, gun: Optional[date] = None) -> list:
     return out
 
 
+def son_yoklama_gunu(cur, personel_id: str) -> Optional[date]:
+    """PUBLIC (Maaş › işten çıkış): kişinin QR'la girdiği SON iş günü (yoksa None)."""
+    cur.execute("SELECT to_regclass('ey_yoklama') IS NOT NULL AS v")
+    if not dict(cur.fetchone())["v"]:
+        return None
+    cur.execute("SELECT MAX(is_gunu) AS t FROM ey_yoklama WHERE personel_id=%s", (str(personel_id),))
+    return (dict(cur.fetchone() or {}) or {}).get("t")
+
+
+def tablet_kayitli(cur, sube_id: str) -> bool:
+    """PUBLIC (panel durumu): şubeye bağlı aktif tablet/PC var mı."""
+    cur.execute("SELECT 1 FROM ey_cihaz WHERE sube_id=%s AND tur='tablet' AND durum='aktif' LIMIT 1", (str(sube_id),))
+    return cur.fetchone() is not None
+
+
+def devir_tamamlanmadi(cur, sube_id: str, gun) -> bool:
+    """PUBLIC (kapanış uyarısı) — SALT OKUMA (Codex P2-5: UPDATE'li devir_durum kilit almasın): devreden onayladı ama devralan
+    onaylamadı, ya da son 30 dakikada başlatılmış/dolduruluyor."""
+    cur.execute("""SELECT 1 FROM ey_devir WHERE sube_id=%s AND is_gunu=%s AND (durum='devreden_onayladi'
+                     OR (durum IN ('baslatildi','dolduruluyor') AND COALESCE(ustlen_ts, panel_ts) > NOW() - INTERVAL '30 minutes'))
+                   LIMIT 1""", (str(sube_id), gun))
+    return cur.fetchone() is not None
+
+
 def acik_mi(cur, sube_id: str, personel_id: str) -> bool:
     """PUBLIC: kişinin bu şubede BUGÜN açık (çıkış yapılmamış) girişi var mı (panel ad listesi / kapısı). Dünün açığı sayılmaz."""
     yoklama_hazirla()

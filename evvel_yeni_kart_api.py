@@ -35,8 +35,8 @@ def kart_hazirla(cur) -> None:
     global _HAZIR
     if _HAZIR:
         return
-    from evvel_yeni_tanim_api import tanim_hazirla
-    tanim_hazirla(cur)
+    from evvel_yeni_tanim_api import kartlar as _kartlar, tanim_hazirla
+    tanim_hazirla(cur)   # eski kart limit/kesim kopyası da orada (ey_kart Tanımlar'ın — F#31)
     # kart kolonları Tanımlar'da tanımlı (tek şema sahibi — Dalga 3)
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_kart_teyit (
         id TEXT PRIMARY KEY, kart_id TEXT NOT NULL, tarih DATE NOT NULL,
@@ -44,22 +44,14 @@ def kart_hazirla(cur) -> None:
         sistem_beklenen BIGINT, kaynak TEXT NOT NULL DEFAULT 'elle', not_ TEXT,
         girilen TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     try:
-        with savepoint(cur, "sp_ey_kart_es"):
-            cur.execute("""UPDATE ey_kart e SET limit_tutar = COALESCE(e.limit_tutar, ROUND(k.limit_tutar*100)::bigint),
-                                  kesim_gunu = COALESCE(e.kesim_gunu, k.kesim_gunu), son_odeme_gunu = COALESCE(e.son_odeme_gunu, k.son_odeme_gunu),
-                                  limit_grup = COALESCE(e.limit_grup, k.ortak_limit_grup)
-                             FROM kartlar k WHERE k.id::text = e.id""")
-    except Exception:  # noqa: BLE001
-        pass
-    try:
         with savepoint(cur, "sp_ey_kart_cipa"):
-            cur.execute("""SELECT e.id, e.limit_tutar, d.kesim_tarihi, d.son_odeme_tarihi, d.donem_borcu, d.kullanilabilir_limit
-                             FROM ey_kart e
-                             JOIN LATERAL (SELECT * FROM kart_ekstre_donem x WHERE x.kart_id = e.id
-                                            ORDER BY x.donem DESC, x.olusturma DESC LIMIT 1) d ON TRUE
-                            WHERE NOT EXISTS (SELECT 1 FROM ey_kart_teyit t WHERE t.kart_id = e.id)""")
+            cur.execute("SELECT DISTINCT kart_id FROM ey_kart_teyit")
+            teyitli = {dict(x)["kart_id"] for x in cur.fetchall() or []}
+            limit = {k["id"]: k.get("limit_tutar") for k in _kartlar(cur) if k["id"] not in teyitli}
+            cur.execute("""SELECT DISTINCT ON (kart_id) kart_id::text AS id, kesim_tarihi, son_odeme_tarihi, donem_borcu, kullanilabilir_limit
+                             FROM kart_ekstre_donem WHERE kart_id::text = ANY(%s) ORDER BY kart_id, donem DESC, olusturma DESC""", (list(limit),))
             for r in cur.fetchall() or []:
-                r = dict(r)
+                r = {**dict(r), "limit_tutar": limit.get(dict(r)["id"])}
                 borc = _kurus(r["donem_borcu"] or 0)
                 if r["kullanilabilir_limit"] is not None:
                     kul, not_ = _kurus(r["kullanilabilir_limit"]), "tahmini başlangıç (eski sistemin son ekstresi) — bankadaki rakamı gir"
@@ -134,8 +126,7 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
     """Her kart: çıpa + sonraki hareketler → şimdiki kullanılabilir; son ödeme ve kalan."""
     kart_hazirla(cur)
     bugun = bugun or _bugun()
-    cur.execute("SELECT * FROM ey_kart WHERE aktif ORDER BY limit_grup NULLS LAST, ad")
-    kartlar = [dict(r) for r in cur.fetchall() or []]
+    kartlar = __import__("evvel_yeni_tanim_api").kartlar(cur)   # Tanımlar'ın kapısı (F#31)
     cur.execute("SELECT * FROM ey_kart_teyit ORDER BY tarih DESC, zaman DESC")
     teyitler = {}
     for r in cur.fetchall() or []:
@@ -266,8 +257,7 @@ def kart_takvimi(yil: Optional[int] = None):
     import evvel_yeni_kasa_api as kasa
     with db() as (conn, cur):
         kart_hazirla(cur)
-        cur.execute("SELECT * FROM ey_kart WHERE aktif ORDER BY limit_grup NULLS LAST, ad")
-        kartlar = [dict(r) for r in cur.fetchall() or []]
+        kartlar = __import__("evvel_yeni_tanim_api").kartlar(cur)   # Tanımlar'ın kapısı (F#31)
         # Codex: aynı aya birden çok teyit → EN SON girilen kazanır (sıralı okuma); teyitteki gerçek son ödeme tarihi korunur
         cur.execute("""SELECT kart_id, ekstre_borc, son_odeme, tarih FROM ey_kart_teyit
                         WHERE ekstre_borc IS NOT NULL AND son_odeme IS NOT NULL ORDER BY tarih, zaman""")

@@ -622,8 +622,7 @@ def _devir_defteri_eski(ay: Optional[str] = None):
     ay_son = (ay_bas.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
     with db() as (conn, cur):
         subeler = _ey_subeler(cur)
-        cur.execute("SELECT id, ad FROM ey_personel")
-        pad = {dict(r)["id"]: dict(r)["ad"] for r in cur.fetchall() or []}
+        pad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_personel")   # Tanımlar'ın kapısı (F#31)
         ev = {}
         cur.execute("""SELECT sube_id::text AS sid, tarih, tip, kasa_sayim, teslim, devir, cevap_ts, personel_id, personel_ad, meta
                          FROM sube_operasyon_event

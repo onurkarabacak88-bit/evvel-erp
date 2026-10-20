@@ -415,6 +415,25 @@ def hareket_iptal(cur, *, bag: str, sebep: str) -> dict:
     return {"iptal": n, "sayimli": bool(kalan), "kalan": kalan}
 
 
+def hareketler(cur, *, turler, bas, son, hedefler=None, hedef_onek=None, kaynak_onek=None, urun_idler=None) -> List[dict]:
+    """PUBLIC — yeni evren stok hareketleri (iptaller hariç), is_gunu bas..son. Süzgeçler: hedefler (tam ad listesi), hedef_onek /
+    kaynak_onek (önek listesi, ör. ['depo:','bar:']), urun_idler. Gider ve Bar bu tabloya kendi SQL'iyle uzanıyordu (F#34/F#36)."""
+    kos, prm = ["yeni", "NOT iptal", "tur = ANY(%s)", "is_gunu BETWEEN %s AND %s"], [list(turler), bas, son]
+    if hedefler is not None:
+        kos.append("hedef = ANY(%s)")
+        prm.append(list(hedefler))
+    for alan, oner in (("hedef", hedef_onek), ("kaynak", kaynak_onek)):
+        if oner:
+            kos.append("(" + " OR ".join(f"{alan} LIKE %s" for _ in oner) + ")")
+            prm += [o.replace("%", r"\%").replace("_", r"\_") + "%" for o in oner]
+    if urun_idler is not None:
+        kos.append("urun_id = ANY(%s)")
+        prm.append([str(x) for x in urun_idler])
+    cur.execute(f"""SELECT tur, urun_id, urun_ad, adet, kaynak, hedef, is_gunu, olay_zaman, bag, kaynak_ref FROM ey_stok_hareket
+                     WHERE {' AND '.join(kos)}""", tuple(prm))
+    return [dict(x) for x in cur.fetchall() or []]
+
+
 def urun_hareketi_var(cur, urun_id: str) -> bool:
     """PUBLIC: ürünün YENİ evrende (ey_urun kimliğiyle) stok hareketi var mı — Ürün kataloğu birim kilidi bunu sorar."""
     depo_hazirla(cur)

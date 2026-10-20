@@ -319,8 +319,7 @@ def panel_durum(sube_id: str):
             yok["qr_gerekli"] = gun >= bas
             yok["girenler"] = y.bugun_girenler(cur, str(sube_id), gun)
             yok["son_okutanlar"] = y.son_okutanlar(cur, str(sube_id), 120)
-            cur.execute("SELECT 1 FROM ey_cihaz WHERE sube_id=%s AND tur='tablet' AND durum='aktif' LIMIT 1", (str(sube_id),))
-            yok["tablet_kayitli"] = bool(cur.fetchone())
+            yok["tablet_kayitli"] = y.tablet_kayitli(cur, str(sube_id))   # Yoklama'nın kapısı (F#26)
             yok["devir"] = y.devir_durum(cur, str(sube_id), gun)
             yok["kapanis_sorumlusu"] = y.kapanis_sorumlusu(cur, str(sube_id), gun)
             if yok["qr_gerekli"]:   # ad listesi = bu şubede QR'la girmiş olanlar (K11: başka şubenin personeli dahil)
@@ -337,9 +336,10 @@ def panel_durum(sube_id: str):
         if depo_acik:   # Basamak 5 (Fable F3/F6): gelen paketler (ADET YOK — kör sayım) + Tema depo bayrağı; yumuşak bağ
             try:
                 with savepoint(cur, "sp_panel_depo"):
-                    from evvel_yeni_depo_api import yoldakiler, _depo_sube
+                    from evvel_yeni_depo_api import yoldakiler
+                    from evvel_yeni_tanim_api import depo_sube_id   # depo bayrağı Tanımlar'ın PUBLIC'i (F#28 — Depo'nun özel fonksiyonu değil)
                     depo_yolda = yoldakiler(cur, str(sube_id))
-                    depo_mu = _depo_sube(cur) == str(sube_id)
+                    depo_mu = depo_sube_id(cur) == str(sube_id)
             except Exception:  # noqa: BLE001
                 log.warning("panel durum: depo okunamadı", exc_info=True)
     def _u(x):
@@ -598,10 +598,7 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
     y = _yoklama()
     if y is not None:
         try:
-            cur.execute("""SELECT 1 FROM ey_devir WHERE sube_id=%s AND is_gunu=%s AND (durum='devreden_onayladi'
-                             OR (durum IN ('baslatildi','dolduruluyor') AND COALESCE(ustlen_ts, panel_ts) > NOW() - INTERVAL '30 minutes'))
-                           LIMIT 1""", (str(sube_id), gun))   # Codex P2-5: salt okuma (UPDATE'li devir_durum kilit almasın)
-            if cur.fetchone():
+            if y.devir_tamamlanmadi(cur, str(sube_id), gun):   # Yoklama'nın kapısı (F#26)
                 u.append("Kasa devri tamamlanmadı")
             s = y.kapanis_sorumlusu(cur, str(sube_id), gun)
             if s:
@@ -1129,11 +1126,10 @@ def teslim_al(sube_id: str, b: TeslimAlBody):
         _gun_acik_mi(cur, c, sube_id)   # eski: gün kapalıyken teslim alınmaz (merkez girer)
         p = _personel(cur, sube_id, b.personel_id)
         _pin(cur, p, b.pin)
-        cur.execute("SELECT id, ad FROM ey_toptanci WHERE id=%s AND aktif", (str(b.toptanci_id),))
-        t = cur.fetchone()
-        if not t:   # Fable: panel toptancı AÇMAZ (çift kimlik — eski hastalık)
+        from evvel_yeni_tanim_api import tanim_oku   # toptancı tablosu Tanımlar'ın (F#27)
+        t = tanim_oku(cur, "ey_toptanci", b.toptanci_id, ("ad", "aktif"))
+        if not t or not t["aktif"]:   # Fable: panel toptancı AÇMAZ (çift kimlik — eski hastalık)
             raise HTTPException(400, "Toptancı listede yok — merkeze haber ver")
-        t = dict(t)
         k = _kalemler(cur, b.kalemler, pasif_olur=True)
         if b.fatura_geldi is None:
             raise HTTPException(400, "🧾 Fatura geldi mi? — EVET ya da HAYIR seç")
@@ -1474,8 +1470,7 @@ async def onay_ozet_telefon(oid: str, request: Request):
             c = y.cihaz_coz(cur, request.headers, "GET", request.url.path, b"", tur="telefon")
             p = y.personel_oku(cur, c["personel_id"])
             o = _onay_oku(cur, oid)
-            cur.execute("SELECT ad FROM ey_sube WHERE id=%s", (o["sube_id"],))
-            sube_ad = dict(cur.fetchone() or {}).get("ad")
+            sube_ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube", [o["sube_id"]]).get(str(o["sube_id"]))   # F#27
         return {"tur": o["tur"], "ad": ONAY_TURLERI.get(o["tur"], (None, None, o["tur"]))[2], "ozet": o["ozet"], "sube": o["sube_id"],
                 "sube_ad": sube_ad, "kisi": p["ad"], "durum": "sure_doldu" if o["durum"] in ("bekliyor", "hata") and o["gecti"] else o["durum"],
                 "mesaj": o["mesaj"]}

@@ -103,15 +103,17 @@ def _yeni_talepler(cur, acik: bool = True) -> list:
     cur.execute("SELECT to_regclass('ey_avans_talep') IS NOT NULL AS v")
     if not dict(cur.fetchone()).get("v"):
         return []
-    from evvel_yeni_tanim_api import subeler
-    cur.execute(f"""SELECT a.*, p.ad FROM ey_avans_talep a LEFT JOIN ey_personel p ON p.id = a.personel_id
+    from evvel_yeni_tanim_api import adlar, subeler   # personel / şube adı Tanımlar'ın kapısından (C-T2-11)
+    cur.execute(f"""SELECT a.* FROM ey_avans_talep a
                      WHERE {"a.durum IN ('talep','onaylandi')" if acik else "a.durum IN ('reddedildi','kapatildi') AND a.talep_ts >= NOW() - INTERVAL '60 days'"}
                      ORDER BY a.talep_ts""")
+    rows = [dict(x) for x in cur.fetchall() or []]
     sad = {x["id"]: x["ad"] for x in subeler(cur, hepsi=True)}
-    return [{"id": r["id"], "personel_id": r["personel_id"], "ad": r.get("ad") or "—", "tutar": int(r["tutar"]) / 100, "durum": r["durum"],
+    pad = adlar(cur, "ey_personel", {r["personel_id"] for r in rows})
+    return [{"id": r["id"], "personel_id": r["personel_id"], "ad": pad.get(str(r["personel_id"])) or "—", "tutar": int(r["tutar"]) / 100, "durum": r["durum"],
              "yontem": r.get("yontem"), "sube": sad.get(r.get("sube_id")), "sube_id": r.get("sube_id"), "donem": r["donem"],
              "talep": str(r["talep_ts"])[:16], "onay": str(r.get("karar_ts") or "")[:16], "not": r.get("not_") or r.get("karar_not"),
-             "yeni": True} for r in [dict(x) for x in cur.fetchall() or []]]
+             "yeni": True} for r in rows]
 
 
 def elden_bekleyen(cur, sube_id: str) -> list:
@@ -132,8 +134,8 @@ def elden_teslim_yaz(cur, *, talep_id: str, sube_id: str, kim: str, gun: date) -
         return {"tekrar": True}
     if t["durum"] != "onaylandi" or t.get("yontem") != "elden" or t.get("sube_id") != str(sube_id):
         raise HTTPException(409, "Bu avans bu şubeden elden verilecek değil — sayfayı yenile")
-    cur.execute("SELECT ad FROM ey_personel WHERE id=%s", (t["personel_id"],))
-    pad = dict(cur.fetchone() or {}).get("ad")
+    from evvel_yeni_tanim_api import adlar
+    pad = adlar(cur, "ey_personel", [t["personel_id"]]).get(str(t["personel_id"]))
     ref = f"avans:{talep_id}"
     sube_avansi_yaz(cur, sube_id=str(sube_id), gun=gun.isoformat(), tutar=int(t["tutar"]), personel_id=t["personel_id"], personel_ad=pad,
                     ait_ay=t["donem"], kim=kim, kaynak_ref=ref)

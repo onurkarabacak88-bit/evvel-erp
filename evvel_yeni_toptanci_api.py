@@ -333,14 +333,24 @@ def son_toptancilar(cur, urun_idler: List[str]) -> dict:
     return {dict(r)["u"]: str(dict(r)["t"]) for r in cur.fetchall() or []}
 
 
+def iptal_teslim_refleri(cur, bas: date, son: date, onek: str = "panel:teslim:") -> set:
+    """PUBLIC (Gider): iptal edilmiş teslimlerin kaynak_ref'leri (tarih bas..son, önekli). Tablo yoksa boş."""
+    cur.execute("SELECT to_regclass('ey_toptanci_teslim') IS NOT NULL AS v")
+    if not dict(cur.fetchone())["v"]:
+        return set()
+    cur.execute("SELECT kaynak_ref FROM ey_toptanci_teslim WHERE iptal AND kaynak_ref LIKE %s AND tarih BETWEEN %s AND %s",
+                (onek.replace("%", r"\%").replace("_", r"\_") + "%", bas, son))
+    return {dict(r)["kaynak_ref"] for r in cur.fetchall() or []}
+
+
 def teslim_yaz(cur, *, kaynak_ref: str, toptanci_id: str, toptanci_ad: str, sube_id: Optional[str], gun: date,
                kalemler: List[dict], fatura_geldi: Optional[bool], kesin_tutar: Optional[int], fatura_no: Optional[str],
                teslim_alan: Optional[str], aciklama: Optional[str] = None, kesin_kaynak: str = "şube") -> Optional[str]:
     """Panel ya da merkez teslimi → tek kayıt (kaynak_ref ile bir kez)."""
     toptanci_hazirla(cur)
     # Fable: eski sistemde sonradan açılan toptancı Evvel Yeni'de yoksa teslim görünmezdi → tanımı kendiliğinden aç
-    cur.execute("""INSERT INTO ey_toptanci (id, ad, kaynak, degistiren) VALUES (%s,%s,'panel teslimi','panel teslimiyle açıldı')
-                   ON CONFLICT (id) DO NOTHING""", (str(toptanci_id), toptanci_ad or str(toptanci_id)))
+    from evvel_yeni_tanim_api import toptanci_yoksa_ac   # toptancı tablosu Tanımlar'ın (F#32)
+    toptanci_yoksa_ac(cur, toptanci_id, toptanci_ad, "panel teslimi")
     satir, tahmini, eksik = _tahmin(cur, toptanci_id, kalemler, gun)
     tid = "tt-" + uuid.uuid4().hex[:12]
     cur.execute("""INSERT INTO ey_toptanci_teslim (id, kaynak_ref, toptanci_id, toptanci_ad, sube_id, tarih, kalemler, tahmini, fiyat_eksik,
@@ -383,8 +393,8 @@ def panel_teslim_iptal(cur, defter_id, sebep: str) -> None:
 
 def _hesap(cur, bugun: date):
     toptanci_hazirla(cur)
-    cur.execute("SELECT id, ad, kategori, telefon, acilis_bakiye, aktif, vade_gun FROM ey_toptanci ORDER BY ad")
-    tlar = [dict(r) for r in cur.fetchall() or []]
+    from evvel_yeni_tanim_api import tanim_listesi   # Tanımlar'ın kapısı (F#32)
+    tlar = tanim_listesi(cur, "ey_toptanci", ("ad", "kategori", "telefon", "acilis_bakiye", "aktif", "vade_gun"))
     belge_say = {}
     if _var(cur, "ey_toptanci_belge"):   # canlı 503 dersi: belge tablosu henüz yoksa Toptancılar yine AÇILIR
         cur.execute("SELECT teslim_id, COUNT(*) AS n FROM ey_toptanci_belge WHERE NOT iptal GROUP BY teslim_id")
@@ -556,8 +566,7 @@ def merkez_teslim(body: TeslimBody, x_evvel_oturum: Optional[str] = Header(defau
     _hazirla()
     with db() as (conn, cur):
         toptanci_hazirla(cur)
-        cur.execute("SELECT ad FROM ey_toptanci WHERE id=%s", (body.toptanci_id,))
-        r = cur.fetchone()
+        r = __import__("evvel_yeni_tanim_api").tanim_oku(cur, "ey_toptanci", body.toptanci_id, ("ad",))   # F#32
         if not r:
             raise HTTPException(404, "Toptancı bulunamadı")
         if t:
@@ -838,11 +847,11 @@ def _fiyatlar_yeni(cur) -> dict:
     idler = [str(u["id"]) for k in kat for u in k["urunler"]]
     cur.execute("SELECT urun_id, birim, girilen, zaman FROM ey_urun_fiyat WHERE urun_id = ANY(%s)", (idler,))
     elle = {dict(r)["urun_id"]: dict(r) for r in cur.fetchall() or []}
-    cur.execute("""SELECT f.urun_anahtar, f.birim, f.tarih, t.ad FROM ey_toptanci_fiyat f LEFT JOIN ey_toptanci t ON t.id = f.toptanci_id
-                    WHERE f.urun_anahtar = ANY(%s)""", (idler,))
+    tad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_toptanci")   # toptancı adı Tanımlar'dan (F#32)
+    cur.execute("SELECT f.urun_anahtar, f.birim, f.tarih, f.toptanci_id FROM ey_toptanci_fiyat f WHERE f.urun_anahtar = ANY(%s)", (idler,))
     top_f = {}
     for r in cur.fetchall() or []:
-        r = dict(r)
+        r = {**dict(r), "ad": tad.get(str(dict(r)["toptanci_id"]))}
         top_f.setdefault(r["urun_anahtar"], []).append({"toptanci": r["ad"], "birim": _tl_sayi(int(r["birim"])), "tarih": r["tarih"].isoformat()})
     out = []
     for k in kat:
@@ -901,10 +910,11 @@ def urun_fiyatlari(evren: Optional[str] = None):
             log.warning("ürün fiyatları: alış fiyatı okunamadı: %s", str(e)[:150])
         cur.execute("SELECT urun_id, birim, girilen, zaman FROM ey_urun_fiyat")
         elle = {dict(r)["urun_id"]: dict(r) for r in cur.fetchall() or []}
-        cur.execute("""SELECT f.urun_anahtar, f.birim, f.tarih, t.ad FROM ey_toptanci_fiyat f LEFT JOIN ey_toptanci t ON t.id = f.toptanci_id""")
+        tad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_toptanci")   # toptancı adı Tanımlar'dan (F#32)
+        cur.execute("SELECT f.urun_anahtar, f.birim, f.tarih, f.toptanci_id FROM ey_toptanci_fiyat f")
         top_f = {}
         for r in cur.fetchall() or []:
-            r = dict(r)
+            r = {**dict(r), "ad": tad.get(str(dict(r)["toptanci_id"]))}
             top_f.setdefault(r["urun_anahtar"], []).append({"toptanci": r["ad"], "birim": _tl_sayi(int(r["birim"])), "tarih": r["tarih"].isoformat()})
     out = []
     for k in kats:
