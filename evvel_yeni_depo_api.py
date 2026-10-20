@@ -1068,6 +1068,28 @@ def yoldakiler(cur, hedef_sube: str) -> list:
     return out
 
 
+def sevk_kalem_durumlari(cur, baglar: List[str]) -> dict:
+    """PUBLIC — sevk kalemi durumu TEK hesap (merkez 'Son paketler' + Sipariş takibi): {bag: {iptal, kabul (None = kabul yok), hasar, fazla}}.
+    iptal = paket merkezce geri alındı. Kabul = şubenin ya da merkez adına kabul satırı (iptal olmayan)."""
+    baglar = sorted({b for b in baglar or [] if str(b).startswith("sevk:")})
+    if not baglar or not _var_tablo(cur, "ey_sevk_parti"):
+        return {}
+    cur.execute("SELECT id, iptal FROM ey_sevk_parti WHERE id = ANY(%s)", (sorted({_parti_id(b) for b in baglar}),))
+    piptal = {dict(r)["id"]: dict(r)["iptal"] for r in cur.fetchall() or []}
+    cur.execute("""SELECT bag, tur, SUM(adet) AS a, COUNT(*) AS n FROM ey_stok_hareket WHERE NOT iptal AND bag = ANY(%s) GROUP BY bag, tur""",
+                (baglar,))
+    T = {}
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        T.setdefault(r["bag"], {})[r["tur"]] = (int(r["a"] or 0), int(r["n"] or 0))
+    out = {}
+    for b in baglar:
+        t = T.get(b, {})
+        out[b] = {"iptal": piptal.get(_parti_id(b), True), "kabul": t["kabul"][0] if t.get("kabul", (0, 0))[1] else None,
+                  "hasar": t.get("hasar", (0, 0))[0], "fazla": t.get("fazla_kabul", (0, 0))[0]}
+    return out
+
+
 class _Kuru(Exception):
     """1 Kasım öncesi merkez sevki DENEME: her şey yazılır, sonuç okunur, savepoint geri alınır."""
 
@@ -1136,12 +1158,7 @@ def sevkler(gun_sayisi: int = 14):
         cur.execute("""SELECT id, kaynak, hedef, kim, notu, is_gunu, kalemler, iptal, iptal_sebep, zaman FROM ey_sevk_parti
                         WHERE zaman > NOW() - make_interval(days => %s) ORDER BY zaman DESC LIMIT 200""", (max(1, min(gun_sayisi, 90)),))
         ps = [dict(r) for r in cur.fetchall() or []]
-        cur.execute("""SELECT bag, tur, SUM(adet) AS a FROM ey_stok_hareket WHERE NOT iptal AND bag LIKE 'sevk:%%'
-                        AND bag LIKE ANY(%s) GROUP BY bag, tur""", ([f"sevk:{p['id']}:%" for p in ps] or ["-"],))
-        T = {}
-        for r in cur.fetchall() or []:
-            r = dict(r)
-            T.setdefault(r["bag"], {})[r["tur"]] = int(r["a"] or 0)
+        T = sevk_kalem_durumlari(cur, [f"sevk:{p['id']}:{i}" for p in ps for i in range(len(p["kalemler"] or []))])
         from evvel_yeni_tanim_api import subeler as _ey_subeler
         ad = {s["id"]: s["ad"] for s in _ey_subeler(cur, hepsi=True)}
     out = []
@@ -1149,7 +1166,7 @@ def sevkler(gun_sayisi: int = 14):
         kal = []
         for i, k in enumerate(p["kalemler"] or []):
             t = T.get(f"sevk:{p['id']}:{i}", {})
-            kal.append({**k, "bag": f"sevk:{p['id']}:{i}", "kabul": t.get("kabul"), "hasar": t.get("hasar", 0), "fazla": t.get("fazla_kabul", 0)})
+            kal.append({**k, "bag": f"sevk:{p['id']}:{i}", "kabul": t.get("kabul"), "hasar": t.get("hasar", 0), "fazla": t.get("fazla", 0)})
         durum = "iptal" if p["iptal"] else ("kabul" if all(x["kabul"] is not None for x in kal) else
                                           ("kismi" if any(x["kabul"] is not None for x in kal) else "yolda"))
         out.append({"id": p["id"], "nereden": ad.get(p["kaynak"], p["kaynak"]), "nereye": ad.get(p["hedef"], p["hedef"]), "kim": p["kim"],

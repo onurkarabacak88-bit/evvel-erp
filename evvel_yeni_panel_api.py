@@ -288,7 +288,7 @@ def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez:
             if isle_deneme and not ctx["kuru"]:   # Codex: geç kapanış ile 'işlendi' işareti AYNI işlemde (yarıda kalmaz)
                 cur.execute("UPDATE ey_panel_deneme SET islendi=TRUE, isleyen=%s WHERE id=%s", (merkez, isle_deneme))
             sonuc = {"ok": True, "kuru": ctx["kuru"], **sonuc}
-            if ctx["kuru"]:
+            if ctx["kuru"] and not ctx.get("kalici"):   # sahip D2 (S5): stok yazmayan sipariş talebi/hazırlığı denemede de kalır
                 raise _Kuru(sonuc)
             return sonuc
     except _Kuru as k:
@@ -356,7 +356,7 @@ def panel_durum(sube_id: str):
             "kapanis_var": any(o["tur"] == "kapanis" and not o["iptal"] for o in bugunku),
             "kapanis_merkezde": _merkezde_mi(sube_id, gun),   # Fable B5: telefonsuz merkeze gönderildi (panel aynı geceyi yeniden doldurmasın)
             "fire_sebepleri": [{"kod": k, "ad": v} for k, v in FIRE_SEBEPLERI.items()],
-            "toptancilar": toptancilar, "toptanci_acik": _modul_acik("toptanci"),   # Basamak 8: Tedarikçiden teslim al (yumuşak bağ)
+            "toptancilar": toptancilar, "toptanci_acik": _modul_acik("toptanci"), "siparis_acik": _modul_acik("siparis"),   # Basamak 8: Tedarikçiden teslim al (yumuşak bağ)
             "saat": {"acilis": "%02d:%02d" % ACILIS_SAAT, "kapanis": "%02d:%02d" % KAPANIS_SAAT}}
 
 
@@ -896,6 +896,136 @@ def depodan_kabul(sube_id: str, b: DepoKabulBody):
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
 
+# ─────────────── BASAMAK 5 S5 · SİPARİŞ VER · TAKİP · GÖNDERİLECEK (sahip D1–D4, 2026-10-20) ───────────────
+# Kayıt Sipariş modülünün PUBLIC kapılarından (evvel_yeni_siparis_api); panel yalnız kimlik + iskelet. Modül kapalıysa 503 (yumuşak bağ).
+def _siparis():
+    if not _modul_acik("siparis"):
+        raise HTTPException(503, "Sipariş modülü kapalı — merkeze haber ver")
+    import evvel_yeni_siparis_api as s
+    return s
+
+
+class SiparisKalem(BaseModel):
+    urun_id: Optional[str] = None
+    ad: Optional[str] = None       # katalog dışı öneri (D4)
+    adet: int
+
+
+class SiparisBody(BaseModel):
+    istemci_gunu: Optional[str] = None
+    personel_id: str
+    pin: Optional[str] = None
+    kalemler: List[SiparisKalem]
+    notu: Optional[str] = None
+    istek_id: str
+
+
+@router.post("/{sube_id}/siparis")
+def siparis_ver(sube_id: str, b: SiparisBody):
+    """Sipariş ver (A2): gün AÇIK şart (A14). 1 Kasım öncesi talep GERÇEK yazılır, deneme işaretli (D2 — stok yok)."""
+    S = _siparis()
+
+    def is_(cur, c):
+        _gun_acik_mi(cur, c, sube_id)
+        p = _personel(cur, sube_id, b.personel_id)
+        _pin(cur, p, b.pin)
+        r = S.siparis_yaz(cur, sube_id=str(sube_id), kalemler=[x.model_dump() for x in b.kalemler], kim=f"{KIM} · {p['ad']}",
+                          personel_id=p["id"], istek_id=b.istek_id, notu=b.notu, deneme=c["kuru"], gun=c["gun"])
+        if not c["kuru"]:   # olay defteri yalnız gerçek dönemde (deneme siparişi okuyuculara karışmasın)
+            _olay(cur, sube_id=sube_id, tur="siparis", is_gunu=c["gun"], kok=f"panel:siparis:{sube_id}:{b.istek_id}", kaynak_tablo="panel",
+                  personel_id=p["id"], personel_ad=p["ad"], veri={"siparis_id": r["siparis_id"], "kalem": r["kalem"], "istek_id": b.istek_id})
+        c["kalici"] = True
+        return {"siparis_id": r["siparis_id"], "tekrar": r["tekrar"],
+                "mesaj": ("Bu sipariş zaten gönderilmişti ✓" if r["tekrar"] else f"🛒 Sipariş gönderildi — {r['kalem']} kalem")
+                + (" · 🧪 deneme (1 Kasım'a kadar sevk yapılmaz)" if c["kuru"] else "")}
+    return _calistir(sube_id, b.istek_id, is_, tur="siparis", govde=b.model_dump(mode="json"))
+
+
+@router.get("/{sube_id}/siparisler")
+def panel_siparisler(sube_id: str):
+    """Sipariş takip (A7, KÖR — sevk/kabul adedi yok) + Sipariş ver rozetleri (A2/A12, adetsiz) + Gönderilecek (yalnız merkez depo şubesi)
+    + Tedarikçi 'beklenen' kartları (A10)."""
+    S = _siparis()
+    with db() as (conn, cur):
+        S.siparis_hazirla(cur)
+        _sube(cur, sube_id)
+        from evvel_yeni_depo_api import _depo_sube
+        depo_mu = _depo_sube(cur) == str(sube_id)
+        return {"siparisler": S.subenin_siparisleri(cur, str(sube_id)), "rozet": S.bekleyen_urunler(cur, str(sube_id)),
+                "gonderilecek": S.gonderilecek(cur, str(sube_id)) if depo_mu else [], "depo": depo_mu,
+                "toptanci_beklenen": S.toptanci_beklenen(cur, str(sube_id))}
+
+
+class SiparisIptalBody(BaseModel):
+    istemci_gunu: Optional[str] = None
+    personel_id: str
+    pin: Optional[str] = None
+    istek_id: str
+
+
+@router.post("/{sube_id}/siparis/{sid}/iptal")
+def panel_siparis_iptal(sube_id: str, sid: str, b: SiparisIptalBody):
+    """Şube yalnız HİÇ yönlendirilmemiş kendi siparişini geri çeker (ad + PIN)."""
+    S = _siparis()
+
+    def is_(cur, c):
+        p = _personel(cur, sube_id, b.personel_id)
+        _pin(cur, p, b.pin)
+        S.siparis_hazirla(cur)
+        S._kilit(cur, sid)
+        S.siparis_iptal(cur, sid=sid, kim=f"{KIM} · {p['ad']}", sebep="şube geri çekti", sube_id=str(sube_id))
+        c["kalici"] = True
+        return {"mesaj": "Sipariş geri çekildi"}
+    return _calistir(sube_id, b.istek_id, is_, tur="siparis_iptal", govde=b.model_dump(mode="json"))
+
+
+class GonderSatir(BaseModel):
+    yon_id: str
+    siparis_id: str
+    surum: Optional[int] = None
+    hazir: Optional[int] = None
+    gonderilen: Optional[int] = None
+
+
+class GonderBody(BaseModel):
+    istemci_gunu: Optional[str] = None
+    personel_id: str
+    pin: Optional[str] = None
+    hedef: str
+    satirlar: List[GonderSatir]
+    yola_cik: bool = False          # False = yalnız "Hazırlığı kaydet" (stok yazmaz)
+    istek_id: str
+
+
+@router.post("/{sube_id}/gonderilecek")
+def panel_gonderilecek(sube_id: str, b: GonderBody):
+    """Gönderilecek (A9, yalnız merkez depo şubesi): 'Hazırlığı kaydet' (stok yok, denemede de kalır) ya da '🚚 Yola çıkar'
+    (Depo sevk_yaz — 1 Kasım öncesi DENEME, geri alınır). Gün kapalıyken de açık (D7). Kısmi → kalan yönlendirilmemişe döner."""
+    S = _siparis()
+
+    def is_(cur, c):
+        from evvel_yeni_depo_api import _depo_sube
+        if _depo_sube(cur) != str(sube_id):
+            raise HTTPException(403, "Gönderilecek yalnız merkez depo şubesinde")
+        p = _personel(cur, sube_id, b.personel_id)
+        _pin(cur, p, b.pin)
+        kim = f"{KIM} · {p['ad']}"
+        if not b.yola_cik:
+            n = S.hazirlik_yaz(cur, depo_sube=str(sube_id), satirlar=[x.model_dump() for x in b.satirlar])
+            c["kalici"] = True
+            return {"mesaj": f"Hazırlık kaydedildi ({n} kalem)"}
+        if any(x.gonderilen is None for x in b.satirlar):
+            raise HTTPException(400, "Her kalem için VAR / KISMİ / YOK seç")
+        r = S.yola_cikar(cur, depo_sube=str(sube_id), hedef_sube=b.hedef, kim=kim, istek_id=b.istek_id,
+                         satirlar=[{"yon_id": x.yon_id, "siparis_id": x.siparis_id, "surum": x.surum, "gonderilen": x.gonderilen} for x in b.satirlar])
+        _olay(cur, sube_id=sube_id, tur="sevk_cikis", is_gunu=c["gun"], kok=f"panel:sevk:{sube_id}:{b.istek_id}", kaynak_tablo="panel",
+              personel_id=p["id"], personel_ad=p["ad"], veri={"hedef": b.hedef, "parti_id": r.get("parti_id"), "istek_id": b.istek_id})
+        return {"parti_id": r.get("parti_id"), "mesaj": (f"🚚 {r['kalem']} ürün yola çıktı" if r.get("kalem") else "Gönderilen ürün yok")
+                + (f" · {r['yok']} kalem YOK — merkez yeniden karar verecek" if r.get("yok") else "")
+                + (f" · {r['kismi']} kalem kısmi — kalanı merkeze döndü" if r.get("kismi") else "")}
+    return _calistir(sube_id, b.istek_id, is_, tur="gonderilecek", govde=b.model_dump(mode="json"))
+
+
 # ─────────────── BASAMAK 8 · TEDARİKÇİDEN TESLİM AL (sahip onayı 2026-10-19; PANEL_YENIDEN_KURULUM.md "BASAMAK 8") ───────────────
 # TEK teslim kapısı (Tema = merkez depo da). Var olan Toptancı kurgusu ESAS: teslim_yaz (TEK KAYIT = TESLİM, borç teslimde) +
 # Depo 'giris' (dışarı:toptanci → depo:şube) TEK işlemde. Toptancı kendiliğinden açılmaz; fiyat şube tutarından öğrenilmez (E5).
@@ -910,6 +1040,7 @@ class TeslimAlBody(BaseModel):
     fatura_no: Optional[str] = None
     aciklama: Optional[str] = None
     koli: Optional[dict] = None           # yalnız iz: {urun_id: {koli, koli_ici, tek}} (hesap ekranda)
+    siparis_yon: Optional[List[str]] = None   # S5 (A10): seçilen "beklenen toptancı siparişi" kart satırları
     istek_id: str
 
 
@@ -963,6 +1094,11 @@ def teslim_al(sube_id: str, b: TeslimAlBody):
                 hareket_yaz(cur, kaynak_ref=f"{kok}:{i}", tur="giris", urun_id=x["urun_id"], urun_ad=x["ad"], adet=x["adet"],
                             kaynak="dışarı:toptanci", hedef=f"depo:{sube_id}", kim=f"{KIM} · {p['ad']}", bag=kok, gun=c["gun"],
                             aciklama=f"{t['ad']} teslimi")
+            if b.siparis_yon and tid:
+                if not _modul_acik("siparis"):
+                    raise HTTPException(503, "Sipariş modülü kapalı — kart seçmeden teslim al ya da merkeze haber ver")
+                from evvel_yeni_siparis_api import teslime_bagla
+                teslime_bagla(cur, sube_id=str(sube_id), teslim_id=tid, toptanci_id=t["id"], yon_idler=b.siparis_yon)
         return {"olay": oid, "teslim_id": tid, "tekrar": oid is None, "toptanci": t["ad"],
                 "mesaj": f"✅ {t['ad']} teslimi kaydedildi — {len(k)} kalem / {sum(x['adet'] for x in k)} adet"}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))

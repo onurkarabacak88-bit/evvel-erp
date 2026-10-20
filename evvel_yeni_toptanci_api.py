@@ -301,6 +301,33 @@ def guncel_fiyat(cur, urun_id: str, gun: Optional[date] = None) -> Optional[int]
     return f["kurus"] if f else None
 
 
+def teslim_kalemleri(cur, teslim_idler: List[str]) -> dict:
+    """PUBLIC (Sipariş takibi): {teslim_id: {urun_id: adet}} — iptal edilmiş teslim dönmez."""
+    idler = sorted({str(x) for x in teslim_idler or [] if x})
+    if not idler or not _var(cur, "ey_toptanci_teslim"):
+        return {}
+    cur.execute("SELECT id, kalemler FROM ey_toptanci_teslim WHERE id = ANY(%s) AND NOT iptal", (idler,))
+    out = {}
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        ks = r["kalemler"] if isinstance(r["kalemler"], list) else json.loads(r["kalemler"] or "[]")
+        d = out.setdefault(r["id"], {})
+        for k in ks:
+            d[str(k.get("urun_id"))] = d.get(str(k.get("urun_id")), 0) + int(k.get("adet") or 0)
+    return out
+
+
+def son_toptancilar(cur, urun_idler: List[str]) -> dict:
+    """PUBLIC (Sipariş 'varsayılanları uygula'): {urun_id: toptanci_id} — ürünün EN SON teslim edildiği (iptal olmayan) toptancı."""
+    idler = sorted({str(x) for x in urun_idler or [] if x})
+    if not idler or not _var(cur, "ey_toptanci_teslim"):
+        return {}
+    cur.execute("""SELECT DISTINCT ON (k->>'urun_id') k->>'urun_id' AS u, t.toptanci_id AS t
+                     FROM ey_toptanci_teslim t, jsonb_array_elements(t.kalemler) k
+                    WHERE NOT t.iptal AND k->>'urun_id' = ANY(%s) ORDER BY k->>'urun_id', t.tarih DESC, t.zaman DESC""", (idler,))
+    return {dict(r)["u"]: str(dict(r)["t"]) for r in cur.fetchall() or []}
+
+
 def teslim_yaz(cur, *, kaynak_ref: str, toptanci_id: str, toptanci_ad: str, sube_id: Optional[str], gun: date,
                kalemler: List[dict], fatura_geldi: Optional[bool], kesin_tutar: Optional[int], fatura_no: Optional[str],
                teslim_alan: Optional[str], aciklama: Optional[str] = None, kesin_kaynak: str = "şube") -> Optional[str]:
