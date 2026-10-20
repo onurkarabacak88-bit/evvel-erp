@@ -58,11 +58,12 @@ def _gunluk(ay: str) -> dict:
         for s in b["subeler"]:
             for g in s["gunler"]:
                 k = {(x.get("anahtar") or x["kod"]): x for x in g["kalemler"]}   # yeni dönem: kod=ürün kimliği, anahtar=anlam
-                if any(c not in k for c in BARDAKLAR):   # Fable: yeni dönemde bardak kalemi katalogda yoksa 500 olmasın
+                bt = [c for c in BARDAKLAR if c in k]   # E2E #17: katalogda OLAN bardak türleriyle hesapla (üçü birden şart değil)
+                if not bt:   # Fable: yeni dönemde bardak kalemi katalogda yoksa 500 olmasın
                     out[(s["sube_id"], g["gun"])] = {"bardak": 0, "neden": "bardak kalemi katalogda yok (panelde sayılır işaretli değil)",
                                                      "sayim_var": bool(g.get("acilis_var") or g.get("kapanis_var")), "bardak_kalem": {}}
                     continue
-                nets = [k[c]["net_eksilme"] for c in BARDAKLAR]
+                nets = [k[c]["net_eksilme"] for c in bt]
                 neden = None
                 if g["durum"] in ("kapanis_yok", "acilis_yok"):
                     neden = "sayım yok"
@@ -70,11 +71,12 @@ def _gunluk(ay: str) -> dict:
                     neden = "bardak sayılmamış"
                 elif any(n < 0 for n in nets):
                     neden = "ürün aç eksik (bardak eksiye düştü)"
-                elif any(abs(k[c]["devir_fark"] or 0) > DEVIR_SINIR for c in BARDAKLAR):
+                elif any(abs(k[c]["devir_fark"] or 0) > DEVIR_SINIR for c in bt):
                     neden = "bardak devir farkı büyük (dün akşam ≠ bu sabah)"
                 out[(s["sube_id"], g["gun"])] = {"bardak": sum(n for n in nets if n is not None and n > 0), "neden": neden,
                                                  "sayim_var": bool(g.get("acilis_var") or g.get("kapanis_var")),
-                                                 "bardak_kalem": {c: k[c]["net_eksilme"] for c in BARDAKLAR}}
+                                                 "bardak_kalem": {c: k[c]["net_eksilme"] for c in bt},
+                                                 "eksik_bardak_turu": [c for c in BARDAKLAR if c not in k]}
     _hazirla()
     with db() as (conn, cur):
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
@@ -255,7 +257,7 @@ def _mut_veri_yeni(cur, gun: str) -> dict:
     dun = g - timedelta(days=1)
     out = {}
     tl = _kr_tl
-    for o in _panel_olaylari(cur, dun, g, {"acilis", "kapanis", "teslim"}):
+    for o in _panel_olaylari(cur, dun, g, {"acilis", "kapanis", "teslim", "ara_sayim"}):
         v = o["v"]
         x = out.setdefault(str(o["sube_id"]), mut_bos())
         x["kor_ara_dahil"] = False   # yeni kapanış: kör sayım ara teslim GİTTİKTEN sonra çekmecede kalan → ara düşülmez
@@ -272,6 +274,9 @@ def _mut_veri_yeni(cur, gun: str) -> dict:
             x["devir"] = tl(v.get("birakilan"))
         elif o["tur"] == "teslim":
             x["ara_teslimler"].append({"tutar": tl(v.get("tutar")) or 0.0, "alan": v.get("alan"), "eden": o.get("personel_ad")})
+        elif o["tur"] == "ara_sayim":   # ⏱ panel ara sayımı (A1 iki sınır) — gün başına tek kök; iptal sonrası yeni sürüm gelirse SON kazanır
+            x["ara_sayim"] = {"sayilan": tl(v.get("sayilan")), "taban": tl(v.get("taban")) if v.get("taban") is not None else None,
+                              "kim": o.get("personel_ad"), "saat": str(v.get("yapilma") or "")[11:16]}
     from evvel_yeni_kasa_api import cekmece_cikislari
     for c in cekmece_cikislari(cur, gun):
         out.setdefault(c["sube_id"], {**mut_bos(), "kor_ara_dahil": False})["giderler"].append({"tutar": c["tutar"], "ad": c["ad"], "kim": c["kim"], "bekliyor": False})
@@ -302,6 +307,20 @@ def mutabakat_hesapla(x: dict) -> dict:
     # Sayılan, bırakılan tutara eşit ve teslim varsa: sayım teslimden SONRA yapılmış — sağlama yapılamaz (sahte açık gösterme)
     x["kor_belirsiz"] = bool(x.get("kor_sayim") is not None and tes > 0 and (
         (x.get("devir") is not None and abs(x["kor_sayim"] - x["devir"]) < 1) or x["kor_sayim"] < tes))
+    # ⏱ ARA SAYIM — iki sınır (gün ortasında 'beklenen' hesaplanamaz; Fable + Codex 21 Eki, sahip A1):
+    #   1) sayılan ≥ taban (sabah sayımı − o ana kadar çekmece çıkışı − ara teslim) — altındaysa kasadan para çıkmış
+    #   2) kapanışta ara SONRASI nakit satış = nakit satış − (sayılan − taban) ≥ 0 — eksiyse ara sayım şişik ya da nakit eksik beyan
+    a = x.get("ara_sayim") or {}
+    x["ara_uyari"] = []
+    if a.get("taban") is not None and a.get("sayilan") is not None:
+        if a["sayilan"] < a["taban"] - 1:
+            x["ara_uyari"].append(f"Ara sayım ({a.get('saat') or '—'}, {a.get('kim') or '—'}): çekmece {a['sayilan']:,.2f} ₺ — sabah tabanının "
+                                  f"({a['taban']:,.2f} ₺) altında")
+        if x.get("z_nakit") is not None:
+            sonra = round(x["z_nakit"] - (a["sayilan"] - a["taban"]), 2)
+            x["ara_sonra_satis"] = sonra
+            if sonra < -1:
+                x["ara_uyari"].append(f"Ara sayımdan sonraki nakit satış eksi çıkıyor ({sonra:,.2f} ₺) — ara sayım şişik ya da kapanış nakdi eksik")
     return x
 
 

@@ -256,3 +256,25 @@ Sahip 20 Eki: pasta her şubeye DOĞRUDAN gelir → Sevk et'te pasta (gununde) s
 **Var mı (Fable, 14 eski işlev):** A1 katalog VAR (açık talep uyarısı türetilir) · A2 sipariş ver YOK → taşı, 409 çift sipariş yerine "⏳ bekliyor / 🚚 yolda" rozeti (adetsiz) · A3 kalem birleştirme ÇIKAR · A4 QR'lı PIN'siz ÇIKAR · A5 katalog dışı → talepte öneri · A6 bekleyen bandı türetilir, "merkez tek seferlik" ÇIKAR · A7 takip 4 adım (Talep→Yönlendirme→Sevk→Kabul) · A8 kabul VAR (Depodan gelen) · A9 Gönderilecek VAR/KISMİ/YOK + Yola çıkar → sevk_yaz · A10 toptancı "beklenen" kartları Tedarikçiden teslim al'a · A11 merkez Yönlendirme (kontrol kulesi, WA ÇIKAR) · A12 çift sipariş = rozet · A13 bayat kilit = surum · A14 sipariş gün açık, takip/gönderilecek kapalıyken de.
 **Sahip kararları (20 Eki):** D1 aynı gün ikinci sipariş = AYRI talep · D2 1 Kasım öncesi talep + yönlendirme + hazırlık GERÇEK (stok yok), Yola çıkar/kabul DENEME; 31 Ekim deneme satırları iptal · D3 toptancıya MERKEZ iletir, panelde yalnız "beklenen" kartı · D4 katalog dışı = talepte öneri (merkez katalogda açıp bağlar / reddeder).
 **Mekanizma (Fable B):** 2 tablo `ey_siparis` (kalemler JSONB, surum, deneme) + `ey_siparis_yon` (kalem_i, kaynak depo:/toptanci:, adet, hazir, parti_id, teslim_id); durum türetilir · kısmi Yola çıkar → kalan yönlendirilmemişe döner (R1) · pasta yalnız toptancıya (R6) · bağsız teslim → Bekleyen işler sorusu, kendiliğinden bağ yok (R5) · Bekleyen işler yalnız 3 satır (katalog dışı öneri · eksik kalem · 24 saat yönlendirilmemiş) · tak-çıkar: Depo/Toptancı siparişi tanımaz.
+
+## BASAMAK 6 — FIRE (20 Eki · Fable mekanizma denetimi + sahip kararları) — kod 768b232, YAYINLANMADI
+| # | Karar |
+|---|---|
+| F1 | İadede müşteri telefonu **isteğe bağlı** (ad gibi); fiş no + iade saati zorunlu |
+| F2 | Sebep kartları sahip: "sen yeniden tasarla" → **8 kart** (Kırıldı/döküldü · Bozuldu/tarihi geçti · Müşteri iadesi · Hatalı hazırlık/deneme [alt: yanlış ürün / bardak değişti / deneme] · Personel kullanımı · İkram · Sayım düzeltmesi · Diğer ≥10). Sipariş iptali + Panel hatası kalktı. Her kartın ÖNERİLEN katalog grupları (kategori adı / bardaklar), altında bütün katalog + arama — sabit ürün kodu YOK |
+| F3 | Gider raporunda **iade AYRI satır** (`dışarı:iade`; etiketler Depo `FIRE_GIDER_ETIKET` — tek yer) |
+| F4 | Fire merkezde **Satış › Günlük döküm**'de; Bekleyen işler'e DÜŞMEZ |
+| F5 | (Fable) Fire maliyeti gidere giriyor — bulgu d yanlış alarm; tezgah firesi bardan (D-4), çift sayım yok; iade kasaya dokunmaz (eskide de) |
+| F6 | (Fable) Eski panel iade sebebini + yanlış ürün senaryosunu ATIYORDU → yenide olaya yazılır |
+| F2.faz | Fotoğraf · olay PII maskeleme kuralı (B7) · eski okuyucular (truth/duyu/reçete) anahtarla susturma (B14) |
+Yayın notu: panel dosyası modül modül yayında c27cb27'den KOPYALANMAZ — fark BİRLEŞTİRİLİR (fire değişikliği silinmesin).
+
+## ARA SAYIM — kurgu (21 Eki · Fable + Codex mekanizma denetimi + sahip kararları) — 19 Eki kararının REVİZYONU
+Fable + Codex ortak: gün ortasında 'beklenen kasa' HESAPLANAMAZ (nakit satış yalnız kapanışta); Kasa `sayim` aynı güne yazılırsa günü KİLİTLER (akşam kapanış 409), ertesi güne yazılırsa SAHTE açık fark. Eski KONTROL: rastgele saat yoktu (ilk sekme tıklamasında çıkıyordu), karşılaştırma yoktu, tablette PIN.
+| # | Karar |
+|---|---|
+| A1 | Kontrol = **iki sınır sağlaması**, ek giriş yok: (1) sayılan ≥ taban (sabah açılış sayımı − o ana kadar çekmece çıkışı − ara teslim); (2) kapanışta ara sonrası nakit satış = kapanış nakit − (sayılan − taban) eksi olamaz. Tutmazsa kapanış uyarısı (merkez, panele değil) |
+| A2 | Kasa'ya hareket **YOK** — yalnız olay `ara_sayim` + Satış mutabakatında satır; Açık farklar kirlenmez |
+| A3 | Pencere **açılış+60 dk … 20:30**; açılış 19:30'dan geç → o gün ara sayım yok (kayıt da yok) |
+| A4 | **Kasım 1. hafta**; 28–30 Ekim provasında 'Deneme: ara sayım iste' düğmesi |
+| A5 (öneri, itirazsız) | Saat açılışta sunucuda `secrets` ile bir kez seçilir, panele vakti gelene kadar dönmez · 15 dk kilit hem ekranda hem sunucuda (sık işlem uçları 409) · açık telefon onayı / devir varsa erteler (en geç 20:30) · telefon QR onayı mevcut onay akışı (ONAY_TURLERI'ne satır) · süre dolunca 'yapılmadı' + Bekleyen işler TEK satır · yeni tablo yok (`ey_panel_onay` tur='ara_sayim') · devir sonrası ikinci sayım YOK |

@@ -19,6 +19,8 @@ import re
 import uuid
 from datetime import date
 from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (E2E #10)
 from typing import List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -127,14 +129,46 @@ def _urunler(cur, idler: List[str], takip: Optional[str] = None, pasif_olur: boo
 
 ACILIS_SAAT = (7, 0)       # sahip D10: 07:00'den önce açılış ENGELLENİR (kişiye özel erken açılış izni hariç)
 KAPANIS_SAAT = (22, 30)    # sahip D10: 22:30'dan önce kapanış ENGELLENİR
-FIRE_SEBEPLERI = {         # sahip D9 — eski panelin sebep kartları (fire_bildirim.FIRE_SEBEP ile aynı anlam)
-    "iade": "Müşteri iadesi / bozuk ürün", "siparis_iptali": "Sipariş iptali", "skt_bozulma": "SKT / bozulma",
-    "kirilma_dokulme": "Kırılma / dökülme", "yanlis_urun": "Yanlış ürün / değişim", "hazirlik_deneme": "Hazırlık / deneme / eğitim",
-    "ikram": "İkram", "personel_kullanim": "Personel kullanımı", "sayim_hatasi": "Sayım hatası", "panel_hatasi": "Panel kullanım hatası",
-    "diger": "Diğer",
-}
-# fire DIŞI çıkışlar ayrı konuma gider (maliyet raporunda ayrı satır — sahip D9)
-FIRE_HEDEF = {"ikram": "dışarı:ikram", "personel_kullanim": "dışarı:personel", "sayim_hatasi": "dışarı:sayim", "panel_hatasi": "dışarı:sayim"}
+# 🔥 FIRE SEBEP KARTLARI — TEK yer (sahip 20 Eki: "burayı sen yeniden tasarlayabilirsin"; Fable fire denetimi). Eski 9 kart → 8:
+# 'Yanlış ürün' + 'Hazırlık/deneme' TEK kart (alt seçimle), 'Sipariş iptali' / 'Panel hatası' kalktı (eski ekranda kartı yoktu).
+# oneri = ürün adımında ÖNCE gösterilen katalog grupları (kategori adı; '__bardak__' = bardak işaretli ürünler) — sabit ürün kodu YOK
+# (eski 'fincan kahve' karosu depodan PAKET kahve düşürüyordu). Ekran bu listeyi /durum'dan okur.
+FIRE_SEBEP_LISTE = [
+    {"kod": "kirilma_dokulme", "ad": "Kırıldı / döküldü", "ikon": "💔", "oneri": ["__bardak__", "Sütler", "Şuruplar", "Soslar", "Püreler", "İçecekler"]},
+    {"kod": "skt_bozulma", "ad": "Bozuldu / tarihi geçti", "ikon": "🟡", "oneri": ["Pastalar", "Sütler", "Püreler", "Şuruplar", "İçecekler"]},
+    {"kod": "iade", "ad": "Müşteri iadesi", "ikon": "↩️", "oneri": ["Pastalar", "İçecekler", "__bardak__"]},
+    {"kod": "hazirlik_deneme", "ad": "Hatalı hazırlık / deneme", "ikon": "🔄", "oneri": ["__bardak__", "Kahveler", "Sütler", "Şuruplar"]},
+    {"kod": "personel_kullanim", "ad": "Personel kullanımı", "ikon": "👤", "oneri": ["İçecekler", "__bardak__", "Sütler", "Pastalar"]},
+    {"kod": "ikram", "ad": "İkram", "ikon": "🎁", "oneri": ["Pastalar", "İçecekler", "__bardak__"]},
+    {"kod": "sayim_hatasi", "ad": "Sayım düzeltmesi (eksik çıktı)", "ikon": "🔢", "oneri": [],
+     "not": "Yalnız eksiği düzeltir — fazla çıkanı merkez sayar. Gidere girmez."},
+    {"kod": "diger", "ad": "Diğer", "ikon": "❓", "oneri": [], "not": "Ne olduğunu en az 10 harfle yaz."},
+]
+FIRE_SEBEPLERI = {x["kod"]: x["ad"] for x in FIRE_SEBEP_LISTE}
+
+
+def _fire_sebepleri(kategoriler) -> list:
+    """Ekrana: öneri grupları kategori KİMLİĞİ olarak (Fable D6-S: adla eşleme katalogda ad değişince sessizce boşalıyordu).
+    '__bardak__' olduğu gibi; katalogda bulunmayan ad uyarı olarak loglanır (ekranda o grup yalnız görünmez)."""
+    from evvel_yeni_cekirdek import ad_anahtari
+    idx = {ad_anahtari(k.get("ad")): str(k.get("id")) for k in kategoriler if k.get("aktif", True)}
+    out = []
+    for x in FIRE_SEBEP_LISTE:
+        ids = []
+        for o in x["oneri"]:
+            if o == "__bardak__":
+                ids.append(o)
+            elif ad_anahtari(o) in idx:
+                ids.append(idx[ad_anahtari(o)])
+            else:
+                log.warning("fire önerisi: '%s' kategorisi katalogda yok", o)
+        out.append({**x, "oneri": ids})
+    return out
+IADE_SEBEPLERI = {"begenmedi": "Beğenmedi", "sicaklik": "Sıcaklık / ısı", "yanlis_verildi": "Yanlış ürün verildi",
+                  "yabanci_madde": "Yabancı madde", "bekleme": "Uzun bekleme", "hasar": "Hasar / ambalaj"}   # eski 6 kart (eski sunucu ATIYORDU)
+HAZIRLIK_TURLERI = {"yanlis_urun": "Yanlış ürün yapıldı", "bardak_degisti": "Bardak / boy değişti", "deneme": "Deneme / eğitim"}
+# fire DIŞI çıkışlar ayrı konuma gider (maliyet raporunda ayrı satır — sahip D9; iade ayrı satır — sahip 20 Eki)
+FIRE_HEDEF = {"ikram": "dışarı:ikram", "personel_kullanim": "dışarı:personel", "sayim_hatasi": "dışarı:sayim", "iade": "dışarı:iade"}
 
 
 from evvel_yeni_cekirdek import simdi_tr as _simdi_tr, tr_saat as _saat_tr   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek
@@ -161,6 +195,10 @@ def _gun_kapali(cur, sube_id: str, gun) -> bool:
 def _gun_acik_mi(cur, c: dict, sube_id: str) -> None:
     if not c.get("merkez") and _gun_kapali(cur, sube_id, c["gun"]):
         raise HTTPException(409, "Gün kapandı — bu işlem yapılamaz")
+    if not c.get("merkez"):
+        a = _ara_sayim_guncelle(cur, sube_id, c["gun"])
+        if a and a["durum"] in ARA_AKTIF:   # ⏱ ara sayım: 15 dk kilit — sık işlem uçları da bekler (A5; Fable: isleniyor/hata dahil)
+            raise HTTPException(409, "⏱ Ara kasa sayımı bekliyor — önce çekmeceyi say ve telefonla onayla")
 
 
 # ─────────────── 🛟 KAPANIŞ KAYBOLMASIN (Zafer 16 Ekim dersi; sahip: "gönderdim sandı ama gelmedi — bunu atlama") ───────────────
@@ -302,6 +340,7 @@ def panel_durum(sube_id: str):
                     "iptal": o.get("iptal", False)}
                    for o in olaylar(cur, sube_id=sube_id, bas=gun, son=gun) if (o.get("kaynak_tablo") or "") == "panel"]
         bas = _baslangic(cur)
+        ara = _ara_durum(cur, sube_id, gun)   # bağlantı AÇIKKEN (yanıt sözlüğü işlem kapandıktan sonra kuruluyor)
         y = _yoklama()
         yok = {"var": y is not None, "qr_gerekli": False, "girenler": [], "son_okutanlar": [], "tablet_kayitli": False}
         if y is not None:
@@ -346,13 +385,16 @@ def panel_durum(sube_id: str):
                             "urunler": [{**_u(x), "takip": x.get("takip") or "sayim", "aktif": bool(x.get("aktif", True))} for x in k["urunler"]]}
                            for k in kat_hepsi if k.get("aktif", True)],
             "bugun": bugunku, "yoklama": yok,
+            "ara_sayim": ara,   # ⏱ yalnız BEKLİYORKEN (plan saati / fark ASLA dönmez — kör)
             # gün çizgisi (eski ana sayfa ①): AÇILIŞ · KAPANIŞ — kim, saat (KONTROL noktası yok: sahip istisnası 10)
             "gun_cizgisi": {t: next(({"kim": o["kim"], "saat": o["zaman"]} for o in bugunku if o["tur"] == t and not o["iptal"]), None)
                             for t in ("acilis", "kapanis")},
             "acilis_var": any(o["tur"] == "acilis" and not o["iptal"] for o in bugunku),
             "kapanis_var": any(o["tur"] == "kapanis" and not o["iptal"] for o in bugunku),
             "kapanis_merkezde": _merkezde_mi(sube_id, gun),   # Fable B5: telefonsuz merkeze gönderildi (panel aynı geceyi yeniden doldurmasın)
-            "fire_sebepleri": [{"kod": k, "ad": v} for k, v in FIRE_SEBEPLERI.items()],
+            "fire_sebepleri": _fire_sebepleri(kat_hepsi),
+            "iade_sebepleri": [{"kod": k, "ad": v} for k, v in IADE_SEBEPLERI.items()],
+            "hazirlik_turleri": [{"kod": k, "ad": v} for k, v in HAZIRLIK_TURLERI.items()],
             "toptancilar": toptancilar, "toptanci_acik": _modul_acik("toptanci"), "siparis_acik": _modul_acik("siparis"),   # Basamak 8: Tedarikçiden teslim al (yumuşak bağ)
             "saat": {"acilis": "%02d:%02d" % ACILIS_SAAT, "kapanis": "%02d:%02d" % KAPANIS_SAAT}}
 
@@ -382,7 +424,7 @@ class SayimSatir(BaseModel):
 class AcilisBody(BaseModel):
     istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
-    kasa_sayim: Decimal                      # sabah kasadaki nakit (TL)
+    kasa_sayim: TrTutar                      # sabah kasadaki nakit (TL)
     sayim: List[SayimSatir] = []             # sayılan ürünler (boş bırakılan SAYILMAZ)
     pasta_toplam: Optional[Decimal] = None   # sahip: pasta yalnız TOPLAM adet (eski panel "Pasta adedi")
     istek_id: Optional[str] = None
@@ -482,6 +524,7 @@ def acilis(sube_id: str, b: AcilisBody):
     """Açılış: kasadaki nakit + sayılan ürünler. Kasa sabah sayımı (gün−1'e) Kasa'nın kendi takvimiyle sonra yazılır
     (geç gelen kayıtlar kilide takılmasın — mevcut kural); burada ham olay + Depo günlük sayımı."""
     _TUR = "acilis"
+    _onay_hazirla()   # ara sayım görevi ey_panel_onay'a yazılır (tablo hazırlığı işlem DIŞINDA — 19 Eki dersi)
     def is_(cur, c):
         from evvel_yeni_depo_api import sayim_yaz
         p = _personel(cur, sube_id, b.personel_id)
@@ -498,24 +541,26 @@ def acilis(sube_id: str, b: AcilisBody):
                              "pasta_toplam": None if b.pasta_toplam is None else _tam(b.pasta_toplam, "Pasta")})
         d = sayim_yaz(cur, konum=f"bar:{sube_id}", satirlar=satir, kim=f"{KIM} · {p['ad']}", tur="gunluk", gun=c["gun"],
                       kaynak_ref=f"{kok}:sayim:{oid}") if satir and oid else None   # Codex: sürüme bağlı (iptal sonrası yeni sayım); Fable: iş günü
+        if oid and not c["kuru"]:
+            _ara_sayim_planla(cur, sube_id, c["gun"])   # ⏱ gizli rastgele saat (A5) — açılış işlemiyle birlikte
         return {"olay": oid, "tekrar": oid is None, "sayilan": len(satir) if d else 0, "mesaj": "Açılış kaydedildi", "saat_engeli": engel}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
 
 class TeslimSatir(BaseModel):
     alan: str          # ev:onur · ev:fethi · ev:fatma
-    tutar: Decimal
+    tutar: TrTutar
 
 
 class KapanisBody(BaseModel):
     istemci_gunu: Optional[str] = None   # tabletin formu açtığı iş günü (gün değiştiyse kayıt merkeze iletilir)
     personel_id: str
-    nakit: Decimal
-    pos: Decimal = Decimal(0)
-    online: Decimal = Decimal(0)
-    kor_sayim: Optional[Decimal] = None      # kasada sayılan (sağlama — Kasa'ya SAYIM yazılmaz, mevcut karar)
+    nakit: TrTutar
+    pos: TrTutar = Decimal(0)
+    online: TrTutar = Decimal(0)
+    kor_sayim: Optional[TrTutar] = None      # kasada sayılan (sağlama — Kasa'ya SAYIM yazılmaz, mevcut karar)
     teslimler: List[TeslimSatir] = []
-    birakilan: Optional[Decimal] = None      # kasada bırakılan
+    birakilan: Optional[TrTutar] = None      # kasada bırakılan
     degirmen: Optional[dict] = None          # değirmen sayaçları (sahip: kalır) — {gunluk, doz1, doz2, doz3} (eski panelle aynı 4 alan)
     sayim: List[SayimSatir] = []
     pasta_toplam: Optional[Decimal] = None   # sahip: pasta yalnız TOPLAM adet
@@ -569,6 +614,7 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
             elif m.get("kor_fark") is not None and abs(m["kor_fark"]) >= 1:
                 ku.append(f"Kör sayım tutmuyor: sayılan {m['kor_sayim']:,.2f} − teslim {m['teslim'] or 0:,.2f} = {m['kor_kalan']:,.2f}, "
                          f"bırakılan {m['devir']:,.2f} ₺ (fark {m['kor_fark']:+,.2f} ₺)")
+            ku.extend(m.get("ara_uyari") or [])   # ⏱ ara sayım iki sınır (A1) — merkez görür, panel GÖRMEZ
             # Kasa farkı burada YAZILMAZ (sahip 2026-10-20: tek evi Kasa › Açık farklar — tekrar etmesin)
         except Exception:  # noqa: BLE001 — uyarı kapanışı ASLA durdurmaz
             log.warning("kapanış uyarısı: kasa sağlaması okunamadı", exc_info=True)
@@ -626,6 +672,7 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
             dusen = [(bil.get(x.urun_id) or {}).get("ad") or x.urun_id for x in b.sayim
                      if x.sayilan is not None and x.urun_id not in {s_["urun_id"] for s_ in satir}]
         kok = panel_kok("kapanis", sube_id, gun)
+        _ara_iptal(cur, sube_id, c["gun"], "gün kapandı")   # Fable D-A: kapanıştan sonra ara sayım doğmasın (merkez geç kapanış dahil)
         oid = _olay(cur, sube_id=sube_id, tur="kapanis", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(nakit) / 100,
                        veri={"nakit": nakit, "pos": pos, "online": onl, "teslimler": tes, "sayim": satir,
@@ -637,14 +684,14 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
         kim = (f"merkez (geç kapanış) · {c['merkez']} · {p['ad']}" if c.get("merkez") else f"{KIM} · {p['ad']}")
         k = kasa_yaz(cur, HareketBody(tur="kapanis", is_gunu=gun, cep=f"sube:{sube_id}", tutar=Decimal(nakit) / 100,
                                       kart=Decimal(pos) / 100, online=Decimal(onl) / 100), kim,
-                     kaynak_ref=f"kapanis:{sube_id}:{gun}")
+                     kaynak_ref=f"kapanis:{sube_id}:{gun}", kor=True)
         if k.get("tekrar") and oid is not None and not c["kuru"]:
             # içerik değişmiş ikinci kapanış: Kasa'daki beyan sessizce eski kalmasın → hepsi geri alınır, düzeltme merkezde
             raise HTTPException(409, "Bugünün kapanışı zaten yapıldı — değiştirmek için merkeze haber verin")
         for i, t in enumerate(tes):
             kasa_yaz(cur, HareketBody(tur="teslim", is_gunu=gun, kaynak=f"sube:{sube_id}", hedef=t["alan"],
                                       tutar=Decimal(t["tutar"]) / 100, teslim_eden=p["ad"]), kim,
-                     kaynak_ref=f"{kok}:teslim:{i}")
+                     kaynak_ref=f"{kok}:teslim:{i}", kor=True)   # kör sayım: ret mesajı rakamsız (E2E #4)
         # Codex BLOKER: geç kapanışta sayım BUGÜNÜN bakiyesine uygulanmaz (geçmiş gün uzlaştırılamaz) — olayda kalır, merkez görür
         gecmis = bool(c.get("merkez")) and c["gun"] != _bugun()
         # Fable: sayım kaynak_ref olay SÜRÜMÜNE bağlı (iptal sonrası yeniden kapanışta sayım yeniden yazılır; tekrar gönderimde yazılmaz)
@@ -751,7 +798,7 @@ class AraTeslimBody(BaseModel):
     personel_id: str
     pin: Optional[str] = None          # 4 hane — doğrulanır, hiçbir yere yazılmaz
     alan: str
-    tutar: Decimal
+    tutar: TrTutar
     istek_id: str
 
 
@@ -773,7 +820,7 @@ def ara_teslim(sube_id: str, b: AraTeslimBody):
         oid = _olay(cur, sube_id=sube_id, tur="teslim", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(k) / 100, veri={"alan": b.alan, "tutar": k})
         r = kasa_yaz(cur, HareketBody(tur="teslim", is_gunu=c["gun"].isoformat(), kaynak=f"sube:{sube_id}", hedef=b.alan,
-                                      tutar=Decimal(k) / 100, teslim_eden=p["ad"]), f"{KIM} · {p['ad']}", kaynak_ref=kok)
+                                      tutar=Decimal(k) / 100, teslim_eden=p["ad"]), f"{KIM} · {p['ad']}", kaynak_ref=kok, kor=True)
         return {"olay": oid, "tekrar": oid is None and bool(r.get("tekrar")), "mesaj": "Teslim kaydedildi"}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
@@ -907,7 +954,7 @@ class GiderBody(BaseModel):
     istemci_gunu: Optional[str] = None
     personel_id: str
     pin: Optional[str] = None
-    tutar: Decimal
+    tutar: TrTutar
     aciklama: str
     kategori: Optional[str] = None
     fis: Optional[bool] = None        # fiş / fatura alındı mı (Fiş kontrol merkezde)
@@ -1081,7 +1128,7 @@ class TeslimAlBody(BaseModel):
     toptanci_id: str
     kalemler: List[Kalem]
     fatura_geldi: Optional[bool] = None   # zorunlu soru (eski "🧾 FATURA GELDİ Mİ?")
-    tutar: Optional[Decimal] = None       # EVET → faturadaki TOPLAM (zorunlu) · HAYIR → kâğıtta yazıyorsa
+    tutar: Optional[TrTutar] = None       # EVET → faturadaki TOPLAM (zorunlu) · HAYIR → kâğıtta yazıyorsa
     fatura_no: Optional[str] = None
     aciklama: Optional[str] = None
     koli: Optional[dict] = None           # yalnız iz: {urun_id: {koli, koli_ici, tek}} (hesap ekranda)
@@ -1178,6 +1225,7 @@ def urun_ac(sube_id: str, b: UrunAcBody):
 
 
 class IadeBilgi(BaseModel):
+    sebep: Optional[str] = None       # IADE_SEBEPLERI (zorunlu — eski panel soruyordu ama kaydetmiyordu)
     fis_no: str
     iade_saat: str                    # "HH:MM"
     musteri_ad: Optional[str] = None  # personele GÖSTERİLMEZ (yalnız merkez)
@@ -1192,6 +1240,7 @@ class FireBody(BaseModel):
     sebep: str                         # FIRE_SEBEPLERI kodu
     aciklama: Optional[str] = None     # 'diger' için zorunlu
     iade: Optional[IadeBilgi] = None   # 'iade' için zorunlu
+    hazirlik_turu: Optional[str] = None   # 'hazirlik_deneme' için zorunlu (HAZIRLIK_TURLERI)
     istek_id: str
 
 
@@ -1207,14 +1256,26 @@ def fire(sube_id: str, b: FireBody):
         if b.sebep not in FIRE_SEBEPLERI:
             raise HTTPException(400, "Fire sebebini seç")
         aciklama = (b.aciklama or "").strip()[:200]
-        if b.sebep == "diger" and len(aciklama) < 2:
-            raise HTTPException(400, "Sebebi yaz")
+        if b.sebep == "diger" and len(aciklama) < 10:
+            raise HTTPException(400, "Ne olduğunu en az 10 harfle yaz")   # eski kural (Diğer ≥10)
+        hazirlik = None
+        if b.sebep == "hazirlik_deneme":
+            if b.hazirlik_turu not in HAZIRLIK_TURLERI:
+                raise HTTPException(400, "Ne oldu? — yanlış ürün / bardak değişti / deneme seç")
+            hazirlik = b.hazirlik_turu
         iade = None
         if b.sebep == "iade":
             m_ = re.fullmatch(r"(\d{1,2}):(\d{2})", (b.iade.iade_saat or "").strip()) if b.iade else None
-            if not b.iade or not (b.iade.fis_no or "").strip() or not m_ or int(m_.group(1)) > 23 or int(m_.group(2)) > 59:
+            if not b.iade or b.iade.sebep not in IADE_SEBEPLERI:
+                raise HTTPException(400, "İade sebebini seç")
+            if not (b.iade.fis_no or "").strip() or not m_ or int(m_.group(1)) > 23 or int(m_.group(2)) > 59:
                 raise HTTPException(400, "İadede fiş numarası ve iade saati zorunlu")
-            iade = {"fis_no": b.iade.fis_no.strip()[:40], "iade_saat": b.iade.iade_saat.strip(),
+            _sim = _simdi_tr()
+            _n, _t = _sim.hour * 60 + _sim.minute, int(m_.group(1)) * 60 + int(m_.group(2))
+            if not (_n < 120 and _t >= 120) and _t > _n + 5:   # Fable D6-S: ileri saat yazılmasın (gece yarısı sonrası: dünkü saat geçerli)
+                raise HTTPException(400, "İade saati şu andan ileri olamaz")
+            iade = {"sebep": b.iade.sebep, "sebep_ad": IADE_SEBEPLERI[b.iade.sebep],
+                    "fis_no": b.iade.fis_no.strip()[:40], "iade_saat": b.iade.iade_saat.strip(),
                     "musteri_ad": (b.iade.musteri_ad or "").strip()[:80] or None,
                     "musteri_tel": re.sub(r"[^\d+]", "", b.iade.musteri_tel or "")[:20] or None}
         sebep_ad = FIRE_SEBEPLERI[b.sebep]
@@ -1222,15 +1283,19 @@ def fire(sube_id: str, b: FireBody):
         kok = panel_kok("fire", sube_id, b.istek_id)
         oid = _olay(cur, sube_id=sube_id, tur="fire", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                     personel_id=p["id"], personel_ad=p["ad"],
-                    veri={"kalemler": k, "sebep": b.sebep, "sebep_ad": sebep_ad, "aciklama": aciklama or None, "iade": iade})
+                    veri={"kalemler": k, "sebep": b.sebep, "sebep_ad": sebep_ad, "aciklama": aciklama or None, "iade": iade,
+                          "hazirlik_turu": hazirlik, "hazirlik_ad": HAZIRLIK_TURLERI.get(hazirlik) if hazirlik else None})
         hedef = FIRE_HEDEF.get(b.sebep, "dışarı:fire")
         for i, x in enumerate(k):
+            if x.get("takip") == "gununde":
+                continue   # Fable D6-B: pasta girişte 'gününde tüketildi' (gider) — fire hareketi çift gider + eksi depo yapardı; olayda kalır
             # Sahip (20 Eki, Fable D-4): tezgahta sayılan ürünün (süt / su / bardak) firesi BARDAN düşer — depodan düşerse bir sonraki
             # depo sayımında sahte fazla çıkıyordu. Maliyeti bar sayım farkında (Gider bu satırı ayrıca yazmaz — kaynak 'bar:').
             tezgah = x.get("panel_sayim")   # _kalemler tezgahta_sayilir ile doldurur (TEK kural)
             hareket_yaz(cur, kaynak_ref=f"{kok}:{i}", tur="fire", urun_id=x["urun_id"], urun_ad=x["ad"], adet=x["adet"],
                         kaynak=f"{'bar' if tezgah else 'depo'}:{sube_id}", hedef=hedef, kim=f"{KIM} · {p['ad']}",
-                        aciklama=sebep_ad + (f" — {aciklama}" if aciklama else "") + (f" · fiş {iade['fis_no']}" if iade else ""),
+                        aciklama=sebep_ad + (f" ({HAZIRLIK_TURLERI[hazirlik]})" if hazirlik else "") + (f" — {aciklama}" if aciklama else "")
+                        + (f" · {iade['sebep_ad']} · fiş {iade['fis_no']}" if iade else ""),
                         bag=kok, gun=c["gun"])
         return {"olay": oid, "tekrar": oid is None, "mesaj": "Fire kaydedildi"}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
@@ -1241,10 +1306,148 @@ def fire(sube_id: str, b: FireBody):
 # Panel formu doldurur → onay isteği (para/stok YAZILMAZ) → ekranda QR (+ onay kimliği) → personel KENDİ telefonuyla okutur → ONAYLA →
 # kişi telefondan (istemciden gelmez), QR + konum yoklama modülünün PUBLIC servisleriyle doğrulanır → panelin MEVCUT yazma ucu o kişi adına
 # çalışır (tek yazar). SUBE_PANELI_TASARIM.md §R1.
+# ─────────────────────────── ⏱ ARA SAYIM (PANEL_YENIDEN_KURULUM.md 'ARA SAYIM' A1–A5 · Fable + Codex 21 Eki) ───────────────────────────
+# Günde BİR kez, açılışta sunucuda gizlice seçilen rastgele saatte (açılış+60 dk … 20:30) panel 15 dk kilitlenir; çekmece KÖR sayılır,
+# telefonla QR onaylanır. YENİ TABLO YOK: görev = ey_panel_onay satırı tur='ara_sayim' (planli → bekliyor → onaylandi / yapilmadi).
+# Gün ortasında 'beklenen' HESAPLANAMAZ (nakit satış kapanışta) → Kasa'ya hareket YAZILMAZ (A2); kayıt olay 'ara_sayim' + iki sınır
+# sağlaması Satış mutabakatında (A1): sayılan ≥ taban · kapanışta ara sonrası satış ≥ 0. Panele fark / uyarı DÖNMEZ (kör).
+ARA_SAYIM_SURE_DK = 15
+ARA_SAYIM_ILK_DK = 60          # açılıştan en erken
+ARA_SAYIM_SON = (20, 30)       # en geç (kapanışla çakışmasın)
+ARA_AKTIF = ("bekliyor", "hata", "isleniyor")   # süre içinde kilit + QR sürer (Fable D-A B2: onay 'hata'da görev sessizce kayboluyordu)
+
+
+def _ara_iptal(cur, sube_id: str, gun, neden: str) -> None:
+    """Gün kapanınca (ya da deneme yerine) o günün açık ara sayımı iptal — kapalı günde kilit / olay doğmasın (Fable D-A)."""
+    if __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_panel_onay"):
+        cur.execute("""UPDATE ey_panel_onay SET durum='iptal', mesaj=%s WHERE sube_id=%s AND tur='ara_sayim' AND govde->>'gun'=%s
+                        AND durum IN ('planli','bekliyor','hata')""", (neden, str(sube_id), gun.isoformat()))
+
+
+def _ara_satir(cur, sube_id: str, gun) -> Optional[dict]:
+    if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_panel_onay"):
+        return None
+    cur.execute("""SELECT *, son < NOW() AS gecti FROM ey_panel_onay WHERE sube_id=%s AND tur='ara_sayim' AND govde->>'gun' = %s
+                    AND durum <> 'iptal' ORDER BY olusturma DESC LIMIT 1""", (str(sube_id), gun.isoformat()))
+    r = cur.fetchone()
+    return dict(r) if r else None
+
+
+def _ara_sayim_planla(cur, sube_id: str, gun) -> None:
+    """Açılış işleminde BİR KEZ: saat sunucuda `secrets` ile seçilir; panele vakti gelene kadar DÖNMEZ (tahmin edilemez)."""
+    import secrets
+    from datetime import timedelta
+    from evvel_yeni_cekirdek import is_gunu_zamani, simdi_tr
+    if _ara_satir(cur, sube_id, gun):
+        return
+    bas, son = simdi_tr() + timedelta(minutes=ARA_SAYIM_ILK_DK), is_gunu_zamani(gun, *ARA_SAYIM_SON)
+    if bas >= son:
+        return   # geç açılış → o gün ara sayım yok, kayıt da yok (A3)
+    plan = bas + timedelta(minutes=secrets.randbelow(int((son - bas).total_seconds() // 60) + 1))
+    oid = "as-" + uuid.uuid4().hex[:16]
+    cur.execute("""INSERT INTO ey_panel_onay (id, sube_id, tur, govde, ozet, durum, son)
+                   VALUES (%s,%s,'ara_sayim',%s::jsonb,'Ara kasa sayımı','planli', %s)""",
+                (oid, str(sube_id), json.dumps({"gun": gun.isoformat(), "plan_ts": plan.isoformat(), "oid": oid}), plan + timedelta(minutes=ARA_SAYIM_SURE_DK)))
+
+
+def _ara_sayim_guncelle(cur, sube_id: str, gun) -> Optional[dict]:
+    """Görevin durumunu ilerletir (idempotent): vakti gelen 'planli' → 'bekliyor' (15 dk başlar; açık açılış/kapanış telefon onayı
+    varsa en geç 20:30'a kadar ERTELENİR) · süresi dolan 'bekliyor' → 'yapilmadi'. Dönüş: güncel satır ya da None."""
+    from datetime import datetime
+    from evvel_yeni_cekirdek import is_gunu_zamani, json_ac, simdi_tr
+    r = _ara_satir(cur, sube_id, gun)
+    if not r:
+        return None
+    if r["durum"] in ("planli",) + ARA_AKTIF and _gun_kapali(cur, sube_id, gun):
+        _ara_iptal(cur, sube_id, gun, "gün kapandı")   # Fable D-A: kapanıştan sonra kilit / ara sayım olayı doğmasın
+        return None
+    simdi = simdi_tr()
+    g = json_ac(r["govde"], {})
+    if r["durum"] == "planli" and r["gecti"]:
+        return r   # Fable son denetim S-1: vakti (plan + 15 dk) panel kapalıyken geçti → kilit yok, merkez 'açık değildi' görür
+    if r["durum"] == "planli" and g.get("plan_ts") and simdi >= datetime.fromisoformat(g["plan_ts"]):
+        cur.execute("""SELECT 1 FROM ey_panel_onay WHERE sube_id=%s AND tur IN ('acilis','kapanis') AND durum IN ('bekliyor','isleniyor')
+                        AND son > NOW() LIMIT 1""", (str(sube_id),))
+        mesgul = bool(cur.fetchone())
+        if not mesgul:   # Fable D-A: açık KASA DEVRİ (para el değiştirirken) de erteler — Yoklama'nın kapısı, yumuşak bağ
+            yk = _yoklama()
+            if yk is not None:
+                try:
+                    with savepoint(cur, "sp_ara_devir"):
+                        dv = yk.devir_durum(cur, str(sube_id), gun)
+                    mesgul = bool(dv and dv.get("durum") in yk.DEVIR_ACIK)
+                except Exception:  # noqa: BLE001
+                    log.warning("ara sayım: devir durumu okunamadı", exc_info=True)
+        if mesgul and simdi < is_gunu_zamani(gun, *ARA_SAYIM_SON):
+            cur.execute("""UPDATE ey_panel_onay SET son = NOW() + %s * INTERVAL '1 minute', govde = govde || '{"ertelendi": true}'::jsonb
+                            WHERE id=%s AND durum='planli'""", (ARA_SAYIM_SURE_DK, r["id"]))   # ertelendi — Bekleyen işler 'yapılmadı' saymasın
+            return _ara_satir(cur, sube_id, gun)
+        cur.execute("""UPDATE ey_panel_onay SET durum='bekliyor', son = NOW() + %s * INTERVAL '1 minute', govde = govde || %s::jsonb
+                        WHERE id=%s AND durum='planli'""", (ARA_SAYIM_SURE_DK, json.dumps({"istenme": simdi.isoformat()}), r["id"]))
+        return _ara_satir(cur, sube_id, gun)
+    if r["durum"] in ARA_AKTIF and r["gecti"]:
+        cur.execute("""UPDATE ey_panel_onay SET durum='yapilmadi', mesaj=COALESCE(NULLIF(mesaj, ''), '15 dk içinde sayılmadı')
+                        WHERE id=%s AND durum IN ('bekliyor','hata','isleniyor')""", (r["id"],))   # Fable D-A B2: hata/takılı da 'yapılmadı'
+        return _ara_satir(cur, sube_id, gun)
+    return r
+
+
+def _ara_taban(cur, sube_id: str, gun) -> dict:
+    """Sınır 1 tabanı (kuruş): sabah açılış sayımı − o ana kadar çekmece çıkışı (Kasa PUBLIC) − ara teslim (olay). Açılış yoksa None."""
+    from evvel_yeni_olay import panel_olaylari
+    acilis, ara = None, 0
+    for o in panel_olaylari(cur, sube_id=str(sube_id), bas=gun, son=gun, turler={"acilis", "teslim"}):
+        if o["tur"] == "acilis":
+            acilis = int(o["v"].get("kasa_sayim") or 0)
+        else:
+            ara += int(o["v"].get("tutar") or 0)
+    cikis = 0
+    if not _modul_acik("kasa"):
+        return {"acilis": acilis, "cekmece_cikis": None, "ara_teslim": ara, "taban": None}
+    try:
+        with savepoint(cur, "sp_ara_cekmece"):
+            from evvel_yeni_kasa_api import cekmece_cikislari
+            cikis = sum(_kurus(c["tutar"]) for c in cekmece_cikislari(cur, gun.isoformat()) if str(c["sube_id"]) == str(sube_id))
+    except Exception:  # noqa: BLE001 — Kasa okunamazsa taban bilinmez (uyarı üretilmez, sahte alarm yok)
+        log.warning("ara sayım: çekmece çıkışları okunamadı", exc_info=True)
+        return {"acilis": acilis, "cekmece_cikis": None, "ara_teslim": ara, "taban": None}
+    return {"acilis": acilis, "cekmece_cikis": cikis, "ara_teslim": ara, "taban": (acilis - cikis - ara) if acilis is not None else None}
+
+
+class AraSayimBody(BaseModel):
+    personel_id: str
+    gun: str
+    oid: str
+    sayilan: Optional[int] = None      # kuruş (panel 'Sayımı gönder' ile yazar)
+    istenme: Optional[str] = None
+    plan_ts: Optional[str] = None
+
+
+def ara_sayim_yaz(sube_id: str, b: AraSayimBody) -> dict:
+    """Telefon ONAYLA → olay 'ara_sayim' (sayan = telefonun sahibi). Kasa'ya hareket YOK (A2). Yanıtta fark / uyarı YOK (kör)."""
+    if b.sayilan is None:
+        raise HTTPException(400, "Önce çekmecedeki parayı yazıp 'Sayımı gönder' de")
+    _TUR = "ara_sayim"
+
+    def is_(cur, c):
+        from evvel_yeni_cekirdek import simdi_tr
+        if c["gun"].isoformat() != b.gun:
+            raise HTTPException(409, "Bu ara sayım bugünün değil")
+        p = _personel(cur, sube_id, b.personel_id)
+        t = _ara_taban(cur, sube_id, c["gun"])
+        kok = panel_kok("ara_sayim", sube_id, b.gun)
+        oid = _olay(cur, sube_id=sube_id, tur="ara_sayim", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
+                    personel_id=p["id"], personel_ad=p["ad"], tutar=Decimal(b.sayilan) / 100,
+                    veri={"sayilan": b.sayilan, **t, "plan": b.plan_ts, "istenme": b.istenme, "yapilma": simdi_tr().isoformat()})
+        return {"olay": oid, "tekrar": oid is None, "mesaj": "Ara sayım kaydedildi"}
+    return _calistir(sube_id, "ara-" + b.oid, is_, tur=_TUR, govde=b.model_dump(mode="json"))
+
+
 ONAY_SURE_DK = 10
 ONAY_TURLERI = {
     "acilis": (AcilisBody, lambda s, b: acilis(s, b), "Açılış"),
     "kapanis": (KapanisBody, lambda s, b: kapanis(s, b), "Kapanış"),
+    "ara_sayim": (AraSayimBody, lambda s, b: ara_sayim_yaz(s, b), "Ara kasa sayımı"),   # görev sistemin (onay-iste ile açılmaz)
 }   # sahip (2026-10-18): sık işlemler (ürün aç, fire, ara teslim, anlık gider, teslim al) QR DEĞİL — "giriş yapmış personelin adı + PIN" (R1b)
 _ONAY_HAZIR = False
 
@@ -1361,7 +1564,7 @@ def _onay_ozet(cur, tur: str, g: dict) -> str:
     if tur == "ara-teslim":
         return f"{str(g.get('alan', '')).split(':')[-1].capitalize()}'a {_tl_yaz(g.get('tutar', 0))} teslim"
     if tur in ("urun-ac", "fire"):
-        return adlar(g.get("kalemler")) + (f" · sebep {FIRE_SEBEPLERI.get(g.get('sebep'), g.get('sebep'))}" if tur == "fire" else "")
+        return adlar(g.get("kalemler")) + (f" · sebep {g.get('sebep_ad') or FIRE_SEBEPLERI.get(g.get('sebep'), g.get('sebep'))}" if tur == "fire" else "")
     return ""
 
 
@@ -1375,7 +1578,7 @@ def onay_iste(sube_id: str, b: OnayIsteBody):
     """Panel: form hazır → onay isteği. Biçim burada denetlenir (telefon geçersiz form görmesin); kayıt telefon onaylayınca yazılır."""
     if _yoklama() is None:
         raise HTTPException(503, "QR sistemi çalışmıyor — merkeze haber ver")
-    if b.tur not in ONAY_TURLERI:
+    if b.tur not in ONAY_TURLERI or b.tur == "ara_sayim":
         raise HTTPException(400, "Bu işlem QR ile onaylanmaz")
     Body, _f, ad = ONAY_TURLERI[b.tur]
     try:
@@ -1488,7 +1691,8 @@ async def onay_onayla(oid: str, request: Request):
             if o["durum"] not in ("bekliyor", "hata", "isleniyor"):
                 raise HTTPException(409, "Bu onay artık geçerli değil — panelden yeniden iste")
             if o["gecti"]:
-                raise HTTPException(410, "Onayın süresi doldu — panelden yeniden iste")
+                raise HTTPException(410, "Ara sayım süresi doldu — merkez görecek" if o["tur"] == "ara_sayim"
+                                    else "Onayın süresi doldu — panelden yeniden iste")
             sube = str(v.get("sube") or "")
             if sube != o["sube_id"]:
                 raise HTTPException(409, "Bu onay başka şubenin — o şubenin QR'ını okut")
@@ -1524,6 +1728,123 @@ async def onay_onayla(oid: str, request: Request):
     if kod:
         raise HTTPException(kod, mesaj)
     return {"ok": True, "mesaj": mesaj, "kuru": bool((sonuc or {}).get("kuru"))}
+
+
+class AraSayimGonderBody(BaseModel):
+    sayilan: TrTutar
+
+
+@router.post("/{sube_id}/ara-sayim")
+def ara_sayim_gonder(sube_id: str, b: AraSayimGonderBody):
+    """Panel: kör sayılan tutar → görev satırına (henüz KAYIT değil); ekranda QR, kimlik telefondan. Süre içinde yeniden gönderilebilir."""
+    _onay_hazirla()
+    with db() as (conn, cur):
+        _sube(cur, sube_id)
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_onay:{sube_id}:ara_sayim",))   # onayla ile aynı sıra
+        r = _ara_sayim_guncelle(cur, sube_id, _bugun())
+        if not r or r["durum"] not in ("bekliyor", "hata"):   # 'hata' sonrası düzeltip yeniden gönderilebilir (e2e yakaladı)
+            raise HTTPException(409, "Sayım şu an telefondan onaylanıyor — birkaç saniye bekle" if r and r["durum"] == "isleniyor"
+                                else "Şu an ara sayım istenmiyor")
+        k = _tl(b.sayilan, "Çekmecedeki para")
+        cur.execute("""UPDATE ey_panel_onay SET govde = govde || %s::jsonb, ozet=%s WHERE id=%s AND durum IN ('bekliyor','hata')
+                        RETURNING id""", (json.dumps({"sayilan": k}), f"Ara kasa sayımı · çekmece {_tl_yaz(k)}", r["id"]))
+        if not cur.fetchone():   # Fable D-A: telefon o an işliyorsa 'gönderildi' sanılmasın
+            raise HTTPException(409, "Sayım şu an telefondan onaylanıyor — birkaç saniye bekle")
+    return {"ok": True, "onay_id": r["id"], "mesaj": "Telefonunla QR'ı okut ve onayla"}
+
+
+@router.post("/{sube_id}/ara-sayim-duzelt")
+def ara_sayim_duzelt(sube_id: str):
+    """'Tutarı düzelt': sunucudaki tutar SİLİNİR — eski QR / telefonda açık ekran eski tutarı ONAYLAYAMAZ (Fable D-A)."""
+    _onay_hazirla()
+    with db() as (conn, cur):
+        _sube(cur, sube_id)
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_onay:{sube_id}:ara_sayim",))
+        r = _ara_sayim_guncelle(cur, sube_id, _bugun())
+        if not r or r["durum"] not in ("bekliyor", "hata"):
+            raise HTTPException(409, "Sayım şu an düzeltilemez — onaylanıyor ya da süresi doldu")
+        cur.execute("UPDATE ey_panel_onay SET govde = govde - 'sayilan', ozet='Ara kasa sayımı' WHERE id=%s", (r["id"],))
+    return {"ok": True}
+
+
+@router.post("/{sube_id}/ara-sayim-deneme")
+def ara_sayim_deneme(sube_id: str):
+    """Yalnız DENEME döneminde (28–30 Ekim provası, A4): ara sayımı hemen iste — kayıt denemede kalıcı değil."""
+    _onay_hazirla()
+    with db() as (conn, cur):
+        _sube(cur, sube_id)
+        gun = _bugun()
+        if not deneme_mi(cur, gun):
+            raise HTTPException(409, "Deneme düğmesi yalnız deneme döneminde")
+        cur.execute("""UPDATE ey_panel_onay SET durum='iptal', mesaj='yerine deneme istendi'
+                        WHERE sube_id=%s AND tur='ara_sayim' AND govde->>'gun'=%s AND durum IN ('planli','bekliyor')""", (str(sube_id), gun.isoformat()))
+        oid = "as-" + uuid.uuid4().hex[:16]
+        from evvel_yeni_cekirdek import simdi_tr
+        cur.execute("""INSERT INTO ey_panel_onay (id, sube_id, tur, govde, ozet, durum, son)
+                       VALUES (%s,%s,'ara_sayim',%s::jsonb,'Ara kasa sayımı (deneme)','bekliyor', NOW() + %s * INTERVAL '1 minute')""",
+                    (oid, str(sube_id), json.dumps({"gun": gun.isoformat(), "oid": oid, "istenme": simdi_tr().isoformat(), "deneme": True}),
+                     ARA_SAYIM_SURE_DK))
+    return {"ok": True, "mesaj": "Deneme ara sayımı başladı (15 dk)"}
+
+
+class AraGordumBody(BaseModel):
+    id: str
+
+
+@router.post("/ara-sayim-gordum")
+def ara_sayim_gordum(body: AraGordumBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez: 'ara sayım yapılmadı' işini gördü (iz: kim) — Bekleyen işler'den düşer."""
+    _onay_hazirla()
+    with db() as (conn, cur):
+        kim = merkez_aktor(cur, x_evvel_oturum)
+        cur.execute("""UPDATE ey_panel_onay SET sonuc = COALESCE(sonuc, '{}'::jsonb) || jsonb_build_object('goruldu', %s::text)
+                        WHERE id=%s AND tur='ara_sayim' RETURNING id""", (kim, body.id))
+        if not cur.fetchone():
+            raise HTTPException(404, "Ara sayım bulunamadı")
+    return {"ok": True}
+
+
+def _ara_durum(cur, sube_id: str, gun) -> Optional[dict]:
+    try:
+        with savepoint(cur, "sp_panel_ara_durum"):
+            r = _ara_sayim_guncelle(cur, sube_id, gun)
+    except Exception:  # noqa: BLE001 — ara sayım okunamazsa panel çalışmaya devam eder
+        log.warning("panel durum: ara sayım okunamadı", exc_info=True)
+        return None
+    if not r or r["durum"] not in ARA_AKTIF:
+        return None
+    from evvel_yeni_cekirdek import json_ac
+    g = json_ac(r["govde"], {})
+    cur.execute("SELECT GREATEST(0, EXTRACT(EPOCH FROM (son - NOW())))::int AS k FROM ey_panel_onay WHERE id=%s", (r["id"],))
+    return {"durum": r["durum"], "onay_id": r["id"], "kalan_sn": int(dict(cur.fetchone())["k"]), "gonderildi": g.get("sayilan") is not None,
+            "deneme": bool(g.get("deneme")), "mesaj": r.get("mesaj") if r["durum"] == "hata" else None}   # hata: telefonun gördüğü sebep (kör — tutar/fark yok)
+
+
+def _ara_sayim_isleri(cur) -> list:
+    """Bekleyen işler (A5): YALNIZ 'yapılmadı' — şube × gün TEK satır (yapılan sayım ve sınır uyarıları kapanış uyarısına girer)."""
+    from evvel_yeni_cekirdek import json_ac, tablo_var
+    from evvel_yeni_tanim_api import subeler
+    if not tablo_var(cur, "ey_panel_onay"):
+        return []
+    cur.execute("""SELECT id, sube_id, govde, durum FROM ey_panel_onay WHERE tur='ara_sayim' AND olusturma >= NOW() - INTERVAL '7 days'
+                    AND (durum = 'yapilmadi' OR (durum IN ('planli','bekliyor','hata','isleniyor') AND son < NOW()))
+                    AND COALESCE(sonuc->>'goruldu', '') = '' ORDER BY olusturma""")
+    satir = [dict(x) for x in cur.fetchall() or []]
+    if not satir:
+        return []
+    bas = _baslangic(cur).isoformat()
+    adlar = {str(s["id"]): s["ad"] for s in subeler(cur)}
+    out = []
+    for r in satir:
+        g = json_ac(r["govde"], {})
+        if (g.get("gun") or "") < bas or g.get("deneme"):
+            continue   # deneme dönemi merkeze iş üretmez
+        out.append({"genel": True, "grup": "kasa", "tur": "ara_sayim_yapilmadi", "id": f"ara:{r['id']}", "tarih": g.get("gun"),
+                    "etiket": "⏱ Ara sayım yapılmadı", "ad": adlar.get(str(r["sube_id"]), r["sube_id"]),
+                    "alt": ("15 dk içinde sayılmadı" if r["durum"] != "planli" else
+                            "istenen saatte panel açık değildi" + (" (açık onay / devir yüzünden ertelenmişti)" if g.get("ertelendi") else "")),
+                    "gordum": {"yol": "/evvel-yeni/panel/ara-sayim-gordum", "govde": {"id": r["id"]}}})
+    return out
 
 
 class DenemeBody(BaseModel):
@@ -1608,6 +1929,11 @@ def _bekleyen(cur, baglam: dict) -> list:
         out.extend(_kapanis_isleri(cur))   # 🛟 reddedilen kapanış — panel açılmadan da (deneme dışı) görünür
     except Exception as e:  # noqa: BLE001
         log.warning("panel kapanış denemeleri okunamadı: %s", str(e)[:150])
+    try:
+        with savepoint(cur, "sp_panel_ara_isleri"):
+            out.extend(_ara_sayim_isleri(cur))   # ⏱ yalnız 'yapılmadı'
+    except Exception as e:  # noqa: BLE001
+        log.warning("panel ara sayım işleri okunamadı: %s", str(e)[:150])
     # C-T1-16: "dün kapanış yok" satırı artık yalnız Kasa'dan (eksik_kapanis — yeni panel kapanışı Kasa'ya yazar); burada ikinci
     # kopya üretilmez (aynı gün iki bekleyen iş çıkıyordu).
     return out

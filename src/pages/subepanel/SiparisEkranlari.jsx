@@ -5,7 +5,7 @@
 // ya da "🚚 Yola çıkar" (kısmi → kalan merkeze döner). Sunucu: evvel_yeni_panel_api (/siparis, /siparisler, /gonderilecek) → Sipariş modülü.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
+import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
 import { tarihNokta } from '../../utils/trTarih';
 
 const DURUM = {
@@ -53,7 +53,7 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
   const rozet = v?.rozet || {};
   const acikSayi = (v?.siparisler || []).filter((s) => s.durum === 'acik').length;
   if (d.siparis_acik === false) return <Kapali />;
-  const degis = (id, n) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(99999, n)) }));
+  const { degis } = adetAyarla(setAdet);   // ortak adet kuralı (D6-R)
   const temizle = () => { setAdet({}); setOneri([]); setNot(''); setIstek(yeniIstek()); taslakKaldir(anahtar); };
   const oneriEkle = () => {
     const a = parseInt(onAdet, 10);

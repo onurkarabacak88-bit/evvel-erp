@@ -60,7 +60,8 @@ export const taslakTemizle = (subeId, gun, yoldakiPartiler = []) => {
 export { yeniIstekId as yeniIstek } from '../../utils/cihazImza';   // istek kimliği TEK üretici (Dalga 5, F#59)
 export { tlYaz as tl } from '../../utils/trSayi';   // ₺ biçimi TEK kaynak (F#58)
 export const sayi = (s) => String(s ?? '').replace(/[^\d]/g, '');
-export const tutar = (s) => String(s ?? '').replace(/[^\d,.]/g, '').replace('.', ',');
+// para yazım maskesi: yalnız rakam , . kalır — noktayı virgüle ÇEVİRMEZ (Codex P1: '1.250' → '1,250' → 1,25 ₺ oluyordu; ayrım TEK kural sayiTR)
+export const tutar = (s) => String(s ?? '').replace(/[^\d,.]/g, '');
 export const tutarNum = (s) => { const n = sayiTR(s, 0); return Number.isNaN(n) ? 0 : n; };   // tek kaynak utils/trSayi ("12.50" artık 12,5)
 export const sayimGovde = (sayim) => Object.entries(sayim).filter(([, v]) => v !== '' && v != null).map(([urun_id, v]) => ({ urun_id, sayilan: Number(v) }));
 export const kalemGovde = (adet) => Object.entries(adet).filter(([, n]) => n > 0).map(([urun_id, n]) => ({ urun_id, adet: n }));
@@ -94,27 +95,34 @@ export const panelHata = (e, { setHata, pinSifirla, yeniIstekVer }) => {
 
 // ➖ ADET GİRDİSİ "− [adet] +" — Ürün aç · Tedarikçi teslim · Sipariş ver · Depodan gelen ORTAK (Dalga 5, F#51: 4 kopya). Koli
 // yardımcıları ekranına göre farklı kalır (teslim: "koli × N + tek" izli; sipariş: "+1/+2/+3 koli" hızlı) — amaçları ayrı.
-export function AdetGirdi({ n, azalt, artir, yaz, genislik = 96, font = 30 }) {
+export function AdetGirdi({ n, azalt, artir, yaz, genislik = 96, font = 30, kapali = false }) {
   return (<>
-    <button type="button" className="sp-pm" onClick={azalt}>−</button>
+    <button type="button" className="sp-pm" onClick={azalt} disabled={kapali}>−</button>
     <input className="sp-in" style={{ width: genislik, textAlign: 'center', fontSize: font, fontWeight: 800, padding: '4px 6px' }} inputMode="numeric" value={n || ''} placeholder="0"
-      onChange={(e) => yaz(Number(e.target.value.replace(/\D/g, '') || 0))} />
-    <button type="button" className="sp-pm" onClick={artir}>+</button>
+      disabled={kapali} onChange={(e) => yaz(Number(e.target.value.replace(/\D/g, '') || 0))} />
+    <button type="button" className="sp-pm" onClick={artir} disabled={kapali}>+</button>
   </>);
 }
+// ➕➖ adet değiştirme — TEK kural (Fable D6-R: Ürün aç / Fire / Tedarikçi / Sipariş 4 kopya, sınırlar 9999 ↔ 99999 farklıydı).
+// Sınır sunucuyla aynı (çekirdek MAKS_ADET 99999). art: hızlı dokunuşta kaybolmasın diye önceki değer üzerinden.
+export const MAKS_ADET = 99999;
+export const adetAyarla = (setAdet) => ({
+  art: (id, dlt) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(MAKS_ADET, (o[id] || 0) + dlt)) })),
+  degis: (id, n) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(MAKS_ADET, Number(n) || 0)) })),
+});
 
 // 🗂 KATEGORİ KARTLARI — Ürün aç · Tedarikçi teslim · Sipariş ver ORTAK (Dalga 5, F#49/50/52: renk dizisi, kart, ürün haritası 3 kopyaydı).
 // Kartta seçili ürün sayısı rozeti; 'alt' verilirse kartın altına küçük yazı (ör. "12 aktif · Dokun → liste").
 export const TONLAR = ['linear-gradient(135deg,#1e3a8a,#3b82f6)', 'linear-gradient(135deg,#065f46,#10b981)', 'linear-gradient(135deg,#78350f,#f59e0b)', 'linear-gradient(135deg,#4c1d95,#8b5cf6)'];
 export const urunHaritasi = (katalog) => Object.fromEntries((katalog || []).flatMap((k) => k.urunler.map((u) => [u.id, { ...u, kategori: k.kategori }])));
-export function KategoriKartlari({ katalog, adet, kapali, onSec, alt, enAz = 160, yukseklik = 90 }) {
+export function KategoriKartlari({ katalog, adet, kapali, onSec, alt, enAz = 160, yukseklik = 90, ton }) {
   return (
     <div style={{ display: 'grid', gridTemplateColumns: `repeat(auto-fill,minmax(${enAz}px,1fr))`, gap: 10 }}>
       {katalog.map((k, i) => {
         const n = k.urunler.filter((u) => (adet[u.id] || 0) > 0).length;
         return (
           <button key={k.id} type="button" onClick={() => onSec(k.id)} disabled={kapali}
-            style={{ position: 'relative', minHeight: yukseklik, borderRadius: 14, opacity: kapali ? 0.45 : 1, border: n ? `2px solid ${C.yesil}` : '1px solid transparent', background: TONLAR[i % 4],
+            style={{ position: 'relative', minHeight: yukseklik, borderRadius: 14, opacity: kapali ? 0.45 : 1, border: n ? `2px solid ${C.yesil}` : '1px solid transparent', background: ton ? ton(k, i) : TONLAR[i % 4],
               color: '#fff', textAlign: 'left', padding: 12, cursor: 'pointer', display: 'grid', gap: 4, font: 'inherit' }}>
             {n > 0 && <span style={{ position: 'absolute', top: 8, right: 8, background: C.yesil, color: '#05210f', borderRadius: 999, minWidth: 24, padding: '2px 7px', fontWeight: 900, fontSize: 13, textAlign: 'center' }}>{n}</span>}
             <span style={{ fontSize: 22 }}>{k.emoji || '📦'}</span>
@@ -221,32 +229,6 @@ export function KisiPin({ adaylar, kisi, setKisi, pin, setPin, hata, devam, deva
     {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
     {devam && <button className="sp-btn sp-ana" disabled={!kisi || !gecerli || (pinIste && pin.length !== 4)} onClick={devam}>{devamYazi}</button>}
   </>);
-}
-
-// Ürün adet seçici (+/− 72px, adet 32px) — ürün aç / fire
-export function AdetListesi({ gruplar, adet, setAdet }) {
-  return (
-    <div style={{ display: 'grid', gap: 14 }}>
-      {gruplar.filter((g) => g.urunler.length).map((g) => (
-        <div key={g.kategori}>
-          <div style={{ color: C.soluk, fontWeight: 700, margin: '4px 0 8px' }}>{g.kategori}</div>
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill,minmax(300px,1fr))', gap: 8 }}>
-            {g.urunler.map((u) => {
-              const n = adet[u.id] || 0;
-              return (
-                <div key={u.id} className="sp-kart" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 8, borderColor: n ? C.mavi : C.cizgi }}>
-                  <div style={{ flex: 1, minWidth: 0 }}><b>{u.ad}</b><div style={{ color: C.soluk, fontSize: 13 }}>{u.birim}</div></div>
-                  <button className="sp-pm" onClick={() => setAdet((a) => ({ ...a, [u.id]: Math.max(0, n - 1) }))}>−</button>
-                  <div style={{ width: 52, textAlign: 'center', fontSize: 32, fontWeight: 800 }}>{n}</div>
-                  <button className="sp-pm" onClick={() => setAdet((a) => ({ ...a, [u.id]: n + 1 }))}>+</button>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 // Sayım listesi (boş bırakılan SAYILMAZ)

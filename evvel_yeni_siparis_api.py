@@ -184,12 +184,20 @@ def _teslim_durumlari(cur, yonler: List[dict], urunler: dict) -> dict:
     'bekleniyor'a çevirir). Codex P1: aynı teslim + aynı ürün BİRDEN ÇOK yöne bağlıysa teslimin adedi yönlere SIRAYLA paylaştırılır
     (her yöne toplamın tamamı yazılıyordu → 10 fiziksel ürün 20 karşılanmış görünüyordu); artan son yöne (fazla gelen)."""
     f = _toptanci("teslim_kalemleri")
-    tid = [y["teslim_id"] for y in yonler if y.get("teslim_id")]
+    tid = sorted({y["teslim_id"] for y in yonler if y.get("teslim_id")})
     if not f or not tid:
         return {}
     T = f(cur, tid)
+    # Codex (kısmen kapalı #9): paylaştırma o teslime bağlı BÜTÜN yönler üzerinden — yalnız ekrana gelenler değil (eski talep tarih
+    # aralığından çıkınca yenisi '0 yerine 10 karşılandı' görünüyordu). Kendi tablosu (Sipariş) — başka modüle SQL yok.
+    cur.execute("""SELECT y.id, y.siparis_id, y.kalem_i, y.adet, y.teslim_id, y.zaman, s.kalemler FROM ey_siparis_yon y
+                     JOIN ey_siparis s ON s.id = y.siparis_id WHERE y.teslim_id = ANY(%s) AND NOT y.iptal""", (tid,))
+    tum = [dict(r) for r in cur.fetchall() or []]
+    for y in tum:
+        urunler.setdefault((y["siparis_id"], y["kalem_i"]), next((k.get("urun_id") for k in y.get("kalemler") or [] if k.get("i") == y["kalem_i"]), None))
+    istenen = {y["id"] for y in yonler}
     grup = {}
-    for y in sorted(yonler, key=lambda y: (str(y.get("teslim_id")), str(y.get("zaman") or ""), str(y["id"]))):   # oluşturma sırası (Fable D4-7)
+    for y in sorted(tum, key=lambda y: (str(y.get("teslim_id")), str(y.get("zaman") or ""), str(y["id"]))):   # oluşturma sırası (Fable D4-7)
         if not y.get("teslim_id") or str(y["teslim_id"]) not in T:
             continue
         u = str(urunler.get((y["siparis_id"], y["kalem_i"])))
@@ -199,7 +207,8 @@ def _teslim_durumlari(cur, yonler: List[dict], urunler: dict) -> dict:
         kalan = int(T[t].get(u, 0) or 0)
         for n, y in enumerate(ys):
             pay = kalan if n == len(ys) - 1 else min(kalan, int(y["adet"]))
-            out[y["id"]] = pay
+            if y["id"] in istenen:
+                out[y["id"]] = pay
             kalan -= pay
     return out
 
@@ -324,9 +333,10 @@ def toptanci_beklenen(cur, sube_id: str) -> List[dict]:
     cur.execute("""SELECT y.id, y.kaynak, y.adet, y.kalem_i, s.kalemler, s.zaman FROM ey_siparis_yon y JOIN ey_siparis s ON s.id = y.siparis_id
                     WHERE s.sube_id=%s AND y.kaynak LIKE 'toptanci:%%' AND NOT y.iptal AND y.teslim_id IS NULL AND NOT s.iptal
                     ORDER BY s.zaman""", (str(sube_id),))
+    rows = [dict(r) for r in cur.fetchall() or []]   # E2E #3: ÖNCE oku — _toptanci_adlari aynı imleçle sorgu atıyor (sonuç kayboluyordu)
     top_ad = _toptanci_adlari(cur)
     grup = {}
-    for y in [dict(r) for r in cur.fetchall() or []]:
+    for y in rows:
         tid = y["kaynak"].split(":", 1)[1]
         k = next((x for x in y["kalemler"] or [] if x["i"] == y["kalem_i"]), {})
         if k.get("iptal"):

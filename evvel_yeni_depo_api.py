@@ -38,7 +38,9 @@ _HAZIR = False
 _SON_SENKRON = {"zaman": 0.0, "sonuc": None}
 DISARI = {"dışarı:toptanci": "Toptancı", "dışarı:tuketim": "Ürün aç (tüketim)", "dışarı:fire": "Fire",
           "dışarı:sayim": "Sayım farkı", "dışarı:bilinmeyen": "Kaynağı belirsiz", "dışarı:kayip": "Kayıp (yolda)",
-          "dışarı:ikram": "İkram", "dışarı:personel": "Personel kullanımı"}
+          "dışarı:ikram": "İkram", "dışarı:personel": "Personel kullanımı", "dışarı:iade": "Müşteri iadesi"}
+# PUBLIC — gidere AYRI satır yazılan fire türü çıkışlar ve gider etiketleri (TEK yer; Gider buradan okur). 'dışarı:sayim' YOK (gidere girmez).
+FIRE_GIDER_ETIKET = {"dışarı:fire": "fire", "dışarı:ikram": "ikram", "dışarı:personel": "personel kullanımı", "dışarı:iade": "müşteri iadesi"}
 
 
 def depo_hazirla(cur=None) -> None:

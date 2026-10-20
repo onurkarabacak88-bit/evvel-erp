@@ -5,7 +5,7 @@
 // Sök-tak: Toptancılar modülü kapalıysa ekran "kapalı" der. Sipariş modu / eksik bildirimi sipariş basamağıyla (ertelendi). Bip YOK (sahip).
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, qrBoyut, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
+import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, qrBoyut, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
 
 
 export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, secimBildir, tabletVar }) {
@@ -46,8 +46,9 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   const tAd = (d.toptancilar || []).find((t) => t.id === toptanci)?.ad;
   const kisiAd = adaylar.find((p) => p.id === kisi)?.ad;
 
-  const degis = (id, n) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(99999, n)) }));
-  const art = (id, dlt) => { setKoli((o) => { const x = { ...o }; delete x[id]; return x; }); setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(99999, (o[id] || 0) + dlt)) })); };
+  const ayar = adetAyarla(setAdet);   // ortak adet kuralı (D6-R)
+  const degis = ayar.degis;
+  const art = (id, dlt) => { setKoli((o) => { const x = { ...o }; delete x[id]; return x; }); ayar.art(id, dlt); };
   const koliYaz = (u, alan, deger) => {   // "2 koli × 12 + 3" → adet (sayım birimi); sunucuya yalnız adet gider
     const n = Number(String(deger).replace(/\D/g, '') || 0);
     const x = { ...(koli[u.id] || { koli: 0, tek: 0 }), [alan]: n };

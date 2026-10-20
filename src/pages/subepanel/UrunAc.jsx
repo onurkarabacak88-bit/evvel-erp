@@ -4,7 +4,7 @@
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek } from './ortak';
+import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek } from './ortak';
 
 
 export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir }) {
@@ -68,8 +68,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
     if (!kisi && son && adaylar.some((p) => p.id === son)) setKisi(son);
     setOnay(1);
   };
-  const degis = (id, n) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(9999, n)) }));
-  const art = (id, dlt) => setAdet((o) => ({ ...o, [id]: Math.max(0, Math.min(9999, (o[id] || 0) + dlt)) }));   // hızlı dokunuşta kaybolmasın
+  const { art, degis } = adetAyarla(setAdet);   // ortak adet kuralı (D6-R)
   const temizle = () => {
     setAdet({}); setNot(''); setIstek(yeniIstek()); setMesaj('');
     taslakKaldir(anahtar);

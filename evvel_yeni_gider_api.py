@@ -255,11 +255,11 @@ def _tuketim_satirlari_yeni(cur, bas: date, son: date) -> list:
     # Sahip (20 Eki, T3-19 kararı): FIRE / İKRAM / PERSONEL kullanımı ayrı gider satırı (sayım/panel hatası 'dışarı:sayim' gidere GİRMEZ).
     # Tezgahta sayılan ürünün firesi: 20 Eki'den önce DEPODAN düşüyordu → bar sayım farkının İÇİNDEydi, ayrıca yazılmaz. Sahip kararıyla
     # (D-4) artık BARDAN düşer → bar bakiyesi önceden azalır, sayım farkı fireyi içermez → fire AYRI satır yazılır (Codex P1: yoksa kaybolur).
-    fire = _yeni_hareketler(cur, bas, son, ("fire",), hedefler=["dışarı:fire", "dışarı:ikram", "dışarı:personel"], kaynak_onek=["depo:", "bar:"])
+    from evvel_yeni_depo_api import FIRE_GIDER_ETIKET as etiket   # TEK yer Depo'da (iade ayrı satır — sahip 20 Eki)
+    fire = _yeni_hareketler(cur, bas, son, ("fire",), hedefler=list(etiket), kaynak_onek=["depo:", "bar:"])
     if fire:
         from evvel_yeni_urun_api import urun_bilgi
         bil = urun_bilgi(cur, sorted({str(h["urun_id"]) for h in fire}))
-        etiket = {"dışarı:fire": "fire", "dışarı:ikram": "ikram", "dışarı:personel": "personel kullanımı"}
         for h in fire:
             if h["kaynak"].startswith("depo:") and __import__("evvel_yeni_urun_api").tezgahta_sayilir(bil.get(str(h["urun_id"])) or {}):
                 continue   # eski (depodan düşen) tezgah firesi — sayım farkında zaten var
@@ -270,8 +270,8 @@ def _tuketim_satirlari_yeni(cur, bas: date, son: date) -> list:
         f = fiyat(uid, gun)
         satir.append({"sube_id": sid, "gun": gun, "kalem_kodu": uid, "ad": ad or uid, "adet": adet,
                       "birim_kurus": f["kurus"] if f else None, "fk": f["kaynak"] if f else None, "fiyat_tarihi": f.get("tarih") if f else None,
-                      "kaynak": {"ac": "ürün aç", "gununde": "gününde tüketilir (pasta — girişte)", "fire": "fire", "ikram": "ikram",
-                                 "personel kullanımı": "personel kullanımı"}.get(tur, "günlük sayım (kullanılan)"),
+                      "kaynak": {"ac": "ürün aç", "gununde": "gününde tüketilir (pasta — girişte)",
+                                 **{v: v for v in etiket.values()}}.get(tur, "günlük sayım (kullanılan)"),   # fire etiketleri TEK yer (Depo)
                       "gun_kesin": (sid, gun) in kesin})
     return satir
 
