@@ -90,6 +90,8 @@ def kira_yaz(cur, sube_id: str, kim: str, tutar=None, gecerli_ay=None, artis_ayi
     for g, ad in ((artis_ayi, "Artış ayı 1–12"), (odeme_gunu, "Kira ödeme günü 1–31")):
         if g is not None and not 1 <= int(g) <= (12 if ad.startswith("Artış") else 31):
             raise HTTPException(400, f"{ad} olmalı")
+    if tutar is not None and _kurus(tutar) < 0:
+        raise HTTPException(400, "Kira eksi olamaz")   # E2E #8: −100 ₺ şube giderine eksi yazılıyordu
     if tutar is not None:
         ay = (gecerli_ay or _bugun().strftime("%Y-%m"))[:7]
         try:
