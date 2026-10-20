@@ -5,7 +5,7 @@
 // Sök-tak: Toptancılar modülü kapalıysa ekran "kapalı" der. Sipariş modu / eksik bildirimi sipariş basamağıyla (ertelendi). Bip YOK (sahip).
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, panelHata, qrBoyut, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
+import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, qrBoyut, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
 
 
 export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, secimBildir, tabletVar }) {
@@ -83,7 +83,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   };
 
   if (!d.toptanci_acik) {
-    return <div className="sp-kart" style={{ color: C.sari, fontWeight: 700 }}>📦 Toptancılar modülü kapalı — teslim şu an alınamıyor. Merkeze haber ver.</div>;
+    return <ModulKapali>📦 Toptancılar modülü kapalı — teslim şu an alınamıyor. Merkeze haber ver.</ModulKapali>;
   }
   const k0 = katalog.find((k) => k.id === acikKat);
   return (

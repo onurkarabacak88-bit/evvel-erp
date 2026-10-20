@@ -5,7 +5,7 @@
 // Sunucu: evvel_yeni_panel_api.depodan_kabul → Depo kabul_yaz (tek işlem). Sök-tak: Depo modülü kapalıysa ekran "kapalı" der.
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
+import { C, KisiPin, Modal, ModulKapali, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
 import { tarihNokta } from '../../utils/trTarih';
 
 export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
@@ -32,7 +32,7 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
   useEffect(() => { if (secPid && !p) setSecPid(null); }, [secPid, p]);   // paket başka yerden kabul edildiyse
 
   if (d.depo_acik === false) {
-    return <div className="sp-kart" style={{ color: C.sari, fontWeight: 700 }}>🚚 Depo modülü kapalı — paket şu an kabul edilemiyor. Merkeze haber ver.</div>;
+    return <ModulKapali>🚚 Depo modülü kapalı — paket şu an kabul edilemiyor. Merkeze haber ver.</ModulKapali>;
   }
   const kalemler = p?.kalemler || [];
   const sayilan = kalemler.filter((k) => (say[k.bag]?.n ?? '') !== '').length;

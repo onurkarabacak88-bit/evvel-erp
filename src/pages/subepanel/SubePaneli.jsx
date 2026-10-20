@@ -153,6 +153,8 @@ export default function SubePaneli({ subeId }) {
     }
     setModal(m);
   };
+  // ekran işi bitti → mesaj + yenile — TEK yol (Dalga 5, F#66: 8 ekranın 'bitti' kopyası)
+  const bittiGoster = (metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); };
   const gonder = async (yol, govde, sonra) => {
     if (mesgul) return;
     if (!kisi) { setAnladim('Önce "Kim yapıyor?" kısmından adını seç'); return; }
@@ -291,22 +293,22 @@ export default function SubePaneli({ subeId }) {
         {/* ORTA: ANA SAYFA */}
         {sekme === 'siparis' ? (
           <SiparisVer key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali}
-            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+            bitti={bittiGoster} />
         ) : sekme === 'siparisTakip' ? (
           <SiparisTakip key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari}
-            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+            bitti={bittiGoster} />
         ) : sekme === 'gonderilecek' ? (
           <Gonderilecek key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari}
-            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+            bitti={bittiGoster} />
         ) : sekme === 'depo' ? (
           <DepodanGelen key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari}
-            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+            bitti={bittiGoster} />
         ) : sekme === 'teslim' ? (
           <TedarikciTeslim key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} tabletVar={tabletVar}
-            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+            bitti={bittiGoster} />
         ) : sekme === 'ac' ? (
           <UrunAc key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} secimBildir={setAcSecim}
-            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+            bitti={bittiGoster} />
         ) : (
           <AnaSayfa d={d} yok={yok} tabletVar={tabletVar} kapali={kapali} ac={ac} setQrBuyuk={setQrBuyuk} setMolaQr={setMolaQr} bilgi={yakinda} avansTeslim={setAvansT} />
         )}
@@ -336,11 +338,11 @@ export default function SubePaneli({ subeId }) {
 
       {avansT && (
         <AvansTeslim t={avansT} d={d} subeId={subeId} adaylar={kisiAdaylari} kapat={() => setAvansT(null)}
-          bitti={(metin, kuru) => { setAvansT(null); setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+          bitti={(metin, kuru) => { setAvansT(null); bittiGoster(metin, kuru); }} />
       )}
       {giderAcik && (
         <AnlikGider d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} kapat={() => setGiderAcik(false)}
-          bitti={(metin, kuru) => { setGiderAcik(false); setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+          bitti={(metin, kuru) => { setGiderAcik(false); bittiGoster(metin, kuru); }} />
       )}
 
       {/* 🔑 AÇILIŞ ÖNCESİ KAPI (eski §1a "Personel Girişi Gerekli" — eski QR + kasa kilidi PIN'i KALKTI, yerine yeni dönen QR) */}

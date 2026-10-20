@@ -5,7 +5,7 @@
 // ya da "🚚 Yola çıkar" (kısmi → kalan merkeze döner). Sunucu: evvel_yeni_panel_api (/siparis, /siparisler, /gonderilecek) → Sipariş modülü.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
+import { AdetGirdi, C, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
 import { tarihNokta } from '../../utils/trTarih';
 
 const DURUM = {
@@ -26,7 +26,7 @@ export function useSiparisler(subeId) {
 }
 
 function Kapali() {
-  return <div className="sp-kart" style={{ color: C.sari, fontWeight: 700 }}>🛒 Sipariş modülü kapalı — merkeze haber ver.</div>;
+  return <ModulKapali>🛒 Sipariş modülü kapalı — merkeze haber ver.</ModulKapali>;
 }
 
 // ─────────────────────────── 🛒 SİPARİŞ VER ───────────────────────────
