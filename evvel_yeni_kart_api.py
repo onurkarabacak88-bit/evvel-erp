@@ -295,8 +295,8 @@ def kart_takvimi(yil: Optional[int] = None):
             od_yeni = yer.get(a, 0)
             e = eski.get((k["id"], a)) or {}
             od_e = int(e.get("odenen") or 0)
-            od = max(od_yeni, od_e)      # iki sistemde de varsa TOPLANMAZ (aynı ödeme olabilir) — büyüğü + "iki sistemde" işareti
-            iki_yerde = od_yeni > 0 and od_e > 0
+            from evvel_yeni_kopru import gecis_odenen
+            od, iki_yerde = gecis_odenen(od_yeni, od_e)   # iki sistemde de varsa TOPLANMAZ — TEK kural (C-T1-08)
             ekstre, ekstre_kaynak = (ty[0] if ty else None), "teyit"
             if ekstre is None and e.get("ekstre"):
                 ekstre, ekstre_kaynak = int(e["ekstre"]), "eski"

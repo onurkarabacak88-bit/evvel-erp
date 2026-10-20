@@ -141,8 +141,8 @@ def takvim(yil: Optional[int] = None):
             # Fable+Codex: aynı taksit iki sistemde de girilmişse TOPLANMAZ — yeni kayıt varsa eski sayılmaz; ikisi de varsa işaret
             od_y = yeni.get((k["id"], a), 0)
             od_e = eski.get((k.get("eski_id"), a), 0) if k.get("eski_id") else 0
-            od = max(od_y, od_e)   # toplanmaz (aynı taksit olabilir); büyüğü + işaret — sahip bakar
-            iki_yerde = od_y > 0 and od_e > 0
+            from evvel_yeni_kopru import gecis_odenen
+            od, iki_yerde = gecis_odenen(od_y, od_e)   # toplanmaz (aynı taksit olabilir); büyüğü + işaret — TEK kural (C-T1-08)
             vade = _gun(int(a[:4]), int(a[5:7]), k["odeme_gunu"])
             if not aktif_ay:
                 durum = "yok"

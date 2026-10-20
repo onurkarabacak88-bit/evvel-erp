@@ -101,6 +101,7 @@ export function KiraTakvim() {
             <div style={{ color: R.not, fontSize: 13 }}>Son ödeme günü {tKisa(sec.a.vade)} · durum: {DURUM[sec.a.durum].ad}</div>
             {sec.a.yeni_kayitlar.map((k) => <div key={k.id} style={{ fontSize: 13 }}>• {tKisa(k.tarih)} · {fmt(k.tutar)} ₺ · {k.aciklama}</div>)}
             {sec.a.eski_sistem > 0 && <div style={{ fontSize: 13 }}>• eski sistemde ödenmiş: {fmt(sec.a.eski_sistem)} ₺</div>}
+            {sec.a.iki_yerde && <div style={{ fontSize: 12.5, color: R.amber }}>⚠ Hem eski sistemde hem Evvel Yeni'de ödeme var — biri mükerrer olabilir (toplanmadı; Kart/Kredi ile aynı kural).</div>}
             {sec.a.kalan > 0 && <div style={{ fontSize: 12.5, color: R.not }}>Ödemek için: Ödeme → Ödeme / gider gir → Kira → şube ve "ait olduğu ay" seç; tutar kendiliğinden gelir.</div>}
             <div style={{ textAlign: 'right' }}><Dugme kucuk onClick={() => setSec(null)}>Kapat</Dugme></div>
           </div>

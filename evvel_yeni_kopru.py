@@ -33,3 +33,11 @@ def urun_ac_parcala(aciklama: str) -> list:
         if adet:
             out.append((str(it.get("urun_id") or "").strip(), str(it.get("urun_ad") or "").strip(), adet))
     return out
+
+
+def gecis_odenen(yeni: int, eski: int):
+    """TEK KURAL (tekrar denetimi C-T1-08): aynı dönemin ödemesi hem eski 'Öde' hem Evvel Yeni Ödeme formundan görünüyorsa TOPLANMAZ
+    (aynı ödeme olabilir) — büyüğü alınır ve 'iki_yerde' işaretlenir, sahip bakar. Kira / Kredi / Kart takvimleri bunu kullanır.
+    Dönüş (odenen, iki_yerde). Kimlikle eşleşme eski sistemde yok — kesimden sonra eski taraf kalkar."""
+    yeni, eski = int(yeni or 0), int(eski or 0)
+    return max(yeni, eski), (yeni > 0 and eski > 0)
