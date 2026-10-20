@@ -212,12 +212,12 @@ def _tahmin(cur, toptanci_id: str, kalemler: List[dict], gun: date):
         adet = int(k.get("adet") or 0)
         uid = str(k.get("urun_id") or "")
         birim, fk = None, None
-        if an in tf:
-            birim, fk = tf[an], "bu toptancının önceki faturası"
-        elif uid in yeni_k:
-            f_ = fiyat_bilgi(cur, uid, gun)
+        if uid in yeni_k:   # F#18: yeni katalogda TEK fiyat kuralı (Ürün fiyatları ekranıyla AYNI), bu toptancının fiyatıyla
+            f_ = fiyat_bilgi(cur, uid, gun, toptanci_id) or fiyat_bilgi(cur, uid, gun)
             if f_:
                 birim, fk = f_["kurus"], f"{f_['kaynak']} fiyatı"
+        elif an in tf:   # eski kimlik / ad anahtarı (geçiş) — tarihsiz toptancı fiyatı
+            birim, fk = tf[an], "bu toptancının önceki faturası"
         elif uid in elle:
             birim, fk = elle[uid], "elle girilen fiyat"
         elif uid in genel:
@@ -261,10 +261,12 @@ def _fiyat_ogren(cur, t: dict, gun: date) -> None:
                            WHERE ey_toptanci_fiyat.tarih <= EXCLUDED.tarih""", (t["toptanci_id"], an, b, gun))
 
 
-def fiyat_bilgi(cur, urun_id: str, gun: Optional[date] = None) -> Optional[dict]:
+def fiyat_bilgi(cur, urun_id: str, gun: Optional[date] = None, toptanci_id: Optional[str] = None) -> Optional[dict]:
     """PUBLIC — TEK FİYAT KURALI, SÖZLEŞMELİ: {kurus, kdv_dahil: True, birim: 'sayim', kaynak, tarih} ya da None.
     O GÜN geçerli fiyat (tarihli geçmişten): o güne kadar öğrenilen en yeni TOPTANCI fiyatı → yoksa o güne kadar en yeni ELLE fiyat
-    (kaldırıldıysa yok) → geçmişte hiç satır yoksa bugünkü tablo (eski kimlik / geçiş). Okuyan modül KDV EKLEMEZ."""
+    (kaldırıldıysa yok) → geçmişte hiç satır yoksa bugünkü tablo (eski kimlik / geçiş). Okuyan modül KDV EKLEMEZ.
+    toptanci_id verilirse (teslim tahmini — tekrar denetimi F#18/C-T1-13: tahmin ayrı kuralla ey_toptanci_fiyat'ı ÖNCE okuyordu):
+    AYNI kural, yalnız BAŞKA toptancıların öğrenilmiş fiyatları yok sayılır (elle fiyat yine en yeniyse kazanır)."""
     toptanci_hazirla(cur)
     uid = str(urun_id or "").strip()
     if not uid:
@@ -272,16 +274,17 @@ def fiyat_bilgi(cur, urun_id: str, gun: Optional[date] = None) -> Optional[dict]
     g = gun or _bugun()
     # Fable: o güne kadar EN YENİ satır kazanır (toptancıdan öğrenilen ya da merkezin elle girdiği) — elle düzeltme toptancı fiyatını
     # ezebilir; en yeni satır "elle kaldırıldı" ise toptancının o güne kadarki en yeni fiyatına düşülür.
-    cur.execute("""SELECT tur, birim, tarih FROM ey_urun_fiyat_gecmis WHERE urun_id=%s AND tarih <= %s
-                    ORDER BY tarih DESC, zaman DESC LIMIT 1""", (uid, g))
+    tq, tp = ("", ()) if not toptanci_id else (" AND (tur <> 'toptanci' OR toptanci_id = %s)", (str(toptanci_id),))
+    cur.execute(f"""SELECT tur, birim, tarih FROM ey_urun_fiyat_gecmis WHERE urun_id=%s AND tarih <= %s{tq}
+                    ORDER BY tarih DESC, zaman DESC LIMIT 1""", (uid, g) + tp)
     r = cur.fetchone()
     if r and dict(r)["birim"] is not None:
         r = dict(r)
         return {"kurus": int(r["birim"]), "kdv_dahil": True, "birim": "sayim", "kaynak": "toptancı" if r["tur"] == "toptanci" else "elle",
                 "tarih": r["tarih"].isoformat()}
     if r:   # en yeni = elle fiyat kaldırıldı
-        cur.execute("""SELECT birim, tarih FROM ey_urun_fiyat_gecmis WHERE urun_id=%s AND tur='toptanci' AND tarih <= %s AND birim IS NOT NULL
-                        ORDER BY tarih DESC, zaman DESC LIMIT 1""", (uid, g))
+        cur.execute(f"""SELECT birim, tarih FROM ey_urun_fiyat_gecmis WHERE urun_id=%s AND tur='toptanci' AND tarih <= %s AND birim IS NOT NULL{tq}
+                        ORDER BY tarih DESC, zaman DESC LIMIT 1""", (uid, g) + tp)
         t = cur.fetchone()
         return {"kurus": int(dict(t)["birim"]), "kdv_dahil": True, "birim": "sayim", "kaynak": "toptancı",
                 "tarih": dict(t)["tarih"].isoformat()} if t else None
