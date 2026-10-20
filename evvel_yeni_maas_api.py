@@ -22,6 +22,7 @@ from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
@@ -463,7 +464,7 @@ class ElleBody(BaseModel):
     bayram_saat: Optional[Decimal] = None
     mesai_saat: Optional[Decimal] = None        # boş gönderilirse vardiya önerisi
     calisma_saat: Optional[Decimal] = None
-    duzeltme: Optional[Decimal] = None
+    duzeltme: Optional[TrTutar] = None
     aciklama: Optional[str] = None
     mesai_oneriye_don: bool = False
     saat_oneriye_don: bool = False

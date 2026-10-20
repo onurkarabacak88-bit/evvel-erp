@@ -13,7 +13,8 @@ Tak-çıkar: Ödeme'nin PUBLIC `odeme_listesi`ni, Kasa'nın PUBLIC `donem_baslan
 import logging
 import uuid
 from datetime import date
-from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -160,7 +161,7 @@ def takvim(yil: Optional[int] = None):
 class KrediBody(BaseModel):
     ad: str
     tur: Optional[str] = None
-    aylik_taksit: Decimal
+    aylik_taksit: TrTutar
     odeme_gunu: int
     ilk_ay: str
     taksit_sayisi: Optional[int] = None

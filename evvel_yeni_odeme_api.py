@@ -25,7 +25,8 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
-from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 
 from database import db
 # Kasa'nın YALNIZ PUBLIC kapıları (tekrar denetimi C-T2-01: önce 11 özel fonksiyon ithal ediliyordu)
@@ -87,11 +88,17 @@ def listeler():
     }
 
 
+
+def _konu_kimlik(k) -> tuple:
+    """BENZER KAYIT kıyası için konunun KİMLİĞİ: tür + kimlik alanları (ad / açıklama hariç — Tanımlar'da ad değişince kalkan kaçmasın)."""
+    k = k or {}
+    return tuple(sorted((a, str(v)) for a, v in k.items() if a.endswith("_id") or a in ("tip", "kalem", "fatura_turu", "vergi_turu", "donem")))
+
 class Parca(BaseModel):
     yontem: str                  # nakit | havale | kart
     cep: Optional[str] = None    # nakit/havale
     kart_id: Optional[str] = None
-    tutar: Decimal
+    tutar: TrTutar
 
 
 class OdemeBody(BaseModel):
@@ -275,7 +282,7 @@ def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
         for h in kayit:
             if h["tur"] != "odeme" or h["is_gunu"] != gun:
                 continue
-            if (h["veri"].get("konu") or {}) != (konu or {}):
+            if _konu_kimlik(h["veri"].get("konu")) != _konu_kimlik(konu):
                 continue   # E2E #13: farklı konu (ör. kart borcu ↔ toptancı) aynı tutarda olabilir — mükerrer değil
             eski = {(p["cep"], int(p["tutar"])) for p in h["veri"].get("parcalar", [])}
             if any((x["cep"], x["tutar"]) in eski for x in nakit_parca):
@@ -412,8 +419,8 @@ def personel_durum(personel_id: str, ay: str):
 class UcretBody(BaseModel):
     personel_id: str
     ay: str                 # YYYY-AA — bu aydan itibaren geçerli
-    maas: Decimal
-    yemek: Decimal
+    maas: TrTutar
+    yemek: TrTutar
 
 
 @router.post("/personel-ucret")

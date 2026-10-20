@@ -11,7 +11,8 @@ otomatik gelsin; ay ay ödenen kiraların listesi yıllıkta ay ay tutulsun — 
 """
 
 from datetime import date
-from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -210,7 +211,7 @@ def kira_aylari(cur, yil: int, bugun: date) -> list:
 
 
 class KiraBody(BaseModel):
-    tutar: Optional[Decimal] = None
+    tutar: Optional[TrTutar] = None
     gecerli_ay: Optional[str] = None
     artis_ayi: Optional[int] = None
     odeme_gunu: Optional[int] = None

@@ -19,6 +19,8 @@ import secrets
 import uuid
 from datetime import date
 from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -478,23 +480,23 @@ class TanimBody(BaseModel):
     sube_id: Optional[str] = None
     gorev: Optional[str] = None
     giris: Optional[str] = None
-    maas: Optional[Decimal] = None
-    yemek: Optional[Decimal] = None
+    maas: Optional[TrTutar] = None
+    yemek: Optional[TrTutar] = None
     ucret_ay: Optional[str] = None       # maaş/yemek değişikliği hangi aydan itibaren
     cikis: Optional[str] = None          # işten ayrılış (YYYY-AA-GG) — son maaş için
     calisma_turu: Optional[str] = None   # 'tam' | 'yari'
     erken_acilis: Optional[bool] = None   # B7: panelde 07:00 öncesi açılış izni
     pin: Optional[str] = None             # panel PIN'i (4 hane) — yalnız değiştirmek için; asla geri dönmez
     yetki_geri_alma: Optional[bool] = None   # S9: hatalı teslimi geri alabilir
-    saatlik: Optional[Decimal] = None    # yarı zamanlı saatlik ücret
-    yol: Optional[Decimal] = None        # aylık yol
+    saatlik: Optional[TrTutar] = None    # yarı zamanlı saatlik ücret
+    yol: Optional[TrTutar] = None        # aylık yol
     # kart / banka
     banka: Optional[str] = None
     kimin: Optional[str] = None
-    acilis_borc: Optional[Decimal] = None
-    limit_tutar: Optional[Decimal] = None
+    acilis_borc: Optional[TrTutar] = None
+    limit_tutar: Optional[TrTutar] = None
     vade_gun: Optional[int] = None           # toptancı: teslimden kaç gün sonra ödenir
-    kira: Optional[Decimal] = None           # şube aylık kirası
+    kira: Optional[TrTutar] = None           # şube aylık kirası
     kira_ay: Optional[str] = None            # kira hangi aydan geçerli (YYYY-AA)
     kira_artis_ayi: Optional[int] = None     # her yıl hangi ay artar (1–12)
     kira_odeme_gunu: Optional[int] = None
@@ -506,7 +508,7 @@ class TanimBody(BaseModel):
     # toptancı
     kategori: Optional[str] = None
     telefon: Optional[str] = None
-    acilis_bakiye: Optional[Decimal] = None
+    acilis_bakiye: Optional[TrTutar] = None
 
 
 def _ad(b: TanimBody, zorunlu: bool) -> Optional[str]:

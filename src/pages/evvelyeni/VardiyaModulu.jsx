@@ -78,15 +78,18 @@ export default function VardiyaModulu({ onToast }) {
   const hafta = v.pazartesi;
   const gun = v.gunler.includes(gunSec) ? gunSec : (v.gunler.includes(bugun) ? bugun : v.gunler[0]);
   const bosta = bostakiler(v, gun);
-  const seciliKisi = secili && bosta.find((p) => p.id === secili);
+  // Seçili kişi (soldan dokunuldu): BOŞ olduğu HER günün kutusu '+ Ad' olur, dokununca pencere açmadan yazılır; seçim KALIR (art arda
+  // birkaç güne yazılır — sahip 20 Eki: 'tıkladığımız herhangi bir boş alana direkt kişiyi atayabilelim'). Bitince isme tekrar dokun.
+  const seciliP = secili ? v.personel.find((p) => p.id === secili) : null;
+  const bostaMi = (g) => !!seciliP && calisabilir(seciliP, g) && !gunuDolu(v, seciliP.id, g);
   // '+' : soldan kişi seçiliyse ve o gün boştaysa PENCERE AÇMADAN yazılır; değilse seçim penceresi
   const arti_ = (o) => {
     setGunSec(o.gun);   // sol liste eklenen güne geçer → eklenen kişinin listeden düştüğü görünür (sahip: 'Elif soldan kaybolmadı')
-    if (secili && o.gun === gun && seciliKisi && o.kalip_id) {
-      yap('plan', { personel_id: secili, gun: o.gun, sube_id: o.sube_id, bas: o.bas, bit: o.bit, kalip_id: o.kalip_id }, () => setSecili(null));
+    if (bostaMi(o.gun) && o.kalip_id) {
+      yap('plan', { personel_id: secili, gun: o.gun, sube_id: o.sube_id, bas: o.bas, bit: o.bit, kalip_id: o.kalip_id });
       return;
     }
-    ekleAc({ ...o, personel_id: secili && o.gun === gun && seciliKisi ? secili : '' });
+    ekleAc({ ...o, personel_id: bostaMi(o.gun) ? secili : '' });
   };
   const ekleAc = (o) => setForm({ yeni: true, tur: 'calisma', personel_id: '', bas: '09:00', bit: '18:30', ...o });
   const duzenleAc = (p) => setForm({ yeni: false, ...p });
@@ -137,7 +140,8 @@ export default function VardiyaModulu({ onToast }) {
                 <b>{p.ad}</b><div style={{ fontSize: 11, color: R.not }}>{sad[p.sube_id] || 'Ortak'}{p.calisma_turu === 'yari' ? ' · yarı zamanlı' : ''}</div>
               </button>))}
             {!bosta.length && <div style={{ fontSize: 12.5, color: R.yesil }}>Herkes yazıldı ya da izinli ✓</div>}
-            <div style={{ fontSize: 11.5, color: R.not }}>{seciliKisi ? `${seciliKisi.ad} seçili → ${gunKisa(gun)} sütununda bir '+' kutusuna dokun` : 'Bir isme dokun, sonra o günün + kutusuna dokun.'}</div>
+            {seciliP && <div style={{ fontSize: 12.5, padding: '6px 8px', borderRadius: 8, background: 'var(--pi-accent-soft)' }}><b>{seciliP.ad}</b> seçili → boş olduğu günlerdeki '+ {seciliP.ad}' kutularına dokun (art arda olur) · <button type="button" onClick={() => setSecili(null)} style={{ border: 'none', background: 'none', color: R.bakirAcik, cursor: 'pointer', font: 'inherit', padding: 0 }}>bitir</button></div>}
+            {!seciliP && <div style={{ fontSize: 11.5, color: R.not }}>Bir isme dokun, sonra o kişinin gireceği kutulara dokun.</div>}
           </div>
           <div style={{ flex: '1 1 600px', minWidth: 0, display: 'grid', gap: 14 }}>
       {v.subeler.map((s) => {
@@ -174,8 +178,8 @@ export default function VardiyaModulu({ onToast }) {
                           <td key={g} style={{ ...hucre, background: !aktifGun ? 'var(--pi-bg)' : eksik ? 'var(--pi-warn-soft)' : undefined }}>
                             {bu.map((p) => <Rozet key={p.id} p={p} ad={pad[p.personel_id] || '—'} onClick={() => duzenleAc(p)} />)}
                             {aktifGun && <button type="button" className="vd-arti" disabled={mesgul} onClick={() => arti_({ sube_id: s.id, gun: g, kalip_id: k.id, bas: k.bas, bit: k.bit })}
-                              style={{ ...arti, color: eksik ? R.amber : R.not, background: seciliKisi && g === gun ? 'var(--pi-accent-soft)' : 'none' }}>
-                              {seciliKisi && g === gun ? `+ ${seciliKisi.ad}` : eksik ? `+ ${bu.length}/${k.kisi}` : '+'}</button>}
+                              style={{ ...arti, color: eksik ? R.amber : R.not, background: bostaMi(g) ? 'var(--pi-accent-soft)' : 'none' }}>
+                              {bostaMi(g) ? `+ ${seciliP.ad}` : eksik ? `+ ${bu.length}/${k.kisi}` : '+'}</button>}
                           </td>
                         );
                       })}
@@ -187,7 +191,7 @@ export default function VardiyaModulu({ onToast }) {
                       <td key={g} style={hucre}>
                         {diger.filter((p) => p.gun === g).map((p) => <Rozet key={p.id} p={p} ad={pad[p.personel_id] || '—'} onClick={() => duzenleAc(p)} />)}
                         <button type="button" className="vd-arti" disabled={mesgul} onClick={() => arti_({ sube_id: s.id, gun: g, kalip_id: null })}
-                          style={{ ...arti, color: R.not, background: seciliKisi && g === gun ? 'var(--pi-accent-soft)' : 'none' }}>{seciliKisi && g === gun ? `+ ${seciliKisi.ad}` : '+'}</button>
+                          style={{ ...arti, color: R.not, background: bostaMi(g) ? 'var(--pi-accent-soft)' : 'none' }}>{bostaMi(g) ? `+ ${seciliP.ad}` : '+'}</button>
                       </td>
                     ))}
                   </tr>

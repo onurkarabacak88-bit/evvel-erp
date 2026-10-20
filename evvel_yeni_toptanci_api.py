@@ -20,6 +20,8 @@ import logging
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from typing import List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -538,7 +540,7 @@ class TeslimBody(BaseModel):
     toptanci_id: str
     sube_id: Optional[str] = None
     tarih: Optional[str] = None
-    tutar: Optional[Decimal] = None
+    tutar: Optional[TrTutar] = None
     fatura_geldi: Optional[bool] = None
     fatura_no: Optional[str] = None
     aciklama: Optional[str] = None
@@ -577,7 +579,7 @@ def merkez_teslim(body: TeslimBody, x_evvel_oturum: Optional[str] = Header(defau
 
 
 class TutarBody(BaseModel):
-    tutar: Decimal
+    tutar: TrTutar
     fatura_geldi: Optional[bool] = True
     fatura_no: Optional[str] = None
     sebep: Optional[str] = None
@@ -948,7 +950,7 @@ def urun_fiyatlari(evren: Optional[str] = None):
 
 class FiyatBody(BaseModel):
     urun_id: str
-    birim: Optional[Decimal] = None     # boş → elle fiyat silinir
+    birim: Optional[TrTutar] = None     # boş → elle fiyat silinir
 
 
 def tahminleri_tazele(cur) -> int:

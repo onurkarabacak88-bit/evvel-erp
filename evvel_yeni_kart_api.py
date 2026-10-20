@@ -13,7 +13,8 @@ SADE MODEL — tek rakam: KULLANILABİLİR LİMİT (bankanın uygulamasında yaz
 
 import uuid
 from datetime import date
-from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -93,7 +94,11 @@ def _teyitten_sonra(x: dict, tarih, zaman) -> bool:
     t = tarih.isoformat() if hasattr(tarih, "isoformat") else str(tarih)
     if x["gun"] != t:
         return x["gun"] > t
-    return bool(zaman and x.get("zaman") and x["zaman"] > zaman)
+    # Fable: GERİYE DÖNÜK teyit (dünün bankası bugün girildi) → o günün bütün hareketleri bankanın rakamında sayılır (eski kural);
+    # zaman kıyası yalnız teyit, kendi gününde girildiyse (sabah teyit + öğlen kartla ödeme)
+    if not zaman or __import__("evvel_yeni_cekirdek").tr_gun(zaman).isoformat() != t:
+        return False
+    return bool(x.get("zaman") and x["zaman"] > zaman)
 
 
 def odeme_ayi(kart: dict, tarih, donem: Optional[str], teyit_son: dict, teyit_tarih: Optional[dict] = None) -> str:
@@ -346,9 +351,9 @@ def kart_ozet():
 
 
 class TeyitBody(BaseModel):
-    kullanilabilir: Decimal
+    kullanilabilir: TrTutar
     tarih: Optional[str] = None
-    ekstre_borc: Optional[Decimal] = None
+    ekstre_borc: Optional[TrTutar] = None
     son_odeme: Optional[str] = None
     not_: Optional[str] = None
 

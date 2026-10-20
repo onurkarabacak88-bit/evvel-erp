@@ -282,7 +282,8 @@ def _cepler(cur) -> List[dict]:
     # eksik kapanış / Gelir eksik günü üretmez. Şube durumu Tanımlar'ın kapısından (tek gerçek).
     try:
         from evvel_yeni_tanim_api import subeler as _ey_subeler
-        aktif = {str(s["id"]) for s in _ey_subeler(cur)}
+        with savepoint(cur, "sp_kasa_sube_aktif"):
+            aktif = {str(s["id"]) for s in _ey_subeler(cur)}
         for c in rows:
             if c["tur"] == "sube" and c.get("sube_id"):
                 c["aktif"] = str(c["sube_id"]) in aktif
@@ -693,7 +694,7 @@ def _isler(kayitlar: List[dict], C: dict, fl: List[dict], bas: Optional[date] = 
         if h["tur"] == "kapanis" and h["durum"] != "onaylandi":
             out.append({"tur": "kapanis", "id": h["id"], "tarih": h["is_gunu"], "cep": h["cep"], "ad": C.get(h["cep"], {}).get("ad"),
                         "nakit": _tl_sayi(h["tutar"]), "kart": _tl_sayi(int(h["veri"].get("kart", 0))), "eski_sistem": bool(h.get("kaynak_ref"))})
-        kilitli = h["tur"] == "teslim" and h["hedef"] in kilit and h["is_gunu"] <= kilit[h["hedef"]]
+        kilitli = h["tur"] == "teslim" and _kilitli_teslim(h, kilit)
         if h["tur"] == "teslim" and h["durum"] != "onaylandi" and (OTOMATIK_KABUL_GUN > 0 or kilitli):
             out.append({"tur": "teslim", "id": h["id"], "tarih": h["is_gunu"], "kaynak": h["kaynak"], "hedef": h["hedef"],
                         "ad": f"{C.get(h['kaynak'], {}).get('ad')} → {C.get(h['hedef'], {}).get('ad')}",
@@ -1466,6 +1467,11 @@ def _otomatik_senkron() -> dict:
             "zaman": datetime.fromtimestamp(zz, timezone.utc).isoformat() if zz else None}
 
 
+def _kilitli_teslim(h: dict, kilit: Dict[str, str]) -> bool:
+    """TEK kural: teslimin hedef cebi teslim günü ya da sonrasında SAYILMIŞ → otomatik kabul edilemez, merkez 'aldım' der."""
+    return h["hedef"] in kilit and h["is_gunu"] <= kilit[h["hedef"]]
+
+
 def _otomatik_kabul(cur) -> int:
     """Teslim gününden en az OTOMATIK_KABUL_GUN geçmiş, hâlâ 'aldım' denmemiş teslimleri
     teslim edilen tutarla KABUL eder (para teslim günü eve girmiş sayılır). Patronun evi o
@@ -1477,7 +1483,7 @@ def _otomatik_kabul(cur) -> int:
     for h in kayit:
         if h["tur"] != "teslim" or h["durum"] == "onaylandi" or h["is_gunu"] > sinir:
             continue
-        if h["hedef"] in kilit and h["is_gunu"] <= kilit[h["hedef"]]:
+        if _kilitli_teslim(h, kilit):
             continue
         veri = dict(h["veri"])
         veri.update(alinan=h["tutar"], onay_gunu=h["is_gunu"], otomatik=True)
@@ -1578,8 +1584,10 @@ def teslim_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = He
         veri = dict(h["veri"])
         veri.setdefault("duzeltmeler", []).append({"eski": int(veri.get("alinan", h["tutar"])), "yeni": al, "kim": kim})
         veri["alinan"] = al
-        # E2E #1: alınan azalınca hedef cep (patron evi) o günden sonra eksiye düşmesin (para zaten harcanmış olabilir)
-        _eksi_denetle(_olaylar([{**x, "veri": veri} if x["id"] == hid else x for x in kayit]), {h["hedef"]}, og, C)
+        # E2E #1: alınan AZALINCA hedef cep (patron evi) o günden sonra eksiye düşmesin (para zaten harcanmış olabilir).
+        # Fable: yönlü — artış (1.000 değil 1.200 saydım) bakiyeyi iyileştirir, eski bir eksik yüzünden reddedilmez.
+        if al < int(veri["duzeltmeler"][-1]["eski"]):
+            _eksi_denetle(_olaylar([{**x, "veri": veri} if x["id"] == hid else x for x in kayit]), {h["hedef"]}, og, C)
         cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(veri, ensure_ascii=False), hid))
     return {"ok": True}
 

@@ -16,7 +16,8 @@ Tak-çıkar: Kasa'nın PUBLIC `defter_ozeti`, `donem_baslangici`, `hareket_ekle`
 import logging
 import uuid
 from datetime import date
-from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -199,7 +200,7 @@ def _borc(cur, yil: int) -> dict:
 class KalemBody(BaseModel):
     ad: str
     kiraci: Optional[str] = None
-    tutar: Decimal
+    tutar: TrTutar
     gecerli_ay: Optional[str] = None     # bu tutar hangi aydan geçerli (zam)
     odeme_gunu: int = 1
     artis_ayi: Optional[int] = None
@@ -264,7 +265,7 @@ def kalem_kaydet(b: KalemBody, mid: Optional[str] = None, x_evvel_oturum: Option
 class TahsilatBody(BaseModel):
     mulk_id: str
     ay: str
-    tutar: Decimal
+    tutar: TrTutar
     tarih: Optional[str] = None
     istek_id: Optional[str] = None
 
