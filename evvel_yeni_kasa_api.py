@@ -448,8 +448,8 @@ def _pos_durumu(ol: List[dict], C: dict, oranlar: Dict[str, tuple], ref: str) ->
             gunler = []
             for o in ol:
                 if o["olay"] == "kapanis" and o["cep"] == c["id"]:
-                    v = o["veri"]
-                    t = int(v.get(kanal, 0)) if (kanal in v) else (int(v.get("kart", 0)) if kanal == "pos" else 0)
+                    _n, _p, _o, _ = kapanis_kanallari({"tutar": o.get("tutar") or 0, "veri": o["veri"]})   # TEK kural (T1-14)
+                    t = _p if kanal == "pos" else _o
                     if t:
                         gunler.append((o["gun"], t))
             yatan = sum(int(o["veri"].get("brut", o["tutar"])) for o in ol
@@ -470,6 +470,33 @@ def _pos_durumu(ol: List[dict], C: dict, oranlar: Dict[str, tuple], ref: str) ->
                         "brut_satis": _tl_sayi(brut), "yatan_brut": _tl_sayi(yatan), "bekleyen_brut": _tl_sayi(bekleyen),
                         "oran": float(oran or 0), "beklenen_net": _tl_sayi(bekleyen - komisyon(bekleyen, oran)),
                         "en_eski_gun": en_eski, "gun_sayisi": _gun_fark(en_eski, ref) if en_eski else 0})
+    return out
+
+
+def kapanis_kanallari(h: dict) -> tuple:
+    """PUBLIC — TEK kapanış kanal kuralı (Codex T1-14): (nakit, pos, online, ayrımsız) kuruş. Eski kayıtta POS/online ayrımı yoksa
+    'kart'ın tamamı POS sayılır (ayrımsız=True, etiketli). Gelir, Satış (iki kopya), Kasa POS bekleyen ayrı yazıyordu."""
+    v = h.get("veri") or {}
+    nakit = int(h.get("tutar") or 0)
+    if "pos" in v:
+        return nakit, int(v.get("pos") or 0), int(v.get("online") or 0), False
+    return nakit, int(v.get("kart") or 0), 0, True
+
+
+def pos_sifir_supheli(kayitlar: list) -> set:
+    """PUBLIC — TEK "POS 0 girilmiş ama satış var" kuralı (Codex T1-15, sahip/Fable 16 Eki): POS'u 0 yazılmış, nakdi olan kapanış;
+    şube en az 3 günde POS girmiş (gerçekten POS'suz şube değil) ve merkez "gerçekten POS yoktu" (pos_sifir_kabul) DEMEMİŞ.
+    Kasa Bekleyen işler + Satış 'kirli gün' AYNI kümeyi kullanır (Satış kabul edilen günü hâlâ kirli sayıyordu). Dönüş: kapanış id'leri."""
+    pos_alan = {}
+    for h in kayitlar:
+        if h["tur"] == "kapanis" and int((h.get("veri") or {}).get("pos", 0) or 0) > 0:
+            pos_alan[h["cep"]] = pos_alan.get(h["cep"], 0) + 1
+    out = set()
+    for h in kayitlar:
+        v = h.get("veri") or {}
+        if (h["tur"] == "kapanis" and "pos" in v and int(v.get("pos") or 0) == 0 and int(h["tutar"] or 0) > 0
+                and pos_alan.get(h["cep"], 0) >= 3 and not v.get("pos_sifir_kabul")):
+            out.add(h["id"])
     return out
 
 
@@ -708,15 +735,10 @@ def _eksik_kapanislar(kayitlar: List[dict], C: dict, donem_bas: Optional[date] =
                 out.append({"tur": "evo_kapanis", "id": h["id"], "tarih": gi, "cep": c["id"], "ad": c["kisa"],
                             "nakit": _tl_sayi(h["tutar"]), "kart": _tl_sayi(int(h["veri"].get("kart", 0)))})
         g += timedelta(days=1)
-    # Sahip/Fable (2026-10-16): "POS 0 girilmiş ama satış var" — kart satışı kapanışa yazılmamış olabilir
-    pos_alan = {}
+    # Sahip/Fable (2026-10-16): "POS 0 girilmiş ama satış var" — kart satışı kapanışa yazılmamış olabilir (TEK kural, T1-15)
+    supheli = pos_sifir_supheli(kayitlar)
     for h in kayitlar:
-        if h["tur"] == "kapanis" and int(h["veri"].get("pos", 0) or 0) > 0:
-            pos_alan[h["cep"]] = pos_alan.get(h["cep"], 0) + 1
-    for h in kayitlar:
-        v = h["veri"]
-        if (h["tur"] == "kapanis" and "pos" in v and int(v.get("pos") or 0) == 0 and h["tutar"] > 0
-                and pos_alan.get(h["cep"], 0) >= 3 and not v.get("pos_sifir_kabul")):
+        if h["id"] in supheli:
             c = C.get(h["cep"]) or {}
             out.append({"tur": "pos_sifir", "id": h["id"], "tarih": h["is_gunu"], "cep": h["cep"], "ad": c.get("kisa"),
                         "nakit": _tl_sayi(h["tutar"])})

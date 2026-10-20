@@ -39,12 +39,7 @@ def _ay_sinirlari(ay: Optional[str]):
     return a_, bas, son, bugun
 
 
-def _kapanis_kanallari(h: dict) -> tuple:
-    """(nakit, pos, online) kuruş — eski kayıtta ayrım yoksa kart'ın tamamı POS sayılır (etiketli)."""
-    v = h["veri"]
-    if "pos" in v:
-        return h["tutar"], int(v.get("pos", 0)), int(v.get("online", 0)), False
-    return h["tutar"], int(v.get("kart", 0)), 0, True
+from evvel_yeni_kasa_api import kapanis_kanallari as _kapanis_kanallari  # noqa: E402 — TEK kural Kasa'da (T1-14)
 
 
 def _toplamla(kayit, C, bas_i, son_i, kesim_gun=None):

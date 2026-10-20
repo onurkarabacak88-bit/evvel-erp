@@ -79,6 +79,8 @@ def _gunluk(ay: str) -> dict:
     _hazirla()
     with db() as (conn, cur):
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
+    from evvel_yeni_kasa_api import kapanis_kanallari as _kapanis_kanallari, pos_sifir_supheli
+    supheli = pos_sifir_supheli(kayit)
     for h in kayit:
         if h["tur"] != "kapanis":
             continue
@@ -86,15 +88,13 @@ def _gunluk(ay: str) -> dict:
         if not sid:
             continue
         v = h["veri"]
-        nakit = int(h["tutar"])
-        pos = int(v.get("pos", 0)) if "pos" in v else int(v.get("kart", 0))
-        onl = int(v.get("online", 0)) if "pos" in v else 0
+        nakit, pos, onl, _ = _kapanis_kanallari(h)   # Kasa'nın TEK kanal kuralı (T1-14)
         d = out.setdefault((str(sid), h["is_gunu"]), {"bardak": 0, "neden": "sayım yok", "bardak_kalem": {}})
         d["ciro"] = (nakit + pos + onl) / 100
         d["nakit"] = nakit / 100
         d["evo"] = v.get("eski_kaynak") == "evo_taslak"
         d["onayli"] = h.get("durum") == "onaylandi"
-        d["pos_sifir"] = ("pos" in v and int(v.get("pos") or 0) == 0 and nakit > 0)
+        d["pos_sifir"] = h["id"] in supheli   # Kasa'nın TEK kuralı — merkezin "POS yoktu" kabulü dahil (T1-15)
     for d in out.values():
         if d.get("ciro") is None and not d["neden"]:
             d["neden"] = "kapanış cirosu yok"
@@ -418,7 +418,7 @@ def satis_gun(gun: Optional[str] = None):
     satıştan kaynaklı fireyi de görmeli"). Şube şube: kalem kalem sabah · giren · akşam · KULLANILAN · FİRE · SATILAN,
     fire listesi (sebep), ciro, bardaktan BEKLENEN ciro → SATIŞTAN AÇIK, kör kasa sayımı → KASA AÇIĞI."""
     from evvel_yeni_bar_api import bar_ozet, kod_anahtar as _kod_anahtar, anahtar_ad as _anahtar_ad, KALEMLER
-    from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
+    from evvel_yeni_kasa_api import kapanis_kanallari as _kapanis_kanallari, kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
     from evvel_yeni_cekirdek import bugun as _bugun
     g_ = (gun or (_bugun() - timedelta(days=1)).isoformat())[:10]
     ay = g_[:7]
@@ -483,8 +483,8 @@ def satis_gun(gun: Optional[str] = None):
         sid = (C.get(h["cep"]) or {}).get("sube_id")
         if h["tur"] == "kapanis" and sid:
             v = h["veri"]
-            kap[str(sid)] = {"nakit": h["tutar"] / 100, "pos": int(v.get("pos", v.get("kart", 0))) / 100,
-                             "online": int(v.get("online", 0)) / 100, "evo": v.get("eski_kaynak") == "evo_taslak",
+            _n, _p, _o, _ = _kapanis_kanallari(h)   # Kasa'nın TEK kanal kuralı (T1-14)
+            kap[str(sid)] = {"nakit": _n / 100, "pos": _p / 100, "online": _o / 100, "evo": v.get("eski_kaynak") == "evo_taslak",
                              "onayli": h.get("durum") == "onaylandi"}
         if h["tur"] == "sayim" and sid and (h.get("kaynak_ref") or "").startswith("sayim_kapanis:"):
             v = h["veri"]

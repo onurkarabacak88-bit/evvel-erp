@@ -31,7 +31,8 @@ from pydantic import BaseModel
 from database import db, savepoint
 from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, pos_oranlari as _oranlar, kasa_kayitlari as _yukle
 from evvel_yeni_cekirdek import aktor as _aktor, kilit as _kilit, kurus as _kurus, tl_sayi as _tl_sayi
-from evvel_yeni_gelir_api import ay_sinirlari as _ay_sinirlari, kapanis_kanallari as _kapanis_kanallari
+from evvel_yeni_gelir_api import ay_sinirlari as _ay_sinirlari
+from evvel_yeni_kasa_api import kapanis_kanallari as _kapanis_kanallari   # TEK kanal kuralı Kasa (T1-14)
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/evvel-yeni/gider", tags=["evvel-yeni-gider"])
