@@ -187,27 +187,21 @@ def tanim_hazirla(cur) -> None:
         except Exception as e:  # noqa: BLE001 — eski tablo kalktıysa kopya biter, Evvel Yeni yaşar
             log.info("evvel-yeni tanım: eski kopya atlandı (%s): %s", sp, str(e)[:120])
     # 07:00 öncesi açılış izni (sahip D10: 07:00 öncesi açılış engellenir, kişiye özel izin istisnası)
-    try:   # İÇERİK bir kez (köprü değil): eski personel kartındaki erken açılış izni — sonra yalnız Evvel Yeni'de değişir
-        from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
-        if ayar_oku(cur, "erken_acilis_kopya") is None:
-            with savepoint(cur, "sp_ey_erken_kopya"):
-                cur.execute("""UPDATE ey_personel e SET erken_acilis = TRUE FROM personel p
-                                WHERE p.id::text = e.id AND COALESCE(p.erken_acilis_izni, FALSE)""")
-            ayar_yaz(cur, "erken_acilis_kopya", "1", "kurulum")
-    except Exception:  # noqa: BLE001
-        log.warning("erken açılış izni kopyalanamadı", exc_info=True)
+    # İÇERİK bir kez (köprü değil) — çekirdek bir_kez (K5): eski personel kartındaki erken açılış izni; sonra yalnız Evvel Yeni'de değişir
+    from evvel_yeni_cekirdek import bir_kez
+    bir_kez(cur, "erken_acilis_kopya", lambda c: c.execute("""UPDATE ey_personel e SET erken_acilis = TRUE FROM personel p
+                                                             WHERE p.id::text = e.id AND COALESCE(p.erken_acilis_izni, FALSE)"""),
+            "erken açılış izni")
     # 🔐 PANEL PIN (sahip 2026-10-19: sık işlemler = ad + PIN; eski panelle AYNI biçim sha256(salt:pin) — personel yeniden PIN almaz)
     # yanlış deneme sayacı AYRI tabloda (Fable: ey_personel izi kirlenmesin; ayrı bağlantıda yazılır)
-    try:   # İÇERİK bir kez (köprü değil): eski personel PIN'leri — yalnız PIN'i olmayan satıra (merkezin yeni verdiği ezilmez)
-        from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
-        if ayar_oku(cur, "pin_kopya") is None:
-            with savepoint(cur, "sp_ey_pin_kopya"):
-                cur.execute("""UPDATE ey_personel e SET pin_salt = p.panel_pin_salt, pin_hash = p.panel_pin_hash FROM personel p
-                                WHERE p.id::text = e.id AND e.pin_hash IS NULL
-                                  AND TRIM(COALESCE(p.panel_pin_hash, '')) <> '' AND TRIM(COALESCE(p.panel_pin_salt, '')) <> ''""")
-            ayar_yaz(cur, "pin_kopya", "1", "kurulum")
-    except Exception:  # noqa: BLE001
-        log.warning("panel PIN'leri kopyalanamadı", exc_info=True)
+    # İÇERİK bir kez: eski personel PIN'leri — yalnız PIN'i olmayan satıra (merkezin yeni verdiği ezilmez)
+    bir_kez(cur, "pin_kopya", lambda c: c.execute("""UPDATE ey_personel e SET pin_salt = p.panel_pin_salt, pin_hash = p.panel_pin_hash FROM personel p
+                                                    WHERE p.id::text = e.id AND e.pin_hash IS NULL
+                                                      AND TRIM(COALESCE(p.panel_pin_hash, '')) <> '' AND TRIM(COALESCE(p.panel_pin_salt, '')) <> ''"""),
+            "panel PIN'leri")
+    # İÇERİK bir kez: eski şube koordinatları (K3) ve yönetici konum muafiyeti (K2) — alanlar Tanımlar'ın (önce Yoklama çağırıyordu)
+    bir_kez(cur, "sube_konum_kopya", lambda c: _eski_konum_sql(c, "sube"), "şube koordinatları")
+    bir_kez(cur, "konum_muaf_kopya", lambda c: _eski_konum_sql(c, "muaf"), "konum muafiyeti")
     _HAZIR = tam   # bu çağrıda kurulduysa bir SONRAKİ çağrı görüp açar
 
 
@@ -346,10 +340,9 @@ def mudur_mu(gorev: Optional[str]) -> bool:
     return "MÜDÜR" in g or "MUDUR" in g
 
 
-def eski_konum_kopyala(cur, ne: str) -> None:
-    """PUBLIC (Yoklama kurulumu, BİR KEZ — içerik, köprü değil): 'sube' = eski şube koordinatları (K3) · 'muaf' = eski panel
-    yöneticisinin konum muafiyeti (K2). Tablolar Tanımlar'ın — Yoklama kendisi UPDATE atmaz (F#31)."""
-    tanim_hazirla(cur)
+def _eski_konum_sql(cur, ne: str) -> None:
+    """Tanımlar hazırlığında BİR KEZ (bir_kez): 'sube' = eski şube koordinatları (K3) · 'muaf' = eski panel yöneticisinin konum
+    muafiyeti (K2). Tablolar Tanımlar'ın — önce Yoklama UPDATE atıyordu (F#31). Hazırlığı yeniden çağırmaz (özyineleme olmasın)."""
     if ne == "sube":
         cur.execute("""UPDATE ey_sube e SET lat = s.lat, lng = s.lng, yaricap_m = COALESCE(s.konum_radius_m, 150)
                          FROM subeler s WHERE s.id::text = e.id AND e.lat IS NULL AND s.lat IS NOT NULL AND s.lng IS NOT NULL""")

@@ -271,6 +271,22 @@ def tablo_var(cur, *adlar: str) -> bool:
     return bool(dict(cur.fetchone() or {}).get("v"))
 
 
+def bir_kez(cur, anahtar: str, is_fn, ad: str) -> bool:
+    """PUBLIC — "İÇERİK bir kez" (köprü değil) kalıbı: ayar defterinde 'anahtar' yoksa is_fn(cur) savepoint içinde çalışır, BAŞARILIYSA
+    işaretlenir (başarısızsa bir sonraki hazırlıkta yeniden denenir; hata yutulur, loglanır). Dalga 4 (K5): Tanımlar 2, Yoklama 2,
+    Toptancı 1 ayrı yazıyordu (Yoklama başarısızlıkta da işaretliyordu). Dönüş: bu çağrıda çalıştı mı."""
+    if ayar_oku(cur, anahtar) is not None:
+        return False
+    try:
+        with savepoint(cur, "sp_bir_kez"):
+            is_fn(cur)
+        ayar_yaz(cur, anahtar, "1", "kurulum")
+        return True
+    except Exception:  # noqa: BLE001
+        log.warning("bir kezlik kopya yapılamadı (%s)", ad, exc_info=True)
+        return False
+
+
 def merkez_aktor(cur, jeton: Optional[str]) -> str:
     """PUBLIC — merkez ucu kapısı: geçerli oturumun adı, yoksa 401 (Dalga 4, F#2: aynı 3 satır 12 yerde)."""
     kim = aktor(cur, jeton)
@@ -390,7 +406,7 @@ def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
-__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "KuruGeriAl",
+__all__ = ["bugun", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "bir_kez", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
 

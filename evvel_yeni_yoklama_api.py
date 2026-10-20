@@ -45,7 +45,7 @@ _HAZIR = False
 
 
 # ── Tanımlar'ın okuma kapıları (F#31: yoklama ey_personel / ey_sube'ye ~35 ayrı SQL atıyordu — ad / müdür / konum tek yerden) ──
-from evvel_yeni_tanim_api import adlar, eski_konum_kopyala, mudur_mu, tanim_listesi, tanim_oku  # noqa: E402
+from evvel_yeni_tanim_api import adlar, mudur_mu, tanim_listesi, tanim_oku  # noqa: E402
 
 
 def _padlar(cur, rows: list) -> dict:
@@ -141,21 +141,7 @@ def yoklama_hazirla() -> None:
         import os
         if not os.getenv("EVVEL_QR_GIZ") and not ayar_oku(cur, "qr_giz"):
             ayar_yaz(cur, "qr_giz", secrets.token_hex(32), "kurulum")
-        # İÇERİK bir kez (köprü değil): eski şube koordinatları (K3) ve yönetici konum muafiyeti (K2)
-        if ayar_oku(cur, "sube_konum_kopya") is None:
-            try:
-                with savepoint(cur, "sp_ey_konum_kopya"):
-                    eski_konum_kopyala(cur, "sube")   # Tanımlar'ın kapısı (F#31)
-            except Exception:  # noqa: BLE001
-                log.warning("şube koordinatları kopyalanamadı", exc_info=True)
-            ayar_yaz(cur, "sube_konum_kopya", "1", "kurulum")
-        if ayar_oku(cur, "konum_muaf_kopya") is None:
-            try:
-                with savepoint(cur, "sp_ey_muaf_kopya"):
-                    eski_konum_kopyala(cur, "muaf")
-            except Exception:  # noqa: BLE001
-                log.warning("konum muafiyeti kopyalanamadı", exc_info=True)
-            ayar_yaz(cur, "konum_muaf_kopya", "1", "kurulum")
+        # eski şube koordinatları + konum muafiyeti kopyası Tanımlar'ın kendi hazırlığında (tanim_hazirla → bir_kez, K5)
     _HAZIR = _devir_goc_tamam
 
 
