@@ -33,6 +33,18 @@ const gunYazi = (g) => { try { return new Date(`${g}T12:00`).toLocaleDateString(
 const saatSimdi = () => new Date().toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' });
 const etiketim = () => { try { return (navigator.userAgentData?.platform || navigator.platform || '').slice(0, 40); } catch { return ''; } };
 
+// ── Ortak küçük yardımcılar (Dalga 5, F#60/F#61: adres parametresi 3 kopya, konum satırı 2 kopya, ağ hatası mesajı 6 kopya) ──
+const urlKimlik = (ad) => {   // ?o= / ?tb= / ?dv= — yalnız güvenli kimlik
+  try { const v = new window.URLSearchParams(window.location.search).get(ad) || ''; return /^[A-Za-z0-9-]{1,40}$/.test(v) ? v : ''; } catch { return ''; }
+};
+const agMesaji = (e, varsayilan) => (e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || varsayilan));
+function KonumSatiri({ muaf, konum, konumAl }) {
+  return (<>
+    {muaf ? 'konum: yönetici (muaf)' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
+    {!muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksan, background: 'none', border: 'none', padding: 0, fontWeight: 700, minHeight: 44 }}>tekrar dene</button></>}
+  </>);
+}
+
 // ── Konum: sayfa açılınca bir kez, 10 sn zaman aşımı; muaf kişide hata engel değil — sunucu karar verir (konum yine gönderilir) ──
 function useKonum(aktif) {
   const [k, setK] = useState({ durum: 'bekliyor', lat: null, lng: null, hata: '' });
@@ -71,7 +83,7 @@ function Bagla({ davet }) {
   const bagla = async () => {
     setMesgul(true); setHata('');
     try { setSonuc(await cihazBagla(davet, etiketim())); }
-    catch (e) { setHata(e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || 'Bağlanamadı')); }
+    catch (e) { setHata(agMesaji(e, 'Bağlanamadı')); }
     setMesgul(false);
   };
   return (
@@ -121,7 +133,7 @@ function QrIslem({ sube, jeton }) {
     if (!bagli) return;
     setHata('');
     imzaliJson('telefon', 'GET', `/api/evvel-yeni/yoklama/ben?sube=${encodeURIComponent(sube)}`)
-      .then(setBen).catch((e) => setHata(e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || 'Okunamadı')));
+      .then(setBen).catch((e) => setHata(agMesaji(e, 'Okunamadı')));
   }, [bagli, sube]);
   useEffect(() => { yukle(); }, [yukle]);
 
@@ -184,8 +196,7 @@ function QrIslem({ sube, jeton }) {
           {ben && (<>
             <div style={{ fontSize: 22, fontWeight: 800 }}>👤 {ben.kisi}</div>
             <div className="tq-not">
-              {ben.muaf ? 'konum: yönetici (muaf)' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
-              {!ben.muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksan, background: 'none', border: 'none', padding: 0, fontWeight: 700, minHeight: 44 }}>tekrar dene</button></>}
+              <KonumSatiri muaf={ben.muaf} konum={konum} konumAl={konumAl} />
             </div>
             {(ben.giris || ben.cikis) && <div className="tq-silik">Bugün: giriş {ben.giris || '—'} · çıkış {ben.cikis || '—'}</div>}
             <MolaSatiri mola={ben.mola} />
@@ -277,7 +288,7 @@ function AvansKart() {
 // ── /q/{sube}/{jeton}?o={onay}: panelde açılış / kapanış formu doldu → "QR ile onayla" (PANEL_YENIDEN_KURULUM R1) ──
 // Kişi telefondan tanınır (PIN yok); önce bu şubede girişi yoksa GİRİŞ YAP (aynı QR), sonra özet + ONAYLA.
 const onayKimligi = () => {
-  try { const o = new window.URLSearchParams(window.location.search).get('o') || ''; return /^[A-Za-z0-9-]{1,40}$/.test(o) ? o : ''; } catch { return ''; }
+  return urlKimlik('o');
 };
 const TUR_IKON = { acilis: '☀️', kapanis: '🌙' };
 
@@ -299,7 +310,7 @@ function OnayIslem({ sube, jeton, onay }) {
       imzaliJson('telefon', 'GET', `/api/evvel-yeni/panel/onay/${encodeURIComponent(onay)}/ozet`),
       imzaliJson('telefon', 'GET', `/api/evvel-yeni/yoklama/ben?sube=${encodeURIComponent(sube)}`),
     ]).then(([o, b]) => { setOzet(o); setBen(b); })
-      .catch((e) => setHata(e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || 'Okunamadı')));
+      .catch((e) => setHata(agMesaji(e, 'Okunamadı')));
   }, [bagli, onay, sube]);
   useEffect(() => { yukle(); }, [yukle]);
   if (!bagli) return <TanimliDegil />;
@@ -346,8 +357,7 @@ function OnayIslem({ sube, jeton, onay }) {
           {ozet && (<>
             <div style={{ fontSize: 22, fontWeight: 800 }}>{TUR_IKON[ozet.tur] || '✔'} {ozet.ad} · {ozet.sube_ad}</div>
             <div style={{ background: T.yuzey, border: `1px solid ${T.kenar}`, borderRadius: 12, padding: 12, fontSize: 17 }}>{ozet.ozet || '—'}</div>
-            <div className="tq-not">Onaylayan: <b>👤 {ozet.kisi}</b> · {ben?.muaf ? 'konum: yönetici (muaf)' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
-              {!ben?.muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksan, background: 'none', border: 'none', padding: 0, fontWeight: 700, minHeight: 44 }}>tekrar dene</button></>}
+            <div className="tq-not">Onaylayan: <b>👤 {ozet.kisi}</b> · <KonumSatiri muaf={!!ben?.muaf} konum={konum} konumAl={konumAl} />
             </div>
             {girisMesaj && <div style={{ color: T.yesil, fontWeight: 700 }}>{girisMesaj}</div>}
             {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
@@ -376,7 +386,7 @@ function OnayIslem({ sube, jeton, onay }) {
 // ── /q/{sube}/{jeton}?tb={teslim}: teslim kaydedildi → "📷 Faturayı çek" (Basamak 8 / E1). Fotoğraf telefonda küçültülür
 // (uzun kenar 1600 px, JPEG) ve imzalı istekle teslime EK olarak yüklenir — ayrı fatura kaydı / okuma / eşleştirme YOK.
 const teslimKimligi = () => {
-  try { const t = new window.URLSearchParams(window.location.search).get('tb') || ''; return /^[A-Za-z0-9-]{1,40}$/.test(t) ? t : ''; } catch { return ''; }
+  return urlKimlik('tb');
 };
 const kucult = async (dosya) => {   // Fable: EXIF yönü — createImageBitmap(imageOrientation) varsa yan dönmez
   if (window.createImageBitmap) {
@@ -418,7 +428,7 @@ function FaturaCek({ sube, tid }) {
     if (!bagli) return;
     setHata('');
     imzaliJson('telefon', 'GET', `${yol}?sube=${encodeURIComponent(sube)}`).then(setOzet)
-      .catch((e) => setHata(e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || 'Okunamadı')));
+      .catch((e) => setHata(agMesaji(e, 'Okunamadı')));
   }, [bagli, yol, sube]);
   useEffect(() => { yukle(); }, [yukle]);
   if (!bagli) return <TanimliDegil />;
@@ -474,7 +484,7 @@ function Durum() {
     if (!bagli) return;
     setHata('');
     imzaliJson('telefon', 'GET', '/api/evvel-yeni/yoklama/ben').then(setBen)
-      .catch((e) => setHata(e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || 'Okunamadı')));
+      .catch((e) => setHata(agMesaji(e, 'Okunamadı')));
   }, [bagli]);
   useEffect(() => { yukle(); }, [yukle]);
   if (!bagli) return <TanimliDegil />;
@@ -504,7 +514,7 @@ const GIRDI = { minHeight: 56, borderRadius: 12, border: `1px solid ${T.kenar}`,
 // İlk okutan İÇERİDEKİ kişi otomatik devreden olur → 15 dk içinde telefonda eski 5 adım (kasa · bardak · ürün · pasta · onay) →
 // DEVREDİYORUM. Devreden onaylayınca devredenden farklı okutan KABUL EDİYORUM / Tutmuyor + kendi saydığı tutar → girişi açılır.
 const devirKimligi = () => {
-  try { const d = new window.URLSearchParams(window.location.search).get('dv') || ''; return /^[A-Za-z0-9-]{1,40}$/.test(d) ? d : ''; } catch { return ''; }
+  return urlKimlik('dv');
 };
 
 function DevirIslem({ sube, jeton, did }) {
@@ -531,7 +541,7 @@ function DevirIslem({ sube, jeton, did }) {
     setHata('');
     return imzaliJson('telefon', 'GET', `/api/evvel-yeni/yoklama/devir/${encodeURIComponent(did)}/telefon?sube=${encodeURIComponent(sube)}`)
       .then((x) => { setB(x); return x; })
-      .catch((e) => { setHata(e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || 'Okunamadı')); return null; });
+      .catch((e) => { setHata(agMesaji(e, 'Okunamadı')); return null; });
   }, [bagli, did, sube]);
   useEffect(() => { yukle(); }, [yukle]);
 
