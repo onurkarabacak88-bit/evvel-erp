@@ -53,7 +53,7 @@ export default function FaturaModulu({ onToast }) {
   };
   const kaydet = async () => {
     const satirlar = v.satirlar.filter((x) => x.durum === 'yeni' && sec[x.id]?.hedef)
-      .map((x) => ({ id: x.id, tarih: x.tarih, aciklama: x.aciklama, tutar: x.tutar, no: x.no, imza: x.imza, ...sec[x.id] }));
+      .map((x) => ({ id: x.id, istek: x.istek, tarih: x.tarih, aciklama: x.aciklama, tutar: x.tutar, no: x.no, imza: x.imza, ...sec[x.id] }));
     if (!satirlar.length) { setHata('Şubesi seçilmiş satır yok'); return; }
     setMesgul(true); setHata('');
     try {

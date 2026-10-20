@@ -199,9 +199,18 @@ def oku(body: OkuBody):
     with db() as (conn, cur):
         mevcut = [(date.fromisoformat(m["tarih"]), Decimal(m["tutar"]) / 100, m["aciklama"]) for m in o.kart_harcamalari(cur, body.kart_id)]
         bas = kasa.donem_baslangici(cur)
-        cur.execute("""SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref LIKE 'odeme_formu:ekstre:%%'
-                         AND id NOT IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal' AND veri ? 'hedef_id')""")
-        yazilmis = {dict(r)["kaynak_ref"][len("odeme_formu:"):] for r in cur.fetchall() or []}
+        # C-T1-29: iptal edilen satır "yeni" görünüp aynı kimlikle yazılamıyordu (ON CONFLICT sessizce). Etkin kayıt → girilmiş;
+        # yalnız iptal edilmiş sürümler varsa yeni sürüm kimliği (ekstre:…:rN) ile yeniden yazılır.
+        cur.execute("""SELECT kaynak_ref, id IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal' AND veri ? 'hedef_id') AS iptal
+                         FROM para_izi_hareket WHERE kaynak_ref LIKE 'odeme_formu:ekstre:%%'""")
+        yazilmis, iptalli = set(), {}
+        for r in cur.fetchall() or []:
+            ref = dict(r)["kaynak_ref"][len("odeme_formu:"):]
+            kok = ref.split(":r", 1)[0]
+            if dict(r)["iptal"]:
+                iptalli[kok] = iptalli.get(kok, 0) + 1
+            else:
+                yazilmis.add(kok)
     out, diger, sayac = [], 0, {}
     for x in tum:
         if x["eksi"]:
@@ -234,7 +243,8 @@ def oku(body: OkuBody):
             durum = "donem_oncesi"          # Fable: seçtirip sonra reddetmesin
         else:
             durum = "yeni"
-        out.append({"id": sid, "tarih": x["tarih"].isoformat(), "benzer": (g[2] if g and durum == "yeni" else None), "aciklama": x["aciklama"],
+        out.append({"id": sid, "istek": sid if not iptalli.get(sid) or durum == "girilmis" else f"{sid}:r{iptalli[sid]}",
+                    "tarih": x["tarih"].isoformat(), "benzer": (g[2] if g and durum == "yeni" else None), "aciklama": x["aciklama"],
                     "tutar": float(x["tutar"]), "no": no, "imza": imza, "oneri": oneri, "kesin": kesin,
                     "belirsiz": bool(kural and kural["belirsiz"]),
                     "fatura_turu": (kural or {}).get("fatura_turu") or _tur_tahmin(x["aciklama"]) or "Diğer abonelik",
@@ -252,6 +262,7 @@ class Satir(BaseModel):
     fatura_turu: Optional[str] = None
     no: Optional[str] = None
     imza: Optional[str] = None
+    istek: Optional[str] = None      # iptal edilip yeniden girilen satırın sürüm kimliği (ekstre:…:rN)
 
 
 class KaydetBody(BaseModel):
@@ -270,17 +281,18 @@ def kaydet(body: KaydetBody, x_evvel_oturum: Optional[str] = Header(default=None
     sonuc = []
     for s in body.satirlar:
         h = s.hedef or ""
+        ik = s.istek if s.istek and s.istek.startswith(s.id) else s.id
         try:
             if h == "yoksay":
                 r = {"ok": True, "mesaj": "yok sayıldı"}
             elif h.startswith("patron:") and h[7:] in PATRONLAR:
                 r = o.odeme_gir(o.OdemeBody(konu="diger", tarih=s.tarih, kimin="patron", patron=h[7:],
-                                            aciklama=f"{s.aciklama[:80]} (kart ekstresi)", istek_id=s.id, tekrar_onay=True,
+                                            aciklama=f"{s.aciklama[:80]} (kart ekstresi)", istek_id=ik, tekrar_onay=True,
                                             parcalar=[o.Parca(yontem="kart", kart_id=body.kart_id, tutar=s.tutar)]), x_evvel_oturum)
             else:
                 r = o.odeme_gir(o.OdemeBody(konu="fatura", tarih=s.tarih, ait_ay=s.tarih[:7], sube_id=h,
                                             fatura_turu=s.fatura_turu or "Diğer abonelik", aciklama=s.aciklama[:80],
-                                            istek_id=s.id, tekrar_onay=True,
+                                            istek_id=ik, tekrar_onay=True,
                                             parcalar=[o.Parca(yontem="kart", kart_id=body.kart_id, tutar=s.tutar)]), x_evvel_oturum)
             sonuc.append({"id": s.id, "ok": True, "tekrar": bool(r.get("tekrar")), "mesaj": r.get("mesaj")})
         except HTTPException as e:
