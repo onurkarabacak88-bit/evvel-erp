@@ -53,7 +53,7 @@ const saatOnce = (hhmm) => {
 
 export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, kapat, bitti, basladi }) {
   const urunler = d.sayilan.flatMap((g) => g.urunler);
-  const bardakMi = (u) => /bardak/i.test(u.ad) && !/kapa[kğ]|çanta|tutucu/i.test(u.ad);
+  const bardakMi = (u) => !!u.bardak;   // TEK bardak kuralı sunucuda (Ürün bardak_mi — Dalga 4, F#9)
   const bardaklar = urunler.filter(bardakMi);
   const digerleri = urunler.filter((u) => !bardakMi(u));
   const anahtar = `sp_taslak:${subeId}:${d.gun}:acilis_sihirbaz`;   // iş gününe bağlı (02:00'de yeni gün = yeni form)

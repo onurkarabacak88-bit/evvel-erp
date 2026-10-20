@@ -331,7 +331,8 @@ def panel_durum(sube_id: str):
             except Exception:  # noqa: BLE001
                 log.warning("panel durum: depo okunamadı", exc_info=True)
     def _u(x):
-        return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici")}
+        return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici"),
+                "bardak": __import__("evvel_yeni_urun_api").bardak_mi(x["ad"])}   # TEK bardak kuralı (F#9) — ekran tahmin etmez
     return {"sube": {"id": s["id"], "ad": s["ad"], "depo": depo_mu}, "depo_acik": depo_acik, "depo_yolda": depo_yolda, "avans_elden": avans_elden, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
             "personel": per, "teslim_alanlar": [{"id": c, "ad": a} for a, c in _TH.items()],
             "sayilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if tezgahta_sayilir(x)]}

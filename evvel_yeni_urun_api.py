@@ -20,6 +20,7 @@ kopyalayıp oradan tekrar bağlayıp Evvel'in ilk versiyonu gibi olmasın."
 
 import json
 import logging
+import re
 import uuid
 from decimal import Decimal
 from typing import Dict, List, Optional
@@ -182,6 +183,15 @@ def tezgahta_sayilir(u: dict) -> bool:
     """PUBLIC — TEK kural: ürün tezgahta (panel açılış/kapanış/devir sayımında) sayılır mı = takip 'sayim' VE 'panelde sayılır'.
     Dalga 4 (F#7): Panel 5 yer, Bar, Yoklama, Gider ayrı yazıyordu; bir kısmı takibe bakmıyordu (ayrışma)."""
     return (u.get("takip") or "sayim") == "sayim" and bool(u.get("panel_sayim"))
+
+
+_BARDAK_DISI = re.compile(r"kapa[kğ]|çanta|tutucu", re.I)
+
+
+def bardak_mi(ad) -> bool:
+    """PUBLIC — TEK bardak kuralı (sayım formlarında bardaklar ayrı adım): adında 'bardak' var, kapak / çanta / tutucu değil.
+    Dalga 4 (F#9): Yoklama devir + panel açılış/kapanış sihirbazı ayrı yazıyordu; panel artık sunucudan 'bardak' bayrağını alır."""
+    return bool(re.search("bardak", str(ad or ""), re.I)) and not _BARDAK_DISI.search(str(ad or ""))
 
 
 def gununde_tuketilir(u: dict) -> bool:

@@ -24,7 +24,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   const gun = formGunu || d.gun;   // Codex P1: formun iş günü AÇILDIĞI an sabit — 02:00'de yeniden kurulup rakamlar silinmez
   const eskiGun = gun !== d.gun;    // gün değişti: QR onayı artık yazamaz → yalnız "Merkeze gönder" (rakamlar kaybolmaz)
   const urunler = d.sayilan.flatMap((g) => g.urunler);
-  const bardakMi = (u) => /bardak/i.test(u.ad) && !/kapa[kğ]|çanta|tutucu/i.test(u.ad);
+  const bardakMi = (u) => !!u.bardak;   // TEK bardak kuralı sunucuda (Ürün bardak_mi — Dalga 4, F#9)
   const bardaklar = urunler.filter(bardakMi);
   const digerleri = urunler.filter((u) => !bardakMi(u));
   const urunAcVar = d.bugun.some((o) => o.tur === 'urun_ac' && !o.iptal);

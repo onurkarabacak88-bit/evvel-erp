@@ -19,7 +19,6 @@ import hmac
 import json
 import logging
 import math
-import re
 import secrets
 import time
 import uuid
@@ -1125,7 +1124,6 @@ def mola_gordum(mid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
 DEVIR_ACIK = ("baslatildi", "dolduruluyor", "hazir", "devreden_onayladi")   # 'hazir' = eski akış (tarihsel satırlar)
 DEVIR_PENCERE_DK = 15   # sahip: devreden QR'ı BİR KEZ okutur, formu 15 dk içinde telefonda doldurur
 DEVIR_DUSME_DK = 30     # başlatılıp okutulmayan / yarıda kalan devir sessizce düşer (Bekleyen işler'e düşmez)
-_BARDAK_DISI = re.compile(r"kapa[kğ]|çanta|tutucu", re.I)
 
 
 def _devir_surum(devreden_id, sayilan_kurus, bardak, urunler=None, pasta=None) -> str:
@@ -1153,7 +1151,7 @@ def devir_listesi(cur) -> dict:
         log.warning("devir: katalog okunamadı", exc_info=True)
         return {"bardak": [], "urun": []}
     hep = [{"id": str(x["id"]), "ad": x["ad"]} for k in kat for x in k["urunler"] if __import__("evvel_yeni_urun_api").tezgahta_sayilir(x)]
-    bardak = [u for u in hep if re.search("bardak", u["ad"], re.I) and not _BARDAK_DISI.search(u["ad"])]
+    bardak = [u for u in hep if __import__("evvel_yeni_urun_api").bardak_mi(u["ad"])]   # TEK bardak kuralı (F#9)
     bid = {u["id"] for u in bardak}
     return {"bardak": bardak, "urun": [u for u in hep if u["id"] not in bid]}
 
