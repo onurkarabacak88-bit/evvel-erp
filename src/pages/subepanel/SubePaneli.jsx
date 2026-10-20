@@ -11,6 +11,7 @@ import KapanisSihirbazi from './KapanisSihirbazi';
 import KasaDevri, { DEVIR_ACIK, devirEtiket } from './KasaDevri';
 import TedarikciTeslim from './TedarikciTeslim';
 import DepodanGelen from './DepodanGelen';
+import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
 import { AdetListesi, C, CSS, kalemGovde, Modal, SayiTusTakimi, TabletQR, tutar, tutarNum, yeniIstek } from './ortak';
 
@@ -124,7 +125,8 @@ export default function SubePaneli({ subeId }) {
     if (m === 'acilis') { setDenemeKapandi(false); setSihirbazElle(true); return; }
     if (m === 'ac') { setSekme('ac'); return; }   // Basamak 5: Ürün Aç eski panel gibi orta alanda SEKME
     if (m === 'teslim') { sekmeyeGec('teslim'); return; }   // Basamak 8: Tedarikçiden teslim al (orta alanda sekme)
-    if (m === 'depo') { sekmeyeGec('depo'); return; }       // Basamak 5 S3: Depodan gelen (orta alanda sekme; gün kapalıyken de açık)
+    if (m === 'depo') { sekmeyeGec('depo'); return; }
+    if (['siparis', 'siparisTakip', 'gonderilecek'].includes(m)) { sekmeyeGec(m); return; }   // S5 sipariş (orta alanda sekme)       // Basamak 5 S3: Depodan gelen (orta alanda sekme; gün kapalıyken de açık)
     if (m === 'kapanis') {   // Codex: gece yarısından sonra sayfa yenilense de dünün GÖNDERİLMEMİŞ kapanışı kaybolmasın
       const dun = new Date(new Date(d.gun + 'T12:00').getTime() - 864e5).toISOString().slice(0, 10);
       let var_ = false;
@@ -238,11 +240,11 @@ export default function SubePaneli({ subeId }) {
     { b: 'STOK İŞLEMLERİ' },
     { k: 'teslim', i: '📦', ad: 'Tedarikçiden Gelen — Teslim Al' },
     { k: 'depo', i: '🚚', ad: 'Depodan Gelen — Teslim Al', acikKapali: true, rozet: (d.depo_yolda || []).length },
-    { k: 'siparis', i: '🛒', ad: 'Sipariş Ver', yakinda: true },
-    { k: 'siparisTakip', i: '📊', ad: 'Sipariş Takip', yakinda: true, acikKapali: true },
+    { k: 'siparis', i: '🛒', ad: 'Sipariş Ver' },
+    { k: 'siparisTakip', i: '📊', ad: 'Sipariş Takip', acikKapali: true },
     { k: 'ac', i: '🔓', ad: 'Ürün Aç' },
     { k: 'fire', i: '🔥', ad: 'Fire Bildirimi' },
-    ...(d.sube.depo ? [{ k: 'gonderilecek', i: '📤', ad: 'Gönderilecek siparişler', yakinda: true }] : []),
+    ...(d.sube.depo ? [{ k: 'gonderilecek', i: '📤', ad: 'Gönderilecek siparişler', acikKapali: true }] : []),
     { b: 'GÜN SONU' },
     { k: 'araTeslim', i: '💵', ad: 'Ara Teslim' },
     { k: 'devir', i: '🔄', ad: 'Kasa Devri' },
@@ -291,7 +293,16 @@ export default function SubePaneli({ subeId }) {
         </div>
 
         {/* ORTA: ANA SAYFA */}
-        {sekme === 'depo' ? (
+        {sekme === 'siparis' ? (
+          <SiparisVer key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali}
+            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+        ) : sekme === 'siparisTakip' ? (
+          <SiparisTakip key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari}
+            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+        ) : sekme === 'gonderilecek' ? (
+          <Gonderilecek key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari}
+            bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
+        ) : sekme === 'depo' ? (
           <DepodanGelen key={d.gun} d={d} subeId={subeId} adaylar={kisiAdaylari}
             bitti={(metin, kuru) => { setMesaj({ tur: kuru ? 'deneme' : 'tamam', metin }); yukle(); }} />
         ) : sekme === 'teslim' ? (
