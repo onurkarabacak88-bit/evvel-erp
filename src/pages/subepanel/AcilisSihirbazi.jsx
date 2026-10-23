@@ -3,7 +3,7 @@
 // sunucu açılışı ONAYLAYANIN adına yazar (S17: girişli herhangi bir personel). Tak-çıkar: yalnız props; sunucu uçları panel modülünde.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, qrBoyut, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, yeniIstek } from './ortak';
+import { C, qrBoyut, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, useSihirbazKlavye, yeniIstek } from './ortak';
 import { paraGecerli } from '../../utils/trSayi';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
@@ -86,6 +86,8 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
 
   useEffect(() => { setHata((h) => (/adedini girin|sayımı girin|geçerli değer/.test(h) ? '' : h)); }, [kasa, sayim, pasta]);   // G2: yazınca eski 'girin' uyarısı kalkar
   const git = (n) => { setHata(''); setYon(n > adim ? 'ileri' : 'geri'); setAdim(n); };
+  const kokRef = useRef(null);
+  useSihirbazKlavye(kokRef, adim);   // G43–G46 ⌨️ laptop: ilk kutuya imleç, Enter ilerler
   const govde = () => ({
     istemci_gunu: d.gun, istek_id: istek, kasa_sayim: tutarNum(kasa), pasta_toplam: Number(pasta),
     sayim: urunler.map((u) => ({ urun_id: u.id, sayilan: Number(sayim[u.id]) })),
@@ -157,7 +159,7 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
   const saatUyari = saatOnce(d.saat?.acilis) ? `Açılış onayı yalnızca ${d.saat?.acilis || '07:00'} ve sonrasında yapılabilir (Türkiye saati) — erken açılış izni olan personel bu saatten önce de açabilir.` : '';
 
   return (
-    <div className="aw-perde">
+    <div className="aw-perde" ref={kokRef}>
       <style>{CSS_AW}</style>
       <div className="aw-kart">
         <div className="aw-marka">
@@ -234,8 +236,8 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
           {saatUyari && <div className="aw-uyari">{saatUyari}</div>}
           <div className="aw-hata">{hata}</div>
           <div className="aw-dugmeler">
-            {adim > 1 && <button className="aw-btn" onClick={geri} disabled={mesgul}>« Geri</button>}
             {adim < 5 && <button className="aw-btn ana" onClick={ileri}>İleri →</button>}
+            {adim > 1 && <button className="aw-btn" style={{ order: -1 }} onClick={geri} disabled={mesgul}>« Geri</button>}   {/* G46: Tab sırasında İleri'den sonra */}
             {adim === 5 && tabletVar && (!onay || !['bekliyor', 'isleniyor'].includes(onay.durum)) && (
               <button className="aw-btn ana yesil" disabled={mesgul} onClick={onayIste}>
                 {mesgul ? 'Hazırlanıyor…' : onay ? '🔁 Yeniden QR iste' : '🔓 Onayla ve Şubeyi Aç'}</button>

@@ -205,7 +205,7 @@ function QrIslem({ sube, jeton }) {
         <div className="tq-kart" style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 72, color: T.yesil, lineHeight: 1 }}>✓</div>
           <b style={{ fontSize: 26 }}>{baslik[sonuc.islem]} {sonuc.saat}</b>
-          <div className="tq-not">{sonuc.mesaj}</div>
+          {!/^[^·]*kaydedildi · \d{2}:\d{2}$/.test(sonuc.mesaj || '') && <div className="tq-not">{sonuc.mesaj}</div>}   {/* G37: başlığı tekrar eden mesaj gizli */}
           {sonuc.hak_dustu && <div className="tq-not">Bugün yemek hakkı kazanılamadı</div>}
           {sonuc.islem === 'giris' && <div className="tq-not">🍽 Yemek molasına çıkarken paneldeki QR'ı <b>tekrar okut</b> → "Yemek molası başlat".</div>}
           <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">✓ Tamam</a>
@@ -390,7 +390,7 @@ function OnayIslem({ sube, jeton, onay }) {
             <div style={{ fontSize: 22, fontWeight: 800 }}>{TUR_IKON[ozet.tur] || '✔'} {ozet.ad} · {ozet.sube_ad}</div>
             <div style={{ background: T.yuzey, border: `1px solid ${T.kenar}`, borderRadius: 12, padding: 12, fontSize: 17, display: 'grid', gap: 6 }}>
               {/* G40 (sim 23 Eki): tek paragraf okunmuyordu → her parça ayrı satır, ilki (kasa/tutar) kalın */}
-              {(ozet.ozet || '—').split(' · ').map((p, i) => <div key={i} style={i === 0 ? { fontWeight: 800, fontSize: 20 } : undefined}>{p}</div>)}
+              {(ozet.ozet || '—').split(' · ').map((p, i) => <div key={i} style={i === 0 ? { fontWeight: 800, fontSize: 20 } : undefined}>{p.charAt(0).toLocaleUpperCase('tr') + p.slice(1)}</div>)}   {/* G49: her satır büyük harfle (online → Online) */}
             </div>
             <div className="tq-not">Onaylayan: <b>👤 {ozet.kisi}</b>{ben?.muaf ? '' : ' · '}<KonumSatiri muaf={!!ben?.muaf} konum={konum} konumAl={konumAl} />
             </div>
@@ -813,7 +813,7 @@ function DevirIslem({ sube, jeton, did }) {
         <div className="tq-kart" style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 72, color: T.yesil, lineHeight: 1 }}>✓</div>
           <b style={{ fontSize: 24 }}>{sonuc.baslik} · {saatSimdi()}</b>
-          <div className="tq-not">{sonuc.mesaj}</div>
+          <div className="tq-not">{(sonuc.mesaj || '').replace(/^[^.—]*· \d{2}:\d{2}\.?\s*/, '')}</div>   {/* G37: başlığı tekrar etmesin */}
           <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">✓ Tamam</a>
         </div>
       ) : (
@@ -824,7 +824,7 @@ function DevirIslem({ sube, jeton, did }) {
             <div style={{ fontSize: 20, fontWeight: 800 }}>👤 {b.kisi}</div>
             <div className="tq-not">{b.muaf ? '' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
               {!b.muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksanKoyu, background: 'none', border: 'none', padding: '0 6px', fontWeight: 700, minHeight: 48, minWidth: 48 }}>tekrar dene</button></>}</div>
-            {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata}</div>}
+            {isHata && !(hata && /süresi doldu/i.test(hata) && /süresi doldu/i.test(isHata)) && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata}</div>}   {/* G57: aynı uyarı iki kez yazılmasın */}
 
             {b.rol === 'ustlenebilir' && b.baska_subede && <div style={{ color: T.kirmizi, fontWeight: 700 }}>Önce diğer şubeden çıkış yap</div>}
             {b.rol === 'ustlenebilir' && !b.icerde && !b.baska_subede && (<>
@@ -842,7 +842,7 @@ function DevirIslem({ sube, jeton, did }) {
               <div className="tq-silik">Adım {adim} / 5 · {b.pencere_dk} dk içinde gönder</div>
               {adim === 1 && (<>
                 <b>💰 Kasadaki nakit (₺)</b>
-                <div className="tq-not">Para kasada kalır, hesaplamalara girmez.</div>
+                <div className="tq-not">Kasadaki bütün nakdi say ve yaz.</div>   {/* G55: "hesaplamalara girmez" dikkatsiz sayıma yol açar + kasa mekaniği anlatılmaz */}
                 <input style={GIRDI} inputMode="decimal" placeholder="0" value={f.kasa} onChange={(e) => setF((o) => ({ ...o, kasa: e.target.value.replace(/[^\d,]/g, '').slice(0, 11) }))} />
               </>)}
               {adim === 2 && (<><b>🥤 Bardaklar</b>{liste.bardak.map(sayiKutu)}</>)}
@@ -854,10 +854,11 @@ function DevirIslem({ sube, jeton, did }) {
               {adim === 5 && (<>
                 <b>✅ Özet</b>
                 {ozet(formOzet)}
-                <label style={{ display: 'flex', gap: 10, alignItems: 'center', minHeight: 48 }}>
-                  <input type="checkbox" style={{ width: 24, height: 24 }} checked={!!f.dogru} onChange={(e) => setF((o) => ({ ...o, dogru: e.target.checked }))} />
-                  <span>Kasadaki nakit sayımını doğruladım</span>
-                </label>
+                <label style={{ display: 'flex', gap: 12, alignItems: 'center', minHeight: 56, padding: '8px 12px', borderRadius: 12, fontWeight: 800,
+                  border: `2px solid ${f.dogru ? T.yesil : '#d97706'}`, background: f.dogru ? 'rgba(34,197,94,.12)' : 'rgba(245,158,11,.14)', color: f.dogru ? T.yesil : '#b45309' }}>
+                  <input type="checkbox" style={{ width: 28, height: 28, flexShrink: 0 }} checked={!!f.dogru} onChange={(e) => setF((o) => ({ ...o, dogru: e.target.checked }))} />
+                  <span>{f.dogru ? '✓ ' : ''}Kasadaki nakit sayımını doğruladım</span>
+                </label>   {/* G56 (sim 23 Eki): küçük kutu fark edilmiyordu, DEVREDİYORUM neden soluk belli değildi */}
                 {(b.digerleri || []).length > 0 && (
                   <label style={{ display: 'grid', gap: 4 }}><span className="tq-silik">Devreden kim? (telefonu olmayan adına)</span>
                     <select style={GIRDI} value={f.adina} onChange={(e) => setF((o) => ({ ...o, adina: e.target.value }))}>

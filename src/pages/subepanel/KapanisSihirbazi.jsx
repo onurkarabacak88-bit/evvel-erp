@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { CSS_AW, saatOncesi, trSaat } from './AcilisSihirbazi';
-import { C, qrBoyut, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, yeniIstek } from './ortak';
+import { C, qrBoyut, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, useSihirbazKlavye, yeniIstek } from './ortak';
 import { gunKaydir } from '../../utils/trTarih';
 import { paraGecerli } from '../../utils/trSayi';
 
@@ -55,8 +55,10 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
     taslakYaz(anahtar, { adim: Math.min(adim, 4), v, sayim, istek });
   }, [adim, v, sayim, istek, anahtar, sonuc]);
   const set = (k, x) => setV((o) => ({ ...o, [k]: x }));
-  useEffect(() => { setHata((h) => (/adedini girin|sayımı girin|geçerli değer|geçerli tutar|sayıp girin|zorunlu|tutarı girin/.test(h) ? '' : h)); }, [v, sayim]);   // G2: yazınca eski 'girin' uyarısı kalkar
+  useEffect(() => { setHata((h) => (/adedini girin|sayımı girin|geçerli değer|geçerli tutar|sayıp girin|zorunlu|tutarı girin|Ürün Aç kaydı yok/.test(h) ? '' : h)); }, [v, sayim]);   // G2: yazınca eski 'girin' uyarısı kalkar · G48: 'Bugün ürün açılmadı' seçilince Ürün Aç uyarısı da
   const git = (n) => { setHata(''); setYon(n > adim ? 'ileri' : 'geri'); setAdim(n); };
+  const kokRef = useRef(null);
+  useSihirbazKlavye(kokRef, adim);   // G43–G46 ⌨️ laptop: ilk kutuya imleç, Enter ilerler
   const teslimler = Object.entries(v.teslim || {}).filter(([, t]) => tutarNum(t) > 0).map(([alan, t]) => ({ alan, tutar: tutarNum(t) }));
   const govde = () => ({
     istemci_gunu: gun, istek_id: istek, nakit: tutarNum(v.nakit), pos: tutarNum(v.pos), online: tutarNum(v.online), teslimler,
@@ -179,7 +181,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
   const devirAcik = dv && ['baslatildi', 'dolduruluyor', 'devreden_onayladi'].includes(dv.durum);
 
   return (
-    <div className="aw-perde">
+    <div className="aw-perde" ref={kokRef}>
       <style>{CSS_AW}</style>
       <div className="aw-kart">
         <div className="aw-marka" style={{ background: 'linear-gradient(135deg,#4c1d95 0%,#7c3aed 100%)' }}>
@@ -287,7 +289,16 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
                   padding: '10px 14px', borderRadius: 12, cursor: 'pointer', textAlign: 'left',
                   border: `2px solid ${v.xrapor ? C.yesil : C.sari}`, background: v.xrapor ? 'rgba(34,197,94,.14)' : 'rgba(245,158,11,.16)',
                   color: v.xrapor ? C.yesil : C.sari }}>
-                  <input type="checkbox" checked={!!v.xrapor} onChange={(e) => set('xrapor', e.target.checked)} style={{ width: 30, height: 30, flexShrink: 0 }} />
+                  <input type="checkbox" checked={!!v.xrapor} disabled={mesgul || onay?.durum === 'isleniyor'} style={{ width: 30, height: 30, flexShrink: 0 }}
+                    onChange={async (e) => {   // G50 (sim 23 Eki): QR açıkken işaret değişirse telefon ESKİ bilgiyi onaylıyordu → eski QR iptal, yeniden iste
+                      const deger = e.target.checked;
+                      if (onay && ['bekliyor', 'hata'].includes(onay.durum)) {
+                        setMesgul(true); const tamam = await onayIptal(); setMesgul(false);
+                        if (!tamam) return;
+                        setHata('Bilgi değişti — aşağıdan yeniden QR iste');
+                      }
+                      set('xrapor', deger);
+                    }} />
                   <span>🧾 {v.xrapor ? '✓ ' : ''}X raporu yazıcıdan çıktı alındı ve gönderildi</span></label>
                 {(!d.acilis_var || devirAcik) && (
                   <div style={{ alignSelf: 'stretch', textAlign: 'left', padding: 10, borderRadius: 8, background: 'rgba(245,158,11,.12)', color: C.sari, fontSize: 13, display: 'grid', gap: 3 }}>
@@ -344,8 +355,8 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
           {saatUyari && <div className="aw-uyari">{saatUyari}</div>}
           <div className="aw-hata">{hata}</div>
           <div className="aw-dugmeler">
-            {adim > 1 && <button className="aw-btn" onClick={geri} disabled={mesgul}>« Geri</button>}
             {adim < 5 && <button className="aw-btn ana" onClick={ileri}>İleri →</button>}
+            {adim > 1 && <button className="aw-btn" style={{ order: -1 }} onClick={geri} disabled={mesgul}>« Geri</button>}   {/* G46: Tab sırasında İleri'den sonra */}
             {adim === 5 && tabletVar && !eskiGun && (!onay || !['bekliyor', 'isleniyor'].includes(onay.durum)) && (
               <button className="aw-btn ana yesil" disabled={mesgul} onClick={onayIste}>
                 {mesgul ? 'Hazırlanıyor…' : onay ? '🔁 Yeniden QR iste' : '🔒 QR ile Mühürle'}</button>

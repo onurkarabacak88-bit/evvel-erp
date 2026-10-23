@@ -67,8 +67,17 @@ export const sayimGovde = (sayim) => Object.entries(sayim).filter(([, v]) => v !
 export const kalemGovde = (adet) => Object.entries(adet).filter(([, n]) => n > 0).map(([urun_id, n]) => ({ urun_id, adet: n }));
 
 export function Modal({ baslik, kapat, children, genis, genislik }) {
+  const kokRef = useRef(null);
+  useEffect(() => {   // G52 (sim 23 Eki, laptop): pencere açılınca imleç ilk yazı kutusuna — fareyle tıklamadan yazılsın (yalnız ⌨️ Klavye)
+    if (cihazTuruOku() !== 'klavye') return undefined;
+    const t = window.setTimeout(() => {
+      const k = kokRef.current?.querySelector('textarea:not([disabled]), input:not([type=hidden]):not([type=checkbox]):not([disabled])');
+      if (k && !kokRef.current.contains(document.activeElement)) k.focus();
+    }, 60);
+    return () => window.clearTimeout(t);
+  }, []);
   return (
-    <div onClick={kapat || undefined} className="sp-perde" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+    <div ref={kokRef} onClick={kapat || undefined} className="sp-perde" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
       <div onClick={(e) => e.stopPropagation()} className="sp-kart" style={{ width: genislik ? `min(${genislik}px,100%)` : genis ? 'min(980px,100%)' : 'min(560px,100%)', maxHeight: '92vh', overflow: 'auto', display: 'grid', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><b style={{ fontSize: 20, flex: 1 }}>{baslik}</b>
           {kapat && <button className="sp-btn" style={{ minHeight: 48, padding: '4px 14px' }} onClick={kapat}>✕</button>}</div>
@@ -212,6 +221,19 @@ export const ModulKapali = ({ children }) => <div className="sp-kart" style={{ c
 // devam verilmezse düğme çizilmez (gönder düğmesi formun kendisinde).
 export function KisiPin({ adaylar, kisi, setKisi, pin, setPin, hata, devam, devamYazi = 'Devam → özet', soru = 'Kim?', pinIste = true, mesgul = false }) {
   const gecerli = !kisi || adaylar.some((x) => x.id === kisi);
+  const pinRef = useRef(null);
+  useEffect(() => {   // G52: laptopta kişi seçilince imleç PIN'e — denetim 15-3: başka yazı kutusundaysa ÇALMAZ (ör. "Neden?")
+    if (!kisi || !pinIste || cihazTuruOku() !== 'klavye') return undefined;
+    const t = window.setTimeout(() => {
+      const a = document.activeElement;
+      if (a && a !== pinRef.current && (a.tagName === 'TEXTAREA' || (a.tagName === 'INPUT' && a.type !== 'checkbox'))) return;
+      pinRef.current?.focus();
+    }, 120);
+    return () => window.clearTimeout(t);
+  }, [kisi, pinIste]);
+  useEffect(() => {   // G53 (sim 23 Eki): içeride tek kişi varken "Önce adını seç" gereksiz adımdı — PIN yine zorunlu
+    if (pinIste && !kisi && adaylar.length === 1) setKisi(adaylar[0].id);
+  }, [pinIste, kisi, adaylar, setKisi]);
   return (<>
     <b>{soru}</b>
     {adaylar.length === 0 ? <div style={{ color: C.sari, fontWeight: 700 }}>İçeride kimse yok — önce telefonundan QR ile giriş yap.</div> : (
@@ -222,7 +244,7 @@ export function KisiPin({ adaylar, kisi, setKisi, pin, setPin, hata, devam, deva
     {!gecerli && <div style={{ color: C.sari, fontWeight: 700 }}>Seçili kişi çıkış yapmış — adını yeniden seç</div>}
     {pinIste && kisi && (
       <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}><b>🔑 PIN</b>
-        <input className="sp-in" style={{ width: 140, textAlign: 'center', letterSpacing: 8 }} type="password" inputMode="numeric" data-pin="1" autoComplete="off"
+        <input ref={pinRef} className="sp-in" style={{ width: 140, textAlign: 'center', letterSpacing: 8 }} type="password" inputMode="numeric" data-pin="1" autoComplete="off"
           maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="••••"
           onKeyDown={(e) => { /* denetim 23 Eki: Enter doğrudan kaydeder → düğmeyle AYNI koşul */ if (devam && e.key === 'Enter' && kisi && gecerli && !mesgul && pin.length === 4) { e.preventDefault(); devam(); } }} /></label>
     )}
@@ -312,6 +334,44 @@ export const cihazTuruOku = () => {
   return cihazOtomatik();
 };
 export const cihazTuruYaz = (v) => { try { window.localStorage.setItem(CIHAZ_ANAHTAR, v); } catch { /* yok */ } };
+// ⌨️ SİHİRBAZ KLAVYE AKIŞI (G43–G46, sim 23 Eki — laptop): adım açılınca imleç ilk BOŞ kutuya · Enter = sonraki kutu, son kutuda İleri
+// (yeşil/ana düğme) · ileri geçince imleç düğmede kalmaz (çift Enter boş adımı denemez). Yalnız ⌨️ Klavye modunda; dokunmatikte numaratör var.
+const sihirbazKutulari = (kok) => [...(kok?.querySelectorAll('.aw-kart input:not([type=hidden]):not([disabled]):not([data-pin])') || [])].filter((i) => i.offsetParent);   // denetim 15-2: PIN kendi düğmesine
+export function useSihirbazKlavye(kokRef, adim) {
+  useEffect(() => {
+    if (cihazTuruOku() !== 'klavye') return undefined;
+    const t = window.setTimeout(() => {
+      const k = sihirbazKutulari(kokRef.current);
+      const hedef = k.find((i) => i.type !== 'checkbox' && !i.value) || k[0];
+      if (hedef && hedef.type === 'checkbox') {   // denetim 15-1: yalnız onay kutusu (X raporu) → özet okunmadan çift Enter işaretlemesin
+        if (kokRef.current?.contains(document.activeElement)) document.activeElement.blur();
+        t2 = window.setTimeout(() => hedef.focus(), 540);
+      } else if (hedef) { hedef.focus(); if (hedef.select) hedef.select(); }
+      else {   // kutusuz adım (özet + QR): imleç yeşil düğmeye — 600 ms sonra (önceki adımdan kalan çift Enter özeti okumadan QR açmasın)
+        if (kokRef.current?.contains(document.activeElement)) document.activeElement.blur();
+        t2 = window.setTimeout(() => kokRef.current?.querySelector('.aw-dugmeler .aw-btn.ana:not([disabled])')?.focus(), 540);
+      }
+    }, 60);   // adım geçiş canlandırması bitsin
+    let t2 = 0;
+    return () => { window.clearTimeout(t); window.clearTimeout(t2); };
+  }, [kokRef, adim]);
+  useEffect(() => {
+    const kok = kokRef.current;
+    if (!kok) return undefined;
+    const tus = (e) => {
+      if (e.key !== 'Enter' || cihazTuruOku() !== 'klavye' || !(e.target instanceof window.HTMLInputElement)) return;
+      const k = sihirbazKutulari(kok);
+      const i = k.indexOf(e.target);
+      if (i < 0) return;
+      e.preventDefault();
+      if (e.target.type === 'checkbox' && !e.target.checked) { e.target.click(); return; }   // onay kutusu: Enter önce İŞARETLER (X raporu), sonra ilerler
+      if (i < k.length - 1) { k[i + 1].focus(); if (k[i + 1].type !== 'checkbox') k[i + 1].select?.(); return; }
+      kok.querySelector('.aw-dugmeler .aw-btn.ana:not([disabled])')?.click();
+    };
+    kok.addEventListener('keydown', tus);
+    return () => kok.removeEventListener('keydown', tus);
+  }, [kokRef]);
+}
 
 export function SayiTusTakimi({ kapsam, etkin = true }) {
   const [hedef, setHedef] = useState(null);
