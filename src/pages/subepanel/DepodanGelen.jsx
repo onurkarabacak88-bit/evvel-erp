@@ -36,7 +36,6 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
   }
   const kalemler = p?.kalemler || [];
   const sayilan = kalemler.filter((k) => (say[k.bag]?.n ?? '') !== '').length;
-  const kisiAd = adaylar.find((x) => x.id === kisi)?.ad;
   const yaz = (bag, alan, deger) => setSay((o) => ({ ...o, [bag]: { ...(o[bag] || {}), [alan]: deger === '' ? '' : Math.max(0, Math.min(99999, Number(deger) || 0)) } }));
   const art = (bag, dlt) => setSay((o) => { const n = o[bag]?.n; return { ...o, [bag]: { ...(o[bag] || {}), n: Math.max(0, (n === '' || n == null ? 0 : n) + dlt) } }; });
   const onayAc = () => {
@@ -59,7 +58,7 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
       // TEK hata kuralı (Dalga 5, F#54): internet · PIN · 409 'zaten' (farklı içerik → yeni istek, form durur)
       const t = panelHata(e, { setHata, pinSifirla: () => { setPin(''); setOnay(1); }, yeniIstekVer: () => setIstek(yeniIstek()) });
       if (t === 'internet') setHata('İnternet yok — bağlantı gelince yeniden gönder (saydıkların duruyor)');
-      if (t === 'hata' && e?.status === 409) { setOnay(0); setPin(''); bitti(e?.message || 'Sayfa yenilendi', false); }   // Fable: gün değişti / paket düştü → yenile (taslak durur)
+      if (t === 'hata' && e?.status === 409) { setOnay(0); setPin(''); bitti(e?.message || 'Sayfa yenilendi', true); }   /* denetim: yeşil 'tamam' değil, sarı uyarı */   // Fable: gün değişti / paket düştü → yenile (taslak durur)
     }
     setMesgul(false);
   };
@@ -117,24 +116,14 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
       )}
 
       {onay > 0 && p && (
-        <Modal baslik={onay === 1 ? '🚚 Kabul onayı' : `🚚 ${p.nereden} · ${kalemler.length} ürün`} kapat={() => { setOnay(0); setPin(''); }}>
-          {onay === 1 && (<>
-            <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim saydı / teslim aldı?"
-              devam={() => { setHata(''); setOnay(2); }} />   {/* ortak Kişi + PIN (Dalga 5, F#48) */}
-          </>)}
-          {onay === 2 && (<>
-            <div style={{ color: C.soluk }}>Sayan: <b style={{ color: C.yazi }}>{kisiAd || '—'}</b></div>
-            {!kisiAd && <div style={{ color: C.sari, fontWeight: 700 }}>Seçili kişi çıkış yapmış — geri dönüp adını yeniden seç</div>}
-            <div style={{ display: 'grid', gap: 4, maxHeight: '40vh', overflow: 'auto' }}>
-              {kalemler.map((k) => <div key={k.bag} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{k.ad}</span>
-                <b>{Number(say[k.bag]?.n || 0)}</b>{Number(say[k.bag]?.h || 0) > 0 && <span style={{ color: C.sari }}>💔 {say[k.bag].h}</span>}</div>)}
-            </div>
-            {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="sp-btn" disabled={mesgul} onClick={() => setOnay(1)}>« Geri</button>
-              <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul || !kisiAd} onClick={kaydet}>{mesgul ? 'Gönderiliyor…' : '✓ Paketi kabul et'}</button>
-            </div>
-          </>)}
+        <Modal baslik={`🚚 ${p.nereden} · ${kalemler.length} ürün`} kapat={() => { setOnay(0); setPin(''); }}>
+          {/* TEK pencere — özet + kişi + PIN + kabul (sahip 23 Eki, G23) */}
+          <div style={{ display: 'grid', gap: 4, maxHeight: '30vh', overflow: 'auto' }}>
+            {kalemler.map((k) => <div key={k.bag} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{k.ad}</span>
+              <b>{Number(say[k.bag]?.n || 0)}</b>{Number(say[k.bag]?.h || 0) > 0 && <span style={{ color: C.sari }}>💔 {say[k.bag].h}</span>}</div>)}
+          </div>
+          <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim saydı / teslim aldı?"
+            devam={kaydet} devamYazi="✓ Paketi kabul et" mesgul={mesgul} />   {/* ortak Kişi + PIN (Dalga 5, F#48) */}
         </Modal>
       )}
     </div>

@@ -131,21 +131,16 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
         </Modal>
       )}
       {onay > 0 && (
-        <Modal baslik={onay === 1 ? '🛒 Sipariş onayı' : `🛒 ${secili.length + oneri.length} kalem`} kapat={() => { setOnay(0); setPin(''); }}>
-          {onay === 1 && <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim sipariş veriyor?" devam={() => { setHata(''); setOnay(2); }} />}
-          {onay === 2 && (<>
-            <div style={{ display: 'grid', gap: 4, maxHeight: '40vh', overflow: 'auto' }}>
-              {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad} <RozetU id={id} /></span><b>{n}</b></div>)}
-              {oneri.map((o, i) => <div key={`o${i}`} style={{ display: 'flex', gap: 8, color: C.sari }}><span style={{ flex: 1 }}>💡 {o.ad} (katalog dışı)</span><b>{o.adet}</b></div>)}
-            </div>
-            {secili.some(([id]) => rozet[id]) && <div style={{ color: C.sari, fontSize: 13 }}>⏳ İşaretli ürünler zaten bekliyor / yolda — yine de istiyorsan gönder.</div>}
-            {not.trim() && <div style={{ color: C.soluk }}>Not: {not.trim()}</div>}
-            {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="sp-btn" disabled={mesgul} onClick={() => setOnay(1)}>« Geri</button>
-              <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul || !adaylar.some((x) => x.id === kisi)} onClick={kaydet}>{mesgul ? 'Gönderiliyor…' : '🛒 Gönder'}</button>
-            </div>
-          </>)}
+        <Modal baslik={`🛒 ${secili.length + oneri.length} çeşit sipariş`} kapat={() => { setOnay(0); setPin(''); }}>
+          {/* TEK pencere — özet + kişi + PIN + gönder (sahip 23 Eki, G23) */}
+          <div style={{ display: 'grid', gap: 4, maxHeight: '30vh', overflow: 'auto' }}>
+            {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad} <RozetU id={id} /></span><b>{n}</b></div>)}
+            {oneri.map((o, i) => <div key={`o${i}`} style={{ display: 'flex', gap: 8, color: C.sari }}><span style={{ flex: 1 }}>💡 {o.ad} (katalog dışı)</span><b>{o.adet}</b></div>)}
+          </div>
+          {secili.some(([id]) => rozet[id]) && <div style={{ color: C.sari, fontSize: 13 }}>⏳ İşaretli ürünler zaten bekliyor / yolda — yine de istiyorsan gönder.</div>}
+          {not.trim() && <div style={{ color: C.soluk }}>Not: {not.trim()}</div>}
+          <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim sipariş veriyor?"
+            devam={kaydet} devamYazi="🛒 Siparişi gönder" mesgul={mesgul} />
         </Modal>
       )}
     </div>

@@ -36,6 +36,11 @@ export default function SubePaneli({ subeId }) {
   };
   const [modal, setModal] = useState(null);
   const [mesaj, setMesaj] = useState(null);
+  useEffect(() => {   // G18 (sahip ekran denemesi 23 Eki): başarı mesajı 15 dk sonra hâlâ duruyordu → hata değilse 6 sn
+    if (!mesaj || mesaj.tur === 'hata') return undefined;
+    const t = window.setTimeout(() => setMesaj(null), 6000);
+    return () => window.clearTimeout(t);
+  }, [mesaj]);
   const [giderAcik, setGiderAcik] = useState(false);   // 💸 anlık gider penceresi
   const [notAcik, setNotAcik] = useState(false);   // 📝 merkez notu penceresi
   const [avansT, setAvansT] = useState(null);           // 🤝 elden verilecek avans (teslim penceresi)
@@ -209,7 +214,7 @@ export default function SubePaneli({ subeId }) {
   };
 
   // S-B6: kısa kesintide ekranın tamamı gitmesin — elde veri varsa ekran kalır, üstte bant (aşağıda); tam sayfa yalnız ilk açılışta
-  if (hata && !d) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style><h2>Panel açılamadı</h2><p>{hata}</p><button className="sp-btn" onClick={yukle}>Tekrar dene</button></div>;
+  if (hata && !d) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style><h2>Panel açılamadı</h2><p>{hataAg ? 'İnternet bağlantısı yok.' : 'Sisteme şu an ulaşılamıyor.'} Birkaç saniye içinde kendiliğinden yeniden denenecek.</p><button className="sp-btn" onClick={yukle}>Tekrar dene</button></div>;
   if (!d) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style>Yükleniyor…</div>;
   // sahip: PIN/kişi seçilen her yerde YALNIZ QR ile girmiş (şu an içeride) personel — tüm personel listesi yedeği YOK
   const kisiAdaylari = (yok.girenler || []).filter((g) => g.acik).map((g) => ({ id: g.personel_id, ad: g.ad }));
@@ -269,7 +274,9 @@ export default function SubePaneli({ subeId }) {
         </div>
       )}
       {mesaj && (
-        <div onClick={() => setMesaj(null)} style={{ margin: '10px 12px 0', padding: '12px 14px', borderRadius: 10, fontWeight: 700, cursor: 'pointer',
+        <div role="status" onClick={() => setMesaj(null)} style={{ position: 'fixed', top: 58, left: '50%', transform: 'translateX(-50%)', zIndex: 85,
+          width: 'min(640px, calc(100% - 24px))', boxShadow: '0 10px 30px rgba(0,0,0,.45)', backdropFilter: 'blur(6px)',
+          padding: '14px 16px', borderRadius: 12, fontWeight: 700, fontSize: 16, cursor: 'pointer',
           background: mesaj.tur === 'hata' ? 'rgba(239,68,68,.15)' : mesaj.tur === 'deneme' ? 'rgba(245,158,11,.15)' : 'rgba(34,197,94,.15)',
           color: mesaj.tur === 'hata' ? C.kirmizi : mesaj.tur === 'deneme' ? C.sari : C.yesil }}>{mesaj.metin}</div>
       )}
@@ -386,7 +393,7 @@ export default function SubePaneli({ subeId }) {
         </div>
       )}
 
-      {tabletVar && yok.var && !qrBuyuk && !kapiAcik && (
+      {tabletVar && yok.var && !qrBuyuk && !kapiAcik && sekme !== 'ana' && (   /* G4: ana sayfada tek QR (kartta) */
         <div style={{ position: 'fixed', right: 12, bottom: 70, zIndex: 40, padding: 6, borderRadius: 14, background: C.bg1, border: `1px solid ${C.cizgi}` }}>
           <TabletQR boyut={110} onClick={() => setQrBuyuk(true)} />
         </div>

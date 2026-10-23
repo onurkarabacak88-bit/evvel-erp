@@ -1,6 +1,6 @@
 // 🔓 ÜRÜN AÇ — eski sube_panel.html tab-ac AYNEN (5363–5395, 10070–10120, 11479–11560, 12390–12610); PANEL_YENIDEN_KURULUM.md Basamak 5.
 // Orta alanda SEKME: hero · yapışkan onay çubuğu · kategori kartları (rozet) · "Pasifleri göster" · kategori penceresi (− adet +) ·
-// seçim özeti · not → "Seçimleri Onayla" → 1) yalnız QR ile girmiş personel + PIN  2) özet → Kaydet. Bütün katalog (sahip).
+// seçim özeti · not → "Onayla" → TEK pencere: özet + yalnız QR ile girmiş personel + PIN → Kaydet (sahip 23 Eki). Bütün katalog (sahip).
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
@@ -14,7 +14,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   const [not, setNot] = useState(ilk?.not || '');
   const [pasif, setPasif] = useState(false);
   const [acikKat, setAcikKat] = useState(null);
-  const [onay, setOnay] = useState(0);          // 0 kapalı · 1 kişi + PIN · 2 özet
+  const [onay, setOnay] = useState(0);          // 0 kapalı · 1 tek onay penceresi (özet + kişi + PIN)
   const [kisi, setKisi] = useState('');
   const [pin, setPin] = useState('');             // YALNIZ bellekte (taslağa / hiçbir yere yazılmaz)
   const [istek, setIstek] = useState(() => ilk?.istek || yeniIstek());
@@ -96,7 +96,6 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   };
 
   const k0 = katalog.find((k) => k.id === acikKat);
-  const kisiAd = adaylar.find((p) => p.id === kisi)?.ad;
 
   return (
     <div style={{ display: 'grid', gap: 12, alignContent: 'start', ...(flas ? { boxShadow: `0 0 0 4px ${C.yesil}`, borderRadius: 14, transition: 'box-shadow .3s' } : {}) }}>
@@ -104,13 +103,8 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
       {kalem > 0 && (
         <div className="sp-kart" style={{ position: 'sticky', top: 0, zIndex: 5, display: 'grid', gap: 6, borderColor: C.yesil }}>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ background: C.yesil, color: '#05210f', borderRadius: 6, padding: '2px 8px', fontWeight: 800, fontSize: 12 }}>Onay</span>
-            <b>Ürün açımını onayla — personel ve PIN güvenli pencerede istenir</b>
-          </div>
-          <div style={{ color: C.soluk, fontSize: 13 }}>Özeti kontrol edin; <b>Seçimleri Onayla</b> ile önce personel + PIN, ardından kalem listesi özeti açılır.</div>
-          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <span style={{ flex: 1, fontWeight: 700 }}>Seçili ürün: {kalem} kalem · toplam {toplam} adet</span>
-            <button className="sp-btn sp-yesil" disabled={kapali || mesgul} onClick={onayAc}>Seçimleri Onayla ({kalem} kalem)</button>
+            <b style={{ flex: 1 }}>🔓 {kalem} çeşit · toplam {toplam} adet seçildi</b>
+            <button className="sp-btn sp-yesil" disabled={kapali || mesgul} onClick={onayAc}>Onayla →</button>   {/* G12: kısa yazı; kişi + PIN açılan pencerede */}
           </div>
         </div>
       )}
@@ -120,7 +114,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
       {kapali && <div className="sp-kart" style={{ color: C.soluk, fontWeight: 700 }}>🔒 Gün kapandı — Ürün Aç yapılamaz</div>}
       {mesaj === 'taslak' && kalem > 0 && (
         <div className="sp-kart" style={{ borderColor: C.sari, color: C.sari, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ flex: 1 }}>🔄 {kalem} kalem yüklendi. Üstteki «Seçimleri Onayla» ile personel + PIN girerek gönderin.</span>
+          <span style={{ flex: 1 }}>🔄 Yarım kalan seçimin geri geldi ({kalem} çeşit). Üstteki «Onayla» ile bitir.</span>
           <button className="sp-btn" style={{ minHeight: 40, padding: '4px 12px' }} onClick={temizle}>✕ Taslağı temizle</button>
         </div>
       )}
@@ -166,27 +160,15 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
         </Modal>
       )}
 
-      {/* onay: 1) kişi + PIN  2) özet → kaydet */}
+      {/* onay: TEK pencere — özet + kişi + PIN + kaydet (sahip 23 Eki, G13/G23: ikinci özet basamağı kalktı) */}
       {onay > 0 && (
-        <Modal baslik={onay === 1 ? '🔓 Ürün Aç onayı' : `🔓 ${toplam} adet ürün açılacak`} kapat={() => { setOnay(0); setPin(''); }}>
-          {onay === 1 && (<>
-            <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim açıyor?"
-              devam={() => { setHata(''); setOnay(2); }} />   {/* ortak Kişi + PIN (Dalga 5, F#48) */}
-          </>)}
-          {onay === 2 && (<>
-            <div style={{ color: C.soluk }}>Açan: <b style={{ color: C.yazi }}>{kisiAd || '—'}</b></div>
-            {!kisiAd && <div style={{ color: C.sari, fontWeight: 700 }}>Seçili kişi çıkış yapmış — geri dönüp adını yeniden seç</div>}
-            <div style={{ fontSize: 22, fontWeight: 900, color: C.yesil }}>{kalem} kalem · {toplam} adet</div>
-            <div style={{ display: 'grid', gap: 4, maxHeight: '40vh', overflow: 'auto' }}>
-              {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{n}</b></div>)}
-            </div>
-            {not.trim() && <div style={{ color: C.soluk }}>Not: {not.trim()}</div>}
-            {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="sp-btn" disabled={mesgul} onClick={() => setOnay(1)}>« Geri</button>
-              <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul || !kisiAd} onClick={kaydet}>{mesgul ? 'Gönderiliyor…' : '✓ Onayla'}</button>
-            </div>
-          </>)}
+        <Modal baslik={`🔓 ${toplam} adet ürün açılacak`} kapat={() => { setOnay(0); setPin(''); }}>
+          <div style={{ display: 'grid', gap: 4, maxHeight: '30vh', overflow: 'auto' }}>
+            {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{n}</b></div>)}
+          </div>
+          {not.trim() && <div style={{ color: C.soluk }}>Not: {not.trim()}</div>}
+          <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim açıyor?"
+            devam={kaydet} devamYazi="✓ Ürünleri aç" mesgul={mesgul} />   {/* ortak Kişi + PIN (Dalga 5, F#48) */}
         </Modal>
       )}
     </div>

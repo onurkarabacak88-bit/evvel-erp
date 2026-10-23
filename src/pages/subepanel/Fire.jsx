@@ -36,7 +36,7 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
   const [mTel, setMTel] = useState('');
   const [acikGrup, setAcikGrup] = useState(null);
   const [ara, setAra] = useState('');
-  const [onay, setOnay] = useState(0);     // 0 · 1 kişi+PIN · 2 özet
+  const [onay, setOnay] = useState(0);     // 0 · 1 tek onay penceresi (özet + kişi + PIN)
   const [kisi, setKisi] = useState('');
   const [pin, setPin] = useState('');
   const [istek, setIstek] = useState(() => ilk?.istek || yeniIstek());
@@ -98,7 +98,6 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
     setMesgul(false);
   };
 
-  const kisiAd = adaylar.find((p) => p.id === kisi)?.ad;
   const ADIMLAR = ['Sebep', 'Ürün', 'Onay'];
 
   return (
@@ -201,25 +200,16 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
         </Modal>
       )}
 
-      {/* onay: kişi + PIN → özet → kaydet */}
+      {/* onay: TEK pencere — özet + kişi + PIN + kaydet (sahip 23 Eki, G13/G23: ikinci özet basamağı kalktı) */}
       {onay > 0 && (
-        <Modal baslik={onay === 1 ? '🔥 Fire onayı' : `🔥 ${toplam} adet fire kaydedilecek`} kapat={() => { setOnay(0); setPin(''); }}>
-          {onay === 1 && <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim bildiriyor?"
-            devam={() => { setHata(''); setOnay(2); }} />}
-          {onay === 2 && (<>
-            <div style={{ color: C.soluk }}>Bildiren: <b style={{ color: C.yazi }}>{kisiAd || '—'}</b></div>
-            {!kisiAd && <div style={{ color: C.sari, fontWeight: 700 }}>Seçili kişi çıkış yapmış — geri dönüp adını yeniden seç</div>}
-            <b>{sb?.ikon} {sb?.ad}{hazirlikAd ? ` · ${hazirlikAd}` : ''}{iadeAd ? ` · ${iadeAd}` : ''}</b>
-            <div style={{ display: 'grid', gap: 4, maxHeight: '40vh', overflow: 'auto' }}>
-              {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{n}</b></div>)}
-            </div>
-            {sebep === 'iade' && <div style={{ color: C.soluk }}>Fiş {fis} · {iadeSaat}</div>}
-            {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="sp-btn" disabled={mesgul} onClick={() => setOnay(1)}>« Geri</button>
-              <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul || !kisiAd} onClick={kaydet}>{mesgul ? 'Gönderiliyor…' : '✓ Fireyi kaydet'}</button>
-            </div>
-          </>)}
+        <Modal baslik={`🔥 ${toplam} adet fire kaydedilecek`} kapat={() => { setOnay(0); setPin(''); }}>
+          <b>{sb?.ikon} {sb?.ad}{hazirlikAd ? ` · ${hazirlikAd}` : ''}{iadeAd ? ` · ${iadeAd}` : ''}</b>
+          <div style={{ display: 'grid', gap: 4, maxHeight: '30vh', overflow: 'auto' }}>
+            {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{n}</b></div>)}
+          </div>
+          {sebep === 'iade' && <div style={{ color: C.soluk }}>Fiş {fis} · {iadeSaat}</div>}
+          <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim bildiriyor?"
+            devam={kaydet} devamYazi="✓ Fireyi kaydet" mesgul={mesgul} />
         </Modal>
       )}
     </div>

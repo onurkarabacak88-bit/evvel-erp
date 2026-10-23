@@ -84,6 +84,7 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
     taslakYaz(anahtar, { adim: Math.min(adim, 4), kasa, sayim, pasta, istek });
   }, [adim, kasa, sayim, pasta, istek, anahtar, basari]);
 
+  useEffect(() => { setHata((h) => (/adedini girin|sayımı girin|geçerli değer/.test(h) ? '' : h)); }, [kasa, sayim, pasta]);   // G2: yazınca eski 'girin' uyarısı kalkar
   const git = (n) => { setHata(''); setYon(n > adim ? 'ileri' : 'geri'); setAdim(n); };
   const govde = () => ({
     istemci_gunu: d.gun, istek_id: istek, kasa_sayim: tutarNum(kasa), pasta_toplam: Number(pasta),

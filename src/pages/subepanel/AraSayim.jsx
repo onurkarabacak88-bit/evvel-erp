@@ -46,7 +46,7 @@ export default function AraSayim({ subeId, a, tabletVar, yenile }) {
   };
 
   return (
-    <div style={{ position: 'fixed', inset: 0, zIndex: 75, background: 'rgba(5,8,15,.97)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+    <div className="sp-perde" style={{ position: 'fixed', inset: 0, zIndex: 75, background: 'rgba(5,8,15,.97)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
       <div className="sp-kart" style={{ width: 'min(560px,100%)', display: 'grid', gap: 14, textAlign: 'center', borderColor: C.sari }}>
         <div style={{ fontSize: 40 }}>⏱</div>
         <b style={{ fontSize: 24 }}>Ara kasa sayımı{a.deneme ? ' (DENEME)' : ''}</b>

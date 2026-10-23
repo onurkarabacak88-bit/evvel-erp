@@ -120,7 +120,7 @@ function Bagla({ davet }) {
             <a className="tq-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}
                href={`/panel/${encodeURIComponent(sonuc.sube_id)}`}>🧾 Şube panelini aç</a>
           )}
-          {sonuc.tur === 'telefon' && <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">🏠 Eve dön</a>}
+          {sonuc.tur === 'telefon' && <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">✓ Tamam</a>}
         </div>
       ) : (
         <div className="tq-kart">
@@ -208,7 +208,7 @@ function QrIslem({ sube, jeton }) {
           <div className="tq-not">{sonuc.mesaj}</div>
           {sonuc.hak_dustu && <div className="tq-not">Bugün yemek hakkı kazanılamadı</div>}
           {sonuc.islem === 'giris' && <div className="tq-not">🍽 Yemek molasına çıkarken paneldeki QR'ı <b>tekrar okut</b> → "Yemek molası başlat".</div>}
-          <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">🏠 Eve dön</a>
+          <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">✓ Tamam</a>
         </div>
       ) : (
         <div className="tq-kart">
@@ -811,7 +811,7 @@ function DevirIslem({ sube, jeton, did }) {
           <div style={{ fontSize: 72, color: T.yesil, lineHeight: 1 }}>✓</div>
           <b style={{ fontSize: 24 }}>{sonuc.baslik} · {saatSimdi()}</b>
           <div className="tq-not">{sonuc.mesaj}</div>
-          <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">🏠 Eve dön</a>
+          <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">✓ Tamam</a>
         </div>
       ) : (
         <div className="tq-kart">

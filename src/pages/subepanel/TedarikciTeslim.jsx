@@ -48,7 +48,6 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   const toplam = secili.reduce((a, [, n]) => a + n, 0);
   useEffect(() => { secimBildir?.(kalem); }, [kalem, secimBildir]);
   const tAd = (d.toptancilar || []).find((t) => t.id === toptanci)?.ad;
-  const kisiAd = adaylar.find((p) => p.id === kisi)?.ad;
 
   const ayar = adetAyarla(setAdet);   // ortak adet kuralı (D6-R)
   const degis = ayar.degis;
@@ -251,26 +250,15 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
       )}
 
       {onay > 0 && (
-        <Modal baslik={onay === 1 ? '📦 Teslim onayı' : `📦 ${tAd || ''} · ${toplam} adet`} kapat={() => { setOnay(0); setPin(''); }}>
-          {onay === 1 && (<>
-            <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim teslim aldı?"
-              devam={() => { setHata(''); setOnay(2); }} />   {/* ortak Kişi + PIN (Dalga 5, F#48) */}
-          </>)}
-          {onay === 2 && (<>
-            <div style={{ color: C.soluk }}>Teslim alan: <b style={{ color: C.yazi }}>{kisiAd || '—'}</b> · Tedarikçi: <b style={{ color: C.yazi }}>{tAd}</b></div>
-            {!kisiAd && <div style={{ color: C.sari, fontWeight: 700 }}>Seçili kişi çıkış yapmış — geri dönüp adını yeniden seç</div>}
-            <div style={{ fontSize: 22, fontWeight: 900, color: C.yesil }}>{kalem} kalem · {toplam} adet</div>
-            <div style={{ display: 'grid', gap: 4, maxHeight: '36vh', overflow: 'auto' }}>
-              {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{n}</b></div>)}
-            </div>
-            <div>🧾 Fatura: <b>{fatura ? 'GELDİ' : 'gelmedi'}</b>{ftTutar ? ` · ${tl(tutarNum(ftTutar))}` : ''}{fatura && ftNo.trim() ? ` · no ${ftNo.trim()}` : ''}</div>
-            {not.trim() && <div style={{ color: C.soluk }}>Not: {not.trim()}</div>}
-            {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
-            <div style={{ display: 'flex', gap: 8 }}>
-              <button className="sp-btn" disabled={mesgul} onClick={() => setOnay(1)}>« Geri</button>
-              <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul || !kisiAd} onClick={kaydet}>{mesgul ? 'Gönderiliyor…' : '📦 Teslim al ve kaydet'}</button>
-            </div>
-          </>)}
+        <Modal baslik={`📦 ${tAd || ''} · ${toplam} adet`} kapat={() => { setOnay(0); setPin(''); }}>
+          {/* TEK pencere — özet + kişi + PIN + kaydet (sahip 23 Eki, G23) */}
+          <div style={{ display: 'grid', gap: 4, maxHeight: '30vh', overflow: 'auto' }}>
+            {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{n}</b></div>)}
+          </div>
+          <div>🧾 Fatura: <b>{fatura ? 'GELDİ' : 'gelmedi'}</b>{ftTutar ? ` · ${tl(tutarNum(ftTutar))}` : ''}{fatura && ftNo.trim() ? ` · no ${ftNo.trim()}` : ''}</div>
+          {not.trim() && <div style={{ color: C.soluk }}>Not: {not.trim()}</div>}
+          <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim teslim aldı?"
+            devam={kaydet} devamYazi="📦 Teslim al ve kaydet" mesgul={mesgul} />   {/* ortak Kişi + PIN (Dalga 5, F#48) */}
         </Modal>
       )}
     </div>

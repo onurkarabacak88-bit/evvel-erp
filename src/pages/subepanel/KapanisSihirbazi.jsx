@@ -55,6 +55,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
     taslakYaz(anahtar, { adim: Math.min(adim, 4), v, sayim, istek });
   }, [adim, v, sayim, istek, anahtar, sonuc]);
   const set = (k, x) => setV((o) => ({ ...o, [k]: x }));
+  useEffect(() => { setHata((h) => (/adedini girin|sayımı girin|geçerli değer|geçerli tutar|sayıp girin|zorunlu|tutarı girin/.test(h) ? '' : h)); }, [v, sayim]);   // G2: yazınca eski 'girin' uyarısı kalkar
   const git = (n) => { setHata(''); setYon(n > adim ? 'ileri' : 'geri'); setAdim(n); };
   const teslimler = Object.entries(v.teslim || {}).filter(([, t]) => tutarNum(t) > 0).map(([alan, t]) => ({ alan, tutar: tutarNum(t) }));
   const govde = () => ({

@@ -68,7 +68,7 @@ export const kalemGovde = (adet) => Object.entries(adet).filter(([, n]) => n > 0
 
 export function Modal({ baslik, kapat, children, genis, genislik }) {
   return (
-    <div onClick={kapat || undefined} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+    <div onClick={kapat || undefined} className="sp-perde" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
       <div onClick={(e) => e.stopPropagation()} className="sp-kart" style={{ width: genislik ? `min(${genislik}px,100%)` : genis ? 'min(980px,100%)' : 'min(560px,100%)', maxHeight: '92vh', overflow: 'auto', display: 'grid', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><b style={{ fontSize: 20, flex: 1 }}>{baslik}</b>
           {kapat && <button className="sp-btn" style={{ minHeight: 48, padding: '4px 14px' }} onClick={kapat}>✕</button>}</div>
@@ -210,7 +210,7 @@ export const ModulKapali = ({ children }) => <div className="sp-kart" style={{ c
 // 🔑 KİM + PIN (sahip R1b: QR'la içeride olan + kendi 4 haneli PIN'i) — TEK parça (Dalga 5, F#48: Ürün aç · Tedarikçi teslim ·
 // Depodan gelen · panel ana pencereleri 'kimSec' ayrı kopyaydı). PIN yalnız bellekte. pinIste=false → yalnız kişi seçimi.
 // devam verilmezse düğme çizilmez (gönder düğmesi formun kendisinde).
-export function KisiPin({ adaylar, kisi, setKisi, pin, setPin, hata, devam, devamYazi = 'Devam → özet', soru = 'Kim?', pinIste = true }) {
+export function KisiPin({ adaylar, kisi, setKisi, pin, setPin, hata, devam, devamYazi = 'Devam → özet', soru = 'Kim?', pinIste = true, mesgul = false }) {
   const gecerli = !kisi || adaylar.some((x) => x.id === kisi);
   return (<>
     <b>{soru}</b>
@@ -224,10 +224,13 @@ export function KisiPin({ adaylar, kisi, setKisi, pin, setPin, hata, devam, deva
       <label style={{ display: 'flex', alignItems: 'center', gap: 10 }}><b>🔑 PIN</b>
         <input className="sp-in" style={{ width: 140, textAlign: 'center', letterSpacing: 8 }} type="password" inputMode="numeric" data-pin="1" autoComplete="off"
           maxLength={4} value={pin} onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))} placeholder="••••"
-          onKeyDown={(e) => { if (devam && e.key === 'Enter' && kisi && pin.length === 4) { e.preventDefault(); devam(); } }} /></label>
+          onKeyDown={(e) => { /* denetim 23 Eki: Enter doğrudan kaydeder → düğmeyle AYNI koşul */ if (devam && e.key === 'Enter' && kisi && gecerli && !mesgul && pin.length === 4) { e.preventDefault(); devam(); } }} /></label>
     )}
     {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
-    {devam && <button className="sp-btn sp-ana" disabled={!kisi || !gecerli || (pinIste && pin.length !== 4)} onClick={devam}>{devamYazi}</button>}
+    {/* G23 (sahip ekran denemesi 23 Eki): soluk düğme neden basılmıyor söylenmiyordu */}
+    {devam && adaylar.length > 0 && (!kisi || !gecerli || (pinIste && pin.length !== 4)) && (
+      <div style={{ color: C.sari, fontWeight: 700, textAlign: 'center' }}>{!kisi || !gecerli ? '👆 Önce adını seç' : '🔑 4 haneli PIN\'ini gir'}</div>)}
+    {devam && <button className="sp-btn sp-ana" disabled={!kisi || !gecerli || (pinIste && pin.length !== 4) || mesgul} onClick={devam}>{mesgul ? 'Gönderiliyor…' : devamYazi}</button>}
   </>);
 }
 
@@ -290,7 +293,7 @@ export function TabletQR({ boyut, onClick, onay, devir, teslim }) {
 }
 
 // 🔢 GLOBAL SAYI TUŞ TAKIMI (eski panel #sayiPaneli, sube_panel.html:14707–15018): inputmode=numeric/decimal olan her alanda sağdan kayar.
-// 7 8 9 ⌫ / 4 5 6 ✓ / 1 2 3 / 0 00 , · en çok 8 tam + 2 ondalık · ilk tuş eski değeri siler · Enter onay, Esc iptal, Tab sonraki alan ·
+// 7 8 9 ⌫ / 4 5 6 ✓ / 1 2 3 / 0 00 , · en çok 8 tam + 2 ondalık · ilk tuş eski değeri siler · Enter onay, Esc kapat (değer kalır), Tab sonraki alan ·
 // dışarı tıklamak onaylayarak kapatır. React kontrollü input'a NATIVE setter + 'input' olayıyla yazar (state güncellenir — Fable).
 const yazInput = (el, deger) => {
   const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
@@ -340,10 +343,19 @@ export function SayiTusTakimi({ kapsam }) {
     const tus = (e) => {
       if (/^[0-9,]$/.test(e.key) || e.key === 'Backspace') ilk.current = false;
       if (e.key === 'Enter') { e.preventDefault(); setHedef(null); hedef.blur(); }
-      else if (e.key === 'Escape') { e.preventDefault(); yazInput(hedef, eski.current); setHedef(null); hedef.blur(); }
+      else if (e.key === 'Escape') { e.preventDefault(); setHedef(null); hedef.blur(); }   // G19 (sahip ekran denemesi 23 Eki): Esc yazılanı SİLMEZ, yalnız kapatır
     };
     window.addEventListener('keydown', tus);
     return () => window.removeEventListener('keydown', tus);
+  }, [hedef]);
+  useEffect(() => {   // G1 (sahip ekran denemesi 23 Eki): numaratör İleri'nin üstüne biniyordu → '6' yerine '61' sayıldı
+    if (!hedef) return undefined;
+    const kok = document.documentElement;
+    const olc = () => kok.style.setProperty('--sayi-bosluk', `${(panelRef.current?.offsetWidth || 360) + 16}px`);
+    olc();
+    document.body.classList.add('sayi-acik');
+    window.addEventListener('resize', olc);
+    return () => { document.body.classList.remove('sayi-acik'); window.removeEventListener('resize', olc); };
   }, [hedef]);
   if (!hedef || !document.body.contains(hedef)) return null;
   const ondalik = (hedef.dataset.imOnceki || hedef.getAttribute('inputmode')) === 'decimal';
@@ -369,6 +381,7 @@ export function SayiTusTakimi({ kapsam }) {
   const tuslar = ['7', '8', '9', '⌫', '4', '5', '6', '✓', '1', '2', '3', '⇥', '0', '00', ondalik ? ',' : '', ''];
   return (
     <>
+      <style>{'body.sayi-acik .sp-perde,body.sayi-acik .aw-perde{padding-right:var(--sayi-bosluk,376px)!important;transition:padding-right .12s}'}</style>
       <div ref={panelRef} onMouseDown={(e) => e.preventDefault()} style={{ position: 'fixed', right: 8, bottom: 70, width: 'min(360px,50vw)', minWidth: 260, zIndex: 90, background: C.bg1,
         border: `1px solid ${C.cizgi}`, borderRadius: 14, padding: 10, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
         {tuslar.map((k, i) => (k === '' ? <span key={i} /> : (

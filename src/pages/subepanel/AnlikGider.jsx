@@ -11,13 +11,12 @@ export default function AnlikGider({ d, subeId, adaylar, kapali, kapat, bitti })
   const [tut, setTut] = useState('');
   const [acik, setAcik] = useState('');
   const [fis, setFis] = useState(null);
-  const [adim, setAdim] = useState(0);   // 0 form · 1 kişi + PIN · 2 özet
+  const [adim, setAdim] = useState(0);   // 0 form · 1 tek onay penceresi (özet + kişi + PIN)
   const [kisi, setKisi] = useState('');
   const [pin, setPin] = useState('');
   const [istek, setIstek] = useState(yeniIstek);
   const [mesgul, setMesgul] = useState(false);
   const [hata, setHata] = useState('');
-  const kisiAd = adaylar.find((x) => x.id === kisi)?.ad;
   const devam = () => {
     setHata('');
     if (!(tutarNum(tut) > 0)) { setHata('Tutarı yaz'); return; }
@@ -58,16 +57,12 @@ export default function AnlikGider({ d, subeId, adaylar, kapali, kapat, bitti })
           {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
           <button className="sp-btn sp-yesil" onClick={devam}>Devam → kim ödedi?</button>
         </>)}
-        {adim === 1 && <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim ödedi?" devam={() => { setHata(''); setAdim(2); }} />}
-        {adim === 2 && (<>
+        {adim === 1 && (<>   {/* TEK pencere — özet + kişi + PIN + kaydet (sahip 23 Eki, G23) */}
           <div style={{ fontSize: 24, fontWeight: 900, color: C.sari }}>{tl(tutarNum(tut))}</div>
           <div>{acik.trim()}{kat.trim() ? ` · ${kat.trim()}` : ''} · fiş {fis ? 'VAR' : 'YOK'}</div>
-          <div style={{ color: C.soluk }}>Ödeyen: <b style={{ color: C.yazi }}>{kisiAd || '—'}</b></div>
-          {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="sp-btn" disabled={mesgul} onClick={() => setAdim(1)}>« Geri</button>
-            <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={mesgul || !kisiAd} onClick={kaydet}>{mesgul ? 'Kaydediliyor…' : '💸 Gideri kaydet'}</button>
-          </div>
+          <button type="button" className="sp-btn" style={{ minHeight: 40, justifySelf: 'start' }} disabled={mesgul} onClick={() => setAdim(0)}>« Düzelt</button>
+          <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim ödedi?"
+            devam={kaydet} devamYazi="💸 Gideri kaydet" mesgul={mesgul} />
         </>)}
       </>)}
     </Modal>
