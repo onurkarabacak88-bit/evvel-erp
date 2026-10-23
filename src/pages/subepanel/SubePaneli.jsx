@@ -17,7 +17,7 @@ import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
 import Fire from './Fire';
 import AraSayim from './AraSayim';
-import { C, CSS, KisiPin, Modal, panelHata, qrBoyut, SayiTusTakimi, TabletQR, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek } from './ortak';
+import { C, CSS, cihazTuruOku, cihazTuruYaz, KisiPin, Modal, panelHata, qrBoyut, SayiTusTakimi, TabletQR, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek } from './ortak';
 import { gunKaydir } from '../../utils/trTarih';
 
 export default function SubePaneli({ subeId }) {
@@ -36,6 +36,7 @@ export default function SubePaneli({ subeId }) {
   };
   const [modal, setModal] = useState(null);
   const [mesaj, setMesaj] = useState(null);
+  const [cihaz, setCihaz] = useState(cihazTuruOku);   // 👆 dokunmatik / ⌨️ klavye (sahip 23 Eki — seçilebilir)
   useEffect(() => {   // G18 (sahip ekran denemesi 23 Eki): başarı mesajı 15 dk sonra hâlâ duruyordu → hata değilse 6 sn
     if (!mesaj || mesaj.tur === 'hata') return undefined;
     const t = window.setTimeout(() => setMesaj(null), 6000);
@@ -266,6 +267,10 @@ export default function SubePaneli({ subeId }) {
         <b style={{ fontSize: 18, flex: 1, textAlign: 'center' }}>{d.sube.ad}</b>
         {d.kuru && <span style={{ background: 'rgba(245,158,11,.15)', color: C.sari, padding: '4px 10px', borderRadius: 8, fontWeight: 700, fontSize: 12 }}>DENEME — kaydedilmez · panel {new Date(d.panel_baslangic + 'T12:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })} sabahı açılır</span>}
         <span style={{ color: C.soluk, fontVariantNumeric: 'tabular-nums' }}>{saat.toLocaleDateString('tr-TR')} · {saat.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
+        <button type="button" className="sp-btn" style={{ minHeight: 40, padding: '4px 12px', fontSize: 14, marginLeft: 8 }}
+          title="Bu bilgisayarın türü — dokunmatik ekranda sayı tuş takımı açılır, laptopta klavyeden yazılır"
+          onClick={() => { const y = cihaz === 'dokunmatik' ? 'klavye' : 'dokunmatik'; cihazTuruYaz(y); setCihaz(y); setMesaj({ tur: 'tamam', metin: y === 'dokunmatik' ? '👆 Dokunmatik ekran — sayılar için ekran tuş takımı açılır' : '⌨️ Klavye — sayıları klavyeden yaz, Tab ile sonraki kutuya geç' }); }}>
+          {cihaz === 'dokunmatik' ? '👆 Dokunmatik' : '⌨️ Klavye'}</button>
       </div>
       {urunBandi && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'rgba(59,130,246,.12)', borderBottom: `1px solid ${C.cizgi}` }}>
@@ -406,7 +411,7 @@ export default function SubePaneli({ subeId }) {
           </div>
         </Modal>
       )}
-      <SayiTusTakimi kapsam={kokRef} />
+      <SayiTusTakimi kapsam={kokRef} etkin={cihaz === 'dokunmatik'} />
       {anladim && (
         <div style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.85)', zIndex: 80, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
           <div className="sp-kart" style={{ maxWidth: 520, display: 'grid', gap: 16, textAlign: 'center', borderColor: C.kirmizi }}>

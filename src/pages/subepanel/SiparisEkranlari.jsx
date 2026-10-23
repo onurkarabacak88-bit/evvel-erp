@@ -85,7 +85,7 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
       {kapali && <div className="sp-kart" style={{ color: C.soluk, fontWeight: 700 }}>🔒 Gün kapandı — sipariş verilemez</div>}
       <div className="sp-teslim" style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) minmax(260px,340px)', gap: 12, alignItems: 'start' }}>
         <KategoriKartlari katalog={katalog} adet={adet} kapali={kapali} onSec={setAcikKat} />
-        <div className="sp-kart" style={{ display: 'grid', gap: 10, position: 'sticky', top: 0 }}>
+        <div className="sp-kart sp-sayi-kart" style={{ display: 'grid', gap: 10, position: 'sticky', top: 0 }}>
           <div style={{ display: 'grid', gap: 4, maxHeight: 240, overflow: 'auto' }}>
             {!secili.length && !oneri.length ? <span style={{ color: C.soluk }}>Henüz ürün seçilmedi</span> : (<>
               <b style={{ color: C.yesil }}>{secili.length + oneri.length} kalem</b>

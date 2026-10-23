@@ -134,7 +134,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
         </div>
 
         {/* sağ sabit panel (eski): tedarikçi · özet · fatura · not · kaydet */}
-        <div className="sp-kart" style={{ display: 'grid', gap: 10, position: 'sticky', top: 0 }}>
+        <div className="sp-kart sp-sayi-kart" style={{ display: 'grid', gap: 10, position: 'sticky', top: 0 }}>
           <label style={{ display: 'grid', gap: 4 }}><b>🚚 Tedarikçi *</b>
             <select className="sp-in" style={{ fontSize: 16 }} value={toptanci} onChange={(e) => { setToptanci(e.target.value); setSecYon([]); }} disabled={kapali}>
               <option value="">— seç —</option>

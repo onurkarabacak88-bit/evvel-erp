@@ -300,12 +300,27 @@ const yazInput = (el, deger) => {
   if (setter) setter.call(el, deger); else el.value = deger;
   el.dispatchEvent(new window.Event('input', { bubbles: true }));
 };
-export function SayiTusTakimi({ kapsam }) {
+// 👆/⌨️ CİHAZ TÜRÜ (sahip 23 Eki: "Starbucks dokunmatiği veya laptop kullanıyoruz şubelerde, bunun da seçilebilmesi çok önemli") —
+// o tarayıcıda hatırlanır; seçilmemişse otomatik: dokunmatik ekran (kaba işaretçi / dokunma noktası) varsa 'dokunmatik'.
+// Klavye modunda ekran numaratörü HİÇ açılmaz (rakam klavyeden, Enter/Tab ile ilerlenir).
+const CIHAZ_ANAHTAR = 'sp_cihaz_turu';
+export const cihazOtomatik = () => {
+  try { return (window.matchMedia?.('(pointer: coarse)').matches || (window.navigator.maxTouchPoints || 0) > 0) ? 'dokunmatik' : 'klavye'; } catch { return 'dokunmatik'; }
+};
+export const cihazTuruOku = () => {
+  try { const v = window.localStorage.getItem(CIHAZ_ANAHTAR); if (v === 'dokunmatik' || v === 'klavye') return v; } catch { /* yok */ }
+  return cihazOtomatik();
+};
+export const cihazTuruYaz = (v) => { try { window.localStorage.setItem(CIHAZ_ANAHTAR, v); } catch { /* yok */ } };
+
+export function SayiTusTakimi({ kapsam, etkin = true }) {
   const [hedef, setHedef] = useState(null);
   const ilk = useRef(true);
   const eski = useRef('');
   const panelRef = useRef(null);
   useEffect(() => {
+    if (!etkin) { setHedef(null); return undefined; }   // ⌨️ klavye modu: numaratör yok
+    document.body.classList.add('sayi-dokunmatik');   // denetim (G31): alt boşluk KALICI — şerit kapanınca sayfa zıplamaz
     const kok = kapsam?.current || document;
     const odak = (e) => {
       const el = e.target;
@@ -319,8 +334,8 @@ export function SayiTusTakimi({ kapsam }) {
       setHedef(el);
     };
     kok.addEventListener('focusin', odak);
-    return () => kok.removeEventListener('focusin', odak);
-  }, [kapsam]);
+    return () => { kok.removeEventListener('focusin', odak); document.body.classList.remove('sayi-dokunmatik'); };
+  }, [kapsam, etkin]);
   useEffect(() => {
     if (!hedef) return undefined;
     const elle = () => { ilk.current = false; };
@@ -351,13 +366,34 @@ export function SayiTusTakimi({ kapsam }) {
   useEffect(() => {   // G1 (sahip ekran denemesi 23 Eki): numaratör İleri'nin üstüne biniyordu → '6' yerine '61' sayıldı
     if (!hedef) return undefined;
     const kok = document.documentElement;
+    // G31 (sahip ekran denemesi 23 Eki): SAYFA İÇİ formda (Tedarikçi fatura tutarı, Depodan gelen sayım) numaratör yandan düğmeyi
+    // örtüyordu → sayfa içinde ALTTA tam genişlik şerit + kutu şeridin üstüne kaydırılır; pencerede (perde) eski hâl: sağda + perde sola
+    const altta = !hedef.closest('.sp-perde,.aw-perde');
     const olc = () => kok.style.setProperty('--sayi-bosluk', `${(panelRef.current?.offsetWidth || 360) + 16}px`);
-    olc();
-    document.body.classList.add('sayi-acik');
-    window.addEventListener('resize', olc);
-    return () => { document.body.classList.remove('sayi-acik'); window.removeEventListener('resize', olc); };
+    if (!altta) olc();   // denetim: --sayi-bosluk yalnız pencere modunda ölçülür (şerit genişliği perde boşluğuna karışmasın)
+    const sinif = altta ? 'sayi-alt' : 'sayi-acik';
+    if (sinif === 'sayi-acik') window.clearTimeout(window.__sayiPerdeT);   // denetim: yalnız pencere→pencere geçişte iptal (sayfa içine geçişte eski sınıf kendi süresinde kalkar)
+    document.body.classList.add(sinif);
+    let raf = 0;
+    if (altta) {   // sınıf eklendi → yapışkan kart akışa döndü; yeni yerleşim bir sonraki karede okunur
+      raf = window.requestAnimationFrame(() => {
+        const r = hedef.getBoundingClientRect();
+        const ust = window.innerHeight - 70 - (panelRef.current?.offsetHeight || 170) - 12;   // şeridin üst kenarı
+        if (r.bottom > ust - 140) window.scrollBy({ top: r.bottom - (ust - 140), behavior: 'smooth' });   // kutu + altındaki düğme şeridin üstünde
+        else if (r.top < 70) window.scrollBy({ top: r.top - 90, behavior: 'smooth' });   // kart akışa dönünce kutu yukarıda kaldıysa
+      });
+    }
+    if (!altta) window.addEventListener('resize', olc);
+    return () => {
+      window.cancelAnimationFrame(raf); window.removeEventListener('resize', olc);
+      // denetim: pencere modunda boşluk dokunuşun İLK anında kalkınca pencere ~190px kayıyor, dokunuş başka düğmeye düşüyordu → 400 ms sonra
+      if (sinif === 'sayi-acik') window.__sayiPerdeT = window.setTimeout(() => document.body.classList.remove(sinif), 400);
+      else document.body.classList.remove(sinif);
+    };
   }, [hedef]);
-  if (!hedef || !document.body.contains(hedef)) return null;
+  if (!etkin) return null;
+  if (!hedef || !document.body.contains(hedef)) return <style>{'body.sayi-acik .sp-perde,body.sayi-acik .aw-perde{padding-right:var(--sayi-bosluk,376px)!important;transition:padding-right .12s}body.sayi-dokunmatik .sp-govde{padding-bottom:240px}body.sayi-dokunmatik .sp-sayi-kart{position:static!important}'}</style>;
+  const altta = !hedef.closest('.sp-perde,.aw-perde');   // G31: sayfa içi → alt şerit
   const ondalik = (hedef.dataset.imOnceki || hedef.getAttribute('inputmode')) === 'decimal';
   const bas = (k) => {
     try { window.navigator.vibrate?.(8); } catch { /* yok */ }
@@ -378,12 +414,16 @@ export function SayiTusTakimi({ kapsam }) {
     setHedef(null);
     if (i >= 0 && hepsi[i + 1]) hepsi[i + 1].focus(); else hedef.blur();
   };
-  const tuslar = ['7', '8', '9', '⌫', '4', '5', '6', '✓', '1', '2', '3', '⇥', '0', '00', ondalik ? ',' : '', ''];
+  const tuslar = altta   // denetim: şeritte sayılar sırayla (1–8 / 9 0 00 , ⌫ ⇥ ✓)
+    ? ['1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '00', ondalik ? ',' : '', '⌫', '⇥', '✓', '']
+    : ['7', '8', '9', '⌫', '4', '5', '6', '✓', '1', '2', '3', '⇥', '0', '00', ondalik ? ',' : '', ''];
   return (
     <>
-      <style>{'body.sayi-acik .sp-perde,body.sayi-acik .aw-perde{padding-right:var(--sayi-bosluk,376px)!important;transition:padding-right .12s}'}</style>
-      <div ref={panelRef} onMouseDown={(e) => e.preventDefault()} style={{ position: 'fixed', right: 8, bottom: 70, width: 'min(360px,50vw)', minWidth: 260, zIndex: 90, background: C.bg1,
-        border: `1px solid ${C.cizgi}`, borderRadius: 14, padding: 10, display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 8, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
+      <style>{'body.sayi-acik .sp-perde,body.sayi-acik .aw-perde{padding-right:var(--sayi-bosluk,376px)!important;transition:padding-right .12s}body.sayi-dokunmatik .sp-govde{padding-bottom:240px}body.sayi-dokunmatik .sp-sayi-kart{position:static!important}'}</style>
+      <div ref={panelRef} onMouseDown={(e) => e.preventDefault()} style={{ position: 'fixed', bottom: 70, zIndex: 90, background: C.bg1,
+        ...(altta ? { left: 8, right: 8, maxWidth: 760, margin: '0 auto', gridTemplateColumns: 'repeat(8,1fr)' }
+          : { right: 8, width: 'min(360px,50vw)', minWidth: 260, gridTemplateColumns: 'repeat(4,1fr)' }),
+        border: `1px solid ${C.cizgi}`, borderRadius: 14, padding: 10, display: 'grid', gap: 8, boxShadow: '0 10px 30px rgba(0,0,0,.5)' }}>
         {tuslar.map((k, i) => (k === '' ? <span key={i} /> : (
           <button key={i} type="button" className="sp-btn" style={{ minHeight: 64, fontSize: 24, padding: 0, background: k === '✓' ? C.yesil : C.bg2, color: k === '✓' ? '#05210f' : C.yazi }}
             onClick={() => (k === '✓' ? (setHedef(null), hedef.blur()) : k === '⇥' ? sonraki() : k === '00' ? (bas('0'), bas('0')) : bas(k))}>{k}</button>
