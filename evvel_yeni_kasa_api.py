@@ -2210,6 +2210,24 @@ def cift_kayit_duzeltmeleri(cur, gun: str) -> Dict[str, float]:
     return out
 
 
+def merkez_teslimleri(cur, gun: str) -> List[dict]:
+    """PUBLIC (Satış mutabakatı): o gün merkezin Kasa'dan (Kasam › + Teslim) şube dükkân nakdinden aldığı teslimler, iptaller düşülmüş.
+    Panelin kendi teslimleri ('panel:' kök) ve eski köprü ('kasa_teslim:') panel olayından / eski tablodan zaten okunur → hariç (çift sayım yok).
+    S-B4 (sim 23 Eki): bu teslim sağlamada düşülmüyordu → Kasa temizken Satış kontrolü 'KASA AÇIĞI' gösteriyordu."""
+    kayit, C = _kayit_ve_cepler(cur, gun, None, None)
+    out = []
+    for h in kayit:
+        ref = str(h.get("kaynak_ref") or "")
+        if (h["tur"] != "teslim" or h["is_gunu"] != gun or not str(h.get("kaynak") or "").startswith("sube:")
+                or ref.startswith(("panel:", "kasa_teslim:"))):
+            continue
+        v = h["veri"] or {}
+        out.append({"sube_id": h["kaynak"][len("sube:"):], "tutar": _tl_sayi(int(h["tutar"])), "alan": h.get("hedef"),
+                    "alan_ad": C.get(h.get("hedef") or "", {}).get("kisa") or h.get("hedef"),
+                    "eden": v.get("teslim_eden") or None, "not": "merkez Kasa'dan" + (f" · {v['not']}" if v.get("not") else "")})
+    return out
+
+
 def cekmece_cikislari(cur, gun: str) -> List[dict]:
     """PUBLIC (Satış mutabakatı): o gün şube ÇEKMECESİNDEN çıkan nakit — anlık gider + elden avans, iptaller düşülmüş.
     Tek gerçek Kasa: merkez burada iptal ederse mutabakat da görür (Fable O-5; önce panel olayından okunuyordu).

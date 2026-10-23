@@ -102,6 +102,22 @@ def _teyitten_sonra(x: dict, tarih, zaman) -> bool:
     return bool(x.get("zaman") and x["zaman"] > zaman)
 
 
+def ekstre_teyitleri(satirlar) -> dict:
+    """TEK kural (S-B1, sim 23 Eki) — ay → {'ekstre', 'son', 'tarih', 'zaman'}; satirlar ESKİDEN YENİYE (ekstre_borc + son_odeme dolu).
+    Rakam ve son ödeme günü EN SON teyitten. Teyit tarihi ise aynı ekstrenin (aynı son ödeme günü + aynı tutar) İLK teyidinden:
+    banka 'dönem borcu'nu ödeme yapıldı diye değiştirmez → aynı ekstre ertesi gün yeniden teyit edilince aradaki ödemeler
+    o ekstrede kalır (önce önceki aya itiliyordu, kalan şişiyordu → çift ödeme riski). Tutar değiştiyse yeni rakam esas (eski kural)."""
+    out = {}
+    for t in satirlar:
+        a = t["son_odeme"].strftime("%Y-%m")
+        e = int(t["ekstre_borc"])
+        o = out.get(a)
+        if o and o["son"] == t["son_odeme"] and o["ekstre"] == e:
+            continue   # aynı ekstrenin yeniden teyidi — ilk teyit tarihi korunur
+        out[a] = {"ekstre": e, "son": t["son_odeme"], "tarih": t["tarih"], "zaman": t.get("zaman")}
+    return out
+
+
 def odeme_ayi(kart: dict, tarih, donem: Optional[str], teyit_son: dict, teyit_tarih: Optional[dict] = None,
               odeme_zaman=None, teyit_zaman: Optional[dict] = None) -> str:
     """TEK KURAL (tekrar denetimi C-T1-09: özet ile takvim ayrı kuralla kalan hesaplıyordu) — bir kart borcu ödemesi hangi ayın
@@ -165,9 +181,10 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
         if ekstre_cipa:
             if ekstre_cipa.get("son_odeme"):   # C-T1-09: takvimle AYNI kural — ödeme o ekstrenin ayına yerleştiyse düşülür
                 ety = [t for t in reversed(ty) if t.get("son_odeme") and t.get("ekstre_borc") is not None]   # B3: takvimle AYNI teyit kümesi
-                tson = {t["son_odeme"].strftime("%Y-%m"): t["son_odeme"] for t in ety}
-                ttar = {t["son_odeme"].strftime("%Y-%m"): t["tarih"] for t in ety}
-                tzam = {t["son_odeme"].strftime("%Y-%m"): t.get("zaman") for t in ety}
+                ets = ekstre_teyitleri(ety)   # S-B1: takvimle AYNI tek kural
+                tson = {a: v["son"] for a, v in ets.items()}
+                ttar = {a: v["tarih"] for a, v in ets.items()}
+                tzam = {a: v["zaman"] for a, v in ets.items()}
                 e_ay = ekstre_cipa["son_odeme"].strftime("%Y-%m")
                 odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and odeme_ayi(k, x["gun"], x.get("donem"), tson, ttar, x.get("zaman"), tzam) == e_ay)
             else:
@@ -278,10 +295,12 @@ def kart_takvimi(yil: Optional[int] = None):
         # Codex: aynı aya birden çok teyit → EN SON girilen kazanır (sıralı okuma); teyitteki gerçek son ödeme tarihi korunur
         cur.execute("""SELECT kart_id, ekstre_borc, son_odeme, tarih, zaman FROM ey_kart_teyit
                         WHERE ekstre_borc IS NOT NULL AND son_odeme IS NOT NULL AND kaynak <> 'geri_alindi' ORDER BY tarih, zaman""")
-        teyit = {}
+        kart_ty = {}
         for r in cur.fetchall() or []:
             r = dict(r)
-            teyit[(r["kart_id"], r["son_odeme"].strftime("%Y-%m"))] = (int(r["ekstre_borc"]), r["son_odeme"], r["tarih"], r["zaman"])
+            kart_ty.setdefault(r["kart_id"], []).append(r)
+        teyit = {(kid_, a): (v["ekstre"], v["son"], v["tarih"], v["zaman"])   # S-B1: kart özetiyle AYNI tek kural
+                 for kid_, rs in kart_ty.items() for a, v in ekstre_teyitleri(rs).items()}
         eski = _eski_plan(cur)
         bas = kasa.donem_baslangici(cur).strftime("%Y-%m")
         import evvel_yeni_odeme_api as odeme   # PUBLIC özet (Kasa'nın iç defterine dokunmadan)
@@ -321,6 +340,8 @@ def kart_takvimi(yil: Optional[int] = None):
                 ekstre_kaynak = None
             if ekstre is None and od > 0:
                 durum = "odeme_var"         # Codex: ekstre bilinmeden 'ödendi' DENMEZ
+            elif ekstre is None and son and k.get("eklenme") and son < k["eklenme"]:
+                durum = "once"              # S-B2: kart eklenmeden önce son günü geçmiş ay 'gecikti' değil (eski kartlarda eklenme boş → eski kural)
             else:   # TEK kural (çekirdek takvim_durumu — C-T1-11)
                 durum = takvim_durumu(ekstre, od, son, bugun, once=a < bas)
             aylar.append({"ay": a, "son_odeme": son.isoformat() if son else None, "ekstre": _tl_sayi(ekstre) if ekstre is not None else None,

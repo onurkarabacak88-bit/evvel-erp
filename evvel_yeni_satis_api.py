@@ -327,6 +327,15 @@ def _mut_veri_yeni(cur, gun: str) -> dict:
                     a["alan_ad"] = adl.get(a.get("alan") or "", a.get("alan"))
         except Exception:  # noqa: BLE001
             log.warning("satış: cep adları okunamadı", exc_info=True)
+    try:   # S-B4: merkezin Kasa'dan aldığı şube teslimi de çekmeceden çıkan para (ara teslim gibi düşülür)
+        from evvel_yeni_kasa_api import merkez_teslimleri
+        with savepoint(cur, "sp_ey_mut_mt"):
+            mt = merkez_teslimleri(cur, gun)
+        for t in mt:
+            out.setdefault(t["sube_id"], {**mut_bos(), "kor_ara_dahil": False})["ara_teslimler"].append(
+                {k: t[k] for k in ("tutar", "alan", "alan_ad", "eden", "not")})
+    except Exception:  # noqa: BLE001
+        log.warning("satış: merkez teslimleri okunamadı", exc_info=True)
     for c in cekmece_cikislari(cur, gun):
         out.setdefault(c["sube_id"], {**mut_bos(), "kor_ara_dahil": False})["giderler"].append({"tutar": c["tutar"], "ad": c["ad"], "kim": c["kim"], "bekliyor": False})
     return out

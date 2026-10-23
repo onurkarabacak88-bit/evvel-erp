@@ -6,7 +6,7 @@
 // Uyarılar ayrı sekme kuralı: burada bant yok; eksikler Bekleyen işler › Personel'de.
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import { ayTR, bugunTR } from '../../utils/trTarih';
+import { ayTR, bugunTR, ggaaSaat } from '../../utils/trTarih';
 import { ALAN, AySecici, Cip, Dugme, kart, num, PI_CSS, R } from './KasaModulu';
 import { tlYaz } from '../../utils/trSayi';
 import { bardakOzet } from '../../utils/devirOzet';
@@ -24,7 +24,7 @@ function cihazDurum(c) {
   const aktif = c.find((x) => x.durum === 'aktif');
   if (aktif) return <><Cip tur="yesil">bağlı</Cip>{aktif.guc === 'jeton' && <Cip tur="sari">⚠️ zayıf bağ</Cip>}</>;
   if (c.some((x) => x.durum === 'onay')) return <Cip tur="sari">onay bekliyor</Cip>;
-  return <Cip tur="sari">link bekliyor{c[0].davet_son ? ` · son ${c[0].davet_son.slice(5, 16).replace('-', '.').replace(' ', ' ')}` : ''}</Cip>;
+  return <Cip tur="sari">link bekliyor{c[0].davet_son ? ` · son ${ggaaSaat(c[0].davet_son)}` : ''}</Cip>;
 }
 
 export default function YoklamaModulu({ onToast }) {
@@ -59,8 +59,8 @@ export default function YoklamaModulu({ onToast }) {
     (d) => setLink({ ad: d.ad, url: `${window.location.origin}${d.yol}`, mesaj: d.mesaj }));
   const kopyala = async (t) => { try { await navigator.clipboard.writeText(t); onToast?.('Kopyalandı'); } catch { onToast?.('Kopyalanamadı — linki elle seç'); } };
   // her satır ne: bağlı cihaz (son kullanım) / onay bekleyen / kullanılmamış link (son geçerlilik) — iki "İptal" karışmasın
-  const cihazNe = (c) => (c.durum === 'aktif' ? `bağlı${c.son_kullanim ? ' · son ' + c.son_kullanim.slice(5, 16).replace('T', ' ') : ' · hiç kullanılmadı'}`
-    : c.durum === 'onay' ? 'onay bekleyen' : `kullanılmamış link${c.davet_son ? ' · ' + c.davet_son.slice(5, 16).replace('T', ' ') + "'e kadar" : ''}`);
+  const cihazNe = (c) => (c.durum === 'aktif' ? `bağlı${c.son_kullanim ? ' · son ' + ggaaSaat(c.son_kullanim) : ' · hiç kullanılmadı'}`
+    : c.durum === 'onay' ? 'onay bekleyen' : `kullanılmamış link${c.davet_son ? ' · ' + ggaaSaat(c.davet_son) + "'e kadar" : ''}`);
   const iptal = (c, ad) => { if (window.confirm(`${ad} cihazı iptal edilsin mi? Bu telefon / şube bilgisayarı bir daha çalışmaz.`)) yap(c.id, `/evvel-yeni/yoklama/cihaz/${c.id}/iptal`, {}); };
 
   return (
@@ -163,7 +163,7 @@ const DURUM_AD = { suruyor: 'sürüyor', bitmedi: 'bitmedi', bitti: 'bitti', 'me
 
 function hakHucre(s) {
   if (s.yemek_hakki === null || s.yemek_hakki === undefined) return <span style={{ color: R.not }}>—</span>;
-  if (s.hak_elle) return <Cip tur="yesil">✓ elle: {s.hak_veren || '?'}{s.hak_zaman ? ` · ${s.hak_zaman.slice(5, 16).replace('-', '.')}` : ''}</Cip>;
+  if (s.hak_elle) return <Cip tur="yesil">✓ elle: {s.hak_veren || '?'}{s.hak_zaman ? ` · ${ggaaSaat(s.hak_zaman)}` : ''}</Cip>;
   if (s.mudur) return <Cip tur="yesil">✓ müdür (şartsız)</Cip>;   // B56: maaş da tam veriyor — iki ekran aynı söylesin
   return s.yemek_hakki ? <Cip tur="yesil">✓</Cip> : <Cip tur="kirmizi">✗</Cip>;
 }

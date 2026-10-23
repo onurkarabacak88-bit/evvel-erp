@@ -87,6 +87,8 @@ export const GUN_KISA = ['Paz', 'Pzt', 'Sal', 'Çar', 'Per', 'Cum', 'Cmt'];
 export const ayAdi = (ym) => { const [y, m] = String(ym || '').split('-'); return m ? `${AY_UZUN[Number(m) - 1]} ${y}` : ''; };
 /** 'YYYY-MM-DD' → '20.10.2026' */
 export const tarihNokta = (ymd) => String(ymd || '').slice(0, 10).split('-').reverse().join('.');
+// 'YYYY-AA-GG[T ]SS:DD…' → 'GG.AA SS:DD' (S-B3: ekranda AY.GÜN / ISO kesiği yazılıyordu)
+export const ggaaSaat = (z) => { const t = String(z || ''); return t.length >= 16 ? `${t.slice(8, 10)}.${t.slice(5, 7)} ${t.slice(11, 16)}` : t; };
 /** 'YYYY-MM-DD' → haftanın günü kısa adı (öğlen üzerinden — saat dilimi kaymaz) */
 export const gunKisa = (ymd) => GUN_KISA[new Date(`${String(ymd).slice(0, 10)}T12:00:00`).getDay()];
 

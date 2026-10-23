@@ -38,7 +38,7 @@ _HAZIR = False
 # o modüller ALTER atmaz, yazarken tanim_guncelle'yi çağırır.
 _TANIM_NESNE = {"ey_sube": ("depo", "lat", "lng", "yaricap_m", "kira_artis_ayi", "kira_odeme_gunu", "kira_yok"),
                 "ey_personel": ("cikis", "calisma_turu", "kisi_id", "erken_acilis", "pin_salt", "pin_hash", "yetki_geri_alma", "konum_muaf"),
-                "ey_kart": ("limit_tutar", "kesim_gunu", "son_odeme_gunu", "limit_grup"), "ey_toptanci": ("vade_gun",),
+                "ey_kart": ("limit_tutar", "kesim_gunu", "son_odeme_gunu", "limit_grup", "eklenme"), "ey_toptanci": ("vade_gun",),
                 "ey_personel_ucret": ("saatlik", "yol"), "ey_pin_deneme": ()}
 _GUNCELLENIR = {"ey_sube": {"lat", "lng", "yaricap_m", "kira_artis_ayi", "kira_odeme_gunu", "kira_yok"},
                 "ey_personel": {"konum_muaf", "aktif", "cikis"},
@@ -115,7 +115,7 @@ def _tanim_ddl(cur) -> None:
     cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS pin_hash TEXT")
     cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS yetki_geri_alma BOOLEAN NOT NULL DEFAULT FALSE")   # S9
     cur.execute("ALTER TABLE ey_personel ADD COLUMN IF NOT EXISTS konum_muaf BOOLEAN NOT NULL DEFAULT FALSE")   # Yoklama K2
-    for x in ("limit_tutar BIGINT", "kesim_gunu INT", "son_odeme_gunu INT", "limit_grup TEXT"):   # Kart
+    for x in ("limit_tutar BIGINT", "kesim_gunu INT", "son_odeme_gunu INT", "limit_grup TEXT", "eklenme DATE"):   # Kart (eklenme: S-B2, yalnız yeni kart)
         cur.execute(f"ALTER TABLE ey_kart ADD COLUMN IF NOT EXISTS {x}")
     cur.execute("ALTER TABLE ey_toptanci ADD COLUMN IF NOT EXISTS vade_gun INT")   # Toptancı
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_pin_deneme (
@@ -698,7 +698,8 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                     raise HTTPException(400, "Kesim / son ödeme günü 1–31 olmalı")
             if yeni:
                 tid = "ey-" + uuid.uuid4().hex[:12]
-                cur.execute("""INSERT INTO ey_kart (id, ad, banka, kimin, acilis_borc, degistiren) VALUES (%s,%s,%s,%s,%s,%s)""",
+                cur.execute("""INSERT INTO ey_kart (id, ad, banka, kimin, acilis_borc, degistiren, eklenme)
+                               VALUES (%s,%s,%s,%s,%s,%s,(NOW() AT TIME ZONE 'Europe/Istanbul')::date)""",
                             (tid, ad, (b.banka or "").strip()[:40] or None, (b.kimin or "").strip()[:40] or None, _kurus(b.acilis_borc or 0), kim))
             else:
                 cur.execute("""UPDATE ey_kart SET ad=COALESCE(%s,ad), banka=COALESCE(%s,banka), kimin=COALESCE(%s,kimin),
