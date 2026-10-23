@@ -8,7 +8,7 @@ Ortak karar (sahip + Codex + Claude):
   · Yarı zamanlı: saat × saatlik ücret (+ bayram ×2). Eksik gün kesintisi YOK. Saatlik ücret yoksa "ücret tanımsız" —
     99 ₺ varsayımı YOK (Codex).
   · Yemek (sahip: Kasım'dan): aylık sabit yemek × geçen gün/30 — mola kontrolü ücretten ayrı.
-  · Gün/mesai/saat ÖNERİSİ şube panelinin vardiya planından (eski gorev_api.vardiya_takip; panel taşınana kadar);
+  · Gün/mesai/saat ÖNERİSİ Vardiya modülünün planından (PUBLIC gun_plani — B44; 26 Eki öncesi eski plan yalnız tablo varsa);
     elle girilen değer öneriyi ezer.
   · Avans: o ayın avansı + önceki aydan devreden → hak ediş kadar MAHSUP; karşılanamayan ertesi aya DEVİR.
     Şubenin elden verdiği avans da (anlik_giderler → Kasa) kişinin avansı sayılır.
@@ -22,6 +22,8 @@ from datetime import date, timedelta
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Optional
 
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
+from evvel_yeni_cekirdek import tl as _tl_tr   # Türkçe para biçimi TEK yer (f-string içinde iç içe tırnak YOK — canlı Python 3.11)
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
 
@@ -67,14 +69,20 @@ def _hazirla(cur):
     if _HAZIR:
         return
     from evvel_yeni_tanim_api import tanim_hazirla
-    from evvel_yeni_cekirdek import ddl_kur, tablo_var
+    from evvel_yeni_cekirdek import ddl_bu_islemde, ddl_kur, tablo_var
     tanim_hazirla(cur)
     # Codex P2: tablolar yokken kuran çağrı sonra 404 ile geri alınırsa bayrak açık kalıp sonraki çağrı UndefinedTable/500 veriyordu →
-    # bayrak YALNIZ tablolar GÖRÜLÜNCE; DDL TEK modelle (savepoint + çağıranın lock_timeout'u geri yüklenir)
-    if tablo_var(cur, "ey_maas_ay", "ey_personel_yoklama_karar"):
-        _HAZIR = True
+    # bayrak YALNIZ tablolar + iptal kolonu GÖRÜLÜNCE ve KURAN işlemde DEĞİLKEN (Codex #19); DDL TEK model
+    from evvel_yeni_cekirdek import kolon_var
+    if tablo_var(cur, "ey_maas_ay", "ey_personel_yoklama_karar") and kolon_var(cur, "ey_personel_yoklama_karar", "iptal_zaman"):
+        if not ddl_bu_islemde(cur):
+            _HAZIR = True
         return
-    ddl_kur(cur, "sp_ey_maas_ddl", _maas_ddl)
+    try:
+        ddl_kur(cur, "sp_ey_maas_ddl", _maas_ddl)
+    except Exception:  # noqa: BLE001 — Fable son denetim S-2: kilit beklerken düşerse 500 değil 503 (vardiya ile aynı)
+        log.warning("maaş tabloları kurulamadı", exc_info=True)
+        raise HTTPException(503, "Personel hazırlanıyor — birkaç saniye sonra tekrar dene")
 
 
 def _maas_ddl(cur) -> None:
@@ -89,6 +97,9 @@ def _maas_ddl(cur) -> None:
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel_yoklama_karar (
         id TEXT PRIMARY KEY, personel_id TEXT NOT NULL, tarih DATE NOT NULL, karar TEXT NOT NULL,
         izin_bitis DATE, aciklama TEXT, degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
+    # İzin kaldırma izli (silinmez): Vardiya planı izni buraya yazar/kaldırır — izin TEK gerçek burada (sahip 20 Eki)
+    cur.execute("ALTER TABLE ey_personel_yoklama_karar ADD COLUMN IF NOT EXISTS iptal_zaman TIMESTAMPTZ")
+    cur.execute("ALTER TABLE ey_personel_yoklama_karar ADD COLUMN IF NOT EXISTS iptal_kim TEXT")
     cur.execute("DELETE FROM ey_maas_ay WHERE personel_id='takvim' AND ay='karar'")   # gölgelenme artığı (2026-10-16)
 
 
@@ -98,6 +109,46 @@ FM_GUNLUK_ESIK = 9.5   # günlük fazla mesai eşiği (eski vardiya_takip'in var
 PLAN_YOK = "__plan_yok__"   # _yeni_oneri sözlüğünde kişi değil BAYRAK anahtarı
 
 
+def _plan_satirlari(cur, bas: date, son: date) -> tuple:
+    """B44 (Fable 22 Eki) — vardiya planının TEK okuyucusu (Maaş saat önerisi + Günlük yoklama): yeni Vardiya PUBLIC gun_plani
+    (yalnız geçerli = yayınlanmış ya da günü gelmiş satır); plan_baslangic öncesi günler için ESKİ vardiya_atama yalnız tablo varsa
+    (köprü, bağımlılık değil — kesimde bu dal silinir). Dönüş (satırlar, durum) · durum: ok | kapali (Vardiya modülü kapalı) | hata.
+    satır: {tarih: date, pid, sid, baslangic_saat: time, bitis_saat: time, slot, saat}."""
+    from datetime import time as _time
+    from evvel_yeni_moduller import acik as _acik
+    if not _acik("vardiya"):
+        return [], "kapali"
+    out = []
+    try:
+        from evvel_yeni_vardiya_api import gun_plani, plan_baslangic
+        pb = plan_baslangic()
+        with savepoint(cur, "sp_ey_plan_yeni"):
+            for r in gun_plani(cur, bas, son):   # yeni plan TÜM aralıkta; eski yalnız yeni planın boş olduğu (kişi, gün) için
+                out.append({"tarih": date.fromisoformat(r["gun"]), "pid": str(r["personel_id"]), "sid": str(r.get("sube_id") or ""),
+                            "baslangic_saat": _time.fromisoformat(r["bas"]), "bitis_saat": _time.fromisoformat(r["bit"]),
+                            "slot": r.get("etiket") or "", "saat": float(r.get("saat") or 0)})
+        if bas < pb and __import__("evvel_yeni_cekirdek").tablo_var(cur, "vardiya_atama", "vardiya_slot"):
+            try:
+                with savepoint(cur, "sp_ey_plan_eski"):
+                    cur.execute("""SELECT a.tarih, a.personel_id::text AS pid, s.sube_id::text AS sid, a.baslangic_saat, a.bitis_saat, s.ad AS slot
+                                     FROM vardiya_atama a JOIN vardiya_slot s ON s.id = a.slot_id
+                                    WHERE a.tarih BETWEEN %s AND %s AND a.tarih < %s AND COALESCE(a.durum,'') <> 'iptal'""", (bas, son, pb))
+                    yeni_var = {(x["pid"], x["tarih"]) for x in out}
+                    for x in cur.fetchall() or []:
+                        x = dict(x)
+                        if (x["pid"], x["tarih"]) in yeni_var:
+                            continue
+                        b_, e_ = x["baslangic_saat"], x["bitis_saat"]
+                        f_ = ((e_.hour * 60 + e_.minute) - (b_.hour * 60 + b_.minute)) / 60.0 if (b_ and e_) else 0.0
+                        out.append({**x, "saat": f_ + 24 if f_ <= 0 else f_})
+            except Exception as e:  # noqa: BLE001
+                log.warning("plan: eski vardiya okunamadı: %s", str(e)[:150])
+        return out, "ok"
+    except Exception as e:  # noqa: BLE001
+        log.warning("plan: vardiya planı okunamadı: %s", str(e)[:160])
+        return [], "hata"
+
+
 def _yeni_oneri(cur, ay: str) -> dict:
     """YENİ DÖNEM öneri (tekrar denetimi C-T3-13: eski vardiya_takip eski QR'ı okuyordu). Sahip (2026-10-20): saat ÖNCE vardiya
     PLANINDAN; o gün plan yoksa QR giriş–çıkışından; çıkışı okutulmamış / gece sistemin kapattığı gün GÜVENİLMEZ → sayılmaz, uyarı.
@@ -105,26 +156,14 @@ def _yeni_oneri(cur, ay: str) -> dict:
     y_, m_ = int(ay[:4]), int(ay[5:7])
     bas = date(y_, m_, 1)
     son = (date(y_ + (m_ == 12), m_ % 12 + 1, 1) - timedelta(days=1))
-    plan, plan_yok = {}, False
-    try:
-        with savepoint(cur, "sp_ey_maas_plan"):
-            # Codex P1: (1) yalnız BUGÜNE KADARKİ plan (gelecek vardiya hak edişe / avans tavanına girmesin);
-            # (2) gece vardiyası (18:00–02:00): 'time + 24h' yine saat değeri → −16 saat çıkıyordu → fark ≤ 0 ise +24 saat.
-            from evvel_yeni_cekirdek import is_gunu as _ig
-            cur.execute("""SELECT a.personel_id::text AS pid, a.tarih,
-                                  EXTRACT(EPOCH FROM (a.bitis_saat::time - a.baslangic_saat::time))/3600.0 AS fark
-                             FROM vardiya_atama a WHERE a.tarih BETWEEN %s AND %s AND COALESCE(a.durum,'') <> 'iptal'""",
-                        (bas, min(son, _ig())))
-            for x in cur.fetchall() or []:
-                x = dict(x)
-                f_ = float(x["fark"] or 0)
-                x["saat"] = f_ + 24 if f_ <= 0 else f_
-                k = (x["pid"], x["tarih"])
-                plan[k] = plan.get(k, 0.0) + float(x["saat"] or 0)
-    except Exception as e:  # noqa: BLE001
-        # Fable O-4: plan ESKİ vardiya_atama tablosunda (yeni sistemde plan tablosu yok) — kalkarsa sessizce "yalnız QR"a düşmesin
-        plan_yok = True
-        log.warning("evvel-yeni maaş: vardiya planı okunamadı: %s", str(e)[:160])
+    plan = {}
+    from evvel_yeni_cekirdek import is_gunu as _ig
+    # Codex P1: yalnız BUGÜNE KADARKİ plan (gelecek vardiya hak edişe / avans tavanına girmesin); gece vardiyası saat tek kural (Vardiya)
+    satirlar, durum = _plan_satirlari(cur, bas, min(son, _ig()))
+    plan_yok = durum != "ok"   # B44: kapalı/okunamadı → uyarı (sessizce "yalnız QR"a düşmesin — Fable O-4)
+    for x in satirlar:
+        k = (x["pid"], x["tarih"])
+        plan[k] = plan.get(k, 0.0) + float(x["saat"] or 0)
     _, rows = _yeni_yoklama(cur, bas, son)
     qr, bozuk = {}, set()
     for x in rows or []:
@@ -151,7 +190,8 @@ def _yeni_oneri(cur, ay: str) -> dict:
         o["calisma_saat"] = round(o["calisma_saat"], 2)
         o["mesai_saat"] = round(o["mesai_saat"], 2)
         o["plan_yok"] = plan_yok
-    out[PLAN_YOK] = plan_yok   # Codex P1: hiç QR/plan satırı olmayan kişiye de uyarı ulaşsın (kişi kaydı yoksa bayrak buradan)
+    out[PLAN_YOK] = plan_yok
+    out["_plan_durum"] = durum   # Fable: kapalı / okunamadı ayrı metin   # Codex P1: hiç QR/plan satırı olmayan kişiye de uyarı ulaşsın (kişi kaydı yoksa bayrak buradan)
     return out
 
 
@@ -324,7 +364,8 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         o = oneri.get(pid) or {}
         uyari = []
         if (o.get("plan_yok") or oneri.get(PLAN_YOK)) and e.get("calisma_saat") is None and (p.get("calisma_turu") or "tam") == "yari":
-            uyari.append("Vardiya planı okunamadı — saat yalnız QR giriş–çıkışından, elle kontrol et")
+            uyari.append("Vardiya modülü kapalı — saat yalnız QR giriş–çıkışından, elle kontrol et" if oneri.get("_plan_durum") == "kapali"
+                         else "Vardiya planı okunamadı — saat yalnız QR giriş–çıkışından, elle kontrol et")
         if o.get("guvenilmez_gun") and e.get("calisma_saat") is None:
             uyari.append(f"{o['guvenilmez_gun']} günde plan yok ve QR çıkışı okutulmamış — o günlerin saati sayılmadı, elle kontrol et")
         yari = (p.get("calisma_turu") or "tam") == "yari"
@@ -459,7 +500,7 @@ class ElleBody(BaseModel):
     bayram_saat: Optional[Decimal] = None
     mesai_saat: Optional[Decimal] = None        # boş gönderilirse vardiya önerisi
     calisma_saat: Optional[Decimal] = None
-    duzeltme: Optional[Decimal] = None
+    duzeltme: Optional[TrTutar] = None
     aciklama: Optional[str] = None
     mesai_oneriye_don: bool = False
     saat_oneriye_don: bool = False
@@ -528,7 +569,7 @@ def maas_onay(pid: str, ay: str, kaldir: bool = False, x_evvel_oturum: Optional[
         cur.execute("INSERT INTO ey_maas_ay (personel_id, ay, degistiren) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (pid, ay[:7], kim))
         cur.execute("""UPDATE ey_maas_ay SET onay=TRUE, kalemler=%s::jsonb, onaylayan=%s, onay_zaman=NOW()
                         WHERE personel_id=%s AND ay=%s""", (json.dumps(r["kalemler"], ensure_ascii=False), kim, pid, ay[:7]))
-    return {"ok": True, "mesaj": f"{r['ad']} · {ay[:7]} onaylandı · hak ediş {r['hak_edis']:,.2f} ₺"}
+    return {"ok": True, "mesaj": f"{r['ad']} · {ay[:7]} onaylandı · hak ediş {_tl_tr(int(round(r['hak_edis'] * 100)))}"}
 
 
 from evvel_yeni_cekirdek import tr_saat as _tr_saat   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek
@@ -548,7 +589,7 @@ def personel_takvim(ay: Optional[str] = None):
         sube_ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
         from evvel_yeni_tanim_api import tanim_listesi
         kisiler = tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "gorev", "giris", "cikis", "calisma_turu", "aktif"))
-        cur.execute("SELECT personel_id, tarih, karar, izin_bitis FROM ey_personel_yoklama_karar ORDER BY zaman")
+        cur.execute("SELECT personel_id, tarih, karar, izin_bitis FROM ey_personel_yoklama_karar WHERE iptal_zaman IS NULL ORDER BY zaman")
         kararlar = {}
         for r in cur.fetchall() or []:
             r = dict(r)
@@ -747,6 +788,42 @@ def takvim_karar(b: YoklamaKararBody, x_evvel_oturum: Optional[str] = Header(def
     return {"ok": True, "mesaj": mesaj}
 
 
+# ─────────── 🏖 İZİN — TEK gerçek (sahip 20 Eki: vardiyadaki gri 'izinli' hücre = bu kayıt; iki ayrı izin defteri YOK) ───────────
+def izin_araliklari(cur, bas: date, son: date, personel_id: Optional[str] = None) -> list:
+    """PUBLIC — [bas, son] ile kesişen izinler [{id, personel_id, bas, bit (None = bitişi belli değil), aciklama, degistiren}].
+    Kaynak: takvim kararı 'izin' (2 gün QR yok sorusu) + Vardiya planı izin hücresi — ikisi de AYNI kayıt."""
+    _hazirla(cur)
+    kos, prm = ["karar='izin'", "iptal_zaman IS NULL", "tarih <= %s", "(izin_bitis IS NULL OR izin_bitis >= %s)"], [son, bas]
+    if personel_id:
+        kos.append("personel_id=%s")
+        prm.append(str(personel_id))
+    cur.execute(f"""SELECT id, personel_id, tarih AS bas, izin_bitis AS bit, aciklama, degistiren FROM ey_personel_yoklama_karar
+                     WHERE {' AND '.join(kos)} ORDER BY tarih""", tuple(prm))
+    return [dict(r) for r in cur.fetchall() or []]
+
+
+def izin_yaz(cur, *, personel_id: str, bas: date, bit: Optional[date], kim: str, aciklama: Optional[str] = None) -> str:
+    """PUBLIC — izin aralığı yaz (çakışan açık izin varsa 409). Kaldırma izin_kaldir ile (silinmez, izli)."""
+    import uuid as _uuid
+    if bit and bit < bas:
+        raise HTTPException(400, "İzin bitişi başlangıçtan önce olamaz")
+    if izin_araliklari(cur, bas, bit or date(2999, 12, 31), personel_id):
+        raise HTTPException(409, "Bu tarihlerde zaten izin var — önce onu kaldır")
+    kid = str(_uuid.uuid4())
+    cur.execute("""INSERT INTO ey_personel_yoklama_karar (id, personel_id, tarih, karar, izin_bitis, aciklama, degistiren)
+                   VALUES (%s,%s,%s,'izin',%s,%s,%s)""", (kid, str(personel_id), bas, bit, (aciklama or "vardiya planı")[:200], kim))
+    return kid
+
+
+def izin_kaldir(cur, izin_id: str, kim: str) -> None:
+    """PUBLIC — izni kaldır (satır silinmez: iptal_zaman + iptal_kim)."""
+    _hazirla(cur)
+    cur.execute("""UPDATE ey_personel_yoklama_karar SET iptal_zaman=NOW(), iptal_kim=%s
+                    WHERE id=%s AND karar='izin' AND iptal_zaman IS NULL RETURNING id""", (kim, izin_id))
+    if not cur.fetchone():
+        raise HTTPException(409, "İzin bulunamadı ya da kaldırılmış — sayfayı yenile")
+
+
 GEC_TOLERANS_DK = 5   # planlanan başlangıçtan bu kadar sonrasına kadar "zamanında"
 
 
@@ -769,27 +846,26 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
         from evvel_yeni_tanim_api import tanim_listesi
         pad = {r["id"]: r for r in tanim_listesi(cur, "ey_personel", ("ad", "gorev"))}
         plan, qr = [], []
-        try:
-            with savepoint(cur, "sp_ey_yok_plan"):
-                cur.execute("""SELECT a.tarih, a.personel_id::text AS pid, s.sube_id::text AS sid, a.baslangic_saat, a.bitis_saat, s.ad AS slot
-                                 FROM vardiya_atama a JOIN vardiya_slot s ON s.id = a.slot_id
-                                WHERE a.tarih BETWEEN %s AND %s AND a.durum <> 'iptal'""", (bas, son))
-                plan = [dict(r) for r in cur.fetchall() or []]
-        except Exception as e:  # noqa: BLE001
-            log.warning("yoklama: plan okunamadı: %s", str(e)[:150])
+        plan, plan_durum = _plan_satirlari(cur, bas, son)   # B44: yeni Vardiya planı (Vardiya PUBLIC) — eski tablo yalnız 26 Eki öncesi
         pb, yeni_qr = _yeni_yoklama(cur, bas, son)   # 1 Kasım'dan itibaren YENİ QR (Y3)
         yoklama_kapali = yeni_qr is None
         yeni_qr = yeni_qr or []
-        try:
-            with savepoint(cur, "sp_ey_yok_qr"):
-                cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, cikis_ts, vardiya_tip
-                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (bas, son, pb))
-                qr = [dict(r) for r in cur.fetchall() or []]
-        except Exception:  # noqa: BLE001
-            with savepoint(cur, "sp_ey_yok_qr2"):
-                cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, NULL AS cikis_ts, vardiya_tip
-                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (bas, son, pb))
-                qr = [dict(r) for r in cur.fetchall() or []]
+        qr = []
+        # B42 (Fable 22 Eki): ESKİ QR yalnız yeni dönemden önceki günler için ve tablo varsa — yoksa sessiz boş (kesimde bu blok silinir)
+        if bas < pb and __import__("evvel_yeni_cekirdek").tablo_var(cur, "gorev_yoklama"):
+            try:
+                with savepoint(cur, "sp_ey_yok_qr"):
+                    cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, cikis_ts, vardiya_tip
+                                     FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (bas, son, pb))
+                    qr = [dict(r) for r in cur.fetchall() or []]
+            except Exception:  # noqa: BLE001
+                try:
+                    with savepoint(cur, "sp_ey_yok_qr2"):
+                        cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, NULL AS cikis_ts, vardiya_tip
+                                         FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (bas, son, pb))
+                        qr = [dict(r) for r in cur.fetchall() or []]
+                except Exception as e:  # noqa: BLE001
+                    log.warning("yoklama: eski QR okunamadı: %s", str(e)[:150])
         qr += [{"tarih": r["tarih"], "pid": r["pid"], "sid": r["sid"], "giris_ts": r["giris_ts"],
                 "cikis_ts": None if r.get("cikis_tur") == "gece_otomatik" else r["cikis_ts"],   # Fable: sistem kapattı → giriş saati çıkış SANILMASIN
                 "sistem_kapatti": r.get("cikis_tur") == "gece_otomatik", "vardiya_tip": "QR"} for r in yeni_qr]
@@ -851,8 +927,11 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
         gunler.append({"gun": gi.isoformat(), "subeler": subeler_out, "plan_var": any(p["tarih"] == gi for p in plan)})
         g -= timedelta(days=1)
     return {"son": son.isoformat(), "gunler": gunler, "tolerans_dk": GEC_TOLERANS_DK,
-            "uyari": "⚠ Yoklama modülü kapalı ya da okunamadı — 1 Kasım sonrası QR görünmüyor" if yoklama_kapali else None,
-            "not": f"Plan: şube panelinin vardiya planı · QR: panelde okutulan giriş (1 Kasım'dan itibaren telefon QR'ı). Çıkış yapılmayan gün gece sistem kapatır (çıkış '—'). Başlangıçtan {GEC_TOLERANS_DK} dk sonrasına kadar zamanında sayılır."}
+            "uyari": " · ".join(x for x in (
+                "⚠ Yoklama modülü kapalı ya da okunamadı — 1 Kasım sonrası QR görünmüyor" if yoklama_kapali else None,
+                "⚠ Vardiya modülü kapalı — plan yok, yalnız QR görünüyor" if plan_durum == "kapali" else
+                ("⚠ Vardiya planı okunamadı — yalnız QR görünüyor" if plan_durum == "hata" else None)) if x) or None,
+            "not": f"Plan: Vardiya planı (Personel › Vardiya; yayınlanmış ya da günü gelmiş satırlar) · QR: panelde okutulan giriş (1 Kasım'dan itibaren telefon QR'ı). Çıkış yapılmayan gün gece sistem kapatır (çıkış '—'). Başlangıçtan {GEC_TOLERANS_DK} dk sonrasına kadar zamanında sayılır."}
 
 
 

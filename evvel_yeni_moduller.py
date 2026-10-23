@@ -47,6 +47,8 @@ MODULLER: List[dict] = [
     {"kod": "kazanc", "ad": "Şube kazancı", "ikon": "📈", "sektor": "genel", "gerekir": ["gelir", "gider"], "aciklama": "gelir − şubenin gideri"},
     {"kod": "avans", "ad": "Avans talepleri", "ikon": "🤝", "sektor": "genel", "gerekir": ["maas"], "menu": False,
      "aciklama": "personelin QR sayfasından avans talepleri → havale / elden / ret (sayfası Personel altında)"},
+    {"kod": "vardiya", "ad": "Vardiya planı", "ikon": "🗓️", "sektor": "genel", "gerekir": ["tanim"], "menu": False,
+     "kurulum": "vardiya_hazirla", "aciklama": "kalıp + kişi/gün planı, taslak → yayın; Günlük yoklama, Maaş, Panel/Telefon 'Bugün' buradan okur (sayfası Personel altında)"},
     {"kod": "fis", "ad": "Anlık gider fiş kontrol", "ikon": "🧾", "sektor": "genel", "gerekir": ["kasa"], "menu": False,
      "aciklama": "panelden girilen giderlerin fişi geldi mi; gelmeyen girişi yapan personelle (sayfası Gider altında)"},
     {"kod": "mulk", "ad": "Kira hesabı", "ikon": "🏠", "sektor": "ozel", "gerekir": ["kasa"],
@@ -103,6 +105,14 @@ def moduller():
     """Ekran menüsü bunu okur: yalnız yüklenen modüller gösterilir."""
     return {"moduller": [{k: m[k] for k in ("kod", "ad", "ikon", "sektor", "yetki", "gerekir", "menu", "aciklama")}
                          | {"durum": DURUM.get(m["kod"], "bilinmiyor")} for m in MODULLER]}
+
+
+@router.get("/gecis")
+def gecis():
+    """Eski QR adresi (/gorev-giris, /gorev-pin) yeni telefon evine (/q) yönlensin mi? TEK kural çekirdeğin anahtarı (30 sn önbellekli).
+    Çekirdek yönlendiricisinde (her zaman yüklü — Fable: yoklama modülü sökülse de kesim kuralı okunur). Oturumsuz, kişisel veri yok."""
+    from evvel_yeni_cekirdek import eski_panel_zinciri_acik_onbellekli
+    return {"yeni": not eski_panel_zinciri_acik_onbellekli()}
 
 
 # ─────────── ESKİ SİSTEM ENVANTERİ: "son 30 günde kullanıldı mı?" (yalnız OKUR) ───────────

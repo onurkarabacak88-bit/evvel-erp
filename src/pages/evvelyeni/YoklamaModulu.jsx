@@ -12,7 +12,7 @@ import { tlYaz } from '../../utils/trSayi';
 import { bardakOzet } from '../../utils/devirOzet';
 
 export const YOKLAMA_SAYFALAR = [
-  { id: 'personel_telefon', ad: 'Telefonlar', alt: 'Telefon bağla · tablet onayı · çıkış düzelt' },
+  { id: 'personel_telefon', ad: 'Telefonlar', alt: 'Telefon bağla · şube PC onayı · çıkış düzelt' },
   { id: 'personel_mola', ad: 'Yemek molaları', alt: 'Gün gün mola · süre · yemek hakkı ✓/✗ · elle hak' },
   { id: 'personel_devir', ad: 'Devirler', alt: 'Kasa devri çift onay · tutmuyor notları · tamamlanmayanı kapat' },
 ];
@@ -61,13 +61,13 @@ export default function YoklamaModulu({ onToast }) {
   // her satır ne: bağlı cihaz (son kullanım) / onay bekleyen / kullanılmamış link (son geçerlilik) — iki "İptal" karışmasın
   const cihazNe = (c) => (c.durum === 'aktif' ? `bağlı${c.son_kullanim ? ' · son ' + c.son_kullanim.slice(5, 16).replace('T', ' ') : ' · hiç kullanılmadı'}`
     : c.durum === 'onay' ? 'onay bekleyen' : `kullanılmamış link${c.davet_son ? ' · ' + c.davet_son.slice(5, 16).replace('T', ' ') + "'e kadar" : ''}`);
-  const iptal = (c, ad) => { if (window.confirm(`${ad} cihazı iptal edilsin mi? Bu telefon/tablet bir daha çalışmaz.`)) yap(c.id, `/evvel-yeni/yoklama/cihaz/${c.id}/iptal`, {}); };
+  const iptal = (c, ad) => { if (window.confirm(`${ad} cihazı iptal edilsin mi? Bu telefon / şube bilgisayarı bir daha çalışmaz.`)) yap(c.id, `/evvel-yeni/yoklama/cihaz/${c.id}/iptal`, {}); };
 
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
       <div><div className="pi-eyebrow">Evvel Yeni · Personel</div><h1 style={{ fontSize: 30 }}>Telefonlar</h1></div>
-      <div style={{ fontSize: 13, color: R.metin2 }}>Her personelin telefonu bir kez bağlanır: "Link üret" → linki WhatsApp'tan gönder → personel telefonunda açar. Sonra giriş / çıkış için şubedeki tabletin QR'ını okutur; PIN yok. Şube tableti de aynı yolla bağlanır, sen onaylarsın.</div>
+      <div style={{ fontSize: 13, color: R.metin2 }}>Her personelin telefonu bir kez bağlanır: "Link üret" → linki WhatsApp'tan gönder → personel telefonunda açar. Sonra giriş / çıkış için şubedeki panel bilgisayarının ekranındaki QR'ı okutur; PIN yok. Şube bilgisayarı da aynı yolla bağlanır, sen onaylarsın.</div>
       {hata && <div style={{ color: R.kirmizi }}>{hata} <Dugme kucuk onClick={yukle}>Yeniden dene</Dugme></div>}
       {!v && !hata && <div style={{ color: R.not }}>Hazırlanıyor…</div>}
 
@@ -124,7 +124,7 @@ export default function YoklamaModulu({ onToast }) {
                   <Dugme key={c.id} kucuk ana disabled={mesgul[c.id]} onClick={() => yap(c.id, `/evvel-yeni/yoklama/cihaz/${c.id}/onayla`, {})}>Onayla{c.etiket ? ` (${c.etiket})` : ''}</Dugme>
                 ))}
                 <Dugme kucuk ana={!s.tabletler.length} disabled={mesgul['s:' + s.id]} onClick={() => linkUret('s:' + s.id, { sube_id: s.id })}>Link üret</Dugme>
-                {s.tabletler.map((c) => <Dugme key={c.id} kucuk disabled={mesgul[c.id]} onClick={() => iptal(c, s.ad + ' tableti')}>İptal · {cihazNe(c)}</Dugme>)}
+                {s.tabletler.map((c) => <Dugme key={c.id} kucuk disabled={mesgul[c.id]} onClick={() => iptal(c, s.ad + ' bilgisayarı')}>İptal · {cihazNe(c)}</Dugme>)}
               </span>
             </div>
           ))}
@@ -141,7 +141,7 @@ export default function YoklamaModulu({ onToast }) {
           return (
             <div key={s.id} style={satir}>
               <span style={{ width: 90, color: R.not }}>{s.gun.slice(8, 10)}.{s.gun.slice(5, 7)}</span>
-              <span style={{ flex: '1 1 160px' }}><b>{s.ad}</b> · {s.sube || '—'} · giriş {s.giris || '—'}</span>
+              <span style={{ flex: '1 1 160px' }}><b>{s.ad}</b> · {s.sube || '—'} · giriş {s.giris || '—'}{s.cikis_tur === 'gece_otomatik' && <span style={{ color: R.amber }}> · sistem gece kapattı (0 sa)</span>}</span>
               <input type="time" value={d.saat || ''} onChange={(e) => set('saat', e.target.value)} style={alan} />
               <input value={d.aciklama || ''} onChange={(e) => set('aciklama', e.target.value)} placeholder="açıklama (zorunlu)" style={{ ...alan, width: 200 }} />
               <Dugme kucuk ana disabled={!d.saat || (d.aciklama || '').trim().length < 2 || mesgul[s.id]}
@@ -159,11 +159,12 @@ export default function YoklamaModulu({ onToast }) {
 // Alt: ay özeti (kişi → mola günü · ortalama süre · hak düşen · elle verilen) · "Bekleyenler" bölümü /molalar?acik=1 (bant değil).
 const ayGunSon = (ay) => { const [y, m] = ay.split('-').map(Number); return `${ay}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
 const gunKisa = (g) => (g ? `${g.slice(8, 10)}.${g.slice(5, 7)}` : '—');
-const DURUM_AD = { suruyor: 'sürüyor', bitmedi: 'bitmedi', bitti: 'bitti', 'merkez yazdı': 'merkez yazdı', 'çıkışla kapandı': 'çıkışla kapandı' };
+const DURUM_AD = { suruyor: 'sürüyor', bitmedi: 'bitmedi', bitti: 'bitti', 'merkez yazdı': 'merkez yazdı', 'çıkışla kapandı': 'çıkışla kapandı', 'gece sistem kapattı': 'gece sistem kapattı' };
 
 function hakHucre(s) {
   if (s.yemek_hakki === null || s.yemek_hakki === undefined) return <span style={{ color: R.not }}>—</span>;
   if (s.hak_elle) return <Cip tur="yesil">✓ elle: {s.hak_veren || '?'}{s.hak_zaman ? ` · ${s.hak_zaman.slice(5, 16).replace('-', '.')}` : ''}</Cip>;
+  if (s.mudur) return <Cip tur="yesil">✓ müdür (şartsız)</Cip>;   // B56: maaş da tam veriyor — iki ekran aynı söylesin
   return s.yemek_hakki ? <Cip tur="yesil">✓</Cip> : <Cip tur="kirmizi">✗</Cip>;
 }
 
@@ -195,8 +196,8 @@ function MolaSatir({ s, duz, setDuz, mesgul, yap, bugun }) {
         )}
         {!bitmedi && hakYok && (
           <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-            <input value={d.aciklama || ''} onChange={(e) => set('aciklama', e.target.value)} placeholder="neden (izli)" style={{ ...alan, width: 150 }} />
-            <Dugme kucuk ana disabled={mesgul[s.id]}
+            <input value={d.aciklama || ''} onChange={(e) => set('aciklama', e.target.value)} placeholder="neden (zorunlu, izli)" style={{ ...alan, width: 150 }} />
+            <Dugme kucuk ana disabled={mesgul[s.id] || (d.aciklama || '').trim().length < 2}
               onClick={() => yap(s.id, `/evvel-yeni/yoklama/mola/${s.id}/hak-ver`, { aciklama: (d.aciklama || '').trim() })}>Hakkı elle ver</Dugme>
             {!s.gorulen && <Dugme kucuk disabled={mesgul[s.id]} onClick={() => yap(s.id, `/evvel-yeni/yoklama/mola/${s.id}/gordum`, {})}>Gördüm</Dugme>}
             {s.gorulen && <span style={{ fontSize: 12, color: R.not }}>görüldü: {s.gorulen}</span>}
@@ -412,7 +413,7 @@ export function Devirler({ onToast }) {
       )}
 
       <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 6 }}>
-        <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>⏳ Bekleyenler — tamamlanmamış devirler + görülmemiş "tutmuyor" (Bekleyen işler › Personel ile aynı liste)</div>
+        <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>⏳ Bekleyenler — 2 saattir tamamlanmamış devirler + görülmemiş "tutmuyor" (Bekleyen işler › Personel ile aynı liste; yeni başlayan devir 2 saat beklenir)</div>
         {acik === null && <div style={{ color: R.not, padding: 6 }}>Okunuyor…</div>}
         {acik && <DevirTablo satirlar={acik} bos="Bekleyen devir yok." {...ortak} />}
       </div>

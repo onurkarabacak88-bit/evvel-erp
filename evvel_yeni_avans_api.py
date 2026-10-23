@@ -61,6 +61,7 @@ def avans_durumu(cur, personel_id: str, ay: Optional[str] = None) -> dict:
     """PUBLIC (telefon): tavan · o ay (verilmezse bu ay) kullanılan · kullanılabilir · açık talep (kuruş). Tavan Maaş'ın (eski oran).
     ay verilirse tavan O AYIN sonuna göre (Codex 2. tur: önceki aydan bekleyen talep onaylanırken bu ayın toplamına bakılıyordu)."""
     avans_hazirla(cur)
+    _eski_kopya_gerekirse(cur)   # eski açık talep taşınmadan ikinci talep açılmasın
     from evvel_yeni_maas_api import avans_tavani
     gun = None
     if ay and ay[:7] != __import__("evvel_yeni_cekirdek").is_gunu().strftime("%Y-%m"):   # Maaş tavanıyla aynı gün kuralı
@@ -73,8 +74,20 @@ def avans_durumu(cur, personel_id: str, ay: Optional[str] = None) -> dict:
     cur.execute("""SELECT id, tutar, durum, yontem, talep_ts FROM ey_avans_talep WHERE personel_id=%s AND durum IN ('talep','onaylandi')
                     ORDER BY talep_ts DESC LIMIT 1""", (str(personel_id),))
     ac = cur.fetchone()
+    # B47: son 7 günde SONUÇLANAN talep — personel telefonda görsün (sessizce kaybolmasın); açık talep varken gerekmez
+    son = None
+    if not ac:
+        cur.execute("""SELECT tutar, durum, yontem, karar_not, COALESCE(teslim_ts, karar_ts) AS ts FROM ey_avans_talep
+                        WHERE personel_id=%s AND durum IN ('odendi','reddedildi','kapatildi')
+                          AND COALESCE(teslim_ts, karar_ts) >= NOW() - INTERVAL '7 days' ORDER BY COALESCE(teslim_ts, karar_ts) DESC LIMIT 1""",
+                    (str(personel_id),))
+        r = cur.fetchone()
+        if r:
+            r = dict(r)
+            son = {"tutar": r["tutar"], "durum": r["durum"], "yontem": r.get("yontem"), "ts": str(r["ts"])[:10],
+                   "neden": (r.get("karar_not") or "")[:120] if r["durum"] == "reddedildi" else None}   # B46: ret sebebi personele
     return {"ay": t["ay"], "tavan": t["tavan"], "kullanilan": kul, "kullanilabilir": max(0, t["tavan"] - kul),
-            "acik": ({**dict(ac), "talep_ts": str(dict(ac)["talep_ts"])[:16]} if ac else None)}
+            "acik": ({**dict(ac), "talep_ts": str(dict(ac)["talep_ts"])[:16]} if ac else None), "son": son}
 
 
 def _onay_denetle(cur, t: dict) -> None:
@@ -134,6 +147,7 @@ def _yeni_talepler(cur, acik: bool = True) -> list:
 
 def elden_bekleyen(cur, sube_id: str) -> list:
     """PUBLIC (şube paneli): bu şubeden ELDEN verilecek onaylı avanslar (personel adı + tutar)."""
+    _eski_kopya_gerekirse(cur)   # 1 Kasım: eski onaylı-elden avanslar panelde kaybolmasın
     return [t for t in _yeni_talepler(cur) if t["durum"] == "onaylandi" and t["yontem"] == "elden" and t["sube_id"] == str(sube_id)]
 
 
@@ -175,7 +189,7 @@ def _acik_talepler(cur) -> list:
             for r in cur.fetchall() or []:
                 r = dict(r)
                 out.append({"id": r["id"], "personel_id": r["personel_id"], "ad": r["ad"] or "—", "tutar": float(r["tutar"] or 0),
-                            "durum": r["durum"], "yontem": r.get("odeme_yontemi"), "sube": r.get("sube_ad"),
+                            "durum": r["durum"], "yontem": r.get("odeme_yontemi"), "sube": r.get("sube_ad"), "sube_id": r.get("sube_id"),
                             "talep": str(r.get("talep_ts") or "")[:16], "onay": str(r.get("onay_ts") or "")[:16],
                             "donem": f"{int(r['donem_yil'])}-{int(r['donem_ay']):02d}" if r.get("donem_yil") else None})
             return out
@@ -192,12 +206,44 @@ def _bekleyen(cur, baglam: dict) -> list:
             for t in _tum_acik(cur) if t["durum"] == "talep"]
 
 
-def _tum_acik(cur) -> list:
-    """Yeni defter + (1 Kasım'a kadar) eski personel_avans açıkları."""
-    out = _yeni_talepler(cur)
+def _eski_acik_kopyala(cur) -> None:
+    """1 KASIM — BİR KEZ (Codex P1: yeni dönemde eski açık talepler okunmuyordu → merkez listesinden ve Bekleyen işler'den
+    KAYBOLUYORDU): eski personel_avans'taki AÇIK talepler yeni deftere taşınır — karar bekleyen 'talep' → 'talep', onaylanmış ELDEN
+    (şube teslim etmedi) → 'onaylandi' aynı şubeyle (panel 'teslim ettim' görür). 'teslim_edildi' (para çekmeceden çıktı, yalnız
+    personel 'aldım'ı bekliyordu — o onay kalktı) taşınmaz. Köprü değil: sonra eski tablo okunmaz (KESİM)."""
+    avans_hazirla(cur)
+    for t in _acik_talepler(cur):   # okunamazsa istisna → bir_kez işaretlemez, sonra yeniden dener
+        if t["durum"] == "talep":
+            durum, yontem, sube = "talep", None, None
+        elif t["durum"] == "onaylandi" and t.get("yontem") == "elden" and t.get("sube_id"):
+            durum, yontem, sube = "onaylandi", "elden", str(t["sube_id"])
+        else:
+            continue
+        cur.execute("""INSERT INTO ey_avans_talep (id, personel_id, tutar, donem, not_, durum, yontem, sube_id, istek_id, karar_kim)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT (id) DO NOTHING""",
+                    ("av-e-" + str(t["id"])[:36], str(t["personel_id"]), int(round(float(t["tutar"]) * 100)),
+                     t.get("donem") or _bugun().strftime("%Y-%m"), "eski sistemden taşındı", durum, yontem, sube,
+                     "eski-" + str(t["id"])[:60], "eski sistem" if durum == "onaylandi" else None))
+
+
+def _eski_kopya_gerekirse(cur) -> bool:
+    """Yeni dönemse eski açıkları (bir kez) taşır; dönüş: yeni dönem mi. Panel / telefon / merkez — hangisi önce okursa."""
     if not yeni_donem(cur):
-        out = _acik_talepler(cur) + out
-    return out
+        return False
+    __import__("evvel_yeni_cekirdek").bir_kez(cur, "avans_eski_acik_kopya", _eski_acik_kopyala, "avans eski açık kopyası")
+    return True
+
+
+def _tum_acik(cur) -> list:
+    """Yeni defter + (1 Kasım'a kadar) eski personel_avans açıkları; 1 Kasım'dan sonra eski açıklar BİR KEZ yeni deftere taşınır."""
+    if _eski_kopya_gerekirse(cur):
+        if __import__("evvel_yeni_cekirdek").ayar_oku(cur, "avans_eski_acik_kopya") is not None:
+            return _yeni_talepler(cur)
+        try:   # Fable son denetim S-3: kopya olmadıysa eski açıklar okunmaya devam eder (sessizce kaybolmaz)
+            return _acik_talepler(cur) + _yeni_talepler(cur)
+        except HTTPException:   # eski tablo artık yok (eski sistem kalktı) → yalnız yeni defter; log _acik_talepler'de
+            return _yeni_talepler(cur)
+    return _acik_talepler(cur) + _yeni_talepler(cur)
 
 
 bekleyen_is_kaydet("avans_talep", _bekleyen)

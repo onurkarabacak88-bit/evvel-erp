@@ -9,8 +9,10 @@ import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { ALAN, AySecici, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tl, useSonIstek } from './KasaModulu';
-import { ayKaydir, ayTR } from '../../utils/trTarih';
+import { ayAdi, ayKaydir, ayTR } from '../../utils/trTarih';
 import { Pencere } from './AyTakvim';
+// B39: tablo sütunlarında tutarlar aynı biçimde (35.200,00 · 20.533,33) — karışık ondalık gözü yanıltmasın
+const fmt2 = (n) => (Number(n) || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 export const MAAS_SAYFALAR = [
   { id: 'maaslar', ad: 'Maaşlar', alt: 'Hak ediş · avans · kalan' },
@@ -91,10 +93,10 @@ export default function MaasModulu({ onToast, onSekme }) {
                 <td style={{ textAlign: 'left' }}><b>{x.ad}</b> <span style={{ color: R.not, fontSize: 12 }}>{x.calisma_turu === 'yari' ? 'yarı' : ''}{x.aktif ? '' : ' · ayrıldı'}</span></td>
                 <td style={{ textAlign: 'left' }}>{x.sube_ad}</td>
                 <td style={num}>{x.gun ?? '—'}</td>
-                <td style={num}>{fmt(x.hak_edis)}</td>
-                <td style={num}>{x.avans_mahsup ? `−${fmt(x.avans_mahsup)}` : ''}</td>
-                <td style={num}>{x.odenen ? `−${fmt(x.odenen)}` : ''}</td>
-                <td style={{ ...num, fontWeight: 700, color: x.kalan > 0 ? R.kirmizi : R.yesil }}>{fmt(x.kalan)}</td>
+                <td style={num}>{fmt2(x.hak_edis)}</td>
+                <td style={num}>{x.avans_mahsup ? `−${fmt2(x.avans_mahsup)}` : ''}</td>
+                <td style={num}>{x.odenen ? `−${fmt2(x.odenen)}` : ''}</td>
+                <td style={{ ...num, fontWeight: 700, color: x.kalan > 0 ? R.kirmizi : R.yesil }}>{fmt2(x.kalan)}</td>
                 <td style={{ textAlign: 'left' }}>
                   {x.onay ? <Cip tur="yesil">onaylı</Cip> : x.kaynak === 'eski_sistem' ? <Cip tur="sari">eski hesap</Cip> : x.ay_acik ? <Cip>ay sürüyor</Cip> : <Cip>onay bekliyor</Cip>}
                   {(x.uyari || []).length > 0 && <Cip tur="kirmizi">⚠ {x.uyari.length}</Cip>}
@@ -111,7 +113,7 @@ export default function MaasModulu({ onToast, onSekme }) {
       {r && (
         <Pencere onKapat={() => setSec(null)} mesgul={mesgul} genislik={640} kapatDugmesi={false} aralik={12} maxYukseklik="90vh">   {/* ortak Pencere (T4-06) — işlem sürerken kapanmaz */}
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-              <b style={{ fontSize: 18 }}>{r.ad}</b><span style={{ color: R.not }}>{r.sube_ad} · {v.ay} · {r.calisma_turu === 'yari' ? 'yarı zamanlı' : 'tam zamanlı'}</span>
+              <b style={{ fontSize: 18 }}>{r.ad}</b><span style={{ color: R.not }}>{r.sube_ad} · {ayAdi(v.ay)} · {r.calisma_turu === 'yari' ? 'yarı zamanlı' : 'tam zamanlı'}</span>
               <span style={{ marginLeft: 'auto' }}><Dugme kucuk onClick={() => setSec(null)}>Kapat</Dugme></span>
             </div>
             {(r.uyari || []).map((u) => <div key={u} style={{ color: R.kirmizi, fontWeight: 600 }}>⚠ {u}</div>)}
@@ -151,7 +153,7 @@ export default function MaasModulu({ onToast, onSekme }) {
                   <label>Düzeltme ₺ (±)<br /><input style={alan} value={d.duzeltme} onChange={(e) => setD((x) => ({ ...x, duzeltme: e.target.value }))} /></label>
                   <label style={{ flex: 1, minWidth: 180 }}>Gerekçe<br /><input style={{ ...alan, width: '100%' }} value={d.aciklama} onChange={(e) => setD((x) => ({ ...x, aciklama: e.target.value }))} /></label>
                 </div>
-                <div style={{ fontSize: 12, color: R.not }}>"vardiyadan" yazan kutular boş bırakılırsa şube panelinin vardiya planı kullanılır.</div>
+                <div style={{ fontSize: 12, color: R.not }}>"vardiyadan" yazan kutular boş bırakılırsa Vardiya planı (Personel › Vardiya) kullanılır.</div>
                 <div style={{ display: 'flex', gap: 8 }}><Dugme onClick={kaydet} disabled={mesgul}>Kaydet</Dugme>
                   {!r.ay_acik && <Dugme ana onClick={() => onayla(false)}>Ayı onayla (dondur)</Dugme>}</div>
               </div>

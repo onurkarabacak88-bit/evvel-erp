@@ -9,14 +9,14 @@ import { paraGecerli, sayiTR, tlYaz } from '../../utils/trSayi';
 import { bardakOzet, kalemYazi } from '../../utils/devirOzet';
 
 const T = { zemin: '#F4EFE9', kart: '#FFFFFF', kenar: '#E6DED4', yuzey: '#F7F2EC', metin: '#2A241E', metin2: '#6B5E50', silik: '#9C8E7E',
-  aksan: '#C8956A', yesil: '#25794F', kirmizi: '#C03A2B', golge: '0 8px 30px rgba(120,90,60,.10)' };
+  aksan: '#C8956A', aksanKoyu: '#94592C', silikOkunur: '#6E6152', yesil: '#25794F', kirmizi: '#C03A2B', golge: '0 8px 30px rgba(120,90,60,.10)' };
 const CSS = `
-.tq *{box-sizing:border-box} .tq{min-height:100vh;background:${T.zemin};color:${T.metin};font-family:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif;font-size:16px;line-height:1.4;padding:16px;display:flex;flex-direction:column;gap:14px;max-width:520px;margin:0 auto}
+.tq,.tq *{box-sizing:border-box} .tq{min-height:100vh;background:${T.zemin};color:${T.metin};font-family:'Instrument Sans',system-ui,-apple-system,'Segoe UI',sans-serif;font-size:16px;line-height:1.4;padding:16px;display:flex;flex-direction:column;gap:14px;max-width:520px;margin:0 auto}
 .tq-kart{background:${T.kart};border:1px solid ${T.kenar};border-radius:16px;padding:16px;box-shadow:${T.golge};display:grid;gap:10px}
 .tq-btn{min-height:64px;width:100%;border-radius:14px;border:1px solid ${T.kenar};background:${T.yuzey};color:${T.metin};font:inherit;font-size:20px;font-weight:800;cursor:pointer;padding:12px 16px}
-.tq-btn:disabled{opacity:.45;cursor:default} .tq-ana{background:${T.aksan};border-color:${T.aksan};color:#fff} .tq-yesil{background:${T.yesil};border-color:${T.yesil};color:#fff}
+.tq-btn:disabled{opacity:.45;cursor:default} .tq-ana{background:${T.aksanKoyu};border-color:${T.aksanKoyu};color:#fff} .tq-yesil{background:${T.yesil};border-color:${T.yesil};color:#fff}
 .tq-kucuk{min-height:56px;font-size:17px;font-weight:700}
-.tq-not{color:${T.metin2};font-size:14px} .tq-silik{color:${T.silik};font-size:13px}
+.tq-not{color:${T.metin2};font-size:14px} .tq-silik{color:${T.silikOkunur};font-size:13px}
 `;
 
 function Marka({ alt }) {
@@ -41,8 +41,8 @@ const urlKimlik = (ad) => {   // ?o= / ?tb= / ?dv= — yalnız güvenli kimlik
 const agMesaji = (e, varsayilan) => (e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || varsayilan));
 function KonumSatiri({ muaf, konum, konumAl }) {
   return (<>
-    {muaf ? 'konum: yönetici (muaf)' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
-    {!muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksan, background: 'none', border: 'none', padding: 0, fontWeight: 700, minHeight: 44 }}>tekrar dene</button></>}
+    {muaf ? 'konumdan muaf' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
+    {!muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksanKoyu, background: 'none', border: 'none', padding: '0 6px', fontWeight: 700, minHeight: 48, minWidth: 48 }}>tekrar dene</button></>}
   </>);
 }
 
@@ -61,8 +61,27 @@ function useKonum(aktif) {
   return [k, al];
 }
 
+// B31: saatten sonra Türkçe ayrılma eki — '13:20'den', '12:30'dan', '14:00'ten' (son okunan sayıya göre)
+const SAAT_EK = { 0: "'dan", 1: "'den", 2: "'den", 3: "'ten", 4: "'ten", 5: "'ten", 6: "'dan", 7: "'den", 8: "'den", 9: "'dan" };
+const ONLUK_EK = { 1: "'dan", 2: "'den", 3: "'dan", 4: "'tan", 5: "'den" };
+function saatEki(hm) {
+  const [h, m] = String(hm || '').split(':').map(Number);
+  if (Number.isNaN(h)) return "'den";
+  const n = m ? m : h;
+  if (n % 10) return SAAT_EK[n % 10];
+  return n === 0 ? "'dan" : n === 10 ? "'dan" : n === 20 ? "'den" : ONLUK_EK[n / 10] || "'den";
+}
+
 export default function TelefonSayfasi({ mod, davet, sube, jeton }) {
-  useEffect(() => { document.title = 'TuliPi · Yoklama'; }, []);
+  useEffect(() => {
+    document.title = 'TuliPi · Personel';
+    // Fable T1: başlık yazı tipi (Fraunces) + gövde (Instrument Sans) + "Ana ekrana ekle" (PWA) — yalnız telefon sayfasında
+    const ekle = (tag, at) => { if (document.head.querySelector(`${tag}[data-tq="${at['data-tq']}"]`)) return; const el = document.createElement(tag); Object.entries(at).forEach(([k, v]) => el.setAttribute(k, v)); document.head.appendChild(el); };
+    ekle('link', { rel: 'stylesheet', href: 'https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Instrument+Sans:wght@400;600;700;800&display=swap', 'data-tq': 'font' });
+    ekle('link', { rel: 'manifest', href: '/q-manifest.webmanifest', 'data-tq': 'manifest' });
+    ekle('link', { rel: 'apple-touch-icon', href: '/q-ikon-192.png', 'data-tq': 'apple' });
+    ekle('meta', { name: 'theme-color', content: '#F4EFE9', 'data-tq': 'tema' });
+  }, []);
   return (
     <div className="tq">
       <style>{CSS}</style>
@@ -70,7 +89,7 @@ export default function TelefonSayfasi({ mod, davet, sube, jeton }) {
       {mod === 'qr' && (onayKimligi() ? <OnayIslem sube={sube} jeton={jeton} onay={onayKimligi()} />
         : devirKimligi() ? <DevirIslem sube={sube} jeton={jeton} did={devirKimligi()} />
         : teslimKimligi() ? <FaturaCek sube={sube} tid={teslimKimligi()} /> : <QrIslem sube={sube} jeton={jeton} />)}
-      {mod === 'durum' && <Durum />}
+      {mod === 'durum' && <Ev />}
     </div>
   );
 }
@@ -89,24 +108,24 @@ function Bagla({ davet }) {
   };
   return (
     <>
-      <Marka alt="Telefonu bağla" />
+      <Marka alt={sonuc?.tur === 'tablet' ? 'Şube bilgisayarını bağla' : sonuc ? 'Telefonu bağla' : 'Cihazı bağla'} />
       {sonuc ? (
         <div className="tq-kart" style={{ textAlign: 'center' }}>
           <div style={{ fontSize: 56 }}>{sonuc.durum === 'aktif' ? '✓' : '⏳'}</div>
           <b style={{ fontSize: 20 }}>{sonuc.mesaj}</b>
           {sonuc.guc === 'jeton' && <div className="tq-silik">Bu tarayıcı güçlü anahtar üretemedi; bağ zayıf (merkez görür).</div>}
-          {sonuc.tur === 'telefon' && <div className="tq-not">Artık giriş / çıkış için şubedeki tabletin QR'ını okutman yeterli.</div>}
+          {sonuc.tur === 'telefon' && <div className="tq-not">Artık giriş / çıkış için şubedeki panel bilgisayarının ekranındaki QR'ı okutman yeterli.</div>}
           {sonuc.tur === 'tablet' && <div className="tq-not">Merkez onaylayınca şube paneli köşede QR göstermeye başlar. Paneli hep BU tarayıcıda (normal pencerede) aç.</div>}
           {sonuc.tur === 'tablet' && sonuc.sube_id && (
             <a className="tq-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}
                href={`/panel/${encodeURIComponent(sonuc.sube_id)}`}>🧾 Şube panelini aç</a>
           )}
-          {sonuc.tur === 'telefon' && <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">Durumumu gör</a>}
+          {sonuc.tur === 'telefon' && <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">🏠 Eve dön</a>}
         </div>
       ) : (
         <div className="tq-kart">
-          <b style={{ fontSize: 19 }}>Bu cihaz sana bağlanacak</b>
-          <div className="tq-not">Merkezin gönderdiği bağlantı tek kullanımlık. Bağlanınca bu telefon senin adına giriş / çıkış yapar — şifre, PIN yok.</div>
+          <b style={{ fontSize: 19 }}>Bu cihaz bağlanacak</b>
+          <div className="tq-not">Merkezin gönderdiği bağlantı tek kullanımlık. Kişisel telefon bağlantısıysa bu telefon senin adına giriş / çıkış yapar; şube bilgisayarı bağlantısıysa şube paneli QR gösterir — şifre, PIN yok.</div>
           {varTel && <div className="tq-silik">Bu tarayıcıda zaten bağlı bir telefon kaydı var; yeniden bağlarsan eski bağ bu telefonda biter.</div>}
           {hata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{hata}</div>}
           <button className="tq-btn tq-ana" disabled={mesgul} onClick={bagla}>{mesgul ? 'Bağlanıyor…' : '📱 BU CİHAZI BAĞLA'}</button>
@@ -133,13 +152,14 @@ function QrIslem({ sube, jeton }) {
   const yukle = useCallback(() => {
     if (!bagli) return;
     setHata('');
-    imzaliJson('telefon', 'GET', `/api/evvel-yeni/yoklama/ben?sube=${encodeURIComponent(sube)}`)
+    imzaliJson('telefon', 'GET', `/api/evvel-yeni/yoklama/ben?sube=${encodeURIComponent(sube)}&qr=${encodeURIComponent(jeton || '')}`)
       .then(setBen).catch((e) => setHata(agMesaji(e, 'Okunamadı')));
-  }, [bagli, sube]);
+  }, [bagli, sube, jeton]);
   useEffect(() => { yukle(); }, [yukle]);
 
   if (!bagli) return <TanimliDegil />;
-  const yapabilir = ben?.yapabilir || [];
+  const qrOk = ben?.qr_gecerli !== false;   // Fable #7: süresi dolan QR'da yanlış düğme ('GİRİŞ YAP') gösterilmez
+  const yapabilir = qrOk ? (ben?.yapabilir || []) : [];
   // Büyük düğme: giriş → mola başlat / molayı bitir; ÇIKIŞ ikinci, sade düğme (§A2 "Girdi" satırı)
   const ana = yapabilir.includes('giris') ? 'giris' : yapabilir.includes('mola_bitir') ? 'mola-bitir' : yapabilir.includes('mola_baslat') ? 'mola-baslat' : null;
   const cikisVar = yapabilir.includes('cikis');
@@ -188,7 +208,7 @@ function QrIslem({ sube, jeton }) {
           <div className="tq-not">{sonuc.mesaj}</div>
           {sonuc.hak_dustu && <div className="tq-not">Bugün yemek hakkı kazanılamadı</div>}
           {sonuc.islem === 'giris' && <div className="tq-not">🍽 Yemek molasına çıkarken paneldeki QR'ı <b>tekrar okut</b> → "Yemek molası başlat".</div>}
-          <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">Durumumu gör</a>
+          <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">🏠 Eve dön</a>
         </div>
       ) : (
         <div className="tq-kart">
@@ -201,6 +221,7 @@ function QrIslem({ sube, jeton }) {
             </div>
             {(ben.giris || ben.cikis) && <div className="tq-silik">Bugün: giriş {ben.giris || '—'} · çıkış {ben.cikis || '—'}</div>}
             <MolaSatiri mola={ben.mola} />
+            {!qrOk && <div style={{ color: T.kirmizi, fontWeight: 700 }}>QR süresi doldu — paneldeki QR'ı yeniden okut</div>}
             {ben.acik && ben.acik_sube && ben.acik_sube !== sube && <div style={{ color: T.kirmizi, fontWeight: 700 }}>Önce {ben.acik_sube_ad || 'diğer şube'}'den çıkış yap</div>}
             {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
             {devirVar && (<>
@@ -232,8 +253,7 @@ function QrIslem({ sube, jeton }) {
                 {dugmeYazi('cikis')}
               </button>
             )}
-            {!islemVar && !ben.acik && <div className="tq-silik">Bu QR ile yapılacak işlem yok.</div>}
-            <AvansKart />
+            {!islemVar && !ben.acik && qrOk && <div className="tq-silik">Bu QR ile yapılacak işlem yok.</div>}
           </>)}
         </div>
       )}
@@ -243,7 +263,7 @@ function QrIslem({ sube, jeton }) {
 
 // ── 🤝 AVANS TALEBİ (1 Kasım — kesim engeli T3-17, sahip 20 Eki: tavan eski oran; "aldım" onayı YOK) ──
 // Tavan / kullanılabilir sunucudan (Maaş'ın hak edişi). Açık talep varken yenisi açılmaz. 1 Kasım öncesi kart görünmez (eski sayfa).
-function AvansKart() {
+function AvansKart({ kartli }) {
   const [d, setD] = useState(null);
   const [ac, setAc] = useState(false);
   const [tut, setTut] = useState('');
@@ -253,7 +273,14 @@ function AvansKart() {
   const istek = useRef(null);
   const yukle = () => imzaliJson('telefon', 'GET', '/api/evvel-yeni/yoklama/avans').then(setD).catch(() => setD(null));
   useEffect(() => { yukle(); }, []);
-  if (!d || d.kapali) return null;
+  useEffect(() => {   // Codex P2: merkez onayı / teslim görünsün — 30 sn + uygulamaya dönüşte
+    const tazele = () => { if (!document.hidden) yukle(); };
+    const t = window.setInterval(tazele, 30000);
+    document.addEventListener('visibilitychange', tazele);
+    return () => { window.clearInterval(t); document.removeEventListener('visibilitychange', tazele); };
+  }, []);
+  if (!d) return null;
+  if (d.kapali) return kartli ? <div className="tq-kart"><b>🤝 Avans</b><div className="tq-silik">Avans talebi 1 Kasım'dan itibaren buradan.</div></div> : null;   // Fable T1 #4: boş kart yok
   const para = (x) => tlYaz(x, 0);   // ₺ biçimi TEK kaynak (F#58)
   const gonder = async () => {
     if (mesgul) return;
@@ -269,11 +296,15 @@ function AvansKart() {
     setMesgul(false);
   };
   return (
-    <div style={{ marginTop: 14, paddingTop: 12, borderTop: `1px solid ${T.kenar}`, display: 'grid', gap: 8 }}>
+    <div className={kartli ? 'tq-kart' : undefined} style={{ display: 'grid', gap: 8 }}>
       <b>🤝 Avans</b>
       {d.acik ? <div className="tq-not">Açık talebin: <b>{para(d.acik.tutar)}</b> — {d.acik.durum === 'talep' ? 'merkez bakıyor' : d.acik.yontem === 'elden' ? 'onaylandı, şubeden elden verilecek' : 'onaylandı'}</div>
         : d.kullanilabilir > 0 ? <div className="tq-silik">Bu ay en çok {para(d.kullanilabilir)} isteyebilirsin</div>
         : <div className="tq-silik">Bu ay avans hakkın yok (hak ediş oluşmadı ya da doldu)</div>}
+      {!d.acik && d.son && (   // B47: son talebin sonucu (7 gün)
+        <div className="tq-not" style={{ color: d.son.durum === 'odendi' ? T.yesil : T.kirmizi }}>
+          Son talebin ({para(d.son.tutar)}, {d.son.ts.slice(8, 10)}.{d.son.ts.slice(5, 7)}): {d.son.durum === 'odendi' ? (d.son.yontem === 'elden' ? 'elden verildi ✓' : 'hesabına gönderildi ✓') : (d.son.neden && d.son.neden !== 'Merkez reddetti' ? `kabul edilmedi — ${d.son.neden}` : 'kabul edilmedi — merkeze sorabilirsin')}
+        </div>)}
       {msj && <div style={{ color: msj.ok ? T.yesil : T.kirmizi, fontWeight: 700 }}>{msj.metin}</div>}
       {!d.acik && d.kullanilabilir > 0 && !ac && <button className="tq-btn tq-kucuk" onClick={() => setAc(true)}>Avans iste</button>}
       {ac && (<>
@@ -309,10 +340,10 @@ function OnayIslem({ sube, jeton, onay }) {
     setHata('');
     Promise.all([
       imzaliJson('telefon', 'GET', `/api/evvel-yeni/panel/onay/${encodeURIComponent(onay)}/ozet`),
-      imzaliJson('telefon', 'GET', `/api/evvel-yeni/yoklama/ben?sube=${encodeURIComponent(sube)}`),
+      imzaliJson('telefon', 'GET', `/api/evvel-yeni/yoklama/ben?sube=${encodeURIComponent(sube)}&qr=${encodeURIComponent(jeton || '')}`),
     ]).then(([o, b]) => { setOzet(o); setBen(b); })
       .catch((e) => setHata(agMesaji(e, 'Okunamadı')));
-  }, [bagli, onay, sube]);
+  }, [bagli, onay, sube, jeton]);
   useEffect(() => { yukle(); }, [yukle]);
   if (!bagli) return <TanimliDegil />;
 
@@ -477,35 +508,195 @@ function FaturaCek({ sube, tid }) {
 }
 
 // ── /q: salt durum ──
-function Durum() {
+// ── 🏠 EV (/q) — Fable tasarımı T1 (tasarim_telefon/, sahip 21 Eki onayı): duruma göre TEK kart + alt sekmeler (⚡ Şimdi · 👤 Ben).
+// Vardiyam / Sipariş sekmeleri kendi basamağında gelir (boş kabuk gösterilmez). İşlemler yine paneldeki QR ile (kimlik + konum);
+// ev yalnız durumu ve sıradaki adımı söyler. 🔒 Kasa / başkasının verisi YOK — yalnız kişinin kendi günü.
+const avatarRenk = (ad) => { const p = ['#C8956A', '#7A9E7E', '#8C7AA9', '#C27C6B', '#6F8FAF', '#B08D57']; let h = 0; for (const ch of String(ad || '')) h = (h * 31 + ch.charCodeAt(0)) >>> 0; return p[h % p.length]; };
+const basHarf = (ad) => String(ad || '?').trim().split(/\s+/).slice(0, 2).map((x) => x[0] || '').join('').toLocaleUpperCase('tr-TR');
+const ilkAd = (ad) => String(ad || '').trim().split(/\s+/)[0] || '';
+function Avatar({ ad }) {
+  return <div style={{ width: 44, height: 44, borderRadius: '50%', background: avatarRenk(ad), color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 800, flexShrink: 0 }}>{basHarf(ad)}</div>;
+}
+function EvBaslik({ ben }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div style={{ width: 44, height: 44, borderRadius: '50%', background: '#000', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+        <img src={tulipiLogo} alt="TuliPi" style={{ width: 34, height: 34, objectFit: 'contain' }} />
+      </div>
+      <Avatar ad={ben?.kisi} />
+      <div style={{ minWidth: 0 }}>
+        <div style={{ fontWeight: 800, fontSize: 18 }}>{ben?.kisi || 'TuliPi'}</div>
+        <div className="tq-silik">{[ben?.sube_ad, ben?.gun && gunYazi(ben.gun)].filter(Boolean).join(' · ')}</div>
+      </div>
+    </div>
+  );
+}
+const dkKisa = (dk) => (dk >= 60 ? `${Math.floor(dk / 60)}s ${dk % 60}d` : `${dk}d`);
+function Halka({ oran, yazi }) {
+  const r = 34, c = 2 * Math.PI * r, o = Math.max(0, Math.min(1, oran || 0));
+  return (
+    <div style={{ position: 'relative', width: 86, height: 86, flexShrink: 0 }}>
+      <svg width="86" height="86" viewBox="0 0 86 86" aria-hidden="true">
+        <circle cx="43" cy="43" r={r} fill="none" stroke={T.kenar} strokeWidth="7" />
+        <circle cx="43" cy="43" r={r} fill="none" stroke={T.aksan} strokeWidth="7" strokeLinecap="round" strokeDasharray={`${c * o} ${c}`} transform="rotate(-90 43 43)" />
+      </svg>
+      <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center' }}><b style={{ fontSize: 15 }}>{yazi}</b></div>
+    </div>
+  );
+}
+// İşlemler paneldeki QR ile (K6: sayfa içi okuyucu yok — telefonun kamerasıyla okutulur); bu kutu yalnız yol gösterir
+function QrIpucu({ yazi, ana }) {
+  return (
+    <div style={{ minHeight: 60, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, textAlign: 'center', padding: '10px 14px',
+      fontWeight: 800, fontSize: ana ? 18 : 16, background: ana ? T.aksanKoyu : T.yuzey, color: ana ? '#fff' : T.metin, border: `1px solid ${ana ? T.aksanKoyu : T.kenar}` }}>
+      📷 {yazi}
+    </div>
+  );
+}
+function YemekBilgi({ ben }) {
+  const m = ben.mola;
+  const lim = ben.mola_limit_dk || 60, az = ben.mola_en_az_dk || 45;
+  if (ben.yemek_tam) return <div className="tq-not">🍽 Yemek hakkın tam (mola şartı yok)</div>;   // Codex P2: müdür — Maaş ile aynı kural
+  if (!m) return ben.cikis && !ben.acik   // Fable T1 #1: gün bitti, molasız gün hak oluşmaz (K17)
+    ? <div className="tq-not">🍽 Bugün mola kullanılmadı · yemek hakkı oluşmadı</div>
+    : <div className="tq-not">🍽 Yemek hakkı · bugün: mola ile kazanılır · {az}–{lim} dk</div>;
+  if (m.durum === 'suruyor') return null;
+  return m.hak_dustu
+    ? <div className="tq-not">🍽 Mola {m.sure_dk ?? '—'} dk · bugün yemek hakkı oluşmadı ({lim} dk sınırı)</div>
+    : <div className="tq-not" style={{ color: T.yesil, fontWeight: 700 }}>🍽 Yemek hakkı: kazanıldı ✓ · mola {m.sure_dk} dk</div>;
+}
+function MolaCubuk({ dk, az, lim }) {
+  const yuzde = (x) => `${Math.min(100, (x / (lim + 1)) * 100)}%`;
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      <div style={{ position: 'relative', height: 10, borderRadius: 6, background: T.yuzey, border: `1px solid ${T.kenar}` }}>
+        <div style={{ position: 'absolute', left: 0, top: 0, bottom: 0, width: yuzde(dk), borderRadius: 6, background: dk > lim ? T.kirmizi : T.aksan }} />
+        <div style={{ position: 'absolute', left: yuzde(az), top: -4, bottom: -4, width: 2, background: T.metin2 }} />
+        <div style={{ position: 'absolute', left: yuzde(lim), top: -4, bottom: -4, width: 2, background: T.kirmizi }} />
+      </div>
+      <div className="tq-silik" style={{ display: 'flex', justifyContent: 'space-between' }}><span>0</span><span>{az} dk</span><span>{lim} dk</span></div>
+    </div>
+  );
+}
+function SimdiKart({ ben, simdi }) {
+  const lim = ben.mola_limit_dk || 60, az = ben.mola_en_az_dk || 45;
+  const m = ben.mola;
+  if (m && m.durum === 'suruyor') {
+    return (
+      <div className="tq-kart" style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 40 }}>🍽</div>
+        <div className="tq-silik" style={{ letterSpacing: 1 }}>MOLADASIN</div>
+        <b style={{ fontSize: 34, fontFamily: "'Fraunces', serif" }}>{m.sure_dk} dk</b>
+        <div className="tq-not">{m.bas}{saatEki(m.bas)} beri · afiyet olsun</div>
+        <MolaCubuk dk={m.sure_dk} az={az} lim={lim} />
+        <div className="tq-not">{ben.yemek_tam ? 'Yemek hakkın tam (mola şartı yok) — afiyet olsun.' : m.hak_dustu || m.sure_dk > lim ? `${lim} dk geçti · bugün yemek hakkı oluşmadı` : `Yemek hakkı ${lim} dk'ya kadar senin. ${lim + 1}. dakikada sistem molayı kapatır; o gün yemek hakkı oluşmaz.`}</div>
+        <QrIpucu yazi={m.sure_dk < az ? `Molayı en erken ${az}. dakikada bitirebilirsin` : 'Molayı bitirmek için QR okut'} ana={m.sure_dk >= az} />
+      </div>
+    );
+  }
+  if (ben.acik) {
+    const dk = ben.giris_ts ? Math.max(0, Math.floor((simdi - new Date(ben.giris_ts).getTime()) / 60000)) : null;
+    return (
+      <div className="tq-kart">
+        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
+          <Halka oran={1} yazi={dk != null ? dkKisa(dk) : '—'} />   {/* Codex P2: plan gelene kadar (T2) yalnız geçen süre — vardiya uzunluğu varsayılmaz */}
+          <div>
+            <div className="tq-silik" style={{ letterSpacing: 1 }}>İÇERİDESİN</div>
+            <b style={{ fontSize: 24, fontFamily: "'Fraunces', serif" }}>{ben.giris ? `${ben.giris}'den beri` : 'İçeridesin'}</b>
+          </div>
+        </div>
+        {ben.devir?.ev && (   // Fable T1 #2: devir bekliyor (yalnız rol + ad — tutar yok; işlem devir QR'ında)
+          <div style={{ background: '#FFF6EC', border: `1px solid ${T.aksan}`, borderRadius: 12, padding: '10px 12px', fontWeight: 700 }}>
+            💵 {ben.devir.rol === 'devralan' ? `${ben.devir.devreden || 'Arkadaşın'} kasayı sana devrediyor` : 'Kasa devrin sürüyor'} — paneldeki devir QR'ını okut
+          </div>
+        )}
+        <QrIpucu yazi={m ? 'Çıkış için paneldeki QR\'ı okut' : 'Mola için paneldeki QR\'ı okut'} ana />
+        {!m && <QrIpucu yazi="Çıkış: aynı QR" />}
+        <YemekBilgi ben={ben} />
+      </div>
+    );
+  }
+  if (ben.cikis) {
+    return (
+      <div className="tq-kart" style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 56, color: T.yesil, lineHeight: 1 }}>✓</div>
+        <b style={{ fontSize: 28, fontFamily: "'Fraunces', serif" }}>Çıkış · {ben.cikis}</b>
+        <div className="tq-not">İyi dinlenmeler {ilkAd(ben.kisi)} 🌙</div>
+        <div style={{ background: T.yuzey, border: `1px solid ${T.kenar}`, borderRadius: 12, padding: '10px 12px', textAlign: 'left', display: 'grid', gap: 4 }}>
+          <div>Giriş <b>{ben.giris || '—'}</b> · Çıkış <b>{ben.cikis}</b></div>
+          {m && <div>🍽 Mola {m.bas}–{m.bit || '—'} · {m.sure_dk ?? '—'} dk</div>}
+        </div>
+        <YemekBilgi ben={ben} />
+      </div>
+    );
+  }
+  return (
+    <div className="tq-kart">
+      <b style={{ fontSize: 26, fontFamily: "'Fraunces', serif" }}>Merhaba {ilkAd(ben.kisi)} ☀️</b>
+      <div className="tq-not">Bugün henüz giriş yapmadın.</div>
+      <QrIpucu yazi="Giriş için paneldeki QR'ı okut" ana />
+      <YemekBilgi ben={ben} />
+    </div>
+  );
+}
+function BenSekme({ ben }) {
+  return (
+    <>
+      <AvansKart kartli />
+      <div className="tq-kart">
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+          <span>📱 Bu telefon</span><span style={{ background: '#E5F2EA', color: T.yesil, borderRadius: 999, padding: '4px 10px', fontWeight: 700, fontSize: 13 }}>bağlı ✓</span>
+        </div>
+        <div className="tq-silik">Ana ekrana ekle: tarayıcı menüsünden "Ana ekrana ekle". iPhone'da Paylaş → Ana Ekrana Ekle → <b>"Web Uygulaması olarak aç" seçeneğini KAPAT</b> (açık kalırsa telefon bağlantısı o simgede görünmez).</div>
+      </div>
+      <div className="tq-silik" style={{ textAlign: 'center' }}>{ben?.kisi} · TuliPi</div>
+    </>
+  );
+}
+function AltMenu({ sekme, setSekme }) {
+  const S = [['simdi', '⚡', 'Şimdi'], ['ben', '👤', 'Ben']];
+  return (
+    <nav style={{ position: 'fixed', left: 0, right: 0, bottom: 0, background: T.kart, borderTop: `1px solid ${T.kenar}`, display: 'flex', justifyContent: 'center', padding: '6px 12px calc(6px + env(safe-area-inset-bottom))', zIndex: 5 }}>
+      <div style={{ display: 'flex', gap: 8, width: '100%', maxWidth: 520 }}>
+        {S.map(([id, ik, ad]) => (
+          <button key={id} type="button" onClick={() => setSekme(id)} style={{ flex: 1, minHeight: 56, borderRadius: 12, border: 'none', font: 'inherit', cursor: 'pointer',
+            background: sekme === id ? T.yuzey : 'transparent', color: sekme === id ? T.metin : T.metin2, fontWeight: sekme === id ? 800 : 600, display: 'grid', placeItems: 'center' }}>
+            <span style={{ fontSize: 20, lineHeight: 1 }}>{ik}</span><span style={{ fontSize: 12 }}>{ad}</span>
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+}
+function Ev() {
   const bagli = !!cihazId('telefon');
   const [ben, setBen] = useState(null);
   const [hata, setHata] = useState('');
+  const [sekme, setSekme] = useState('simdi');
+  const [simdi, setSimdi] = useState(() => Date.now());
   const yukle = useCallback(() => {
     if (!bagli) return;
-    setHata('');
-    imzaliJson('telefon', 'GET', '/api/evvel-yeni/yoklama/ben').then(setBen)
+    imzaliJson('telefon', 'GET', '/api/evvel-yeni/yoklama/ben').then((r) => { setBen(r); setHata(''); })
       .catch((e) => setHata(agMesaji(e, 'Okunamadı')));
   }, [bagli]);
   useEffect(() => { yukle(); }, [yukle]);
+  useEffect(() => {   // sayfa açıkken 30 sn'de bir tazele (K5: bildirim yok); sekme gizliyken durur, dönünce hemen tazeler
+    const tazele = () => { if (!document.hidden) { setSimdi(Date.now()); yukle(); } };
+    const t = window.setInterval(tazele, 30000);
+    document.addEventListener('visibilitychange', tazele);
+    return () => { window.clearInterval(t); document.removeEventListener('visibilitychange', tazele); };
+  }, [yukle]);
   if (!bagli) return <TanimliDegil />;
   return (
-    <>
-      <Marka alt="Bugünkü durumun" />
-      <div className="tq-kart">
-        {hata && <><div style={{ color: T.kirmizi, fontWeight: 700 }}>{hata}</div><button className="tq-btn tq-kucuk" onClick={yukle}>Tekrar dene</button></>}
-        {!hata && !ben && <div className="tq-not">Hazırlanıyor…</div>}
-        {ben && (<>
-          <div style={{ fontSize: 22, fontWeight: 800 }}>👤 {ben.kisi}</div>
-          <div className="tq-silik">{gunYazi(ben.gun)}</div>
-          <div style={{ fontSize: 18 }}>Giriş: <b>{ben.giris || '—'}</b> · Çıkış: <b>{ben.cikis || '—'}</b></div>
-          {ben.acik && <div style={{ color: T.yesil, fontWeight: 700 }}>İçeridesin{ben.acik_sube_ad ? ` · ${ben.acik_sube_ad}` : ''}</div>}
-          <MolaSatiri mola={ben.mola} />
-          {ben.acik && !ben.mola && <div className="tq-not">🍽 Yemek molası: henüz başlamadı — başlatmak için paneldeki QR'ı okut.</div>}
-          <div className="tq-not">Giriş / çıkış / yemek molası için şubedeki tabletin QR'ını okut.</div>
-        </>)}
-      </div>
-    </>
+    <div style={{ display: 'grid', gap: 14, paddingBottom: 84 }}>
+      <EvBaslik ben={ben} />
+      <EskiQrNotu bagli />
+      {hata && <div className="tq-kart"><div style={{ color: T.kirmizi, fontWeight: 700 }}>{hata}</div><button className="tq-btn tq-kucuk" onClick={yukle}>Tekrar dene</button></div>}
+      {!hata && !ben && <div className="tq-kart"><div className="tq-not">Hazırlanıyor…</div></div>}
+      {ben && sekme === 'simdi' && <SimdiKart ben={ben} simdi={simdi} />}
+      {ben && sekme === 'ben' && <BenSekme ben={ben} />}
+      <AltMenu sekme={sekme} setSekme={setSekme} />
+    </div>
   );
 }
 
@@ -540,10 +731,10 @@ function DevirIslem({ sube, jeton, did }) {
   const yukle = useCallback(() => {
     if (!bagli) return Promise.resolve(null);
     setHata('');
-    return imzaliJson('telefon', 'GET', `/api/evvel-yeni/yoklama/devir/${encodeURIComponent(did)}/telefon?sube=${encodeURIComponent(sube)}`)
+    return imzaliJson('telefon', 'GET', `/api/evvel-yeni/yoklama/devir/${encodeURIComponent(did)}/telefon?sube=${encodeURIComponent(sube)}&qr=${encodeURIComponent(jeton || '')}`)
       .then((x) => { setB(x); return x; })
       .catch((e) => { setHata(agMesaji(e, 'Okunamadı')); return null; });
-  }, [bagli, did, sube]);
+  }, [bagli, did, sube, jeton]);
   useEffect(() => { yukle(); }, [yukle]);
 
   const konumHazir = konum.durum !== 'bekliyor' || !!b?.muaf;
@@ -620,7 +811,7 @@ function DevirIslem({ sube, jeton, did }) {
           <div style={{ fontSize: 72, color: T.yesil, lineHeight: 1 }}>✓</div>
           <b style={{ fontSize: 24 }}>{sonuc.baslik} · {saatSimdi()}</b>
           <div className="tq-not">{sonuc.mesaj}</div>
-          <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">Durumumu gör</a>
+          <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">🏠 Eve dön</a>
         </div>
       ) : (
         <div className="tq-kart">
@@ -628,8 +819,8 @@ function DevirIslem({ sube, jeton, did }) {
           {!hata && !b && <div className="tq-not">Hazırlanıyor…</div>}
           {b && (<>
             <div style={{ fontSize: 20, fontWeight: 800 }}>👤 {b.kisi}</div>
-            <div className="tq-not">{b.muaf ? 'konum: yönetici (muaf)' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
-              {!b.muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksan, background: 'none', border: 'none', padding: 0, fontWeight: 700, minHeight: 44 }}>tekrar dene</button></>}</div>
+            <div className="tq-not">{b.muaf ? 'konumdan muaf' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
+              {!b.muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksanKoyu, background: 'none', border: 'none', padding: '0 6px', fontWeight: 700, minHeight: 48, minWidth: 48 }}>tekrar dene</button></>}</div>
             {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata}</div>}
 
             {b.rol === 'ustlenebilir' && b.baska_subede && <div style={{ color: T.kirmizi, fontWeight: 700 }}>Önce diğer şubeden çıkış yap</div>}
@@ -731,17 +922,28 @@ function MolaSatiri({ mola }) {
   return (
     <>
       <div style={{ fontSize: 17 }}>
-        🍽 {mola.durum === 'suruyor' ? <>Mola <b>{mola.bas}</b>'dan beri · <b>{mola.sure_dk} dk</b></> : <>Mola {mola.bas}–{mola.bit || '—'} · <b>{mola.sure_dk ?? '—'} dk</b></>}
+        🍽 {mola.durum === 'suruyor' ? <>Mola <b>{mola.bas}</b>{saatEki(mola.bas)} beri · <b>{mola.sure_dk} dk</b></> : <>Mola {mola.bas}–{mola.bit || '—'} · <b>{mola.sure_dk ?? '—'} dk</b></>}
       </div>
       {mola.hak_dustu && <div className="tq-not">{mola.otomatik ? `Mola ${mola.sure_dk ?? 61} dakikayı geçti — sistem kapattı, yemek hakkını kaybettin` : 'Bugün yemek hakkı kazanılamadı'}</div>}
     </>
   );
 }
 
+// 🔀 Eski basılı QR'dan gelindi (/gorev-giris → /q?eski=1, 1 Kasım kesimi) — tek satır ipucu (Fable 21 Eki)
+const eskiQrdan = () => { try { return new window.URLSearchParams(window.location.search).get('eski') === '1'; } catch { return false; } };
+function EskiQrNotu({ bagli }) {
+  if (!eskiQrdan()) return null;
+  return (
+    <div className="tq-kart" style={{ borderColor: T.aksanKoyu, fontWeight: 700 }}>
+      🔀 Bu eski QR artık kullanılmıyor. {bagli ? "Giriş / çıkış için paneldeki QR'ı okut." : 'Telefonunu bağlamak için merkeze adını söyle; gelen linki bu telefonda aç.'}
+    </div>
+  );
+}
 function TanimliDegil() {
   return (
     <>
       <Marka alt="Yoklama" />
+      <EskiQrNotu bagli={false} />
       <div className="tq-kart" style={{ textAlign: 'center' }}>
         <div style={{ fontSize: 44 }}>📵</div>
         <b style={{ fontSize: 20 }}>Bu telefon tanımlı değil</b>

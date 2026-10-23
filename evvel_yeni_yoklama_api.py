@@ -22,7 +22,7 @@ import math
 import secrets
 import time
 import uuid
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -33,6 +33,7 @@ from starlette.concurrency import run_in_threadpool
 from database import db, savepoint
 from evvel_yeni_olay import panel_kok   # kök biçimi tek yerde (K9)
 from evvel_yeni_cekirdek import merkez_aktor
+from evvel_yeni_cekirdek import tl as _tl_tr   # Türkçe para biçimi TEK yer (f-string içinde iç içe tırnak YOK — canlı Python 3.11)
 from evvel_yeni_cekirdek import adet_oku, ayar_oku, ayar_yaz, bekleyen_is_kaydet, is_gunu
 
 router = APIRouter(prefix="/api/evvel-yeni/yoklama", tags=["evvel-yeni-yoklama"])
@@ -236,7 +237,7 @@ def cihaz_coz(cur, basliklar, method: str, yol: str, govde: bytes, tur: Optional
     cur.execute("SELECT * FROM ey_cihaz WHERE id=%s", (cid,))
     c = cur.fetchone()
     if c and dict(c)["durum"] == "onay":
-        raise HTTPException(403, "Bu tablet merkez onayı bekliyor")
+        raise HTTPException(403, "Bu panel bilgisayarı merkez onayı bekliyor")
     if not c or dict(c)["durum"] != "aktif":
         raise HTTPException(403, "Bu cihaz tanımlı değil ya da iptal edildi — merkezden bağlantı iste")
     c = dict(c)
@@ -459,7 +460,8 @@ def _mola_durum(cur, personel_id: str, gun: date) -> Optional[dict]:
     lim = mola_limit(cur)
     if m["bitis_ts"] is None:
         sn = max(0, (datetime.now(timezone.utc) - m["baslangic_ts"]).total_seconds())
-        return {"durum": "suruyor", "bas": _saat(m["baslangic_ts"]), "sure_dk": int(sn // 60), "limit_dk": lim, "hak_dustu": sn > lim * 60}
+        return {"durum": "suruyor", "bas": _saat(m["baslangic_ts"]), "sure_dk": int(sn // 60), "limit_dk": lim, "en_az_dk": mola_en_az(cur),
+                "hak_dustu": sn > lim * 60}
     return {"durum": "bitti", "bas": _saat(m["baslangic_ts"]), "bit": _saat(m["bitis_ts"]), "sure_dk": m["sure_dk"], "limit_dk": lim,
             "hak_dustu": not m["yemek_hakki"] and not m["hak_elle"],
             "otomatik": m.get("bitis_tur") in ("otomatik_limit", "gece_otomatik")}
@@ -509,12 +511,15 @@ def yoklama_satirlari(cur, bas: date, son: date) -> list:
 
 def son_okutanlar(cur, sube_id: str, sn: int = 300) -> list:
     """PUBLIC: panelde canlı 'son okutanlar' (yabancı ad hemen görülsün)."""
+    # Codex (kısmen kapalı #16): ad süzgeci SQL'DE, sınır SONRA — 'LIMIT 50' sonra süzmek, ilk 50 kayıtsızsa geçerlileri yine saklıyordu.
+    # Geçerli kişiler Tanımlar'ın PUBLIC kapısından (ey_personel'e JOIN yok — modül sınırı)
+    pad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_personel")
+    if not pad:
+        return []
     cur.execute("""SELECT q.islem, q.zaman, q.personel_id FROM ey_qr_kullanim q
-                    WHERE q.sube_id=%s AND q.zaman > NOW() - (%s || ' seconds')::interval ORDER BY q.zaman DESC LIMIT 50""", (sube_id, str(sn)))
-    rows = [dict(x) for x in cur.fetchall() or []]
-    pad = _padlar(cur, rows)
-    # Codex P2: önce ad süzgeci, SONRA 8 (JOIN'deki gibi) — kayıtsız kişiler ilk 8'i doldurup geçerlileri saklamasın
-    return [{"ad": pad[r["personel_id"]], "islem": r["islem"], "saat": _saat(r["zaman"])} for r in rows if r["personel_id"] in pad][:8]
+                    WHERE q.sube_id=%s AND q.zaman > NOW() - (%s || ' seconds')::interval AND q.personel_id = ANY(%s)
+                    ORDER BY q.zaman DESC LIMIT 8""", (sube_id, str(sn), list(pad)))
+    return [{"ad": pad[str(r["personel_id"])], "islem": r["islem"], "saat": _saat(r["zaman"])} for r in [dict(x) for x in cur.fetchall() or []]]
 
 
 from evvel_yeni_cekirdek import tr_saat as _saat  # noqa: E402   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek
@@ -696,9 +701,16 @@ async def qr_png(request: Request):
     """Tabletin imzalı isteğiyle dönen QR resmi. Uzaktan 'güncel QR'ı çekmek' kapalı (Codex)."""
     yoklama_hazirla()
 
+    istenen = (request.query_params.get("s") or "").strip()[:60]   # B5: panelin AÇIK olduğu şube
+
     def _is():
         with db() as (conn, cur):
             c = cihaz_coz(cur, request.headers, "GET", request.url.path, b"", tur="tablet")
+            if istenen and str(c["sube_id"]) != istenen:   # B5 (Fable): başka şubeye bağlı PC yanlış şubenin QR'ını göstermesin — baştan söyle
+                from evvel_yeni_tanim_api import subeler as _sb
+                ad = {str(x["id"]): x["ad"] for x in _sb(cur, hepsi=True)}
+                raise HTTPException(409, f"Bu bilgisayar {ad.get(str(c['sube_id']), c['sube_id'])} şubesine bağlı — "
+                                         f"{ad.get(istenen, istenen)} için QR veremez. Merkezden bu şube için bağlantı iste.")
             return c["sube_id"], qr_jeton(cur, c["sube_id"])
     sube_id, jeton = await run_in_threadpool(_is)
     # R1: panelin "QR ile onayla" adımı → QR onay kimliğini taşır (telefon o işlemi onaylar)
@@ -742,7 +754,7 @@ async def _telefon(request: Request, fn):
 
 
 @router.get("/ben")
-async def ben(request: Request, sube: Optional[str] = None):
+async def ben(request: Request, sube: Optional[str] = None, qr: Optional[str] = None):
     """Telefon ekranı: kim, hangi şube, bugün giriş / çıkış, yapabileceği tek düğme."""
     def fn(cur, c, p, _v):
         cur.execute("SELECT y.* FROM ey_yoklama y WHERE y.personel_id=%s ORDER BY y.giris_ts DESC LIMIT 1", (p["id"],))
@@ -753,6 +765,8 @@ async def ben(request: Request, sube: Optional[str] = None):
         sube_ad = None
         if sube:
             sube_ad = adlar(cur, "ey_sube", [sube]).get(str(sube))
+        elif acik:   # telefon EV sayfası (/q, şubesiz): açık girişin şubesi (Fable B8)
+            sube_ad = son.get("sube_ad")
         mola = _mola_durum(cur, p["id"], is_gunu())
         burada = acik and son.get("sube_id") == sube
         yap = ["giris"] if not acik and sube else []
@@ -761,12 +775,24 @@ async def ben(request: Request, sube: Optional[str] = None):
         devir = None
         if sube:
             d = devir_durum(cur, sube)
-            if d and d["durum"] == "devreden_onayladi" and d.get("devreden_id") != p["id"] and (burada or not acik):
+            # Codex P1 (21 Eki): devrin beyan ayrıntısı (sayılan tutar) yalnız o şubenin GEÇERLİ QR'ıyla — adrese şube yazmak yetmez
+            if (d and d["durum"] == "devreden_onayladi" and d.get("devreden_id") != p["id"] and (burada or not acik)
+                    and qr_dogrula(cur, str(sube), qr or "") is not None):
                 devir, yap = {**d, "rol": "devralan", "giris_acilir": not acik}, ["kabul"] + [x for x in yap if x != "giris"]
+        elif acik and son.get("sube_id"):   # EV (/q, şubesiz) — Fable T1 #2: yalnız ROL + devredenin adı (tutar yok; işlem QR'da)
+            d = devir_durum(cur, str(son["sube_id"]))
+            if d and d["durum"] == "devreden_onayladi" and d.get("devreden_id") != p["id"]:
+                devir = {"rol": "devralan", "devreden": d.get("devreden"), "ev": True}
+            elif d and d["durum"] in DEVIR_ACIK and d.get("devreden_id") == p["id"]:
+                devir = {"rol": "devreden", "ev": True}
         return {"kisi": p["ad"], "muaf": bool(p.get("konum_muaf")), "gun": is_gunu().isoformat(), "sube": sube, "sube_ad": sube_ad,
                 "mola": mola, "devir": devir,
+                "qr_gecerli": (qr_dogrula(cur, str(sube), qr or "") is not None) if sube else None,   # Fable #7: süresi dolan QR baştan söylensin
+                "yemek_tam": bool(p.get("mudur")),   # müdür: yemek mola şartsız tam (Maaş ile aynı kural; _personel 'mudur' hesaplar)
                 "acik": acik, "acik_sube": son.get("sube_id") if acik else None, "acik_sube_ad": son.get("sube_ad") if acik else None,
                 "giris": _saat(son.get("giris_ts")) if son and son.get("is_gunu") == is_gunu() else None,
+                "giris_ts": son["giris_ts"].isoformat() if son and son.get("is_gunu") == is_gunu() and son.get("giris_ts") else None,   # ev kartı süre halkası
+                "mola_limit_dk": mola_limit(cur), "mola_en_az_dk": mola_en_az(cur),
                 "cikis": _saat(son.get("cikis_ts")) if son and son.get("is_gunu") == is_gunu() else None,
                 "yapabilir": yap}
     return await _telefon(request, fn)
@@ -810,7 +836,8 @@ async def avans_durum_tel(request: Request):
         d = A.avans_durumu(cur, p["id"])
         return {"tavan": d["tavan"] / 100, "kullanilan": d["kullanilan"] / 100, "kullanilabilir": d["kullanilabilir"] / 100,
                 "acik": ({"tutar": int(d["acik"]["tutar"]) / 100, "durum": d["acik"]["durum"], "yontem": d["acik"].get("yontem"),
-                          "talep": d["acik"]["talep_ts"]} if d["acik"] else None), "ay": d["ay"]}
+                          "talep": d["acik"]["talep_ts"]} if d["acik"] else None), "ay": d["ay"],
+                "son": ({**d["son"], "tutar": int(d["son"]["tutar"]) / 100} if d.get("son") else None)}
     return await _telefon(request, fn)
 
 
@@ -902,8 +929,11 @@ def gunler(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = Fa
         _merkez(cur, x_evvel_oturum)
         gece_kapat(cur)
         if acik:
-            cur.execute("""SELECT y.* FROM ey_yoklama y WHERE y.cikis_ts IS NULL AND y.is_gunu < %s
-                            ORDER BY y.is_gunu, y.giris_ts""", (is_gunu(),))
+            # B33 (Fable 22 Eki): gece_kapat önce çalıştığı için 'cikis_ts IS NULL' hep boştu → sistemin GECE kapattığı (son 14 gün)
+            # ve hâlâ açık kalanlar; merkez saat yazınca cikis_tur='merkez' olur, listeden kendiliğinden düşer
+            cur.execute("""SELECT y.* FROM ey_yoklama y WHERE y.is_gunu < %s
+                             AND (y.cikis_ts IS NULL OR (y.cikis_tur = 'gece_otomatik' AND y.is_gunu >= %s))
+                            ORDER BY y.is_gunu, y.giris_ts""", (is_gunu(), is_gunu() - timedelta(days=14)))
         elif bas and son:
             cur.execute("SELECT y.* FROM ey_yoklama y WHERE y.is_gunu BETWEEN %s AND %s ORDER BY y.is_gunu, y.giris_ts", (bas, son))
         else:
@@ -939,7 +969,7 @@ def duzelt(b: DuzeltBody, x_evvel_oturum: Optional[str] = Header(default=None)):
             personel_kilidi(cur, dict(k0)["personel_id"])   # Codex: telefondan mola başlatma ile yarışmasın
         cur.execute("SELECT * FROM ey_yoklama WHERE id=%s FOR UPDATE", (b.yoklama_id,))
         r = cur.fetchone()
-        if not r or dict(r)["cikis_ts"] is not None:
+        if not r or (dict(r)["cikis_ts"] is not None and dict(r).get("cikis_tur") != "gece_otomatik"):   # B33: gece kapatılan da düzeltilir
             raise HTTPException(404, "Açık giriş bulunamadı")
         r = dict(r)
         from evvel_yeni_cekirdek import is_gunu_zamani
@@ -1033,17 +1063,24 @@ def molalar(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = F
             raise HTTPException(400, "bas/son ya da acik=1")
         rows = _adla(cur, [dict(r) for r in cur.fetchall() or []])
         lim = mola_limit(cur)
+        # B56: müdürün yemek hakkı mola şartsız (Maaş 'müdür — tam') → mola ekranı 'hak düşen' demesin, Bekleyen'e düşmesin
+        from evvel_yeni_tanim_api import mudur_mu, tanim_listesi
+        _mud = {str(p["id"]) for p in tanim_listesi(cur, "ey_personel", ("gorev",)) if mudur_mu(p.get("gorev"))}
+        for r in rows:
+            r["mudur"] = str(r["personel_id"]) in _mud
+        if acik:
+            rows = [r for r in rows if not (r["mudur"] and r["bitis_ts"] is not None)]
     bugun = is_gunu()
 
     def _durum(r):
         if r["bitis_ts"] is None:
             return "suruyor" if r["is_gunu"] >= bugun else "bitmedi"
-        return {"merkez": "merkez yazdı", "qr": "bitti"}.get(r["bitis_tur"], "çıkışla kapandı")
+        return {"merkez": "merkez yazdı", "qr": "bitti", "gece_otomatik": "gece sistem kapattı"}.get(r["bitis_tur"], "çıkışla kapandı")   # B56
     return {"limit_dk": lim, "satirlar": [{
         "id": r["id"], "personel_id": r["personel_id"], "gun": r["is_gunu"].isoformat(), "ad": r["ad"], "sube": r["sube_ad"], "bas": _saat(r["baslangic_ts"]),
         "bit": _saat(r["bitis_ts"]), "sure_dk": r["sure_dk"], "durum": _durum(r), "yemek_hakki": r["yemek_hakki"],
         "hak_elle": r["hak_elle"], "hak_veren": r["hak_veren"], "hak_aciklama": r["hak_aciklama"],
-        "hak_zaman": str(r["hak_zaman"])[:16] if r["hak_zaman"] else None, "gorulen": r["gorulen"], "mesafe": r["baslangic_mesafe_m"]}
+        "hak_zaman": str(r["hak_zaman"])[:16] if r["hak_zaman"] else None, "gorulen": r["gorulen"], "mesafe": r["baslangic_mesafe_m"], "mudur": r["mudur"]}
         for r in rows]}
 
 
@@ -1087,6 +1124,8 @@ def mola_duzelt(mid: str, b: MolaDuzeltBody, x_evvel_oturum: Optional[str] = Hea
 @router.post("/mola/{mid}/hak-ver")
 def mola_hak_ver(mid: str, b: AciklamaBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Merkez: uzun moladan düşen yemek hakkını elle verir (K7 'gerekirse ödemesini yaparız') — izli."""
+    if len((b.aciklama or "").strip()) < 2:   # B56: ekran "NEDEN yazılır" diyor — boş geçilemez
+        raise HTTPException(400, "Nedenini yaz")
     yoklama_hazirla()
     with db() as (conn, cur):
         kim = _merkez(cur, x_evvel_oturum)
@@ -1188,7 +1227,7 @@ def _devir_dict(cur, r: dict) -> dict:
             "ustlenen_id": r.get("ustlenen_id"), "ustlenen": ad.get(r.get("ustlenen_id")), "vekil": bool(r.get("vekil")),
             "sayilan": None if sk is None else int(sk) / 100, "bardak": r.get("bardak") or [], "urunler": r.get("urunler") or [],
             "pasta": r.get("pasta_adet"), "panel": _saat(r["panel_ts"]), "ustlen_saat": _saat(r.get("ustlen_ts")), "pencere": pencere,
-            "devreden_saat": _saat(r.get("devreden_ts")), "devralan_saat": _saat(r.get("devralan_ts")), "not": r.get("devralan_not"),
+            "devreden_saat": _saat(r.get("devreden_ts")), "devralan_saat": _saat(r.get("devralan_ts")), "not": r.get("devralan_not") or (f"merkez: {r.get('merkez_aciklama')}" if r.get("merkez_aciklama") else None),   # B57
             "devralan_sayilan": None if ds is None else int(ds) / 100, "merkez_sonuc": r.get("merkez_sonuc")}
 
 
@@ -1299,7 +1338,7 @@ def _devir_rol(cur, d: dict, p: dict, sube: str) -> str:
 
 
 @router.get("/devir/{did}/telefon")
-async def devir_telefon(did: str, request: Request, sube: Optional[str] = None):
+async def devir_telefon(did: str, request: Request, sube: Optional[str] = None, qr: Optional[str] = None):
     """Telefon (imzalı): devir QR'ı okutuldu → bu kişinin rolü + devir + form kalemleri + içeride mi."""
     def fn(cur, c, p, _v):
         cur.execute("SELECT * FROM ey_devir WHERE id=%s", (did,))
@@ -1310,6 +1349,13 @@ async def devir_telefon(did: str, request: Request, sube: Optional[str] = None):
         cur.execute("SELECT * FROM ey_devir WHERE id=%s", (did,))
         d = _devir_dict(cur, dict(cur.fetchone()))
         s = dict(r)["sube_id"]
+        # Codex P1 (21 Eki): kasa beyanı / ürünler / adlar yalnız devrin TARAFINA ya da o şubenin GEÇERLİ QR'ını okutana
+        # (eski / kopyalanmış devir bağlantısı yetmez; adresteki şube devrin şubesi olmalı)
+        if sube and str(sube) != str(s):
+            raise HTTPException(404, "Devir bulunamadı")
+        taraf = p["id"] in {dict(r).get("devreden_id"), dict(r).get("ustlenen_id"), dict(r).get("devralan_id")} - {None}
+        if not taraf and qr_dogrula(cur, str(s), qr or "") is None:
+            raise HTTPException(409, "QR süresi doldu — paneldeki devir QR'ını yeniden okut")
         sube_ad = adlar(cur, "ey_sube", [s]).get(str(s))
         icerde = acik_mi(cur, s, p["id"])
         cur.execute("SELECT DISTINCT y.personel_id FROM ey_yoklama y WHERE y.sube_id=%s AND y.cikis_ts IS NULL AND y.is_gunu=%s AND y.personel_id<>%s",
@@ -1574,7 +1620,11 @@ def _bekleyen(cur, baglam: dict) -> list:
                     WHERE (m.bitis_ts IS NULL AND (m.is_gunu < %s OR m.baslangic_ts < NOW() - (%s || ' minutes')::interval))
                        OR (m.yemek_hakki = FALSE AND NOT m.hak_elle AND m.gorulen IS NULL)
                     ORDER BY m.is_gunu""", (bugun, str(mola_limit(cur) + 1)))
+    from evvel_yeni_tanim_api import mudur_mu, tanim_listesi
+    _mud = {str(p["id"]) for p in tanim_listesi(cur, "ey_personel", ("gorev",)) if mudur_mu(p.get("gorev"))}   # B56
     for r in _adla(cur, [dict(x) for x in cur.fetchall() or []]):
+        if r["bitis_ts"] is not None and str(r["personel_id"]) in _mud:
+            continue   # B56: müdürün yemek hakkı şartsız — 'hakkı düştü' işi yok
         if r["bitis_ts"] is None and r["is_gunu"] >= bugun:
             out.append({"tur": "yoklama_mola_uzun", "genel": True, "grup": "personel", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
                         "etiket": "⏱ Mola uzun", "ad": f"{r['ad']} — {r['sube_ad'] or ''} molası sürüyor, sınır aşıldı (yemek hakkı düşüyor)",
@@ -1602,7 +1652,7 @@ def _bekleyen(cur, baglam: dict) -> list:
         if r["durum"] in ("tutmuyor", "tamam"):   # tutmuyor (fark) ya da başka personel ADINA devir (sahip: merkeze bildirim)
             fark = ""
             if r.get("devralan_sayilan_kurus") is not None and r.get("sayilan_kurus") is not None:
-                fark = f" · devreden {int(r['sayilan_kurus']) / 100:,.2f} ₺, devralan {int(r['devralan_sayilan_kurus']) / 100:,.2f} ₺"
+                fark = f" · devreden {_tl_tr(int(r['sayilan_kurus']))}, devralan {_tl_tr(int(r['devralan_sayilan_kurus']))}"
             vek = f" · {r['ustlenen']} adına doldurdu" if r.get("vekil") else ""
             out.append({"tur": "yoklama_devir_tutmuyor", "genel": True, "grup": "personel", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
                         "etiket": "⚠ Devir tutmuyor" if r["durum"] == "tutmuyor" else "👥 Devir başkası adına",
@@ -1623,19 +1673,21 @@ def _bekleyen(cur, baglam: dict) -> list:
     cur.execute("SELECT sube_id, durum FROM ey_cihaz WHERE sube_id IS NOT NULL AND durum IN ('onay','aktif')")
     _cz = {(dict(x)["sube_id"], dict(x)["durum"]) for x in cur.fetchall() or []}
     _sub = [{"ad": s["ad"], "onay": (s["id"], "onay") in _cz, "aktif": (s["id"], "aktif") in _cz, "konumsuz": s["lat"] is None}
-            for s in tanim_listesi(cur, "ey_sube", ("ad", "lat", "depo"), aktif=True) if not s.get("depo")]   # depo QR göstermez
+            for s in tanim_listesi(cur, "ey_sube", ("ad", "lat", "depo"), aktif=True)
+            # yalnız depo olan yer panel istemez; depo + şube (Tema) paneli bağlıysa onun da koordinatı sorulur (B87)
+            if not s.get("depo") or (s["id"], "onay") in _cz or (s["id"], "aktif") in _cz]
     for r in _sub:
         if r["onay"]:
             out.append({"tur": "yoklama_tablet_onay", "genel": True, "grup": "personel", "id": "tablet_onay:" + r["ad"], "tarih": bugun.isoformat(),
-                        "etiket": "📟 Tablet", "ad": f"{r['ad']} tableti onay bekliyor", "alt": "Bu tablet o şubenin mi? Onayla",
+                        "etiket": "🖥️ Panel", "ad": f"{r['ad']} panel bilgisayarı onay bekliyor", "alt": "Bu bilgisayar o şubenin mi? Onayla",
                         "sayfa": "personel_telefon", "dugme": "Telefonlar"})
         elif not r["aktif"]:
             out.append({"tur": "yoklama_tablet_yok", "genel": True, "grup": "personel", "id": "tablet_yok:" + r["ad"], "tarih": bugun.isoformat(),
-                        "etiket": "📟 Tablet", "ad": f"{r['ad']} tableti kayıtlı değil", "alt": "Tablet için bağlantı linki üret (QR'ı tablet gösterir)",
+                        "etiket": "🖥️ Panel", "ad": f"{r['ad']} panel bilgisayarı kayıtlı değil", "alt": "Panel bilgisayarı için bağlantı linki üret (QR'ı panel ekranı gösterir)",
                         "sayfa": "personel_telefon", "dugme": "Telefonlar"})
         if r["konumsuz"]:
             out.append({"tur": "yoklama_konum_yok", "genel": True, "grup": "personel", "id": "konum_yok:" + r["ad"], "tarih": bugun.isoformat(),
-                        "etiket": "📍 Koordinat", "ad": f"{r['ad']} şubesinin koordinatı yok", "alt": "Konum kontrolü yapılamıyor",
+                        "etiket": "📍 Koordinat", "ad": f"{r['ad']} şubesinin koordinatı yok", "alt": "Konum kontrolü yapılamıyor — Tanımlar › Şubeler",
                         "sayfa": "personel_telefon", "dugme": "Telefonlar"})
     return out
 

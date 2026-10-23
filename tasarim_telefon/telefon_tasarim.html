@@ -1,0 +1,470 @@
+<!doctype html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>TuliPi Telefon Taslağı</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,600;9..144,700&family=Instrument+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+:root{--zemin:#F4EFE9;--kart:#FFFFFF;--kenar:#E6DED4;--yuzey:#F7F2EC;--metin:#2A241E;--metin2:#6B5E50;--silik:#9C8E7E;--aksan:#C8956A;--aksan2:#8a5a32;--yesil:#25794F;--yesil2:#E3F1E8;--kirmizi:#C03A2B;--golge:0 8px 30px rgba(120,90,60,.10)}
+*{box-sizing:border-box}
+body{margin:0;background:#E9E1D7;font-family:'Instrument Sans',system-ui,sans-serif;color:var(--metin);padding:28px 20px 60px}
+h1{font-family:'Fraunces',serif;font-weight:700;font-size:30px;margin:0 0 4px}
+.alt{color:var(--metin2);font-size:14px;margin-bottom:22px;max-width:900px;line-height:1.5}
+.galeri{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}
+.ekran{width:390px;flex:0 0 390px}
+.ekran h2{font-size:13px;font-weight:700;color:var(--metin2);margin:0 0 8px;letter-spacing:.3px;text-transform:uppercase}
+.ekran h2 span{display:inline-block;background:var(--aksan);color:#fff;border-radius:999px;padding:2px 9px;margin-right:6px;font-size:11px}
+.tel{width:390px;min-height:780px;background:var(--zemin);border-radius:44px;border:10px solid #1d1917;box-shadow:0 24px 60px rgba(40,25,10,.25);position:relative;overflow:hidden;display:flex;flex-direction:column}
+.cent{position:absolute;top:0;left:50%;transform:translateX(-50%);width:120px;height:30px;background:#1d1917;border-radius:0 0 18px 18px;z-index:5}
+.sb{height:44px;display:flex;align-items:flex-end;justify-content:space-between;padding:0 26px 4px;font-size:12px;font-weight:600;color:var(--metin2)}
+.ic{padding:10px 16px 14px;display:flex;flex-direction:column;gap:12px;flex:1}
+.bas{display:flex;align-items:center;gap:10px}
+.rozet{width:44px;height:44px;border-radius:50%;background:#15110e;color:#D8C49B;display:flex;align-items:center;justify-content:center;font-family:'Fraunces',serif;font-weight:700;font-size:11px;letter-spacing:.2px;flex-shrink:0;box-shadow:0 2px 10px rgba(200,149,106,.3)}
+.avatar{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px;flex-shrink:0;background:rgba(200,149,106,.16);color:var(--aksan2);border:1.5px solid rgba(200,149,106,.4)}
+.bas .ad{font-weight:700;font-size:16px;line-height:1.15}
+.bas .sube{font-size:12.5px;color:var(--silik)}
+.bas .sag{margin-left:auto;font-size:12px;color:var(--silik);text-align:right}
+.kart{background:var(--kart);border:1px solid var(--kenar);border-radius:20px;padding:18px;box-shadow:var(--golge);display:flex;flex-direction:column;gap:10px}
+.kart.vurgu{background:linear-gradient(160deg,#FFFDFA,#F9F1E8)}
+.etiket{font-size:12px;font-weight:700;letter-spacing:.6px;text-transform:uppercase;color:var(--silik)}
+.buyuk{font-family:'Fraunces',serif;font-size:28px;font-weight:700;line-height:1.1}
+.orta{font-size:17px;font-weight:600}
+.not{font-size:14px;color:var(--metin2);line-height:1.45}
+.silik{font-size:13px;color:var(--silik)}
+.btn{min-height:64px;width:100%;border-radius:16px;border:1px solid var(--kenar);background:var(--yuzey);color:var(--metin);font:inherit;font-size:18px;font-weight:700;display:flex;align-items:center;justify-content:center;gap:10px;padding:12px 16px;text-align:center}
+.btn.ana{background:var(--aksan);border-color:var(--aksan);color:#fff;box-shadow:0 8px 20px rgba(200,149,106,.35)}
+.btn.yesil{background:var(--yesil);border-color:var(--yesil);color:#fff}
+.btn.kucuk{min-height:54px;font-size:16px;font-weight:600}
+.btn.pasif{opacity:.45}
+.satir{display:flex;justify-content:space-between;align-items:center;font-size:15px;padding:8px 0;border-top:1px solid var(--kenar)}
+.satir:first-of-type{border-top:0}
+.pil{display:inline-flex;align-items:center;gap:6px;border-radius:999px;padding:5px 11px;font-size:12.5px;font-weight:700;background:var(--yuzey);border:1px solid var(--kenar);color:var(--metin2)}
+.pil.yesil{background:var(--yesil2);border-color:#BFDDCB;color:var(--yesil)}
+.pil.aksan{background:rgba(200,149,106,.14);border-color:rgba(200,149,106,.4);color:var(--aksan2)}
+.serit{background:var(--yesil2);border:1px solid #BFDDCB;color:var(--yesil);border-radius:14px;padding:12px 14px;font-weight:700;font-size:15px;display:flex;gap:8px;align-items:center}
+.halka{display:flex;align-items:center;gap:14px}
+.halka svg{flex-shrink:0}
+.nav{margin-top:auto;display:flex;border-top:1px solid var(--kenar);background:#FBF8F4;padding:8px 10px 18px}
+.nav div{flex:1;text-align:center;font-size:11.5px;font-weight:600;color:var(--silik);padding:6px 0;min-height:48px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:3px}
+.nav div b{font-size:20px;display:block}
+.nav .aktif{color:var(--aksan2);background:rgba(200,149,106,.12);border-radius:12px}
+.girdi{min-height:56px;border-radius:14px;border:1px solid var(--kenar);background:var(--yuzey);font:inherit;font-size:18px;padding:12px 14px;width:100%;color:var(--metin);display:flex;align-items:center}
+.girdi.bos{color:var(--silik)}
+.adim{display:flex;gap:6px}
+.adim i{flex:1;height:5px;border-radius:3px;background:var(--kenar)}
+.adim i.d{background:var(--aksan)}
+.gun{display:flex;align-items:center;gap:12px;padding:12px 14px;border-radius:14px;background:var(--kart);border:1px solid var(--kenar)}
+.gun .g{width:44px;text-align:center;line-height:1.1}
+.gun .g b{display:block;font-size:17px}
+.gun .g span{font-size:11px;color:var(--silik);text-transform:uppercase}
+.gun .b{flex:1}
+.gun .b b{display:block;font-size:15px}
+.gun .b span{font-size:13px;color:var(--metin2)}
+.gun.bugun{border-color:var(--aksan);background:#FFF9F2;box-shadow:var(--golge)}
+.gun.izin{opacity:.75}
+.gun.bos .b b{color:var(--silik);font-weight:500}
+.ok{font-size:72px;color:var(--yesil);line-height:1;text-align:center}
+.kutu{background:var(--yuzey);border:1px solid var(--kenar);border-radius:14px;padding:12px 14px;display:flex;flex-direction:column;gap:5px;font-size:15px}
+.kutu b.k{font-size:18px}
+.ipucu{display:flex;gap:10px;align-items:flex-start;font-size:13px;color:var(--metin2);background:var(--yuzey);border-radius:12px;padding:10px 12px}
+.qr{width:72px;height:72px;border-radius:12px;background:
+ repeating-linear-gradient(90deg,#2A241E 0 6px,transparent 6px 12px),
+ repeating-linear-gradient(0deg,#2A241E 0 6px,transparent 6px 12px);background-blend-mode:multiply;opacity:.85;border:4px solid #fff;outline:1px solid var(--kenar)}
+.sekme{display:flex;gap:6px;background:var(--yuzey);border-radius:12px;padding:4px}
+.sekme div{flex:1;text-align:center;font-size:13px;font-weight:600;color:var(--silik);padding:8px;border-radius:9px}
+.sekme .a{background:#fff;color:var(--metin);box-shadow:0 1px 4px rgba(0,0,0,.06)}
+.legend{margin-top:40px;background:#fff;border-radius:16px;padding:18px 22px;border:1px solid var(--kenar);max-width:900px;font-size:14px;line-height:1.6;color:var(--metin2)}
+.legend b{color:var(--metin)}
+</style>
+</head>
+<body>
+<h1>TuliPi · Personel Telefon Alanı</h1>
+<div class="alt">Fable taslağı · 21 Ekim 2026 · Açık/sıcak tema, tek el kullanımı, tek büyük düğme. Örnek veriler uydurma (Ayşe K., Zafer). Hiçbir ekranda kasada beklenen tutar, fark ya da başkasının verisi yok — yalnız kişinin kendi yazdığı sayılar.</div>
+
+<div class="galeri">
+
+<!-- 1 BAĞLA -->
+<div class="ekran"><h2><span>1</span>İlk açılış · Telefonu bağla</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>09:41</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div><div class="ad">TuliPi Coffee</div><div class="sube">Telefonunu bağla</div></div></div>
+  <div class="kart vurgu" style="margin-top:28px;text-align:center;gap:14px">
+    <div style="font-size:52px">📱</div>
+    <div class="buyuk">Bu telefon senin olacak</div>
+    <div class="not">Merkezin gönderdiği bağlantı tek kullanımlık. Bağlanınca giriş, çıkış ve onaylar bu telefondan yapılır — <b>şifre yok, PIN yok.</b></div>
+    <div class="btn ana">Bu cihazı bağla</div>
+    <div class="silik">iPhone'da Safari: önce "Ana ekrana ekle", sonra oradan bağla.</div>
+  </div>
+  <div class="ipucu"><span>🔒</span><span>Anahtar yalnız bu telefonda durur; kopyalanamaz. Telefon değişince merkezden yeni bağlantı iste.</span></div>
+</div></div></div>
+
+<!-- 2 GİRİŞ -->
+<div class="ekran"><h2><span>2</span>QR okuttu · Giriş</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>08:01</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">Zafer · 21 Ekim, Çarşamba</div></div></div>
+  <div class="kart vurgu" style="gap:14px">
+    <div class="etiket">Giriş</div>
+    <div class="buyuk">Günaydın Ayşe ☀️</div>
+    <div class="satir"><span>Şube</span><b>Zafer</b></div>
+    <div class="satir"><span>Konum</span><span class="pil yesil">✓ şubedesin</span></div>
+    <div class="satir"><span>Bugünkü planın</span><b>09:00 – 18:30</b></div>
+    <div class="btn yesil" style="margin-top:8px">✅ Giriş yap</div>
+  </div>
+  <div class="ipucu"><span>🍽</span><span>Yemek molasına çıkarken paneldeki QR'ı <b>tekrar okut</b> — düğme kendiliğinden "Mola başlat" olur.</span></div>
+</div></div></div>
+
+<!-- 3 ŞİMDİ / İÇERİDEYİM -->
+<div class="ekran"><h2><span>3</span>Ev · Şimdi (içerideyim)</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>11:22</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">Zafer · 21 Ekim</div></div><div class="sag">bugün<br>kapanış <b>sende</b> 🔑</div></div>
+  <div class="serit">✓ Giriş yaptın · 08:02</div>
+  <div class="kart vurgu">
+    <div class="halka">
+      <svg width="84" height="84" viewBox="0 0 84 84"><circle cx="42" cy="42" r="34" fill="none" stroke="#E6DED4" stroke-width="8"/><circle cx="42" cy="42" r="34" fill="none" stroke="#C8956A" stroke-width="8" stroke-linecap="round" stroke-dasharray="213.6" stroke-dashoffset="138" transform="rotate(-90 42 42)"/><text x="42" y="47" text-anchor="middle" font-size="16" font-weight="700" fill="#2A241E">3s 20d</text></svg>
+      <div><div class="etiket">İçeridesin</div><div class="buyuk" style="font-size:24px">08:02'den beri</div><div class="not">Plan 09:00 – 18:30 · 7 sa 8 dk kaldı</div></div>
+    </div>
+    <div class="btn ana" style="margin-top:6px">🍽 Mola için QR okut</div>
+    <div class="btn kucuk">🚪 Çıkış için QR okut</div>
+  </div>
+  <div class="kart" style="padding:14px 18px">
+    <div class="satir"><span>🍽 Yemek hakkı · bugün</span><span class="pil">mola ile kazanılır · 45–60 dk</span></div>
+    <div class="satir"><span>📅 Yarın</span><b>Zafer · 09:00 – 18:30</b></div>
+  </div>
+  <div class="nav"><div class="aktif"><b>⚡</b>Şimdi</div><div><b>📅</b>Haftam</div><div><b>👤</b>Ben</div></div>
+</div></div></div>
+
+<!-- 4 MOLADA -->
+<div class="ekran"><h2><span>4</span>Ev · Molada</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>12:48</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">Zafer · 21 Ekim</div></div></div>
+  <div class="kart vurgu" style="text-align:center;gap:12px">
+    <div style="font-size:44px">🍽</div>
+    <div class="etiket">Moladasın</div>
+    <div class="buyuk">18 dk</div>
+    <div class="not">12:30'dan beri · Afiyet olsun</div>
+    <div style="position:relative;height:10px;border-radius:5px;background:var(--kenar);margin:6px 4px"><div style="position:absolute;left:0;top:0;height:10px;width:30%;border-radius:5px;background:var(--aksan)"></div><div style="position:absolute;left:75%;top:-4px;width:2px;height:18px;background:var(--metin2)"></div><div style="position:absolute;right:0;top:-4px;width:2px;height:18px;background:var(--kirmizi)"></div></div>
+    <div style="display:flex;justify-content:space-between;font-size:12px;color:var(--silik);padding:0 4px"><span>0</span><span>45 dk · bitirilebilir</span><span>60 dk</span></div>
+    <div class="satir" style="border:0;padding:4px 0 0"><span>🍽 Yemek hakkı</span><span class="pil yesil">60 dk'ya kadar senin</span></div>
+    <div class="silik">61. dakikada sistem molayı kendiliğinden kapatır; o gün yemek hakkı oluşmaz.</div>
+    <div class="btn kucuk pasif" style="margin-top:4px">Molayı bitir için QR okut · 13:15'ten sonra</div>
+  </div>
+  <div class="kart" style="padding:14px 18px">
+    <div class="satir"><span>Giriş</span><b>08:02</b></div>
+    <div class="satir"><span>Bugünkü planın</span><b>09:00 – 18:30</b></div>
+  </div>
+  <div class="nav"><div class="aktif"><b>⚡</b>Şimdi</div><div><b>📅</b>Haftam</div><div><b>👤</b>Ben</div></div>
+</div></div></div>
+
+<!-- 5 ONAY -->
+<div class="ekran"><h2><span>5</span>QR okuttu · Kapanış onayı</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>22:41</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">Zafer · onay</div></div></div>
+  <div class="kart vurgu" style="gap:12px">
+    <div class="etiket">🌙 Kapanış · Zafer</div>
+    <div class="buyuk" style="font-size:24px">Paneldeki kapanışı onaylıyorsun</div>
+    <div class="kutu">
+      <span class="silik">Panelde girdiğin özet</span>
+      <span>💵 Saydığın nakit: <b>1.250 ₺</b></span>
+      <span>🥤 Bardak: küçük 40 · büyük 30 · plastik 20</span>
+      <span>🍰 Pasta: 6 · ☑ X raporu alındı</span>
+    </div>
+    <div class="satir"><span>Onaylayan</span><b>Ayşe K.</b></div>
+    <div class="satir"><span>Konum</span><span class="pil yesil">✓ şubedesin</span></div>
+    <div class="btn ana" style="margin-top:4px">✅ Onayla — kapanışçı sen olursun</div>
+    <div class="silik" style="text-align:center">Kapanışı sen yapmıyorsan onaylama:</div>
+    <div class="btn kucuk">🚪 Sadece çıkış yap</div>
+  </div>
+</div></div></div>
+
+<!-- 6 DEVİR DEVREDEN -->
+<div class="ekran"><h2><span>6</span>Kasa devri · Devreden (adım 5/5)</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>15:02</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">Zafer · kasa devri</div></div><div class="sag">⏱ 11 dk kaldı</div></div>
+  <div class="adim"><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i></div>
+  <div class="kart vurgu" style="gap:12px">
+    <div class="etiket">Özet · adım 5 / 5</div>
+    <div class="kutu">
+      <b class="k">💵 Saydığım nakit: 1.250 ₺</b>
+      <span>🥤 Bardak: küçük 40 · büyük 30 · plastik 20</span>
+      <span>📦 Ürün: Süt 8 · Su 24 · Redbull 10</span>
+      <span>🍰 Pasta: 6</span>
+    </div>
+    <label style="display:flex;gap:12px;align-items:center;min-height:48px;font-size:15px"><span style="width:26px;height:26px;border-radius:7px;background:var(--aksan);color:#fff;display:inline-flex;align-items:center;justify-content:center;font-weight:700">✓</span>Nakit sayımını doğruladım</label>
+    <div class="btn ana">🔁 Devrediyorum</div>
+    <div style="display:flex;gap:8px"><div class="btn kucuk" style="flex:1">« Geri</div></div>
+  </div>
+  <div class="silik" style="text-align:center">Yazdıkların telefonda saklanır; süre dolarsa QR'ı tekrar okut.</div>
+</div></div></div>
+
+<!-- 7 DEVİR DEVRALAN -->
+<div class="ekran"><h2><span>7</span>Kasa devri · Devralan</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>15:06</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar" style="background:rgba(74,120,180,.14);color:#2F5C8F;border-color:rgba(74,120,180,.4)">MY</div><div><div class="ad">Mehmet Y.</div><div class="sube">Zafer · kasa devri</div></div></div>
+  <div class="kart vurgu" style="gap:12px">
+    <div class="etiket">Ayşe K. sana devrediyor · 15:02</div>
+    <div class="kutu">
+      <b class="k">💵 Ayşe'nin saydığı: 1.250 ₺</b>
+      <span>🥤 Bardak: küçük 40 · büyük 30 · plastik 20</span>
+      <span>📦 Ürün: Süt 8 · Su 24 · Redbull 10 · 🍰 Pasta 6</span>
+    </div>
+    <div class="not">Kabul edince kasa sende, <b>girişin bununla açılır</b> ve kapanış sende olur.</div>
+    <div class="btn yesil">✅ Kabul ediyorum</div>
+    <div class="btn kucuk">Tutmuyor</div>
+    <div class="kutu" style="gap:8px">
+      <span class="silik">Tutmuyorsa: kendi saydığın tutarı yaz — devir yine sende kalır, merkez bakar.</span>
+      <div class="girdi bos">Saydığım tutar (₺)</div>
+    </div>
+  </div>
+</div></div></div>
+
+<!-- 8 HAFTAM -->
+<div class="ekran"><h2><span>8</span>Haftam · bu hafta</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>11:22</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">20 – 26 Ekim</div></div><div class="sag"><span class="pil yesil">yayında ✓</span></div></div>
+  <div class="sekme"><div class="a">Bu hafta</div><div>Gelecek hafta</div></div>
+  <div class="gun"><div class="g"><b>20</b><span>Pzt</span></div><div class="b"><b>Zafer</b><span>09:00 – 18:30 · çalıştın 9 sa 25 dk</span></div><span class="pil yesil">✓</span></div>
+  <div class="gun bugun"><div class="g"><b>21</b><span>Çar</span></div><div class="b"><b>Zafer</b><span>09:00 – 18:30 · bugün</span></div><span class="pil aksan">içeride</span></div>
+  <div class="gun"><div class="g"><b>22</b><span>Per</span></div><div class="b"><b>Zafer</b><span>09:00 – 18:30</span></div></div>
+  <div class="gun"><div class="g"><b>23</b><span>Cum</span></div><div class="b"><b>Köyceğiz</b><span>14:30 – 23:59 · kapanış</span></div><span class="pil aksan">güncellendi</span></div>
+  <div class="gun izin"><div class="g"><b>24</b><span>Cmt</span></div><div class="b"><b>İzinli</b><span>haftalık izin</span></div></div>
+  <div class="gun"><div class="g"><b>25</b><span>Paz</span></div><div class="b"><b>Zafer</b><span>09:00 – 18:30</span></div></div>
+  <div class="gun bos"><div class="g"><b>26</b><span>Pzt</span></div><div class="b"><b>Plan yok</b><span>&nbsp;</span></div></div>
+  <div class="silik" style="text-align:center">Plan merkezde yapılır; değişiklik burada hemen görünür.</div>
+  <div class="nav"><div><b>⚡</b>Şimdi</div><div class="aktif"><b>📅</b>Haftam</div><div><b>👤</b>Ben</div></div>
+</div></div></div>
+
+<!-- 9 BEN / AY ÖZETİ -->
+<div class="ekran"><h2><span>9</span>Ben · bu ay + avans</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>11:22</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar" style="width:48px;height:48px;font-size:17px">AK</div><div><div class="ad" style="font-size:18px">Ayşe Kaya</div><div class="sube">Zafer · tam zamanlı</div></div></div>
+  <div class="kart">
+    <div class="etiket">🤝 Avans</div>
+    <div class="satir"><span>Bu ay isteyebileceğin</span><b>en çok 6.000 ₺</b></div>
+    <div class="satir"><span>Açık talebin</span><span class="silik">yok</span></div>
+    <div class="btn kucuk">Avans iste</div>
+  </div>
+  <div class="kart">
+    <div class="etiket">📆 Ekim · şu ana kadar</div>
+    <div style="display:flex;gap:10px">
+      <div class="kutu" style="flex:1;align-items:center"><b class="k">18</b><span class="silik">gün</span></div>
+      <div class="kutu" style="flex:1;align-items:center"><b class="k">142 sa</b><span class="silik">çalışma</span></div>
+      <div class="kutu" style="flex:1;align-items:center"><b class="k">16</b><span class="silik">yemek günü</span></div>
+    </div>
+    <div class="silik">Eylül hak edişin: <b style="color:var(--metin)">onaylandı ✓</b> · tutar sahip kararıyla (K1)</div>
+  </div>
+  <div class="kart" style="padding:14px 18px">
+    <div class="satir"><span>📱 Bu telefon</span><span class="pil yesil">bağlı · güçlü</span></div>
+    <div class="satir"><span>Ana ekrana ekle</span><span class="silik">nasıl? ›</span></div>
+  </div>
+  <div class="nav"><div><b>⚡</b>Şimdi</div><div><b>📅</b>Haftam</div><div class="aktif"><b>👤</b>Ben</div></div>
+</div></div></div>
+
+<!-- 10 AVANS TALEP -->
+<div class="ekran"><h2><span>10</span>Avans talebi</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>11:25</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">Avans iste</div></div><div class="sag">✕</div></div>
+  <div class="kart vurgu" style="gap:12px">
+    <div class="etiket">🤝 Avans talebi</div>
+    <div class="buyuk" style="font-size:24px">Ne kadar?</div>
+    <div class="girdi" style="font-size:24px;font-weight:700">2.000 ₺</div>
+    <div style="display:flex;gap:8px">
+      <span class="pil">1.000</span><span class="pil aksan">2.000</span><span class="pil">3.000</span><span class="pil">en çok 6.000</span>
+    </div>
+    <div class="girdi bos" style="min-height:50px;font-size:15px">Not (isteğe bağlı)</div>
+    <div class="not">Merkez bakar; onaylanınca <b>havale</b> ya da <b>şubeden elden</b> verilir. Açık talebin varken yenisi açılmaz.</div>
+    <div class="btn ana">Talebi gönder</div>
+    <div class="btn kucuk">Vazgeç</div>
+  </div>
+</div></div></div>
+
+<!-- 11 ÇIKIŞ -->
+<div class="ekran"><h2><span>11</span>Çıkış yapıldı · Ev</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>18:34</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">Zafer · 21 Ekim</div></div></div>
+  <div class="kart vurgu" style="text-align:center;gap:10px">
+    <div class="ok">✓</div>
+    <div class="buyuk">Çıkış · 18:34</div>
+    <div class="not">İyi akşamlar Ayşe 🌙</div>
+    <div class="kutu" style="text-align:left;margin-top:6px">
+      <span>Giriş <b>08:02</b> · Çıkış <b>18:34</b></span>
+      <span>🍽 Mola 12:30 – 13:15 · 45 dk</span>
+      <span>⏱ Bugün 9 sa 47 dk</span>
+    </div>
+  </div>
+  <div class="kart" style="padding:14px 18px">
+    <div class="satir"><span>📅 Yarın</span><b>Zafer · 09:00 – 18:30</b></div>
+  </div>
+  <div class="nav"><div class="aktif"><b>⚡</b>Şimdi</div><div><b>📅</b>Haftam</div><div><b>👤</b>Ben</div></div>
+</div></div></div>
+
+<!-- 12 VARDİYAM BUGÜN -->
+<div class="ekran"><h2><span>12</span>Vardiyam · Bugün</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>16:40</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">Vardiyam</div></div></div>
+  <div class="sekme"><div class="a">Bugün</div><div>Bu hafta</div><div>Gelecek</div></div>
+  <div class="kart vurgu" style="gap:12px">
+    <div class="etiket">21 Ekim, Çarşamba · Zafer</div>
+    <div class="halka">
+      <svg width="84" height="84" viewBox="0 0 84 84"><circle cx="42" cy="42" r="34" fill="none" stroke="#E6DED4" stroke-width="8"/><circle cx="42" cy="42" r="34" fill="none" stroke="#C8956A" stroke-width="8" stroke-linecap="round" stroke-dasharray="213.6" stroke-dashoffset="40" transform="rotate(-90 42 42)"/><text x="42" y="47" text-anchor="middle" font-size="15" font-weight="700" fill="#2A241E">8s 38d</text></svg>
+      <div><div class="buyuk" style="font-size:22px">Vardiyanın sonuna az kaldı</div><div class="not">Plan bitişi 18:30 · 1 sa 50 dk kaldı</div></div>
+    </div>
+    <div class="kutu" style="gap:0">
+      <div class="satir"><span>Plan</span><b>09:00 – 18:30</b></div>
+      <div class="satir"><span>Giriş</span><b>08:02</b></div>
+      <div class="satir"><span>🍽 Mola</span><b>12:30 – 13:15 · 45 dk</b></div>
+      <div class="satir"><span>Yemek hakkı</span><span class="pil yesil">kazanıldı ✓</span></div>
+      <div class="satir"><span>Çıkış</span><span class="silik">henüz yok</span></div>
+      <div class="satir"><span>Şu ana kadar</span><b>8 sa 38 dk</b></div>
+    </div>
+    <div class="kutu" style="background:#FBF6F0;border-style:dashed;gap:2px">
+      <span class="silik">Dün · 20 Ekim</span>
+      <span style="font-size:14px">🍽 Mola 12:10 – 13:14 · 64 dk · <b style="color:var(--metin2)">yemek hakkı oluşmadı</b> (60 dk sınırı)</span>
+    </div>
+    <div class="silik">Plan ile saatlerin yan yana durur; değerlendirme merkezde, ay sonunda.</div>
+  </div>
+  <div class="kart" style="padding:14px 18px">
+    <div class="satir"><span>Bugün seninle</span><b>Mehmet Y. · 14:30 – 23:59</b></div>
+  </div>
+  <div class="nav"><div><b>⚡</b>Şimdi</div><div class="aktif"><b>📅</b>Vardiyam</div><div><b>🛒</b>Sipariş</div><div><b>👤</b>Ben</div></div>
+</div></div></div>
+
+<!-- 13 HAFTAM DETAY -->
+<div class="ekran"><h2><span>13</span>Vardiyam · Bu hafta + gün detayı</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>16:41</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">20 – 26 Ekim</div></div><div class="sag"><span class="pil yesil">yayında ✓</span></div></div>
+  <div class="sekme"><div>Bugün</div><div class="a">Bu hafta</div><div>Gelecek</div></div>
+  <div class="gun"><div class="g"><b>20</b><span>Pzt</span></div><div class="b"><b>Zafer</b><span>09:00 – 18:30 · 9 sa 25 dk · 🍽 64 dk</span></div><span class="pil">✓ · yemek —</span></div>
+  <div class="gun bugun"><div class="g"><b>21</b><span>Çar</span></div><div class="b"><b>Zafer</b><span>09:00 – 18:30 · bugün · 🍽 45 dk</span></div><span class="pil aksan">içeride</span></div>
+  <div class="gun"><div class="g"><b>22</b><span>Per</span></div><div class="b"><b>Zafer</b><span>09:00 – 18:30</span></div></div>
+  <div class="kart" style="margin:-6px 0 0 24px;border-top-left-radius:6px;background:var(--yuzey);gap:6px;padding:14px 16px">
+    <div class="etiket">Cuma 23 Ekim · Köyceğiz · kapanış</div>
+    <div class="orta">14:30 – 23:59 · 9 sa 29 dk</div>
+    <div class="not">Seninle: <b>Elif S.</b> 09:00 – 18:00</div>
+    <div class="silik">Plan dün güncellendi (önce Zafer'di)</div>
+  </div>
+  <div class="gun" style="border-color:var(--aksan)"><div class="g"><b>23</b><span>Cum</span></div><div class="b"><b>Köyceğiz</b><span>14:30 – 23:59 · kapanış</span></div><span class="pil aksan">güncellendi</span></div>
+  <div class="gun izin"><div class="g"><b>24</b><span>Cmt</span></div><div class="b"><b>İzinli</b><span>haftalık izin</span></div></div>
+  <div class="gun"><div class="g"><b>25</b><span>Paz</span></div><div class="b"><b>Zafer</b><span>09:00 – 18:30</span></div></div>
+  <div class="gun bos"><div class="g"><b>26</b><span>Pzt</span></div><div class="b"><b>Plan yok</b><span>gelecek hafta henüz yayınlanmadı</span></div></div>
+  <div class="nav"><div><b>⚡</b>Şimdi</div><div class="aktif"><b>📅</b>Vardiyam</div><div><b>🛒</b>Sipariş</div><div><b>👤</b>Ben</div></div>
+</div></div></div>
+
+<!-- 14 BEN DETAY -->
+<div class="ekran"><h2><span>14</span>Ben · tahmini hak ediş (K1)</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>16:42</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar" style="width:48px;height:48px;font-size:17px">AK</div><div><div class="ad" style="font-size:18px">Ayşe Kaya</div><div class="sube">Zafer · tam zamanlı</div></div></div>
+  <div class="kart vurgu" style="gap:10px">
+    <div class="etiket">💰 Ekim · tahmini hak ediş</div>
+    <div class="buyuk" style="color:var(--yesil)">31.480 ₺</div>
+    <div class="adim"><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i><i></i><i></i><i></i></div>
+    <div class="silik">Ayın 21. günü · <b>ay sonunda kesinleşir</b></div>
+    <div class="kutu" style="gap:0">
+      <div class="satir"><span>Maaş (21 / 31 gün)</span><b>27.100 ₺</b></div>
+      <div class="satir"><span>🍽 Yemek · 16 / 18 gün</span><b>+ 3.613 ₺</b></div>
+      <div class="silik" style="padding:0 0 6px">2 gün yemek hakkı oluşmadı: 8 Eki (mola 64 dk), 20 Eki (mola 64 dk)</div>
+      <div class="satir"><span>🚌 Yol · 18 gün</span><b>+ 1.267 ₺</b></div>
+      <div class="satir"><span>Ek saat · 1 sa 10 dk</span><b>+ 500 ₺</b></div>
+      <div class="satir"><span>🤝 Avans · 1 Ekim</span><b style="color:var(--kirmizi)">− 1.000 ₺</b></div>
+    </div>
+    <div class="satir" style="border-top:1px solid var(--kenar);padding-top:10px"><span>Çalışma</span><b>18 gün · 142 sa</b></div>
+  </div>
+  <div class="kart" style="padding:14px 18px">
+    <div class="satir"><span>Eylül</span><span class="pil yesil">33.200 ₺ · onaylandı ✓</span></div>
+    <div class="satir"><span>🤝 Avans</span><span>bu ay en çok <b>5.000 ₺</b> daha › </span></div>
+    <div class="satir"><span>📱 Bu telefon</span><span class="pil yesil">bağlı · güçlü</span></div>
+  </div>
+  <div class="nav"><div><b>⚡</b>Şimdi</div><div><b>📅</b>Vardiyam</div><div><b>🛒</b>Sipariş</div><div class="aktif"><b>👤</b>Ben</div></div>
+</div></div></div>
+
+<!-- 15 SİPARİŞ VER -->
+<div class="ekran"><h2><span>15</span>Sipariş ver</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>10:15</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">Zafer · sipariş</div></div><div class="sag"><span class="pil yesil">içeridesin ✓</span></div></div>
+  <div class="sekme"><div class="a">Sipariş ver</div><div>Takip · 2 açık</div></div>
+  <div style="display:flex;gap:8px;overflow:hidden"><span class="pil aksan">🥛 Süt ürünleri</span><span class="pil">🥤 Bardak</span><span class="pil">🧃 İçecek</span><span class="pil">🍪 Atıştırma</span></div>
+  <div class="kart" style="gap:0;padding:6px 16px">
+    <div class="satir" style="padding:12px 0"><div><b>Süt 1 L</b><div class="silik">koli 12 · <span style="color:#B07A12;font-weight:700">⏳ bekliyor</span></div></div><div style="display:flex;align-items:center;gap:10px"><span class="btn kucuk" style="width:48px;min-height:48px;padding:0">−</span><b style="font-size:20px;min-width:30px;text-align:center">24</b><span class="btn kucuk ana" style="width:48px;min-height:48px;padding:0">+</span></div></div>
+    <div class="satir" style="padding:12px 0"><div><b>Laktozsuz süt</b><div class="silik">koli 12</div></div><div style="display:flex;align-items:center;gap:10px"><b style="font-size:20px;min-width:30px;text-align:center;color:var(--silik)">0</b><span class="btn kucuk" style="width:48px;min-height:48px;padding:0">+</span></div></div>
+    <div class="satir" style="padding:12px 0"><div><b>Yulaf sütü</b><div class="silik">koli 6 · <span style="color:#2F5C8F;font-weight:700">🚚 yolda</span></div></div><div style="display:flex;align-items:center;gap:10px"><b style="font-size:20px;min-width:30px;text-align:center;color:var(--silik)">0</b><span class="btn kucuk" style="width:48px;min-height:48px;padding:0">+</span></div></div>
+    <div class="satir" style="padding:12px 0"><div><b>Krema</b><div class="silik">koli 12</div></div><div style="display:flex;align-items:center;gap:10px"><span class="btn kucuk" style="width:48px;min-height:48px;padding:0">−</span><b style="font-size:20px;min-width:30px;text-align:center">12</b><span class="btn kucuk ana" style="width:48px;min-height:48px;padding:0">+</span></div></div>
+  </div>
+  <div class="girdi bos" style="min-height:50px;font-size:15px">💡 Katalogda olmayan ürün (öneri)</div>
+  <div class="kart" style="padding:12px 16px;position:sticky;bottom:0;gap:8px">
+    <div class="satir" style="border:0;padding:0"><span><b>2 kalem</b> · Süt 24, Krema 12</span><span class="silik">not ekle ›</span></div>
+    <div class="btn ana">🛒 Siparişi gönder</div>
+  </div>
+  <div class="nav"><div><b>⚡</b>Şimdi</div><div><b>📅</b>Vardiyam</div><div class="aktif"><b>🛒</b>Sipariş</div><div><b>👤</b>Ben</div></div>
+</div></div></div>
+
+<!-- 16 SİPARİŞ TAKİP -->
+<div class="ekran"><h2><span>16</span>Sipariş takip · şubem</h2>
+<div class="tel"><div class="cent"></div>
+<div class="sb"><span>10:16</span><span>●●● ᯤ ▮</span></div>
+<div class="ic">
+  <div class="bas"><div class="rozet">TuliPi</div><div class="avatar">AK</div><div><div class="ad">Ayşe K.</div><div class="sube">Zafer · son 21 gün</div></div></div>
+  <div class="sekme"><div>Sipariş ver</div><div class="a">Takip · 2 açık</div></div>
+  <div class="kart" style="gap:8px">
+    <div class="satir" style="border:0;padding:0"><b>21 Ekim · 10:15</b><span class="pil aksan">⏳ merkez bakıyor</span></div>
+    <div class="adim"><i class="d"></i><i></i><i></i><i></i></div>
+    <div class="silik">Talep → Yönlendirme → Sevk → Kabul</div>
+    <div class="satir"><span>Süt 1 L</span><b>24</b></div>
+    <div class="satir"><span>Krema</span><b>12</b></div>
+    <div class="silik">Ayşe K. verdi · 📝 hafta sonu için</div>
+  </div>
+  <div class="kart" style="gap:8px">
+    <div class="satir" style="border:0;padding:0"><b>19 Ekim · 17:40</b><span class="pil" style="background:#E8F0F8;border-color:#C5D6E8;color:#2F5C8F">🚚 yolda</span></div>
+    <div class="adim"><i class="d"></i><i class="d"></i><i class="d"></i><i></i></div>
+    <div class="satir"><span>Yulaf sütü</span><b>6</b></div>
+    <div class="satir"><span>💡 Kahve kaşığı (öneri)</span><span class="pil">merkez kararı</span></div>
+    <div class="silik">Mehmet Y. verdi · gelen adet panelde kabulde sayılır</div>
+  </div>
+  <div class="kart" style="gap:8px;opacity:.8">
+    <div class="satir" style="border:0;padding:0"><b>14 Ekim</b><span class="pil yesil">✓ geldi</span></div>
+    <div class="adim"><i class="d"></i><i class="d"></i><i class="d"></i><i class="d"></i></div>
+    <div class="satir"><span>Bardak küçük</span><b>500</b></div>
+  </div>
+  <div class="nav"><div><b>⚡</b>Şimdi</div><div><b>📅</b>Vardiyam</div><div class="aktif"><b>🛒</b>Sipariş</div><div><b>👤</b>Ben</div></div>
+</div></div></div>
+
+</div>
+
+<div class="legend">
+<b>Okuma rehberi.</b> Ekran 1, 2, 5, 6, 7, 10 = QR ya da bağlantıyla açılan <b>işlem ekranları</b> (sekmesiz, tek odak, tek büyük düğme). Ekran 3, 4, 11 ve 12–16 = <b>ev</b> (/q): altta 4 sekme ⚡ Şimdi · 📅 Vardiyam (Bugün / Bu hafta / Gelecek) · 🛒 Sipariş (Ver / Takip) · 👤 Ben. Ekran 8–9 ilk turun 3 sekmeli hâli (eski); 12–14 sahibin istediği genişletilmiş hâl — 13 ve 14 onların yerini alır. İşlem bitince telefon eve döner, üstte yeşil şerit bir kez görünür.<br>
+<b>Yemek hakkı (3, 4, 12, 13, 14).</b> Koddaki kural: mola en az 45 dk sürmeden bitirilemez; <b>≤ 60 dk → yemek hakkı o gün kazanılır</b>; 60 dk 1 sn'den uzunsa hak oluşmaz; 61. dakikada sistem kendiliğinden kapatır; gece açık kalan mola → hak yok; merkez elle hak verebilir. Telefonda yalnız "kazanıldı ✓ / oluşmadı (mola 64 dk)" — ceza, kesinti, tutar kelimesi yok (yemek tek pozitif kalem).<br>
+<b>Vardiyam (12).</b> Plan ve gerçek saat yan yana, hüküm yok ("geç kaldın" yazmaz); "Bugün seninle" yalnız aynı şube + aynı gün çalışan kişinin adı ve plan saati (K12). <b>Sipariş (15–16).</b> Panelin Sipariş modülüyle aynı kapı; yalnız <b>içerideki</b> personel gönderir (K11); "bekliyor/yolda" rozeti adetsiz; takipte talep adedi var, sevk/kabul adedi yok (kör kural).<br>
+<b>Güvenlik.</b> Onay (5) ve devir (6–7) özetleri kişinin <b>kendi yazdığı</b> sayılardır; devralan ekranında "Ayşe'nin saydığı" diye adlandırılır (beyan, kasa gerçeği değil). Hiçbir ekranda beklenen tutar, fark, başkasının saati/avansı yok.<br>
+<b>Sahip kararı bekleyen parçalar.</b> Ekran 9'daki hak ediş satırı (K1), görev tik listesi (K2, taslağa konmadı), sayfa içi QR okuyucu (K6).
+</div>
+</body>
+</html>
