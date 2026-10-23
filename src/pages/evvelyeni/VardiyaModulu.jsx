@@ -244,7 +244,7 @@ export default function VardiyaModulu({ onToast }) {
         {!v.uyarilar.length && <div style={{ color: R.not, padding: 6, fontSize: 13 }}>Uyarı yok.</div>}
         {v.uyarilar.map((u, i) => (
           <div key={i} style={{ borderTop: `1px solid ${R.cizgi}`, padding: '6px 0', fontSize: 13 }}>
-            {{ kalip_eksik: '👤', yedi_gun: '🟡', sonradan: '✎' }[u.tur] || '•'} {u.metin}
+            {{ ayrildi: '🚪', kalip_eksik: '👤', yedi_gun: '🟡', sonradan: '✎' }[u.tur] || '•'} {u.metin}
           </div>
         ))}
       </div>

@@ -82,6 +82,8 @@ def _personel(cur, sube_id: str, pid: Optional[str], kapi: bool = True, gun=None
     p = next((x for x in secim_listeleri(cur)["personel"] if str(x["id"]) == str(pid) and x["aktif"]), None)
     if not p:
         raise HTTPException(400, "Personel bulunamadı")
+    if __import__("evvel_yeni_tanim_api").ayrildi_mi(p.get("cikis"), gun or _bugun()):   # S-B7: Tanımlar TEK kural
+        raise HTTPException(400, "Bu personelin ayrılış tarihi geçti — merkeze haber ver")
     y = _yoklama()
     # sahip (2026-10-19): "bütün personeller bütün şubelere gider" — QR'la BU şubeye girmiş olan (deneme döneminde de) burada çalışır
     burada = y is not None and (

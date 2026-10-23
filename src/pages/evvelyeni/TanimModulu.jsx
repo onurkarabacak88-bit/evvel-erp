@@ -7,6 +7,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
+import { tarihNokta } from '../../utils/trTarih';
 import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R } from './KasaModulu';
 
 export const TANIM_SAYFALAR = [
@@ -47,7 +48,7 @@ const YAPI = {
       // Panel PIN'i: sık işlemlerde (ürün aç, fire, ara teslim…) ad + PIN. Boş bırakılırsa değişmez; PIN ekrana asla geri gelmez.
       { k: 'pin', ad: 'Panel PIN (4 hane) — değiştirmek için yaz', tip: 'password' },
       { k: 'yetki_geri_alma', ad: 'Hatalı teslimi geri alabilir (yetki)', secim: 'evet_yetki' }],
-    kolon: (x) => [x.ad, `${x.sube_ad}${x.gorev ? ` · ${x.gorev}` : ''} · ${x.calisma_turu === 'yari' ? 'yarı zamanlı' : 'tam zamanlı'}${x.cikis ? ` · ayrıldı ${x.cikis}` : ''}${x.erken_acilis ? ' · erken açılış izni' : ''}${x.pin_var ? '' : ' · PIN yok'}${x.yetki_geri_alma ? ' · geri alma yetkisi' : ''}`,
+    kolon: (x) => [x.ad, `${x.sube_ad}${x.gorev ? ` · ${x.gorev}` : ''} · ${x.calisma_turu === 'yari' ? 'yarı zamanlı' : 'tam zamanlı'}${x.cikis ? ` · ayrıldı ${tarihNokta(x.cikis)}` : ''}${x.erken_acilis ? ' · erken açılış izni' : ''}${x.pin_var ? '' : ' · PIN yok'}${x.yetki_geri_alma ? ' · geri alma yetkisi' : ''}`,
       x.calisma_turu === 'yari' ? `saatlik ${fmt(x.saatlik)} · yemek ${fmt(x.yemek)}` : `maaş ${fmt(x.maas)} · yemek ${fmt(x.yemek)}${x.yol ? ` · yol ${fmt(x.yol)}` : ''}`, x.ucret_eski ? <Cip tur="sari">ücret eski sistemden — kontrol et</Cip> : null],
   },
   tanim_banka: {

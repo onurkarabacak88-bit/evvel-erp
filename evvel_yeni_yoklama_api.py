@@ -271,9 +271,11 @@ def cihaz_coz(cur, basliklar, method: str, yol: str, govde: bytes, tur: Optional
 
 # ─────────────────────────── PUBLIC okuma servisleri (panel / maaş bunları çağırır) ───────────────────────────
 def _personel(cur, pid: str) -> dict:
-    r = tanim_oku(cur, "ey_personel", pid, ("ad", "sube_id", "aktif", "konum_muaf", "gorev"))   # Tanımlar'ın kapısı (F#31)
+    r = tanim_oku(cur, "ey_personel", pid, ("ad", "sube_id", "aktif", "konum_muaf", "gorev", "cikis"))   # Tanımlar'ın kapısı (F#31)
     if not r or not r["aktif"]:
         raise HTTPException(403, "Personel kaydı aktif değil")
+    if __import__("evvel_yeni_tanim_api").ayrildi_mi(r.get("cikis"), is_gunu()):   # S-B7: ayrılış tarihi geçti
+        raise HTTPException(403, "Ayrılış tarihin geçti — bu telefonla işlem yapılamaz, merkeze haber ver")
     return {k: r[k] for k in ("id", "ad", "sube_id", "aktif", "konum_muaf")} | {"mudur": mudur_mu(r.get("gorev"))}
 
 
@@ -1075,7 +1077,8 @@ def molalar(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = F
     def _durum(r):
         if r["bitis_ts"] is None:
             return "suruyor" if r["is_gunu"] >= bugun else "bitmedi"
-        return {"merkez": "merkez yazdı", "qr": "bitti", "gece_otomatik": "gece sistem kapattı"}.get(r["bitis_tur"], "çıkışla kapandı")   # B56
+        return {"merkez": "merkez yazdı", "qr": "bitti", "gece_otomatik": "gece sistem kapattı",
+                "otomatik_limit": "süre doldu — sistem kapattı"}.get(r["bitis_tur"], "çıkışla kapandı")   # B56 · S-B5
     return {"limit_dk": lim, "satirlar": [{
         "id": r["id"], "personel_id": r["personel_id"], "gun": r["is_gunu"].isoformat(), "ad": r["ad"], "sube": r["sube_ad"], "bas": _saat(r["baslangic_ts"]),
         "bit": _saat(r["bitis_ts"]), "sure_dk": r["sure_dk"], "durum": _durum(r), "yemek_hakki": r["yemek_hakki"],

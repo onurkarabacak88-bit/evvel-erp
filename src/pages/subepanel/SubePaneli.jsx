@@ -207,7 +207,8 @@ export default function SubePaneli({ subeId }) {
     setMesgul(false);
   };
 
-  if (hata) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style><h2>Panel açılamadı</h2><p>{hata}</p><button className="sp-btn" onClick={yukle}>Tekrar dene</button></div>;
+  // S-B6: kısa kesintide ekranın tamamı gitmesin — elde veri varsa ekran kalır, üstte bant (aşağıda); tam sayfa yalnız ilk açılışta
+  if (hata && !d) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style><h2>Panel açılamadı</h2><p>{hata}</p><button className="sp-btn" onClick={yukle}>Tekrar dene</button></div>;
   if (!d) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style>Yükleniyor…</div>;
   // sahip: PIN/kişi seçilen her yerde YALNIZ QR ile girmiş (şu an içeride) personel — tüm personel listesi yedeği YOK
   const kisiAdaylari = (yok.girenler || []).filter((g) => g.acik).map((g) => ({ id: g.personel_id, ad: g.ad }));
@@ -251,6 +252,8 @@ export default function SubePaneli({ subeId }) {
   return (
     <div className="sp" ref={kokRef} style={tabletVar && yok.var && !kapiAcik ? { paddingBottom: 150 } : undefined}>{/* B89: sabit QR kutusu son satırların üstüne binmesin — kaydırınca açığa çıkar */}
       <style>{CSS}</style>
+      {hata && <div role="alert" style={{ background: '#b3261e', color: '#fff', padding: '10px 14px', fontWeight: 600, fontSize: 15 }}>
+        ⚠ Bağlantı yok — ekrandaki bilgi son alınan hâli. Kendiliğinden yeniden deneniyor… <button className="sp-btn" style={{ marginLeft: 8, minHeight: 36 }} onClick={yukle}>Tekrar dene</button></div>}
       {/* ÜST BAR (eski 52px): EVVEL · şube · tarih saat */}
       <div className="sp-ust">
         <span className="sp-logo">EVVEL</span>

@@ -139,7 +139,10 @@ def _yeni_talepler(cur, acik: bool = True) -> list:
     rows = [dict(x) for x in cur.fetchall() or []]
     sad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
     pad = adlar(cur, "ey_personel", {r["personel_id"] for r in rows})
+    cik = {p["id"]: p["cikis"] for p in __import__("evvel_yeni_tanim_api").tanim_listesi(cur, "ey_personel", ("cikis",),
+                                                                                       idler={str(r["personel_id"]) for r in rows}) if p.get("cikis")}
     return [{"id": r["id"], "personel_id": r["personel_id"], "ad": pad.get(str(r["personel_id"])) or "—", "tutar": int(r["tutar"]) / 100, "durum": r["durum"],
+             "ayrilis": cik[str(r["personel_id"])].strftime("%d.%m") if str(r["personel_id"]) in cik else None,   # S-B8: ekranda 'ayrıldı' işareti
              "yontem": r.get("yontem"), "sube": sad.get(r.get("sube_id")), "sube_id": r.get("sube_id"), "donem": r["donem"],
              "talep": str(r["talep_ts"])[:16], "onay": str(r.get("karar_ts") or "")[:16], "not": r.get("not_") or r.get("karar_not"),
              "yeni": True} for r in rows]

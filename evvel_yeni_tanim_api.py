@@ -294,6 +294,15 @@ def _tablo_kolon(tablo: str, alanlar) -> str:
     return ", ".join(dict.fromkeys(["id", *al]))
 
 
+def ayrildi_mi(cikis, gun) -> bool:
+    """PUBLIC — TEK kural (S-B7, sim 23 Eki): ayrılış tarihi SON iş günüdür; ertesi günden itibaren kişi telefon/panelde iş yapamaz
+    (önce yalnız 'aktif' bakılıyordu → ayrılan personel QR giriş + avans isteği yapabiliyordu)."""
+    if not cikis:
+        return False
+    g = gun.isoformat() if hasattr(gun, "isoformat") else str(gun)
+    return str(cikis)[:10] < g[:10]
+
+
 def tanim_oku(cur, tablo: str, kid, alanlar=None) -> Optional[dict]:
     """PUBLIC — tek Tanımlar kaydı (id ile) ya da None. alanlar verilmezse bütün kolonlar."""
     if kid is None:

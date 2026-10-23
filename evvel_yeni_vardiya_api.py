@@ -188,6 +188,18 @@ def _satirlar(cur, bas: date, son: date, sube_id: Optional[str] = None, personel
     return [dict(r) for r in cur.fetchall() or []]
 
 
+def _ayrilis(cur) -> Dict[str, date]:
+    """{personel_id: ayrılış günü} — ayrılış tarihi girilmiş kişiler (Tanımlar'ın kapısı)."""
+    from evvel_yeni_tanim_api import tanim_listesi
+    return {p["id"]: p["cikis"] for p in tanim_listesi(cur, "ey_personel", ("cikis",)) if p.get("cikis")}
+
+
+def _ayrildi(r: dict, ayr: Dict[str, date]) -> bool:
+    """S-B8: satır kişinin ayrılış gününden SONRA mı (Tanımlar TEK kural ayrildi_mi). Ayrılış tarihi plan yazıldıktan sonra
+    girilince eski satırlar planda kalıyor, ihtiyacı dolduruyor, maaşa/panele gidiyordu."""
+    return __import__("evvel_yeni_tanim_api").ayrildi_mi(ayr.get(str(r["personel_id"])), r["gun"])
+
+
 def _disa(r: dict) -> dict:
     return {"id": r["id"], "gun": r["gun"].isoformat(), "personel_id": r["personel_id"], "sube_id": r.get("sube_id"), "tur": r["tur"],
             "bas": _hm(r.get("bas")), "bit": _hm(r.get("bit")), "gece": bool(r.get("gece")), "kalip_id": r.get("kalip_id"),
@@ -208,8 +220,8 @@ def gun_plani(cur, bas: date, son: date, sube_id: Optional[str] = None, izin: bo
     """PUBLIC — GEÇERLİ (yayınlanmış ya da geçmiş) çalışma satırları [{gun, personel_id, sube_id, bas, bit, gece, saat, etiket,
     kaynak, kalip_id}]; izin=True ise 'izin' satırları da (tur alanıyla). Günlük yoklama, panel 'Bugün' ve Maaş buradan okur."""
     vardiya_hazirla(cur)
-    yayin, bugun = _yayin_haritasi(cur, bas, son), is_gunu()
-    out = [_disa(r) for r in _satirlar(cur, bas, son, sube_id) if _gecerli(r, yayin, bugun)
+    yayin, bugun, ayr = _yayin_haritasi(cur, bas, son), is_gunu(), _ayrilis(cur)
+    out = [_disa(r) for r in _satirlar(cur, bas, son, sube_id) if _gecerli(r, yayin, bugun) and not _ayrildi(r, ayr)
            and r.get("bas") is not None and r.get("bit") is not None]   # Fable: saatsiz satır bütün ayın planını düşürmesin
     return out + ([_disa(r) for r in _izin_satirlari(cur, bas, son)] if izin else [])
 
@@ -219,7 +231,8 @@ def kisi_gunleri(cur, personel_id: str, bas: date, son: date) -> List[dict]:
     vardiya_hazirla(cur)
     from evvel_yeni_tanim_api import adlar
     yayin, bugun = _yayin_haritasi(cur, bas, son), is_gunu()
-    rows = [r for r in _satirlar(cur, bas, son, personel_id=personel_id) if _gecerli(r, yayin, bugun)]
+    ayr = _ayrilis(cur)
+    rows = [r for r in _satirlar(cur, bas, son, personel_id=personel_id) if _gecerli(r, yayin, bugun) and not _ayrildi(r, ayr)]
     rows += _izin_satirlari(cur, bas, son, personel_id)
     sad = adlar(cur, "ey_sube", {r["sube_id"] for r in rows if r.get("sube_id")})
     return [{**_disa(r), "sube": sad.get(str(r.get("sube_id")))} for r in rows]
@@ -356,8 +369,18 @@ def hafta(pazartesi: Optional[str] = None):
         # Fable D-V0: o hafta satırı olan pasif kişi de listede (yoksa rozet '—', kaldırılamaz)
         kisiler = [p for p in tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "gorev", "giris", "cikis", "calisma_turu", "aktif"))
                    if p["id"] in planli or ((p.get("aktif") or (p.get("cikis") and p["cikis"] >= pzt)) and not (p.get("giris") and p["giris"] > paz))]
-        _kalip_esle(rows, kaliplar)
+        ayr = _ayrilis(cur)
+        _kalip_esle([r for r in rows if not _ayrildi(r, ayr)], kaliplar)   # S-B8: ayrılanın satırı ihtiyacı doldurmaz
         uyarilar = _uyarilar(cur, pzt, sb, kaliplar, rows, kisiler, bugun)
+        fazla: Dict[str, list] = {}
+        for r in hafta_rows:
+            if _ayrildi(r, ayr):
+                fazla.setdefault(r["personel_id"], []).append(r["gun"].strftime("%d.%m"))
+        pad_ = {p["id"]: p["ad"] for p in kisiler}
+        for pid, gl in fazla.items():   # kişi başına TEK satır
+            uyarilar.insert(0, {"tur": "ayrildi", "personel_id": pid,
+                                "metin": f"{pad_.get(pid, '—')} {ayr[pid].strftime('%d.%m')} tarihinde ayrıldı — sonrasında {len(gl)} vardiyası var "
+                                         f"({', '.join(gl)}): sayılmıyor, kaldır"})
         # Fable D-V0: yayından sonra KALDIRILAN satır da değişikliktir (yoksa sayaç 0, personel eksik vardiyayı bilmez).
         # Saat değişikliğinde iptal edilen eski satır sayılmaz (yeni satırı zaten sayılıyor).
         cur.execute("""SELECT p.sube_id, COUNT(*) AS n FROM ey_vardiya_plan p
@@ -376,7 +399,7 @@ def hafta(pazartesi: Optional[str] = None):
                          "satir": sum(1 for r in hafta_rows if r.get("sube_id") == s["id"])} for s in sb],
             "kaliplar": [{"id": k["id"], "sube_id": k["sube_id"], "ad": k["ad"], "bas": _hm(k["bas"]), "bit": _hm(k["bit"]),
                           "kisi": k["kisi"], "gunler": list(k["gunler"] or []), "sira": k["sira"]} for k in kaliplar],
-            "plan": [{**_disa(r), "kalip_es": r.get("kalip_es")} for r in hafta_rows] + [_disa(r) for r in _izin_satirlari(cur, pzt, paz)],
+            "plan": [{**_disa(r), "kalip_es": r.get("kalip_es"), "ayrildi": _ayrildi(r, ayr)} for r in hafta_rows] + [_disa(r) for r in _izin_satirlari(cur, pzt, paz)],
             "izin_acik": __import__("evvel_yeni_moduller").acik("maas"),
             "personel": [{"id": p["id"], "ad": p["ad"], "sube_id": p.get("sube_id"), "calisma_turu": p.get("calisma_turu") or "tam",
                           "mudur": mudur_mu(p.get("gorev")), "aktif": bool(p.get("aktif")),

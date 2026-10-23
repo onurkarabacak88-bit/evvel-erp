@@ -159,7 +159,7 @@ export default function YoklamaModulu({ onToast }) {
 // Alt: ay özeti (kişi → mola günü · ortalama süre · hak düşen · elle verilen) · "Bekleyenler" bölümü /molalar?acik=1 (bant değil).
 const ayGunSon = (ay) => { const [y, m] = ay.split('-').map(Number); return `${ay}-${String(new Date(y, m, 0).getDate()).padStart(2, '0')}`; };
 const gunKisa = (g) => (g ? `${g.slice(8, 10)}.${g.slice(5, 7)}` : '—');
-const DURUM_AD = { suruyor: 'sürüyor', bitmedi: 'bitmedi', bitti: 'bitti', 'merkez yazdı': 'merkez yazdı', 'çıkışla kapandı': 'çıkışla kapandı', 'gece sistem kapattı': 'gece sistem kapattı' };
+const DURUM_AD = { suruyor: 'sürüyor', bitmedi: 'bitmedi', bitti: 'bitti', 'merkez yazdı': 'merkez yazdı', 'çıkışla kapandı': 'çıkışla kapandı', 'gece sistem kapattı': 'gece sistem kapattı', 'süre doldu — sistem kapattı': 'süre doldu — sistem kapattı' };
 
 function hakHucre(s) {
   if (s.yemek_hakki === null || s.yemek_hakki === undefined) return <span style={{ color: R.not }}>—</span>;
@@ -200,7 +200,7 @@ function MolaSatir({ s, duz, setDuz, mesgul, yap, bugun }) {
             <Dugme kucuk ana disabled={mesgul[s.id] || (d.aciklama || '').trim().length < 2}
               onClick={() => yap(s.id, `/evvel-yeni/yoklama/mola/${s.id}/hak-ver`, { aciklama: (d.aciklama || '').trim() })}>Hakkı elle ver</Dugme>
             {!s.gorulen && <Dugme kucuk disabled={mesgul[s.id]} onClick={() => yap(s.id, `/evvel-yeni/yoklama/mola/${s.id}/gordum`, {})}>Gördüm</Dugme>}
-            {s.gorulen && <span style={{ fontSize: 12, color: R.not }}>görüldü: {s.gorulen}</span>}
+            {s.gorulen && <span style={{ fontSize: 12, color: R.not }}>görüldü: {s.gorulen === 'otomatik_limit' ? 'sistem (süre doldu)' : s.gorulen}</span>}
           </span>
         )}
       </td>

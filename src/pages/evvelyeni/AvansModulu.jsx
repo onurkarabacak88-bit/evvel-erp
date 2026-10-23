@@ -43,7 +43,7 @@ export default function AvansModulu({ onToast }) {
             const set = (k, x) => setSec((o) => ({ ...o, [t.id]: { ...s, [k]: x } }));
             return (
               <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${R.cizgi}`, padding: '8px 0', fontSize: 13.5 }}>
-                <span style={{ flex: '1 1 180px' }}><b>{t.ad}</b><div style={{ fontSize: 12, color: R.not }}>talep {trTalep(t.talep)}</div>{t.not && <div style={{ fontSize: 12.5 }}>📝 {t.not}</div>}</span>
+                <span style={{ flex: '1 1 180px' }}><b>{t.ad}</b>{t.ayrilis && <Cip tur="kirmizi">ayrılış {t.ayrilis}</Cip>}<div style={{ fontSize: 12, color: R.not }}>talep {trTalep(t.talep)}</div>{t.not && <div style={{ fontSize: 12.5 }}>📝 {t.not}</div>}</span>
                 <b style={{ ...num, width: 90, textAlign: 'right' }}>{fmt(t.tutar)} ₺</b>
                 <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
                   {t.yeni && <select value={s.cep || ''} onChange={(e) => set('cep', e.target.value)} style={alan}>
@@ -79,7 +79,7 @@ Bankadan düşer, maaştan mahsup edilir.`)) yap(t, 'onayla', { yontem: 'havale'
           <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700 }}>Onaylandı · şubeden teslim bekleniyor</div>
           {elden.map((t) => (
             <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', borderTop: `1px solid ${R.cizgi}`, padding: '6px 0', fontSize: 13.5 }}>
-              <span style={{ flex: 1 }}><b>{t.ad}</b> · {t.sube || '—'}</span><b style={num}>{fmt(t.tutar)} ₺</b><Cip tur="sari">{t.durum === 'teslim_edildi' ? 'personel onayı bekliyor' : 'elden verilecek — şube panelinde "teslim ettim"'}</Cip>
+              <span style={{ flex: 1 }}><b>{t.ad}</b>{t.ayrilis && <Cip tur="kirmizi">ayrılış {t.ayrilis}</Cip>} · {t.sube || '—'}</span><b style={num}>{fmt(t.tutar)} ₺</b><Cip tur="sari">{t.durum === 'teslim_edildi' ? 'personel onayı bekliyor' : 'elden verilecek — şube panelinde "teslim ettim"'}</Cip>
               {/* Fable O-2: şube teslim etmediyse (kişi ayrıldı, yanlış şube) talep merkezden kapatılır — yoksa kişi yeni talep açamaz */}
               {String(t.id).startsWith('av-') && t.durum === 'onaylandi' && (
                 <Dugme kucuk disabled={mesgul[t.id]} onClick={() => { if (window.confirm(`${t.ad} · ${fmt(t.tutar)} ₺ — şube teslim etmedi, talep kapatılsın mı? (para hareketi yok)`)) yap(t, 'kapat', { not_: 'şube teslim etmedi — merkez kapattı' }); }}>Kapat</Dugme>
