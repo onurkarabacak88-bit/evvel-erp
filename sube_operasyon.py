@@ -10,7 +10,7 @@ import uuid
 from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
@@ -31,6 +31,16 @@ from tr_saat import (
 )
 
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-operasyon"])
+
+def _eski_kapi() -> None:
+    """🔌 1 Kasım kesimi — eski panel KAYIT uçları kesimden sonra 410 (kural çekirdekte: evvel_yeni_cekirdek.eski_yazim_kapisi).
+    Kapı okunamazsa yazım izni VERİLMEZ (Codex 22 Eki P2)."""
+    try:
+        from evvel_yeni_cekirdek import eski_yazim_kapisi
+    except Exception:  # noqa: BLE001
+        raise HTTPException(503, "Sistem şu an kontrol edilemiyor — biraz sonra yeniden dene")
+    eski_yazim_kapisi()
+
 
 ACILIS_TOLERANS_DK = 10
 # KONTROL: açılış sonrası sabit saat yok — rastgele gecikme + rastgele cevap penceresi; tamamlamada yalnızca kasa sayımı + PIN.
@@ -108,6 +118,12 @@ def _row_event(r) -> dict:
 
 
 def _ensure_events(cur, sube_id: str, sube: dict) -> None:
+    try:   # 🔌 1 Kasım kesimi (Codex 22 Eki): kesimden sonra eski panel okuması eski olay satırı (ACILIS/KAPANIS) üretmez — tek anahtar
+        from evvel_yeni_cekirdek import eski_panel_zinciri_acik_onbellekli
+        if not eski_panel_zinciri_acik_onbellekli():
+            return
+    except Exception:  # noqa: BLE001 — anahtar okunamazsa eski davranış (gece halkası da aynı anahtarla susuyor)
+        pass
     d = is_gunu_tr()   # gece 00:00–02:00 → önceki iş günü (kapanış 02:00'a kadar aynı gün sayılır)
     acilis_t = sube.get("acilis_saati") or "09:00"
     kapanis_t = sube.get("kapanis_saati") or "22:00"
@@ -724,7 +740,7 @@ def _deneme_sonuc(did: Optional[str], sonuc: str, sebep: Optional[str] = None, h
         logger.warning("operasyon_deneme sonucu yazılamadı %s: %s", did, str(ex)[:200])
 
 
-@router.post("/{sube_id}/operasyon/event/{event_id}/tamamla")
+@router.post("/{sube_id}/operasyon/event/{event_id}/tamamla", dependencies=[Depends(_eski_kapi)])
 def operasyon_tamamla_rota(sube_id: str, event_id: str, body: OperasyonTamamla):
     did = _deneme_yaz(sube_id, event_id, body, "merkez_gec" if _GEC_YONETICI.get() else "panel")
     try:
@@ -1717,7 +1733,7 @@ def operasyon_tamamla(sube_id: str, event_id: str, body: OperasyonTamamla):
     return {"success": True, "event_id": event_id, "uyarilar": _kapanis_uyarilar}
 
 
-@router.post("/{sube_id}/operasyon/event/{event_id}/alarm-arttir")
+@router.post("/{sube_id}/operasyon/event/{event_id}/alarm-arttir", dependencies=[Depends(_eski_kapi)])
 def operasyon_alarm_arttir(sube_id: str, event_id: str):
     """Bekleyen/gecikmiş olay için alarm döngüsü sayacı (şube UI ses/tekrar ile eşleşir)."""
     with db() as (conn, cur):
@@ -1739,7 +1755,7 @@ def operasyon_alarm_arttir(sube_id: str, event_id: str):
     return {"success": True, "alarm_sayisi": int(r["alarm_sayisi"])}
 
 
-@router.post("/{sube_id}/operasyon/cikis-baslat")
+@router.post("/{sube_id}/operasyon/cikis-baslat", dependencies=[Depends(_eski_kapi)])
 def operasyon_cikis_baslat(sube_id: str):
     """Anlık çıkış olayı (deadline birkaç dakika)."""
     simdi = dt_now_tr_naive()

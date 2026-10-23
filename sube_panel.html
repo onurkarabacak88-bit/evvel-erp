@@ -6215,6 +6215,22 @@ async function postCiroTaslak(body) {
 
 const SUBE_ID = subeIdFromPath();
 
+// 🔀 1 Kasım kesimi (KESIM_GUNU_PLANI B1): kesimden sonra bu eski panel kayıt almaz (sunucu 410) → yeni şube paneline yönlen.
+// TEK kural sunucuda (/api/evvel-yeni/moduller/gecis = çekirdek anahtarı); sunucuya ulaşılamazsa sayfa açık kalır, kayıtları sunucu yine reddeder.
+(function(){
+  function gecisBak() {
+    try {
+      var u = apiUrl('/evvel-yeni/moduller/gecis'); if (!u) return;   // sunucu adresi yoksa (file://) sorma
+      fetch(u, { cache: 'no-store' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+        // Codex 22 Eki: sayfanın kayıtlı sunucu adresi (file:// / farklı kök) — yeni panel aynı sunucuda
+        if (d && d.yeni && SUBE_ID) window.location.replace(String(getApiBase() || '').replace(/\/+$/, '') + '/panel/' + encodeURIComponent(SUBE_ID));
+      }).catch(function(){});
+    } catch(e) {}
+  }
+  gecisBak();
+  setInterval(gecisBak, 60000);   // Fable 22 Eki: 31 Ekim akşamı açık kalan ekran 1 Kasım 02:00'den sonra kendiliğinden geçsin
+})();
+
 // ─── STATE ──────────────────────────────────────────────────
 var lastData = null;
 var pk = [];     // panel_pin_kullanicilar

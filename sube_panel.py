@@ -67,6 +67,16 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-panel"])
 
+def _eski_kapi() -> None:
+    """🔌 1 Kasım kesimi — eski panel KAYIT uçları kesimden sonra 410 (kural çekirdekte: evvel_yeni_cekirdek.eski_yazim_kapisi).
+    Kapı okunamazsa yazım izni VERİLMEZ (Codex 22 Eki P2)."""
+    try:
+        from evvel_yeni_cekirdek import eski_yazim_kapisi
+    except Exception:  # noqa: BLE001
+        raise HTTPException(503, "Sistem şu an kontrol edilemiyor — biraz sonra yeniden dene")
+    eski_yazim_kapisi()
+
+
 
 class MerkezPanelOnayBody(BaseModel):
     """En az bir panel yöneticisi tanımlıyken PIN / yönetici rolü değişiminde zorunlu."""
@@ -859,7 +869,7 @@ class PersonelPanelYoneticiBody(MerkezPanelOnayBody):
     yonetici: bool = True
 
 
-@router.post("/{sube_id}/kasa-kilit-ac")
+@router.post("/{sube_id}/kasa-kilit-ac", dependencies=[Depends(_eski_kapi)])
 def kasa_kilit_ac(sube_id: str, body: KasaKilitAcModel):
     """Günlük kasa kilidini personel + şirket geneli panel PIN ile aç (tüm şubelerde aynı PIN)."""
     pid = (body.personel_id or "").strip()
@@ -1123,7 +1133,7 @@ class AcilisGeriAlBody(BaseModel):
     onay_pin: Optional[str] = None     # İşletme onayı (Merve Karabacak 4 haneli PIN)
 
 
-@router.post("/{sube_id}/acilis-geri-al")
+@router.post("/{sube_id}/acilis-geri-al", dependencies=[Depends(_eski_kapi)])
 def sube_acilis_geri_al(sube_id: str, uygula: bool = False,
                         body: AcilisGeriAlBody = AcilisGeriAlBody()):
     """Bugünkü şube açılışını GERİ AL (test/yanlış açılış temizliği).
@@ -1229,7 +1239,7 @@ def sube_acilis_geri_al(sube_id: str, uygula: bool = False,
             "onaylayan": (onayci or {}).get("ad_soyad")}
 
 
-@router.post("/{sube_id}/acilis")
+@router.post("/{sube_id}/acilis", dependencies=[Depends(_eski_kapi)])
 def sube_acilis_kaydet(sube_id: str, body: SubeAcilisModel = SubeAcilisModel()):
     """
     Şubeyi aç — gün başına tek aktif kayıt (durum=acildi).
@@ -1748,7 +1758,7 @@ def x_rapor_foto_getir(kayit_id: str):
     )
 
 
-@router.post("/{sube_id}/x-rapor-oku")
+@router.post("/{sube_id}/x-rapor-oku", dependencies=[Depends(_eski_kapi)])
 async def x_rapor_oku(
     sube_id: str,
     file: UploadFile = File(...),
@@ -2586,7 +2596,7 @@ def sube_personel_panel_public(payload: dict) -> dict:
     return p
 
 
-@router.post("/{sube_id}/kasa-yoklama-ac")
+@router.post("/{sube_id}/kasa-yoklama-ac", dependencies=[Depends(_eski_kapi)])
 class KasaYoklamaAcBody(BaseModel):
     # SUBE-003: verilirse BU kişinin bugünkü yoklaması sunucudan doğrulanır.
     personel_id: Optional[str] = None
@@ -2649,7 +2659,7 @@ def sube_panel_getir(sube_id: str):
         return _build_sube_panel_payload(cur, sube_id)
 
 
-@router.post("/{sube_id}/aktivite")
+@router.post("/{sube_id}/aktivite", dependencies=[Depends(_eski_kapi)])
 def sube_panel_aktivite(sube_id: str):
     """Panel sekme hareketi sinyali — latent KONTROL eventlerini aktive eder.
 
@@ -2675,7 +2685,7 @@ class SubeCiroModel(BaseModel):
     pin:         str
 
 
-@router.post("/{sube_id}/ciro")
+@router.post("/{sube_id}/ciro", dependencies=[Depends(_eski_kapi)])
 def sube_ciro_gir(sube_id: str, body: SubeCiroModel):
     raise HTTPException(
         410,
@@ -2700,7 +2710,7 @@ class AraTeslimModel(BaseModel):
     aciklama: Optional[str] = None
 
 
-@router.post("/{sube_id}/ara-kasa-teslim")
+@router.post("/{sube_id}/ara-kasa-teslim", dependencies=[Depends(_eski_kapi)])
 def sube_ara_kasa_teslim(sube_id: str, body: AraTeslimModel):
     """Gün içi ara kasa teslimi — kasa_teslim tablosuna 'ara' tipiyle yazar."""
     if body.tutar <= 0:
@@ -2802,7 +2812,7 @@ def sube_ara_kasa_teslim(sube_id: str, body: AraTeslimModel):
     return {"success": True, "id": kt_id}
 
 
-@router.post("/{sube_id}/anlik-gider")
+@router.post("/{sube_id}/anlik-gider", dependencies=[Depends(_eski_kapi)])
 def sube_anlik_gider_gir(sube_id: str, body: SubeAnlikGiderModel):
     if body.tutar <= 0:
         raise HTTPException(400, "Tutar sıfırdan büyük olmalı")
@@ -2898,7 +2908,7 @@ class SubeMerkezNotBody(BaseModel):
     pin: str
 
 
-@router.post("/{sube_id}/merkez-not")
+@router.post("/{sube_id}/merkez-not", dependencies=[Depends(_eski_kapi)])
 def sube_merkez_not_gonder(sube_id: str, body: SubeMerkezNotBody):
     """Şube personeli: iade, sorun vb. metin — operasyon merkezinde listelenir."""
     metin = (body.metin or "").strip()
@@ -2969,7 +2979,7 @@ class SubeUrunStokEkleBody(BaseModel):
     not_aciklama: Optional[str] = None
 
 
-@router.post("/{sube_id}/urun-stok-ekle")
+@router.post("/{sube_id}/urun-stok-ekle", dependencies=[Depends(_eski_kapi)])
 def sube_urun_stok_ekle(sube_id: str, body: SubeUrunStokEkleBody):
     from operasyon_stok_motor import (
         normalize_delta_body,
@@ -3057,7 +3067,7 @@ class SubeFireBildirBody(BaseModel):
     diger_sarf: Optional[int] = None
 
 
-@router.post("/{sube_id}/fire-bildir")
+@router.post("/{sube_id}/fire-bildir", dependencies=[Depends(_eski_kapi)])
 def sube_fire_bildir(sube_id: str, body: SubeFireBildirBody):
     from fire_bildirim import fire_bildirim_kaydet, fire_bildirim_sube_yanit, FIRE_SEBEP
     from tr_saat import bugun_tr
@@ -3232,7 +3242,7 @@ def sube_toptanci_siparis_bekleyen(sube_id: str):
     return {"siparisler": out}
 
 
-@router.post("/{sube_id}/urun-sevk")
+@router.post("/{sube_id}/urun-sevk", dependencies=[Depends(_eski_kapi)])
 def sube_urun_sevk(sube_id: str, body: SubeSevkBody):
     """
     Tedarikçi/toptancı teslim kaydı (URUN_SEVK).
@@ -3965,7 +3975,7 @@ class SubeSevkGeriAlBody(BaseModel):
     sebep: str                # neden geri alınıyor (zorunlu)
 
 
-@router.post("/{sube_id}/urun-sevk-geri-al")
+@router.post("/{sube_id}/urun-sevk-geri-al", dependencies=[Depends(_eski_kapi)])
 def sube_urun_sevk_geri_al(sube_id: str, body: SubeSevkGeriAlBody):
     """
     Yanlış kullanılan 'Ürün Teslim Al' (URUN_SEVK) kaydını tersine çevirir:
@@ -4195,7 +4205,7 @@ def sube_urun_ac_taslak_oku(sube_id: str):
         }
 
 
-@router.post("/{sube_id}/urun-ac/taslak")
+@router.post("/{sube_id}/urun-ac/taslak", dependencies=[Depends(_eski_kapi)])
 def sube_urun_ac_taslak_kaydet(sube_id: str, body: SubeUrunAcTaslakBody):
     """Otomatik kaydet — kullanıcı her seçim/adet değişiminde tetikler."""
     import json as _json
@@ -4238,7 +4248,7 @@ def sube_urun_ac_taslak_kaydet(sube_id: str, body: SubeUrunAcTaslakBody):
     return {"basarili": True}
 
 
-@router.delete("/{sube_id}/urun-ac/taslak")
+@router.delete("/{sube_id}/urun-ac/taslak", dependencies=[Depends(_eski_kapi)])
 def sube_urun_ac_taslak_sil(sube_id: str):
     """Onay sonrası veya kullanıcı manuel temizlerse."""
     with db() as (conn, cur):
@@ -4288,7 +4298,7 @@ def sube_urun_ac_bugun_sayisi(sube_id: str):
         return {"sube_id": sube_id, "bugun_kayit": int(r.get("adet") or 0)}
 
 
-@router.post("/{sube_id}/urun-ac")
+@router.post("/{sube_id}/urun-ac", dependencies=[Depends(_eski_kapi)])
 def sube_urun_ac(sube_id: str, body: SubeUrunAcBody):
     """
     Depodan aktif kullanıma açılan ürün (URUN_AC).
@@ -4688,7 +4698,7 @@ def sube_kullanimda_listele(sube_id: str):
     return {"success": True, "items": items, "adet": len(items)}
 
 
-@router.post("/{sube_id}/urun-bitti")
+@router.post("/{sube_id}/urun-bitti", dependencies=[Depends(_eski_kapi)])
 def sube_urun_bitti(sube_id: str, body: SubeUrunBittiBody):
     """'bitince' modlu kullanımdaki ürün bitti:
     şimdi URUN_AC yazılır, depodan düşülür ve sipariş alarmı tetiklenir."""
@@ -4842,7 +4852,7 @@ class MesajOkuBody(BaseModel):
     pin: str
 
 
-@router.post("/{sube_id}/merkez-mesaj/{mesaj_id}/oku")
+@router.post("/{sube_id}/merkez-mesaj/{mesaj_id}/oku", dependencies=[Depends(_eski_kapi)])
 def sube_merkez_mesaj_oku(sube_id: str, mesaj_id: str, body: MesajOkuBody):
     """Personel mesajı PIN ile onaylar → okundu işaretlenir, deftere yazılır."""
     pid_in = (body.personel_id or "").strip()
@@ -5740,7 +5750,7 @@ def sube_siparis_akisi(
     }
 
 
-@router.post("/{sube_id}/siparis-teslim-kabul")
+@router.post("/{sube_id}/siparis-teslim-kabul", dependencies=[Depends(_eski_kapi)])
 def sube_siparis_teslim_kabul(sube_id: str, body: SubeSiparisTeslimKabulBody):
     """
     Talep şubesi paketi teslim aldığını onaylar: stok_yolda → kabul, şube deposu güncellenir.
@@ -5875,7 +5885,7 @@ def sube_siparis_teslim_kabul(sube_id: str, body: SubeSiparisTeslimKabulBody):
     return sonuc
 
 
-@router.post("/{sube_id}/siparis-depo-sevkiyat-kaydet")
+@router.post("/{sube_id}/siparis-depo-sevkiyat-kaydet", dependencies=[Depends(_eski_kapi)])
 def sube_siparis_depo_sevkiyat_kaydet(sube_id: str, body: SubeDepoSevkiyatKaydetBody):
     """
     Bu endpointe yalnızca operasyonun atadığı hedef depo şubesi erişir; bu şube bu sipariş için
@@ -5910,7 +5920,7 @@ def sube_siparis_depo_sevkiyat_kaydet(sube_id: str, body: SubeDepoSevkiyatKaydet
         )
 
 
-@router.post("/{sube_id}/siparis-ozel-talep")
+@router.post("/{sube_id}/siparis-ozel-talep", dependencies=[Depends(_eski_kapi)])
 def sube_siparis_ozel_talep(sube_id: str, body: SiparisOzelTalepBody):
     """Katalogda olmayan ürün talebi — yalnızca merkez onayı sonrası kataloga girer."""
     pid_in = (body.personel_id or "").strip()
@@ -6073,7 +6083,7 @@ def _kalem_merge(mevcut: List[Dict], yeni: List[Dict]) -> List[Dict]:
     return list(sonuc.values())
 
 
-@router.post("/{sube_id}/siparis-kalem-ekle")
+@router.post("/{sube_id}/siparis-kalem-ekle", dependencies=[Depends(_eski_kapi)])
 def sube_siparis_kalem_ekle(sube_id: str, body: SiparisOnayBody):
     """
     Akıllı sipariş ekleme — iş kuralı:
@@ -6240,7 +6250,7 @@ def sube_siparis_kalem_ekle(sube_id: str, body: SiparisOnayBody):
             }
 
 
-@router.post("/{sube_id}/siparis-onay")
+@router.post("/{sube_id}/siparis-onay", dependencies=[Depends(_eski_kapi)])
 def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
     pid_in = (body.personel_id or "").strip()
     pin = (body.pin or "").replace(" ", "")
@@ -6377,7 +6387,7 @@ def sube_siparis_onay(sube_id: str, body: SiparisOnayBody):
         return out
 
 
-@router.post("/{sube_id}/siparis-yoklama")
+@router.post("/{sube_id}/siparis-yoklama", dependencies=[Depends(_eski_kapi)])
 def sube_siparis_yoklama(sube_id: str, body: SiparisYoklamaBody):
     """QR yoklama oturumu ile sipariş ver — PIN gerekmez, yoklama kaydı yeterli."""
     pid_in = (body.personel_id or "").strip()
@@ -6533,7 +6543,7 @@ def sube_geri_bildirimler(sube_id: str, gun: int = Query(default=14, ge=1, le=90
         return {"bildirimler": bildirimler, "merkez_mesajlar": merkez_mesajlar}
 
 
-@router.post("/{sube_id}/panel-pin-dogrula")
+@router.post("/{sube_id}/panel-pin-dogrula", dependencies=[Depends(_eski_kapi)])
 def sube_panel_pin_dogrula(sube_id: str, body: PanelPinDogrulaBody):
     """Şube panelinde (sipariş / ürün teslim / ürün aç kategori modalında) pencereyi kapatmadan önce PIN doğrular; girilen miktarları silmez."""
     pid_in = (body.personel_id or "").strip()

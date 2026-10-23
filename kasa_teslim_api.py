@@ -3,13 +3,23 @@ from __future__ import annotations
 import uuid
 from typing import Any, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 from pydantic import BaseModel
 
 from database import db, savepoint
 from kasa_service import audit
 
 router = APIRouter(tags=["kasa-teslim"])
+
+def _eski_kapi() -> None:
+    """🔌 1 Kasım kesimi — eski panel KAYIT uçları kesimden sonra 410 (kural çekirdekte: evvel_yeni_cekirdek.eski_yazim_kapisi).
+    Kapı okunamazsa yazım izni VERİLMEZ (Codex 22 Eki P2)."""
+    try:
+        from evvel_yeni_cekirdek import eski_yazim_kapisi
+    except Exception:  # noqa: BLE001
+        raise HTTPException(503, "Sistem şu an kontrol edilemiyor — biraz sonra yeniden dene")
+    eski_yazim_kapisi()
+
 
 
 # ── KASA TESLİM ALICI CRUD ────────────────────────────────────
@@ -105,7 +115,7 @@ class KasaTeslimBody(BaseModel):
     pin: Optional[str] = None
 
 
-@router.post("/api/kasa-teslim")
+@router.post("/api/kasa-teslim", dependencies=[Depends(_eski_kapi)])
 def kasa_teslim_ekle(body: KasaTeslimBody):
     """
     FIX KP5 (2026-07-06): bu uç kimliksizdi — PIN opsiyonel, şube doğrulanmıyordu; kasa teslimi

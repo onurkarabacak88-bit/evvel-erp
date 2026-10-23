@@ -26,7 +26,6 @@ import KartEkstreAnaliz from './pages/KartEkstreAnaliz';
 import VardiyaPlanlamaV2 from './pages/VardiyaPlanlamaV2';
 import SubePanelPinleri from './pages/SubePanelPinleri';
 import GorevQR from './pages/GorevQR';
-import GorevGiris from './pages/GorevGiris';
 import GorevOzet from './pages/GorevOzet';
 import PersonelVardiyaTakip from './pages/PersonelVardiyaTakip';
 import Tedarikciler from './pages/Tedarikciler';
@@ -53,6 +52,7 @@ import CepApp from './pages/cep/CepApp';
 import EvvelYeniApp from './pages/evvelyeni/EvvelYeniApp';
 import SubePaneli from './pages/subepanel/SubePaneli';
 import TelefonSayfasi from './pages/telefon/TelefonSayfasi';
+import EskiQrKapisi from './pages/telefon/EskiQrKapisi';
 import DuyuPaneli from './pages/DuyuPaneli';
 import ReceteEslestirme from './pages/ReceteEslestirme';
 import BelgeMerkezi from './pages/BelgeMerkezi';
@@ -343,11 +343,11 @@ export default function App() {
   // QR giriş sayfası — sidebar olmadan tam ekran
   const gorevGirisMatch = window.location.pathname.match(/^\/gorev-giris\/(.+)$/);
   if (gorevGirisMatch) {
-    return <GorevGiris subeId={gorevGirisMatch[1]} />;
+    return <EskiQrKapisi subeId={gorevGirisMatch[1]} />;   // 1 Kasım'dan sonra yeni telefon evine (/q) yönlenir
   }
   // QR'sız direkt giriş — şube seçimli
   if (window.location.pathname === '/gorev-pin') {
-    return <GorevGiris subeId={null} />;
+    return <EskiQrKapisi subeId={null} />;
   }
 
   // Fire/iade kanıt fotoğrafı — personel telefonundan QR ile açılır

@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional
@@ -9,6 +9,17 @@ import bordro_kural_coz as _bkc          # BORDRO V2 · kural cozucu (TEK KAPI)
 _bkc_varsayilan = dict(_bkc.VARSAYILAN)  # tablo bosken/kirikken dusulecek taban
 
 router = APIRouter()
+
+
+def _eski_kapi() -> None:
+    """🔌 1 Kasım kesimi — SUNUCU kapısı (Fable 21 Eki): personelin eski telefon/QR yazıcı uçları kesimden sonra 410.
+    TEK kural çekirdek anahtarı (eski_panel_zinciri_acik; ey_ayar 'eski_gece_zinciri'='acik' → geri açılır). Ön yüzdeki /q
+    yönlendirmesi kolaylık; aynı günün hem eski hem yeni yoklama defterine yazılmasını bu kapı önler. Merkez düzeltme uçları açık kalır."""
+    try:   # kural + mesaj çekirdekte TEK yerde (evvel_yeni_cekirdek.eski_yazim_kapisi — eski şube paneli de aynı kapıyı kullanır)
+        from evvel_yeni_cekirdek import eski_yazim_kapisi
+    except Exception:  # noqa: BLE001 — Codex 22 Eki P2: kapı okunamazsa YAZIM İZNİ VERİLMEZ (kesimden sonra eski tabloya yazmasın)
+        raise HTTPException(503, "Sistem şu an kontrol edilemiyor — biraz sonra yeniden dene")
+    eski_yazim_kapisi()
 
 # Sistem başlangıç tarihi - bu tarihten önceki veriler hesaba katılmaz
 # (gecikme=0, fazla mesai=0, yemek=tam, haftalık izin=var)
@@ -196,7 +207,7 @@ def _cep_aktor_metni(body) -> str:
     return f"{ad} (BEYAN — doğrulanmadı)" if ad else "BİLİNMİYOR (aktör gönderilmedi)"
 
 
-@router.post("/api/gorev/tamamla")
+@router.post("/api/gorev/tamamla", dependencies=[Depends(_eski_kapi)])
 def gorev_tamamla(body: GorevTamamlaBody):
     from datetime import date as _date, datetime as _dt
     t = _date.fromisoformat(body.tarih)
@@ -286,7 +297,7 @@ class GorevPinGirisBody(BaseModel):
     lng: Optional[float] = None
 
 
-@router.post("/api/gorev/pin-giris")
+@router.post("/api/gorev/pin-giris", dependencies=[Depends(_eski_kapi)])
 def gorev_pin_giris(body: GorevPinGirisBody):
     """Personel PIN doğrulaması. Konum varsa şube yakınlığı kontrol edilir. Yoklama kaydedilir."""
     from personel_panel_auth import dogrula_personel_panel_pin
@@ -679,7 +690,7 @@ def _konum_kontrol(cur, sube_id: str, lat, lng, hata_prefix: str):
             f"(şubeye uzaklık: {int(mesafe)} m, limit: {YEMEK_KONUM_RADIUS} m).")
 
 
-@router.post("/api/gorev/yemek-baslat")
+@router.post("/api/gorev/yemek-baslat", dependencies=[Depends(_eski_kapi)])
 def yemek_baslat(body: YemekMolasiBody):
     """Personel yemeğe gidiyor - konum kontrolü + mola başlangıcını kaydet."""
     from tr_saat import is_gunu_tr
@@ -707,7 +718,7 @@ def yemek_baslat(body: YemekMolasiBody):
     return {"basarili": True, "durum": "mola_basladi"}
 
 
-@router.post("/api/gorev/yemek-bitis")
+@router.post("/api/gorev/yemek-bitis", dependencies=[Depends(_eski_kapi)])
 def yemek_bitis(body: YemekMolasiBody):
     """Personel yemekten döndü - konum kontrolü + mola bitiş + ücret hakkı hesapla."""
     from tr_saat import is_gunu_tr, dt_now_tr
@@ -776,7 +787,7 @@ class MesaiCikisBody(BaseModel):
     lng: Optional[float] = None
 
 
-@router.post("/api/gorev/mesai-cikis")
+@router.post("/api/gorev/mesai-cikis", dependencies=[Depends(_eski_kapi)])
 def mesai_cikis(body: MesaiCikisBody):
     """Personel mesai çıkışı - kasa devri veya kapanışta QR onayıyla."""
     from tr_saat import is_gunu_tr, dt_now_tr
@@ -849,7 +860,7 @@ class DevirFormKaydetBody(BaseModel):
     devralan_id: str
     form_data: dict = {}
 
-@router.post("/api/gorev/devir-form-kaydet")
+@router.post("/api/gorev/devir-form-kaydet", dependencies=[Depends(_eski_kapi)])
 def devir_form_kaydet(body: DevirFormKaydetBody):
     """Panel form verisini kaydeder (durum=form_kaydedildi). Sabahçı telefondan onaylayacak."""
     from tr_saat import is_gunu_tr
@@ -894,7 +905,7 @@ class DevirSabahOnaylaBody(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
 
-@router.post("/api/gorev/devir-sabah-onayla")
+@router.post("/api/gorev/devir-sabah-onayla", dependencies=[Depends(_eski_kapi)])
 def devir_sabah_onayla(body: DevirSabahOnaylaBody):
     """Sabahçı telefondan devri onaylar: adim1 + cikis_ts set."""
     from tr_saat import is_gunu_tr, dt_now_tr
@@ -979,7 +990,7 @@ class DevirKabulBody(BaseModel):
     kabul_eden_id: str
     devir_id: str
 
-@router.post("/api/gorev/devir-baslat")
+@router.post("/api/gorev/devir-baslat", dependencies=[Depends(_eski_kapi)])
 def devir_baslat(body: DevirBaslatBody):
     """Sabahci/ara vardiya cikarken kasa devir kaydini olusturur (durum=bekliyor)."""
     from tr_saat import is_gunu_tr
@@ -1126,7 +1137,7 @@ def devir_gun_sifirla(body: DevirGunSifirlaBody):
     }
 
 
-@router.post("/api/gorev/devir-kabul")
+@router.post("/api/gorev/devir-kabul", dependencies=[Depends(_eski_kapi)])
 def devir_kabul(body: DevirKabulBody):
     """Gelen vardiya devri onaylar."""
     from tr_saat import is_gunu_tr, dt_now_tr
@@ -1165,7 +1176,7 @@ class DevirGirisBody(BaseModel):
     lat: Optional[float] = None
     lng: Optional[float] = None
 
-@router.post("/api/gorev/devir-giris")
+@router.post("/api/gorev/devir-giris", dependencies=[Depends(_eski_kapi)])
 def devir_giris(body: DevirGirisBody):
     """
     QR ile devir kabulu - PIN gerektirmez.
@@ -1549,7 +1560,7 @@ class KapanisMuhurleBody(BaseModel):
     lng: Optional[float] = None
 
 
-@router.post("/api/gorev/kapanis-muhurle")
+@router.post("/api/gorev/kapanis-muhurle", dependencies=[Depends(_eski_kapi)])
 def kapanis_muhurle(body: KapanisMuhurleBody):
     """
     QR ile kapanis onaylama - pin gerektirmez.
@@ -1597,7 +1608,7 @@ class KapanisMuhurOverrideBody(BaseModel):
     onay_pin: Optional[str] = None   # CEP-001: işletme onay PIN'i
 
 
-@router.post("/api/gorev/kapanis-muhur-override")
+@router.post("/api/gorev/kapanis-muhur-override", dependencies=[Depends(_eski_kapi)])
 def kapanis_muhur_override(body: KapanisMuhurOverrideBody):
     """YÖNETİCİ OVERRIDE (sahip Cep'ten): kapanışçı telefonla mühür atamadıysa
     (ayrıldı / otomatik kapandı / sadece kasa_devri yaptı), sahip seçtiği personeli
@@ -1870,7 +1881,7 @@ class KapanisYoneticiKapatBody(BaseModel):
     yapan_ad: Optional[str] = None
 
 
-@router.post("/api/gorev/kapanis-yonetici-kapat")
+@router.post("/api/gorev/kapanis-yonetici-kapat", dependencies=[Depends(_eski_kapi)])
 def kapanis_yonetici_kapat(body: KapanisYoneticiKapatBody):
     """
     Çıkış yapmadan giden personelin bugünkü AÇIK yoklamasını yönetici kapatır

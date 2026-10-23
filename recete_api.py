@@ -25,7 +25,7 @@ import uuid
 from datetime import date, timedelta
 from typing import Any, Dict, List, Optional
 
-from fastapi import APIRouter, HTTPException
+from fastapi import Depends, APIRouter, HTTPException
 from pydantic import BaseModel
 
 from database import db
@@ -845,7 +845,16 @@ def _degirmen_ensure(cur) -> None:
                 "WHERE ad LIKE 'degirmen%%doz_g'")
 
 
-@router.post("/degirmen-sayac")
+def _eski_kapi() -> None:
+    """🔌 1 Kasım kesimi — eski panel kapanışının değirmen sayacı yazımı kesimden sonra 410 (kural çekirdekte: eski_yazim_kapisi)."""
+    try:
+        from evvel_yeni_cekirdek import eski_yazim_kapisi
+    except Exception:  # noqa: BLE001
+        raise HTTPException(503, "Sistem şu an kontrol edilemiyor — biraz sonra yeniden dene")
+    eski_yazim_kapisi()
+
+
+@router.post("/degirmen-sayac", dependencies=[Depends(_eski_kapi)])
 def degirmen_sayac_kaydet(payload: dict):
     """Kapanışta değirmen istatistik sayacı okuma (BİRİKİMLİ değerler — sıfırlamayın).
     Aynı gün ikinci gönderim üstüne yazar (son okuma geçerli). Hata-yutar tasarım:
