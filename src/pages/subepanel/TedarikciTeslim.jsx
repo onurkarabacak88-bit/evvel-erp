@@ -26,13 +26,17 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   const [pin, setPin] = useState('');    // YALNIZ bellekte
   const [mesgul, setMesgul] = useState(false);
   const [hata, setHata] = useState('');
-  const [foto, setFoto] = useState(null);   // E1: kayıttan sonra { teslim_id, toptanci, fatura } → "📷 Faturayı çek" QR
+  const [foto, setFoto] = useState(null);
+  // ↩ S9 "Hatalı? Geri al": bugünkü teslim → sebep + yetkili kişi + PIN (sunucu yetkiyi Tanımlar'dan denetler)
+  const [geri, setGeri] = useState(null);   // { teslim, sebep, kisi, pin, istek }   // E1: kayıttan sonra { teslim_id, toptanci, fatura } → "📷 Faturayı çek" QR
   // 🛒 S5d (A10, D3): bu şubeye toptancıdan BEKLENEN sipariş kalemleri — işaretlenen kart teslime bağlanır (sipariş 'karşılandı' olur)
   const [bekl, setBekl] = useState([]);
   const [secYon, setSecYon] = useState(ilk?.secYon || []);
+  // Fable S9: teslim kaydı / geri alma sonrası beklenen kartlar yeniden okunur (geri alınan teslimin kartı yeniden 'bekleniyor' olur)
+  const teslimIzi = (d.teslimler_bugun || []).map((t) => t.id + (t.iptal ? ':x' : '')).join(',');
   useEffect(() => {
     api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/siparisler`).then((r) => setBekl(r?.toptanci_beklenen || [])).catch(() => setBekl([]));
-  }, [subeId]);
+  }, [subeId, teslimIzi]);
   useEffect(() => {
     taslakYaz(anahtar, { adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek, secYon });
   }, [adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek, secYon, anahtar]);
@@ -65,6 +69,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
     setAdet({}); setKoli({}); setToptanci(''); setFatura(null); setFtTutar(''); setFtNo(''); setNot(''); setIstek(yeniIstek());
     taslakKaldir(anahtar);
   };
+  useEffect(() => { setHata(''); }, [adet, toptanci, fatura]);   // B15: düzeltilince eski hata kalmasın
   const onayAc = () => {   // eski validateAndSubmit sırası
     setHata('');
     if (!kalem) { setHata('Katalogdan en az bir üründe adet girin'); return; }
@@ -92,6 +97,22 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
     } catch (e) {
       const t = panelHata(e, { setHata, pinSifirla: () => { setPin(''); setOnay(1); }, yeniIstekVer: () => setIstek(yeniIstek()) });
       if (t === 'farkli') { setOnay(0); setPin(''); }
+    }
+    setMesgul(false);
+  };
+
+  const geriAl = async () => {
+    if (mesgul || !geri) return;
+    if (geri.sebep.trim().length < 3) { setGeri({ ...geri, hata: 'Neden geri alındığını yaz' }); return; }
+    if (!/^\d{4}$/.test(geri.pin)) { setGeri({ ...geri, hata: '4 haneli PIN gir' }); return; }
+    setMesgul(true); setGeri({ ...geri, hata: '' });
+    try {
+      const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/teslim-geri-al`, { method: 'POST', body: {
+        personel_id: geri.kisi, pin: geri.pin, istek_id: geri.istek, istemci_gunu: d.gun, teslim_id: geri.teslim.id, sebep: geri.sebep.trim() } });
+      setGeri(null);
+      bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : (r.mesaj || 'Teslim geri alındı'), !!r.kuru);
+    } catch (e) {
+      panelHata(e, { setHata: (h) => setGeri((g) => g && { ...g, hata: h }), pinSifirla: () => setGeri((g) => g && { ...g, pin: '' }), yeniIstekVer: () => setGeri((g) => g && { ...g, istek: yeniIstek() }) });
     }
     setMesgul(false);
   };
@@ -159,6 +180,37 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
         </div>
       </div>
 
+      {(d.teslimler_bugun || []).length > 0 && (
+        <div className="sp-kart" style={{ display: 'grid', gap: 8 }}>
+          <b>📋 Bugün alınan teslimler</b>
+          {d.teslimler_bugun.map((t) => (
+            <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', opacity: t.iptal ? 0.55 : 1 }}>
+              <span style={{ flex: 1, minWidth: 200 }}>{t.saat} · <b>{t.toptanci}</b> · {t.kalem} kalem / {t.adet} adet{t.teslim_alan ? ` · ${t.teslim_alan}` : ''}</span>
+              {t.iptal ? <span style={{ color: C.soluk, fontWeight: 700 }}>{t.iptal_eden === 'merkez' ? '✕ merkez iptal etti' : '↩ geri alındı'}</span>
+                : t.merkez_isledi ? <span style={{ color: C.soluk, fontSize: 13 }}>merkez işledi — hata varsa merkeze haber ver</span>
+                : <button type="button" className="sp-btn" style={{ minHeight: 48 }} disabled={kapali}
+                    onClick={() => setGeri({ teslim: t, sebep: '', kisi: '', pin: '', istek: yeniIstek(), hata: '' })}>Hatalı? Geri al</button>}
+            </div>
+          ))}
+        </div>
+      )}
+
+      {geri && (
+        <Modal baslik="↩ Teslimi geri al" kapat={() => setGeri(null)}>
+          <div><b>{geri.teslim.toptanci}</b> · {geri.teslim.saat} · {geri.teslim.kalem} kalem / {geri.teslim.adet} adet</div>
+          <span style={{ color: C.soluk, fontSize: 14 }}>Teslim silinmez, iptal olarak kalır; merkez kaydı düzeltir. Doğrusunu sonra yeniden girebilirsin. Yalnız geri alma yetkisi olan kişi yapabilir.</span>
+          <label style={{ display: 'grid', gap: 4 }}><b>Neden? *</b>
+            <input className="sp-in" style={{ fontSize: 16 }} value={geri.sebep} maxLength={200} placeholder="ör. yanlış tedarikçi seçildi, adet yanlış girildi"
+              onChange={(e) => setGeri({ ...geri, sebep: e.target.value })} /></label>
+          <KisiPin adaylar={adaylar} kisi={geri.kisi} setKisi={(k) => setGeri((g) => ({ ...g, kisi: k }))} pin={geri.pin}
+            setPin={(v) => setGeri((g) => ({ ...g, pin: v }))} hata={geri.hata} soru="Kim geri alıyor?" />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <button className="sp-btn" disabled={mesgul} onClick={() => setGeri(null)}>Vazgeç</button>
+            <button className="sp-btn sp-ana" style={{ flex: 1 }} disabled={mesgul || !geri.kisi || geri.pin.length !== 4 || geri.sebep.trim().length < 3}
+              onClick={geriAl}>{mesgul ? 'Gönderiliyor…' : '↩ Geri al'}</button>
+          </div>
+        </Modal>
+      )}
       {foto && (
         <Modal baslik="📷 Faturayı çek" kapat={() => setFoto(null)}>
           <div style={{ display: 'grid', justifyItems: 'center', gap: 10, textAlign: 'center' }}>

@@ -137,11 +137,14 @@ def olay_veri_ekle(cur, olay_id: Optional[str], ek: dict) -> None:
     cur.execute("UPDATE ey_sube_olay SET veri = veri || %s::jsonb WHERE id=%s", (json.dumps(ek, ensure_ascii=False, default=str), olay_id))
 
 
-def yakin_ayni_olay(cur, *, sube_id: str, tur: str, veri_alan: str, deger: str, dakika: int, istek_haric: Optional[str] = None) -> bool:
-    """Son N dakikada aynı şubede aynı türde, verisinin bir alanı aynı olan BAŞKA istekli olay var mı (çift basış kilidi)."""
+def yakin_ayni_olay(cur, *, sube_id: str, tur: str, veri_alan: str, deger: str, dakika: int, istek_haric: Optional[str] = None,
+                    haric_kokler=None) -> bool:
+    """Son N dakikada aynı şubede aynı türde, verisinin bir alanı aynı olan BAŞKA istekli olay var mı (çift basış kilidi).
+    haric_kokler: sayılmayacak kökler (ör. geri alınmış teslim — Codex 22 Eki: düzeltip yeniden giren 3 dk beklemesin)."""
     cur.execute("""SELECT 1 FROM ey_sube_olay WHERE sube_id=%s AND tur=%s AND veri->>%s=%s
-                     AND olay_zamani > NOW() - make_interval(mins => %s) AND COALESCE(veri->>'istek_id','') <> %s LIMIT 1""",
-                (str(sube_id), tur, veri_alan, str(deger), int(dakika), istek_haric or ""))
+                     AND olay_zamani > NOW() - make_interval(mins => %s) AND COALESCE(veri->>'istek_id','') <> %s
+                     AND NOT (kok = ANY(%s)) LIMIT 1""",
+                (str(sube_id), tur, veri_alan, str(deger), int(dakika), istek_haric or "", list(haric_kokler or [])))
     return cur.fetchone() is not None
 
 
@@ -158,6 +161,9 @@ def olaylar(cur, sube_id: Optional[str] = None, bas: Any = None, son: Any = None
     if son:
         q += " AND is_gunu <= %s"
         p.append(son)
+    if turler:   # Codex 22 Eki: sık çağrılan okuyucular (panel durumu) bütün olay gövdelerini taşımasın — iptal satırları işaret için gelir
+        q += " AND (tur = ANY(%s) OR tur = 'iptal')"
+        p.append(list(turler))
     cur.execute(q + " ORDER BY olay_zamani", p)
     rows = [dict(r) for r in cur.fetchall() or []]
     iptal = {}   # kök → en son iptal anı (iptalden SONRA gelen yeni sürüm geçerlidir: geri al → yeniden kapat)

@@ -22,8 +22,8 @@ export function DevirOzet({ devir }) {
 }
 
 // Sağ kolondaki / ana sayfadaki kısa durum satırı
-export function devirEtiket(devir) {
-  if (!devir) return { renk: C.soluk, metin: '● Bekliyor' };
+export function devirEtiket(devir, kapandi = false) {
+  if (!devir) return kapandi ? { renk: C.soluk, metin: '— gün kapandı' } : { renk: C.soluk, metin: '● Bekliyor' };   // B6
   return {
     baslatildi: { renk: C.sari, metin: '⏳ Devreden QR okutsun' },
     dolduruluyor: { renk: C.sari, metin: `⏳ ${devir.ustlenen || 'Devreden'} telefonda sayıyor` },

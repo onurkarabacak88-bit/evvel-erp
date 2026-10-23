@@ -12,7 +12,7 @@ import { gunKaydir } from '../../utils/trTarih';
 import { paraGecerli } from '../../utils/trSayi';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
-const BASLIK = ['', 'Kasa & Ciro', 'Bardak Sayımı', 'Ürün Sayımı', 'Değirmen & Pasta', 'QR ile Mühürle'];
+const BASLIK = ['', 'Kasa & Ciro', 'Tezgah Sayımı — Bardak', 'Tezgah Sayımı — Ürün', 'Değirmen & Pasta', 'QR ile Mühürle'];
 
 // 22:30 kuralı (sunucu kesin karar verir): 02:00–22:30 arası kapanış yapılamaz
 const kapanisErken = (hhmm) => Number(trSaat(new Date()).split(':')[0]) >= 2 && saatOncesi(hhmm, '22:30');   // K10: ortak yardımcı
@@ -105,6 +105,8 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
       }
       if (v.kor === '' || !paraGecerli(v.kor)) { setHata('Çekmecedeki TÜM parayı sayıp girin (teslim etmeden önce, kör sayım)'); return; }
       if (v.birakilan === '' || !paraGecerli(v.birakilan)) { setHata('Kasada bırakılan (devir) tutarı zorunlu'); return; }
+      const buyuk = ['kor', 'birakilan', 'nakit'].filter((x) => tutarNum(v[x]) >= 100000);   // B11: sabit sınır, kör sayımı delmez
+      if (buyuk.length && !window.confirm('100.000 ₺ üstü tutar var (' + buyuk.map((x) => tl(tutarNum(v[x]))).join(', ') + ') — sayıyı yeniden kontrol et; doğru mu?')) return;
       const n = tutarNum(v.nakit), p = tutarNum(v.pos), o = tutarNum(v.online);
       if (o > 0 && n > 0 && p > 0 && Math.abs(o - (n + p)) < 0.5) { setHata('Online alanı nakit+POS toplamına eşit olamaz. Online satış yoksa 0 bırakın.'); return; }
       if (n + p + o <= 0) { setHata('En az bir ciro tutarı girin'); return; }
@@ -166,6 +168,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
     <div style={{ minWidth: 0 }}>
       <label className="aw-lbl">{ad}</label>
       <input className="aw-in" inputMode="decimal" autoComplete="off" placeholder={ipucu || '0'} value={v[k]} onChange={(e) => set(k, tutar(e.target.value))} />
+      {v[k] !== '' && v[k] != null && <div style={{ fontSize: 13, color: C.soluk, marginTop: 4 }}>= <b>{tl(tutarNum(v[k]))}</b></div>}   {/* B11 */}
     </div>
   );
   const altYazi = { 1: 'X raporu + kör çekmece sayımı + teslim', 2: bardaklar.map((u) => u.ad).join(' · ') || 'Bardak', 3: digerleri.map((u) => u.ad).join(' · ') || 'Ürün',
@@ -238,6 +241,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
                 {para('birakilan', '3 · Kasada bırakılan (devir) *', 'Zorunlu')}
               </div>
             </>)}
+            {(adim === 2 || adim === 3) && <div className="aw-kor">🧮 Yalnız TEZGAHTA açık / kullanımdaki olanı say — raftaki, depodaki kapalı koli SAYILMAZ</div>}   {/* B40 (Fable): sayılan = tezgah, raf değil */}
             {adim === 2 && <div className="aw-izgara">{bardaklar.map(sayiKutu)}</div>}
             {adim === 3 && (<>
               <div className="aw-izgara">{digerleri.map(sayiKutu)}</div>

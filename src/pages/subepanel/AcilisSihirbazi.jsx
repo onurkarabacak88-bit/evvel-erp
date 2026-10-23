@@ -7,7 +7,7 @@ import { C, qrBoyut, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tut
 import { paraGecerli } from '../../utils/trSayi';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
-const BASLIK = ['', 'Kasa Sayımı', 'Bardak Stoku', 'Ürün Stoku', 'Pasta Stoku', 'QR ile Onay'];
+const BASLIK = ['', 'Kasa Sayımı', 'Tezgah Sayımı — Bardak', 'Tezgah Sayımı — Ürün', 'Pasta Stoku', 'QR ile Onay'];
 
 export const CSS_AW = `
 @keyframes awSagdan{from{opacity:0;transform:translateX(24px)}to{opacity:1;transform:translateX(0)}}
@@ -117,6 +117,7 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
     if (adim === 1) {
       if (kasa === '') { setHata('Kasa sayımı girin'); return; }
       if (!paraGecerli(kasa)) { setHata('Kasa sayımı için geçerli değer girin'); return; }
+      if (tutarNum(kasa) >= 100000 && !window.confirm(`Kasa ${tl(tutarNum(kasa))} — 100.000 ₺ üstü. Sayıyı yeniden kontrol et; doğru mu?`)) return;   // B11: sabit sınır (önceki tutarla ilgisi yok — kör sayım bozulmaz)
       git(2); return;
     }
     if (adim === 2) { if (zorunlu(bardaklar)) git(3); return; }
@@ -188,7 +189,9 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
               <p style={{ fontSize: 12, color: C.soluk, margin: '0 0 12px', lineHeight: 1.5 }}>Kasadaki parayı <b>bağımsız olarak say.</b> Sunucu saati: <b>{trSaat(saat)}</b></p>
               <label className="aw-lbl">Kasa Sayımı (₺)</label>
               <input className="aw-in" inputMode="decimal" autoComplete="off" placeholder="0" value={kasa} onChange={(e) => setKasa(tutar(e.target.value))} />
+              {kasa !== '' && <div style={{ fontSize: 13, color: C.soluk, marginTop: 4 }}>= <b>{tl(tutarNum(kasa))}</b></div>}   {/* B11: binlikli okunuş — 151500 yazınca '151.500' görünür */}
             </>)}
+            {(adim === 2 || adim === 3) && <div className="aw-kor">🧮 Yalnız TEZGAHTA açık / kullanımdaki olanı say — raftaki, depodaki kapalı koli SAYILMAZ</div>}   {/* B40 (Fable): sayılan = tezgah, raf değil */}
             {adim === 2 && <div className="aw-izgara">{bardaklar.map(sayiKutu)}</div>}
             {adim === 3 && <div className="aw-izgara">{digerleri.map(sayiKutu)}</div>}
             {adim === 4 && (

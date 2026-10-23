@@ -37,7 +37,7 @@ export default function KazancModulu() {
     listeBaslik: 'Kalem kalem',
     satirlar: [
       { ad: 'Gelir · nakit', tutar: tl(s.gelir_kirilim.nakit) }, { ad: 'Gelir · POS', tutar: tl(s.gelir_kirilim.pos) }, { ad: 'Gelir · online', tutar: tl(s.gelir_kirilim.online) },
-      ...Object.entries(s.gider_kirilim).filter(([, t]) => t).map(([k, t]) => ({ ad: `Gider · ${v.turler[k] || k}`, tutar: `− ${tl(t)}` })),
+      ...Object.entries(s.gider_kirilim).filter(([, t]) => t).map(([k, t]) => ({ ad: `Gider · ${v.turler[k] || k}${k === 'kira' && s.kira_tam_ay ? ` (ay içi: ${v.ay_ici.gecen_gun}/${v.ay_ici.ay_gun} gün · tam ay ${tl(s.kira_tam_ay)})` : ''}`, tutar: `− ${tl(t)}` })),
       ...s.tasidiklari.map((x) => ({ ad: `Taşıdığı · ${x.ad}`, tutar: `− ${tl(x.tutar)}`, detay: 'kârı oranında payına düşen' })),
     ],
   });
@@ -55,7 +55,7 @@ export default function KazancModulu() {
 
       <div style={{ ...kart, padding: '16px 20px', background: 'var(--pi-accent-soft)', display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <div>
-          <div style={etiketStil}>{ayAd} işletme kazancı{v.ay_bitti ? '' : ' · bugüne kadar'}</div>
+          <div style={etiketStil}>{ayAd} işletme kazancı{v.ay_bitti ? '' : ` · bugüne kadar${v.ay_ici ? ` (kira ${v.ay_ici.gecen_gun}/${v.ay_ici.ay_gun} gün oranında)` : ''}`}</div>
           <div style={{ ...num, fontSize: 40, fontWeight: 700, color: renk(v.isletme_kazanci), lineHeight: 1.05 }}>{tl(v.isletme_kazanci)}</div>
         </div>
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
@@ -72,7 +72,7 @@ export default function KazancModulu() {
             ...kart, textAlign: 'left', cursor: 'pointer', font: 'inherit', color: R.krem, padding: '14px 16px',
             borderLeft: `5px solid ${renk(s.kazanc)}`, display: 'flex', flexDirection: 'column', gap: 7,
           }}>
-            <span style={etiketStil}>{s.kazanc >= 0 ? 'Kâr ediyor' : 'Zarar ediyor'}</span>
+            <span style={etiketStil}>{!s.gelir && !s.gider ? 'Hareket yok' : s.kazanc >= 0 ? 'Kâr ediyor' : 'Zarar ediyor'}</span>
             <b style={{ fontSize: 15 }}>{s.ad}</b>
             <span style={{ ...num, fontSize: 26, fontWeight: 700, color: renk(s.kazanc) }}>{tl(s.kazanc)}</span>
             {[['Gelir', s.gelir, 'var(--pi-good)'], ['Gider', s.gider, 'var(--pi-bad)']].map(([a, t, c]) => (

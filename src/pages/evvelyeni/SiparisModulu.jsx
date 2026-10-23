@@ -74,7 +74,7 @@ export default function SiparisModulu({ onToast }) {
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
       <div><div className="pi-eyebrow">Evvel Yeni · Sipariş</div><h1 style={{ fontSize: 30 }}>Sipariş yönlendirme</h1></div>
-      <div style={{ fontSize: 13, color: R.metin2 }}>Şubenin talebini kalem kalem yönlendir: <b>merkez depo</b> (Depo › Sevk et listesine düşer) ya da <b>toptancı</b> (şube teslim alınca karşılanır). Bölebilirsin. Burada stok ya da borç yazılmaz.</div>
+      <div style={{ fontSize: 13, color: R.metin2 }}>Şubenin talebini kalem kalem yönlendir: <b>merkez depo</b> (depo şubesinin panelinde '📤 Gönderilecek siparişler'e düşer) ya da <b>toptancı</b> (şube teslim alınca karşılanır). Bölebilirsin. Burada stok ya da borç yazılmaz.</div>
       <div style={{ display: 'flex', gap: 6 }}>
         <Dugme kucuk ana={gorunum === 'acik'} onClick={() => setGorunum('acik')}>Açık</Dugme>
         <Dugme kucuk ana={gorunum === 'gecmis'} onClick={() => setGorunum('gecmis')}>Geçmiş (30 gün)</Dugme>
@@ -99,7 +99,9 @@ export default function SiparisModulu({ onToast }) {
             </div>
             {s.notu && <div style={{ fontSize: 12.5, color: R.metin2 }}>📝 {s.notu}</div>}
             {s.kalemler.map((k) => {
-              const [dAd, dTur] = DURUM[k.durum] || [k.durum];
+              const [dAd0, dTur] = DURUM[k.durum] || [k.durum];
+              // B28: kısmen yönlendirilmişse kaç adedin beklediğini söyle
+              const dAd = k.durum === 'yonlendirilmedi' && k.yonsuz > 0 && k.yonsuz < k.adet ? `${k.yonsuz} adet yönlendirilmedi` : dAd0;
               const ys = yonlerOf(s, k);
               const duzenlenir = acik && k.durum !== 'iptal' && k.durum !== 'oneri' && !!k.urun_id;
               const kilitler = k.yonler.filter(kilitli);
@@ -110,7 +112,8 @@ export default function SiparisModulu({ onToast }) {
                     <b style={{ flex: '1 1 180px' }}>{k.ad}{k.pasta ? ' 🍰' : ''}</b>
                     <b style={num}>{k.adet}</b>
                     <Cip tur={dTur}>{dAd}</Cip>
-                    {k.eksik > 0 && <Cip tur="kirmizi">{k.eksik} eksik geldi</Cip>}
+                    {k.depo_yok && <Cip tur="sari">depo YOK dedi ({k.depo_yok})</Cip>}
+                    {k.eksik > 0 && <Cip tur="kirmizi">{k.eksik} {k.durum === 'yonlendirilmedi' ? 'adet gönderilmedi' : 'eksik geldi'}</Cip>}
                     {acik && k.durum !== 'iptal' && kilitler.length === 0 && (
                       <Dugme kucuk disabled={mesgul[s.id]} onClick={() => { const r = window.prompt(`${k.ad} kalemi neden iptal ediliyor?`); if (r && r.trim()) is_(s.id, 'yon', { surum: s.surum, kalemler: [{ i: k.i, iptal: r.trim() }] }, 'Kalem iptal edildi'); }}>Kalemi iptal</Dugme>
                     )}
@@ -159,7 +162,13 @@ function OneriBagla({ s, k, urunler, mesgul, is_ }) {
   const [ara, setAra] = useState(k.ad || '');
   const [sec, setSec] = useState('');
   const kucuk = (x) => String(x || '').replace(/I/g, 'ı').replace(/İ/g, 'i').toLocaleLowerCase('tr');
-  const aday = useMemo(() => urunler.filter((u) => kucuk(u.ad).includes(kucuk(ara).trim())).slice(0, 30), [urunler, ara]);
+  // B49: kelime kelime ve kök (ilk 5 harf) — 'peçete paketi' katalogdaki 'Peçete Paket'i bulsun; en çok eşleşen üstte
+  const aday = useMemo(() => {
+    const kok = kucuk(ara).split(/\s+/).filter((w) => w.length >= 3).map((w) => w.slice(0, 5));
+    if (!kok.length) return urunler.slice(0, 30);
+    return urunler.map((u) => [u, kok.filter((w) => kucuk(u.ad).includes(w)).length]).filter(([, n]) => n > 0)
+      .sort((a, b) => b[1] - a[1]).map(([u]) => u).slice(0, 30);
+  }, [urunler, ara]);
   return (
     <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap', paddingLeft: 12 }}>
       <span style={{ fontSize: 12.5, color: R.metin2 }}>Şubenin yazdığı: <b>{k.ad}</b> →</span>

@@ -425,6 +425,19 @@ def main() -> int:
                 print("    - kapandi: " + b)
             _taban_yaz(guncel)
 
+    # 22 Eki (Codex P1): canli Python 3.11 — f-string icinde ayni tirnakla dize 3.12+ ister; yerel 3.14 yakalamaz
+    try:
+        import importlib.util as _iu, os as _os
+        _sp = _iu.spec_from_file_location("py311_kontrol", _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "py311_kontrol.py"))
+        _m = _iu.module_from_spec(_sp); _sp.loader.exec_module(_m)
+        import glob as _g
+        _p311 = [b for y in sorted(_g.glob("*.py")) for b in _m.denetle(y)]
+        print("PYTHON 3.11 UYUMU      %d" % len(_p311))
+        for y_, s_, m_ in _p311:
+            print("    - %s:%s %s" % (y_, s_, m_))
+        sert_toplam += len(_p311)
+    except Exception as _e:  # noqa: BLE001
+        print("PYTHON 3.11 UYUMU      denetlenemedi: %s" % _e)
     print("=" * 68)
     if sert_toplam:
         print("KAPI KAPALI — %d bulgu. Push etmeden once duzelt." % sert_toplam)

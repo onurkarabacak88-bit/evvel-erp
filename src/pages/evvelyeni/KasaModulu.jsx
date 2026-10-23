@@ -206,17 +206,17 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit, onFis }) {
   let ust = '', alt = '', tutar = fmt(h.tutar), renk = R.krem, cip = null, cipTur = 'bakir';
   if (h.tur === 'acilis') { ust = cepAd(h.cep); alt = '1 Ekim açılış bakiyesi'; renk = R.yesil; tutar = `+${tutar}`; }
   if (h.tur === 'kapanis') {
-    ust = cepAd(h.cep); alt = `Şube panelinden · kart/online ${fmt(h.kart)} ₺ bankaya geçer, nakde girmez`;
+    ust = cepAd(h.cep); alt = `Şube panelinden · kart/online ${fmt(h.kart)} ₺ bankaya geçer, nakde girmez${h.cift_kayit ? ` · ⚠ nakit ${fmt(h.cift_kayit)} ₺ düşüldü (kartla ödenmiş, nakit olarak da yazılmıştı — ${(h.cift_kayit_iz || []).map((z) => z.kim).join(', ')})` : ''}`;
     renk = R.yesil; tutar = `+${tutar}`; cipTur = 'yesil';
     cip = h.durum === 'onaylandi' ? <Cip tur="yesil">onaylandı</Cip> : <Dugme kucuk ana onClick={() => onTeyit(h.id)}>Onayla</Dugme>;
   }
   if (h.tur === 'dis') { ust = h.alt_ad + (h.kimden ? ` · ${h.kimden}` : ''); alt = `${cepAd(h.cep)} cebine girdi${h.not_ ? ` · ${h.not_}` : ''}`; renk = R.yesil; tutar = `+${tutar}`; cip = h.geri_odenecek ? <Cip tur="sari">geri ödenecek</Cip> : null; cipTur = 'yesil'; }
   if (h.tur === 'teslim') {
     ust = `${cepAd(h.kaynak)} → ${cepAd(h.hedef)}`;
-    alt = 'Dükkân nakdinden çıktı · girildiği gün alınmış sayılır (almadıysa 7 gün içinde Düzelt)';
+    alt = 'Dükkân nakdinden çıktı · "aldım" denene kadar Yolda (ev bakiyesine girmez); 7 gün içinde denmezse girildiği gün alınmış sayılır' + (h.not_ ? ` · 📝 ${h.not_}` : '');
     cip = h.durum !== 'onaylandi' ? <Cip tur="sari">onay bekliyor</Cip>
       : (h.fark ? <Cip tur="kirmizi">sayılan {fmt(h.alinan)} · {h.fark > 0 ? 'eksik' : 'fazla'} {fmt(Math.abs(h.fark))}</Cip> : <Cip tur="yesil">alındı</Cip>);
-    if (h.durum === 'onaylandi' && h.onay_gunu && h.onay_gunu !== h.tarih) alt = `${tUzun(h.onay_gunu)} günü alındı — o güne kadar "yolda"`;
+    if (h.durum === 'onaylandi' && h.onay_gunu && h.onay_gunu !== h.tarih) alt = `${tUzun(h.onay_gunu)} günü alındı — o güne kadar "yolda"${h.kilit_sonrasi ? ' · ev sayımından sonra alındı' : ''}`;
   }
   if (h.tur === 'tasima') { ust = `${cepAd(h.kaynak)} → ${cepAd(h.hedef)}`; }
   if (h.tur === 'sayim') {
@@ -337,6 +337,9 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
   const [aktar, setAktar] = useState(null);
   const [donem, setDonem] = useState(null);
   const [sayimDefter, setSayimDefter] = useState(null);
+  useEffect(() => { setHata(''); }, [d]);   // B65: form değişince eski hata metni kalmasın
+  const [personeller, setPersoneller] = useState([]);   // B64: teslim eden personel — Tanımlar listesinden öneri (kimlik kaynakta)
+  useEffect(() => { if (tip === 'teslim') api('/evvel-yeni/tanim/liste').then((r) => setPersoneller((r?.personel || []).filter((p) => p.aktif))).catch(() => setPersoneller([])); }, [tip]);
   const set = (k) => (e) => setD((x) => {
     const y = { ...x, [k]: e.target.value };
     if (k === 'alt' && e.target.value === 'kira' && cepler.some((c) => c.id === 'banka:fatma_kira')) y.cep = 'banka:fatma_kira';
@@ -344,7 +347,8 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
   });
 
   useEffect(() => {
-    if (tip === 'coz') api(`/evvel-yeni/kasa/fark/${form.id}`).then((f) => { setFark(f); setD((x) => ({ ...x, sebep: f.sebep_secenekleri[0]?.kod, is_gunu: (form.gun || gun) < f.tarih ? f.tarih : (form.gun || gun) })); }).catch((e) => setHata(e.message));
+    // Fable + Codex (21 Eki): sebep KENDİLİĞİNDEN seçilmez (ilk seçenek 'defter doğru' farkı ertesi gün yeniden doğuruyordu); tarih = BUGÜN
+    if (tip === 'coz') api(`/evvel-yeni/kasa/fark/${form.id}`).then((f) => { setFark(f); setD((x) => ({ ...x, sebep: '', tutar: '', is_gunu: f.bugun < f.tarih ? f.tarih : f.bugun })); }).catch((e) => setHata(e.message));
     if (tip === 'aktar') api('/evvel-yeni/kasa/aktar?kuru=true', { method: 'POST' }).then(setAktar).catch((e) => setHata(e.message));
     if (tip === 'donem') setD((x) => ({ ...x, is_gunu: veri.bugun }));
   }, [tip, form.id]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -392,7 +396,10 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
           body.tutar = Number(d.tutar); body.aciklama = d.aciklama; body.kimin = d.kimin;
           body.parcalar = d.parcalar.filter((p) => p.cep && Number(p.tutar) > 0).map((p) => ({ cep: p.cep, tutar: Number(p.tutar) }));
         }
-        if (tip === 'coz') { body.fark_id = form.id; body.sebep = d.sebep; body.sorumlu = d.sorumlu; body.not = d.not; }
+        if (tip === 'coz') {
+          body.fark_id = form.id; body.sebep = d.sebep; body.sorumlu = d.sorumlu; body.not = d.not;
+          if (d.sebep === 'kartla' && String(d.tutar || '').trim()) body.tutar = String(d.tutar).trim();   // kısmi (sunucu TrTutar okur)
+        }
         await api('/evvel-yeni/kasa/hareket', { method: 'POST', body });
         onToast?.('Kaydedildi');
       }
@@ -429,7 +436,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         </>)}
 
         {tip === 'kapanis' && (<>
-          <div style={{ fontSize: 12, color: R.not }}>Normalde şube panelinden gelir. Gelmediyse şubenin X/Z raporundan buradan girilir. O gün Evo tahmini varsa bu kapanış onun yerini alır (Evo rakamı silinmez, devre dışı kalır).</div>
+          <div style={{ fontSize: 12, color: R.not }}>Normalde şube panelinden gelir. Gelmediyse şubenin X/Z raporundan buradan girilir.</div>
           <div style={izgara}>
             <Alan etiket="Şube"><select value={d.cep} onChange={set('cep')} style={alanStil}>{secenek(['sube'])}</select></Alan>
             {gunAlani}
@@ -445,7 +452,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
           return (<>
             <div style={{ fontSize: 12.5, color: R.metin2 }}><b>POS (kart) ertesi gün kendiliğinden yatar — buraya girilmez.</b> Burası yalnız online platform (Yemeksepeti, Getir vb.) yatışları için. Yatan <b>net</b> tutarı gir; brüt satışı bilmiyorsan boş bırak.</div>
             <div style={izgara}>
-              <Alan etiket="Hangi şubenin bankasına"><select value={d.cep} onChange={set('cep')} style={alanStil}>{cepler.filter((c) => c.tur === 'banka' && !c.kira).map((c) => <option key={c.id} value={c.id}>{c.ad}</option>)}</select></Alan>
+              <Alan etiket="Hangi şubenin bankasına"><select value={d.cep} onChange={set('cep')} style={alanStil}>{cepler.filter((c) => c.tur === 'banka' && !c.kira && !c.gizli).map((c) => <option key={c.id} value={c.id}>{c.ad}</option>)}</select></Alan>
               {tutarAlani('Yatan net (₺)')}
               <Alan etiket="Brüt satış (₺)" ipucu="Bilmiyorsan boş bırak"><input type="number" min="0" step="0.01" value={d.kart || ''} onChange={set('kart')} style={alanStil} /></Alan>
               {gunAlani}
@@ -480,7 +487,10 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
           <div style={izgara}>
             <Alan etiket="Teslim eden şube"><select value={d.kaynak} onChange={set('kaynak')} style={alanStil}>{secenek(['sube'], true)}</select></Alan>
             <Alan etiket="Teslim alan patron"><select value={d.hedef} onChange={set('hedef')} style={alanStil}>{secenek(['ev', 'hesap'])}</select></Alan>
-            <Alan etiket="Teslim eden personel"><input value={d.teslim_eden || ''} onChange={set('teslim_eden')} style={alanStil} placeholder="ör. Ayşe" /></Alan>
+            <Alan etiket="Teslim eden personel"><select value={d.teslim_eden || ''} onChange={set('teslim_eden')} style={alanStil}>
+              <option value="">Seç…</option>
+              {personeller.filter((p) => !(d.kaynak || '').startsWith('sube:') || !p.sube_id || p.sube_id === d.kaynak.slice(5)).map((p) => <option key={p.id} value={p.ad}>{p.ad}</option>)}
+            </select></Alan>
             {tutarAlani()}{gunAlani}
           </div>
         )}
@@ -538,7 +548,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
             <Alan etiket="Ne ödendi"><input value={d.aciklama || ''} onChange={set('aciklama')} style={alanStil} /></Alan>
             {tutarAlani()}{gunAlani}
             <Alan etiket="Kimin ödemesi" ipucu="Yalnız aylık karne için, paraya dokunmaz">
-              <select value={d.kimin} onChange={set('kimin')} style={alanStil}><option>Ortak</option>{cepler.filter((c) => c.tur === 'sube').map((c) => <option key={c.id}>{c.kisa}</option>)}</select>
+              <select value={d.kimin} onChange={set('kimin')} style={alanStil}><option>Ortak</option>{cepler.filter((c) => c.tur === 'sube' && !c.gizli).map((c) => <option key={c.id}>{c.kisa}</option>)}</select>
             </Alan>
           </div>
           <div style={etiketStil}>Para nereden toplandı</div>
@@ -560,14 +570,30 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
 
         {tip === 'coz' && fark && (<>
           <div style={{ padding: '9px 12px', borderRadius: 9, background: 'var(--pi-bad-soft)', border: `1px solid ${alfa(R.kirmizi, 35)}`, fontSize: 13 }}>
-            <b>{fark.ad}</b> · {tUzun(fark.tarih)} · <b style={num}>{tl(Math.abs(fark.f))}</b> {fark.f > 0 ? 'eksik' : 'fazla'}
+            <b>{fark.ad}</b> · {tUzun(fark.tarih)} · <b style={num}>{tl(Math.abs(fark.kalan ?? fark.f))}</b> {fark.f > 0 ? 'eksik' : 'fazla'}{fark.kismi ? ` (fark ${tl(Math.abs(fark.f))}, bir kısmı kapandı)` : ''}
           </div>
           <div style={izgara}>
-            <Alan etiket="Sebep"><select value={d.sebep} onChange={set('sebep')} style={alanStil}>{fark.sebep_secenekleri.map((s) => <option key={s.kod} value={s.kod}>{s.ad}</option>)}</select></Alan>
+            <Alan etiket="Sebep"><select value={d.sebep} onChange={set('sebep')} style={alanStil}>
+              <option value="">— Seç —</option>
+              {fark.sebep_secenekleri.map((s) => <option key={s.kod} value={s.kod}>{s.ad}{fark.onerilen === s.kod ? ' (önerilen)' : ''}</option>)}
+            </select></Alan>
             <Alan etiket="Sorumlu"><select value={d.sorumlu} onChange={set('sorumlu')} style={alanStil}>{['', ...PATRONLAR, 'Şube personeli', 'Bilinmiyor'].map((x) => <option key={x} value={x}>{x || 'Seçilmedi'}</option>)}</select></Alan>
             {gunAlani}
           </div>
-          <Alan etiket="Açıklama" ipucu={['kayip', 'harcandi'].includes(d.sebep) ? 'Kayba ya da harcamaya yazarken zorunlu' : null}><input value={d.not || ''} onChange={set('not')} style={alanStil} /></Alan>
+          {(fark.notlar || []).length > 0 && (
+            <div style={{ display: 'grid', gap: 4, padding: '8px 12px', borderRadius: 9, background: R.girinti, fontSize: 12.5 }}>
+              <b>📝 O günün şube notları</b>
+              {fark.notlar.map((n) => <div key={n.id}>{tUzun(n.is_gunu)} {n.saat} · <b>{n.personel}</b>: {n.metin}</div>)}
+            </div>
+          )}
+          {d.sebep === 'kartla' && (
+            <Alan etiket={`Kartla ödenen tutar (boş = ${fmt(Math.abs(fark.kalan ?? fark.f))})`}><input inputMode="decimal" value={d.tutar || ''} onChange={set('tutar')} style={alanStil} placeholder={String(Math.abs(fark.kalan ?? fark.f))} /></Alan>
+          )}
+          {fark.tekrar_uyari && <div style={{ padding: '8px 12px', borderRadius: 9, fontSize: 12.5, background: 'var(--pi-warn-soft, rgba(245,158,11,.14))', color: R.amber, fontWeight: 600 }}>🔁 {fark.tekrar_uyari}</div>}
+          {fark.sayim_notu && <div style={{ fontSize: 12, color: R.not }}>🕗 {fark.sayim_notu}</div>}
+          {fark.defter_eksi && <div style={{ fontSize: 12.5, color: R.kirmizi }}>⚠ Sayım anında defter EKSİDEYDİ — önceki bir çözüm ya da teslim yanlış olabilir.</div>}
+          {d.sebep && (() => { const s = fark.sebep_secenekleri.find((z) => z.kod === d.sebep); return s?.etki ? <div style={{ padding: '8px 12px', borderRadius: 9, fontSize: 12.5, background: R.girinti }}>📒 {s.etki}</div> : null; })()}
+          <Alan etiket="Açıklama" ipucu={['kayip', 'harcandi', 'bulundu', 'ekstre_dogru', 'kartla'].includes(d.sebep) ? 'Bu sebepte zorunlu (ne oldu / nerede bulundu?)' : null}><input value={d.not || ''} onChange={set('not')} style={alanStil} /></Alan>
         </>)}
 
         {tip === 'iptal' && (<>
@@ -615,7 +641,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
 
         {hata && <div style={{ color: R.kirmizi, fontSize: 13, fontWeight: 600 }}>{hata}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <Dugme ana onClick={gonder} disabled={mesgul || (tip === 'aktar' && !aktar) || (tip === 'coz' && !fark)}>
+          <Dugme ana onClick={gonder} disabled={mesgul || (tip === 'aktar' && !aktar) || (tip === 'coz' && (!fark || !d.sebep))}>
             {mesgul ? 'Kaydediliyor…' : tip === 'donem' ? (donem ? `${tUzun(d.is_gunu)} itibarıyla yeni dönemi başlat` : 'Önce ne olacağını göster')
               : tip === 'aktar' ? 'Aktar' : tip === 'iptal' ? 'İptal et' : tip === 'coz' ? 'Farkı kapat' : 'Kaydet'}
           </Dugme>
@@ -772,7 +798,7 @@ function TeslimSekmesi({ onToast, onDegisti }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ ...kart, padding: '10px 14px', fontSize: 13, color: R.metin2, background: 'var(--pi-bg)' }}>
-        Teslim <b>girildiği gün alınmış sayılır</b> — "aldım" demeniz gerekmez. Para gelmediyse ya da eksik geldiyse{' '}
+        Teslim "aldım" denene kadar <b>Yolda</b> görünür, ev bakiyesine girmez; {v.duzeltme_suresi_gun} gün içinde denmezse <b>girildiği gün alınmış sayılır</b>. Para gelmediyse ya da eksik geldiyse{' '}
         {v.duzeltme_suresi_gun} gün içinde "Düzelt" ile yazılır ya da evdeki sayımda ortaya çıkar.
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
@@ -805,7 +831,7 @@ function TeslimSekmesi({ onToast, onDegisti }) {
                   <Cip tur={x.yas_gun >= 3 ? 'kirmizi' : 'sari'}>{x.yas_gun === 0 ? 'bugün' : `${x.yas_gun} gündür`}</Cip>
                   {x.eski_sistem && <Cip>eski sistemden</Cip>}
                 </div>
-                <div style={{ fontSize: 12, color: R.not }}>{tUzun(x.tarih)} teslim edildi · <span style={num}>{fmt(x.tutar)}</span> ₺{x.kaydeden ? ` · ${x.kaydeden}` : ''}</div>
+                <div style={{ fontSize: 12, color: R.not }}>{tUzun(x.tarih)} teslim edildi · <span style={num}>{fmt(x.tutar)}</span> ₺{x.kaydeden ? ` · ${x.kaydeden}` : ''}{x.not ? ` · 📝 ${x.not}` : ''}</div>
               </div>
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', justifyContent: 'flex-end' }}>
                 {!acikGiris[x.id] ? (<>
@@ -842,7 +868,7 @@ function TeslimSekmesi({ onToast, onDegisti }) {
                 {v.alinan.map((x) => (
                   <tr key={x.id}>
                     <td style={num}>{tKisa(x.tarih)}</td>
-                    <td style={{ textAlign: 'left' }}>{x.kaynak_ad} → {x.hedef_kisa}</td>
+                    <td style={{ textAlign: 'left' }}>{x.kaynak_ad} → {x.hedef_kisa}{x.not ? <div style={{ fontSize: 11, color: R.not }}>📝 {x.not}</div> : null}</td>
                     <td style={num}>{fmt(x.tutar)}</td>
                     <td style={num}>{fmt(x.alinan)}</td>
                     <td style={{ ...num, color: x.fark ? R.kirmizi : R.yesil, fontWeight: 600 }}>{x.fark ? `${x.fark > 0 ? '−' : '+'}${fmt(Math.abs(x.fark))}` : 'tuttu'}</td>
@@ -919,8 +945,8 @@ function BankaSekmesi({ onToast, onDegisti }) {
               <table className="pi-tablo">
                 <tbody>
                   <tr><td>Ay başı bakiye</td><td style={num}>{fmt(b.ay_basi)}</td></tr>
-                  {b.giris.map((g) => <tr key={`g${g.ad}`}><td style={{ color: R.metin2 }}>+ {g.ad}</td><td style={{ ...num, color: R.yesil }}>{fmt(g.tutar)}</td></tr>)}
-                  {b.cikis.map((g) => <tr key={`c${g.ad}`}><td style={{ color: R.metin2 }}>− {g.ad}</td><td style={{ ...num, color: R.kirmizi }}>{fmt(g.tutar)}</td></tr>)}
+                  {b.giris.map((g) => <tr key={`g${g.ad}`}><td style={{ color: R.metin2 }}>+ {IZ_AD[g.ad] || g.ad}</td><td style={{ ...num, color: R.yesil }}>{fmt(g.tutar)}</td></tr>)}
+                  {b.cikis.map((g) => <tr key={`c${g.ad}`}><td style={{ color: R.metin2 }}>− {IZ_AD[g.ad] || g.ad}</td><td style={{ ...num, color: R.kirmizi }}>{fmt(g.tutar)}</td></tr>)}
                   <tr><td><b>Programa göre ay sonu</b></td><td style={{ ...num, fontWeight: 700 }}>{fmt(b.program_ay_sonu)}</td></tr>
                 </tbody>
               </table>
@@ -978,12 +1004,13 @@ function BankaSekmesi({ onToast, onDegisti }) {
 // (tak-çıkar); söylemeyen eski türler aşağıdaki eşlemeyle yerleşir.
 export const IS_GRUPLARI = [
   { id: 'isler_kasa', grup: 'kasa', ad: 'Kasa & kapanış', alt: 'Kapanış · teslim · fark' },
-  { id: 'isler_odeme', grup: 'odeme', ad: 'Ödemeler', alt: 'Kart son ödeme · toptancı vadesi' },
+  { id: 'isler_odeme', grup: 'odeme', ad: 'Ödemeler', alt: 'Kart son ödeme · toptancı vadesi · şube kirası' },
   { id: 'isler_tedarik', grup: 'tedarik', ad: 'Tedarik & depo', alt: 'Yolda kalan · fatura tutarı' },
   { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri · vardiya planı yok', mod: ['avans', 'vardiya'] },   // biri açıksa görünür
   { id: 'isler_kira', grup: 'kira', ad: 'Kira hesabı', alt: 'Gelmeyen kira · şahsi mi borç mu', mod: 'mulk' },
+  { id: 'isler_not', grup: 'not', ad: '📝 Şube notları', alt: 'Personelin merkeze yazdıkları · Gördüm', mod: 'panel' },   // sahip 21 Eki: AYRI alan
 ];
-const GRUPLAR = new Set(['kasa', 'odeme', 'tedarik', 'personel', 'kira']);
+const GRUPLAR = new Set(['kasa', 'odeme', 'tedarik', 'personel', 'kira', 'not']);
 // Codex: tanınmayan grup taşıyan iş kaybolmasın → Kasa & kapanış'a düşer
 export const isGrubu = (x) => (GRUPLAR.has(x.grup) ? x.grup : 'kasa');   // Fable: Kasa iş türlerini tanımaz — sağlayıcı 'grup' yazar
 
@@ -1133,12 +1160,12 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
           listeBaslik: 'Farklar · çözülmemişler önce',
           satirlar: [...acik, ...a.farklar.filter((x) => x.coz)].map((x) => ({
             ad: `${x.coz ? '✓' : '🔴'} ${x.ad}`, detay: `${tUzun(x.tarih)} · ${x.coz ? x.coz.sebep_ad : 'çözülmedi'}`,
-            tutar: tl(Math.abs(x.f)), solgun: !!x.coz, onTikla: () => cekmeceAc({ tur: 'fark', id: x.id, ad: x.ad }, false),
+            tutar: tl(Math.abs(x.coz ? x.f : (x.kalan ?? x.f))), solgun: !!x.coz, onTikla: () => cekmeceAc({ tur: 'fark', id: x.id, ad: x.ad }, false),
           })),
           not: a.farklar.length ? null : 'Henüz hiç fark yok.',
           iz: a.gun_gun.slice().reverse().map((x) => ({
             ad: `Gün sonu açık ${tl(x.gun_sonu_acik)}`, zaman: tUzun(x.gun),
-            detay: `yeni ${fmt(x.yeni)} · geri dönen ${fmt(x.geri_donen)} · kayba ${fmt(x.kayba_yazilan)} · harcamaya ${fmt(x.harcamaya_yazilan)} · toplam kayıp ${fmt(x.toplam_kayip)} · toplam kayıtsız harcama ${fmt(x.toplam_harcanan)}`,
+            detay: `yeni ${fmt(x.yeni)} · deftere geri ${fmt(x.geri_donen)} · kabul ${fmt(x.kabul_edilen || 0)} · açılış ${fmt(x.baslangic_esitleme || 0)} · kayba ${fmt(x.kayba_yazilan)} · harcamaya ${fmt(x.harcamaya_yazilan)} · toplam kayıp ${fmt(x.toplam_kayip)} · toplam kayıtsız harcama ${fmt(x.toplam_harcanan)}`,
             renk: x.gun_sonu_acik ? R.kirmizi : R.yesil,
           })),
         });
@@ -1156,11 +1183,11 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
 
   const o = veri.ozet;
   const evler = veri.cepler.filter((c) => c.tur === 'ev' && !c.gizli);
-  const subeler = veri.cepler.filter((c) => c.tur === 'sube');
+  const subeler = veri.cepler.filter((c) => c.tur === 'sube' && !c.gizli);   // B13: boş pasif şube görünmez
   const hesaplar = veri.cepler.filter((c) => c.tur === 'hesap');
-  const bankalar = veri.cepler.filter((c) => c.tur === 'banka' && !c.kira);
+  const bankalar = veri.cepler.filter((c) => c.tur === 'banka' && !c.kira && !c.gizli);
   const kiraHesap = veri.cepler.filter((c) => c.tur === 'banka' && c.kira);
-  const acilisEksik = veri.cepler.filter((c) => !(veri.acilis_girilen || []).includes(c.id));
+  const acilisEksik = veri.cepler.filter((c) => !c.gizli && !(veri.acilis_girilen || []).includes(c.id));
   const deg = veri.degisim;
   const k = veri.kpi;
 
@@ -1251,11 +1278,13 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         </div>
       )}
       {veri.senkron && (veri.senkron.tamam === false ? (
-        <div style={{ fontSize: 12, color: R.kirmizi }}>Eski sistemden köprü çalışmadı: {veri.senkron.hata}</div>
+        <div style={{ fontSize: 12, color: R.kirmizi }}>Otomatik işler çalışmadı: {veri.senkron.hata}</div>
       ) : veri.senkron.zaman ? (
         <div style={{ fontSize: 11.5, color: R.not2 }}>
-          Eski sistemle yan yana · köprü {new Date(veri.senkron.zaman).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
-          {(veri.senkron.kapanis || veri.senkron.teslim) ? ` · yeni: ${veri.senkron.kapanis} kapanış, ${veri.senkron.teslim} teslim` : ' · yeni kayıt yok'}
+          {/* B14: eski köprü ayrı — patlasa da yeni panel kayıtları işlenir */}
+          {veri.senkron.kopru === 'acik' ? 'Eski sistemle yan yana · köprü' : 'Otomatik işler'} {new Date(veri.senkron.zaman).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+          {(veri.senkron.hatalar || []).length > 0 && <span style={{ color: R.amber }}> · ⚠ {veri.senkron.hatalar.join(' · ')} (yeni panel kayıtları yine işlendi)</span>}
+          {veri.senkron.kopru !== 'acik' ? '' : (veri.senkron.kapanis || veri.senkron.teslim) ? ` · yeni: ${veri.senkron.kapanis} kapanış, ${veri.senkron.teslim} teslim` : ' · yeni kayıt yok'}
           {veri.senkron.eslesmeyen_teslim ? <span style={{ color: R.amber }}> · {veri.senkron.eslesmeyen_teslim} teslim alıcısı tanınmadı</span> : null}
         </div>
       ) : null)}
@@ -1358,8 +1387,8 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
             {isler.filter((x) => x.tur !== 'teslim' && x.tur !== 'evo_kapanis').map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })}
               onPosKabul={async (id) => { try { const r = await api('/evvel-yeni/kasa/pos-sifir-kabul', { method: 'POST', body: { id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); } }}
               onGecKapanis={async (x) => {
-                if (!window.confirm(`${x.ad} ${x.tarih} kapanışı, personelin girdiği verilerle GEÇ KAPANIŞ olarak işlensin mi?
-(Reddin sebebi: ${x.sebep})`)) return;
+                if (!window.confirm(`${x.ad} ${tKisa(x.tarih)} kapanışı, personelin girdiği verilerle GEÇ KAPANIŞ olarak işlensin mi?
+(${/^Telefonsuz/.test(x.sebep || '') ? 'Not' : 'Reddin sebebi'}: ${x.sebep})`)) return;
                 try { const r = await api(x.islem || '/evvel-yeni/kasa/gec-kapanis', { method: 'POST', body: { deneme_id: x.id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); }
               }}
               onKapanisGordum={async (x) => { try { await api(x.gordum || '/evvel-yeni/kasa/kapanis-uyari-gordum', { method: 'POST', body: { deneme_id: x.id } }); yukle(); } catch (e) { onToast?.(e.message); } }}
@@ -1443,7 +1472,10 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
           <div key={x.id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto', gap: 10, alignItems: 'center', padding: '8px 10px', borderRadius: 9, border: `1px solid ${alfa(R.kirmizi, 45)}`, background: 'var(--pi-bad-soft)' }}>
             <div style={{ minWidth: 0 }}>
               <button type="button" onClick={() => onCepAc(x.cep, x.ad)} style={{ border: 'none', background: 'transparent', padding: 0, font: 'inherit', fontWeight: 700, color: R.krem, cursor: 'pointer', textAlign: 'left' }}>{x.ad} ›</button>
-              <div style={{ fontSize: 12, color: R.not }}>{tUzun(x.tarih)} · <span style={num}>{fmt(Math.abs(x.f))}</span> ₺ {x.f > 0 ? 'eksik' : 'fazla'}</div>
+              <div style={{ fontSize: 12, color: R.not }}>{tUzun(x.tarih)} · <span style={num}>{fmt(Math.abs(x.kalan ?? x.f))}</span> ₺ {x.f > 0 ? 'eksik' : 'fazla'}{x.kismi ? ` (fark ${fmt(Math.abs(x.f))} — ${x.kismi.map((k) => `${fmt(Math.abs(k.f))} ${k.sebep_ad}`).join(', ')})` : ''}{x.sayim_notu ? ` · ${x.sayim_notu}` : ''}</div>
+              {(x.notlar || []).map((n) => <div key={n.id} style={{ fontSize: 12, color: R.krem, background: R.girinti, borderRadius: 7, padding: '4px 8px', marginTop: 3 }}>📝 {tUzun(n.is_gunu)} {n.saat} · <b>{n.personel}</b>: {n.metin}</div>)}
+              {x.tekrar_uyari && <div style={{ fontSize: 12, color: R.amber, fontWeight: 600 }}>🔁 {x.tekrar_uyari}</div>}
+              {x.defter_eksi && <div style={{ fontSize: 12, color: R.kirmizi }}>⚠ Sayım anında defter eksideydi</div>}
             </div>
             <Dugme ana kucuk onClick={() => onCoz(x.id)}>Farkı çöz</Dugme>
           </div>
@@ -1453,15 +1485,15 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
         <div style={{ padding: '9px 14px', borderBottom: `1px solid ${R.cizgi}` }}><b>Gün gün</b></div>
         <div style={{ overflowX: 'auto' }}>
           <table className="pi-tablo pi-excel">
-            <thead><tr><th>Gün</th><th>Yeni fark</th><th>Geri dönen</th><th>Kayba</th><th>Harcamaya</th><th>Gün sonu açık</th><th>Toplam kayıp</th><th>Toplam kayıtsız harcama</th></tr></thead>
+            <thead><tr><th>Gün</th><th>Yeni fark</th><th title="Defteri değiştiren çözümler (bulundu / şubede)">Deftere geri</th><th title="Defter sayıma eşitlendi (fazla kabul / ekstre doğru)">Kabul</th><th>Açılış eşitleme</th><th>Kayba</th><th>Harcamaya</th><th>Gün sonu açık</th><th>Toplam kayıp</th><th>Toplam kayıtsız harcama</th></tr></thead>
             <tbody>
               {v.gun_gun.length ? v.gun_gun.map((x) => (
                 <tr key={x.gun}>
-                  <td style={num}>{tUzun(x.gun)}</td><td style={num}>{x.yeni ? fmt(x.yeni) : '—'}</td><td style={{ ...num, color: R.yesil }}>{x.geri_donen ? fmt(x.geri_donen) : '—'}</td>
+                  <td style={num}>{tUzun(x.gun)}</td><td style={num}>{x.yeni ? fmt(x.yeni) : '—'}</td><td style={{ ...num, color: R.yesil }}>{x.geri_donen ? fmt(x.geri_donen) : '—'}</td><td style={num}>{x.kabul_edilen ? fmt(Math.abs(x.kabul_edilen)) : '—'}</td><td style={num}>{x.baslangic_esitleme ? fmt(Math.abs(x.baslangic_esitleme)) : '—'}</td>
                   <td style={{ ...num, color: R.kirmizi }}>{x.kayba_yazilan ? fmt(x.kayba_yazilan) : '—'}</td><td style={{ ...num, color: R.amber }}>{x.harcamaya_yazilan ? fmt(x.harcamaya_yazilan) : '—'}</td>
                   <td style={{ ...num, fontWeight: 700 }}>{fmt(x.gun_sonu_acik)}</td><td style={num}>{fmt(x.toplam_kayip)}</td><td style={num}>{fmt(x.toplam_harcanan)}</td>
                 </tr>
-              )) : <tr><td colSpan={8}>Henüz fark yok.</td></tr>}
+              )) : <tr><td colSpan={10}>Henüz fark yok.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -1474,7 +1506,7 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
               <thead><tr><th>Fark</th><th>Tutar</th><th>Sebep</th><th>Sorumlu</th><th>Kapanış</th></tr></thead>
               <tbody>{v.farklar.filter((x) => x.coz).map((x) => (
                 <tr key={x.id}><td style={{ textAlign: 'left' }}>{x.ad}</td><td style={num}>{fmt(Math.abs(x.f))}</td>
-                  <td style={{ textAlign: 'left' }}>{x.coz.sebep_ad}{x.coz.not ? ` · ${x.coz.not}` : ''}</td><td style={{ textAlign: 'left' }}>{x.coz.sorumlu || '—'}</td><td style={num}>{tKisa(x.coz.tarih)}</td></tr>
+                  <td style={{ textAlign: 'left' }}>{x.kismi ? x.kismi.map((k) => `${fmt(Math.abs(k.f))} ${k.sebep_ad}`).join(' + ') : x.coz.sebep_ad}{x.coz.not ? ` · ${x.coz.not}` : ''}</td><td style={{ textAlign: 'left' }}>{x.coz.sorumlu || '—'}</td><td style={num}>{tKisa(x.coz.tarih)}</td></tr>
               ))}</tbody>
             </table>
           </div>

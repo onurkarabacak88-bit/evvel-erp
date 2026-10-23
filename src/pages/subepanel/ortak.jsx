@@ -265,7 +265,9 @@ export function TabletQR({ boyut, onClick, onay, devir, teslim }) {
     setSrc(''); setHata('');   // Codex: başka onayın QR'ı bir an bile görünmesin
     const yol = '/api/evvel-yeni/yoklama/qr.png' + (onay ? `?o=${encodeURIComponent(onay)}` : devir ? `?dv=${encodeURIComponent(devir)}`
       : teslim ? `?tb=${encodeURIComponent(teslim)}` : '');   // teslim: E1 "Faturayı çek"
-    const cek = () => imzaliFetch('tablet', 'GET', yol)
+    const acikSube = (window.location.pathname.match(/^\/panel\/([^/?#]+)/) || [])[1];   // B5: panelin açık olduğu şube — sunucu eşleşmezse söyler
+    const yolS = acikSube ? `${yol}${yol.includes('?') ? '&' : '?'}s=${encodeURIComponent(acikSube)}` : yol;
+    const cek = () => imzaliFetch('tablet', 'GET', yolS)
       .then(async (r) => {
         if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(typeof d.detail === 'string' ? d.detail : 'QR alınamadı'); }
         return r.blob();

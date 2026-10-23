@@ -5,7 +5,7 @@
 import React from 'react';
 import { C, TabletQR } from './ortak';
 
-const TUR_AD = { acilis: 'Açılış', kapanis: 'Kapanış', urun_ac: 'Ürün açıldı', fire: 'Fire', teslim: 'Ara teslim', vardiya: 'Kasa devri', teslim_al: 'Tedarikçi teslimi', depo_kabul: 'Depodan gelen kabul', siparis: 'Sipariş', sevk_cikis: 'Sevk çıkışı', gider: 'Anlık gider' };
+const TUR_AD = { acilis: 'Açılış', kapanis: 'Kapanış', urun_ac: 'Ürün açıldı', fire: 'Fire', teslim: 'Ara teslim', vardiya: 'Kasa devri', teslim_al: 'Tedarikçi teslimi', depo_kabul: 'Depodan gelen kabul', siparis: 'Sipariş', sevk_cikis: 'Sevk çıkışı', gider: 'Anlık gider', teslim_geri_al: 'Teslim geri alındı', not: 'Merkez notu' };
 
 function GunNoktasi({ ad, veri, varsayilan, son }) {
   const tamam = !!veri;
@@ -87,7 +87,7 @@ export default function AnaSayfa({ d, yok, tabletVar, kapali, ac, setQrBuyuk, se
         <button className="sp-hizli" disabled={kapali} style={{ background: 'linear-gradient(135deg,#7f1d1d,#ef4444)' }} onClick={() => ac('fire')}><i>🔥</i><b>Fire Bildirimi</b><span>Kayıp / zayi kaydı</span></button>
         <button className="sp-hizli" disabled={kapali} style={{ background: 'linear-gradient(135deg,#1e3a8a,#3b82f6)' }} onClick={() => ac('ac')}><i>🔓</i><b>Ürün Aç</b><span>Depodan kullanıma al</span></button>
         <button className="sp-hizli" disabled={kapali} style={{ background: 'linear-gradient(135deg,#78350f,#f59e0b)' }} onClick={() => ac('gider')}><i>💸</i><b>Anlık Gider</b><span>Çekmeceden nakit gider</span></button>
-        <button className="sp-hizli" style={{ background: 'linear-gradient(135deg,#4c1d95,#8b5cf6)' }} onClick={() => bilgi('Merkez notu ekranı kendi basamağında açılacak')}><i>📝</i><b>Merkez Notu</b><span>Operasyona bildir</span></button>
+        <button className="sp-hizli" style={{ background: 'linear-gradient(135deg,#4c1d95,#8b5cf6)' }} onClick={() => ac('not')}><i>📝</i><b>Merkez Notu</b><span>Operasyona bildir</span></button>
         <button className="sp-hizli" disabled={!yok.var} style={{ background: 'linear-gradient(135deg,#7c2d12,#f97316)' }} onClick={() => setMolaQr(true)}><i>🍽️</i><b>Yemek Molası</b><span>QR okut → mola başlat / bitir</span></button>
       </div>
 
@@ -107,16 +107,23 @@ export default function AnaSayfa({ d, yok, tabletVar, kapali, ac, setQrBuyuk, se
       {/* ③ DURUM ÇİPLERİ — kaynak Evvel Yeni'de henüz yoksa "—" (0 yanlış bilgi olur; gizlemek düzeni bozar) */}
       <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
         <Cip ad="📦 Bekleyen Sipariş" deger={d.cipler?.bekleyen_siparis} onClick={() => bilgi('Sipariş takip ekranı kendi basamağında açılacak')} />
-        <Cip ad="⚠️ Stok Uyarısı" deger={d.cipler?.stok_uyarisi} onClick={() => bilgi('Stok uyarısı Depo bağlantısıyla gelecek')} />
         <Cip ad="📩 Merkez Mesajı" deger={d.cipler?.merkez_mesaji} onClick={() => bilgi('Mesajlar kendi basamağında açılacak')} />
       </div>
 
       {/* ④ SİPARİŞ RED LİSTESİ · ⑤ MERKEZ MESAJLARI · ⑥ SON TESLİM / KABUL — kutular yerinde */}
       <div className="sp-kart" style={(d.siparis_red || []).length ? { borderColor: C.kirmizi } : undefined}><b>🚫 Reddedilen sipariş talepleri</b>
         {(d.siparis_red || []).length === 0 && <div style={{ color: C.soluk, marginTop: 6 }}>Reddedilen talep yok.</div>}
-        {(d.siparis_red || []).map((r, i) => <div key={i} style={{ color: C.soluk, padding: '4px 0' }}>{r.tarih} · {r.mesaj}</div>)}</div>
+        {(d.siparis_red || []).map((r, i) => <div key={i} style={{ color: C.soluk, padding: '4px 0' }}>{/^\d{4}-\d{2}-\d{2}/.test(r.tarih || '') ? `${r.tarih.slice(8, 10)}.${r.tarih.slice(5, 7)}` : r.tarih} · {r.mesaj}</div>)}</div>
       <div className="sp-kart"><b>📩 Merkez Mesajları</b><div style={{ color: C.soluk, marginTop: 6 }}>{(d.mesajlar || []).length ? `${d.mesajlar.length} okunmamış mesaj` : 'Henüz mesaj yok.'}</div></div>
-      <div className="sp-kart"><b>📦 Son Teslim / Kabul</b><div style={{ color: C.soluk, marginTop: 6 }}>{(d.son_teslimler || []).length ? '' : 'Henüz teslim kaydı yok.'}</div></div>
+      <div className="sp-kart"><b>📦 Son Teslim / Kabul</b>
+        {(d.son_teslimler || []).length === 0 && <div style={{ color: C.soluk, marginTop: 6 }}>Son 3 günde teslim kaydı yok.</div>}
+        {(d.son_teslimler || []).map((t, i) => (
+          <div key={i} style={{ display: 'flex', gap: 10, padding: '6px 0', borderTop: i ? `1px solid ${C.cizgi}` : undefined, opacity: t.geri ? 0.55 : 1 }}>
+            <span style={{ color: C.soluk, width: 92 }}>{t.gun === d.gun ? 'Bugün' : t.gun.slice(8, 10) + '.' + t.gun.slice(5, 7)} {t.saat}</span>
+            <span style={{ flex: 1 }}>{t.ne}{t.geri ? ' · ↩ iptal / geri alındı' : ''}</span>
+            <span style={{ color: C.soluk }}>{t.kim}</span>
+          </div>
+        ))}</div>
 
       <div className="sp-kart">
         <b>Bugün kaydedilenler</b>

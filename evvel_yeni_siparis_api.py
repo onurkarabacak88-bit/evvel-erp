@@ -221,6 +221,13 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
     sv = _sevk_durumlari(cur, hepsi)
     tv = _teslim_durumlari(cur, hepsi, urunler)
     sube_ad, top_ad = _sube_adlari(cur), _toptanci_adlari(cur)
+    depo_yok = {}   # B91: depo 'YOK' dediği kalem yönlendirilmemişe döner — kim dediği kartta görünsün (merkez yine depoya yollamasın)
+    if rows and not kor:
+        cur.execute("""SELECT siparis_id, kalem_i, kim FROM ey_siparis_yon WHERE siparis_id = ANY(%s) AND iptal
+                         AND iptal_sebep LIKE 'depoda yok%%' ORDER BY zaman""", ([r["id"] for r in rows],))
+        for y in cur.fetchall() or []:
+            y = dict(y)
+            depo_yok[(y["siparis_id"], y["kalem_i"])] = (y.get("kim") or "depo").split(" · ")[-1]   # "şube paneli · Ali" → "Ali"
     out = []
     for r in rows:
         kal_out, tamam = [], True
@@ -228,7 +235,7 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
             if k.get("iptal"):
                 kal_out.append({**k, "durum": "iptal", "yonler": [], "yonsuz": 0})
                 continue
-            ys, dagitilan, karsilanan = [], 0, 0
+            ys, dagitilan, karsilanan, gonderilmis = [], 0, 0, False
             for y in [y for y in Y.get(r["id"], []) if y["kalem_i"] == k["i"]]:
                 tur = y["kaynak"].split(":", 1)[0]
                 if tur == "depo":
@@ -243,6 +250,7 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
                     d = "karsilandi" if bagli else "bekleniyor"
                     gelen = tv.get(y["id"]) if bagli else None
                 dagitilan += int(y["adet"])
+                gonderilmis = gonderilmis or bool(y.get("parti_id") or y.get("teslim_id"))   # B27 (Fable): geri alınan sevk sayılmaz (yukarıda atlandı)
                 if d == "karsilandi":
                     karsilanan += int(gelen if gelen is not None else y["adet"])
                 yy = {"id": y["id"], "kaynak": y["kaynak"], "kaynak_ad": _kaynak_ad(y["kaynak"], sube_ad, top_ad), "durum": d}
@@ -250,10 +258,14 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
                     yy.update({"adet": int(y["adet"]), "hazir": y.get("hazir"), "gelen": gelen})
                 ys.append(yy)
             yonsuz = max(0, int(k["adet"]) - dagitilan)
+            # B27 (Fable 22 Eki): kısmi gönderimden kalan — yola çıkmış/teslim bağlı yön varsa merkez "eksiği kapat" diyebilir;
+            # kapatıldıysa kalan artık 'yönlendirilmedi' sayılmaz (sipariş sonsuza açık kalmaz)
             if k.get("oneri") and not k.get("urun_id"):
                 d = "oneri"
-            elif yonsuz > 0:
+            elif yonsuz > 0 and not k.get("eksik_kapandi"):
                 d = "yonlendirilmedi"
+            elif k.get("eksik_kapandi") and not ys:   # Fable: hiç gönderilmeden eksiği kapatılan kalem sipariş açık tutmaz
+                d = "karsilandi"
             elif ys and all(y["durum"] == "karsilandi" for y in ys):
                 d = "karsilandi"
             else:
@@ -263,7 +275,10 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
                 tamam = False
             kk = {"i": k["i"], "urun_id": k.get("urun_id"), "ad": k["ad"], "adet": int(k["adet"]), "oneri": bool(k.get("oneri")),
                   "durum": d, "yonsuz": yonsuz, "yonler": ys}
-            eksik = 0 if k.get("eksik_kapandi") else (max(0, dagitilan - karsilanan) if d == "karsilandi" else 0)
+            if d == "yonlendirilmedi" and (r["id"], k["i"]) in depo_yok:
+                kk["depo_yok"] = depo_yok[(r["id"], k["i"])]
+            eksik = 0 if k.get("eksik_kapandi") else ((max(0, dagitilan - karsilanan) if d == "karsilandi" else 0)
+                                                     + (yonsuz if (d == "yonlendirilmedi" and gonderilmis) else 0))
             if eksik:
                 tamam = False   # Codex P1: istenenden az geldi → sipariş AÇIK kalır (yoksa Bekleyen işler'den düşüyordu)
             if not kor:
@@ -289,6 +304,52 @@ def subenin_siparisleri(cur, sube_id: str) -> List[dict]:
     cur.execute("SELECT * FROM ey_siparis WHERE sube_id=%s AND zaman > NOW() - make_interval(days => %s) ORDER BY zaman DESC",
                 (str(sube_id), TAKIP_GUN))
     return _derle(cur, [dict(r) for r in cur.fetchall() or []], kor=True)
+
+
+def _simdi_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _son_gun_mu(z, gun: int) -> bool:
+    """z (ISO metin ya da datetime) son `gun` gün içinde mi — kalem ret zamanı yoksa siparişin zamanı verilir."""
+    from datetime import datetime, timedelta, timezone
+    try:
+        d = z if isinstance(z, datetime) else datetime.fromisoformat(str(z))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d > datetime.now(timezone.utc) - timedelta(days=gun)
+    except (TypeError, ValueError):
+        return True
+
+
+def sube_redleri(cur, sube_id: str, gun_sayisi: int = 7) -> List[dict]:
+    """PUBLIC (panel ana sayfa 'Reddedilen sipariş talepleri', eski siparis_red_bildirimleri): son N günde MERKEZİN iptal ettiği
+    sipariş ya da kalem (sebebiyle). Şubenin kendi iptali ve deneme siparişleri dönmez. Hafif sorgu — yön/sevk hesabı yapılmaz
+    (panel durumu sık yenilenir). Adet dönmez."""
+    if not _var(cur):
+        return []
+    # Codex 22 Eki: sipariş iptali İPTAL ZAMANINA göre (eski açılıp bugün reddedilen görünsün); kalem retinin ayrı zamanı yok →
+    # takip penceresindeki (TAKIP_GUN) açık siparişlerin kalem retleri
+    cur.execute("""SELECT is_gunu, iptal, iptal_kim, iptal_sebep, kalemler, zaman, COALESCE(iptal_zaman, zaman) AS sira FROM ey_siparis
+                   WHERE sube_id=%s AND NOT deneme
+                     AND NOT (iptal AND COALESCE(iptal_kim, '') LIKE 'şube paneli%%')   -- Codex P3: şubenin kendi iptali sınırdan ÖNCE elenir
+                     AND ((iptal AND COALESCE(iptal_zaman, zaman) > NOW() - make_interval(days => %s))
+                          OR (NOT iptal AND kalemler @> '[{"iptal": true}]'::jsonb AND zaman > NOW() - make_interval(days => %s)))
+                   ORDER BY sira DESC LIMIT 20""", (str(sube_id), gun_sayisi, TAKIP_GUN))
+    out = []
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        tarih = r["is_gunu"].isoformat()
+        if r["iptal"]:
+            if (r.get("iptal_kim") or "").startswith("şube paneli"):   # şubenin kendi iptali red değildir
+                continue
+            out.append({"tarih": tarih, "mesaj": "Sipariş iptal edildi" + (f" — {r['iptal_sebep']}" if r.get("iptal_sebep") else "")})
+            continue
+        for k in r.get("kalemler") or []:
+            if k.get("iptal") and _son_gun_mu(k.get("iptal_zaman") or r["zaman"], gun_sayisi):   # Codex 22 Eki: kalem RET ZAMANI
+                out.append({"tarih": tarih, "mesaj": f"{k.get('ad') or 'ürün'}" + (f" — {k['iptal_sebep']}" if k.get("iptal_sebep") else " — iptal")})
+    return out[:15]
 
 
 def bekleyen_urunler(cur, sube_id: str, siparisler: Optional[List[dict]] = None) -> dict:
@@ -368,13 +429,17 @@ def yola_cikar(cur, *, depo_sube: str, hedef_sube: str, satirlar: List[dict], ki
     from evvel_yeni_depo_api import sevk_yaz
     if not satirlar:
         raise HTTPException(400, "Gönderilecek kalem yok")
-    for sid in sorted({str(x.get("siparis_id") or "") for x in satirlar}):
+    from evvel_yeni_depo_api import konum_kilitle
+    konum_kilitle(cur, f"depo:{depo_sube}")   # Fable S9: KİLİT SIRASI her yerde önce Depo konumu, sonra sipariş (teslim al / iptal ile aynı)
+    # Fable 21 Eki: kilit kümesi İSTEMCİNİN siparis_id'sinden değil, yön satırlarının GERÇEK siparişinden (teslime_bagla ile aynı kalıp)
+    cur.execute("SELECT DISTINCT siparis_id FROM ey_siparis_yon WHERE id = ANY(%s)", ([str(x.get("yon_id")) for x in satirlar],))
+    for sid in sorted(str(dict(r)["siparis_id"]) for r in cur.fetchall() or []):
         _kilit(cur, sid)
     from evvel_yeni_cekirdek import yeni_donem
     gercek = yeni_donem(cur)
     ys = {}
     for x in satirlar:
-        cur.execute("""SELECT y.*, s.sube_id AS hedef, s.surum, s.iptal AS s_iptal, s.kalemler FROM ey_siparis_yon y
+        cur.execute("""SELECT y.*, s.sube_id AS hedef, s.surum, s.iptal AS s_iptal, s.kalemler, s.is_gunu AS s_gun FROM ey_siparis_yon y
                          JOIN ey_siparis s ON s.id=y.siparis_id WHERE y.id=%s FOR UPDATE OF y""", (str(x.get("yon_id")),))
         y = cur.fetchone()
         if not y:
@@ -409,7 +474,8 @@ def yola_cikar(cur, *, depo_sube: str, hedef_sube: str, satirlar: List[dict], ki
     for n, tur in enumerate(turlar):
         r = sevk_yaz(cur, kaynak_sube=depo_sube, hedef_sube=hedef_sube, kalemler=[{"urun_id": urun(y), "adet": g} for y, g in tur], kim=kim,
                      istek_id=istek_id if n == 0 else f"{istek_id}-{n}",
-                     notu="Sipariş: " + ", ".join(sorted({y["siparis_id"] for y, _ in tur})))
+                     # B23: personele kod değil talep günü ("22.10 siparişi"); kimlik bağı yön satırında (parti_id) zaten var
+                     notu=", ".join(f"{g:%d.%m}" for g in sorted({y["s_gun"] for y, _ in tur})) + " siparişi")
         idx = {k["urun_id"]: i for i, k in enumerate(r["kalemler"])}   # #5: sıralı kalemler sevk_yaz'dan (Depo tablosuna uzanma yok)
         for y, g in tur:
             cur.execute("UPDATE ey_siparis_yon SET parti_id=%s, parti_i=%s, adet=%s, hazir=%s WHERE id=%s",
@@ -548,7 +614,7 @@ def yonlendir(sid: str, body: YonBody, x_evvel_oturum: Optional[str] = Header(de
                     raise HTTPException(409, f"{k['ad']}: bir kısmı yola çıktı / teslim alındı — iptal edilemez")
                 cur.execute("UPDATE ey_siparis_yon SET iptal=TRUE, iptal_sebep='kalem iptal', kim=%s WHERE siparis_id=%s AND kalem_i=%s AND NOT iptal",
                             (kim, sid, i))
-                kalemler = [{**kk, "iptal": True, "iptal_sebep": str(x["iptal"])[:200]} if kk["i"] == i else kk for kk in kalemler]
+                kalemler = [{**kk, "iptal": True, "iptal_sebep": str(x["iptal"])[:200], "iptal_zaman": _simdi_iso()} if kk["i"] == i else kk for kk in kalemler]
                 continue
             if not k.get("urun_id"):
                 raise HTTPException(400, f"{k['ad']}: katalog dışı öneri — önce ürünü bağla ya da reddet")
@@ -608,7 +674,8 @@ def oneri_karar(sid: str, i: int, body: OneriBody, x_evvel_oturum: Optional[str]
             k.update({"urun_id": str(body.urun_id), "oneri_ad": k["ad"], "ad": b["ad"], "baglayan": kim})
             mesaj = f"'{k['oneri_ad']}' → {b['ad']} olarak bağlandı"
         else:
-            k.update({"iptal": True, "iptal_sebep": ("öneri reddedildi" + (f": {body.sebep}" if body.sebep else ""))[:200], "baglayan": kim})
+            k.update({"iptal": True, "iptal_sebep": ("öneri reddedildi" + (f": {body.sebep}" if body.sebep else ""))[:200], "baglayan": kim,
+                      "iptal_zaman": _simdi_iso()})
             mesaj = "Öneri reddedildi"
         cur.execute("UPDATE ey_siparis SET kalemler=%s::jsonb WHERE id=%s", (json.dumps(kal, ensure_ascii=False), sid))
         _surum_artir(cur, sid)

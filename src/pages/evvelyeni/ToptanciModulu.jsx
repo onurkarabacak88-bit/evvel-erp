@@ -166,7 +166,7 @@ export default function ToptanciModulu({ onToast }) {
   );
 
   // ── 🔍 NEREDE? (Evvel'in ilk kurgusu: "neyin nerede olduğunu bulabilelim") — her rakam tıklanır, iz açılır ──
-  const tutarAc = (h, t) => { donus.current = t ? t.id : null; setCk(null); setTutarForm({ h, tutar: h.kesin != null ? String(h.kesin) : '', fatura_no: h.fatura_no || '', sebep: '', kaynak: 'fatura' }); };
+  const tutarAc = (h, t) => { donus.current = t ? t.id : null; setCk(null); setTutarForm({ h, tutar: h.kesin != null ? String(h.kesin) : '', fatura_no: h.fatura_no || '', sebep: '', kaynak: h.fatura_geldi === false ? 'ekstre' : 'fatura' }); };
   const toptanciCk = (t, geri, filtre) => {
     const sirali = [...t.hareketler].sort((a, b) => (a.tarih < b.tarih ? -1 : a.tarih > b.tarih ? 1 : 0));
     const gorunur = (h) => !filtre || (filtre.sube ? (h.tur === 'teslim' && h.sube === filtre.sube) : filtre.odeme ? h.tur === 'odeme' : true);
@@ -343,7 +343,7 @@ export default function ToptanciModulu({ onToast }) {
                               {h.kesin_kaynak === 'şube' && h.kesin != null && (   // E5: şubenin tutarı merkez onaylayınca kesinleşir + fiyat öğrenilir
                                 <Dugme kucuk ana disabled={mesgul} onClick={() => { if (window.confirm(`Şubenin yazdığı ${fmt(h.kesin)} ₺ doğru mu? Onaylarsan ürün fiyatları bu tutardan öğrenilir.`)) gonder(`/evvel-yeni/toptanci/teslim/${h.id}/tutar`, { tutar: h.kesin, fatura_geldi: h.fatura_geldi !== false, fatura_no: h.fatura_no || null, sebep: 'şube tutarı merkezce onaylandı' }); }}>✔ Onayla</Dugme>
                               )}
-                              <Dugme kucuk ana={h.durum !== 'kesin'} onClick={() => setTutarForm({ h, tutar: h.kesin != null ? String(h.kesin) : '', fatura_no: h.fatura_no || '', sebep: '' })}>{h.durum === 'kesin' ? 'Düzelt' : 'Tutar gir'}</Dugme>
+                              <Dugme kucuk ana={h.durum !== 'kesin'} onClick={() => setTutarForm({ h, tutar: h.kesin != null ? String(h.kesin) : '', fatura_no: h.fatura_no || '', sebep: '', kaynak: h.fatura_geldi === false ? 'ekstre' : 'fatura' })}>{h.durum === 'kesin' ? 'Düzelt' : 'Tutar gir'}</Dugme>
                               <Dugme kucuk onClick={() => { const s = window.prompt('Bu teslim neden iptal ediliyor?'); if (s) gonder(`/evvel-yeni/toptanci/teslim/${h.id}/iptal`, { sebep: s }); }}>İptal</Dugme>
                             </span>}
                           </td>

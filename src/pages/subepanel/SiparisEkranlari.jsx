@@ -203,9 +203,13 @@ export function SiparisTakip({ d, subeId, adaylar, bitti }) {
             </div>}
             <div style={{ display: 'grid', gap: 3 }}>
               {s.kalemler.map((k) => (
-                <div key={k.i} style={{ display: 'flex', gap: 8, fontSize: 14 }}>
+                <div key={k.i} style={{ display: 'flex', gap: 8, fontSize: 14, flexWrap: 'wrap' }}>
                   <span style={{ flex: 1 }}>{k.oneri ? '💡 ' : ''}{k.ad}</span><b>{k.adet}</b>
                   <span style={{ width: 190, textAlign: 'right', color: (DURUM[k.durum] || [])[1] || C.soluk, fontWeight: 700 }}>{(DURUM[k.durum] || [k.durum])[0]}</span>
+                  {(k.yonler || []).length > 1 && (   // B21: bölünmüş kalem — her kaynağın durumu ayrı (adet yok: kör sayım)
+                    <div style={{ flexBasis: '100%', paddingLeft: 12, fontSize: 12.5, color: C.soluk }}>
+                      {k.yonler.map((y) => `${y.kaynak_ad} · ${(DURUM[y.durum] || [y.durum])[0]}`).join('  |  ')}
+                    </div>)}
                 </div>))}
             </div>
             {s.notu && <div style={{ color: C.soluk, fontSize: 13 }}>📝 {s.notu}</div>}

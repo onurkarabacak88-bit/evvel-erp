@@ -1193,6 +1193,7 @@ def _kart_uret(cur, sube_row: dict, guvenlik_lim: Dict[str, int]) -> Dict[str, A
         SELECT COUNT(*) AS adet
         FROM sube_merkez_not
         WHERE sube_id=%s AND DATE(olusturma)=CURRENT_DATE
+          AND COALESCE(personel_ad,'') <> 'SISTEM' AND COALESCE(metin,'') NOT LIKE '[YARIM_ISLEM%%'
         """,
         (sid,),
     )
@@ -5483,6 +5484,7 @@ def ops_metrics_sube_operasyon_kalite(
             FROM sube_merkez_not n
             JOIN subeler s ON s.id = n.sube_id
             WHERE n.olusturma >= (NOW() - (%s * INTERVAL '1 day'))
+              AND COALESCE(n.personel_ad,'') <> 'SISTEM' AND COALESCE(n.metin,'') NOT LIKE '[YARIM_ISLEM%%'
         """
         if sid:
             q2 += " AND n.sube_id=%s"
@@ -8714,6 +8716,7 @@ def ops_sube_notlar(
     year_month: Optional[str] = None,
     sube_id: Optional[str] = None,
     limit: int = 200,
+    sistem: bool = False,
 ):
     ym = _coerce_year_month(year_month)
     lim = max(10, min(500, int(limit)))
@@ -8726,6 +8729,8 @@ def ops_sube_notlar(
             JOIN subeler s ON s.id = n.sube_id
             WHERE to_char(n.olusturma, 'YYYY-MM') = %s
         """
+        if not sistem:   # 21 Eki (Tema 470 ₺ dersi): notların %98'i sistem satırıydı, personel notu gömülüyordu → varsayılan GİZLİ
+            q += " AND COALESCE(n.personel_ad,'') <> 'SISTEM' AND COALESCE(n.metin,'') NOT LIKE '[YARIM_ISLEM%%'"
         if sid_f:
             q += " AND n.sube_id = %s"
             qp.append(sid_f)

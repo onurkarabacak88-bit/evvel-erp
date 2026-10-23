@@ -71,6 +71,8 @@ def gelir_ozet(ay: Optional[str] = None):
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
         oranlar = _oranlar(cur)
         donem_bas = _baslangic(cur)
+        from evvel_yeni_tanim_api import subeler as _sb_hepsi
+        pasif = {str(x["id"]) for x in _sb_hepsi(cur, hepsi=True) if not x["aktif"]}   # B13
     sube_cep = [c for c in cep_list if c["tur"] == "sube"]
     bas_i, son_i = ay_bas.isoformat(), ay_son.isoformat()
     S = _toplamla(kayit, C, bas_i, son_i)
@@ -97,6 +99,8 @@ def gelir_ozet(ay: Optional[str] = None):
         gun_sayisi = len(s["gunler"])
         subeler.append({
             "cep": c["id"], "ad": c["kisa"],
+            # B13: geliri olmayan PASİF şube ekranda gizlenir (Kazanç gideri varsa yine gösterir — gizli maliyet olmasın)
+            "pasif": str(c.get("sube_id")) in pasif, "gizle": str(c.get("sube_id")) in pasif and not top and not gtop,
             "nakit": _tl_sayi(s["nakit"]), "pos": _tl_sayi(s["pos"]), "online": _tl_sayi(s["online"]), "toplam": _tl_sayi(top),
             "gun_sayisi": gun_sayisi, "gunluk_ort": _tl_sayi(round(top / gun_sayisi)) if gun_sayisi else 0,
             "gecen_ay_ayni_gunler": _tl_sayi(gtop), "degisim_yuzde": round((top - gtop) * 100 / gtop, 1) if gtop else None,

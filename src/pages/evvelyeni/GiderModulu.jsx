@@ -19,7 +19,7 @@ export const GIDER_SAYFALAR = [
 
 const KALEM = ['mal', 'kira', 'personel', 'fatura', 'dukkan', 'anlik', 'diger', 'komisyon'];
 const TUR_RENK = { mal: 'var(--pi-accent)', kira: '#7a5c3e', personel: '#4f6d7a', fatura: '#8a7a3a', dukkan: 'var(--pi-warn)', anlik: '#b08850', diger: '#999', komisyon: 'var(--pi-ink3)' };
-const TUR_AD = { mal: 'Mal (ürün aç)', kira: 'Kira', personel: 'Personel', fatura: 'Fatura', dukkan: 'Dükkân küçük', anlik: 'Anlık', diger: 'Diğer', komisyon: 'Komisyon', sevk: 'Depodan sevk (gider DEĞİL)' };
+const TUR_AD = { mal: 'Mal (tüketim — sayımdan)', kira: 'Kira', personel: 'Personel', fatura: 'Fatura', dukkan: 'Dükkân küçük', anlik: 'Anlık', diger: 'Diğer', komisyon: 'Komisyon', sevk: 'Depodan sevk (gider DEĞİL)' };
 
 export default function GiderModulu({ onToast }) {
   const [ay, setAy] = useState(ayTR);

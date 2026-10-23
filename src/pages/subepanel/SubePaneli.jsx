@@ -1,5 +1,5 @@
 // 🧾 ŞUBE PANELİ — ÇERÇEVE (PANEL_YENIDEN_KURULUM.md: eski sube_panel.html AYNEN, yalnız QR sistemi yeni) · sunucu: evvel_yeni_panel_api.py
-// Basamak 1: üst bar · sol menü (STOK İŞLEMLERİ / GÜN SONU / HIZLI ERİŞİM) · ana sayfa (AnaSayfa.jsx) · sağ (Kasa devri / Günü kapat) · alt bar ·
+// Basamak 1: üst bar · sol menü (STOK İŞLEMLERİ / GÜN SONU (HIZLI ERİŞİM: X raporu · geri bildirim · puan sahip 21 Eki kaldırdı)) · ana sayfa (AnaSayfa.jsx) · sağ (Kasa devri / Günü kapat) · alt bar ·
 // açılış öncesi QR kapısı · sayı tuş takımı. Ekranlar (açılış, kapanış, devir, ürün aç, fire, ara teslim…) kendi basamaklarında yeniden kurulur;
 // o güne dek aşağıdaki mevcut modallar AYNEN çalışır. Panel 1 Kasım'a kadar DENEME (kaydetmez).
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -12,6 +12,7 @@ import KasaDevri, { DEVIR_ACIK, devirEtiket } from './KasaDevri';
 import TedarikciTeslim from './TedarikciTeslim';
 import DepodanGelen from './DepodanGelen';
 import AnlikGider, { AvansTeslim } from './AnlikGider';
+import MerkezNotu from './MerkezNotu';
 import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
 import Fire from './Fire';
@@ -35,6 +36,7 @@ export default function SubePaneli({ subeId }) {
   const [modal, setModal] = useState(null);
   const [mesaj, setMesaj] = useState(null);
   const [giderAcik, setGiderAcik] = useState(false);   // 💸 anlık gider penceresi
+  const [notAcik, setNotAcik] = useState(false);   // 📝 merkez notu penceresi
   const [avansT, setAvansT] = useState(null);           // 🤝 elden verilecek avans (teslim penceresi)
   const [mesgul, setMesgul] = useState(false);
   const [istek, setIstek] = useState(yeniIstek);
@@ -135,6 +137,7 @@ export default function SubePaneli({ subeId }) {
     if (m === 'teslim') { sekmeyeGec('teslim'); return; }   // Basamak 8: Tedarikçiden teslim al (orta alanda sekme)
     if (m === 'depo') { sekmeyeGec('depo'); return; }
     if (m === 'gider') { setGiderAcik(true); return; }   // 💸 anlık gider (alt bar + ana sayfa kartı aynı pencere)
+    if (m === 'not') { setNotAcik(true); return; }   // 📝 merkez notu (alt bar + ana sayfa kartı; gün kapalıyken de yazılabilir)
     if (['siparis', 'siparisTakip', 'gonderilecek'].includes(m)) { sekmeyeGec(m); return; }   // S5 sipariş (orta alanda sekme)       // Basamak 5 S3: Depodan gelen (orta alanda sekme; gün kapalıyken de açık)
     if (m === 'kapanis') {   // Codex: gece yarısından sonra sayfa yenilense de dünün GÖNDERİLMEMİŞ kapanışı kaybolmasın
       const dun = gunKaydir(d.gun, -1);   // Dalga 5 (F#56)
@@ -171,7 +174,7 @@ export default function SubePaneli({ subeId }) {
     try {
       const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/${yol}`, { method: 'POST', body });
       // devir (yoklama açıkken): sunucu "Devir hazır — X telefonundan 'Devrediyorum'…" der; olay yazılmaz, onaylar telefonda (D5)
-      setMesaj({ tur: r.kuru ? 'deneme' : 'tamam', metin: r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : r.devir_id && r.mesaj ? r.mesaj : (r.tekrar ? 'Bu kayıt zaten alınmıştı' : 'Kaydedildi ✓') });
+      setMesaj({ tur: r.kuru ? 'deneme' : 'tamam', metin: r.kuru ? (/^DENEME/.test(r.mesaj || '') ? r.mesaj : `DENEME — ${r.mesaj || 'kaydedilmedi'}`) : r.devir_id && r.mesaj ? r.mesaj : (r.tekrar ? 'Bu kayıt zaten alınmıştı' : 'Kaydedildi ✓') });
       taslakSil(modal); setModal(null); temizle(); sonra?.(); yukle();
     } catch (e) {
       if (e instanceof TypeError && pinli) {   // PIN tablete yazılmaz → PIN'li işlem kuyruğa girmez; form açık kalır
@@ -243,14 +246,10 @@ export default function SubePaneli({ subeId }) {
     { k: 'araTeslim', i: '💵', ad: 'Ara Teslim' },
     { k: 'devir', i: '🔄', ad: 'Kasa Devri' },
     { k: 'kapanis', i: '🌙', ad: 'Günü Kapat', kapanisKarti: true },
-    { b: 'HIZLI ERİŞİM' },
-    { k: 'xrapor', i: '📷', ad: 'X Raporu', yakinda: true },
-    { k: 'geri', i: '🧠', ad: 'Operasyon Geri Bildirimi', yakinda: true },
-    { k: 'puan', i: '⭐', ad: 'Puanım', yakinda: true },
   ];
 
   return (
-    <div className="sp" ref={kokRef}>
+    <div className="sp" ref={kokRef} style={tabletVar && yok.var && !kapiAcik ? { paddingBottom: 150 } : undefined}>{/* B89: sabit QR kutusu son satırların üstüne binmesin — kaydırınca açığa çıkar */}
       <style>{CSS}</style>
       {/* ÜST BAR (eski 52px): EVVEL · şube · tarih saat */}
       <div className="sp-ust">
@@ -317,7 +316,7 @@ export default function SubePaneli({ subeId }) {
             <button className="sp-btn" style={{ minHeight: 56 }} onClick={async () => { try { await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/ara-sayim-deneme`, { method: 'POST', body: {} }); yukle(); } catch (e) { setAnladim(e?.message || 'Başlatılamadı'); } }}>⏱ Deneme: ara sayım iste</button>)}
           <button className="sp-kart" disabled={kapali} onClick={() => ac('devir')} style={{ textAlign: 'left', cursor: kapali ? 'default' : 'pointer', minHeight: 78, opacity: kapali ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4 }}>
             <b style={{ fontSize: 16 }}>💵 Kasa Devri</b><span style={{ color: C.soluk, fontSize: 12 }}>Vardiya nakit teslim & devir</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: devirEtiket(devir).renk }}>{devirEtiket(devir).metin}</span>
+            <span style={{ fontSize: 12, fontWeight: 700, color: devirEtiket(devir, !!d?.kapanis_var).renk }}>{devirEtiket(devir, !!d?.kapanis_var).metin}</span>
           </button>
           <button className="sp-kart" disabled={d.kapanis_var && !dunTaslak} onClick={() => { if (d.kapanis_merkezde && !window.confirm(`Bu günün kapanışı ${d.kapanis_merkezde}'de merkeze gönderildi; merkez işleyecek. Yine de yeniden doldurmak istiyor musun?`)) return; ac('kapanis'); }} style={{ textAlign: 'left', cursor: d.kapanis_var && !dunTaslak ? 'default' : 'pointer', minHeight: 78, opacity: d.kapanis_var && !dunTaslak ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4,
             background: 'linear-gradient(135deg,rgba(76,29,149,.5),rgba(124,58,237,.35))' }}>
@@ -332,13 +331,17 @@ export default function SubePaneli({ subeId }) {
       <div className="sp-alt">
         <button onClick={() => sekmeyeGec('ana')} style={sekme === 'ana' ? { color: C.mavi } : undefined}><span style={{ fontSize: 20, display: 'block' }}>🏠</span><span style={{ fontSize: 11 }}>Ana</span></button>
         <button onClick={() => setGiderAcik(true)}><span style={{ fontSize: 20, display: 'block' }}>💸</span><span style={{ fontSize: 11 }}>Gider</span></button>
-        <button onClick={() => yakinda('Merkez notu ekranı kendi basamağında açılacak')}><span style={{ fontSize: 20, display: 'block' }}>📝</span><span style={{ fontSize: 11 }}>Not</span></button>
+        <button onClick={() => ac('not')}><span style={{ fontSize: 20, display: 'block' }}>📝</span><span style={{ fontSize: 11 }}>Not</span></button>
         <button onClick={() => yakinda('Mesajlar kendi basamağında açılacak')}><span style={{ fontSize: 20, display: 'block' }}>📩</span><span style={{ fontSize: 11 }}>Mesaj</span></button>
       </div>
 
       {avansT && (
         <AvansTeslim t={avansT} d={d} subeId={subeId} adaylar={kisiAdaylari} kapat={() => setAvansT(null)}
           bitti={(metin, kuru) => { setAvansT(null); bittiGoster(metin, kuru); }} />
+      )}
+      {notAcik && (
+        <MerkezNotu d={d} subeId={subeId} adaylar={kisiAdaylari} kapat={() => setNotAcik(false)}
+          bitti={(metin, kuru) => { setNotAcik(false); bittiGoster(metin, kuru); }} />
       )}
       {giderAcik && (
         <AnlikGider d={d} subeId={subeId} adaylar={kisiAdaylari} kapali={kapali} kapat={() => setGiderAcik(false)}
@@ -419,8 +422,12 @@ export default function SubePaneli({ subeId }) {
           </div>
           <label style={{ display: 'grid', gap: 6 }}><b>Tutar</b>
             <input className="sp-in" inputMode="decimal" value={f.tutar ?? ''} onChange={(e) => setF({ ...f, tutar: tutar(e.target.value) })} placeholder="0,00" /></label>
+          <label style={{ display: 'grid', gap: 6 }}><b>Açıklama <span style={{ color: C.soluk, fontWeight: 400 }}>(isteğe bağlı)</span></b>
+            <input className="sp-in" value={f.aciklama ?? ''} maxLength={120} onChange={(e) => setF({ ...f, aciklama: e.target.value })} placeholder="Açıklama (isteğe bağlı)" /></label>
+          {/* Fable (21 Eki): 'sigara aldım' gibi harcamalar teslim yazılıyordu — kapıyı göster (kasa derinliği vermez) */}
+          <div style={{ color: C.soluk, fontSize: 12 }}>Çekmeceden harcama yaptıysan <b>Anlık gider</b>'i kullan.</div>
           <button className="sp-btn sp-yesil" disabled={mesgul || !f.alan || !tutarNum(f.tutar)}
-            onClick={() => gonder('ara-teslim', { personel_id: kisi, alan: f.alan, tutar: tutarNum(f.tutar) })}>✔ Teslimi Kaydet</button>
+            onClick={() => gonder('ara-teslim', { personel_id: kisi, alan: f.alan, tutar: tutarNum(f.tutar), aciklama: (f.aciklama || '').trim() || null })}>✔ Teslimi Kaydet</button>
         </Modal>
       )}
       {modal === 'devir' && (

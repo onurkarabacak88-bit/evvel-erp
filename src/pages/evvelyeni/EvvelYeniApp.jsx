@@ -201,8 +201,15 @@ export default function EvvelYeniApp() {
             })}
           </nav>
           <main className="piapp-ic">
-            {(GORUNUR.find((b) => b.mod === (TUM_SAYFALAR.find((x) => x.id === sekme) || {}).mod) || MODULLER[0])
-              .g(sekme, { onToast: setToast, onSekme: sekmeDegis, onVeri: veriGeldi })}
+            {(() => {
+              const sy = TUM_SAYFALAR.find((x) => x.id === sekme);
+              const mb = sy && GORUNUR.find((b) => b.mod === sy.mod);
+              if (sy && !mb && MODULLER.some((b) => b.mod === sy.mod)) {   // B59: kapalı modülün adresi — iskelet/teknik hata yerine açık söz
+                const ad = (MODULLER.find((b) => b.mod === sy.mod) || {}).ad || sy.ad;
+                return <div style={{ padding: 24, fontSize: 15 }}>🔌 <b>{ad}</b> modülü şu an kapalı — bu sayfa kullanılamaz.</div>;
+              }
+              return (mb || MODULLER[0]).g(sekme, { onToast: setToast, onSekme: sekmeDegis, onVeri: veriGeldi });
+            })()}
           </main>
         </div>
       )}

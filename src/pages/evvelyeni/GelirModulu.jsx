@@ -101,7 +101,7 @@ export default function GelirModulu() {
         <div style={etiketStil}>Şube şube</div><Lejant />
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(250px, 1fr))', gap: 12 }}>
-        {v.subeler.map((s) => {
+        {v.subeler.filter((s) => !s.gizle).map((s) => {
           const sv = s.eksik_gunler.length ? R.kirmizi : s.onaysiz ? R.amber : R.yesil;
           return (
             <button key={s.cep} type="button" onClick={() => subeAc(s)} style={{
@@ -131,12 +131,12 @@ export default function GelirModulu() {
         <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--pi-line)' }}><b>Gün gün · tüm şubeler</b> <span style={{ color: R.not, fontSize: 12.5 }}>boş hücre = kapanış yok</span></div>
         <div style={{ overflowX: 'auto', maxHeight: 460 }}>
           <table className="pi-tablo pi-excel">
-            <thead><tr><th>Gün</th>{v.subeler.map((s) => <th key={s.cep}>{s.ad}</th>)}<th>Toplam</th></tr></thead>
+            <thead><tr><th>Gün</th>{v.subeler.filter((s) => !s.gizle).map((s) => <th key={s.cep}>{s.ad}</th>)}<th>Toplam</th></tr></thead>
             <tbody>
               {v.matris.slice().reverse().map((m) => (
                 <tr key={m.gun}>
                   <td style={{ ...num, whiteSpace: 'nowrap' }}>{tKisa(m.gun)} <span style={{ color: R.not }}>{gunAdi(m.gun).slice(0, 3)}</span></td>
-                  {v.subeler.map((s) => {
+                  {v.subeler.filter((s) => !s.gizle).map((s) => {
                     const t = m.subeler[s.cep];
                     return <td key={s.cep} style={{ ...num, background: t == null ? 'var(--pi-bad-soft)' : undefined, color: t == null ? R.kirmizi : undefined }}>{t == null ? 'yok' : fmt(t)}</td>;
                   })}

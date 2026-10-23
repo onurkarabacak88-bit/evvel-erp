@@ -37,7 +37,7 @@ from evvel_yeni_kasa_api import kapanis_kanallari as _kapanis_kanallari   # TEK 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/evvel-yeni/gider", tags=["evvel-yeni-gider"])
 
-TURLER = {"mal": "Mal (ürün aç)", "kira": "Kira", "fatura": "Fatura / abonelik", "personel": "Personel",
+TURLER = {"mal": "Mal (tüketim — sayımdan)", "kira": "Kira", "fatura": "Fatura / abonelik", "personel": "Personel",
           "dukkan": "Dükkân küçük giderleri", "anlik": "Anlık gider", "diger": "Diğer", "komisyon": "POS / online komisyonu"}
 KALEMLER = list(TURLER)
 VARSAYILAN_KDV = Decimal("0.10")

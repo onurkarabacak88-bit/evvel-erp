@@ -14,7 +14,7 @@ import logging
 import math
 from datetime import date, datetime, time, timedelta
 from decimal import Decimal, InvalidOperation
-from typing import Annotated, Callable, Dict, List, Optional
+from typing import Annotated, Any, Callable, Dict, List, Optional
 
 from fastapi import HTTPException
 from pydantic import BeforeValidator
@@ -160,7 +160,10 @@ def tr_baslik(s: str) -> str:
     """'KÖYCEĞİZ' → 'Köyceğiz' (Türkçe I/İ kuralıyla; str.title() bozar)."""
     def kucuk(x):
         return x.replace("I", "ı").replace("İ", "i").lower()
-    return " ".join((w[:1] + kucuk(w[1:])) if w else w for w in (s or "").split(" "))
+    def kelime(w):   # B12: '(TEMA)' → '(Tema)' — baştaki noktalama atlanır, ilk HARF büyük kalır
+        i = next((j for j, ch in enumerate(w) if ch.isalpha()), len(w))
+        return w[:i + 1] + kucuk(w[i + 1:])
+    return " ".join(kelime(w) if w else w for w in (s or "").split(" "))
 
 
 # ─────────────────────────── PARA ───────────────────────────
@@ -431,13 +434,18 @@ def eski_panel_zinciri_acik() -> bool:
     İş günü < panel_baslangic → açık. ey_ayar 'eski_gece_zinciri'='acik' → zorla açık (geri dönüş, silinmez).
     Ayar okunamazsa (Codex #8) sabit 1 Kasım'a göre karar verir — hata yüzünden kesimden sonra eski uyarı üretilmez."""
     try:
-        with db() as (_c, cur):
-            if (ayar_oku(cur, "eski_gece_zinciri", "") or "").strip() == "acik":
-                return True
-            return is_gunu() < panel_baslangic(cur)
+        return _zincir_oku()
     except Exception as e:  # noqa: BLE001
         log.warning("🔌 eski panel zinciri anahtarı okunamadı (sabit 1 Kasım'a göre): %s", str(e)[:150])
         return is_gunu() < date(2026, 11, 1)
+
+
+def _zincir_oku() -> bool:
+    """Kuralın kendisi (hata YUTMAZ) — gece işleri yukarıdaki yedekli hâli, kayıt kapısı katı hâli kullanır."""
+    with db() as (_c, cur):
+        if (ayar_oku(cur, "eski_gece_zinciri", "") or "").strip() == "acik":
+            return True
+        return is_gunu() < panel_baslangic(cur)
 
 
 def yeni_donem(cur, gun: Optional[date] = None) -> bool:
@@ -452,7 +460,59 @@ def deneme_mi(cur, gun: Optional[date] = None) -> bool:
     return not yeni_donem(cur, gun)
 
 
+_ZINCIR_ONB: Dict[str, Any] = {}
+_ZINCIR_KILIT = __import__("threading").Lock()
+
+
+def eski_panel_zinciri_acik_onbellekli(sure_sn: int = 30, kati: bool = False) -> bool:
+    """PUBLIC — eski_panel_zinciri_acik'in 30 sn süreç içi önbellekli hâli; OTURUMSUZ / sık çağrılan kapılar için (eski QR /gecis,
+    eski telefon uçlarının 410 kapısı — Fable 21 Eki: halka açık uç havuzu meşgul etmesin). Gece işleri önbelleksiz olanı kullanır."""
+    import time as _t
+    g = is_gunu()   # Codex 22 Eki P1: önbellek İŞ GÜNÜYLE anahtarlı — 1 Kasım 02:00'de eski 'açık' cevabı bir an bile taşınmaz
+
+    def _yedek():   # okuma hatası / kilit zaman aşımı: katı çağrı HATA, diğerleri sabit tarih yedeği — hiçbiri önbelleğe GİRMEZ
+        if kati:
+            raise RuntimeError("kesim anahtarı okunamadı")
+        return is_gunu() < date(2026, 11, 1)
+
+    o = _ZINCIR_ONB.get("v")
+    if o and o[2] == g and _t.monotonic() - o[1] < sure_sn:
+        return o[0]
+    if not _ZINCIR_KILIT.acquire(timeout=2):   # Codex 22 Eki P2: yavaş ayar sorgusunda anonim istekler havuzu kilitlemesin
+        return _yedek()
+    try:   # soğuk önbellekte eşzamanlı istekler tek sorguya iner
+        o = _ZINCIR_ONB.get("v")
+        if o and o[2] == g and _t.monotonic() - o[1] < sure_sn:
+            return o[0]
+        try:
+            v = _zincir_oku()   # Codex 22 Eki P1: önbelleğe YALNIZ başarılı okuma girer (hata yedeği katı kapıyı açamaz)
+        except Exception as e:  # noqa: BLE001
+            log.warning("🔌 eski panel zinciri anahtarı okunamadı: %s", str(e)[:150])
+            return _yedek()
+        if _t.monotonic() >= _ZINCIR_ONB.get("bekle", 0):   # Codex P2: ayar yazıldıktan sonraki 5 sn önbelleğe alma (commit öncesi eski değer)
+            _ZINCIR_ONB["v"] = (v, _t.monotonic(), g)
+        return v
+    finally:
+        _ZINCIR_KILIT.release()
+
+
+def eski_yazim_kapisi() -> None:
+    """PUBLIC — 1 Kasım kesimi SUNUCU kapısı (FastAPI Depends): eski şube paneli / eski telefon / eski kasa teslim KAYIT uçları
+    kesimden sonra 410 (sahip 21 Eki "A", Fable: eski panelde yapılan kapanış/teslim Kasa'ya, tedarikçi teslimi toptancı borcuna ÇİFT yazılmasın).
+    TEK kural: eski_panel_zinciri_acik (30 sn önbellekli); ey_ayar 'eski_gece_zinciri'='acik' → geri açılır. Merkez düzeltme uçları kapıya bağlanmaz."""
+    from fastapi import HTTPException as _H
+    try:
+        acik = eski_panel_zinciri_acik_onbellekli(kati=True)
+    except Exception as e:  # noqa: BLE001 — Codex 22 Eki: kural okunamazsa yazım izni YOK (sabit tarihe düşmez)
+        log.warning("🔌 eski yazım kapısı okunamadı → 503: %s", str(e)[:150])
+        raise _H(503, "Sistem şu an kontrol edilemiyor — biraz sonra yeniden dene")
+    if not acik:
+        raise _H(410, "Yeni sisteme geçildi — bu ekran artık kayıt almıyor. Yeni şube panelini / telefondaki yeni sayfayı kullan.")
+
+
 def ayar_yaz(cur, anahtar: str, deger: Optional[str], kim: str) -> None:
+    _ZINCIR_ONB.clear()   # kesim anahtarı önbelleği (ayar değişince hemen geçerli)
+    _ZINCIR_ONB["bekle"] = __import__("time").monotonic() + 5   # Codex 22 Eki: commit gelene kadar eski değer önbelleğe girmesin
     _ayar_hazirla(cur)
     cur.execute("""INSERT INTO ey_ayar (anahtar, deger, degistiren) VALUES (%s,%s,%s)
                    ON CONFLICT (anahtar) DO UPDATE SET deger=EXCLUDED.deger, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
@@ -462,6 +522,10 @@ def ayar_yaz(cur, anahtar: str, deger: Optional[str], kim: str) -> None:
 # ─────────────────────────── KAYIT DEFTERLERİ (registry) ───────────────────────────
 # Bekleyen işler: her sağlayıcı (cur, baglam) → [ {tur, id, tarih, ad, ...} ]. baglam = {"kayit": para defteri kayıtları, "C": cepler}
 _BEKLEYEN_IS: Dict[str, Callable] = {}
+
+
+# Yarı zamanlı personelin günlük saat standardı (sahip kararı, eski maas_service PART_GUNLUK_SAAT ile aynı) — EY'de TEK sayı (B94)
+PART_GUNLUK_SAAT = 5.5
 
 
 def bekleyen_is_kaydet(ad: str, saglayici: Callable) -> None:
@@ -487,7 +551,7 @@ def bekleyen_saglayicilar() -> List[str]:
 
 __all__ = ["TrTutar", "bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "kolon_var", "bir_kez", "ddl_kur", "ddl_bu_islemde", "lock_timeout_ayarla", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
-           "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik"]
+           "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik", "eski_panel_zinciri_acik_onbellekli", "eski_yazim_kapisi"]
 
 
 def takvim_durumu(beklenen, odenen, vade, bugun, once: bool = False, tolerans=100) -> str:

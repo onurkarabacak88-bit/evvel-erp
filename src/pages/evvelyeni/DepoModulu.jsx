@@ -80,8 +80,9 @@ function Nerede() {
         varsayilan: 'iz',
         tablo: {
           ad: 'İz', kolonlar: [{ ad: 'Gün' }, { ad: 'Ne', sar: true }, { ad: 'Nereden / nereye', sar: true }, { ad: 'Kim' }, { ad: 'Adet', sag: true }, { ad: 'Kalan', sag: true }],
-          satirlar: r.iz.map((x) => [tKisa(x.gun), `${x.aciklama || x.tur}${x.iptal ? ` · İPTAL (${x.iptal_sebep || ''})` : ''}`, x.karsi, x.kim || '',
-            { t: `${x.d > 0 ? '+' : ''}${x.d}`, renk: x.iptal ? R.not : x.d > 0 ? R.yesil : R.kirmizi }, { t: String(x.kalan), kalin: true, renk: x.kalan < 0 ? R.kirmizi : undefined }]),
+          satirlar: r.iz.map((x) => [tKisa(x.gun), `${x.aciklama && x.aciklama !== x.tur ? x.aciklama : (IZ_TUR_AD[x.tur] || x.tur)}${x.iptal ? ` · İPTAL (${x.iptal_sebep || ''})` : ''}`, x.karsi, x.kim || '',
+            // B81: kod adı ('ac') yerine Türkçe · iptal satırı kalanı değiştirmez → adet üstü çizili gösterilir (eklendi sanılmasın)
+            { t: x.iptal ? `(${x.d > 0 ? '+' : ''}${x.d}) iptal` : `${x.d > 0 ? '+' : ''}${x.d}`, renk: x.iptal ? R.not : x.d > 0 ? R.yesil : R.kirmizi }, { t: String(x.kalan), kalin: true, renk: x.kalan < 0 ? R.kirmizi : undefined }]),
         },
       });
     } catch (e) { setCk({ tip: 'DEPO', baslik: 'İz okunamadı', not: e?.message }); }
@@ -185,7 +186,8 @@ function Yoldakiler({ onToast, mod }) {
             {v.bekleyen.map((x) => (
               <tr key={x.id} style={{ background: x.gec ? `color-mix(in srgb, ${R.kirmizi} 8%, transparent)` : undefined }}>
                 <td style={{ ...hucre, whiteSpace: 'nowrap' }}>{x.sevk_gunu ? tKisa(x.sevk_gunu) : '—'}<div style={{ fontSize: 11.5, color: x.gec ? R.kirmizi : R.not }}>{x.gun} gün</div></td>
-                <td style={hucre}><b>{x.urun}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.nereden} → {x.nereye}</div></td>
+                <td style={hucre}><b>{x.urun}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.nereden} → {x.nereye}</div>
+                  <div style={{ fontSize: 11.5, color: R.not }}>📤 Gönderen: <b>{x.sevk_eden || '—'}</b></div></td>
                 <td style={{ ...hucre, textAlign: 'right', ...num, fontWeight: 700 }}>{x.sevk} adet</td>
                 <td style={{ ...hucre, textAlign: 'right' }}><Dugme kucuk onClick={() => kabul(x)}>Merkez adına kabul</Dugme></td>
               </tr>
@@ -200,8 +202,9 @@ function Yoldakiler({ onToast, mod }) {
             {v.fark.map((x) => (
               <tr key={x.id}>
                 <td style={{ ...hucre, whiteSpace: 'nowrap' }}>{x.sevk_gunu ? tKisa(x.sevk_gunu) : '—'}</td>
-                <td style={hucre}><b>{x.urun}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.nereden} → {x.nereye}</div></td>
-                <td style={{ ...hucre, textAlign: 'right', ...num }}>sevk {x.sevk} · kabul {x.kabul + Math.max(0, x.fazla)}{x.merkez_kabul ? ' (merkez)' : ''}</td>
+                <td style={hucre}><b>{x.urun}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.nereden} → {x.nereye}</div>
+                  <div style={{ fontSize: 11.5, color: R.not }}>📤 Gönderen: <b>{x.sevk_eden || '—'}</b> · 📥 Kabul eden: <b>{x.kabul_eden || '—'}</b>{x.merkez_kabul ? ' (merkez adına — şube saymadı)' : ''}</div></td>
+                <td style={{ ...hucre, textAlign: 'right', ...num }}>sevk {x.sevk} · kabul {x.kabul + Math.max(0, x.fazla)}</td>
                 <td style={{ ...hucre, textAlign: 'right', color: x.fazla > 0 || x.hasar > 0 ? R.amber : R.kirmizi, fontWeight: 700 }}>
                   {x.hasar > 0 ? <>{x.hasar} adet HASARLI geldi — ASKIDA
                     <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>
@@ -215,7 +218,8 @@ function Yoldakiler({ onToast, mod }) {
                     : <>{x.eksik} adet eksik geldi — yolda kaldı
                     <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>
                       <Dugme kucuk onClick={() => coz(x, 'kayip', `${x.urun}: ${x.eksik} adet KAYIP olarak kapatılsın mı?`)}>Kayıp</Dugme>
-                      <Dugme kucuk onClick={() => coz(x, 'iade', `${x.urun}: ${x.eksik} adet ${x.nereden} deposuna GERİ yazılsın mı (hiç çıkmamış)?`)}>Kaynağa geri</Dugme></div></>}</td>
+                      <Dugme kucuk onClick={() => coz(x, 'iade', `${x.urun}: ${x.eksik} adet ${x.nereden} deposuna GERİ yazılsın mı (hiç çıkmamış)?`)}>Kaynağa geri</Dugme>
+                      <Dugme kucuk onClick={() => coz(x, 'sube_saydi', `${x.urun}: gelen TAMMIŞ, şube yanlış saymış — ${x.eksik} adet şube stoğuna eklensin mi?`)}>Şube yanlış saydı</Dugme></div></>}</td>
               </tr>
             ))}
           </tbody></table>
@@ -226,6 +230,7 @@ function Yoldakiler({ onToast, mod }) {
 }
 
 // 🚚 SEVK ET (Basamak 5 S2 — sahip P2: depoda görünmese de yazılır + uyarı; pasta seçilemez: pastane şubeye doğrudan getirir)
+const IZ_TUR_AD = { giris: 'Giriş', sevk: 'Sevk', kabul: 'Kabul', fazla_kabul: 'Fazla kabul', ac: 'Ürün aç', tuketim: 'Tüketim', fire: 'Fire', sayim: 'Sayım', acilis_sayim: 'Açılış sayımı', iade: 'İade', kayip: 'Kayıp', hasar: 'Hasar' };
 const DURUM_AD = { yolda: ['🚚 yolda', 'sari'], kismi: ['◐ kısmen kabul', 'sari'], kabul: ['✓ kabul edildi', 'yesil'], iptal: ['geri alındı', undefined] };
 
 function SevkEt({ onToast }) {

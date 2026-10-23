@@ -58,7 +58,7 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
     : katalog.find((k) => k.id === o))).filter((k) => k && k.urunler.length), [sb, katalog]);
   const g0 = acikGrup === BARDAK ? oneri.find((k) => k.id === BARDAK) : katalog.find((k) => k.id === acikGrup);
   const aramaSonuc = ara.trim().length >= 2
-    ? katalog.flatMap((k) => k.urunler.filter((u) => u.aktif && u.ad.toLocaleLowerCase('tr').includes(ara.trim().toLocaleLowerCase('tr')))).slice(0, 30) : [];
+    ? katalog.flatMap((k) => k.urunler.filter((u) => u.aktif && `${u.ad} ${k.kategori || ''}`.toLocaleLowerCase('tr').includes(ara.trim().toLocaleLowerCase('tr')))).slice(0, 30) : [];   // B20: kategori adıyla da ('pasta')
 
   const secili = Object.entries(adet).filter(([id, n]) => n > 0 && urunMap[id]);
   const kalem = secili.length;

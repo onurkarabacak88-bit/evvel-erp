@@ -20,6 +20,9 @@ import logging
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
+from evvel_yeni_cekirdek import tl as _tl_tr   # Türkçe para biçimi TEK yer (f-string içinde iç içe tırnak YOK — canlı Python 3.11)
 from typing import List, Optional
 
 from fastapi import APIRouter, Header, HTTPException, Request
@@ -29,7 +32,7 @@ from starlette.concurrency import run_in_threadpool
 from database import db, savepoint
 from evvel_yeni_kasa_api import kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
 from evvel_yeni_cekirdek import merkez_aktor
-from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kurus as _kurus, tl_sayi as _tl_sayi, bekleyen_is_kaydet
+from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, is_gunu as _is_gunu, kurus as _kurus, tl_sayi as _tl_sayi, bekleyen_is_kaydet
 
 router = APIRouter(prefix="/api/evvel-yeni/toptanci", tags=["evvel-yeni-toptanci"])
 log = logging.getLogger(__name__)
@@ -58,7 +61,8 @@ def toptanci_hazirla(cur) -> None:
     global _HAZIR
     if _HAZIR:
         return
-    if (__import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_toptanci_belge", "idx_ey_top_belge", "ey_urun_fiyat_gecmis", "ey_toptanci_teslim")
+    if (__import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_toptanci_belge", "idx_ey_top_belge", "ey_urun_fiyat_gecmis", "ey_toptanci_teslim",
+                                                    "idx_ey_top_teslim_sube_gun")
             and _kolon_var(cur, "ey_toptanci_belge", "iptal_zaman") and _kolon_var(cur, "ey_toptanci", "vade_gun")):
         _HAZIR = True
         return
@@ -74,8 +78,7 @@ def toptanci_hazirla(cur) -> None:
 
 
 def _kolon_var(cur, tablo: str, kolon: str) -> bool:
-    cur.execute("SELECT 1 FROM information_schema.columns WHERE table_name=%s AND column_name=%s", (tablo, kolon))
-    return cur.fetchone() is not None
+    return __import__("evvel_yeni_cekirdek").kolon_var(cur, tablo, kolon)   # TEK kural çekirdekte
 
 
 def _var(cur, ad: str) -> bool:
@@ -121,8 +124,10 @@ def _toptanci_ddl(cur) -> None:
             cur.execute(f"ALTER TABLE ey_toptanci_belge ADD COLUMN IF NOT EXISTS {k_} {t_}")
     if not _var(cur, "idx_ey_top_belge"):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_top_belge ON ey_toptanci_belge (teslim_id) WHERE NOT iptal")
+    if not _var(cur, "idx_ey_top_teslim_sube_gun"):   # Codex 22 Eki: panel durumu (5-15 sn) bugünkü teslimleri okur
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_top_teslim_sube_gun ON ey_toptanci_teslim (sube_id, tarih, zaman)")
     from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
-    if not ayar_oku(cur, "fiyat_gecmis_kopya"):   # bir kez: bugünkü fiyatlar 1 Ekim'den geçerli ilk satır olur
+    if not ayar_oku(cur, "fiyat_gecmis_kopya") and __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_urun", "ey_urun_fiyat", "ey_toptanci_fiyat"):   # bir kez (E2E #9: katalog yoksa bekler)
         _idler = __import__("evvel_yeni_urun_api").urun_idleri(cur)   # Ürün'ün PUBLIC kapısı (Codex P2: ey_urun JOIN'i kalktı)
         cur.execute("""INSERT INTO ey_urun_fiyat_gecmis (id, urun_id, tur, birim, tarih, kaynak, girilen)
                        SELECT 'fg-' || md5(f.urun_id || ':ilk'), f.urun_id, 'elle', f.birim, DATE '2026-10-01', 'ilk kopya (ey_urun_fiyat)', f.girilen
@@ -502,6 +507,13 @@ def _hesap(cur, bugun: date):
     return out
 
 
+def toptanci_bakiyesi(cur, tid: str, bugun: date) -> dict:
+    """PUBLIC (Tanımlar › pasif yap, B69): {bakiye ₺ (+ borç, − alacak), bilinmeyen: tutarı bilinmeyen teslim sayısı} — Toptancılar
+    ekranıyla AYNI hesap (_hesap). Fable: fiyatsız teslim bakiyeye girmez ama borçtur → pasif kararında ayrıca sayılır."""
+    x = next((x for x in _hesap(cur, bugun) if str(x["id"]) == str(tid)), None) or {}
+    return {"bakiye": x.get("bakiye") or 0, "bilinmeyen": x.get("bilinmeyen_sayi") or 0}
+
+
 @router.get("/ozet")
 def toptanci_ozet():
     _hazirla()
@@ -539,7 +551,7 @@ class TeslimBody(BaseModel):
     toptanci_id: str
     sube_id: Optional[str] = None
     tarih: Optional[str] = None
-    tutar: Optional[Decimal] = None
+    tutar: Optional[TrTutar] = None
     fatura_geldi: Optional[bool] = None
     fatura_no: Optional[str] = None
     aciklama: Optional[str] = None
@@ -549,7 +561,7 @@ class TeslimBody(BaseModel):
 def merkez_teslim(body: TeslimBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Merkezin elle girdiği teslim (panel dışı gelen mal, açılış sonrası unutulan teslim)."""
     try:
-        gun = date.fromisoformat((body.tarih or _bugun().isoformat())[:10])
+        gun = date.fromisoformat((body.tarih or _is_gunu().isoformat())[:10])   # boşsa İŞ GÜNÜ (gece 00–02 önceki gün)
     except ValueError:
         raise HTTPException(400, "Tarih YYYY-AA-GG olmalı")
     if gun > _bugun():
@@ -563,6 +575,8 @@ def merkez_teslim(body: TeslimBody, x_evvel_oturum: Optional[str] = Header(defau
         r = __import__("evvel_yeni_tanim_api").tanim_oku(cur, "ey_toptanci", body.toptanci_id, ("ad",))   # F#32
         if not r:
             raise HTTPException(404, "Toptancı bulunamadı")
+        if body.sube_id and not __import__("evvel_yeni_tanim_api").tanim_oku(cur, "ey_sube", body.sube_id, ("ad",)):
+            raise HTTPException(400, "Şube bulunamadı")   # E2E #15
         if t:
             cur.execute("""SELECT 1 FROM ey_toptanci_teslim WHERE toptanci_id=%s AND tarih=%s AND kesin_tutar=%s AND NOT iptal""",
                         (body.toptanci_id, gun, t))
@@ -576,7 +590,7 @@ def merkez_teslim(body: TeslimBody, x_evvel_oturum: Optional[str] = Header(defau
 
 
 class TutarBody(BaseModel):
-    tutar: Decimal
+    tutar: TrTutar
     fatura_geldi: Optional[bool] = True
     fatura_no: Optional[str] = None
     sebep: Optional[str] = None
@@ -611,7 +625,7 @@ def teslim_tutar(tid: str, body: TutarBody, x_evvel_oturum: Optional[str] = Head
         s = (t - int(x["tahmini"])) / int(x["tahmini"])
         if abs(s) > SAPMA_ORAN:
             sap = f" ⚠ tahminden %{round(s * 100)} farklı — birim (koli/adet) karışmış olabilir"
-    return {"ok": True, "mesaj": f"Tutar kesinleşti: {_tl_sayi(t):,.2f} ₺{sap}"}
+    return {"ok": True, "mesaj": f"Tutar kesinleşti: {_tl_tr(t)}{sap}"}
 
 
 class IptalBody(BaseModel):
@@ -647,6 +661,11 @@ def _belge_coz(veri: str, mime: Optional[str]) -> tuple:
 
 
 def _belge_ekle(cur, tid: str, ham: bytes, mime: str, sha: str, yukleyen: str, kaynak: str) -> dict:
+    # Codex 22 Eki P1: teslim satırı kilidi (panel S9 geri alma ile AYNI kilit) — 'merkez belgesi yok' denip geri alınırken belge eklenmesin
+    cur.execute("SELECT iptal FROM ey_toptanci_teslim WHERE id=%s FOR UPDATE", (tid,))
+    t0 = cur.fetchone()
+    if not t0 or dict(t0)["iptal"]:
+        raise HTTPException(409, "Bu teslim iptal edilmiş / geri alınmış — belge eklenemez")
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_top_belge:" + tid,))
     cur.execute("SELECT id FROM ey_toptanci_belge WHERE teslim_id=%s AND sha256=%s AND NOT iptal", (tid, sha))
     r = cur.fetchone()
@@ -797,6 +816,73 @@ def belge_kaldir(bid: str, x_evvel_oturum: Optional[str] = Header(default=None))
     return {"ok": True, "mesaj": "Sayfa kaldırıldı"}
 
 
+SUBE_GERI_ONEK = "şube geri aldı"   # iptal sebebinin başı: şubenin geri alması (merkez iptalinden ayırt eden TEK yer)
+
+
+def teslim_iptal_et(cur, tid: str, sebep: str, sayilan_varsa_dur: bool = False, sube_kim: Optional[str] = None) -> str:
+    """PUBLIC — teslimi iptal eder (borçtan düşer) + panel teslimiyse depo girişi geri alınır + bağlı sipariş kalemleri çözülür.
+    TEK iptal yolu: merkez (Toptancılar) ve şube paneli (S9 'Hatalı? Geri al') aynı kapıyı kullanır. Dönen: ek bilgi metni.
+    Çağıranın işleminde çalışır; teslim yoksa / zaten iptalse 404. sube_kim verilirse (panel S9) sebep 'şube geri aldı · kişi · …' olur."""
+    if sube_kim:
+        sebep = f"{SUBE_GERI_ONEK} · {sube_kim} · {sebep[:150]}"
+    cur.execute("SELECT kaynak_ref FROM ey_toptanci_teslim WHERE id=%s", (tid,))
+    r0 = cur.fetchone()
+    if r0 and (dict(r0)["kaynak_ref"] or "").startswith("panel:teslim:"):
+        from evvel_yeni_moduller import acik as _acik
+        if not _acik("depo"):   # Codex: borç düşüp stok kalmasın — önce Depo açılmalı
+            raise HTTPException(409, "Depo modülü kapalı — bu teslimin depo girişi de geri alınmalı; önce Depo'yu aç")
+    cur.execute("UPDATE ey_toptanci_teslim SET iptal=TRUE, iptal_sebep=%s WHERE id=%s AND NOT iptal RETURNING id, kaynak_ref",
+                (sebep[:250], tid))
+    r = cur.fetchone()
+    if not r:
+        raise HTTPException(404, "Teslim bulunamadı ya da zaten iptal")
+    ek = ""
+    # KİLİT SIRASI panel teslimiyle AYNI: önce Depo, sonra Sipariş (Codex P2: ters sıra eşzamanlı teslim + iptalde kilitlenme yapıyordu)
+    ref = dict(r)["kaynak_ref"] or ""
+    if ref.startswith("panel:teslim:"):   # yeni panel teslimi: depo girişi de geri alınır (Depo açık — yukarıda denetlendi)
+        from evvel_yeni_depo_api import hareket_iptal
+        d = hareket_iptal(cur, bag=ref, sebep=f"toptancı teslimi iptal · {sebep[:100]}")
+        if sayilan_varsa_dur and d["kalan"]:   # Fable S9: panelden geri almada sayılmış ürün sessiz stok fazlası bırakmasın → işlem
+            raise HTTPException(409, "Bu teslimdeki ürün sonradan sayılmış — geri almak için merkeze haber ver")   # tamamen geri alınır
+        ek = f" · depo girişi geri alındı ({d['iptal']} kalem)" + (
+            f" · sonradan SAYILAN {', '.join(d['kalan'])} geri alınmadı (stok sayımla kesinleşti)" if d["kalan"] else "")
+    from evvel_yeni_moduller import acik as _acik2
+    if _acik2("siparis"):   # Fable D4-1: bağlı sipariş kalemleri çözülür → yeniden 'bekleniyor' (yumuşak bağ)
+        n_ = __import__("evvel_yeni_siparis_api").teslim_iptal_edildi(cur, tid)
+        ek += f" · {n_} sipariş kalemi yeniden bekleniyor" if n_ else ""
+    return ek
+
+
+def panel_teslim_kilitle(cur, tid: str, sube_id: str) -> Optional[dict]:
+    """PUBLIC (şube paneli S9): bu şubenin PANEL teslimini kilitler (FOR UPDATE) → {tarih, iptal, merkez_isledi} ya da None.
+    merkez_isledi = merkez tutarı düzeltti (iz) ya da merkez belge ekledi (telefonla çekilen fotoğraf personelin kendi eki — sayılmaz)."""
+    cur.execute("SELECT id, kaynak_ref, sube_id, tarih, iptal, iz FROM ey_toptanci_teslim WHERE id=%s FOR UPDATE", (tid,))
+    t = cur.fetchone()
+    t = dict(t) if t else None
+    if not t or str(t.get("sube_id") or "") != str(sube_id) or not (t.get("kaynak_ref") or "").startswith("panel:teslim:"):
+        return None
+    cur.execute("SELECT 1 FROM ey_toptanci_belge WHERE teslim_id=%s AND kaynak='merkez' AND NOT iptal LIMIT 1", (tid,))
+    return {"ref": t["kaynak_ref"], "tarih": t["tarih"], "iptal": bool(t["iptal"]), "merkez_isledi": bool(t.get("iz")) or cur.fetchone() is not None}
+
+
+def panel_teslimleri(cur, sube_id: str, gun: date) -> List[dict]:
+    """PUBLIC (şube paneli S9): o şubenin o günkü PANEL teslimleri (iptaller dahil) — kalem/adet, teslim alan, merkez işledi mi.
+    Tutar DÖNMEZ (panelde yalnız personelin kendi girdiği teslim görünür; borç/fiyat merkezin)."""
+    cur.execute("""SELECT t.id, t.toptanci_ad, t.kalemler, t.teslim_alan, t.iptal, t.iptal_sebep, t.iz, t.zaman,
+                          EXISTS (SELECT 1 FROM ey_toptanci_belge b WHERE b.teslim_id=t.id AND b.kaynak='merkez' AND NOT b.iptal) AS mb
+                   FROM ey_toptanci_teslim t
+                   WHERE t.sube_id=%s AND t.tarih=%s AND t.kaynak_ref LIKE 'panel:teslim:%%' ORDER BY t.zaman""", (str(sube_id), gun))
+    out = []
+    for x in cur.fetchall() or []:
+        x = dict(x)
+        k = x.get("kalemler") or []
+        out.append({"id": x["id"], "toptanci": x.get("toptanci_ad"), "kalem": len(k), "adet": sum(int(i.get("adet") or 0) for i in k),
+                    "teslim_alan": x.get("teslim_alan"), "iptal": bool(x["iptal"]), "merkez_isledi": bool(x.get("iz")) or bool(x.get("mb")),
+                    "iptal_eden": None if not x["iptal"] else ("sube" if (x.get("iptal_sebep") or "").startswith(SUBE_GERI_ONEK) else "merkez"),
+                    "saat": x["zaman"].astimezone(__import__("tr_saat").TR_TZ).strftime("%H:%M") if x.get("zaman") else None})
+    return out
+
+
 @router.post("/teslim/{tid}/iptal")
 def teslim_iptal(tid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     if len((body.sebep or "").strip()) < 3:
@@ -804,28 +890,7 @@ def teslim_iptal(tid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Head
     _hazirla()
     with db() as (conn, cur):
         toptanci_hazirla(cur)
-        cur.execute("SELECT kaynak_ref FROM ey_toptanci_teslim WHERE id=%s", (tid,))
-        r0 = cur.fetchone()
-        if r0 and (dict(r0)["kaynak_ref"] or "").startswith("panel:teslim:"):
-            from evvel_yeni_moduller import acik as _acik
-            if not _acik("depo"):   # Codex: borç düşüp stok kalmasın — önce Depo açılmalı
-                raise HTTPException(409, "Depo modülü kapalı — bu teslimin depo girişi de geri alınmalı; önce Depo'yu aç")
-        cur.execute("UPDATE ey_toptanci_teslim SET iptal=TRUE, iptal_sebep=%s WHERE id=%s AND NOT iptal RETURNING id, kaynak_ref",
-                    (f"{body.sebep.strip()[:150]} · {_aktor(cur, x_evvel_oturum)}", tid))
-        r = cur.fetchone()
-        if not r:
-            raise HTTPException(404, "Teslim bulunamadı ya da zaten iptal")
-        ek = ""
-        from evvel_yeni_moduller import acik as _acik2
-        if _acik2("siparis"):   # Fable D4-1: bağlı sipariş kalemleri çözülür → yeniden 'bekleniyor' (yumuşak bağ)
-            n_ = __import__("evvel_yeni_siparis_api").teslim_iptal_edildi(cur, tid)
-            ek += f" · {n_} sipariş kalemi yeniden bekleniyor" if n_ else ""
-        ref = dict(r)["kaynak_ref"] or ""
-        if ref.startswith("panel:teslim:"):   # yeni panel teslimi: depo girişi de geri alınır (Depo açık — yukarıda denetlendi)
-            from evvel_yeni_depo_api import hareket_iptal
-            d = hareket_iptal(cur, bag=ref, sebep=f"toptancı teslimi iptal · {body.sebep.strip()[:100]}")
-            ek = f" · depo girişi geri alındı ({d['iptal']} kalem)" + (
-                f" · sonradan SAYILAN {', '.join(d['kalan'])} geri alınmadı (stok sayımla kesinleşti)" if d["kalan"] else "")
+        ek = teslim_iptal_et(cur, tid, f"{body.sebep.strip()[:150]} · {_aktor(cur, x_evvel_oturum)}")
     return {"ok": True, "mesaj": "Teslim iptal edildi — borçtan düştü" + ek}
 
 
@@ -947,7 +1012,7 @@ def urun_fiyatlari(evren: Optional[str] = None):
 
 class FiyatBody(BaseModel):
     urun_id: str
-    birim: Optional[Decimal] = None     # boş → elle fiyat silinir
+    birim: Optional[TrTutar] = None     # boş → elle fiyat silinir
 
 
 def tahminleri_tazele(cur) -> int:
@@ -989,7 +1054,7 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
             cur.execute("DELETE FROM ey_urun_fiyat WHERE urun_id=%s RETURNING urun_id", (body.urun_id,))
             from evvel_yeni_urun_api import urun_bilgi
             if cur.fetchone() and urun_bilgi(cur, [body.urun_id]):
-                _fiyat_gecmis_yaz(cur, body.urun_id, "elle", None, _bugun(), "elle fiyat kaldırıldı", girilen=kim)
+                _fiyat_gecmis_yaz(cur, body.urun_id, "elle", None, _is_gunu(), "elle fiyat kaldırıldı", girilen=kim)
             tahminleri_tazele(cur)
             return {"ok": True, "mesaj": f"{dict(r)['ad']}: elle fiyat kaldırıldı"}
         b = _kurus(body.birim)
@@ -1000,9 +1065,9 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
                     (body.urun_id, b, kim))
         from evvel_yeni_urun_api import urun_bilgi
         if urun_bilgi(cur, [body.urun_id]):   # Fable: eski kimlik fiyat geçmişine girmez
-            _fiyat_gecmis_yaz(cur, body.urun_id, "elle", b, _bugun(), "elle", girilen=kim)
+            _fiyat_gecmis_yaz(cur, body.urun_id, "elle", b, _is_gunu(), "elle", girilen=kim)   # Codex P1: gece 00–02 girilen fiyat o İŞ GÜNÜNE (takvim günü değil — giderde 0 ₺ çıkıyordu)
         tahminleri_tazele(cur)
-    return {"ok": True, "mesaj": f"{dict(r)['ad']}: {_tl_sayi(b):,.2f} ₺ (KDV dahil) kaydedildi"}
+    return {"ok": True, "mesaj": f"{dict(r)['ad']}: {_tl_tr(b)} (KDV dahil) kaydedildi"}
 
 
 # 🧩 Bekleyen işler kayıt defterine (Kasa bu modülü tanımaz; modül kapanınca satırları da kalkar)
