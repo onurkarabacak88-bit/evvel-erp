@@ -23,6 +23,7 @@ import { gunKaydir } from '../../utils/trTarih';
 export default function SubePaneli({ subeId }) {
   const [d, setD] = useState(null);
   const [hata, setHata] = useState('');
+  const [hataAg, setHataAg] = useState(false);   // Fable (S-B6 denetimi): bant metni — bağlantı mı yok, sunucu mu reddetti
   const [kisi, setKisi] = useState('');
   const [sekme, setSekme] = useState('ana');
   const [acSecim, setAcSecim] = useState(0);   // Ürün Aç: onaylanmamış seçim sayısı (sol menü rozeti, eski solUrunAcBadge)
@@ -102,7 +103,7 @@ export default function SubePaneli({ subeId }) {
 
   const yukle = useCallback(() => api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/durum`)
     .then((x) => { setD(x); setHata(''); taslakTemizle(subeId, x.gun, x.depo_acik ? (x.depo_yolda || []).map((p) => p.parti_id) : null); })   // F#53: eski taslak birikmesin
-    .catch((e) => setHata(e?.message || 'Panel açılamadı')), [subeId]);
+    .catch((e) => { setHataAg(e instanceof TypeError); setHata(e?.message || 'Panel açılamadı'); }), [subeId]);
   const [kapiGecildi, setKapiGecildi] = useState(false);   // yalnız DENEME'de "QR'sız geç" (saklanmaz — her yüklemede kapı yine görünür)
   const [sihirbazElle, setSihirbazElle] = useState(false);
   const [denemeKapandi, setDenemeKapandi] = useState(false);
@@ -253,7 +254,7 @@ export default function SubePaneli({ subeId }) {
     <div className="sp" ref={kokRef} style={tabletVar && yok.var && !kapiAcik ? { paddingBottom: 150 } : undefined}>{/* B89: sabit QR kutusu son satırların üstüne binmesin — kaydırınca açığa çıkar */}
       <style>{CSS}</style>
       {hata && <div role="alert" style={{ background: '#b3261e', color: '#fff', padding: '10px 14px', fontWeight: 600, fontSize: 15 }}>
-        ⚠ Bağlantı yok — ekrandaki bilgi son alınan hâli. Kendiliğinden yeniden deneniyor… <button className="sp-btn" style={{ marginLeft: 8, minHeight: 36 }} onClick={yukle}>Tekrar dene</button></div>}
+        ⚠ {hataAg ? 'Bağlantı yok' : 'Sistem şu an yanıt vermiyor'} — ekrandaki bilgi son alınan hâli. Kendiliğinden yeniden deneniyor… <button className="sp-btn" style={{ marginLeft: 8, minHeight: 36 }} onClick={yukle}>Tekrar dene</button></div>}
       {/* ÜST BAR (eski 52px): EVVEL · şube · tarih saat */}
       <div className="sp-ust">
         <span className="sp-logo">EVVEL</span>

@@ -94,9 +94,11 @@ def _onay_denetle(cur, t: dict) -> None:
     """Onay ANINDA yeniden denetim (Codex P1 — eski avans_onayla da yapıyordu): personel hâlâ AKTİF mi · bu ayın avansları (bu talep
     dahil) GÜNCEL tavanı aşıyor mu (talepten sonra ücret/saat düzeltilip tavan düştüyse onay verilmez)."""
     from evvel_yeni_tanim_api import tanim_oku
-    p = tanim_oku(cur, "ey_personel", t["personel_id"], ("aktif",))
+    p = tanim_oku(cur, "ey_personel", t["personel_id"], ("aktif", "cikis"))
     if not p or not p["aktif"]:
         raise HTTPException(409, "Personel pasif — avans verilemez (talebi kapat ya da reddet)")
+    if __import__("evvel_yeni_tanim_api").ayrildi_mi(p.get("cikis"), __import__("evvel_yeni_cekirdek").is_gunu()):   # Fable (S-B7 denetimi)
+        raise HTTPException(409, "Personelin ayrılış tarihi geçti — avans verilemez (talebi kapat ya da reddet)")
     d = avans_durumu(cur, t["personel_id"], t["donem"])   # talebin AYI (önceki aydan bekleyen talep o ayın tavanına bakar)
     if d["kullanilan"] > d["tavan"]:
         raise HTTPException(409, f"Güncel avans tavanı {d['tavan'] / 100:,.0f} ₺ — bu ay talepler bunu aşıyor; reddet ya da tavan "

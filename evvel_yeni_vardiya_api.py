@@ -371,7 +371,7 @@ def hafta(pazartesi: Optional[str] = None):
                    if p["id"] in planli or ((p.get("aktif") or (p.get("cikis") and p["cikis"] >= pzt)) and not (p.get("giris") and p["giris"] > paz))]
         ayr = _ayrilis(cur)
         _kalip_esle([r for r in rows if not _ayrildi(r, ayr)], kaliplar)   # S-B8: ayrılanın satırı ihtiyacı doldurmaz
-        uyarilar = _uyarilar(cur, pzt, sb, kaliplar, rows, kisiler, bugun)
+        uyarilar = _uyarilar(cur, pzt, sb, kaliplar, [r for r in rows if not _ayrildi(r, ayr)], kisiler, bugun)   # Fable: ayrılanın satırı başka uyarı üretmez
         fazla: Dict[str, list] = {}
         for r in hafta_rows:
             if _ayrildi(r, ayr):
