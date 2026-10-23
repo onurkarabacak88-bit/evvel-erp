@@ -99,9 +99,22 @@ export default function SiparisModulu({ onToast }) {
             </div>
             {s.notu && <div style={{ fontSize: 12.5, color: R.metin2 }}>📝 {s.notu}</div>}
             {s.kalemler.map((k) => {
-              const [dAd0, dTur] = DURUM[k.durum] || [k.durum];
+              const [dAd0, dTur0] = DURUM[k.durum] || [k.durum];
               // B28: kısmen yönlendirilmişse kaç adedin beklediğini söyle
-              const dAd = k.durum === 'yonlendirilmedi' && k.yonsuz > 0 && k.yonsuz < k.adet ? `${k.yonsuz} adet yönlendirilmedi` : dAd0;
+              let dAd = k.durum === 'yonlendirilmedi' && k.yonsuz > 0 && k.yonsuz < k.adet ? `${k.yonsuz} adet yönlendirilmedi` : dAd0;
+              let dTur = dTur0;
+              // G29 (sahip ekran denemesi 23 Eki): bölünmüş kalemde (8 depo yolda + 4 toptancı bekleniyor) tek "Yolda" yarım anlatıyordu
+              const parcalar = {};
+              k.yonler.filter((y) => y.durum !== 'iptal').forEach((y) => { parcalar[y.durum] = (parcalar[y.durum] || 0) + (y.adet || 0); });
+              const KISA = { hazirlaniyor: 'depoda hazırlanıyor', bekleniyor: 'toptancıdan bekleniyor', yolda: 'yolda', karsilandi: 'geldi' };
+              if (k.durum !== 'yonlendirilmedi' && k.durum !== 'karsilandi' && Object.keys(parcalar).length > 1) {
+                dAd = Object.entries(parcalar).map(([d, n]) => `${n} ${KISA[d] || d}`).join(' · ');
+              }
+              // G27: karşılandı ama eksik geldi (10 istendi 8 geldi, kalan kapatıldı) → yeşil "Karşılandı" değil
+              const gelenTop = k.yonler.filter((y) => y.durum === 'karsilandi').reduce((a, y) => a + (y.gelen != null ? y.gelen : (y.adet || 0)), 0);   // denetim: sunucu gibi (boş gelen = istenen)
+              if (k.durum === 'karsilandi' && k.eksik_kapandi && gelenTop < k.adet) {   // denetim: yalnız eksik KAPATILDIYSA (açık eksik = kırmızı çip)
+                dAd = `${gelenTop}/${k.adet} geldi · kalanı kapatıldı`; dTur = 'sari';
+              }
               const ys = yonlerOf(s, k);
               const duzenlenir = acik && k.durum !== 'iptal' && k.durum !== 'oneri' && !!k.urun_id;
               const kilitler = k.yonler.filter(kilitli);
@@ -113,14 +126,14 @@ export default function SiparisModulu({ onToast }) {
                     <b style={num}>{k.adet}</b>
                     <Cip tur={dTur}>{dAd}</Cip>
                     {k.depo_yok && <Cip tur="sari">depo YOK dedi ({k.depo_yok})</Cip>}
-                    {k.eksik > 0 && <Cip tur="kirmizi">{k.eksik} {k.durum === 'yonlendirilmedi' ? 'adet gönderilmedi' : 'eksik geldi'}</Cip>}
+                    {k.eksik > 0 && k.durum !== 'yonlendirilmedi' && <Cip tur="kirmizi">{k.eksik} eksik geldi</Cip>}   {/* G29: yönlendirilmedi etiketi zaten söylüyor */}
                     {acik && k.durum !== 'iptal' && kilitler.length === 0 && (
                       <Dugme kucuk disabled={mesgul[s.id]} onClick={() => { const r = window.prompt(`${k.ad} kalemi neden iptal ediliyor?`); if (r && r.trim()) is_(s.id, 'yon', { surum: s.surum, kalemler: [{ i: k.i, iptal: r.trim() }] }, 'Kalem iptal edildi'); }}>Kalemi iptal</Dugme>
                     )}
                   </div>
                   {kilitler.map((y) => (
                     <div key={y.id} style={{ fontSize: 12.5, color: R.metin2, paddingLeft: 12 }}>
-                      🔒 {y.kaynak_ad} · <b style={num}>{y.adet}</b>{y.gelen != null ? ` · gelen ${y.gelen}` : ''} · {(DURUM[y.durum] || [y.durum])[0]}
+                      🔒 {y.kaynak_ad} · <b style={num}>{y.adet}</b>{y.gelen != null ? ` · gelen ${y.gelen}` : ''} · {y.durum === 'karsilandi' && y.gelen != null && y.gelen < y.adet ? 'eksik kapandı' : (DURUM[y.durum] || [y.durum])[0]}
                     </div>
                   ))}
                   {k.durum === 'oneri' && acik && <OneriBagla s={s} k={k} urunler={urunler} mesgul={mesgul[s.id]} is_={is_} />}

@@ -184,7 +184,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
       <div className="aw-kart">
         <div className="aw-marka" style={{ background: 'linear-gradient(135deg,#4c1d95 0%,#7c3aed 100%)' }}>
           <div className="aw-logo">🌙</div>
-          <div><div className="aw-mttl">Evvel ERP</div><div className="aw-msub">Şube Kapanış Protokolü</div></div>
+          <div><div className="aw-mttl">TuliPi · {d.sube?.ad || ''}</div><div className="aw-msub">Şube Kapanış Protokolü</div></div>
           {!sonuc && <div className="aw-saat">{trSaat(saat)}</div>}
         </div>
         {sonuc ? (
@@ -282,9 +282,13 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
                   <div>📦 {digerleri.map((u) => `${u.ad} ${sayim[u.id]}`).join(' · ') || '—'}</div>
                   <div>🍰 Pasta <b>{v.pasta}</b></div>
                 </div>
-                <label style={{ display: 'flex', alignItems: 'center', gap: 10, alignSelf: 'stretch', fontWeight: 700, minHeight: 44 }}>
-                  <input type="checkbox" checked={!!v.xrapor} onChange={(e) => set('xrapor', e.target.checked)} style={{ width: 22, height: 22 }} />
-                  X raporu yazıcıdan çıktı alındı ve gönderildi</label>
+                {/* sahip ekran denemesi 23 Eki: "X rapor yazan yerin rengi daha belirgin olsun" — işaretsizken sarı uyarı kutusu, işaretliyken yeşil */}
+                <label style={{ display: 'flex', alignItems: 'center', gap: 12, alignSelf: 'stretch', fontWeight: 800, fontSize: 17, minHeight: 60,
+                  padding: '10px 14px', borderRadius: 12, cursor: 'pointer', textAlign: 'left',
+                  border: `2px solid ${v.xrapor ? C.yesil : C.sari}`, background: v.xrapor ? 'rgba(34,197,94,.14)' : 'rgba(245,158,11,.16)',
+                  color: v.xrapor ? C.yesil : C.sari }}>
+                  <input type="checkbox" checked={!!v.xrapor} onChange={(e) => set('xrapor', e.target.checked)} style={{ width: 30, height: 30, flexShrink: 0 }} />
+                  <span>🧾 {v.xrapor ? '✓ ' : ''}X raporu yazıcıdan çıktı alındı ve gönderildi</span></label>
                 {(!d.acilis_var || devirAcik) && (
                   <div style={{ alignSelf: 'stretch', textAlign: 'left', padding: 10, borderRadius: 8, background: 'rgba(245,158,11,.12)', color: C.sari, fontSize: 13, display: 'grid', gap: 3 }}>
                     {!d.acilis_var && <div>⚠ Bugün açılış kaydı yok</div>}
@@ -346,7 +350,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
               <button className="aw-btn ana yesil" disabled={mesgul} onClick={onayIste}>
                 {mesgul ? 'Hazırlanıyor…' : onay ? '🔁 Yeniden QR iste' : '🔒 QR ile Mühürle'}</button>
             )}
-            <button className="aw-btn" disabled={mesgul} onClick={async () => { if (await onayIptal()) kapat(); }} title="Girdiklerin tablette durur">Kapat</button>
+            <button className="aw-btn" disabled={mesgul} onClick={async () => { if (await onayIptal()) kapat(); }} title="Girdiklerin bu bilgisayarda durur">Kapat</button>
           </div>
         </>)}
       </div>

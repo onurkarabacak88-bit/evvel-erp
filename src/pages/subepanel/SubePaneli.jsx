@@ -181,7 +181,7 @@ export default function SubePaneli({ subeId }) {
     try {
       const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/${yol}`, { method: 'POST', body });
       // devir (yoklama açıkken): sunucu "Devir hazır — X telefonundan 'Devrediyorum'…" der; olay yazılmaz, onaylar telefonda (D5)
-      setMesaj({ tur: r.kuru ? 'deneme' : 'tamam', metin: r.kuru ? (/^DENEME/.test(r.mesaj || '') ? r.mesaj : `DENEME — ${r.mesaj || 'kaydedilmedi'}`) : r.devir_id && r.mesaj ? r.mesaj : (r.tekrar ? 'Bu kayıt zaten alınmıştı' : 'Kaydedildi ✓') });
+      setMesaj({ tur: r.kuru ? 'deneme' : 'tamam', metin: r.kuru ? (/^DENEME/.test(r.mesaj || '') ? r.mesaj : `DENEME — ${r.mesaj || 'kaydedilmedi'}`) : (r.devir_id || yol === 'ara-teslim') && r.mesaj ? r.mesaj : (r.tekrar ? 'Bu kayıt zaten alınmıştı' : 'Kaydedildi ✓') });   // G33
       taslakSil(modal); setModal(null); temizle(); sonra?.(); yukle();
     } catch (e) {
       if (e instanceof TypeError && pinli) {   // PIN tablete yazılmaz → PIN'li işlem kuyruğa girmez; form açık kalır

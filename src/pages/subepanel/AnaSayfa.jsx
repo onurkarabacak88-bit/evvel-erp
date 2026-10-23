@@ -15,7 +15,7 @@ function GunNoktasi({ ad, veri, varsayilan, son }) {
         <div style={{ width: 36, height: 36, borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center', fontWeight: 900,
           background: tamam ? C.yesil : C.bg3, border: `2px solid ${tamam ? C.yesil : C.cizgi}`, color: tamam ? '#05210f' : C.soluk }}>{tamam ? '✓' : '○'}</div>
         <b style={{ fontSize: 13 }}>{ad}</b>
-        <span style={{ fontSize: 12, color: tamam ? C.yesil : C.soluk }}>{tamam ? `${veri.saat} · ${veri.kim || ''}` : `bekleniyor · ${varsayilan}`}</span>
+        <span style={{ fontSize: 12, color: tamam ? C.yesil : C.soluk }}>{tamam ? `${veri.saat} · ${veri.kim || ''}` : (varsayilan === '00:00' ? 'gün sonunda' : `bekleniyor · ${varsayilan}`)}</span>
       </div>
       {!son && <div style={{ flex: 1, height: 3, borderRadius: 2, background: tamam ? C.yesil : C.cizgi, marginBottom: 34 }} />}
     </div>

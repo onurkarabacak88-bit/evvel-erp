@@ -162,7 +162,7 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
       <div className="aw-kart">
         <div className="aw-marka">
           <div className="aw-logo">☕</div>
-          <div><div className="aw-mttl">Evvel ERP</div><div className="aw-msub">Şube Açılış Protokolü</div></div>
+          <div><div className="aw-mttl">TuliPi · {d.sube?.ad || ''}</div><div className="aw-msub">Şube Açılış Protokolü</div></div>
           {!basari && <div className="aw-saat">{trSaat(saat)}</div>}
         </div>
         {basari ? (
@@ -186,7 +186,7 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
               <div><div className="aw-attl">{BASLIK[adim]}</div><div className="aw-asub">{altYazi}</div></div>
             </div>
             {adim === 1 && (<>
-              <div className="aw-kor">🔒 KÖR SAYIM — önceki tutara bakma</div>
+              <div className="aw-kor">🔒 Kasadaki parayı say ve yaz</div>
               <p style={{ fontSize: 12, color: C.soluk, margin: '0 0 12px', lineHeight: 1.5 }}>Kasadaki parayı <b>bağımsız olarak say.</b> Sunucu saati: <b>{trSaat(saat)}</b></p>
               <label className="aw-lbl">Kasa Sayımı (₺)</label>
               <input className="aw-in" inputMode="decimal" autoComplete="off" placeholder="0" value={kasa} onChange={(e) => setKasa(tutar(e.target.value))} />

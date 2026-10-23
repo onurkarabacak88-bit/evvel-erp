@@ -60,7 +60,7 @@ function KasaAcigi({ m, ciro, teslimler = [] }) {
               ? <span style={{ color: R.amber }}>panelde {m.panel_teslimleri.map((t) => `${fmt(t.tutar)} → ${t.alan || '?'}`).join(', ')} var — Kasa'ya henüz aktarılmadı (≤10 dk) ya da alıcı Onur/Fethi/Fatma ile eşleşmedi</span>
               : <span style={{ color: R.kirmizi }}>kasiyer {fmt((m.teslim || 0) + (m.ara_toplam || 0))} ₺ teslim yazdı ama hiçbir teslim kaydı YOK</span>)
             : teslimler.map((t, i) => (
-              <span key={i} style={{ marginRight: 8 }}>{fmt(t.tutar)} ₺ → {t.alan}: {t.durum === 'bekliyor'
+              <span key={i} style={{ marginRight: 8, display: 'inline-block' }}>{i > 0 ? '· ' : ''}{fmt(t.tutar)} ₺ → {t.alan}: {t.durum === 'bekliyor'
                 ? <span style={{ color: R.amber }}>henüz alınmadı</span>
                 : t.otomatik ? <span style={{ color: R.amber }}>otomatik kabul (kimse saymadı)</span>
                   : Math.abs(t.fark || 0) < 1 ? <span style={{ color: R.yesil }}>aldı, saydı ✓</span>

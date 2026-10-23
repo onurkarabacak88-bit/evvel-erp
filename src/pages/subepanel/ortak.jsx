@@ -392,7 +392,9 @@ export function SayiTusTakimi({ kapsam, etkin = true }) {
     };
   }, [hedef]);
   if (!etkin) return null;
-  if (!hedef || !document.body.contains(hedef)) return <style>{'body.sayi-acik .sp-perde,body.sayi-acik .aw-perde{padding-right:var(--sayi-bosluk,376px)!important;transition:padding-right .12s}body.sayi-dokunmatik .sp-govde{padding-bottom:240px}body.sayi-dokunmatik .sp-sayi-kart{position:static!important}'}</style>;
+  // G38 (sim 23 Eki): sayı kutulu pencere dokunmatikte BAŞTAN sola yaslı — ilk dokunuşta kayıp ikinci dokunuş yanlış kutuya düşmesin;
+  // G39: açılış/kapanış sihirbazı (aw-perde) BÜTÜN adımlarda aynı yerde (QR adımında ortaya zıplamasın)
+  if (!hedef || !document.body.contains(hedef)) return <style>{'body.sayi-acik .sp-perde,body.sayi-acik .aw-perde,body.sayi-dokunmatik .aw-perde{padding-right:var(--sayi-bosluk,376px)!important;transition:padding-right .12s}body.sayi-dokunmatik .sp-perde:has(input[inputmode=\"numeric\"],input[inputmode=\"decimal\"],input[data-im-onceki]){padding-right:var(--sayi-bosluk,376px)!important}body.sayi-dokunmatik .sp-govde{padding-bottom:240px}body.sayi-dokunmatik .sp-sayi-kart{position:static!important}'}</style>;
   const altta = !hedef.closest('.sp-perde,.aw-perde');   // G31: sayfa içi → alt şerit
   const ondalik = (hedef.dataset.imOnceki || hedef.getAttribute('inputmode')) === 'decimal';
   const bas = (k) => {
@@ -419,7 +421,7 @@ export function SayiTusTakimi({ kapsam, etkin = true }) {
     : ['7', '8', '9', '⌫', '4', '5', '6', '✓', '1', '2', '3', '⇥', '0', '00', ondalik ? ',' : '', ''];
   return (
     <>
-      <style>{'body.sayi-acik .sp-perde,body.sayi-acik .aw-perde{padding-right:var(--sayi-bosluk,376px)!important;transition:padding-right .12s}body.sayi-dokunmatik .sp-govde{padding-bottom:240px}body.sayi-dokunmatik .sp-sayi-kart{position:static!important}'}</style>
+      <style>{'body.sayi-acik .sp-perde,body.sayi-acik .aw-perde,body.sayi-dokunmatik .aw-perde{padding-right:var(--sayi-bosluk,376px)!important;transition:padding-right .12s}body.sayi-dokunmatik .sp-perde:has(input[inputmode=\"numeric\"],input[inputmode=\"decimal\"],input[data-im-onceki]){padding-right:var(--sayi-bosluk,376px)!important}body.sayi-dokunmatik .sp-govde{padding-bottom:240px}body.sayi-dokunmatik .sp-sayi-kart{position:static!important}'}</style>
       <div ref={panelRef} onMouseDown={(e) => e.preventDefault()} style={{ position: 'fixed', bottom: 70, zIndex: 90, background: C.bg1,
         ...(altta ? { left: 8, right: 8, maxWidth: 760, margin: '0 auto', gridTemplateColumns: 'repeat(8,1fr)' }
           : { right: 8, width: 'min(360px,50vw)', minWidth: 260, gridTemplateColumns: 'repeat(4,1fr)' }),

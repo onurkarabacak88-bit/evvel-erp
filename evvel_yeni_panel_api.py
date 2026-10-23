@@ -870,7 +870,9 @@ def ara_teslim(sube_id: str, b: AraTeslimBody):
                        veri={"alan": b.alan, "tutar": k, "aciklama": aciklama, "istek_id": b.istek_id})
         r = kasa_yaz(cur, HareketBody(tur="teslim", is_gunu=c["gun"].isoformat(), kaynak=f"sube:{sube_id}", hedef=b.alan,
                                       tutar=Decimal(k) / 100, teslim_eden=p["ad"], not_=aciklama), f"{KIM} · {p['ad']}", kaynak_ref=kok, kor=True)
-        return {"olay": oid, "tekrar": oid is None and bool(r.get("tekrar")), "mesaj": "Teslim kaydedildi"}
+        alan_ad = next((a for a, c in _TH.items() if c == b.alan), b.alan)   # G33: ne kaydedildi açık yazsın
+        return {"olay": oid, "tekrar": oid is None and bool(r.get("tekrar")),
+                "mesaj": f"Teslim kaydedildi ✓ — {alan_ad} · {_tl_tr(k)}"}   # denetim: ek yok (Fethi'a hatası)
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
 
@@ -962,7 +964,7 @@ def depodan_kabul(sube_id: str, b: DepoKabulBody):
             fark = fark or bool(r.get("eksik") or r.get("fazla") or r.get("hasar"))
         # KÖR kalır: personele rakam söylenmez (beklenen sızmasın) — yalnız "merkeze iletildi"
         return {"olay": oid, "tekrar": False,
-                "mesaj": f"{len(b.satirlar)} ürün kabul edildi ✓" + (" · Sayımda fark var — merkeze iletildi" if fark else "")}
+                "mesaj": f"{len(b.satirlar)} ürün kabul edildi ✓ · sayım merkeze iletildi"}   # G26: fark VAR/YOK personele söylenmez (kör)
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
 

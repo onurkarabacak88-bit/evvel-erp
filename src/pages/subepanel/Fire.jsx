@@ -41,6 +41,8 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
   const [pin, setPin] = useState('');
   const [istek, setIstek] = useState(() => ilk?.istek || yeniIstek());
   const [mesgul, setMesgul] = useState(false);
+  const [silSor, setSilSor] = useState(false);   // G42: Vazgeç iki dokunuş (Onayla'nın yanında, tek dokunuşta her şey siliniyordu)
+  useEffect(() => { if (!silSor) return undefined; const t = window.setTimeout(() => setSilSor(false), 3000); return () => window.clearTimeout(t); }, [silSor]);
   const [hata, setHata] = useState('');
   useEffect(() => {
     if (!sebep && !Object.values(adet).some((n) => n > 0) && !aciklama && !fis) { taslakKaldir(anahtar); return; }
@@ -135,11 +137,19 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
       </>)}
 
       {adim === 2 && (<>
-        <div className="sp-kart" style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: 22 }}>{sb?.ikon}</span><b style={{ flex: 1 }}>{sb?.ad}{hazirlikAd ? ` · ${hazirlikAd}` : ''}{iadeAd ? ` · ${iadeAd}` : ''}</b>
-          <button className="sp-btn" style={{ minHeight: 56 }} onClick={() => setAdim(1)}>« Sebebi değiştir</button>
+        {/* G22 (sim 23 Eki): "Devam → onay" en alttaydı (uzun katalogda görünmüyordu) → üstte yapışkan, HEP yerinde (seçim yokken soluk, G41 gibi kayma yok) */}
+        <div className="sp-kart" style={{ position: 'sticky', top: 0, zIndex: 5, display: 'grid', gap: 8, borderColor: kalem ? C.kirmizi : undefined }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span style={{ fontSize: 22 }}>{sb?.ikon}</span><b style={{ flex: 1 }}>{sb?.ad}{hazirlikAd ? ` · ${hazirlikAd}` : ''}{iadeAd ? ` · ${iadeAd}` : ''}</b>
+            <button className="sp-btn" style={{ minHeight: 40, padding: '4px 12px', fontSize: 13, color: C.soluk }} onClick={() => setAdim(1)}>« Sebebi değiştir</button>   {/* G22: Devam'dan küçük/soluk — telaşta yanlışlıkla geri dönülmesin */}
+          </div>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+            <b style={{ flex: 1, color: kalem ? undefined : C.soluk }}>{kalem ? `🔥 ${kalem} çeşit · toplam ${toplam} adet seçildi` : '🔥 Henüz ürün seçilmedi'}</b>
+            <button className="sp-btn sp-ana" disabled={!kalem || kapali} style={kalem ? undefined : { opacity: 0.35 }} onClick={() => setAdim(3)}>Devam → onay</button>
+          </div>
         </div>
         {!kapali && <input className="sp-in" style={{ fontSize: 18 }} value={ara} onChange={(e) => setAra(e.target.value)} placeholder="🔎 Ürün ara (en az 2 harf)…" />}
+        {ara.trim().length >= 2 && aramaSonuc.length === 0 && <div className="sp-kart" style={{ color: C.soluk }}>“{ara.trim()}” bulunamadı.</div>}
         {aramaSonuc.length > 0 && (
           <div className="sp-kart" style={{ display: 'grid', gap: 6 }}>
             {aramaSonuc.map((u) => (
@@ -156,7 +166,6 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
           {kalem === 0 ? <span style={{ color: C.soluk }}>Henüz ürün seçilmedi</span> : secili.map(([id, n]) => (
             <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad} <span style={{ color: C.soluk }}>· {urunMap[id].kategori}</span></span><b>{n}</b></div>))}
         </div>
-        <button className="sp-btn sp-ana" disabled={!kalem || kapali} onClick={() => setAdim(3)}>Devam → onay ({kalem} kalem · {toplam} adet)</button>
       </>)}
 
       {adim === 3 && (<>
@@ -180,7 +189,8 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
         </label>
         {onayEksik && <div style={{ color: C.sari, fontWeight: 700 }}>{onayEksik}</div>}
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="sp-btn" onClick={temizle} disabled={mesgul}>✕ Vazgeç</button>
+          <button className="sp-btn" disabled={mesgul} onClick={() => { if (silSor) { setSilSor(false); temizle(); } else setSilSor(true); }}
+            style={silSor ? { background: C.kirmizi, color: '#fff', fontWeight: 800 } : { color: C.soluk }}>{silSor ? '🗑 Silinsin mi? Tekrar bas' : '✕ Vazgeç'}</button>
           <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={!!onayEksik || !kalem || kapali || mesgul} onClick={() => { setHata(''); setOnay(1); }}>Onayla — personel + PIN</button>
         </div>
       </>)}

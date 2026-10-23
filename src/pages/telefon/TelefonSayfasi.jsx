@@ -41,7 +41,7 @@ const urlKimlik = (ad) => {   // ?o= / ?tb= / ?dv= — yalnız güvenli kimlik
 const agMesaji = (e, varsayilan) => (e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || varsayilan));
 function KonumSatiri({ muaf, konum, konumAl }) {
   return (<>
-    {muaf ? 'konumdan muaf' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
+    {muaf ? '' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
     {!muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksanKoyu, background: 'none', border: 'none', padding: '0 6px', fontWeight: 700, minHeight: 48, minWidth: 48 }}>tekrar dene</button></>}
   </>);
 }
@@ -388,8 +388,11 @@ function OnayIslem({ sube, jeton, onay }) {
           {!hata && !ozet && <div className="tq-not">Hazırlanıyor…</div>}
           {ozet && (<>
             <div style={{ fontSize: 22, fontWeight: 800 }}>{TUR_IKON[ozet.tur] || '✔'} {ozet.ad} · {ozet.sube_ad}</div>
-            <div style={{ background: T.yuzey, border: `1px solid ${T.kenar}`, borderRadius: 12, padding: 12, fontSize: 17 }}>{ozet.ozet || '—'}</div>
-            <div className="tq-not">Onaylayan: <b>👤 {ozet.kisi}</b> · <KonumSatiri muaf={!!ben?.muaf} konum={konum} konumAl={konumAl} />
+            <div style={{ background: T.yuzey, border: `1px solid ${T.kenar}`, borderRadius: 12, padding: 12, fontSize: 17, display: 'grid', gap: 6 }}>
+              {/* G40 (sim 23 Eki): tek paragraf okunmuyordu → her parça ayrı satır, ilki (kasa/tutar) kalın */}
+              {(ozet.ozet || '—').split(' · ').map((p, i) => <div key={i} style={i === 0 ? { fontWeight: 800, fontSize: 20 } : undefined}>{p}</div>)}
+            </div>
+            <div className="tq-not">Onaylayan: <b>👤 {ozet.kisi}</b>{ben?.muaf ? '' : ' · '}<KonumSatiri muaf={!!ben?.muaf} konum={konum} konumAl={konumAl} />
             </div>
             {girisMesaj && <div style={{ color: T.yesil, fontWeight: 700 }}>{girisMesaj}</div>}
             {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
@@ -819,7 +822,7 @@ function DevirIslem({ sube, jeton, did }) {
           {!hata && !b && <div className="tq-not">Hazırlanıyor…</div>}
           {b && (<>
             <div style={{ fontSize: 20, fontWeight: 800 }}>👤 {b.kisi}</div>
-            <div className="tq-not">{b.muaf ? 'konumdan muaf' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
+            <div className="tq-not">{b.muaf ? '' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
               {!b.muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksanKoyu, background: 'none', border: 'none', padding: '0 6px', fontWeight: 700, minHeight: 48, minWidth: 48 }}>tekrar dene</button></>}</div>
             {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata}</div>}
 

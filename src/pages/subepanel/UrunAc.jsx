@@ -14,6 +14,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   const [not, setNot] = useState(ilk?.not || '');
   const [pasif, setPasif] = useState(false);
   const [acikKat, setAcikKat] = useState(null);
+  const [ara, setAra] = useState('');   // G21: Fire'daki gibi ürün arama (şurup vb. kategoride aranmasın)
   const [onay, setOnay] = useState(0);          // 0 kapalı · 1 tek onay penceresi (özet + kişi + PIN)
   const [kisi, setKisi] = useState('');
   const [pin, setPin] = useState('');             // YALNIZ bellekte (taslağa / hiçbir yere yazılmaz)
@@ -96,18 +97,20 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   };
 
   const k0 = katalog.find((k) => k.id === acikKat);
+  const araT = ara.trim().toLocaleLowerCase('tr');
+  const aramaSonuc = araT.length >= 2
+    ? katalog.flatMap((k) => k.urunler.filter((u) => (u.aktif || pasif) && `${u.ad} ${k.kategori || ''}`.toLocaleLowerCase('tr').includes(araT))
+      .map((u) => ({ ...u, kategori: k.kategori }))).filter((u, i, a) => a.findIndex((x) => x.id === u.id) === i).slice(0, 30) : [];
 
   return (
     <div style={{ display: 'grid', gap: 12, alignContent: 'start', ...(flas ? { boxShadow: `0 0 0 4px ${C.yesil}`, borderRadius: 14, transition: 'box-shadow .3s' } : {}) }}>
-      {/* yapışkan onay çubuğu (seçim varken) */}
-      {kalem > 0 && (
-        <div className="sp-kart" style={{ position: 'sticky', top: 0, zIndex: 5, display: 'grid', gap: 6, borderColor: C.yesil }}>
-          <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-            <b style={{ flex: 1 }}>🔓 {kalem} çeşit · toplam {toplam} adet seçildi</b>
-            <button className="sp-btn sp-yesil" disabled={kapali || mesgul} onClick={onayAc}>Onayla →</button>   {/* G12: kısa yazı; kişi + PIN açılan pencerede */}
-          </div>
+      {/* yapışkan onay çubuğu — G41 (sim 23 Eki): HEP yerinde (seçim yokken soluk); ilk + dokunuşunda belirip sayfayı itiyordu → ikinci dokunuş kayıyordu */}
+      <div className="sp-kart" style={{ position: 'sticky', top: 0, zIndex: 5, display: 'grid', gap: 6, borderColor: kalem ? C.yesil : undefined }}>
+        <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          <b style={{ flex: 1, color: kalem ? undefined : C.soluk }}>{kalem ? `🔓 ${kalem} çeşit · toplam ${toplam} adet seçildi` : '🔓 Henüz ürün seçilmedi'}</b>
+          <button className="sp-btn sp-yesil" disabled={!kalem || kapali || mesgul} style={kalem ? undefined : { opacity: 0.35 }} onClick={onayAc}>Onayla →</button>   {/* G12: kısa yazı; kişi + PIN açılan pencerede */}
         </div>
-      )}
+      </div>
       {/* hero */}
       <Hero ikon="🔓" baslik="Ürün Aç — Aktif Kullanıma Al" alt="Depodan bara/sahaya çıkan ürünleri sayın · Personel + PIN onayda istenir"
         zemin="linear-gradient(135deg,rgba(6,78,59,.75),rgba(16,185,129,.3))" cerceve="rgba(34,197,94,.35)" renk="#86efac" />
@@ -118,9 +121,30 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
           <button className="sp-btn" style={{ minHeight: 40, padding: '4px 12px' }} onClick={temizle}>✕ Taslağı temizle</button>
         </div>
       )}
+      {/* G21: ürün arama — kategori bilmeden bulunur */}
+      <input className="sp-in" style={{ fontSize: 17 }} value={ara} onChange={(e) => setAra(e.target.value)} disabled={kapali}
+        placeholder="🔎 Ürün ara (en az 2 harf)…" />
+      {araT.length >= 2 && (
+        <div className="sp-kart" style={{ display: 'grid', gap: 6 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <b style={{ flex: 1, color: C.soluk, fontSize: 12 }}>ARAMA SONUCU · {aramaSonuc.length}</b>
+            <button className="sp-btn" style={{ minHeight: 40, padding: '4px 12px' }} onClick={() => setAra('')}>✕ Aramayı kapat</button>
+          </div>
+          {aramaSonuc.length === 0 && <div style={{ color: C.soluk }}>“{ara.trim()}” bulunamadı{pasif ? '' : ' — pasif ürünse «Pasifleri göster»i işaretle'}.</div>}
+          {aramaSonuc.map((u) => {
+            const n = adet[u.id] || 0;
+            return (
+              <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 6, borderRadius: 10, background: n ? 'rgba(34,197,94,.1)' : C.bg2, opacity: u.aktif ? 1 : 0.6 }}>
+                <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad}{!u.aktif && ' 🚫'} <span style={{ color: C.soluk, fontSize: 12, fontWeight: 500 }}>{u.kategori} · {u.birim}</span></span>
+                <AdetGirdi n={n} azalt={() => art(u.id, -1)} artir={() => art(u.id, 1)} genislik={90} font={32} yaz={(v) => degis(u.id, v)} />
+              </div>
+            );
+          })}
+        </div>
+      )}
       {/* kategori kartları */}
       <KategoriKartlari katalog={katalog.filter((k) => k.urunler.some((u) => u.aktif || pasif))} adet={adet} kapali={kapali} onSec={setAcikKat}
-        enAz={170} yukseklik={96} alt={(k) => `${k.urunler.filter((u) => u.aktif).length} aktif · Dokun → liste`} />
+        enAz={170} yukseklik={96} alt={(k) => `${k.urunler.filter((u) => u.aktif).length} ürün · Dokun → liste`} />
       <div style={{ display: 'flex', gap: 10, alignItems: 'center', color: C.soluk, fontSize: 13 }}>
         <span style={{ flex: 1 }}>Kategoriye dokunun, adet girin, Tamam deyin.</span>
         <label style={{ display: 'flex', gap: 6, alignItems: 'center', cursor: 'pointer' }}><input type="checkbox" checked={pasif} onChange={(e) => setPasif(e.target.checked)} /> Pasifleri göster</label>
