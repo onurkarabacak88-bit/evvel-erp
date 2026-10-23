@@ -17,6 +17,8 @@ export const SATIS_SAYFALAR = [
   { id: 'devir_defteri', ad: 'Kasa devir defteri', alt: 'Kim saydı · kime devretti' },
 ];
 
+// B84: dün kapalıysa son kapanış günü ('20.10 akşamı')
+const dunAd = (g) => (g ? `${g.slice(8, 10)}.${g.slice(5, 7)} akşamı` : 'dün');
 const DURUM = {
   bak: { tur: 'sari', ad: 'İncele' },
   normal: { tur: 'yesil', ad: 'Uyumlu' },
@@ -43,11 +45,11 @@ function KasaAcigi({ m, ciro, teslimler = [] }) {
       {satir('Sabah kasada sayılan', m.acilis, '')}
       {satir('Girilen nakit satış', m.z_nakit, '+', ciro ? `toplam ciro ${fmt(ciro.toplam)} (POS ${fmt(ciro.pos)})` : null)}
       {satir('Nakit giderler', m.gider_toplam, '−', m.giderler.length ? m.giderler.map((g) => `${g.ad} ${fmt(g.tutar)}${g.bekliyor ? ' (onay bekliyor)' : ''}`).join(', ') : null)}
-      {m.ara_toplam > 0 && satir('Ara teslim', m.ara_toplam, '−', m.ara_teslimler.map((t) => `${t.alan || '?'} ${fmt(t.tutar)}`).join(', '))}
+      {m.ara_toplam > 0 && satir('Ara teslim', m.ara_toplam, '−', m.ara_teslimler.map((t) => `${t.alan_ad || t.alan || '?'} ${fmt(t.tutar)}${t.not ? ` (${t.not})` : ''}`).join(', '))}
       {satir('Gün sonu teslim', m.teslim, '−')}
       {satir('Kasada bırakılan (devir)', m.devir, '−')}
       <div style={{ borderTop: '1px solid var(--pi-line)', marginTop: 4, paddingTop: 4, color: R.metin2, fontSize: 12 }}>
-        <div>Sağlama · sabah: {m.sabah_fark == null ? 'dünkü devir yok' : Math.abs(m.sabah_fark) < 1 ? `dün bırakılan ${fmt(m.dun_devir)} = bu sabah sayılan ✓` : <span style={{ color: R.kirmizi }}>dün bırakılan {fmt(m.dun_devir)} · bu sabah {fmt(m.acilis)} → {m.sabah_fark > 0 ? '+' : ''}{fmt(m.sabah_fark)}</span>}</div>
+        <div>Sağlama · sabah: {m.sabah_fark == null ? 'dünkü devir yok' : Math.abs(m.sabah_fark) < 1 ? `${dunAd(m.dun_devir_gunu)} bırakılan ${fmt(m.dun_devir)} = bu sabah sayılan ✓` : <span style={{ color: R.kirmizi }}>{dunAd(m.dun_devir_gunu)} bırakılan {fmt(m.dun_devir)} · bu sabah {fmt(m.acilis)} → {m.sabah_fark > 0 ? '+' : ''}{fmt(m.sabah_fark)}</span>}</div>
         <div>Sağlama · akşam: {m.kor_belirsiz ? <span style={{ color: R.amber }}>sayım teslimden SONRA yapılmış ({fmt(m.kor_sayim)} = bırakılan) — sağlama yapılamadı</span>
           : m.kor_fark == null ? '—' : Math.abs(m.kor_fark) < 1 ? `sayılan ${fmt(m.kor_sayim)} − teslim = bırakılan ${fmt(m.devir)} ✓`
           : <span style={{ color: R.kirmizi }}>sayılan {fmt(m.kor_sayim)} − teslim {fmt((m.teslim || 0) + (m.ara_toplam || 0))} = {fmt(m.kor_kalan)} · bırakılan {fmt(m.devir)} → {m.kor_fark > 0 ? '+' : ''}{fmt(m.kor_fark)}</span>}</div>
@@ -75,7 +77,8 @@ function KasaAcigi({ m, ciro, teslimler = [] }) {
 
 // ── GÜNLÜK DÖKÜM — sahip: "bugün 14 adet 8oz vs. görmek istiyorum; kasada açık var mı, satıştan açık var mı; fire" ──
 function GunlukDokum() {
-  const [gun, setGun] = useState(() => tarihKaydir(-1));   // dün (TR) — Dalga 5
+  // dün (TR) — Dalga 5 · adreste ?gun= varsa o gün (Bekleyen işler › 🌅 Sabah sayımı tutmadı düğmesi bugünü açar)
+  const [gun, setGun] = useState(() => (/^\d{4}-\d{2}-\d{2}$/.test(new URLSearchParams(window.location.search).get('gun') || '') ? new URLSearchParams(window.location.search).get('gun') : tarihKaydir(-1)));
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   useSonIstek(`/evvel-yeni/satis/gun?gun=${gun}`, setV, setHata, true);   // ortak 'son istek kazanır' (T4-09)
@@ -98,10 +101,11 @@ function GunlukDokum() {
           <div key={s.sube_id} style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 9 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><b style={{ fontSize: 16 }}>{s.ad}</b>
               {s.durum === 'kapanis_yok' && <Cip>akşam sayımı yok</Cip>}{s.durum === 'acilis_yok' && <Cip>sabah sayımı yok</Cip>}</div>
-            {s.durum !== 'kapanis_yok' && s.durum !== 'acilis_yok' ? (
+            {/* B63 (22 Eki): akşam sayımı yokken de tablo — sabah + gece farkı görünsün (Bekleyen › 🌅 Sabah sayımı tutmadı buraya gelir); 'satılan' akşamla çıkar */}
+            {s.durum !== 'acilis_yok' && (s.durum !== 'kapanis_yok' || s.kalemler.some((k) => k.sabah != null)) ? (
               <>
                 {/* Sahip: "satılan yazısı daha belirgin olsun" — büyük rakamlı kutucuklar */}
-                <div style={{ background: 'var(--pi-accent-soft)', borderRadius: 11, padding: '10px 12px' }}>
+                {s.durum !== 'kapanis_yok' && <div style={{ background: 'var(--pi-accent-soft)', borderRadius: 11, padding: '10px 12px' }}>
                   <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '.06em', color: R.metin2, marginBottom: 6 }}>BUGÜN SATILAN</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     {s.kalemler.filter((k) => k.satilan > 0).map((k) => (
@@ -112,7 +116,7 @@ function GunlukDokum() {
                     ))}
                     {!s.kalemler.some((k) => k.satilan > 0) && <span style={{ color: R.not }}>—</span>}
                   </div>
-                </div>
+                </div>}
                 <div style={{ overflowX: 'auto' }}><table className="pi-tablo pi-excel" style={{ fontSize: 12.5, minWidth: 420 }}>
                   <thead><tr><th style={{ textAlign: 'left' }}>Kalem</th><th>Sabah</th><th>Giren</th><th>Akşam</th><th>Kullanılan</th><th>Fire</th><th>Satılan</th></tr></thead>
                   <tbody>{s.kalemler.map((k) => (
@@ -125,7 +129,7 @@ function GunlukDokum() {
                     </tr>))}</tbody>
                 </table></div>
               </>
-            ) : <div style={{ color: R.not, fontSize: 13 }}>Sabah ve akşam bar sayımı olmadan kalem dökümü çıkmaz.</div>}
+            ) : <div style={{ color: R.not, fontSize: 13 }}>Sabah bar sayımı olmadan kalem dökümü çıkmaz.</div>}
             {s.fire.length > 0 && (
               <div style={{ fontSize: 12.5, background: 'var(--pi-bg)', borderRadius: 9, padding: '7px 10px' }}>
                 <b>Fire ({s.fire_toplam})</b>
@@ -267,7 +271,7 @@ export function DevirDefteri() {
                 <tr key={g.gun} style={{ background: g.zincir_fark != null && !g.zincir_tutuyor ? 'rgba(192,58,43,.06)' : undefined }}>
                   <td style={{ ...hucre, ...num, whiteSpace: 'nowrap' }}><b>{tKisa(g.gun)}</b></td>
                   <td style={hucre}>{g.sabah ? <><b>{g.sabah.kim || '?'}</b> · {g.sabah.saat}<br />sayılan <b style={num}>{tut(g.sabah.sayilan)}</b>
-                    {g.sabah.dun_birakilan != null && <span style={{ color: R.not }}> · dün bırakılan {tut(g.sabah.dun_birakilan)}</span>}{fark(g.sabah.fark)}</> : <span style={{ color: R.not }}>açılış yok</span>}</td>
+                    {g.sabah.dun_birakilan != null && <span style={{ color: R.not }}> · {dunAd(g.sabah.dun_gunu)} bırakılan {tut(g.sabah.dun_birakilan)}</span>}{fark(g.sabah.fark)}</> : <span style={{ color: R.not }}>açılış yok</span>}</td>
                   <td style={hucre}>{g.vardiya ? <><b>{g.vardiya.devreden}</b> → <b>{g.vardiya.devralan}</b> · {g.vardiya.saat}<br />
                     nakit {tut(g.vardiya.nakit)}{g.vardiya.teslim ? ` · teslim ${tut(g.vardiya.teslim)}` : ''} · bıraktı <b style={num}>{tut(g.vardiya.birakilan)}</b>
                     {g.vardiya.durum === 'acilis_bekliyor' && <div style={{ color: R.amber }}>devralan henüz onaylamadı</div>}</> : <span style={{ color: R.not }}>—</span>}</td>

@@ -34,7 +34,7 @@ export default function BarModulu() {
 
   const gunAc = (s, g) => setCk({
     tip: 'BAR SAYIMI', baslik: `${s.ad} · ${tUzun(g.gun)}`,
-    alt: 'Devir: dün akşam sayılan + gece açılan = bu sabah olmalı. Net eksilme: sabah + gün içi açılan − akşam (satış + fire + ikram).',
+    alt: (g.dun_gunu ? `Önceki sayım ${g.dun_gunu.slice(8, 10)}.${g.dun_gunu.slice(5, 7)} akşamı (arada kapalı gün) · ` : '') + 'Devir: dün akşam sayılan + gece açılan = bu sabah olmalı. Net eksilme: sabah + gün içi açılan − akşam (satış + fire + ikram).',   // B84
     kpi: [{ etiket: '🌙 Akşam kapanışı yapan', deger: g.kapanisci ? `${g.kapanisci}${g.kapanis_saat ? ` · ${g.kapanis_saat}` : ''}` : '— kapanış yok', renk: g.kapanisci ? undefined : R.kirmizi },
       { etiket: '🌅 Sabah açılışı yapan', deger: g.acilisci ? `${g.acilisci}${g.acilis_saat ? ` · ${g.acilis_saat}` : ''}` : '— açılış yok' },
       ...(g.dun_kapanisci ? [{ etiket: 'Dün akşam sayan', deger: g.dun_kapanisci }] : []),

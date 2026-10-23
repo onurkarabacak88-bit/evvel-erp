@@ -19,6 +19,8 @@ import secrets
 import uuid
 from datetime import date
 from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -364,6 +366,19 @@ def kartlar(cur) -> List[dict]:
     return [dict(r) for r in cur.fetchall() or []]
 
 
+def _konum_coz(t: str) -> tuple:
+    """B36: '36.96912, 28.68845' (Google Haritalar kopyası) ya da '36,96912 28,68845' → (enlem, boylam)."""
+    t = t.strip()
+    parca = [x for x in re.split(r"\s*,\s*", t) if x] if "." in t else [x.replace(",", ".") for x in re.split(r"[\s;]+", t) if x]
+    try:
+        lat, lng = float(parca[0]), float(parca[1])
+        if len(parca) != 2 or not (-90 <= lat <= 90 and -180 <= lng <= 180):
+            raise ValueError
+    except (ValueError, IndexError):
+        raise HTTPException(400, "Konum: Google Haritalar'dan 'enlem, boylam' yapıştır (ör. 36.96912, 28.68845)")
+    return lat, lng
+
+
 def subeler(cur, hepsi: bool = False):
     tanim_hazirla(cur)
     cur.execute(f"SELECT id, ad, pos_oran, online_oran, aktif, depo FROM ey_sube {'' if hepsi else 'WHERE aktif'} ORDER BY ad")
@@ -429,6 +444,8 @@ def liste():
     with db() as (conn, cur):
         tanim_hazirla(cur)
         sube = subeler(cur, hepsi=True)
+        cur.execute("SELECT id, lat, lng, yaricap_m FROM ey_sube")
+        konum = {dict(r)["id"]: dict(r) for r in cur.fetchall() or []}   # B36: koordinat Tanımlar'da görünür / düzeltilir
         sube_ad = {s["id"]: s["ad"] for s in sube}
         cur.execute("""SELECT p.*, u.maas, u.yemek, u.saatlik, u.yol, u.gecerli_ay, u.degistiren AS ucret_kim
                          FROM ey_personel p LEFT JOIN LATERAL (
@@ -462,7 +479,9 @@ def liste():
         "subeler": [{"id": s["id"], "ad": s["ad"], "pos_oran": float(s["pos_oran"]), "online_oran": float(s["online_oran"]), "aktif": s["aktif"],
                      "kira": (kira_t.get(s["id"]) or {}).get("kira"), "kira_artis_ayi": (kira_t.get(s["id"]) or {}).get("artis_ayi"),
                      "kira_odeme_gunu": (kira_t.get(s["id"]) or {}).get("odeme_gunu"), "kira_gecmis": (kira_t.get(s["id"]) or {}).get("gecmis", []),
-                     "kira_yok": (kira_t.get(s["id"]) or {}).get("kira_yok", False)}
+                     "kira_yok": (kira_t.get(s["id"]) or {}).get("kira_yok", False),
+                     "konum": (f"{konum[s['id']]['lat']}, {konum[s['id']]['lng']}" if (konum.get(s["id"]) or {}).get("lat") is not None else None),
+                     "yaricap_m": (konum.get(s["id"]) or {}).get("yaricap_m")}
                     for s in sube],
         "personel": personel, "kartlar": kart, "toptancilar": top, "bankalar": banka, "ay": ay,
     }
@@ -478,27 +497,29 @@ class TanimBody(BaseModel):
     sube_id: Optional[str] = None
     gorev: Optional[str] = None
     giris: Optional[str] = None
-    maas: Optional[Decimal] = None
-    yemek: Optional[Decimal] = None
+    maas: Optional[TrTutar] = None
+    yemek: Optional[TrTutar] = None
     ucret_ay: Optional[str] = None       # maaş/yemek değişikliği hangi aydan itibaren
     cikis: Optional[str] = None          # işten ayrılış (YYYY-AA-GG) — son maaş için
     calisma_turu: Optional[str] = None   # 'tam' | 'yari'
     erken_acilis: Optional[bool] = None   # B7: panelde 07:00 öncesi açılış izni
     pin: Optional[str] = None             # panel PIN'i (4 hane) — yalnız değiştirmek için; asla geri dönmez
     yetki_geri_alma: Optional[bool] = None   # S9: hatalı teslimi geri alabilir
-    saatlik: Optional[Decimal] = None    # yarı zamanlı saatlik ücret
-    yol: Optional[Decimal] = None        # aylık yol
+    saatlik: Optional[TrTutar] = None    # yarı zamanlı saatlik ücret
+    yol: Optional[TrTutar] = None        # aylık yol
     # kart / banka
     banka: Optional[str] = None
     kimin: Optional[str] = None
-    acilis_borc: Optional[Decimal] = None
-    limit_tutar: Optional[Decimal] = None
+    acilis_borc: Optional[TrTutar] = None
+    limit_tutar: Optional[TrTutar] = None
     vade_gun: Optional[int] = None           # toptancı: teslimden kaç gün sonra ödenir
-    kira: Optional[Decimal] = None           # şube aylık kirası
+    kira: Optional[TrTutar] = None           # şube aylık kirası
     kira_ay: Optional[str] = None            # kira hangi aydan geçerli (YYYY-AA)
     kira_artis_ayi: Optional[int] = None     # her yıl hangi ay artar (1–12)
     kira_odeme_gunu: Optional[int] = None
     kira_yok: Optional[bool] = None          # mülk bizim — kira gideri yok
+    konum: Optional[str] = None              # B36: "enlem, boylam" (Google Haritalar'dan) — boş bırakılırsa değişmez
+    yaricap_m: Optional[int] = None          # telefon yoklamasında kabul yarıçapı (m)
     kesim_gunu: Optional[int] = None
     son_odeme_gunu: Optional[int] = None
     limit_grup: Optional[str] = None
@@ -506,7 +527,34 @@ class TanimBody(BaseModel):
     # toptancı
     kategori: Optional[str] = None
     telefon: Optional[str] = None
-    acilis_bakiye: Optional[Decimal] = None
+    acilis_bakiye: Optional[TrTutar] = None
+
+
+def _pasif_denetle(cur, tur: str, tid: str) -> None:
+    """B69 (Fable 22 Eki) — TEK KURAL: açık borcu olan toptancı / kart pasif yapılmaz. Pasif kart Kartlar'dan ve takvimden, pasif
+    toptancı Ödeme formundan düşer → borç ödenemez / görünmez olur. Borç sahibi modülün kendi hesabından okunur (yeni hesap yok);
+    modül kapalıysa denetim atlanır (tak-çıkar). Banka cebi kuralı Kasa'nın kendi kapısında (banka_cebi_yaz)."""
+    from evvel_yeni_moduller import acik as _acik
+    from evvel_yeni_cekirdek import bugun as _bugun, tl as _tl, kurus as _k
+    if tur == "toptanci" and _acik("toptanci"):
+        from evvel_yeni_toptanci_api import toptanci_bakiyesi
+        tb = toptanci_bakiyesi(cur, tid, _bugun())
+        bak = tb["bakiye"]
+        if bak:
+            raise HTTPException(409, (f"Bu toptancıya {_tl(_k(bak))} borç var" if bak > 0 else f"Bu toptancıdan {_tl(_k(-bak))} alacak var")
+                                + " — pasif yapılamaz. Önce Ödeme'den kapat.")
+        if tb["bilinmeyen"]:
+            raise HTTPException(409, f"Bu toptancının tutarı bilinmeyen {tb['bilinmeyen']} teslimi var — pasif yapılamaz. "
+                                     "Önce Toptancılar › Tutar gir, sonra borcu kapat.")
+    if tur == "kart" and _acik("kart"):
+        from evvel_yeni_kart_api import kart_durumu
+        k = next((x for x in kart_durumu(cur) if str(x["id"]) == str(tid)), None)
+        borc = (k or {}).get("kullanilan") or ((k or {}).get("son_odeme") or {}).get("kalan") or 0
+        so_ = (k or {}).get("son_odeme") or {}
+        if so_.get("teyit_gerekli") and (so_.get("ekstre") or (k or {}).get("kullanilan")):   # Fable P2: borçsuz/kullanılmamış kart engellenmez   # Fable: son günü geçmiş ekstre teyit edilmeden borç bilinmez
+            raise HTTPException(409, "Bu kartın son ödeme günü geçmiş, ekstre teyit edilmemiş — silinemez. Önce Kartlar'da ekstreyi teyit et.")
+        if borc:
+            raise HTTPException(409, f"Bu kartta {_tl(_k(borc))} borç var — silinemez. Önce Ödeme › Kart borcu ile öde.")
 
 
 def _ad(b: TanimBody, zorunlu: bool) -> Optional[str]:
@@ -530,8 +578,11 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
     if tur not in ("sube", "personel", "kart", "toptanci", "banka"):
         raise HTTPException(404, "Bilinmeyen tanım")
     from evvel_yeni_kasa_api import sube_cepleri_yaz
-    from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kilit as _kilit
+    from evvel_yeni_cekirdek import aktor as _aktor, bugun as _bugun, kilit as _kilit, ad_anahtari
     yeni = tid is None
+    if tur in ("sube", "banka"):
+        from evvel_yeni_kasa_api import kasa_hazirla
+        kasa_hazirla()   # E2E #9: sıfırdan kurulumda şube cebi tablosu yoktu (500) — Kasa kendi kısa işleminde hazırlanır
     with db() as (conn, cur):
         tanim_hazirla(cur)
         _kilit(cur)
@@ -540,9 +591,20 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
         if tur == "banka":
             from evvel_yeni_kasa_api import banka_cebi_yaz   # cep tablosu Kasa'nın — Tanımlar yazmaz, Kasa'nın kapısını çağırır (F#35)
             tid = banka_cebi_yaz(cur, cid=None if yeni else tid, tur=b.tur, ad=ad, sube_id=b.sube_id, aktif=None if yeni else b.aktif,
-                                 slug=_slug(ad))
+                                 slug=_slug(ad) if ad else None)   # B68: 'Pasif yap' yalnız aktif gönderir — ad yok, slug yalnız yeni kayıtta
             return {"ok": True, "id": tid, "mesaj": f"Banka {'eklendi' if yeni else 'güncellendi'}"}
 
+        for o_, ad_ in ((b.pos_oran, "POS oranı"), (b.online_oran, "Online oranı")):
+            if o_ is not None and not 0 <= float(o_) <= 100:
+                raise HTTPException(400, f"{ad_} 0–100 arası olmalı (yüzde)")   # E2E #16: eksi / %150 sessizce komisyonu 0 yapıyordu
+        if b.limit_tutar is not None and _kurus(b.limit_tutar) < 0:
+            raise HTTPException(400, "Kart limiti eksi olamaz")
+        if not yeni and tur in ("sube", "personel", "kart", "toptanci"):
+            cur.execute(f"SELECT 1 FROM ey_{tur} WHERE id=%s", (tid,))
+            if not cur.fetchone():
+                raise HTTPException(404, "Kayıt bulunamadı")   # E2E #11: olmayan kaydı 'güncellendi' diyordu
+        if not yeni and b.aktif is False and tur in ("toptanci", "kart"):
+            _pasif_denetle(cur, tur, tid)   # B69: borcu olan toptancı / kart pasif yapılamaz (borç gözden kaybolmasın)
         if tur == "sube":
             if yeni:
                 tid = "sube-" + _slug(ad)
@@ -555,6 +617,13 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                 cur.execute("""UPDATE ey_sube SET ad=COALESCE(%s,ad), pos_oran=COALESCE(%s,pos_oran), online_oran=COALESCE(%s,online_oran),
                                  aktif=COALESCE(%s,aktif), degistiren=%s, zaman=NOW() WHERE id=%s""",
                             (ad, b.pos_oran, b.online_oran, b.aktif, kim, tid))
+            if b.konum is not None and b.konum.strip():
+                lat, lng = _konum_coz(b.konum)
+                tanim_guncelle(cur, "ey_sube", tid, {"lat": lat, "lng": lng}, kim=kim)
+            if b.yaricap_m is not None:
+                if not 30 <= b.yaricap_m <= 2000:
+                    raise HTTPException(400, "Yarıçap 30–2000 metre olmalı")
+                tanim_guncelle(cur, "ey_sube", tid, {"yaricap_m": b.yaricap_m}, kim=kim)
             sube_cepleri_yaz(cur)   # dükkân nakdi + şube bankası cepleri hemen açılır / adı güncellenir
             if any(x is not None for x in (b.kira, b.kira_artis_ayi, b.kira_odeme_gunu, b.kira_yok)):
                 from evvel_yeni_kira_api import kira_yaz
@@ -580,9 +649,19 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                     giris = date.fromisoformat(b.giris[:10])
                 except ValueError:
                     raise HTTPException(400, "İşe giriş tarihi YYYY-AA-GG olmalı")
+            if not yeni and (giris or cikis):
+                cur.execute("SELECT giris, cikis FROM ey_personel WHERE id=%s", (tid,))
+                _e = dict(cur.fetchone() or {})
+                giris_, cikis_ = giris or _e.get("giris"), cikis or _e.get("cikis")
+            else:
+                giris_, cikis_ = giris, cikis
+            if giris_ and cikis_ and cikis_ < giris_:
+                raise HTTPException(400, "Ayrılış tarihi işe girişten önce olamaz")   # E2E #16
             if yeni:
-                if b.maas is None:
+                if b.maas is None and b.calisma_turu != "yari":
                     raise HTTPException(400, "Maaşı yaz (0 olabilir)")
+                if b.calisma_turu == "yari" and b.saatlik is None:   # B35: yarı zamanlıda zorunlu olan SAATLİK ücret
+                    raise HTTPException(400, "Yarı zamanlı için saatlik ücreti yaz")
                 tid = "ey-" + uuid.uuid4().hex[:12]
                 cur.execute("""INSERT INTO ey_personel (id, ad, sube_id, gorev, giris, cikis, calisma_turu, erken_acilis, degistiren)
                                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
@@ -634,9 +713,8 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
 
         # toptancı
         if yeni:
-            cur.execute("SELECT 1 FROM ey_toptanci WHERE LOWER(TRIM(ad)) = LOWER(TRIM(%s))", (ad,))
-            if cur.fetchone():
-                raise HTTPException(409, "Bu adla toptancı zaten var")
+            if any(ad_anahtari(x["ad"]) == ad_anahtari(ad) for x in tanim_listesi(cur, "ey_toptanci", ("ad",))):
+                raise HTTPException(409, "Bu adla toptancı zaten var")   # E2E #12: "ATA GIDA" ↔ "Ata Gıda" ayrı açılıyordu
             tid = "ey-" + uuid.uuid4().hex[:12]
             cur.execute("""INSERT INTO ey_toptanci (id, ad, kategori, telefon, acilis_bakiye, degistiren) VALUES (%s,%s,%s,%s,%s,%s)""",
                         (tid, ad, (b.kategori or "").strip()[:40] or None, (b.telefon or "").strip()[:20] or None, _kurus(b.acilis_bakiye or 0), kim))

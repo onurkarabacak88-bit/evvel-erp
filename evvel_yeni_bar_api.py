@@ -53,7 +53,11 @@ def _anahtar_ad(ad: str) -> Optional[str]:
         return None
     if n in ("su", "su adet", "su_adet", "su sisesi", "su şişesi") or (" su " in f" {n} " and len(n) <= 15):
         return "su_adet"
-    for w, k in (("redbull", "redbull_adet"), ("red bull", "redbull_adet"), ("soda", "soda_adet"), ("cookie", "cookie_adet")):
+    if "sade maden" in n or "soda" in n:   # Fable B3 (21 Eki): katalog adı 'Sade Maden Suyu'; aromalılar tezgahta sayılmaz (P2-b)
+        return "soda_adet"
+    if "cookie" in n and not any(w in n for w in ("şurup", "surup")):   # Fable S5: 'Cookie Şurup' kurabiye değil
+        return "cookie_adet"
+    for w, k in (("redbull", "redbull_adet"), ("red bull", "redbull_adet")):
         if w in n:
             return k
     if any(w in n for w in _PASTA_IZ):
@@ -90,6 +94,33 @@ def _sayim(meta, alan: str) -> Optional[dict]:
 
 
 from evvel_yeni_kopru import urun_ac_parcala as _urun_ac_parcala   # köprü tek yerde (kesimde dosya silinir)
+
+
+def _sevk_pasta_parcala(aciklama: str) -> list:
+    """URUN_SEVK_JSON (eski panel tedarikçiden teslim) → pasta kategorisindeki kalemlerin adetleri."""
+    raw = aciklama or ""
+    if not raw.startswith("URUN_SEVK_JSON:"):
+        return []
+    try:
+        obj = json.loads(raw[len("URUN_SEVK_JSON:"):].split(" | ", 1)[0].strip())
+    except Exception:  # noqa: BLE001
+        return []
+    out = []
+    for it in (obj.get("kalemler") or []) if isinstance(obj, dict) else []:
+        if (isinstance(it, dict) and str(it.get("kategori_id") or "").lower() == "pasta"
+                and _anahtar_ad(str(it.get("urun_ad") or "")) in (None, "pasta")):   # Fable P2-a: 'Cookie (Kurabiye)' pasta değil
+            try:
+                n = int(it.get("adet") or 0)
+            except (TypeError, ValueError):
+                n = 0
+            if n > 0:
+                out.append(n)
+    return out
+
+
+def _sevk_kaydi_mi(x: tuple, sevk: list) -> bool:
+    """ac listesindeki satır bir teslim (URUN_SEVK) satırından mı geldi (olay saati eşleşmesi)."""
+    return any(x[0] == d["olay_ts"] for d in sevk)
 
 
 def _stok_ekle_parcala(aciklama: str):
@@ -132,13 +163,17 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
     # sahip P1 (20 Eki): katalogdaki 'gününde tüketilir' TEK GERÇEK (Dalga 4, F#8: işaretli yoksa ADDAN tahmin eden ikinci kural kalktı —
     # tahmin başka ekranlarla ayrışıyordu). İşaretli ürün yoksa ekranda uyarı.
     pasta_id = {str(u["id"]) for k in kat for u in k["urunler"] if __import__("evvel_yeni_urun_api").gununde_tuketilir(u)}
+    # sahip (21 Eki): pastalar 'gününde' işaretlenmeyecek → KATALOG KATEGORİSİ 'Pasta' (ürün adı tahmini değil) da pasta girişidir
+    pasta_id |= {str(u["id"]) for k in kat if "pasta" in str(k.get("ad") or "").lower() for u in k["urunler"]
+                 if not __import__("evvel_yeni_urun_api").tezgahta_sayilir(u)}   # Fable P2-a: tezgahta ayrı sayılan (Cookie) pasta değil
     kalemler = sayilan + [("pasta", "Pasta (toplam)")]
     kodlar = [k for k, _ in kalemler]
     # Satış kontrolü bardakları anlam anahtarıyla arar (bardak_kucuk/buyuk/plastik) — ürün adından TEK eşleştiriciyle
     anahtar_of = {k: ("pasta" if k == "pasta" else _anahtar_ad(ad)) for k, ad in kalemler}
     sids = {s_["id"] for s_ in subeler}
     ev, ac = {}, {}
-    for o in __import__("evvel_yeni_olay").panel_olaylari(cur, bas=bas, son=son + timedelta(days=1), turler={"acilis", "kapanis", "urun_ac"}):
+    # B84 (Fable 22 Eki): dün kapalıysa SON kapanışla kıyas — 14 gün geriye okunur (Satış son_kapanislar ile aynı sınır)
+    for o in __import__("evvel_yeni_olay").panel_olaylari(cur, bas=bas - timedelta(days=14), son=son + timedelta(days=1), turler={"acilis", "kapanis", "urun_ac"}):
         if str(o["sube_id"]) not in sids:   # F#12: iptal/panel süzgeci Olay'da
             continue
         sid = str(o["sube_id"])
@@ -157,7 +192,7 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
             if _acik("depo"):
                 # Fable #7 / sahip P1: şubeye DOĞRUDAN gelen pasta (Tedarikçiden teslim al = giris) da bara girer
                 from evvel_yeni_depo_api import hareketler   # Depo'nun kapısı (F#34)
-                for h in hareketler(cur, turler=("kabul", "giris", "fazla_onay"), bas=bas, son=son + timedelta(days=1),
+                for h in hareketler(cur, turler=("kabul", "giris", "fazla_onay"), bas=bas - timedelta(days=14), son=son + timedelta(days=1),
                                     hedef_onek=["depo:"], urun_idler=list(pasta_id)):
                     ac.setdefault(h["hedef"].split(":", 1)[1], []).append((h["olay_zaman"], h["is_gunu"], "pasta", int(h["adet"])))
         except Exception:  # noqa: BLE001
@@ -184,12 +219,28 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
             e = ev.get(sid, {}).get(g, {})
             dun = ev.get(sid, {}).get(g - timedelta(days=1), {})
             acil, kap, dkap = e.get("acilis"), e.get("kapanis"), dun.get("kapanis")
+            dkap_gun = None
+            if dkap is None and acil and not dun.get("acilis"):   # B84: dün kapalı → son kapanış; araya kapanışsız açılış girerse zincir kopuk
+                for i in range(2, 15):
+                    gg = ev.get(sid, {}).get(g - timedelta(days=i), {})
+                    if gg.get("kapanis"):
+                        dkap, dkap_gun = gg["kapanis"], (g - timedelta(days=i)).isoformat()
+                        break
+                    if gg.get("acilis"):
+                        break
             A, K, DK = (acil or {}).get("say"), (kap or {}).get("say"), (dkap or {}).get("say")
             gun = {"gun": g.isoformat(), "acilis_var": bool(acil), "kapanis_var": bool(kap), "kalemler": [], "devir_fark": 0, "ac_eksik": 0,
                    "kapanisci": (kap or {}).get("kim"), "kapanis_saat": _saat(kap["ts"]) if kap else None,
                    "acilisci": (acil or {}).get("kim"), "acilis_saat": _saat(acil["ts"]) if acil else None,
-                   "dun_kapanisci": (dkap or {}).get("kim")}
-            gun_ici = ac_topla(sid, acil["ts"], kap["ts"]) if (acil and kap) else bos()
+                   "dun_kapanisci": (dkap or {}).get("kim"), "dun_gunu": dkap_gun}
+            if acil and kap:
+                gun_ici = ac_topla(sid, acil["ts"], kap["ts"])
+            elif acil:   # Codex P2 (B63): kapanış yokken de giren görünsün — açılıştan ertesi açılışa, o yoksa İŞ GÜNÜ SONUNA (02:00) kadar
+                # (Codex 2. kontrol: açık uç geçmiş kapanışsız güne ertesi günün girişlerini taşırdı)
+                from evvel_yeni_cekirdek import is_gunu_zamani as _igz
+                gun_ici = ac_topla(sid, acil["ts"], (ev.get(sid, {}).get(g + timedelta(days=1), {}).get("acilis") or {}).get("ts") or _igz(g, 1, 59))
+            else:
+                gun_ici = bos()
             gece = ac_topla(sid, dkap["ts"], acil["ts"]) if (dkap and acil) else bos()
             for k, ad in kalemler:
                 a = A.get(k) if A else None
@@ -259,6 +310,13 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None, evren: Opt
                         WHERE etiket = 'URUN_STOK_EKLE' AND tarih BETWEEN %s AND %s AND sube_id::text = ANY(%s)""",
                     (bas, son + timedelta(days=1), sids))
         stok_ekle = [dict(r) for r in cur.fetchall() or []]
+        # Fable B2 (21 Eki): pasta şubeye TEDARİKÇİDEN doğrudan gelir (eski panel 'Ürün Teslim Al' = URUN_SEVK) — bara giren pasta
+        cur.execute("""SELECT id::text AS id, sube_id::text AS sube_id, tarih, olay_ts, aciklama FROM operasyon_defter
+                        WHERE etiket = 'URUN_SEVK' AND tarih BETWEEN %s AND %s AND sube_id::text = ANY(%s)
+                          AND id::text NOT IN (SELECT ref_event_id::text FROM operasyon_defter
+                                                WHERE etiket = 'URUN_SEVK_IPTAL' AND ref_event_id IS NOT NULL)""",
+                    (bas, son + timedelta(days=1), sids))
+        sevk = [dict(r) for r in cur.fetchall() or []]
         pasta_kabul = []
         try:
             with savepoint(cur, "sp_ey_bar_kabul"):
@@ -295,6 +353,20 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None, evren: Opt
     for d in stok_ekle:
         for k, adet in _stok_ekle_parcala(d["aciklama"]):
             ac.setdefault(d["sube_id"], []).append((d["olay_ts"], d["tarih"], k, adet))
+    sevk_pasta_gun = set()
+    for d in sevk:
+        for adet in _sevk_pasta_parcala(d["aciklama"]):
+            ac.setdefault(d["sube_id"], []).append((d["olay_ts"], d["tarih"], "pasta", adet))
+            sevk_pasta_gun.add((d["sube_id"], d["tarih"]))
+    if sevk_pasta_gun:   # pasta hem teslim hem ürün aç ile girildiyse (Tema 20 Eki) TEK kaynak teslim: teslimden sonraki 24 saatteki ürün aç pastası düşer
+        sevk_ts = {}
+        for d in sevk:
+            if _sevk_pasta_parcala(d["aciklama"]):
+                sevk_ts.setdefault(d["sube_id"], []).append(_tr_saat(d["olay_ts"]))
+        for sid_, lst in ac.items():
+            ac[sid_] = [x for x in lst if not (x[2] == "pasta" and not _sevk_kaydi_mi(x, sevk) and _tr_saat(x[0]) is not None
+                                                and any(s is not None and s <= _tr_saat(x[0]) <= s + timedelta(hours=24)
+                                                        for s in sevk_ts.get(sid_, [])))]
     for r in pasta_kabul:
         k = _kod_anahtar(r.get("depo_stok_kalem_kodu")) or _kod_anahtar(r.get("kalem_kodu")) or _anahtar_ad(r.get("ad"))
         if k == "pasta":   # yalnız pasta: diğer kalemler depoya girer, bara ürün aç ile geçer
@@ -373,3 +445,12 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None, evren: Opt
 # ── AÇIK KAPILAR (sök-tak): başka modüller iç '_' fonksiyonu değil BU adları kullanır — içerik aynı, kapı tek ──
 kod_anahtar = _kod_anahtar
 anahtar_ad = _anahtar_ad
+
+
+def bar_gunu(cur, gun: date, sube_id: Optional[str] = None) -> dict:
+    """PUBLIC — TEK iş gününün bar kaydı, çağıranın işleminde (Satış › sabah satırı, B62/B63): {şube: gün} — hesap _bar_yeni (tek formül;
+    ay boyu hesap ve ikinci bağlantı açılmaz). Yalnız yeni evren."""
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    subeler = [s for s in _ey_subeler(cur) if not sube_id or s["id"] == sube_id]
+    r = _bar_yeni(cur, subeler, gun, gun - timedelta(days=1), gun)
+    return {s["sube_id"]: s["gunler"][-1] for s in r["subeler"] if s["gunler"]}

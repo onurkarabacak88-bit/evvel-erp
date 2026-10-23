@@ -195,9 +195,23 @@ def kasa_mutabakat(cur, gun: str, evren: Optional[str] = None) -> dict:
     # Fable B2: evren bakılan GÜNE göre (1 Kasım sonrası eski bir güne bakınca eski panel verisi okunur) — tek kural (Fable D-1)
     yeni = (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur, _date.fromisoformat(gun[:10]))
     out = _mut_veri_yeni(cur, gun) if yeni else _mut_veri_eski(cur, gun)
+    _cift_kayit_dus(cur, gun, out)   # Codex P2: eski ve yeni evrende AYNI düzeltme (Kasa 'kartla' çift kayıt)
     for x in out.values():
         mutabakat_hesapla(x)
     return out
+
+
+def _cift_kayit_dus(cur, gun: str, out: dict) -> None:
+    """Kasa'daki 'kartla ödenmiş — nakit olarak da yazılmış' düzeltmesi → nakit satış o kadar az (TEK gerçek Kasa; yumuşak bağ)."""
+    try:   # Kasa'da 'kartla ödenmiş — nakit olarak da yazılmış' düzeltmesi → nakit satış o kadar az (TEK gerçek Kasa)
+        from evvel_yeni_kasa_api import cift_kayit_duzeltmeleri
+        for sid, t_ in cift_kayit_duzeltmeleri(cur, gun).items():
+            x = out.get(sid)
+            if x and x.get("z_nakit") is not None:
+                x["z_nakit"] = round(x["z_nakit"] - t_, 2)
+                x["z_duzeltme"] = t_
+    except Exception:  # noqa: BLE001 — Fable R: yumuşak bağ; düzeltme okunamazsa sağlama yine çıkar
+        log.warning("satış: çift kayıt düzeltmeleri okunamadı", exc_info=True)
 
 
 def _kr_tl(k):
@@ -210,6 +224,27 @@ def _panel_olaylari(cur, bas, son, turler) -> list:
     (Fable T-1: üç yerde ayrı ayrı süzgeç + JSON açma vardı)."""
     from evvel_yeni_olay import panel_olaylari   # süzgeç + veri açma Olay'da TEK (F#12)
     return panel_olaylari(cur, bas=bas, son=son, turler=set(turler))
+
+
+ZINCIR_GERI_GUN = 14   # B84: son kapanış en çok bu kadar gün geriden aranır (daha eskisi = zincir kopuk, kıyas yok)
+
+
+def son_kapanislar(cur, gun, subeler=None) -> dict:
+    """B84 (Fable 22 Eki): {şube: (gün, bırakılan ₺)} — `gun`den ÖNCEKİ en son kapanış (dün değilse kapalı gün(ler) atlanır).
+    Sabah sağlaması 'dün'e değil SON kapanışa bakar: pazar kapalıysa pazartesi sabahı cumartesi akşamıyla kıyaslanır."""
+    from datetime import date as _date
+    g = gun if isinstance(gun, _date) else _date.fromisoformat(str(gun)[:10])
+    out, acilis = {}, {}
+    for o in _panel_olaylari(cur, g - timedelta(days=ZINCIR_GERI_GUN), g - timedelta(days=1), {"kapanis", "acilis"}):
+        sid = str(o["sube_id"])
+        if subeler is not None and sid not in subeler:
+            continue
+        if o["tur"] == "acilis":
+            acilis[sid] = max(acilis.get(sid, o["is_gunu"]), o["is_gunu"])
+        elif sid not in out or o["is_gunu"] >= out[sid][0]:   # aynı gün birden çok sürüm: SON kazanır (olay sırası)
+            out[sid] = (o["is_gunu"], _kr_tl(o["v"].get("birakilan")))
+    # Fable: kapalı gün ≠ KAPANIŞSIZ gün — son kapanıştan sonra açılıp kapanmamış gün varsa zincir kopuk (sahte fark üretme)
+    return {sid: v for sid, v in out.items() if not (sid in acilis and acilis[sid] > v[0])}
 
 
 def _elle_teslimler() -> dict:
@@ -273,11 +308,25 @@ def _mut_veri_yeni(cur, gun: str) -> dict:
             x["teslim"] = sum(int(t.get("tutar") or 0) for t in v.get("teslimler") or []) / 100
             x["devir"] = tl(v.get("birakilan"))
         elif o["tur"] == "teslim":
-            x["ara_teslimler"].append({"tutar": tl(v.get("tutar")) or 0.0, "alan": v.get("alan"), "eden": o.get("personel_ad")})
+            x["ara_teslimler"].append({"tutar": tl(v.get("tutar")) or 0.0, "alan": v.get("alan"), "eden": o.get("personel_ad"),
+                                       "not": v.get("aciklama")})
         elif o["tur"] == "ara_sayim":   # ⏱ panel ara sayımı (A1 iki sınır) — gün başına tek kök; iptal sonrası yeni sürüm gelirse SON kazanır
             x["ara_sayim"] = {"sayilan": tl(v.get("sayilan")), "taban": tl(v.get("taban")) if v.get("taban") is not None else None,
                               "kim": o.get("personel_ad"), "saat": str(v.get("yapilma") or "")[11:16]}
+    eksik = {sid for sid, x in out.items() if x.get("acilis") is not None and x.get("dun_devir") is None}
+    if eksik:   # B84: dün kapanış yok (şube kapalıydı) → son kapanışın bırakılanı
+        for sid, (kg, bir) in son_kapanislar(cur, g, eksik).items():
+            out[sid]["dun_devir"], out[sid]["dun_devir_gunu"] = bir, kg.isoformat()
     from evvel_yeni_kasa_api import cekmece_cikislari
+    if any(x.get("ara_teslimler") for x in out.values()):
+        try:   # ara teslim alıcısı: cep kimliği ('ev:onur') yerine ad (Kasa PUBLIC)
+            from evvel_yeni_kasa_api import cep_kisa_adlari
+            adl = cep_kisa_adlari(cur, gun)
+            for x in out.values():
+                for a in x.get("ara_teslimler") or []:
+                    a["alan_ad"] = adl.get(a.get("alan") or "", a.get("alan"))
+        except Exception:  # noqa: BLE001
+            log.warning("satış: cep adları okunamadı", exc_info=True)
     for c in cekmece_cikislari(cur, gun):
         out.setdefault(c["sube_id"], {**mut_bos(), "kor_ara_dahil": False})["giderler"].append({"tutar": c["tutar"], "ad": c["ad"], "kim": c["kim"], "bekliyor": False})
     return out
@@ -314,13 +363,13 @@ def mutabakat_hesapla(x: dict) -> dict:
     x["ara_uyari"] = []
     if a.get("taban") is not None and a.get("sayilan") is not None:
         if a["sayilan"] < a["taban"] - 1:
-            x["ara_uyari"].append(f"Ara sayım ({a.get('saat') or '—'}, {a.get('kim') or '—'}): çekmece {a['sayilan']:,.2f} ₺ — sabah tabanının "
-                                  f"({a['taban']:,.2f} ₺) altında")
+            x["ara_uyari"].append(f"Ara sayım ({a.get('saat') or '—'}, {a.get('kim') or '—'}): çekmece {_tl_tr(int(round(a['sayilan'] * 100)))} — sabah tabanının "
+                                  f"({_tl_tr(int(round(a['taban'] * 100)))}) altında")
         if x.get("z_nakit") is not None:
             sonra = round(x["z_nakit"] - (a["sayilan"] - a["taban"]), 2)
             x["ara_sonra_satis"] = sonra
             if sonra < -1:
-                x["ara_uyari"].append(f"Ara sayımdan sonraki nakit satış eksi çıkıyor ({sonra:,.2f} ₺) — ara sayım şişik ya da kapanış nakdi eksik")
+                x["ara_uyari"].append(f"Ara sayımdan sonraki nakit satış eksi çıkıyor ({_tl_tr(int(round(sonra * 100)))}) — ara sayım şişik ya da kapanış nakdi eksik")
     return x
 
 
@@ -580,7 +629,7 @@ def _devir_defteri_yeni(ay: Optional[str] = None):
     ev = {}
     with db() as (conn, cur):
         subeler = _ey_subeler(cur)
-        for o in _panel_olaylari(cur, ay_bas - timedelta(days=1), ay_son + timedelta(days=1), {"acilis", "kapanis", "vardiya", "teslim"}):
+        for o in _panel_olaylari(cur, ay_bas - timedelta(days=ZINCIR_GERI_GUN), ay_son + timedelta(days=1), {"acilis", "kapanis", "vardiya", "teslim"}):
             ev.setdefault((str(o["sube_id"]), o["is_gunu"].isoformat(), o["tur"]), []).append(o)
     elle_tes = _elle_teslimler()
     tl = _kr_tl
@@ -596,10 +645,20 @@ def _devir_defteri_yeni(ay: Optional[str] = None):
             k = son(ev.get((sid, gi, "kapanis"), []))
             ka = son(ev.get((sid, ert, "acilis"), []))
             dk = son(ev.get((sid, dn, "kapanis"), []))
+            dk_gun = None
+            if dk is None and a:   # B84: dün kapalıydı → son kapanış (ZINCIR_GERI_GUN içinde)
+                for i in range(1, ZINCIR_GERI_GUN + 1):
+                    gg = (g - timedelta(days=i)).isoformat()
+                    dk = son(ev.get((sid, gg, "kapanis"), []))
+                    if dk:
+                        dk_gun = gg
+                        break
+                    if ev.get((sid, gg, "acilis")):   # Fable: açılmış ama kapanmamış gün → zincir kopuk, eski kapanışla kıyaslama
+                        break
             vd = son(ev.get((sid, gi, "vardiya"), []))
             dun_birak = tl(dk["v"].get("birakilan")) if dk else None
             sab = tl(a["v"].get("kasa_sayim")) if a else None
-            sabah = {"kim": a.get("personel_ad"), "saat": tr_saat(a.get("olay_zamani"), g), "sayilan": sab, "dun_birakilan": dun_birak,
+            sabah = {"kim": a.get("personel_ad"), "saat": tr_saat(a.get("olay_zamani"), g), "sayilan": sab, "dun_birakilan": dun_birak, "dun_gunu": dk_gun,
                      "fark": round(sab - dun_birak, 2) if (sab is not None and dun_birak is not None) else None} if a else None
             vardiya = None
             if vd:
@@ -737,6 +796,7 @@ def _devir_defteri_eski(ay: Optional[str] = None):
 
 
 from evvel_yeni_cekirdek import tr_saat as _tr_saat   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek (birebir kopyasıydı)
+from evvel_yeni_cekirdek import tl as _tl_tr   # Türkçe para biçimi TEK yer (f-string içinde iç içe tırnak YOK — canlı Python 3.11)
 
 
 
@@ -750,3 +810,57 @@ def _mut_aciklama(m, kap):
         m["eksik"] = ("panel kapanışı yok — ciro " + ("Evo'dan" if kap.get("evo") else "Kasa'dan") +
                       " geldi ama çekmece sayılmadı / devir yazılmadı; kasa açığı hesaplanamaz")
     return m
+
+
+# 🌅 SABAH SAYIMI TUTMADI — B62/B63 (Fable 22 Eki; sahip: "sistemi şişirmeden, veriyi gözden kaçırmadan"). O İŞ GÜNÜ Bekleyen işler'e
+# şube başına TEK satır (bilgi + Satış kontrolü düğmesi). Yeni hesap yok: kasa = mutabakat_hesapla 'sabah_fark', ürün = Bar devir farkı.
+# Gördüm / kalıcı kayıt yok: ertesi gün satır kendiliğinden kalkar — kasa farkı o sabah Kasa › Açık farklar'a yazılır (karar ORADA, bir kez),
+# ürün farkı Bar sayımı gün kutusunda sarı kalır. Ürün FAZLASI (sabah > dün akşam) satıra girmez — Bar'da görünür (veri kaybolmaz).
+# Deneme dönemi merkeze iş üretmez. Personel görmez (yalnız merkez Bekleyen işler).
+def _sabah_isleri(cur, _baglam) -> list:
+    from evvel_yeni_cekirdek import deneme_mi, is_gunu, kurus
+    from evvel_yeni_tanim_api import subeler
+    gun = is_gunu()
+    if deneme_mi(cur, gun):
+        return []
+    mut = kasa_mutabakat(cur, gun.isoformat(), evren="yeni")
+    try:
+        from evvel_yeni_moduller import acik as _acik
+        from evvel_yeni_bar_api import bar_gunu
+        bar = {}
+        if _acik("bar"):   # tak-çıkar: Bar kapalıysa ürün parçası yok
+            with savepoint(cur, "sp_satis_sabah_bar"):   # Codex P2: Bar SQL hatası işlemi bozup kasa parçasını düşürmesin
+                bar = bar_gunu(cur, gun)
+    except Exception:  # noqa: BLE001 — Bar okunamazsa kasa parçası yine gelir
+        log.warning("satış: sabah satırı için bar okunamadı", exc_info=True)
+        bar = {}
+    out = []
+    for s in subeler(cur):
+        sid = str(s["id"])
+        parca = []
+        m = mut.get(sid) or {}
+        f = m.get("sabah_fark")
+        if f is not None and abs(f) >= 1:
+            yon = "eksik" if f < 0 else "fazla"
+            _dg = m.get("dun_devir_gunu")
+            _ne = f"{_dg[8:10]}.{_dg[5:7]} akşamı" if _dg else "dün"   # B84: kapalı gün sonrası son kapanış
+            parca.append(f"Kasa: {_ne} bırakılan {_tl_tr(kurus(m['dun_devir']))} · bu sabah {_tl_tr(kurus(m['acilis']))} → "
+                         f"{_tl_tr(kurus(abs(f)))} {yon}")
+        urun = []
+        _bg = (bar.get(sid) or {}).get("dun_gunu")
+        _bne = f"{_bg[8:10]}.{_bg[5:7]} akşamı" if _bg else "dün akşam"   # B84: Bar da son kapanışla kıyaslar
+        for k in (bar.get(sid) or {}).get("kalemler") or []:
+            if (k.get("devir_fark") or 0) < 0:
+                gece = f" + gece açılan {k['gece_ac']}" if k.get("gece_ac") else ""
+                urun.append(f"{k['ad']}: {-k['devir_fark']} eksik ({_bne} {k['dun_kapanis']}{gece} → bu sabah {k['acilis']})")
+        if urun:
+            parca.append("Ürün: " + ", ".join(urun))
+        if parca:
+            out.append({"genel": True, "grup": "kasa", "tur": "sabah_sayimi", "id": f"sabah:{sid}:{gun.isoformat()}", "tarih": gun.isoformat(),
+                        "etiket": "🌅 Sabah sayımı tutmadı", "ad": s["ad"], "alt": " · ".join(parca),
+                        "sayfa": f"satis_kontrol?gun={gun.isoformat()}", "dugme": "Satış kontrolü"})
+    return out
+
+
+from evvel_yeni_cekirdek import bekleyen_is_kaydet as _bekleyen_is_kaydet   # tak-çıkar: Satış kapalıysa satır da yok
+_bekleyen_is_kaydet("satis_sabah", _sabah_isleri)

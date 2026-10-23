@@ -28,9 +28,11 @@ const YAPI = {
     alanlar: [{ k: 'ad', ad: 'Şube adı', zorunlu: true }, { k: 'pos_oran', ad: 'POS komisyonu %', sayi: true }, { k: 'online_oran', ad: 'Online komisyonu %', sayi: true },
       { k: 'kira', ad: 'Aylık kira ₺', sayi: true }, { k: 'kira_ay', ad: 'Kira hangi aydan geçerli', tip: 'month' },
       { k: 'kira_odeme_gunu', ad: 'Kira ödeme günü (1–31)', sayi: true }, { k: 'kira_artis_ayi', ad: 'Kira artış ayı (1–12, ör. 6 = Haziran)', sayi: true },
-      { k: 'kira_yok', ad: 'Kira yok — mülk bizim', secim: 'evet_hayir' }],
+      { k: 'kira_yok', ad: 'Kira yok — mülk bizim', secim: 'evet_hayir' },
+      // B36: telefon yoklamasının konum kontrolü — Google Haritalar'da şubeye sağ tık → üstteki sayıları kopyala
+      { k: 'konum', ad: 'Konum (Google Haritalar: enlem, boylam)' }, { k: 'yaricap_m', ad: 'Konum yarıçapı (metre, ör. 150)', sayi: true }],
     kolon: (x) => [x.ad, `POS %${fmt(x.pos_oran)} · online %${fmt(x.online_oran)}`,
-      x.kira_yok ? 'mülk bizim — kira yok' : x.kira != null ? `kira ${fmt(x.kira)} ₺${x.kira_odeme_gunu ? ` · her ayın ${x.kira_odeme_gunu}'i` : ''}${x.kira_artis_ayi ? ` · artış ${['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'][x.kira_artis_ayi - 1]}` : ''}` : 'kira tanımsız'],
+      x.kira_yok ? 'mülk bizim — kira yok' : x.kira != null ? `kira ${fmt(x.kira)} ₺${x.kira_odeme_gunu ? ` · her ayın ${x.kira_odeme_gunu}'i` : ''}${x.kira_artis_ayi ? ` · artış ${['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'][x.kira_artis_ayi - 1]}` : ''}` : 'kira tanımsız', x.konum ? `📍 ${x.yaricap_m || 150} m` : '📍 konum yok'],
   },
   tanim_personel: {
     tur: 'personel', liste: 'personel', baslik: 'Personel', tekil: 'personel',
@@ -112,7 +114,7 @@ export default function TanimModulu({ gorunum, onToast }) {
     } catch (e) { setHata(e?.message || 'Kaydedilemedi'); } finally { setMesgul(false); }
   };
   const aktiflik = async (x) => {
-    const soru = y.tur === 'kart' ? `"${x.ad}" kartı silinsin mi?\nListelerden ve Kartlar ekranından kalkar; geçmiş ödemelerde adı kalır.` : `"${x.ad}" pasif yapılsın mı?\nSilinmez; listelerde çıkmaz, geçmiş kayıtlarda adı kalır.`;
+    const soru = y.tur === 'kart' ? `"${x.ad}" kartı silinsin mi?\nListelerden ve Kartlar ekranından kalkar; geçmiş ödemelerde adı kalır.` : `"${x.ad}" pasif yapılsın mı?\nSilinmez; listelerde çıkmaz, geçmiş kayıtlarda adı kalır.${['banka', 'toptanci'].includes(y.tur) ? '\nParası / borcu sıfır değilse pasif yapılamaz.' : ''}`;
     if (x.aktif && !window.confirm(soru)) return;
     try { const r = await api(`/evvel-yeni/tanim/${y.tur}/${encodeURIComponent(x.id)}`, { method: 'POST', body: { aktif: !x.aktif } }); onToast?.(x.aktif ? (y.tur === 'kart' ? 'Kart silindi' : 'Pasif yapıldı') : 'Yeniden aktif'); yukle(); void r; }
     catch (e) { onToast?.(e?.message || 'Olmadı'); }
@@ -141,7 +143,7 @@ export default function TanimModulu({ gorunum, onToast }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
             {y.alanlar.filter((a) => !(a.yalnizYeni && !yeni) && !(a.duzeltmede && yeni)).map((a) => (
               <label key={a.k} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, fontWeight: 600, color: R.metin2 }}>
-                {a.ad}{(a.zorunlu || (a.zorunluYeni && yeni)) && ' *'}
+                {a.ad}{(a.zorunlu || (a.zorunluYeni && yeni && !(a.k === 'maas' && form.calisma_turu === 'yari')) || (a.k === 'saatlik' && yeni && form.calisma_turu === 'yari')) && ' *'}
                 {a.secim ? (
                   <select style={alan} value={form[a.k] ?? (a.secim === 'banka_tur' ? '' : '')} onChange={(e) => setForm((f) => ({ ...f, [a.k]: e.target.value }))}>
                     {a.secim === 'banka_tur' && <option value="">Seç…</option>}
