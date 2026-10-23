@@ -737,9 +737,21 @@ def _gece_yarisi_scheduler():
                 continue
             ay_son_gun = calendar.monthrange(bugun.year, bugun.month)[1]
 
+            # A5/A6 (köprü taraması 23 Eki): Evvel Yeni'nin devraldığı aylarda (panel_baslangic ve sonrası) ESKİ para işleri
+            # (aylık ödeme planı, kart kesim planı, bordro taslağı) eski tablolara yeni satır ÜRETMEZ — Ekim işleri (ör. Ekim
+            # bordrosu, 1–15 Kasım) eskisi gibi sürer. Ayar okunamazsa sabit 1 Kasım.
+            def _eski_ay_mi(_y, _a):
+                try:
+                    from evvel_yeni_cekirdek import panel_baslangic as _pb
+                    with db() as (_c, _cur):
+                        _sinir = _pb(_cur)
+                except Exception:  # noqa: BLE001
+                    _sinir = date(2026, 11, 1)
+                return date(_y, _a, 1) < _sinir.replace(day=1)
+
             # Ay başı — sabit gider, maaş, taksit vs. (kart asgarisi HARİÇ;
             # kart asgarisi her kartın kendi kesim gününde tetiklenir)
-            if bugun.day == 1:
+            if bugun.day == 1 and _eski_ay_mi(bugun.year, bugun.month):
                 try:
                     sonuc = aylik_odeme_plani_uret(bugun.year, bugun.month)
                     logger.info(f"⏰ Scheduler: Aylık plan üretildi — {sonuc.get('toplam', 0)} kayıt")
@@ -750,7 +762,7 @@ def _gece_yarisi_scheduler():
             # bugün kesim olan varsa o kart için ekstre planı üret/güncelle.
             # Hafta sonu/tatil kayması motorun içindedir.
             try:
-                ks = kart_kesim_plan_tetikle()
+                ks = kart_kesim_plan_tetikle() if _eski_ay_mi(bugun.year, bugun.month) else {}   # A6: yeni dönemde kart = EY teyit
                 if ks.get("tetiklenen"):
                     logger.info(f"⏰ Scheduler: Kart kesim tetiklendi — {len(ks['tetiklenen'])} kart")
             except Exception as e:
@@ -843,6 +855,7 @@ def _gece_yarisi_scheduler():
                     _onc = _bugun_b.replace(day=1) - timedelta(days=1)
                     _donemler.append((_onc.year, _onc.month))
                 _bordro_log = []
+                _donemler = [d for d in _donemler if _eski_ay_mi(*d)]   # A5: yeni dönem ayı eski bordroya yazılmaz (Ekim sürer)
                 for _yb, _ab in _donemler:
                     with db() as (conn, cur):
                         cur.execute(

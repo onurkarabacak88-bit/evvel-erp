@@ -313,7 +313,8 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
         oranlar = _oranlar(cur)
         from evvel_yeni_cekirdek import yeni_donem
-        yeni = (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur)
+        # A2/B4: kaynak BAKILAN ayın son (görülen) gününe göre — 1 Kasım'dan sonra Ekim gideri boş görünmesin
+        yeni = (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur, min(ay_son, bugun))
         if yeni:   # Evvel Yeni defterleri (tek kaynak); eski okuyucular (köprü) yalnız geçişte — kesimde silinir
             from evvel_yeni_tanim_api import depo_sube_id
             depo = depo_sube_id(cur) or "sube-tema"

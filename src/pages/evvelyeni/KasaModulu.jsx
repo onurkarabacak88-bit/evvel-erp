@@ -1258,7 +1258,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         <details style={{ fontSize: 13 }}>
           <summary style={{ cursor: 'pointer', color: R.not, padding: '6px 4px' }}>⚙️ Ayarlar</summary>
           <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
-            <Dugme kucuk onClick={() => formAc('aktar')} title="Dönem başından bu yana kapanış ve teslimleri eski sistemden okur">Eski sistemden aktar</Dugme>
+            {veri.senkron?.kopru === 'acik' && <Dugme kucuk onClick={() => formAc('aktar')} title="Dönem başından bu yana kapanış ve teslimleri eski sistemden okur">Eski sistemden aktar</Dugme>}{/* A3: eski köprü kapanınca gizli */}
             <Dugme kucuk onClick={() => formAc('donem')} title="Önceki kayıtlar arşive geçer; her cep sayılıp yeniden başlanır">Yeni başlangıç</Dugme>
           </div>
         </details>

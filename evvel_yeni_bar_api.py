@@ -283,7 +283,8 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None, evren: Opt
     bas, son = ay_bas - timedelta(days=1), min(ay_son, bugun)
     with db() as (conn, cur):
         subeler = [s for s in _ey_subeler(cur) if not sube_id or s["id"] == sube_id]
-        if (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur):   # Evvel Yeni defterleri; eski okuma yalnız geçişte
+        # A2/B4 (köprü taraması 23 Eki): kaynak BAKILAN aya göre (bugüne değil) — 1 Kasım'dan sonra Ekim raporu eski köprüden dolu gelir
+        if (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur, son):   # Evvel Yeni defterleri; eski okuma yalnız geçişte
             return {"ay": a_, **_bar_yeni(cur, subeler, ay_bas, bas, son)}
         sids = [s["id"] for s in subeler]
         cur.execute("""SELECT sube_id::text AS sube_id, tarih, tip, cevap_ts, meta, personel_ad FROM sube_operasyon_event

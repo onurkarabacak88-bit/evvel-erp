@@ -1711,6 +1711,9 @@ def eski_sistemden_aktar(kuru: bool = True, x_evvel_oturum: Optional[str] = Head
     _hazirla()
     with db() as (conn, cur):
         _kilit(cur)
+        from evvel_yeni_cekirdek import eski_panel_zinciri_acik, tablo_var
+        if not (eski_panel_zinciri_acik() and tablo_var(cur, "ciro", "ciro_taslak", "kasa_teslim")):   # A3 (köprü taraması 23 Eki)
+            raise HTTPException(410, "Eski sistem kapandı — aktarılacak eski kayıt yok (yeni panel doğrudan Kasa'ya yazar)")
         kim = "eski sistem aktarımı · " + _aktor(cur, x_evvel_oturum)
         return _aktar(cur, kuru, kim)
 
@@ -2674,6 +2677,8 @@ def _kapanis_deneme_isleri(cur, C: dict) -> List[dict]:
       · UYARILI: kapanış kaydedildi ama mühürsüz / X raporu yok / devir eksik → merkez "gördüm" diyene kadar."""
     if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "operasyon_deneme"):
         return []
+    _yeni = __import__("evvel_yeni_cekirdek").yeni_donem(cur)   # A4: yeni dönemde eski 'red' satırı (geç kapanış yazıcısı) üretilmez;
+    #                                                          uyarılı (mühürsüz) satırlar 7 gün daha görünür — merkez 'gördüm' diyebilsin (Fable)
     # Codex P2: okuma sırasında BAŞKA modülün (eski sistem) tablosuna ALTER yok — kolon yoksa 'görülmedi' sayılır (şema kilidi beklemesin)
     _g = "d.goruldu" if __import__("evvel_yeni_cekirdek").kolon_var(cur, "operasyon_deneme", "goruldu") else "FALSE AS goruldu"
     cur.execute(f"""SELECT d.id, d.sube_id, d.event_id, d.tip, d.is_gunu, d.sonuc, d.sebep, d.uyarilar, d.zaman, {_g},
@@ -2689,7 +2694,7 @@ def _kapanis_deneme_isleri(cur, C: dict) -> List[dict]:
         goruldu_ev.add(r["event_id"])
         gun = r["is_gunu"].isoformat() if r.get("is_gunu") else r["zaman"].date().isoformat()
         ad = sube_ad.get(r["sube_id"], r["sube_id"])
-        if r["sonuc"] in ("red", "hata", "gonderildi") and r.get("ev_durum") != "tamamlandi":
+        if r["sonuc"] in ("red", "hata", "gonderildi") and r.get("ev_durum") != "tamamlandi" and not _yeni:
             out.append({"tur": "kapanis_red", "id": r["id"], "tarih": gun, "ad": ad, "sebep": r.get("sebep") or "sonuç alınamadı",
                         "saat": _tr_zaman(r["zaman"])})
         elif r["sonuc"] == "ok_uyarili" and not r.get("goruldu"):
@@ -2712,6 +2717,8 @@ def gec_kapanis(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default
     import sube_operasyon as so
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
+        if __import__("evvel_yeni_cekirdek").yeni_donem(cur):   # A4: 1 Kasım'dan sonra eski tabloya kapanış YAZILMAZ (Kasa'ya ulaşmazdı)
+            raise HTTPException(410, "Eski panelin reddedilen kapanışı 1 Kasım'dan sonra işlenemez — kapanışı Kasam › + Kapanış'tan gir")
         cur.execute("SELECT sube_id, event_id, govde, tip FROM operasyon_deneme WHERE id=%s", (body.deneme_id,))
         r = cur.fetchone()
     if not r:
