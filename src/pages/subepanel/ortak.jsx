@@ -104,12 +104,22 @@ export const panelHata = (e, { setHata, pinSifirla, yeniIstekVer }) => {
 
 // ➖ ADET GİRDİSİ "− [adet] +" — Ürün aç · Tedarikçi teslim · Sipariş ver · Depodan gelen ORTAK (Dalga 5, F#51: 4 kopya). Koli
 // yardımcıları ekranına göre farklı kalır (teslim: "koli × N + tek" izli; sipariş: "+1/+2/+3 koli" hızlı) — amaçları ayrı.
+// G60 (sim 23 Eki, laptop): ürünler arası 3 Tab gerekiyordu (kutu → + → − → kutu) → klavye modunda −/+ Tab sırasında YOK (fareyle basılır),
+// Enter = sonraki ürünün adet kutusu (aynı pencere / sayfa içinde).
+const sonrakiAdet = (el) => {
+  const kok = el.closest('.sp-perde') || document;
+  const k = [...kok.querySelectorAll('input.sp-adet:not([disabled])')].filter((i) => i.offsetParent);
+  const h = k[k.indexOf(el) + 1];
+  if (h) { h.focus(); h.select?.(); }
+};
 export function AdetGirdi({ n, azalt, artir, yaz, genislik = 96, font = 30, kapali = false }) {
+  const klavye = cihazTuruOku() === 'klavye';
   return (<>
-    <button type="button" className="sp-pm" onClick={azalt} disabled={kapali}>−</button>
-    <input className="sp-in" style={{ width: genislik, textAlign: 'center', fontSize: font, fontWeight: 800, padding: '4px 6px' }} inputMode="numeric" value={n || ''} placeholder="0"
-      disabled={kapali} onChange={(e) => yaz(Number(e.target.value.replace(/\D/g, '') || 0))} />
-    <button type="button" className="sp-pm" onClick={artir} disabled={kapali}>+</button>
+    <button type="button" className="sp-pm" onClick={azalt} disabled={kapali} tabIndex={klavye ? -1 : undefined}>−</button>
+    <input className="sp-in sp-adet" style={{ width: genislik, textAlign: 'center', fontSize: font, fontWeight: 800, padding: '4px 6px' }} inputMode="numeric" value={n || ''} placeholder="0"
+      disabled={kapali} onChange={(e) => yaz(Number(e.target.value.replace(/\D/g, '') || 0))}
+      onKeyDown={klavye ? (e) => { if (e.key === 'Enter') { e.preventDefault(); sonrakiAdet(e.currentTarget); } } : undefined} />
+    <button type="button" className="sp-pm" onClick={artir} disabled={kapali} tabIndex={klavye ? -1 : undefined}>+</button>
   </>);
 }
 // ➕➖ adet değiştirme — TEK kural (Fable D6-R: Ürün aç / Fire / Tedarikçi / Sipariş 4 kopya, sınırlar 9999 ↔ 99999 farklıydı).

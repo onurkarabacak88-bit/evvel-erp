@@ -1037,7 +1037,8 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
   const onCekmece = setCk;   // aşağıdaki çekmece çağrıları aynı kalır, Evvel kabuğuna değil buraya açılır
   // Sahip (2026-10-18): tarih yalnız bu oturumda hatırlanır — ekran her açılışta BUGÜNden başlar (16 Ekim'de takılı kalmıştı)
   const [gun, setGun] = useState(() => {
-    try { return sessionStorage.getItem('paraIziGun') || iso(new Date()); } catch { return iso(new Date()); }
+    const bugun = iso(new Date());
+    try { const g = sessionStorage.getItem('paraIziGun'); return g && g <= bugun ? g : bugun; } catch { return bugun; }   // G20 (sim 23 Eki): hatırlanan gün bugünü aşamaz (1 Kasım'da açılıyordu)
   });
   const [hepsi, setHepsi] = useState(false);
   const [veri, setVeri] = useState(null);

@@ -81,6 +81,15 @@ function GunlukDokum() {
   const [gun, setGun] = useState(() => (/^\d{4}-\d{2}-\d{2}$/.test(new URLSearchParams(window.location.search).get('gun') || '') ? new URLSearchParams(window.location.search).get('gun') : tarihKaydir(-1)));
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
+  useEffect(() => {   // G35 (sim 23 Eki): her açılışta DÜN seçiliydi — bugün kapanmış şube varsa bugün açılır (akşam kontrolü gözden kaçmasın)
+    if (new URLSearchParams(window.location.search).get('gun')) return undefined;
+    let canli = true;
+    const bugun = tarihKaydir(0);
+    api(`/evvel-yeni/satis/gun?gun=${bugun}`).then((r) => {
+      if (canli && (r?.subeler || []).some((s) => s.durum && s.durum !== 'kapanis_yok')) setGun((g) => (g === tarihKaydir(-1) ? bugun : g));
+    }).catch(() => { /* dün kalır */ });
+    return () => { canli = false; };
+  }, []);
   useSonIstek(`/evvel-yeni/satis/gun?gun=${gun}`, setV, setHata, true);   // ortak 'son istek kazanır' (T4-09)
   const kaydir = (k) => setGun(gunKaydir(gun, k));
   const acikYaz = (x) => (x == null ? '—' : Math.abs(x) < 1 ? 'yok' : x > 0 ? `${fmt(Math.round(x))} ₺ AÇIK` : `${fmt(Math.round(-x))} ₺ fazla`);

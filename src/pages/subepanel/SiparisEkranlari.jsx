@@ -296,7 +296,16 @@ export function Gonderilecek({ d, subeId, adaylar, bitti }) {
               </div>
             );
           })}
-          {eksikSecim > 0 && <div style={{ color: C.sari, fontSize: 13 }}>{eksikSecim} kalemde seçim yok / KISMİ adedi geçersiz (1 ile istenen arası)</div>}
+          {(() => {   // G28 (sim 23 Eki): hiçbir şeye basmadan turuncu uyarı çıkıyordu → seçilmemiş = sakin sayaç, sarı yalnız geçersiz KISMİ
+            const secilmedi = g.kalemler.filter((k) => !sec[k.yon_id]?.tur).length;
+            const kismiBos = g.kalemler.filter((k) => sec[k.yon_id]?.tur === 'kismi' && (sec[k.yon_id]?.n ?? '') === '').length;   // henüz yazılmadı → sakin ipucu
+            const gecersiz = eksikSecim - secilmedi - kismiBos;
+            return (<>
+              {secilmedi > 0 && <div style={{ color: C.soluk, fontSize: 13 }}>Her kaleme VAR / KISMİ / YOK seç — {g.kalemler.length - secilmedi}/{g.kalemler.length} seçildi</div>}
+              {kismiBos > 0 && <div style={{ color: C.soluk, fontSize: 13 }}>KISMİ seçtiğin kaleme kaç tane gönderdiğini yaz</div>}
+              {gecersiz > 0 && <div style={{ color: C.sari, fontSize: 13, fontWeight: 700 }}>KISMİ adedi 1 ile istenen arasında olmalı ({gecersiz} kalem)</div>}
+            </>);
+          })()}
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="sp-btn" style={{ flex: 1 }} onClick={() => { setHataG(''); setOnay('hazirlik'); }}>💾 Hazırlığı kaydet</button>
             <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={eksikSecim > 0} onClick={() => { setHataG(''); setOnay('yola'); }}>🚚 Yola çıkar</button>

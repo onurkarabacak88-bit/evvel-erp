@@ -69,7 +69,9 @@ export default function SiparisModulu({ onToast }) {
     is_(s.id, 'yon', { surum: s.surum, kalemler }, 'Yönlendirildi');
   };
 
-  const liste = v?.siparisler || [];
+  // G61 (sim 23 Eki): yönlendirilmeyi BEKLEYEN sipariş en üstte (eskiden yeniye sırada bugünkü talep en altta kalıyordu)
+  const liste = [...(v?.siparisler || [])].sort((a, b) => Number((b.kalemler || []).some((k) => k.durum === 'yonlendirilmedi'))
+    - Number((a.kalemler || []).some((k) => k.durum === 'yonlendirilmedi')));
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
@@ -151,7 +153,7 @@ export default function SiparisModulu({ onToast }) {
                       ))}
                       <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                         <Dugme kucuk onClick={() => yonSet(s, k, [...ys, { kaynak: k.oneri_kaynak || '', adet: Math.max(0, k.adet - toplam) || '' }])}>+ Kaynak ekle (böl)</Dugme>
-                        <span style={{ fontSize: 12, color: toplam > k.adet ? R.kirmizi : R.not }}>{toplam} / {k.adet} yönlendirildi{toplam > k.adet ? ' — istenenden fazla' : ''}</span>
+                        <span style={{ fontSize: 12, color: toplam > k.adet ? R.kirmizi : R.not }}>{toplam} / {k.adet} {taslak[s.id]?.[k.i] ? 'dağıtıldı — kaydetmek için «Yönlendir»' : k.durum === 'yonlendirilmedi' && toplam < k.adet ? 'yönlendirildi · kalan bekliyor' : 'yönlendirildi'}{toplam > k.adet ? ' — istenenden fazla' : ''}</span>   {/* G62 (+denetim 16): kaydedilmemiş değişiklik = taslak */}
                       </div>
                     </div>
                   )}
