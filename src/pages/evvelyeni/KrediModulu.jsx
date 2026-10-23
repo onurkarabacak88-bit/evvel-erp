@@ -35,7 +35,7 @@ export default function KrediModulu({ onToast, onSekme }) {
 
   const satirlar = (v?.krediler || []).map((k) => ({
     id: k.id, baslik: k.ad, alt: `${fmt(k.taksit)} ₺/ay · ${k.odeme_gunu}'i${k.son_ay ? ` · son ${k.son_ay}` : ''}`, k,
-    aylar: k.aylar.map((a) => ({ ...a, ust: a.odenen > 0 ? fmt(a.odenen) : a.durum === 'once' ? '·' : fmt(a.beklenen), alt: a.iki_yerde ? '⚠ iki sistemde' : a.durum === 'kismi' ? `kalan ${fmt(a.kalan)}` : null })),
+    aylar: k.aylar.map((a) => ({ ...a, ust: a.odenen > 0 ? fmt(a.odenen) : a.durum === 'once' ? '·' : fmt(a.beklenen), alt: a.iki_yerde ? '⚠ iki sistemde' : (a.durum === 'kismi' || (a.odenen > 0 && a.kalan > 0)) ? `kalan ${fmt(a.kalan)}` : null })),
     sag: fmt(k.yil_odenen), sagAlt: `/ ${fmt(k.yil_beklenen)}`,
   }));
   return (
@@ -57,6 +57,8 @@ export default function KrediModulu({ onToast, onSekme }) {
         </div>
         <div style={{ fontSize: 12, color: R.not }}>Bir aya tıkla: taksiti öde ya da krediyi düzelt. {v.baslangic} öncesi aylar "·" (Evvel Yeni öncesi, kayıt yok).</div>
       </>}
+      {/* B67: krediye bağlanmamış taksit ödemesi takvimde görünmez — kaybolmasın, tek yol Ödeme defteri › Düzelt */}
+      {v && v.bagsiz?.length > 0 && <div style={{ fontSize: 13, color: R.amber }}>⚠ Krediye bağlanmamış {v.bagsiz.length} taksit ödemesi var ({v.bagsiz.map((b) => `${tKisa(b.tarih)} · ${fmt(b.toplam)} ₺`).join(', ')}) — takvimde görünmez. Ödeme defteri › Düzelt ile krediyi seç.</div>}
       {sec && (
         <Pencere baslik={`🏦 ${sec.k.ad} · ${AY_UZUN[sec.i]} ${v.yil}`} onKapat={() => setSec(null)}>
           <div>Taksit <b style={num}>{tutarYaz(sec.a.beklenen)}</b> ₺ · ödenen <b style={num}>{fmt(sec.a.odenen)}</b> ₺ · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺</div>

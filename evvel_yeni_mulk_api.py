@@ -16,7 +16,8 @@ Tak-çıkar: Kasa'nın PUBLIC `defter_ozeti`, `donem_baslangici`, `hareket_ekle`
 import logging
 import uuid
 from datetime import date
-from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -108,6 +109,7 @@ def _takvim(cur, yil: int) -> dict:
             else:   # TEK kural (çekirdek takvim_durumu — C-T1-11)
                 durum = takvim_durumu(bek, g, vade, bugun, once=a < donem_ay)
             satir.append({"ay": a, "beklenen": _tl_sayi(bek), "odenen": _tl_sayi(g), "kalan": _tl_sayi(max(0, bek - g)),
+                          "fazla": _tl_sayi(max(0, g - bek)) if bek > 0 else 0.0,   # B80: beklenenden fazla gelen (durum yine 'odendi')
                           "durum": durum, "vade": vade.isoformat(), "artis_ayi": bool(k.get("artis_ayi")) and int(a[5:7]) == k["artis_ayi"]})
         out.append({"id": k["id"], "ad": k["ad"], "kiraci": k.get("kiraci"), "odeme_gunu": k["odeme_gunu"], "artis_ayi": k.get("artis_ayi"),
                     "baslangic_ay": k["baslangic_ay"], "bitis_ay": k.get("bitis_ay"), "aktif": k["aktif"], "not": k.get("not_"),
@@ -178,7 +180,23 @@ def _borc(cur, yil: int) -> dict:
             else:
                 kc = C.get(h.get("kaynak")) or {}
                 s = kc.get("sube_id") if kc.get("sube_id") in sube_ad else "ortak"
-                hareket.append({"gun": h["is_gunu"], "sube": s, "alinan": 0, "geri": h["tutar"], "aciklama": f"Geri ödeme ← {kc.get('ad', h.get('kaynak'))}", "id": h["id"]})
+                # B79 (Fable 22 Eki): geri ödeme HANGİ şubenin borcunu kapatır — para hangi bankadan çıktıysa o değil (kasa tek havuz);
+                # merkez seçer (karar 'sube:<id>' | 'ortak', aynı karar defteri). Seçilmediyse kaynak bankanın şubesi varsayılır.
+                kk = karar.get("sube:" + h["id"]) or ""   # Fable: şube seçimi AYRI anahtarda — şahsi/borç kararını ezmez
+                secili = kk.startswith("sube:") and kk[5:] in sube_ad
+                if secili:
+                    s = kk[5:]
+                elif kk == "ortak":
+                    s, secili = "ortak", True
+                hareket.append({"gun": h["is_gunu"], "sube": s, "alinan": 0, "geri": h["tutar"], "aciklama": f"Geri ödeme ← {kc.get('ad', h.get('kaynak'))}",
+                                "id": h["id"], "sube_secilebilir": (C.get(h.get("kaynak")) or {}).get("tur") not in ("ev", "hesap"),
+                                "sube_secili": secili})
+    # B79: varsayılan şubede borç yokken düşülen geri ödeme yanıltır (sim: Zafer −1.000) → merkez sorulur
+    _net = {}
+    for x in hareket:
+        _net[x["sube"]] = _net.get(x["sube"], 0) + x["alinan"] - x["geri"]
+    sube_sor = [{"id": x["id"], "gun": x["gun"], "tutar": _tl_sayi(x["geri"]), "aciklama": x["aciklama"], "varsayilan": x["sube"]}
+                for x in hareket if x.get("sube_secilebilir") and not x.get("sube_secili") and _net.get(x["sube"], 0) < 0]
     aylar = [f"{yil}-{m:02d}" for m in range(1, 13)]
     subeler = sorted({x["sube"] for x in hareket} | set(sube_ad), key=lambda s: (s == "ortak", sube_ad.get(s, "Ortak")))
     out = []
@@ -191,7 +209,7 @@ def _borc(cur, yil: int) -> dict:
             b += al - ge
             satir.append({"ay": a, "alinan": _tl_sayi(al), "geri": _tl_sayi(ge), "borc": _tl_sayi(b), "baslamadi": a < BORC_BAS[:7]})
         out.append({"sube": s, "ad": sube_ad.get(s, "Ortak (şubesiz)"), "devir": _tl_sayi(devir), "aylar": satir, "borc": _tl_sayi(b)})
-    return {"yil": yil, "baslangic": BORC_BAS, "subeler": out, "toplam_borc": round(sum(x["borc"] for x in out), 2), "karar_bekleyen": sor, "kararli": sorted(kararli, key=lambda x: x["gun"], reverse=True),
+    return {"yil": yil, "baslangic": BORC_BAS, "subeler": out, "toplam_borc": round(sum(x["borc"] for x in out), 2), "karar_bekleyen": sor, "sube_sor": sube_sor, "kararli": sorted(kararli, key=lambda x: x["gun"], reverse=True),
             "sahsi": _tl_sayi(sahsi), "hareketler": [{**x, "alinan": _tl_sayi(x["alinan"]), "geri": _tl_sayi(x["geri"])}
                                                      for x in sorted(hareket, key=lambda x: x["gun"], reverse=True)[:200]]}
 
@@ -199,7 +217,7 @@ def _borc(cur, yil: int) -> dict:
 class KalemBody(BaseModel):
     ad: str
     kiraci: Optional[str] = None
-    tutar: Decimal
+    tutar: TrTutar
     gecerli_ay: Optional[str] = None     # bu tutar hangi aydan geçerli (zam)
     odeme_gunu: int = 1
     artis_ayi: Optional[int] = None
@@ -264,7 +282,7 @@ def kalem_kaydet(b: KalemBody, mid: Optional[str] = None, x_evvel_oturum: Option
 class TahsilatBody(BaseModel):
     mulk_id: str
     ay: str
-    tutar: Decimal
+    tutar: TrTutar
     tarih: Optional[str] = None
     istek_id: Optional[str] = None
 
@@ -277,6 +295,10 @@ def tahsilat(b: TahsilatBody, x_evvel_oturum: Optional[str] = Header(default=Non
     with db() as (conn, cur):
         cur.execute("SELECT ad, kiraci FROM ey_mulk WHERE id=%s", (b.mulk_id,))
         k = cur.fetchone()
+        hucre = None
+        if k:   # B80: fazla geleni reddetme (para gerçekten geldi) — mesajda söyle
+            ev = next((e for e in _takvim(cur, int(ay[:4]))["evler"] if e["id"] == b.mulk_id), None)
+            hucre = next((a for a in (ev or {}).get("aylar", []) if a["ay"] == ay), None)
     if not k:
         raise HTTPException(404, "Ev bulunamadı")
     k = dict(k)
@@ -284,7 +306,15 @@ def tahsilat(b: TahsilatBody, x_evvel_oturum: Optional[str] = Header(default=Non
     r = kasa.hareket_ekle(kasa.HareketBody(tur="dis", is_gunu=(b.tarih or _bugun().isoformat())[:10], cep=KIRA_CEP, tutar=b.tutar, alt="kira",
                                            kimden=(k.get("kiraci") or k["ad"])[:80], not_=f"{k['ad']} · {ay} kirası",
                                            bag={"modul": "mulk", "id": b.mulk_id, "ay": ay}, istek_id=b.istek_id), x_evvel_oturum)
-    return {"ok": True, "tekrar": bool(r.get("tekrar")), "mesaj": r.get("mesaj") or f"{k['ad']} · {ay} kirası Fatma'nın kira hesabına girdi"}
+    msj = r.get("mesaj") or f"{k['ad']} · {_AY[int(ay[5:7]) - 1]} kirası Fatma'nın kira hesabına girdi"
+    if hucre and hucre["beklenen"] and not r.get("tekrar"):
+        fz = round(_tl_sayi(_kurus(b.tutar)) - hucre["kalan"], 2)
+        if fz >= 1:
+            msj += f" · ⚠ {hucre['kalan']:,.0f} ₺ bekleniyordu, {fz:,.0f} ₺ FAZLA geldi (Uyarılar'da görünür)".replace(",", ".")
+    return {"ok": True, "tekrar": bool(r.get("tekrar")), "mesaj": msj}
+
+
+_AY = ("Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık")
 
 
 def _gecikenler(cur) -> list:
@@ -305,12 +335,17 @@ def _bekleyen(cur, baglam: dict) -> list:
     out = []
     try:
         with savepoint(cur, "sp_ey_mulk_borc"):   # Codex: SQL hatası ortak işlemi bozmasın
-            kb = _borc(cur, _bugun().year)["karar_bekleyen"]
+            _b = _borc(cur, _bugun().year)
+            kb, ss = _b["karar_bekleyen"], _b.get("sube_sor") or []
     except Exception as e:  # noqa: BLE001 — Codex: sessizce kaybolmasın
         log.warning("kira hesabı borcu okunamadı: %s", str(e)[:150])
         return [{"tur": "mulk_hata", "genel": True, "grup": "kira", "id": "mulk_hata", "tarih": _bugun().isoformat(),
                  "etiket": "⚠ Kira hesabı okunamadı", "ad": "İşletmelerin borcu hesaplanamadı", "alt": "sayfayı açıp tekrar dene",
                  "sayfa": "mulk_borc", "dugme": "İşletmelerin borcu"}]
+    if ss:
+        out.append({"tur": "mulk_sube", "genel": True, "grup": "kira", "id": "mulk_sube", "tarih": ss[0]["gun"],
+                    "etiket": "🏠 Hangi şubenin borcu?", "ad": f"{len(ss)} geri ödeme kira hesabına",
+                    "alt": "borcu olmayan şubeden düşüldü — hangi şubenin borcunu kapattığını seç", "sayfa": "mulk_borc", "dugme": "İşletmelerin borcu"})
     if kb:
         out.append({"tur": "mulk_karar", "genel": True, "grup": "kira", "id": "mulk_karar", "tarih": kb[0]["gun"],
                     "etiket": "🏠 Şahsi mi borç mu?", "ad": f"{len(kb)} aktarım kira hesabı ↔ ev / hesap",
@@ -326,7 +361,8 @@ def _bekleyen(cur, baglam: dict) -> list:
 
 class KararBody(BaseModel):
     hareket_id: str
-    karar: str          # sahsi | borc | (boş = kararı geri al)
+    karar: str          # sahsi | borc | sube:<id> | ortak | (boş = kararı geri al)
+    alan: Optional[str] = None   # 'sube' → geri ödemenin şube seçimi (ayrı anahtar: "sube:"+hareket_id)
 
 
 @router.post("/karar")
@@ -334,13 +370,19 @@ def karar_ver(b: KararBody, x_evvel_oturum: Optional[str] = Header(default=None)
     """Kira hesabı ↔ ev / Fethi hesabı aktarımı: ŞAHSİ (borç değil) mi, İŞLETME BORCU mu (sahip karar verir)."""
     _hazirla()
     with db() as (conn, cur):
-        if b.karar in ("sahsi", "borc"):
+        if b.karar.startswith("sube:"):   # B79: geri ödemenin şubesi — yalnız bilinen şube
+            from evvel_yeni_tanim_api import subeler as _sb
+            if b.karar[5:] not in {x["id"] for x in _sb(cur)}:
+                raise HTTPException(400, "Şube bulunamadı")
+        sube_alani = b.alan == "sube" or b.karar == "ortak" or b.karar.startswith("sube:")
+        anahtar = ("sube:" + b.hareket_id) if sube_alani else b.hareket_id
+        if b.karar in ("sahsi", "borc", "ortak") or b.karar.startswith("sube:"):
             cur.execute("""INSERT INTO ey_mulk_karar (hareket_id, karar, kim) VALUES (%s,%s,%s)
                            ON CONFLICT (hareket_id) DO UPDATE SET karar=EXCLUDED.karar, kim=EXCLUDED.kim, zaman=NOW()""",
-                        (b.hareket_id, b.karar, _aktor(cur, x_evvel_oturum)))
+                        (anahtar, b.karar, _aktor(cur, x_evvel_oturum)))
         else:
-            cur.execute("DELETE FROM ey_mulk_karar WHERE hareket_id=%s", (b.hareket_id,))
-    return {"ok": True, "mesaj": {"sahsi": "Şahsi — borca katılmadı", "borc": "İşletme borcu olarak sayıldı"}.get(b.karar, "Karar geri alındı")}
+            cur.execute("DELETE FROM ey_mulk_karar WHERE hareket_id=%s", (anahtar,))
+    return {"ok": True, "mesaj": {"sahsi": "Şahsi — borca katılmadı", "borc": "İşletme borcu olarak sayıldı"}.get(b.karar, "Şube seçildi — borç kırılımı güncellendi" if (b.karar.startswith("sube:") or b.karar == "ortak") else "Karar geri alındı")}
 
 
 @router.get("/uyarilar")
@@ -350,10 +392,16 @@ def uyarilar():
     with db() as (conn, cur):
         gec = _gecikenler(cur)
         evler = _kalemler(cur)
+        bu_ay = bugun.strftime("%Y-%m")
+        son3 = {ay_kaydir(bu_ay, -i) for i in range(3)} | {ay_kaydir(bu_ay, 1)}
+        fazla = [{"id": e["id"], "ad": e["ad"], "kiraci": e.get("kiraci"), "ay": a["ay"], "fazla": a["fazla"], "beklenen": a["beklenen"], "odenen": a["odenen"]}
+                 for y in sorted({int(x[:4]) for x in son3}) for e in _takvim(cur, y)["evler"] for a in e["aylar"]
+                 if a["ay"] in son3 and a.get("fazla", 0) >= 1]
     simdi, sonraki = bugun.month, bugun.month % 12 + 1
     return {"geciken": [{"id": e["id"], "ad": e["ad"], "kiraci": e.get("kiraci"), "ay": a["ay"], "kalan": a["kalan"]} for e in gec for a in e["gec"]],
             "artis": [{"id": k["id"], "ad": k["ad"], "artis_ayi": k["artis_ayi"]} for k in evler
-                      if k["aktif"] and k.get("artis_ayi") in (simdi, sonraki)]}
+                      if k["aktif"] and k.get("artis_ayi") in (simdi, sonraki)],
+            "fazla": fazla}
 
 
 @router.get("/baglanmamis")

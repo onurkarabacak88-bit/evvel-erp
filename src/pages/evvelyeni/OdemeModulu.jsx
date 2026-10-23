@@ -75,7 +75,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
     if (!on) return;
     const t = on.tutar > 0 ? String(on.tutar) : '';
     otoTutar.current = t;
-    setF({ ...BOS(), konu: on.konu, personel_id: on.personel_id, personel_kalemi: on.personel_kalemi, ait_ay: on.ait_ay || ayBugun(), kimin: on.kimin, patron: on.patron, toptanci_id: on.toptanci_id, kredi_id: on.kredi_id, kredi_ad: on.kredi_ad,
+    setF({ ...BOS(), konu: on.konu, personel_id: on.personel_id, personel_kalemi: on.personel_kalemi, ait_ay: on.ait_ay || ayBugun(), kimin: on.kimin, patron: on.patron, toptanci_id: on.toptanci_id, kredi_id: on.kredi_id, kredi_ad: on.kredi_ad, sube_id: on.sube_id,
       kart_donem: on.konu === 'kart_borcu' ? (on.ait_ay || '') : '',
       parcalar: [{ yontem: 'havale', cep: '', kart_id: '', tutar: t }] });
   }, [L]);
@@ -129,7 +129,9 @@ export default function OdemeModulu({ onToast, gorunum }) {
   };
   const duzKaydet = async () => {
     try {
-      const r = await api(`/evvel-yeni/odeme/${duz.id}/duzelt`, { method: 'POST', body: { kimin: duz.kimin, ait_ay: duz.ait_ay, aciklama: duz.aciklama } });
+      const govde = duz.konu_tip === 'kredi' ? { kredi_id: duz.kredi_id || undefined, ait_ay: duz.ait_ay, aciklama: duz.aciklama }   // B67: kredi gider değil — kimin yok
+        : { kimin: duz.kimin, ait_ay: duz.ait_ay, aciklama: duz.aciklama };
+      const r = await api(`/evvel-yeni/odeme/${duz.id}/duzelt`, { method: 'POST', body: govde });
       onToast?.(r.mesaj); setDuz(null); listeYukle();
     } catch (e) { onToast?.(e?.message || 'Düzeltilemedi'); }
   };
@@ -159,7 +161,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
 
   const toplam = f.parcalar.reduce((a, p) => a + (sayi(p.tutar) || 0), 0);   // yalnız giriş geri bildirimi
   const hataliSatir = f.parcalar.some((p) => !(sayi(p.tutar) > 0));
-  const subeAd = (id) => (L.subeler.find((s) => s.id === id) || {}).ad;
+  const subeAd = (id) => (L.sube_adlari || {})[id] || (L.subeler.find((s) => s.id === id) || {}).ad;
   const secPer = L.personel.find((p) => String(p.id) === String(f.personel_id));
   const kiminAd = f.konu === 'anlik' && f.kimin === 'patron' ? `Patron şahsi${f.patron ? ` · ${f.patron}` : ''}`
     : ['kira', 'fatura', 'anlik'].includes(f.konu) ? subeAd(f.sube_id)
@@ -297,7 +299,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
               <Etiket ad={f.konu === 'sgk' ? 'Hangi ayın SGK primi' : 'Hangi ayın vergisi'}><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
             </>)}
             {f.konu === 'kredi' && (
-              <Etiket ad="Hangi ayın taksiti" ipucu="Kredi takviminde bu ay 'ödendi' olur"><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
+              <Etiket ad="Hangi ayın taksiti" ipucu={krediler == null ? 'Krediler modülü kapalı — takvime işlenmez' : krediler.length === 0 ? 'Tanımlı kredi yok — önce Krediler › + Kredi ekle; krediye bağlı olmayan borç: Diğer › Patron şahsi' : "Kredi takviminde bu ay 'ödendi' olur"}><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
             )}
             {f.konu === 'kart_borcu' && (
               <Etiket ad="Hangi ayın ekstresi (son ödeme ayı)" ipucu="Boş bırakırsan ödeme gününe göre kendiliğinden yerleşir"><input type="month" style={alan} value={f.kart_donem || ''} onChange={(e) => set('kart_donem', e.target.value)} /></Etiket>
@@ -395,8 +397,8 @@ export default function OdemeModulu({ onToast, gorunum }) {
                   <td style={{ ...num, fontWeight: 700 }}>{fmt(x.toplam)}</td>
                   <td style={{ textAlign: 'left' }}>{['vergi', 'sgk'].includes(x.konu_tip) ? <Cip>{x.konu_tip === 'sgk' ? 'SGK' : 'vergi'} · {ayAdi(x.ait_ay)}</Cip> : x.gider ? <Cip tur="sari">gider · {ayAdi(x.ait_ay)}</Cip> : x.konu === 'Dükkân gideri' ? <Cip>dükkân gideri</Cip> : <span style={{ color: R.not }}>gider değil</span>}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    {x.duzeltilebilir && x.gider !== undefined && ['kira', 'fatura', 'anlik', 'personel', 'diger', 'vergi', 'sgk'].includes(x.konu_tip) && (
-                      <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); setDuz({ id: x.id, konu_tip: x.konu_tip, kimin: x.kimin_kod || '', ait_ay: x.ait_ay || '', aciklama: x.aciklama || '', baslik: `${x.aciklama} · ${fmt(x.toplam)} ₺` }); }}>Düzelt</Dugme>)}{' '}
+                    {x.duzeltilebilir && x.gider !== undefined && (['kira', 'fatura', 'anlik', 'personel', 'diger', 'vergi', 'sgk'].includes(x.konu_tip) || (x.konu_tip === 'kredi' && krediler?.length > 0)) && (
+                      <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); setDuz({ id: x.id, konu_tip: x.konu_tip, kredi_id: x.kredi_id || '', kimin: x.kimin_kod || '', ait_ay: x.ait_ay || '', aciklama: x.aciklama || '', baslik: `${x.aciklama} · ${fmt(x.toplam)} ₺` }); }}>Düzelt</Dugme>)}{' '}
                     {x.duzeltilebilir && <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); iptalEt(x); }}>İptal</Dugme>}
                     {x.duzeltmeler?.length > 0 && <span title="Düzeltildi" style={{ marginLeft: 4 }}>✏️</span>}
                   </td>
@@ -412,12 +414,18 @@ export default function OdemeModulu({ onToast, gorunum }) {
       {duz && (
         <Pencere baslik="Gider tarafını düzelt" onKapat={() => setDuz(null)} mesgul={mesgul} genislik={460} kapatDugmesi={false} aralik={12}>   {/* ortak Pencere (T4-06) — işlem sürerken kapanmaz */}
             <div style={{ fontSize: 13, color: R.not }}>{duz.baslik}<br />Para oynamaz — cepler ve tutar aynı kalır. Tutar / cep yanlışsa: iptal edip yeniden gir.</div>
+            {duz.konu_tip === 'kredi' ? (
+              <Etiket ad="Hangi kredinin taksiti" ipucu="Seçince kredi takviminde o ay 'ödendi' olur"><select style={alan} value={duz.kredi_id} onChange={(e) => setDuz((d) => ({ ...d, kredi_id: e.target.value }))}>
+                <option value="">Seç…</option>{(krediler || []).map((k) => <option key={k.id} value={k.id}>{k.ad}</option>)}
+              </select></Etiket>
+            ) : (
             <Etiket ad="Kimin gideri"><select style={alan} value={duz.kimin} onChange={(e) => setDuz((d) => ({ ...d, kimin: e.target.value }))}>
               {L.subeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
+              {duz.kimin && !L.subeler.some((s) => s.id === duz.kimin) && (L.sube_adlari || {})[duz.kimin] && <option value={duz.kimin}>{L.sube_adlari[duz.kimin]} (pasif)</option>}
               {['diger', 'personel', 'vergi', 'sgk'].includes(duz.konu_tip) && <option value="ortak">Ortak</option>}
               {['diger', 'personel'].includes(duz.konu_tip) && <option value="patron">Patron şahsi (gider değil)</option>}
-            </select></Etiket>
-            {['kira', 'fatura', 'personel', 'vergi', 'sgk'].includes(duz.konu_tip) && (
+            </select></Etiket>)}
+            {['kira', 'fatura', 'personel', 'vergi', 'sgk', 'kredi'].includes(duz.konu_tip) && (
               <Etiket ad="Ait olduğu ay"><input type="month" style={alan} value={duz.ait_ay} onChange={(e) => setDuz((d) => ({ ...d, ait_ay: e.target.value }))} /></Etiket>
             )}
             <Etiket ad="Açıklama"><input style={alan} value={duz.aciklama} onChange={(e) => setDuz((d) => ({ ...d, aciklama: e.target.value }))} /></Etiket>

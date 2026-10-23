@@ -7,12 +7,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useState } from 'react';
 import { api } from '../../utils/api';
-import { fmt, num, PI_CSS, R, tKisa, useSonIstek } from './KasaModulu';
+import { Dugme, fmt, num, PI_CSS, R, tKisa, useSonIstek } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici } from './AyTakvim';   // ortak takvim (Dalga 5, T4-08 — kopya kalktı)
 
 const MOR = '#7B4FB8';   // kira artış ayı
 
-export function KiraTakvim() {
+export function KiraTakvim({ onSekme }) {
   const [yil, setYil] = useState(() => new Date().getFullYear());
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
@@ -21,10 +21,10 @@ export function KiraTakvim() {
 
   const satirlar = (v?.subeler || []).map((s) => ({
     id: s.sube_id, kaynak: s, baslik: s.ad,
-    alt: `${s.kira_yok ? 'mülk bizim — kira yok' : s.kira != null ? `${fmt(s.kira)} ₺/ay` : 'kira tanımsız'}${s.odeme_gunu ? ` · ${s.odeme_gunu}'i` : ''}${s.artis_ayi ? ` · artış ${AY_UZUN[s.artis_ayi - 1]}` : ''}`,
+    alt: `${s.kira_yok ? 'mülk bizim — kira yok' : s.kira != null ? `${fmt(s.kira)} ₺/ay` : 'kira tanımsız — Tanımlar › Şubeler › Düzelt'}${s.odeme_gunu ? ` · ${s.odeme_gunu}'i` : ''}${s.artis_ayi ? ` · artış ${AY_UZUN[s.artis_ayi - 1]}` : ''}`,
     aylar: s.aylar.map((a) => ({
       ...a, ust: a.odenen > 0 ? fmt(a.odenen) : a.beklenen != null ? fmt(a.beklenen) : '—',
-      alt: a.durum === 'kismi' ? `kalan ${fmt(a.kalan)}` : null,
+      alt: (a.durum === 'kismi' || (a.odenen > 0 && a.kalan > 0)) ? `kalan ${fmt(a.kalan)}` : null,
       vurgu: (a.artis_ayi || a.artis) ? MOR : null, etiket: (a.artis_ayi || a.artis) ? `📈${a.artis ? ' artış' : ''}` : null,
     })),
     sag: fmt(s.yil_odenen), sagAlt: `/ ${fmt(s.yil_beklenen)}`,
@@ -48,7 +48,12 @@ export function KiraTakvim() {
           {sec.a.yeni_kayitlar.map((k) => <div key={k.id} style={{ fontSize: 13 }}>• {tKisa(k.tarih)} · {fmt(k.tutar)} ₺ · {k.aciklama}</div>)}
           {sec.a.eski_sistem > 0 && <div style={{ fontSize: 13 }}>• eski sistemde ödenmiş: {fmt(sec.a.eski_sistem)} ₺</div>}
           {sec.a.iki_yerde && <div style={{ fontSize: 12.5, color: R.amber }}>⚠ Hem eski sistemde hem Evvel Yeni'de ödeme var — biri mükerrer olabilir (toplanmadı; Kart/Kredi ile aynı kural).</div>}
-          {sec.a.kalan > 0 && <div style={{ fontSize: 12.5, color: R.not }}>Ödemek için: Ödeme → Ödeme / gider gir → Kira → şube ve "ait olduğu ay" seç; tutar kendiliğinden gelir.</div>}
+          {sec.a.kalan > 0 && sec.a.beklenen != null && (   // B77: kredi takvimi gibi hücreden öde (form hazır gelir, tutar düzeltilebilir)
+            <div><Dugme ana kucuk onClick={() => {
+              try { window.sessionStorage.setItem('ey_odeme_on', JSON.stringify({ konu: 'kira', sube_id: sec.s.sube_id, ait_ay: sec.a.ay, tutar: sec.a.kalan })); } catch { /* yut */ }
+              setSec(null); onSekme?.('odemeler');
+            }}>Kalanı öde ({fmt(sec.a.kalan)} ₺) →</Dugme></div>
+          )}
         </Pencere>
       )}
     </div>

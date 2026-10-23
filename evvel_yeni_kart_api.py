@@ -13,7 +13,9 @@ SADE MODEL — tek rakam: KULLANILABİLİR LİMİT (bankanın uygulamasında yaz
 
 import uuid
 from datetime import date
-from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
+from evvel_yeni_cekirdek import tl as _tl_tr   # Türkçe para biçimi TEK yer (f-string içinde iç içe tırnak YOK — canlı Python 3.11)
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -45,7 +47,7 @@ def kart_hazirla(cur) -> None:
         girilen TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
     try:
         with savepoint(cur, "sp_ey_kart_cipa"):
-            cur.execute("SELECT DISTINCT kart_id FROM ey_kart_teyit")
+            cur.execute("SELECT DISTINCT kart_id FROM ey_kart_teyit WHERE kaynak <> 'geri_alindi'")
             teyitli = {dict(x)["kart_id"] for x in cur.fetchall() or []}
             limit = {k["id"]: k.get("limit_tutar") for k in _kartlar(cur) if k["id"] not in teyitli}
             cur.execute("""SELECT DISTINCT ON (kart_id) kart_id::text AS id, kesim_tarihi, son_odeme_tarihi, donem_borcu, kullanilabilir_limit
@@ -77,16 +79,31 @@ def _hareketler(kayit) -> dict:
         v = h["veri"]
         for p in v.get("kart_parcalar") or []:
             out.setdefault(str(p["kart_id"]), []).append({"gun": h["is_gunu"], "tutar": -int(p["tutar"]), "tur": "harcama",
-                                                          "aciklama": v.get("aciklama"), "id": h["id"]})
+                                                          "aciklama": v.get("aciklama"), "id": h["id"], "zaman": h.get("kayit_zamani")})
         k = v.get("konu") or {}
         if k.get("kart_id"):
             tut = sum(int(p["tutar"]) for p in v.get("parcalar") or [])
             out.setdefault(str(k["kart_id"]), []).append({"gun": h["is_gunu"], "tutar": tut, "tur": "borc_odeme",
-                                                          "aciklama": v.get("aciklama"), "id": h["id"], "donem": k.get("donem")})
+                                                          "aciklama": v.get("aciklama"), "id": h["id"], "donem": k.get("donem"),
+                                                          "zaman": h.get("kayit_zamani")})
     return out
 
 
-def odeme_ayi(kart: dict, tarih, donem: Optional[str], teyit_son: dict, teyit_tarih: Optional[dict] = None) -> str:
+def _teyitten_sonra(x: dict, tarih, zaman) -> bool:
+    """TEK kural (E2E #2): hareket teyitten SONRA mı — teyit gününden sonraki gün, ya da AYNI gün teyit kaydından sonra yazılmışsa
+    (önce: aynı günkü her hareket dışarıda kalıyordu; teyidi sabah girip öğlen kartla ödeme yapılınca bakiye yeni teyide kadar yanlış)."""
+    t = tarih.isoformat() if hasattr(tarih, "isoformat") else str(tarih)
+    if x["gun"] != t:
+        return x["gun"] > t
+    # Fable: GERİYE DÖNÜK teyit (dünün bankası bugün girildi) → o günün bütün hareketleri bankanın rakamında sayılır (eski kural);
+    # zaman kıyası yalnız teyit, kendi gününde girildiyse (sabah teyit + öğlen kartla ödeme)
+    if not zaman or __import__("evvel_yeni_cekirdek").tr_gun(zaman).isoformat() != t:
+        return False
+    return bool(x.get("zaman") and x["zaman"] > zaman)
+
+
+def odeme_ayi(kart: dict, tarih, donem: Optional[str], teyit_son: dict, teyit_tarih: Optional[dict] = None,
+              odeme_zaman=None, teyit_zaman: Optional[dict] = None) -> str:
     """TEK KURAL (tekrar denetimi C-T1-09: özet ile takvim ayrı kuralla kalan hesaplıyordu) — bir kart borcu ödemesi hangi ayın
     ekstresine sayılır: dönemi açıkça seçildiyse o ay; değilse tarihinden SONRAKİ ilk son ödeme günü (teyitteki gerçek tarih > kartın
     son ödeme günü > ay sonu). teyit_son: {'YYYY-AA': date}.
@@ -101,7 +118,10 @@ def odeme_ayi(kart: dict, tarih, donem: Optional[str], teyit_son: dict, teyit_ta
         a = f"{y}-{m:02d}"
         son = teyit_son.get(a) or _son_gun(y, m, kart.get("son_odeme_gunu") or 31)
         if son >= t:
-            if teyit_tarih.get(a) and t <= teyit_tarih[a]:
+            # B54 (Fable 22 Eki): aynı gün → saat sırası TEK kuralla (_teyitten_sonra): sabah teyit + öğlen ödeme = BU ayın ekstresi.
+            # Saat yoksa (eski kayıt) ya da teyit geriye dönükse eski tarih kuralı aynen (KAYIP OLMAMA).
+            if teyit_tarih.get(a) and not _teyitten_sonra({"gun": t.isoformat(), "zaman": odeme_zaman}, teyit_tarih[a],
+                                                          (teyit_zaman or {}).get(a)):
                 return __import__("evvel_yeni_cekirdek").ay_kaydir(a, -1)   # ekstre ondan sonra kesildi → önceki ayın geç ödemesi (T1-22)
             return a
         y, m = y + (m == 12), m % 12 + 1
@@ -124,7 +144,7 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
     kart_hazirla(cur)
     bugun = bugun or _bugun()
     kartlar = __import__("evvel_yeni_tanim_api").kartlar(cur)   # Tanımlar'ın kapısı (F#31)
-    cur.execute("SELECT * FROM ey_kart_teyit ORDER BY tarih DESC, zaman DESC")
+    cur.execute("SELECT * FROM ey_kart_teyit WHERE kaynak <> 'geri_alindi' ORDER BY tarih DESC, zaman DESC")
     teyitler = {}
     for r in cur.fetchall() or []:
         teyitler.setdefault(dict(r)["kart_id"], []).append(dict(r))
@@ -136,7 +156,7 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
         ty = teyitler.get(k["id"], [])
         cipa = ty[0] if ty else None
         hs = sorted(H.get(k["id"], []), key=lambda x: x["gun"])
-        sonra = [x for x in hs if cipa and x["gun"] > cipa["tarih"].isoformat()]
+        sonra = [x for x in hs if cipa and _teyitten_sonra(x, cipa["tarih"], cipa.get("zaman"))]
         kul = (int(cipa["kullanilabilir"]) + sum(x["tutar"] for x in sonra)) if cipa else None
         limit = int(k["limit_tutar"]) if k.get("limit_tutar") else None
         # son ödeme: çıpanın ekstre borcu − çıpadan sonra yapılan borç ödemeleri
@@ -147,10 +167,11 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
                 ety = [t for t in reversed(ty) if t.get("son_odeme") and t.get("ekstre_borc") is not None]   # B3: takvimle AYNI teyit kümesi
                 tson = {t["son_odeme"].strftime("%Y-%m"): t["son_odeme"] for t in ety}
                 ttar = {t["son_odeme"].strftime("%Y-%m"): t["tarih"] for t in ety}
+                tzam = {t["son_odeme"].strftime("%Y-%m"): t.get("zaman") for t in ety}
                 e_ay = ekstre_cipa["son_odeme"].strftime("%Y-%m")
-                odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and odeme_ayi(k, x["gun"], x.get("donem"), tson, ttar) == e_ay)
+                odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and odeme_ayi(k, x["gun"], x.get("donem"), tson, ttar, x.get("zaman"), tzam) == e_ay)
             else:
-                odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and x["gun"] > ekstre_cipa["tarih"].isoformat())
+                odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and _teyitten_sonra(x, ekstre_cipa["tarih"], ekstre_cipa.get("zaman")))
             son_tarih = ekstre_cipa.get("son_odeme")
             kaydi = False
             if son_tarih and son_tarih < bugun:
@@ -185,6 +206,7 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
                           "fark": _tl_sayi(int(t["kullanilabilir"]) - int(t["sistem_beklenen"])) if t.get("sistem_beklenen") is not None else None,
                           "girilen": t.get("girilen")} for t in ty[:6]],
             "_cipa_tarih": cipa["tarih"].isoformat() if cipa else None, "_cipa_kul": int(cipa["kullanilabilir"]) if cipa else None,
+            "_cipa_zaman": cipa.get("zaman") if cipa else None,
             "_sonra_kr": [(x["gun"], int(x["tutar"])) for x in sonra],   # C-T1-02: teyit beklenen BÜTÜN hareketlerden (kuruş)
             "_limit": limit,
         })
@@ -200,7 +222,7 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
         lim = max((k["_limit"] or 0) for k in ks) or None
         kul = None
         if en:
-            kul = en["_cipa_kul"] + sum(x["tutar"] for k in ks for x in H.get(k["id"], []) if x["gun"] > en["_cipa_tarih"])
+            kul = en["_cipa_kul"] + sum(x["tutar"] for k in ks for x in H.get(k["id"], []) if _teyitten_sonra(x, en["_cipa_tarih"], en["_cipa_zaman"]))
         for k in ks:
             k["grup"] = {"ad": g, "kartlar": [x["ad"] for x in ks], "limit": _tl_sayi(lim) if lim else None,
                          "kullanilabilir": _tl_sayi(kul) if kul is not None else None,
@@ -254,12 +276,12 @@ def kart_takvimi(yil: Optional[int] = None):
         kart_hazirla(cur)
         kartlar = __import__("evvel_yeni_tanim_api").kartlar(cur)   # Tanımlar'ın kapısı (F#31)
         # Codex: aynı aya birden çok teyit → EN SON girilen kazanır (sıralı okuma); teyitteki gerçek son ödeme tarihi korunur
-        cur.execute("""SELECT kart_id, ekstre_borc, son_odeme, tarih FROM ey_kart_teyit
-                        WHERE ekstre_borc IS NOT NULL AND son_odeme IS NOT NULL ORDER BY tarih, zaman""")
+        cur.execute("""SELECT kart_id, ekstre_borc, son_odeme, tarih, zaman FROM ey_kart_teyit
+                        WHERE ekstre_borc IS NOT NULL AND son_odeme IS NOT NULL AND kaynak <> 'geri_alindi' ORDER BY tarih, zaman""")
         teyit = {}
         for r in cur.fetchall() or []:
             r = dict(r)
-            teyit[(r["kart_id"], r["son_odeme"].strftime("%Y-%m"))] = (int(r["ekstre_borc"]), r["son_odeme"], r["tarih"])
+            teyit[(r["kart_id"], r["son_odeme"].strftime("%Y-%m"))] = (int(r["ekstre_borc"]), r["son_odeme"], r["tarih"], r["zaman"])
         eski = _eski_plan(cur)
         bas = kasa.donem_baslangici(cur).strftime("%Y-%m")
         import evvel_yeni_odeme_api as odeme   # PUBLIC özet (Kasa'nın iç defterine dokunmadan)
@@ -280,7 +302,8 @@ def kart_takvimi(yil: Optional[int] = None):
                 yer[x["donem"]] = yer.get(x["donem"], 0) + x["toplam"]
                 continue
             hedef_ay = odeme_ayi(k, x["tarih"], None, {a: v[1] for (kid_, a), v in teyit.items() if kid_ == k["id"]},
-                                 {a: v[2] for (kid_, a), v in teyit.items() if kid_ == k["id"]})
+                                 {a: v[2] for (kid_, a), v in teyit.items() if kid_ == k["id"]}, x.get("zaman"),
+                                 {a: v[3] for (kid_, a), v in teyit.items() if kid_ == k["id"]})
             yer[hedef_ay] = yer.get(hedef_ay, 0) + x["toplam"]
         aylar = []
         for m in range(1, 13):
@@ -315,7 +338,7 @@ def kart_ozet():
         kartlar = kart_durumu(cur)
     bugun = _bugun()
     for k in kartlar:
-        for x in ("_cipa_tarih", "_cipa_kul", "_limit", "_sonra_kr"):
+        for x in ("_cipa_tarih", "_cipa_kul", "_cipa_zaman", "_limit", "_sonra_kr"):
             k.pop(x, None)
     goruldu, tekil = set(), []
     for k in kartlar:   # ortak limitli grup toplamda BİR kez
@@ -335,9 +358,9 @@ def kart_ozet():
 
 
 class TeyitBody(BaseModel):
-    kullanilabilir: Decimal
+    kullanilabilir: TrTutar
     tarih: Optional[str] = None
-    ekstre_borc: Optional[Decimal] = None
+    ekstre_borc: Optional[TrTutar] = None
     son_odeme: Optional[str] = None
     not_: Optional[str] = None
 
@@ -368,7 +391,7 @@ def kart_teyit(kid: str, body: TeyitBody, x_evvel_oturum: Optional[str] = Header
         eb = _kurus(body.ekstre_borc) if body.ekstre_borc is not None else None
         cur.execute("""INSERT INTO ey_kart_teyit (id, kart_id, tarih, kullanilabilir, ekstre_borc, son_odeme, sistem_beklenen, kaynak, not_, girilen)
                        VALUES (%s,%s,%s,%s,%s,%s,%s,'elle',%s,%s)""",
-                    ("kt-" + uuid.uuid4().hex[:12], kid, tarih, _kurus(body.kullanilabilir), eb or None, son, beklenen,
+                    ("kt-" + uuid.uuid4().hex[:12], kid, tarih, _kurus(body.kullanilabilir), eb, son, beklenen,   # Codex P1: 0 ₺ ekstre de teyit
                      (body.not_ or "").strip()[:200] or None, kim))
     fark = (_kurus(body.kullanilabilir) - beklenen) if beklenen is not None else None
     if fark is None:
@@ -376,18 +399,21 @@ def kart_teyit(kid: str, body: TeyitBody, x_evvel_oturum: Optional[str] = Header
     elif abs(fark) < 100:
         msg = "Teyit kaydedildi — sistemle TUTTU ✓"
     else:
-        msg = (f"Teyit kaydedildi — bankada {_tl_sayi(abs(fark)):,.2f} ₺ {'daha AZ' if fark < 0 else 'daha FAZLA'} kullanılabilir: "
+        msg = (f"Teyit kaydedildi — bankada {_tl_tr(abs(fark))} {'daha AZ' if fark < 0 else 'daha FAZLA'} kullanılabilir: "
                + ("forma girilmemiş kart harcaması olabilir" if fark < 0 else "girilmemiş kart borcu ödemesi / iade olabilir"))
     return {"ok": True, "mesaj": msg, "fark": _tl_sayi(fark) if fark is not None else None}
 
 
 @router.post("/teyit/{tid}/sil")
-def teyit_sil(tid: str):
-    """Yanlış girilen teyidi geri al (önceki çıpa geçerli olur)."""
+def teyit_sil(tid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Yanlış girilen teyidi geri al (önceki çıpa geçerli olur). E2E #19: SİLİNMEZ — 'geri_alindi' damgası + kim/ne zaman notu (iz)."""
     _hazirla()
     with db() as (conn, cur):
         kart_hazirla(cur)
-        cur.execute("DELETE FROM ey_kart_teyit WHERE id=%s AND kaynak='elle' RETURNING id", (tid,))
+        kim = __import__("evvel_yeni_cekirdek").merkez_aktor(cur, x_evvel_oturum)
+        cur.execute("""UPDATE ey_kart_teyit SET kaynak='geri_alindi',
+                              not_ = LEFT(COALESCE(not_ || ' · ', '') || 'geri alındı: ' || %s || ' ' || to_char(NOW() AT TIME ZONE 'Europe/Istanbul', 'DD.MM HH24:MI'), 400)
+                        WHERE id=%s AND kaynak='elle' RETURNING id""", (kim, tid))
         if not cur.fetchone():
             raise HTTPException(404, "Teyit bulunamadı")
     return {"ok": True}

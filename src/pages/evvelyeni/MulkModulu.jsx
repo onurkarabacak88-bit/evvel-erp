@@ -4,7 +4,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayiTR, tKisa } from './KasaModulu';
-import { ayTR, bugunTR } from '../../utils/trTarih';
+import { ayAdi, ayTR, bugunTR } from '../../utils/trTarih';
 import { AY, AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici } from './AyTakvim';
 
 export const MULK_SAYFALAR = [
@@ -79,7 +79,7 @@ function EvKiralari({ onToast }) {
   };
   const satirlar = (v?.evler || []).map((e) => ({
     id: e.id, baslik: e.ad, alt: `${e.kiraci || 'kiracı yok'} · ${fmt(e.kira)} ₺ · ayın ${e.odeme_gunu}. günü${e.aktif ? '' : ' · kapalı'}`, e,
-    aylar: e.aylar.map((a) => ({ ...a, ust: a.odenen > 0 ? fmt(a.odenen) : fmt(a.beklenen), alt: a.artis_ayi ? '📈 artış' : a.durum === 'kismi' ? `kalan ${fmt(a.kalan)}` : null })),
+    aylar: e.aylar.map((a) => ({ ...a, ust: a.odenen > 0 ? fmt(a.odenen) : fmt(a.beklenen), alt: a.fazla > 0 ? `+${fmt(a.fazla)} fazla` : a.artis_ayi ? '📈 artış' : (a.durum === 'kismi' || (a.odenen > 0 && a.kalan > 0)) ? `kalan ${fmt(a.kalan)}` : null })),
     sag: fmt(e.yil_gelen), sagAlt: `/ ${fmt(e.yil_beklenen)}`,
   }));
   return (
@@ -94,7 +94,7 @@ function EvKiralari({ onToast }) {
       {v && v.evler.length > 0 && <AyIzgara satirlar={satirlar} onHucre={(s, a, i) => setSec({ e: s.e, a, i })} />}
       {sec && (
         <Pencere baslik={`🏠 ${sec.e.ad} · ${AY_UZUN[sec.i]} ${v.yil}`} onKapat={() => setSec(null)}>
-          <div>Kira <b style={num}>{fmt(sec.a.beklenen)}</b> ₺ · gelen <b style={num}>{fmt(sec.a.odenen)}</b> ₺ · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺</div>
+          <div>Kira <b style={num}>{fmt(sec.a.beklenen)}</b> ₺ · gelen <b style={num}>{fmt(sec.a.odenen)}</b> ₺ · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺{sec.a.fazla > 0 && <> · <b style={{ color: R.amber }}>+{fmt(sec.a.fazla)} ₺ fazla geldi</b></>}</div>
           <div style={{ color: R.not, fontSize: 13 }}>Ödeme günü {tKisa(sec.a.vade)} · {DURUM[sec.a.durum]?.ad}{sec.e.kiraci ? ` · ${sec.e.kiraci}` : ''}</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {sec.a.kalan > 0 && <Dugme kucuk ana onClick={() => { setTah({ e: sec.e, a: sec.a, tutar: String(sec.a.kalan), tarih: gunBugun(), istek_id: yeniId() }); setSec(null); }}>Kira geldi →</Dugme>}
@@ -103,7 +103,7 @@ function EvKiralari({ onToast }) {
         </Pencere>
       )}
       {tah && (
-        <Pencere baslik={`💰 ${tah.e.ad} · ${tah.a.ay} kirası geldi`} onKapat={() => setTah(null)}>
+        <Pencere baslik={`💰 ${tah.e.ad} · ${ayAdi(tah.a.ay)} kirası geldi`} onKapat={() => setTah(null)}>
           <div style={{ fontSize: 13, color: R.metin2 }}>Fatma'nın kira hesabına giriş olarak yazılır.</div>
           <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Gelen tutar (₺)<input style={alan} inputMode="decimal" value={tah.tutar} onChange={(e) => setTah((t) => ({ ...t, tutar: e.target.value }))} /></label>
           <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Geldiği gün<input style={alan} type="date" value={tah.tarih} max={gunBugun()} onChange={(e) => setTah((t) => ({ ...t, tarih: e.target.value }))} /></label>
@@ -140,9 +140,9 @@ function IsletmeBorcu({ onToast }) {
   const [yil, setYil] = useState(() => new Date().getFullYear());
   const [v, hata, yukle] = useVeri('/evvel-yeni/mulk/borc', yil);
   const [mesgul, setMesgul] = useState('');
-  const karar = async (x, k) => {
+  const karar = async (x, k, alan) => {
     setMesgul(x.id);
-    try { const r = await api('/evvel-yeni/mulk/karar', { method: 'POST', body: { hareket_id: x.id, karar: k } }); onToast?.(r.mesaj); yukle(); }
+    try { const r = await api('/evvel-yeni/mulk/karar', { method: 'POST', body: { hareket_id: x.id, karar: k, alan: alan || null } }); onToast?.(r.mesaj); yukle(); }
     catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
     setMesgul('');
   };
@@ -165,6 +165,11 @@ function IsletmeBorcu({ onToast }) {
               <Dugme kucuk ana disabled={mesgul === x.id} onClick={() => karar(x, 'borc')}>{x.yon === 'cikis' ? 'İşletme borcu' : 'Borç geri ödemesi'}</Dugme>
             </div>
           ))}
+        </div>
+      )}
+      {v && v.sube_sor?.length > 0 && (
+        <div style={{ ...kart, padding: '10px 14px', fontSize: 13, borderColor: R.amber }}>
+          <b>Hangi şubenin borcu?</b> {v.sube_sor.length} geri ödeme, borcu olmayan şubeden düşüldü ({v.sube_sor.map((x) => `${tKisa(x.gun)} ${fmt(x.tutar)} ₺`).join(' · ')}) — aşağıdaki <b>Hareketler</b>'de şubesini seç.
         </div>
       )}
       {v && v.kararli?.length > 0 && (
@@ -212,7 +217,16 @@ function IsletmeBorcu({ onToast }) {
             {v.hareketler.map((x) => (
               <div key={x.id} style={{ display: 'flex', gap: 10, borderTop: `1px solid ${R.cizgi}`, padding: '5px 0', fontSize: 13 }}>
                 <span style={{ width: 52, color: R.metin2 }}>{tKisa(x.gun)}</span><span style={{ width: 90 }}>{(v.subeler.find((s) => s.sube === x.sube) || {}).ad}</span>
-                <span style={{ flex: 1 }}>{x.aciklama}</span><b style={{ ...num, color: x.alinan > 0 ? R.kirmizi : R.yesil }}>{x.alinan > 0 ? `+${fmt(x.alinan)}` : `−${fmt(x.geri)}`}</b>
+                <span style={{ flex: 1 }}>{x.aciklama}</span>
+                {x.sube_secilebilir && (   // B79: geri ödeme hangi şubenin borcunu kapatır
+                  <select value={x.sube_secili ? (x.sube === 'ortak' ? 'ortak' : `sube:${x.sube}`) : ''} disabled={mesgul === x.id} title="Bu geri ödeme hangi şubenin borcunu kapattı?"
+                    onChange={(e) => karar(x, e.target.value, 'sube')} style={{ fontSize: 12 }}>
+                    <option value="">{x.sube_secili ? 'seçimi kaldır' : `şube seç (şimdilik: ${(v.subeler.find((s) => s.sube === x.sube) || {}).ad || x.sube})`}</option>
+                    {v.subeler.filter((s) => s.sube !== 'ortak').map((s) => <option key={s.sube} value={`sube:${s.sube}`}>{s.ad}</option>)}
+                    <option value="ortak">Ortak (şubesiz)</option>
+                  </select>
+                )}
+                <b style={{ ...num, color: x.alinan > 0 ? R.kirmizi : R.yesil }}>{x.alinan > 0 ? `+${fmt(x.alinan)}` : `−${fmt(x.geri)}`}</b>
               </div>
             ))}
           </div>
@@ -231,10 +245,16 @@ function Uyarilar({ onSekme }) {
       <Baslik ad="Uyarılar" />
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Hazırlanıyor…</div>}
-      {v && v.geciken.length === 0 && v.artis.length === 0 && <div style={{ color: R.not }}>Uyarı yok.</div>}
+      {v && v.geciken.length === 0 && v.artis.length === 0 && !(v.fazla || []).length && <div style={{ color: R.not }}>Uyarı yok.</div>}
       {(v?.geciken || []).map((g) => (
         <div key={g.id + g.ay} style={{ ...kart, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Cip tur="kirmizi">Kira gelmedi</Cip><span style={{ flex: 1 }}><b>{g.ad}</b>{g.kiraci ? ` · ${g.kiraci}` : ''} · {g.ay} · kalan <b style={num}>{fmt(g.kalan)}</b> ₺</span>
+          <Cip tur="kirmizi">Kira gelmedi</Cip><span style={{ flex: 1 }}><b>{g.ad}</b>{g.kiraci ? ` · ${g.kiraci}` : ''} · {ayAdi(g.ay)} · kalan <b style={num}>{fmt(g.kalan)}</b> ₺</span>
+          <Dugme kucuk onClick={() => onSekme?.('mulk_takvim')}>Ev kiraları</Dugme>
+        </div>
+      ))}
+      {(v?.fazla || []).map((g) => (
+        <div key={`f${g.id}${g.ay}`} style={{ ...kart, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+          <Cip tur="sari">Fazla geldi</Cip><span style={{ flex: 1 }}><b>{g.ad}</b>{g.kiraci ? ` · ${g.kiraci}` : ''} · {ayAdi(g.ay)} · beklenen <b style={num}>{fmt(g.beklenen)}</b> ₺, gelen <b style={num}>{fmt(g.odenen)}</b> ₺ → <b style={num}>+{fmt(g.fazla)}</b> ₺ (sonraki aya ait olabilir)</span>
           <Dugme kucuk onClick={() => onSekme?.('mulk_takvim')}>Ev kiraları</Dugme>
         </div>
       ))}

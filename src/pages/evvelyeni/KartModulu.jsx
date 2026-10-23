@@ -177,7 +177,7 @@ export function KartTakvim({ onSekme }) {
   const satirlar = (v?.kartlar || []).map((k) => ({
     id: k.id, baslik: k.ad, alt: k.son_odeme_gunu ? `son ödeme ${k.son_odeme_gunu}'i` : 'son ödeme günü tanımsız', k,
     aylar: k.aylar.map((a) => ({ ...a, ust: a.odenen > 0 ? fmt(a.odenen) : a.ekstre != null ? fmt(a.ekstre) : a.durum === 'once' ? '·' : '?',
-      alt: a.iki_yerde ? '⚠ iki sistemde' : a.durum === 'kismi' ? `kalan ${fmt(a.kalan)}` : (a.ekstre == null && !['once', 'odendi'].includes(a.durum) ? 'ekstre yok' : null) })),
+      alt: a.iki_yerde ? '⚠ iki sistemde' : (a.durum === 'kismi' || (a.odenen > 0 && a.kalan > 0)) ? `kalan ${fmt(a.kalan)}` : (a.ekstre == null && !['once', 'odendi'].includes(a.durum) ? 'ekstre yok' : null) })),
     sag: fmt(k.yil_odenen), sagAlt: 'ödenen',
   }));
   return (

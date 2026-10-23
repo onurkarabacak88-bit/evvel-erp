@@ -11,7 +11,8 @@ otomatik gelsin; ay ay ödenen kiraların listesi yıllıkta ay ay tutulsun — 
 """
 
 from datetime import date
-from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -90,6 +91,8 @@ def kira_yaz(cur, sube_id: str, kim: str, tutar=None, gecerli_ay=None, artis_ayi
     for g, ad in ((artis_ayi, "Artış ayı 1–12"), (odeme_gunu, "Kira ödeme günü 1–31")):
         if g is not None and not 1 <= int(g) <= (12 if ad.startswith("Artış") else 31):
             raise HTTPException(400, f"{ad} olmalı")
+    if tutar is not None and _kurus(tutar) < 0:
+        raise HTTPException(400, "Kira eksi olamaz")   # E2E #8: −100 ₺ şube giderine eksi yazılıyordu
     if tutar is not None:
         ay = (gecerli_ay or _bugun().strftime("%Y-%m"))[:7]
         try:
@@ -208,7 +211,7 @@ def kira_aylari(cur, yil: int, bugun: date) -> list:
 
 
 class KiraBody(BaseModel):
-    tutar: Optional[Decimal] = None
+    tutar: Optional[TrTutar] = None
     gecerli_ay: Optional[str] = None
     artis_ayi: Optional[int] = None
     odeme_gunu: Optional[int] = None
@@ -234,3 +237,37 @@ def kira_tahakkuk(cur, ay: str) -> dict:
     for r in tanim_listesi(cur, "ey_sube", ("kira_yok",)):
         out[r["id"]] = "yok" if r["kira_yok"] else kira_tutari(cur, r["id"], ay)
     return out
+
+
+_AY_AD = ("Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık")
+
+
+def _bekleyen(cur, baglam: dict) -> list:
+    """Bekleyen işler › Ödemeler (B86): son günü geçmiş, kalanı olan ŞUBE kirası — şube başına TEK satır, son 3 ay
+    (yıl sınırını aşar). Ödeme girilince takvim_durumu değişir, satır kendiliğinden düşer (Gördüm / kalıcı kayıt yok)."""
+    from evvel_yeni_cekirdek import ay_kaydir
+    bugun = _bugun()
+    son3 = {ay_kaydir(bugun.strftime("%Y-%m"), -i) for i in range(3)}
+    subeler = {}
+    with savepoint(cur, "sp_ey_kira_bekleyen"):   # okuma hatası ortak işlemi bozmasın
+        for yil in sorted({int(a[:4]) for a in son3}):
+            for s in kira_aylari(cur, yil, bugun):
+                subeler.setdefault(s["sube_id"], {"ad": s["ad"], "gec": []})["gec"] += [
+                    a for a in s["aylar"] if a["ay"] in son3 and a["durum"] == "gecikti" and a["kalan"] > 0]
+    out = []
+    for sid, s in subeler.items():
+        if not s["gec"]:
+            continue
+        g = sorted(s["gec"], key=lambda a: a["ay"])
+        top = sum(a["kalan"] for a in g)
+        aylar = ", ".join(_AY_AD[int(a["ay"][5:7]) - 1] for a in g)
+        v = g[0]["vade"]
+        out.append({"tur": "sube_kira_gecikti", "genel": True, "grup": "odeme", "id": f"sube_kira:{sid}", "tarih": v,
+                    "etiket": "🏠 Şube kirası ödenmedi", "ad": s["ad"],
+                    "alt": f"{aylar} · {f'{top:,.0f}'.replace(',', '.')} ₺ kalan · son gün {v[8:10]}.{v[5:7]}",
+                    "sayfa": "kira_takvimi", "dugme": "Kira takvimi"})
+    return out
+
+
+from evvel_yeni_cekirdek import bekleyen_is_kaydet  # noqa: E402
+bekleyen_is_kaydet("kira_sube", _bekleyen)

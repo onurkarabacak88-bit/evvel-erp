@@ -13,7 +13,8 @@ Tak-çıkar: Ödeme'nin PUBLIC `odeme_listesi`ni, Kasa'nın PUBLIC `donem_baslan
 import logging
 import uuid
 from datetime import date
-from decimal import Decimal
+
+from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
 from typing import Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -94,6 +95,14 @@ def _krediler(cur, hepsi: bool = False) -> list:
     return [dict(r) for r in cur.fetchall() or []]
 
 
+def kredi_listesi(cur) -> list:
+    """PUBLIC (Ödeme › kredi taksiti, B67): aktif krediler [{id, ad}] — çağıranın işleminde, tablo yoksa boş."""
+    from evvel_yeni_cekirdek import tablo_var
+    if not tablo_var(cur, "ey_kredi"):
+        return []
+    return [{"id": str(k["id"]), "ad": k["ad"]} for k in _krediler(cur)]
+
+
 def _yeni_odenen(cur) -> dict:
     """Ödeme modülünün PUBLIC özetinden (tek okuma): {(kredi_id, 'YYYY-AA'): kuruş} — ait olduğu ay (takvimden seçilen)."""
     import evvel_yeni_odeme_api as odeme
@@ -129,6 +138,9 @@ def takvim(yil: Optional[int] = None):
         eski = _eski_odenen(cur)
         bas = kasa.donem_baslangici(cur).isoformat()[:7]
         yeni = _yeni_odenen(cur)
+        # B67: krediye bağlanmamış kredi taksiti ödemeleri — takvimde 'ödendi' görünmez; Ödeme defteri › Düzelt ile bağlanır (kayıp olmasın)
+        import evvel_yeni_odeme_api as _od
+        bagsiz = [{"id": x["id"], "tarih": x["tarih"], "toplam": _tl_sayi(int(x["toplam"]))} for x in _od.konu_odemeleri(cur, "kredi") if not x.get("kredi_id")]
     aylar = [f"{yil}-{m:02d}" for m in range(1, 13)]
     out = []
     for k in kr:
@@ -154,13 +166,13 @@ def takvim(yil: Optional[int] = None):
                     "yil_odenen": _tl_sayi(sum(int(round(x["odenen"] * 100)) for x in satir))})
     ay_top = [{"ay": a, "beklenen": round(sum(k["aylar"][i]["beklenen"] for k in out), 2),
                "odenen": round(sum(k["aylar"][i]["odenen"] for k in out), 2)} for i, a in enumerate(aylar)]
-    return {"yil": yil, "bugun": bugun.isoformat(), "baslangic": bas, "krediler": out, "ay_toplam": ay_top}
+    return {"yil": yil, "bugun": bugun.isoformat(), "baslangic": bas, "krediler": out, "ay_toplam": ay_top, "bagsiz": bagsiz}
 
 
 class KrediBody(BaseModel):
     ad: str
     tur: Optional[str] = None
-    aylik_taksit: Decimal
+    aylik_taksit: TrTutar
     odeme_gunu: int
     ilk_ay: str
     taksit_sayisi: Optional[int] = None
