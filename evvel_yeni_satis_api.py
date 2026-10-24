@@ -903,19 +903,32 @@ def _devir_defteri_eski(ay: Optional[str] = None):
                 aksam = {"kim": kapanan.get((sid, gi)) or k.get("personel_ad"), "saat": saat(k["cevap_ts"], g), "kor_toplam": f(k["kasa_sayim"]),
                          "teslim": f(k["teslim"]) or 0.0, "kime": ", ".join(f"{t['alan']} {t['tutar']:.0f}" for t in tes if t["tur"] == "gun_sonu") or None,
                          "ara_teslim": ", ".join(f"{t['alan']} {t['tutar']:.0f}" for t in tes if t["tur"] != "gun_sonu") or None,
-                         "birakilan": _eski_birakilan(k, km)}   # TEK kural (T1-33)
+                         "birakilan": _eski_birakilan(k, km)}   # TEK kural (T1-33) — beyan önce (sahip 24 Eki canlı vaka + Codex: sıra değişmez)
+                # Alsancak 23 Eki (sahip "neden +3243, tuttu görünmüyor"): personel beyanı 0, kör sayım 3230, teslim yok → beyan ile
+                # SAYIMDAN KALAN ayrıca gösterilir (Codex: hangisinin yanlış olduğu kesin bilinemez; 0 geçerli değer)
+                ara = sum(t["tutar"] for t in tes if t["tur"] != "gun_sonu")
+                aksam["sayimdan_kalan"] = round(f(k["kasa_sayim"]) - (f(k["teslim"]) or 0.0) - ara, 2) if k["kasa_sayim"] is not None else None
             ertesi = {"kim": ka.get("personel_ad"), "saat": saat(ka["cevap_ts"], g + timedelta(days=1)), "sayilan": f(ka["kasa_sayim"])} if ka else None
-            kopuk = None
+            kopuk = kopuk_say = None
             if aksam and ertesi and aksam["birakilan"] is not None and ertesi["sayilan"] is not None:
                 kopuk = round(ertesi["sayilan"] - aksam["birakilan"], 2)
+                if aksam.get("sayimdan_kalan") is not None:
+                    kopuk_say = round(ertesi["sayilan"] - aksam["sayimdan_kalan"], 2)
+            beyan_var = bool(k and (k.get("devir") is not None or km.get("kasiyer_devir_beyan") is not None))   # Fable #2: beyansız gün yedek kuralı (sayım − teslim) ara düşmez → sahte çelişki olmasın
+            celiski = bool(beyan_var and aksam and aksam.get("sayimdan_kalan") is not None and aksam["birakilan"] is not None
+                           and round(aksam["sayimdan_kalan"] - aksam["birakilan"], 2) != 0)
+            tutuyor = kopuk is not None and kopuk == 0 and not celiski   # sahip: devirde 0 ₺ tolerans (kuruş) — eski 'abs < 1' gevşekliği kalktı (Codex)
+            durum = None if kopuk is None else ("tuttu" if tutuyor else ("celiskili" if (kopuk == 0 or kopuk_say == 0) else "kopuk"))
             gunler.append({"gun": gi, "sabah": sabah if a else None, "vardiya": vardiya, "aksam": aksam, "ertesi_sabah": ertesi,
                            "elle_teslim": ", ".join(elle_tes.get((sid, gi), [])) or None,
-                           "zincir_fark": kopuk, "zincir_tutuyor": (kopuk is not None and abs(kopuk) < 1)})
+                           "zincir_fark": kopuk, "zincir_fark_sayim": kopuk_say, "zincir_celiski": celiski, "zincir_durum": durum,
+                           "zincir_tutuyor": tutuyor})
             g += timedelta(days=1)
         out.append({"sube_id": sid, "ad": s["ad"], "gunler": gunler,
                     "panel_yok": not any(x["sabah"] or x["aksam"] for x in gunler),
                     "ozet": {"tutan": sum(1 for x in gunler if x["zincir_tutuyor"]),
-                             "kopuk": sum(1 for x in gunler if x["zincir_fark"] is not None and not x["zincir_tutuyor"])}})
+                             "kopuk": sum(1 for x in gunler if x.get("zincir_durum") == "kopuk"),
+                             "celiskili": sum(1 for x in gunler if x.get("zincir_durum") == "celiskili")}})
     return {"ay": a_, "subeler": out, "not": "Zincir: akşam bırakılan (devir) = ertesi sabah sayılan olmalı. Kopukluk kırmızı."}
 
 

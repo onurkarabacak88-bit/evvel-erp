@@ -242,7 +242,7 @@ export function DevirDefteri() {
   useEffect(() => {
     const n = ++no.current;
     setV(null);
-    api(`/evvel-yeni/satis/devir-defteri?ay=${ay}`).then((r) => { if (n === no.current) { setV(r); setHata(null); setSube((x) => x || r.subeler.find((s) => s.ozet.tutan + s.ozet.kopuk > 0)?.sube_id || r.subeler[0]?.sube_id); } })
+    api(`/evvel-yeni/satis/devir-defteri?ay=${ay}`).then((r) => { if (n === no.current) { setV(r); setHata(null); setSube((x) => x || r.subeler.find((s) => s.ozet.tutan + s.ozet.kopuk + (s.ozet.celiskili || 0) > 0)?.sube_id || r.subeler[0]?.sube_id); } })
       .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
   }, [ay]);
   const s = v && v.subeler.find((x) => x.sube_id === sube);
@@ -266,7 +266,7 @@ export function DevirDefteri() {
             <button key={x.sube_id} type="button" onClick={() => setSube(x.sube_id)} style={{
               font: 'inherit', fontWeight: 700, padding: '8px 14px', borderRadius: 10, cursor: 'pointer',
               border: `1px solid ${sube === x.sube_id ? 'var(--pi-accent)' : 'var(--pi-line)'}`, background: sube === x.sube_id ? 'var(--pi-accent)' : 'var(--pi-paper)', color: sube === x.sube_id ? 'var(--pi-on-accent)' : R.krem,
-            }}>{x.ad} <span style={{ fontWeight: 400, fontSize: 12 }}>✓{x.ozet.tutan}{x.ozet.kopuk ? ` · ✗${x.ozet.kopuk}` : ''}</span></button>
+            }}>{x.ad} <span style={{ fontWeight: 400, fontSize: 12 }}>✓{x.ozet.tutan}{x.ozet.celiskili ? ` · ⚠${x.ozet.celiskili}` : ''}{x.ozet.kopuk ? ` · ✗${x.ozet.kopuk}` : ''}</span></button>
           ))}
         </div>
         {s && s.panel_yok && <div style={{ ...kart, padding: '10px 14px', color: R.not, fontSize: 13 }}><b style={{ color: 'var(--pi-ink)' }}>{s.ad}</b> · panelde sayım / kapanış yapılmıyor — bu ekranın kapsamı dışında (ciro Gelir'de)</div>}
@@ -277,7 +277,7 @@ export function DevirDefteri() {
                 <th style={hucre}>Gün</th><th style={hucre}>🌅 Sabah sayımı</th><th style={hucre}>🔁 Vardiya devri</th><th style={hucre}>🌙 Akşam kapanış</th><th style={hucre}>➡️ Ertesi sabah</th><th style={hucre}>Zincir</th>
               </tr></thead>
               <tbody>{s.gunler.map((g) => (
-                <tr key={g.gun} style={{ background: g.zincir_fark != null && !g.zincir_tutuyor ? 'rgba(192,58,43,.06)' : undefined }}>
+                <tr key={g.gun} style={{ background: g.zincir_durum === 'celiskili' ? 'rgba(201,138,30,.07)' : g.zincir_fark != null && !g.zincir_tutuyor ? 'rgba(192,58,43,.06)' : undefined }}>
                   <td style={{ ...hucre, ...num, whiteSpace: 'nowrap' }}><b>{tKisa(g.gun)}</b></td>
                   <td style={hucre}>{g.sabah ? <><b>{g.sabah.kim || '?'}</b> · {g.sabah.saat}<br />sayılan <b style={num}>{tut(g.sabah.sayilan)}</b>
                     {g.sabah.dun_birakilan != null && <span style={{ color: R.not }}> · {dunAd(g.sabah.dun_gunu)} bırakılan {tut(g.sabah.dun_birakilan)}</span>}{fark(g.sabah.fark)}</> : <span style={{ color: R.not }}>açılış yok</span>}</td>
@@ -305,10 +305,17 @@ export function DevirDefteri() {
                   <td style={hucre}>{g.aksam ? <><b>{g.aksam.kim || '?'}</b> · {g.aksam.saat}<br />kör toplam <b style={num}>{tut(g.aksam.kor_toplam)}</b>
                     {g.aksam.teslim ? <> · teslim <b style={num}>{tut(g.aksam.teslim)}</b> → {g.aksam.kime || <span style={{ color: R.kirmizi }}>kime? kayıt yok</span>}</> : ' · teslim yok'}
                     {g.aksam.ara_teslim && <div style={{ color: R.not }}>ara teslim: {g.aksam.ara_teslim}</div>}
-                    <div>bıraktı <b style={num}>{tut(g.aksam.birakilan)}</b></div></> : <span style={{ color: R.not }}>kapanış yok</span>}
+                    <div>bıraktı <b style={num}>{tut(g.aksam.birakilan)}</b>
+                      {g.zincir_celiski && <span style={{ color: R.amber }} title="Personelin 'kasada bırakılan' beyanı ile kör sayım − teslim − ara teslim uyuşmuyor"> (beyan) · sayımdan kalan <b style={num}>{tut(g.aksam.sayimdan_kalan)}</b></span>}</div></> : <span style={{ color: R.not }}>kapanış yok</span>}
                     {g.elle_teslim && <div style={{ color: 'var(--pi-accent)', fontSize: 12 }}>teslim (Kasa'ya elle): {g.elle_teslim}</div>}</td>
                   <td style={hucre}>{g.ertesi_sabah ? <><b>{g.ertesi_sabah.kim || '?'}</b> · {g.ertesi_sabah.saat}<br />saydı <b style={num}>{tut(g.ertesi_sabah.sayilan)}</b></> : <span style={{ color: R.not }}>—</span>}</td>
-                  <td style={{ ...hucre, fontWeight: 700 }}>{g.zincir_fark == null ? <span style={{ color: R.not }}>—</span> : g.zincir_tutuyor ? <span style={{ color: R.yesil }}>tuttu ✓</span> : <span style={{ color: R.kirmizi }}>{g.zincir_fark > 0 ? '+' : ''}{fmt(g.zincir_fark)}</span>}</td>
+                  {/* sahip 24 Eki (Alsancak +3243): beyan ile sayımdan kalan çelişirse İKİ fark birden; tolerans 0 ₺ (Codex) */}
+                  <td style={{ ...hucre, fontWeight: 700 }}>{g.zincir_fark == null ? <span style={{ color: R.not }}>—</span>
+                    : g.zincir_tutuyor ? <span style={{ color: R.yesil }}>tuttu ✓</span>
+                    : g.zincir_durum === 'celiskili' ? <span style={{ color: R.amber }}>sabah uyumlu · kapanış verileri çelişkili
+                        <div style={{ fontWeight: 400, fontSize: 12 }}>beyana göre {g.zincir_fark > 0 ? '+' : ''}{fmt(g.zincir_fark)} · sayıma göre {g.zincir_fark_sayim > 0 ? '+' : ''}{fmt(g.zincir_fark_sayim)}</div></span>
+                    : <span style={{ color: R.kirmizi }}>{g.zincir_fark > 0 ? '+' : ''}{fmt(g.zincir_fark)}{g.zincir_celiski ? ' (beyana göre)' : ''}
+                        {g.zincir_celiski && g.zincir_fark_sayim != null && <div style={{ fontWeight: 400, fontSize: 12 }}>sayıma göre {g.zincir_fark_sayim > 0 ? '+' : ''}{fmt(g.zincir_fark_sayim)}</div>}</span>}</td>
                 </tr>
               ))}</tbody>
             </table>
