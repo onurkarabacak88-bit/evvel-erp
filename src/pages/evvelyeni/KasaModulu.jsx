@@ -1230,7 +1230,8 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
   const bankalar = veri.cepler.filter((c) => c.tur === 'banka' && !c.kira && !c.gizli);
   const kiraHesap = veri.cepler.filter((c) => c.tur === 'banka' && c.kira);
   const acilisEksik = veri.cepler.filter((c) => !c.gizli && !(veri.acilis_girilen || []).includes(c.id));
-  const deg = veri.degisim;
+  const deg = veri.degisim_toplam;      // B6: manşetle aynı kapsam (kira dahil)
+  const degIs = veri.degisim_isletme;   // işletme parası ayrı
   const k = veri.kpi;
 
   const cepAc = (c) => cekmeceAc({ tur: 'cep', id: c.id, ad: c.ad }, true);
@@ -1243,13 +1244,13 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
     </div>
   );
   // Kasam sayfasının grup kartı: toplam + üye sayısı + en kötü durum; tıklayınca o sayfa
-  const GrupKart = ({ ad, tutar, liste, hedef, alt, renk, deger }) => {
+  const GrupKart = ({ ad, tutar, liste, hedef, alt, renk, deger, kaydir }) => {
     const sv = renk || enKotu(liste || []);
     const kenar = { kirmizi: R.kirmizi, sari: R.amber, yesil: R.yesil, gri: 'var(--pi-line)' }[sv];
     const kir = (liste || []).filter((c) => c.seviye === 'kirmizi').length;
     const sar = (liste || []).filter((c) => c.seviye === 'sari').length;
     return (
-      <button type="button" onClick={() => git(hedef)} style={{
+      <button type="button" onClick={() => { git(hedef); if (kaydir) setTimeout(() => document.getElementById(kaydir)?.scrollIntoView({ behavior: 'smooth', block: 'start' }), 80); }} style={{
         ...kart, textAlign: 'left', cursor: 'pointer', font: 'inherit', color: R.krem, padding: '14px 16px',
         borderLeft: `5px solid ${kenar}`, display: 'flex', flexDirection: 'column', gap: 4, minHeight: 118,
       }}>
@@ -1346,23 +1347,25 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
             {deg != null && <div style={{ fontSize: 12.5, color: R.metin2, marginTop: 4 }}>Önceki akşama göre <b style={{ ...num, color: deg < 0 ? R.kirmizi : deg > 0 ? R.yesil : R.metin2 }}>{deg > 0 ? '+' : ''}{fmt(deg)}</b></div>}
           </div>
           <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-            {[['İşletme parası', o.toplam], ['Nakit', o.nakit], ['Banka', o.banka + o.gecis], ['Kira hesabı', o.kira]].map(([a, v]) => (
-              <div key={a}><div style={etiketStil}>{a}</div><div style={{ ...num, fontSize: 17 }}>{fmt(v)}</div></div>
+            {[['İşletme parası', o.toplam, degIs], ['Nakit', o.nakit], ['Banka', o.banka + o.gecis], ['Kira hesabı', o.kira]].map(([a, v, dd]) => (
+              <div key={a}><div style={etiketStil}>{a}</div><div style={{ ...num, fontSize: 17 }}>{fmt(v)}</div>
+                {dd != null && dd !== deg && <div style={{ fontSize: 11.5, color: R.not2 }}>önceki akşama göre <b style={{ ...num, color: dd < 0 ? R.kirmizi : dd > 0 ? R.yesil : R.metin2 }}>{dd > 0 ? '+' : ''}{fmt(dd)}</b></div>}</div>
             ))}
           </div>
           {veri.pos_bekleyen_brut > 0 && <div style={{ marginLeft: 'auto', fontSize: 12.5, color: R.amber }}>Toplama dahil değil · POS/online bankaya gelecek (brüt) <b style={num}>{fmt(veri.pos_bekleyen_brut)}</b> ₺</div>}
         </div>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(240px, 1fr))', gap: 12 }}>
+          {/* B2 (sim 25 Eki, önem sırası): iş gerektiren iki kart başta — 648 px ekranda kaydırmadan görünsün */}
+          <GrupKart ad="Açık farklar" tutar={o.acik_eksik} hedef="farklar" renk={o.acik_fark_sayisi ? 'kirmizi' : 'yesil'}
+            alt={o.acik_fark_sayisi ? `${o.acik_fark_sayisi} fark çözülmedi${o.acik_fazla > 0 ? ` · +${fmt(o.acik_fazla)} fazla` : ''}` : 'Çözülmemiş fark yok'} />
+          <GrupKart ad="Bekleyen işler" tutar={0} deger={`${veri.isler.length} iş`} hedef={(IS_GRUPLARI.find((g) => veri.isler.some((x) => isGrubu(x) === g.grup)) || IS_GRUPLARI[0]).id} renk={veri.isler.length ? 'sari' : 'yesil'}
+            alt={veri.isler.length ? IS_GRUPLARI.map((g) => [g.ad, veri.isler.filter((x) => isGrubu(x) === g.grup).length]).filter(([, n]) => n).map(([a, n]) => `${a} ${n}`).join(' · ') : 'Hepsi tamam'} />
           <GrupKart ad="Dükkân nakitleri" tutar={o.sube} liste={subeler} hedef="subeler" alt={`${subeler.length} dükkân · çekmecedeki nakit`} />
           <GrupKart ad="Evler" tutar={o.ev} liste={evler} hedef="evler" alt={evler.map((c) => c.kisa).join(' · ')} />
           {/* Sahip: "Kasam bankalar alanında (Fethi'nin hesabı) görünmüyor" → geçiş hesabı Bankalar'ın içinde */}
           <GrupKart ad="Bankalar" tutar={o.banka + o.gecis} liste={[...bankalar, ...hesaplar]} hedef="bankalar" alt={`${bankalar.length} şube bankası + Fethi hesabı${veri.pos_bekleyen_brut > 0 ? ` · + ${fmt(veri.pos_bekleyen_brut)} ₺ POS/online gelecek` : ''}`} />
           {o.yolda >= 0.005 && <GrupKart ad="Teslim yolda" tutar={o.yolda} liste={[]} hedef="isler_kasa" alt="teslim edildi, 'aldı' onayı bekliyor" />}
-          <GrupKart ad="Kira hesabı" tutar={o.kira} liste={kiraHesap} hedef="bankalar" alt="İşletmeden ayrı · destek için" />
-          <GrupKart ad="Açık farklar" tutar={o.acik_eksik} hedef="farklar" renk={o.acik_fark_sayisi ? 'kirmizi' : 'yesil'}
-            alt={o.acik_fark_sayisi ? `${o.acik_fark_sayisi} fark çözülmedi${o.acik_fazla > 0 ? ` · +${fmt(o.acik_fazla)} fazla` : ''}` : 'Çözülmemiş fark yok'} />
-          <GrupKart ad="Bekleyen işler" tutar={0} deger={`${veri.isler.length} iş`} hedef={(IS_GRUPLARI.find((g) => veri.isler.some((x) => isGrubu(x) === g.grup)) || IS_GRUPLARI[0]).id} renk={veri.isler.length ? 'sari' : 'yesil'}
-            alt={veri.isler.length ? `${veri.isler.length} iş · onay / fark` : 'Hepsi tamam'} />
+          <GrupKart ad="Kira hesabı" tutar={o.kira} liste={kiraHesap} hedef="bankalar" kaydir="kira-bolumu" alt="İşletmeden ayrı · destek için" />
         </div>
       </>)}
 
@@ -1376,7 +1379,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
             POS ertesi gün kendiliğinden yatar; online elle girilir. Bankaya gelecek: {veri.pos.filter((x) => x.bekleyen_brut > 0.004).map((x) => `${x.sube} ${x.kanal === 'pos' ? 'POS' : 'online'} ${fmt(x.bekleyen_brut)} ₺`).join(' · ') || 'yok'}
           </div>
         )}
-        {kiraHesap.length > 0 && (<><div style={etiketStil}>Kira hesabı · işletmeden ayrı</div><KartIzgara liste={kiraHesap} /></>)}
+        {kiraHesap.length > 0 && (<><div id="kira-bolumu" style={etiketStil}>Kira hesabı · işletmeden ayrı</div><KartIzgara liste={kiraHesap} /></>)}
       </>)}
       {(sekme === 'isler' || String(sekme).startsWith('isler_')) && (
           (() => { const isler = isGrup ? veri.isler.filter((x) => isGrubu(x) === isGrup) : veri.isler;

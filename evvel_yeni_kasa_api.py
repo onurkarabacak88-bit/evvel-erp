@@ -703,7 +703,7 @@ def _cep_durum(c: dict, ol: List[dict], D: dict, ref: str, fl: List[dict], C: di
         net = sum(x.get("kalan", x["f"]) for x in acik_f)
         eks = sum(1 for x in acik_f if x["f"] > 0)
         kir.append(f"{len(acik_f)} açık fark · net {_tl(abs(net))} {'eksik' if net > 0 else 'fazla' if net < 0 else '(birbirini götürüyor)'}"
-                   + (f" · {eks} eksik, {len(acik_f) - eks} fazla" if 0 < eks < len(acik_f) else "") + f" · en eskisi {gg(min(str(x['tarih']) for x in acik_f))} → Açık farklar")
+                   + (f" · {eks} eksik, {len(acik_f) - eks} fazla" if 0 < eks < len(acik_f) else "") + f" · en eskisi {gg(min(str(x['tarih']) for x in acik_f))}")   # B9: "→ Açık farklar" kalktı (o sayfaya götürmüyordu; ayrıntı kartın Özet'inde)
     cikislar = {o["id"]: o for o in ol if o["olay"] == "teslim_cikis"}
     alimlar = {o["id"] for o in ol if o["olay"] == "teslim_alim"}
     for hid, o in cikislar.items():
@@ -1078,7 +1078,9 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
         "gun": g, "hepsi": hepsi, "baslangic": bas.isoformat(), "bugun": bugun, "senkron": senkron,
         "ozet": _ozet(D, fl),
         "onceki_toplam": None if onceki is None else _tl_sayi(onceki["toplam"]),
-        "degisim": None if onceki is None else _tl_sayi(D["toplam"] - onceki["toplam"]),
+        # B6 (sim 25 Eki + Codex B): manşet TOPLAM KASA kira dahil → değişimi de kira dahil; işletme değişimi AYRI adla (sessiz anlam değişimi yok)
+        "degisim_toplam": None if onceki is None else _tl_sayi(D["hepsi"] - onceki["hepsi"]),
+        "degisim_isletme": None if onceki is None else _tl_sayi(D["toplam"] - onceki["toplam"]),
         "cepler": cep_durumlari,
         "seviye_sayim": {"kirmizi": sum(1 for c in cep_durumlari if c["seviye"] == "kirmizi"),
                          "sari": sum(1 for c in cep_durumlari if c["seviye"] == "sari")},
