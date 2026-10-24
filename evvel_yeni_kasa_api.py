@@ -40,6 +40,7 @@ from datetime import date, timedelta
 from decimal import Decimal
 
 from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (E2E #10)
+from evvel_yeni_cekirdek import is_gunu as _is_gunu_panel   # panel iş günü (02:00) — saatli sayım kilidinde "bugün" (Codex 24 Eki)
 from typing import Dict, List, Optional
 
 from fastapi import APIRouter, Header, HTTPException
@@ -806,12 +807,13 @@ def _ozet(D: dict, fl: List[dict]) -> dict:
 def _isler(kayitlar: List[dict], C: dict, fl: List[dict], bas: Optional[date] = None, ilk: Optional[dict] = None) -> List[dict]:
     """Bekleyen işler — GÜNE BAĞLI DEĞİL, en eski üstte (sahip: 'onayları gözden kaçırırız')."""
     out = []
-    kilit = _sayim_kilidi(_olaylar(kayitlar))   # E2E #5: sayım kilidine takılan teslim otomatik kabul EDİLEMEZ → burada görünmeli
+    _ol = _olaylar(kayitlar)
+    kilit, anlar = _sayim_kilidi(_ol), _sayim_anlari(_ol)   # E2E #5: sayım kilidine takılan teslim otomatik kabul EDİLEMEZ → burada görünmeli
     for h in kayitlar:
         if h["tur"] == "kapanis" and h["durum"] != "onaylandi":
             out.append({"tur": "kapanis", "id": h["id"], "tarih": h["is_gunu"], "cep": h["cep"], "ad": C.get(h["cep"], {}).get("ad"),
                         "nakit": _tl_sayi(h["tutar"]), "kart": _tl_sayi(int(h["veri"].get("kart", 0))), "eski_sistem": _eski_sistem_mi(h)})
-        kilitli = h["tur"] == "teslim" and _kilitli_teslim(h, kilit)
+        kilitli = h["tur"] == "teslim" and _kilitli_teslim(h, kilit, anlar)
         if h["tur"] == "teslim" and h["durum"] != "onaylandi" and (OTOMATIK_KABUL_GUN > 0 or kilitli):
             out.append({"tur": "teslim", "id": h["id"], "tarih": h["is_gunu"], "kaynak": h["kaynak"], "hedef": h["hedef"],
                         "ad": f"{C.get(h['kaynak'], {}).get('ad')} → {C.get(h['hedef'], {}).get('ad')}",
@@ -914,18 +916,46 @@ def _sayim_kilidi(ol: List[dict]) -> Dict[str, str]:
     return k
 
 
-def _kilit_denetle(etkiler: List[tuple], kilit: Dict[str, str], C: dict, sayim_icin: Optional[str] = None, kor: bool = False) -> None:
-    """etkiler: [(cep, gün)] — sayılmış bir cebi sayım günü ve öncesinde etkileyen değişiklik reddedilir."""
+GUN_TOPLAMI_TURLERI = {"kapanis", "acilis"}   # tek anlık hareket değil, günün TOPLAMI → saatli sayım istisnası UYGULANMAZ
+# Fable D (24 Eki): saatli istisna yalnız NAKİT ceplerde — bankanın "sayımı" ekstre bakiyesi, paranın bankaya giriş anı kayıt anı değil
+# (sabah ekstrede görünen EFT öğleden sonra aynı güne girilirse çift sayardı). Bankalar / geçiş hesapları gün kilidinde kalır.
+NAKIT_CEP_TURLERI = {"ev", "sube"}
+
+
+def _sayim_anlari(ol: List[dict]) -> Dict[str, tuple]:
+    """cep → (gün, kayıt anı) — cebin EN SON sayımı (sahip 24 Eki: kilit gün + SAAT). Liste sırasına güvenilmez (Codex)."""
+    a: Dict[str, tuple] = {}
+    for o in ol:
+        if o["olay"] == "sayim":
+            k = (o["gun"], str(o.get("s") or ""))
+            if k > a.get(o["cep"], ("", "")):
+                a[o["cep"]] = k
+    return a
+
+
+def _sayimdan_sonra(cep: str, gun: str, an, anlar: Dict[str, tuple]) -> bool:
+    """Bu olay (gün, kayıt anı) cebin son sayımından KESİN sonra mı? Eksik/eşit an 'sonra' sayılmaz (Codex)."""
+    a = anlar.get(cep)
+    return bool(a and an and a[1] and gun == a[0] and str(an) > a[1])
+
+
+def _kilit_denetle(etkiler: List[tuple], kilit: Dict[str, str], C: dict, sayim_icin: Optional[str] = None, kor: bool = False,
+                   yeni_gun: Optional[str] = None) -> None:
+    """etkiler: [(cep, gün)] — sayılmış bir cebi sayım günü ve öncesinde etkileyen değişiklik reddedilir.
+    yeni_gun (sahip 24 Eki "sayım yapılıp hemen aktarım yapabiliriz, olağan; akşamında tekrar teslim olacak"): ŞU AN yazılan YENİ olay,
+    sayım GÜNÜ bugünse serbest — kayıt anı her zaman sayımdan sonradır; sayımın farkı saklı 'beklenen'le sabit kalır. Geçmiş gün kilitli."""
     for cep, gun in etkiler:
         if cep in (ACIK, YOLDA) or cep not in kilit:
             continue
         if sayim_icin == cep and gun >= kilit[cep]:
             continue    # aynı/sonraki gün yeni sayım serbest
+        if yeni_gun and gun == kilit[cep] == yeni_gun and C.get(cep, {}).get("tur") in NAKIT_CEP_TURLERI:
+            continue    # sayımdan SONRA bugüne yazılan yeni kayıt (aktarım, akşam teslimi, gider…) — yalnız NAKİT cep (Fable D)
         if gun <= kilit[cep] and kor:   # Codex P1 (21 Eki): panel personeline sayım tarihi / 'Farkı çöz' SIZMAZ (kasa derinliği)
             raise HTTPException(409, "Kayıt yapılamadı — merkeze haber verin")
         if gun <= kilit[cep]:
-            raise HTTPException(409, f"{C[cep]['ad']} {kilit[cep][8:10]}.{kilit[cep][5:7]} günü sayıldı; o güne ve öncesine değişiklik yapılamaz "
-                                     f"(sayım bozulurdu). Fark varsa 'Farkı çöz' ile kapat ya da kaydı sayımdan sonraki bir güne gir.")
+            raise HTTPException(409, f"{C[cep]['ad']} {kilit[cep][8:10]}.{kilit[cep][5:7]} günü sayıldı — bu işlem sayım kilidi nedeniyle kaydedilemiyor. "
+                                     f"Sayım öncesini veya kilitli geçmiş günleri değiştiremezsiniz; fark varsa 'Farkı çöz'ü kullanın.")
 
 
 def _eksi_denetle(ol: List[dict], cepler: set, bas_gun: str, C: dict) -> None:
@@ -1537,10 +1567,14 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
         y["id"] = f"__yeni{i}__"
     yeni_ol = _olaylar(yeniler)
     etkiler = [(e["cep"], o["gun"]) for o in yeni_ol for e in _etki(o, C)]
-    if evo_yerine:   # Evo tahmininin kalkması da o cebi değiştirir → sayılmış güne dokunamaz
-        etkiler.append((evo_yerine["cep"], evo_yerine["is_gunu"]))
     if t != "cozum":   # fark çözümü sayımın kendi kapanış yoludur — kilide takılmaz
-        _kilit_denetle(etkiler, kilit, C, sayim_icin=body.cep if t == "sayim" else None, kor=kor)
+        # sahip 24 Eki: sayım günü BUGÜN ise sayımdan sonra yazılan yeni kayıt serbest (panelde iş günü, merkezde takvim günü — Codex)
+        # Fable #2 incelemesi (24 Eki): KAPANIŞ günün TOPLAM satış nakdidir (tek an değil) — gün içi sayımdan önceki satış nakdi sayılan
+        # paranın içinde zaten var → sayımdan sonra da kilitli kalır (çift sayım); saat istisnası yalnız ANLIK hareketlere
+        _kilit_denetle(etkiler, kilit, C, sayim_icin=body.cep if t == "sayim" else None, kor=kor,
+                       yeni_gun=None if t in GUN_TOPLAMI_TURLERI else (_is_gunu_panel().isoformat() if kor else _bugun().isoformat()))
+        if evo_yerine:   # Evo tahmininin kalkması da o cebi değiştirir → sayılmış güne dokunamaz (saat istisnası YOK: tahmin sayımdan önceydi)
+            _kilit_denetle([(evo_yerine["cep"], evo_yerine["is_gunu"])], kilit, C, kor=kor)
     cikan = {e["cep"] for o in yeni_ol for e in _etki(o, C) if e["d"] < 0 and e["cep"] in C}
     if not kor:   # B29 (Fable 22 Eki): panel yazımı BEYAN — gider/avansla TEK kural (sahip 20 Eki: eksiye düşse de yazılır, merkez
         #            Kasa'da görür). Doğruluğu akşam kör sayım + alanın "aldım" onayı kurar; açık günde satış nakdi henüz yokken
@@ -1615,22 +1649,26 @@ def onayla(hid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(defa
             if al < 0:
                 raise HTTPException(400, "Sayılan tutar eksi olamaz")
             bugun = r["is_gunu"] if _geriye_donuk(r) else max(_bugun().isoformat(), r["is_gunu"])
-            kilit = _sayim_kilidi(_olaylar(kayit))
+            _ol = _olaylar(kayit)
+            kilit = _sayim_kilidi(_ol)
             ks = kilit.get(r["hedef"])
-            if ks and bugun <= ks and not _geriye_donuk(r):
+            # sahip 24 Eki ("akşamında tekrar teslim olacak"): teslim sayımdan SONRA yola çıktıysa para sayıma girmedi → bugün 'aldım'
+            sayim_sonrasi = bool(ks and bugun == ks and not _geriye_donuk(r) and _sayimdan_sonra(r["hedef"], ks, r.get("_sira"), _sayim_anlari(_ol)))
+            if ks and bugun <= ks and not _geriye_donuk(r) and not sayim_sonrasi:
                 # B75 (Fable 22 Eki): ev teslimden SONRA sayıldı → 'aldım' reddedilmez, para sayımdan SONRAKİ gün eve girer
                 # (sayım günü ve öncesi bozulmaz; sayım parayı içerdiyse fazla zaten Kasa › Açık farklar'da — tek karar evi)
                 ertesi = date.fromordinal(date.fromisoformat(ks).toordinal() + 1).isoformat()
                 if ertesi > _bugun().isoformat():
                     raise HTTPException(409, f"{C[r['hedef']]['ad']} bugün sayıldı — 'Aldım'ı yarın gir (bugünkü sayım bozulmasın)")
                 bugun = ertesi
-            if ks and ks >= r["is_gunu"] and not _geriye_donuk(r):
+            if ks and ks >= r["is_gunu"] and not _geriye_donuk(r) and not sayim_sonrasi:
                 veri["kilit_sonrasi"] = ks   # Fable: ev teslimden sonra sayıldıysa iz her durumda
             veri.update(alinan=al, onay_gunu=bugun)
-            _kilit_denetle([(r["hedef"], bugun)], kilit, C)
+            _kilit_denetle([(r["hedef"], bugun)], kilit, C, yeni_gun=bugun if sayim_sonrasi else None)
         elif r["tur"] != "kapanis":
             raise HTTPException(400, "Bu kayıt onay gerektirmez")
-        cur.execute("""UPDATE para_izi_hareket SET durum='onaylandi', onay_zamani=NOW(), onaylayan=%s, veri=%s::jsonb
+        # Codex: NOW() işlem başı — kilitte bekleyen onay sayımdan ÖNCE görünmesin → gerçek an
+        cur.execute("""UPDATE para_izi_hareket SET durum='onaylandi', onay_zamani=clock_timestamp(), onaylayan=%s, veri=%s::jsonb
                         WHERE id=%s AND COALESCE(durum,'') <> 'onaylandi'""", (kim, json.dumps(veri, ensure_ascii=False), hid))
     return {"ok": True}
 
@@ -1656,13 +1694,17 @@ def iptal(hid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Header(defa
         if any(x["tur"] == "cozum" and x["veri"].get("fark_id") == hid for x in kayit):
             raise HTTPException(409, "Bu kaydın farkı kapatılmış; önce fark kapanışını iptal et")
         ol_eski = _olaylar([h])
-        etkiler = [(e["cep"], o["gun"]) for o in ol_eski for e in _etki(o, C)]
-        kilit = _sayim_kilidi(_olaylar([x for x in kayit if x["id"] != hid]) if h["tur"] == "sayim" else _olaylar(kayit))
+        _ol = _olaylar([x for x in kayit if x["id"] != hid]) if h["tur"] == "sayim" else _olaylar(kayit)
+        kilit, anlar = _sayim_kilidi(_ol), _sayim_anlari(_ol)
         kartla = h["tur"] == "cozum" and (h["veri"] or {}).get("sebep") == "kartla"
         if h["tur"] != "sayim" and not kartla:   # kartla: kapanış −t + çözüm +t aynı gün, net 0 — geri alınınca da net 0 (Fable)
-            _kilit_denetle(etkiler, kilit, C)
+            # sahip 24 Eki + Codex: etkinin KENDİ anı (teslim çıkışı kayıt anı, alımı onay anı) sayımdan sonraysa o etki sayıma girmedi → serbest
+            _kilit_denetle([(e["cep"], o["gun"]) for o in ol_eski for e in _etki(o, C)
+                            if not _sayimdan_sonra(e["cep"], o["gun"], o.get("s"), anlar)], kilit, C)
         else:
-            sonraki = [x for x in kayit if x["tur"] == "sayim" and x["cep"] == h["cep"] and x["is_gunu"] >= h["is_gunu"] and x["id"] != hid]
+            # Codex (24 Eki): aynı gün iki sayımda ikisi de iptal edilemiyordu — yalnız KESİN sonraki sayım engel (sondan geri alınır)
+            sonraki = [x for x in kayit if x["tur"] == "sayim" and x["cep"] == h["cep"] and x["id"] != hid
+                       and (x["is_gunu"], x.get("_sira") or "") > (h["is_gunu"], h.get("_sira") or "")]
             if sonraki:
                 raise HTTPException(409, "Bu cebin daha sonra (ya da aynı gün) başka sayımı var; önce onu iptal et")
         azalan = {e["cep"] for o in ol_eski for e in _etki(o, C) if e["d"] > 0 and e["cep"] in C}
@@ -1769,8 +1811,11 @@ def _otomatik_senkron() -> dict:
             "zaman": datetime.fromtimestamp(zz, timezone.utc).isoformat() if zz else None}
 
 
-def _kilitli_teslim(h: dict, kilit: Dict[str, str]) -> bool:
-    """TEK kural: teslimin hedef cebi teslim günü ya da sonrasında SAYILMIŞ → otomatik kabul edilemez, merkez 'aldım' der."""
+def _kilitli_teslim(h: dict, kilit: Dict[str, str], anlar: Optional[Dict[str, tuple]] = None) -> bool:
+    """TEK kural: teslimin hedef cebi teslim günü ya da sonrasında SAYILMIŞ → otomatik kabul edilemez, merkez 'aldım' der.
+    Sahip 24 Eki: teslim sayım GÜNÜ, sayımdan SONRA kaydedildiyse para sayıma girmedi → kilitli değil."""
+    if anlar and _sayimdan_sonra(h["hedef"], h["is_gunu"], h.get("_sira"), anlar):
+        return False
     return h["hedef"] in kilit and h["is_gunu"] <= kilit[h["hedef"]]
 
 
@@ -1779,17 +1824,18 @@ def _otomatik_kabul(cur) -> int:
     teslim edilen tutarla KABUL eder (para teslim günü eve girmiş sayılır). Patronun evi o
     günden sonra sayıldıysa (sayım kilidi) dokunmaz — orada bekler, ekranda görünür."""
     cep_list, C, kayit, _ = _yukle(cur)
-    kilit = _sayim_kilidi(_olaylar(kayit))
+    _ol = _olaylar(kayit)
+    kilit, anlar = _sayim_kilidi(_ol), _sayim_anlari(_ol)
     sinir = date.fromordinal(_bugun().toordinal() - OTOMATIK_KABUL_GUN).isoformat()
     n = 0
     for h in kayit:
         if h["tur"] != "teslim" or h["durum"] == "onaylandi" or h["is_gunu"] > sinir:
             continue
-        if _kilitli_teslim(h, kilit):
+        if _kilitli_teslim(h, kilit, anlar):
             continue
         veri = dict(h["veri"])
         veri.update(alinan=h["tutar"], onay_gunu=h["is_gunu"], otomatik=True)
-        cur.execute("""UPDATE para_izi_hareket SET durum='onaylandi', onay_zamani=NOW(),
+        cur.execute("""UPDATE para_izi_hareket SET durum='onaylandi', onay_zamani=clock_timestamp(),
                               onaylayan='otomatik kabul (itiraz yok)', veri=%s::jsonb
                         WHERE id=%s AND COALESCE(durum,'') <> 'onaylandi'""", (json.dumps(veri, ensure_ascii=False), h["id"]))
         n += cur.rowcount
@@ -1882,7 +1928,10 @@ def teslim_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = He
         al = _kurus(body.alinan)
         if al < 0:
             raise HTTPException(400, "Sayılan tutar eksi olamaz")
-        _kilit_denetle([(h["hedef"], og)], _sayim_kilidi(_olaylar(kayit)), C)
+        _ol = _olaylar(kayit)   # Codex: hedefte ÖZGÜN alım olayının anı (onay) sayımdan sonraysa düzeltme sayımı bozmaz
+        _an = h["onay_zamani"].isoformat() if hasattr(h.get("onay_zamani"), "isoformat") else None
+        if not _sayimdan_sonra(h["hedef"], og, _an, _sayim_anlari(_ol)):
+            _kilit_denetle([(h["hedef"], og)], _sayim_kilidi(_ol), C)
         veri = dict(h["veri"])
         veri.setdefault("duzeltmeler", []).append({"eski": int(veri.get("alinan", h["tutar"])), "yeni": al, "kim": kim})
         veri["alinan"] = al
