@@ -263,7 +263,8 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
                         continue   # sevk geri alındı → kalem yeniden yönlendirilmemiş sayılır
                     d = "hazirlaniyor" if not y.get("parti_id") else s["durum"] if s else "yolda"
                     gelen = s["kabul"] if s else None
-                    acik_y = bool(s and s.get("acik"))   # Codex H: kabul farkı merkezde henüz çözülmedi
+                    # Codex H: kabul farkı merkezde henüz çözülmedi — yalnız PAYINA eksik düşen yön (G: tek pakette eski sipariş dolduysa ona yansımaz)
+                    acik_y = bool(s and s.get("acik") and (gelen is None or int(gelen) < int(y["adet"])))
                     fark_acik = fark_acik or acik_y
                 else:
                     acik_y = False
@@ -318,12 +319,14 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
             else:
                 kk["eksik"] = eksik
                 kk["eksik_kapandi"] = k.get("eksik_kapandi")
-            kk["_eksik"] = eksik
+            kk["_eksik"] = eksik or (1 if fark_acik else 0)   # Fable #3 testi (24 Eki): sevk farkı açıkken sipariş merkezde 'tamamlandı' görünüyordu
             kal_out.append(kk)
         tamam = tamam and any(k["durum"] != "iptal" for k in kal_out)
         eksik_var = any([k.pop("_eksik", 0) for k in kal_out])   # LİSTE: hepsinden silinsin (any kısa devre panele sızdırıyordu — Fable D4-2)
         durum = "iptal" if r["iptal"] else ("tamamlandi" if not eksik_var and (tamam or all(k["durum"] in ("iptal", "karsilandi") for k in kal_out))
                                             else "acik")
+        if kor and not r["iptal"]:   # Fable #3 + sahip 24 Eki "KAPAT": şube 'açık kaldı = sayımım tutmadı'yı öğrenmesin — durum YALNIZ kalemlerden
+            durum = "tamamlandi" if all(k["durum"] in ("iptal", "karsilandi") for k in kal_out) else "acik"   # Fable d1: hepsi iptal → merkezle aynı
         out.append({"id": r["id"], "sube_id": r["sube_id"], "sube": sube_ad.get(r["sube_id"], r["sube_id"]), "kim": r["kim"],
                     "notu": r["notu"], "gun": r["is_gunu"].isoformat(), "zaman": r["zaman"].isoformat(), "surum": r["surum"],
                     "deneme": bool(r["deneme"]), "durum": durum, "iptal_sebep": r.get("iptal_sebep"), "kalemler": kal_out})
