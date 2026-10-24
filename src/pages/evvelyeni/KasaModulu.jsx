@@ -1014,6 +1014,46 @@ export const IS_GRUPLARI = [
 const GRUPLAR = new Set(['kasa', 'siparis', 'odeme', 'tedarik', 'personel', 'kira', 'not']);
 // Codex: tanınmayan grup taşıyan iş kaybolmasın → Kasa & kapanış'a düşer
 export const isGrubu = (x) => (GRUPLAR.has(x.grup) ? x.grup : 'kasa');   // Fable: Kasa iş türlerini tanımaz — sağlayıcı 'grup' yazar
+// G75 (sim 24 Eki, sahip "Bekleyen işler şişmesin" + "uyarılar: tek satır özet → ayrıntı içeride"): yalnız 'Gördüm' isteyen (karar
+// gerektirmeyen) AYNI türden 2+ satır tek açılır özet satıra toplanır; karar satırlarına dokunulmaz.
+// Opus G75-3/4: para uyarısı (kapanis_sonradan) ve şube notu (acil olabilir) gruplanmaz — her biri kendi satırında okunur
+const GRUPLANMAZ = new Set(['kapanis_sonradan', 'sube_not']);
+export const bilgiMi = (x) => !GRUPLANMAZ.has(x.tur) && (x.tur === 'kapanis_uyarili' || (x.genel && x.gordum));
+const bilgiAnahtar = (x) => (x.tur === 'kapanis_uyarili' ? 'kapanis_uyarili' : `${x.tur}|${x.etiket || ''}`);
+export function bilgiGrupla(isler) {
+  const say = {};
+  isler.forEach((x) => { if (bilgiMi(x)) say[bilgiAnahtar(x)] = (say[bilgiAnahtar(x)] || 0) + 1; });
+  const out = [];
+  const eklendi = new Set();
+  isler.forEach((x) => {
+    if (!bilgiMi(x) || say[bilgiAnahtar(x)] < 2) { out.push(x); return; }
+    const a = bilgiAnahtar(x);
+    if (eklendi.has(a)) return;
+    eklendi.add(a);
+    const xs = isler.filter((y) => bilgiMi(y) && bilgiAnahtar(y) === a);
+    const sube = {};
+    xs.forEach((y) => { const ad = String(y.ad || '').split(' — ')[0].split(' · ')[0].trim() || '—'; sube[ad] = (sube[ad] || 0) + 1; });
+    const enEski = xs.map((y) => String(y.tarih || '').slice(0, 10)).filter(Boolean).sort()[0];
+    out.push({ bilgiGrubu: true, anahtar: a, etiket: x.tur === 'kapanis_uyarili' ? '⚠ Kapanış uyarılı' : x.etiket, xs, enEski,
+      ozet: Object.entries(sube).map(([ad, n]) => (n > 1 ? `${ad} ${n}` : ad)).join(' · ') });
+  });
+  return out;
+}
+function BilgiGrubu({ g, satir, bugun }) {
+  const [acik, setAcik] = useState(false);
+  const gun = g.enEski && bugun ? Math.round((new Date(bugun) - new Date(g.enEski)) / 86400000) : null;   // Opus G75-5: süre
+  return (
+    <div style={{ display: 'grid', gap: 6 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', gap: 10, alignItems: 'center', padding: '8px 10px', borderRadius: 9, background: R.girinti, border: `1px solid ${R.cizgi}` }}>
+        <Cip tur="sari">{g.etiket}</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{g.xs.length} kez</b> · {g.ozet}{gun != null ? ` · en eskisi ${gun ? `${gun} gündür` : 'bugün'}` : ''}
+          <div style={{ fontSize: 11.5, color: R.not }}>Bilgi — karar gerekmiyor; ayrıntı ve "Gördüm" içeride</div></div>
+        <Dugme kucuk onClick={() => setAcik((a) => !a)}>{acik ? 'Gizle ▴' : 'Göster ▾'}</Dugme>
+      </div>
+      {acik && <div style={{ display: 'grid', gap: 6, paddingLeft: 14 }}>{g.xs.map((y) => satir(y))}</div>}
+    </div>
+  );
+}
 
 export const SAYFALAR = [
   { id: 'kasam', ad: 'Kasam', alt: 'Toplam kasa · gruplar' },
@@ -1339,11 +1379,23 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         {kiraHesap.length > 0 && (<><div style={etiketStil}>Kira hesabı · işletmeden ayrı</div><KartIzgara liste={kiraHesap} /></>)}
       </>)}
       {(sekme === 'isler' || String(sekme).startsWith('isler_')) && (
-          (() => { const isler = isGrup ? veri.isler.filter((x) => isGrubu(x) === isGrup) : veri.isler; return (
+          (() => { const isler = isGrup ? veri.isler.filter((x) => isGrubu(x) === isGrup) : veri.isler;
+            const isSatirCiz = (x) => (<IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })}
+              onPosKabul={async (id) => { try { const r = await api('/evvel-yeni/kasa/pos-sifir-kabul', { method: 'POST', body: { id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); } }}
+              onGecKapanis={async (x) => {
+                if (!window.confirm(`${x.ad} ${tKisa(x.tarih)} kapanışı, personelin girdiği verilerle GEÇ KAPANIŞ olarak işlensin mi?
+(${/^Telefonsuz/.test(x.sebep || '') ? 'Not' : 'Reddin sebebi'}: ${x.sebep})`)) return;
+                try { const r = await api(x.islem || '/evvel-yeni/kasa/gec-kapanis', { method: 'POST', body: { deneme_id: x.id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); }
+              }}
+              onKapanisGordum={async (x) => { try { await api(x.gordum || '/evvel-yeni/kasa/kapanis-uyari-gordum', { method: 'POST', body: { deneme_id: x.id } }); yukle(); } catch (e) { onToast?.(e.message); } }}
+              onGenelGordum={async (x) => { try { await api(x.gordum.yol, { method: 'POST', body: x.gordum.govde }); yukle(); } catch (e) { onToast?.(e.message); } }} />);
+            return (
           <div ref={islerRef} style={{ ...kart, padding: 12, display: 'flex', flexDirection: 'column', gap: 6, border: isler.length ? `2px solid ${R.amber}` : kart.border }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <span style={{ fontWeight: 700, fontSize: 14 }}>Bekleyen işler{isGrup ? ` · ${(IS_GRUPLARI.find((x) => x.grup === isGrup) || {}).ad}` : ''}</span>
-              {isler.length ? <Cip tur="kirmizi">{isler.length}</Cip> : <Cip tur="yesil">Hepsi tamam</Cip>}
+              {(() => { const b = isler.filter(bilgiMi).length; const k = isler.length - b; return (<>   {/* Opus G75-10: kırmızı = karar; bilgi gri */}
+                {k ? <Cip tur="kirmizi">{k}</Cip> : <Cip tur="yesil">{b ? 'Karar bekleyen yok' : 'Hepsi tamam'}</Cip>}
+                {b ? <span style={{ fontSize: 12, color: R.not }}>· {b} bilgi</span> : null}</>); })()}
             </div>
             {(() => {
               const kp = isler.filter((x) => x.tur === 'kapanis');
@@ -1386,18 +1438,13 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
                 </span>
               </div>
             ))}
-            {isler.filter((x) => x.tur !== 'teslim' && x.tur !== 'evo_kapanis').map((x) => <IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })}
-              onPosKabul={async (id) => { try { const r = await api('/evvel-yeni/kasa/pos-sifir-kabul', { method: 'POST', body: { id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); } }}
-              onGecKapanis={async (x) => {
-                if (!window.confirm(`${x.ad} ${tKisa(x.tarih)} kapanışı, personelin girdiği verilerle GEÇ KAPANIŞ olarak işlensin mi?
-(${/^Telefonsuz/.test(x.sebep || '') ? 'Not' : 'Reddin sebebi'}: ${x.sebep})`)) return;
-                try { const r = await api(x.islem || '/evvel-yeni/kasa/gec-kapanis', { method: 'POST', body: { deneme_id: x.id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); }
-              }}
-              onKapanisGordum={async (x) => { try { await api(x.gordum || '/evvel-yeni/kasa/kapanis-uyari-gordum', { method: 'POST', body: { deneme_id: x.id } }); yukle(); } catch (e) { onToast?.(e.message); } }}
-              onGenelGordum={async (x) => { try { await api(x.gordum.yol, { method: 'POST', body: x.gordum.govde }); yukle(); } catch (e) { onToast?.(e.message); } }} />)}
+            {bilgiGrupla(isler.filter((x) => x.tur !== 'teslim' && x.tur !== 'evo_kapanis')).map((x) => (x.bilgiGrubu
+              ? <BilgiGrubu key={`bg${x.anahtar}`} g={x} bugun={veri.bugun} satir={(y) => isSatirCiz(y)} />
+              : isSatirCiz(x)))}
           </div>
           ); })()
       )}
+
       {sekme === 'hareketler' && (<>
           <div style={{ display: 'flex', alignItems: 'baseline', gap: 10 }}>
             <span style={{ fontSize: 22, fontWeight: 700 }}>{hepsi ? 'Tüm günler' : tUzun(gun)}</span>
