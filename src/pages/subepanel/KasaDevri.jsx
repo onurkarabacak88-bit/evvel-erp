@@ -68,7 +68,7 @@ export default function KasaDevri({ devir, tabletVar, kapali, kapat, yukle, ipta
   return (
     <Modal baslik="💵 Kasa Devri" kapat={kapat}>
       {!tabletVar && <b style={{ color: C.sari }}>Bu bilgisayar kayıtlı değil — devir QR'ı çıkamaz. Merkezden bağlantı iste.</b>}
-      {/* bitmiş devir: büyük durum satırı (G58/D8 — koca "Devri başlat" düğmesi yok; yeni devir küçük ve ikinci sırada) */}
+      {/* bitmiş devir: büyük durum satırı — sahip: günde BİR devir, ikinci devir düğmesi YOK (sunucu da 409; yalnız merkez iptalinden sonra yeniden) */}
       {devir && !acik && (
         <div className="sp-kart" style={{ display: 'grid', gap: 6, borderColor: et.renk, borderWidth: 2 }}>
           <b style={{ color: et.renk, fontSize: 20 }}>{et.metin}</b>

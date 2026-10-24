@@ -3,6 +3,7 @@
 //   Modül EKLEMEK  = buraya bir satır (+ sunucu listesine bir satır).
 //   Modül KAPATMAK = sunucu listesinde acik=False → /api/evvel-yeni/moduller "yuklendi" demez → menüden kalkar.
 // sektor: 'genel' her işletmede · 'kahve' kahveciliğe özgü · 'ozel' yalnız bu işletmenin düzeni. yetki: rol anahtarı (sonra).
+// KURAL (Opus 4e-4): bir modülün 'mod' kodu BAŞKA modülün sayfa id'si olamaz — adres önce sayfa id'sine, sonra mod koduna çözülür.
 // bolum: modülün sayfaları BAŞKA bir bölümün altında görünür (ör. Faturaları dağıt → Ödeme); modül kapanınca sayfa da kalkar.
 import React from 'react';
 import KasaModulu, { SAYFALAR, IS_GRUPLARI } from './KasaModulu';
@@ -50,11 +51,11 @@ export const MODULLER = [
   { mod: 'mulk', ad: 'Kira hesabı', ikon: '🏠', sektor: 'ozel', sayfalar: MULK_SAYFALAR, g: (s, c) => <MulkModulu gorunum={s} onToast={c.onToast} onSekme={c.onSekme} /> },
   { mod: 'kart', ad: 'Kartlar', ikon: '💳', sektor: 'genel', sayfalar: KART_SAYFALAR,
     g: (s, c) => (s === 'kart_takvimi' ? <KartTakvim onSekme={c.onSekme} /> : <KartModulu onToast={c.onToast} />) },
+  // 🛒 Sipariş (S5c): şube talebi → merkez yönlendirme. Bekleyen işler 'siparis_yon' sayfasına gelir (Codex P1: karşılığı yoktu).
+  { mod: 'siparis', ad: 'Sipariş yönlendirme', ikon: '🛒', sektor: 'genel', sayfalar: SIPARIS_SAYFALAR, g: (s, c) => <SiparisModulu onToast={c.onToast} /> },   // 4e (sahip 23 Eki): menüde KENDİ başlığı — Depo altında kayboluyordu
   { mod: 'toptanci', ad: 'Toptancılar', ikon: '🚚', sektor: 'genel', sayfalar: TOPTANCI_SAYFALAR,
     g: (s, c) => (s === 'urun_fiyatlari' ? <UrunFiyatlari onToast={c.onToast} /> : <ToptanciModulu onToast={c.onToast} />) },
   { mod: 'depo', ad: 'Depo', ikon: '📦', sektor: 'genel', sayfalar: DEPO_SAYFALAR, g: (s, c) => <DepoModulu gorunum={s} onToast={c.onToast} /> },
-  // 🛒 Sipariş (S5c): şube talebi → merkez yönlendirme. Bekleyen işler 'siparis_yon' sayfasına gelir (Codex P1: karşılığı yoktu).
-  { mod: 'siparis', bolum: 'depo', ad: 'Sipariş yönlendirme', ikon: '🛒', sektor: 'genel', sayfalar: SIPARIS_SAYFALAR, g: (s, c) => <SiparisModulu onToast={c.onToast} /> },
   { mod: 'kazanc', ad: 'Şube kazancı', ikon: '📈', sektor: 'genel', sayfalar: KAZANC_SAYFALAR, g: () => <KazancModulu /> },
   { mod: 'bar', ad: 'Bar', ikon: '🥤', sektor: 'kahve', sayfalar: BAR_SAYFALAR, g: () => <BarModulu /> },
   { mod: 'satis', ad: 'Satış kontrolü', ikon: '🔍', sektor: 'kahve', sayfalar: SATIS_SAYFALAR, g: (s) => <SatisModulu gorunum={s} /> },

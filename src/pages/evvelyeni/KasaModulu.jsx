@@ -1004,13 +1004,14 @@ function BankaSekmesi({ onToast, onDegisti }) {
 // (tak-çıkar); söylemeyen eski türler aşağıdaki eşlemeyle yerleşir.
 export const IS_GRUPLARI = [
   { id: 'isler_kasa', grup: 'kasa', ad: 'Kasa & kapanış', alt: 'Kapanış · teslim · fark' },
+  { id: 'isler_siparis', grup: 'siparis', ad: '🛒 Sipariş yönlendirme', alt: 'Şube siparişi geldi → depo / toptancı', mod: 'siparis' },   // 4f (sahip): AYRI isim
   { id: 'isler_odeme', grup: 'odeme', ad: 'Ödemeler', alt: 'Kart son ödeme · toptancı vadesi · şube kirası' },
   { id: 'isler_tedarik', grup: 'tedarik', ad: 'Tedarik & depo', alt: 'Yolda kalan · fatura tutarı' },
   { id: 'isler_personel', grup: 'personel', ad: 'Personel', alt: 'Avans talepleri · vardiya planı yok', mod: ['avans', 'vardiya'] },   // biri açıksa görünür
   { id: 'isler_kira', grup: 'kira', ad: 'Kira hesabı', alt: 'Gelmeyen kira · şahsi mi borç mu', mod: 'mulk' },
   { id: 'isler_not', grup: 'not', ad: '📝 Şube notları', alt: 'Personelin merkeze yazdıkları · Gördüm', mod: 'panel' },   // sahip 21 Eki: AYRI alan
 ];
-const GRUPLAR = new Set(['kasa', 'odeme', 'tedarik', 'personel', 'kira', 'not']);
+const GRUPLAR = new Set(['kasa', 'siparis', 'odeme', 'tedarik', 'personel', 'kira', 'not']);
 // Codex: tanınmayan grup taşıyan iş kaybolmasın → Kasa & kapanış'a düşer
 export const isGrubu = (x) => (GRUPLAR.has(x.grup) ? x.grup : 'kasa');   // Fable: Kasa iş türlerini tanımaz — sağlayıcı 'grup' yazar
 

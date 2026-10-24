@@ -755,32 +755,46 @@ def deneme_temizle(x_evvel_oturum: Optional[str] = Header(default=None)):
     return {"ok": True, "mesaj": f"{n} deneme siparişi kapatıldı"}
 
 
-# ─────────────────────────── BEKLEYEN İŞLER (yalnız merkez KARARI — 3 satır; kuyruğun kendisi Sipariş ekranında) ───────────────────────────
+# ─────────────────────────── BEKLEYEN İŞLER (yalnız merkez KARARI) ───────────────────────────
+# 4f (sahip 23-24 Eki): "sipariş geldiğinde oradan yönlendirme" + "sipariş yönlendirme Bekleyen işler'de AYRI isimde, içine girmeden anlaşılsın"
+# → AYRI grup 'siparis'; yönlendirilmemiş HER sipariş GELDİĞİ AN tek satır (şube · kalem · süre · Yönlendir); YONSUZ_SAAT aşınca 'gecikti'.
+def _kalan_yazi(k: dict) -> str:
+    """Opus 4f-6: kısmen yönlendirilmiş kalemde kalan adet görünsün — 'Süt (4 kaldı)'."""
+    kalan, adet = k.get("yonsuz"), k.get("adet")
+    return f"{k['ad']} ({kalan} kaldı)" if kalan and adet and kalan != adet else k["ad"]
+
+
 def siparis_isleri(cur) -> list:
     if not _var(cur):
         return []
     from evvel_yeni_cekirdek import yeni_donem
     gercek = yeni_donem(cur)
-    cur.execute("SELECT * FROM ey_siparis WHERE NOT iptal AND zaman > NOW() - INTERVAL '30 days' AND NOT (deneme AND %s) ORDER BY zaman",
+    cur.execute("SELECT * FROM ey_siparis WHERE NOT iptal AND zaman > NOW() - INTERVAL '90 days' AND NOT (deneme AND %s) ORDER BY zaman",   # Opus 4f-10
                 (gercek,))
     acik = [s for s in _derle(cur, [dict(r) for r in cur.fetchall() or []]) if s["durum"] == "acik"]
     out, simdi = [], _is_gunu()   # F#23: sunucu UTC date.today() değil
     oneri = [k["ad"] for s in acik for k in s["kalemler"] if k["durum"] == "oneri"]
     if oneri:
-        out.append({"genel": True, "tur": "siparis_oneri", "grup": "tedarik", "id": "so", "tarih": simdi.isoformat(), "etiket": "🛒 Katalog dışı istek",
+        out.append({"genel": True, "tur": "siparis_oneri", "grup": "siparis", "id": "so", "tarih": simdi.isoformat(), "etiket": "🛒 Katalog dışı istek",
                     "ad": f"{len(oneri)} ürün önerisi", "alt": ", ".join(oneri[:3]) + (" …" if len(oneri) > 3 else "") + " — ürünü aç ve bağla ya da reddet",
                     "sayfa": "siparis_yon", "dugme": "Sipariş"})
-    eksik = [f"{s['sube']}: {k['ad']}" for s in acik for k in s["kalemler"] if k.get("eksik")]
+    eksik = [f"{s['sube']}: {k['ad']}" for s in acik for k in s["kalemler"] if k.get("eksik") and k["durum"] != "yonlendirilmedi"]   # Opus 4f-7
     if eksik:
-        out.append({"genel": True, "tur": "siparis_eksik", "grup": "tedarik", "id": "se", "tarih": simdi.isoformat(), "etiket": "🛒 Eksik karşılandı",
+        out.append({"genel": True, "tur": "siparis_eksik", "grup": "siparis", "id": "se", "tarih": simdi.isoformat(), "etiket": "🛒 Eksik karşılandı",
                     "ad": f"{len(eksik)} kalem istenenden az geldi", "alt": ", ".join(eksik[:3]) + " — yeniden yönlendir ya da kapat",
                     "sayfa": "siparis_yon", "dugme": "Sipariş"})
     from datetime import datetime, timezone
-    eski = [s for s in acik if any(k["durum"] == "yonlendirilmedi" for k in s["kalemler"])
-            and (datetime.now(timezone.utc) - datetime.fromisoformat(s["zaman"])).total_seconds() > YONSUZ_SAAT * 3600]
-    if eski:
-        out.append({"genel": True, "tur": "siparis_yonsuz", "grup": "tedarik", "id": "sy", "tarih": min(s["gun"] for s in eski), "etiket": "🛒 Yönlendirilmedi",
-                    "ad": f"{len(eski)} sipariş {YONSUZ_SAAT} saattir bekliyor", "alt": ", ".join(sorted({s["sube"] for s in eski})),
+    for s in acik:
+        yon = [k for k in s["kalemler"] if k["durum"] == "yonlendirilmedi"]
+        if not yon:
+            continue
+        dk = int((datetime.now(timezone.utc) - datetime.fromisoformat(s["zaman"])).total_seconds() // 60)
+        sa = dk // 60
+        sure = f"{sa} sa" if sa else (f"{dk} dk" if dk >= 1 else "az önce")   # Opus 4f-11
+        out.append({"genel": True, "tur": "siparis_yonsuz", "grup": "siparis", "id": f"sy-{s['id']}", "tarih": s["gun"],
+                    "etiket": "🛒 Sipariş yönlendirme bekliyor" + (" · gecikti" if sa >= YONSUZ_SAAT else ""),
+                    "ad": f"{s['sube']} · {len(yon)} kalem · {sure}" + (" · deneme" if s.get("deneme") else ""),   # Opus 4f-5
+                    "alt": ", ".join(_kalan_yazi(k) for k in yon[:3]) + (" …" if len(yon) > 3 else "") + " — depoya ya da toptancıya yönlendir",
                     "sayfa": "siparis_yon", "dugme": "Yönlendir"})
     return out
 

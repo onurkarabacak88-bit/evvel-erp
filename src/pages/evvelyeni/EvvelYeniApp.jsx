@@ -23,7 +23,12 @@ export const TABAN = '/evvel-yeni';
 const sekmeAdresten = () => {
   const p = (window.location.pathname || '').replace(/\/+$/, '');
   const son = p.replace(/^\/evvel-yeni/, '').split('/').filter(Boolean).pop() || '';
-  return TUM_SAYFALAR.some((x) => x.id === son) ? son : 'kasam';
+  if (TUM_SAYFALAR.some((x) => x.id === son)) return son;
+  // 4e (sahip 23 Eki: '/siparis' Kasam'a düşüyordu): modül adıyla gelen adres o modülün İLK sayfasına (ör. /evvel-yeni/siparis → Sipariş yönlendirme)
+  const m = MODULLER.find((b) => b.mod === son);
+  const ilk = m && m.sayfalar[0] && m.sayfalar[0].id;
+  if (ilk) { try { window.history.replaceState(null, '', `${TABAN}/${ilk}`); } catch { /* yok */ } return ilk; }   // Opus 4e-7: adres de doğru sayfa
+  return 'kasam';
 };
 
 const KABUK_CSS = `
