@@ -1463,7 +1463,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
           ))}
           {(veri.iptaller || []).map((x) => (
             <div key={`ip${x.id}`} style={{ ...kart, padding: '9px 13px', fontSize: 12.5, color: R.not, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-              <Cip>İptal</Cip><span>Bir {TUR_AD[x.hedef_tur] || 'kayıt'} kaydı iptal edildi · {x.sebep}{x.kaydeden ? ` · ${x.kaydeden}` : ''}</span>
+              <Cip>İptal</Cip><span>{x.hedef_tur ? <>{TUR_AD[x.hedef_tur] || x.hedef_tur}{x.hedef_yer ? ` · ${x.hedef_yer}` : ''}{x.hedef_tutar != null ? ` · ${fmt(x.hedef_tutar)} ₺` : ''}{x.hedef_gun ? ` (${tKisa(x.hedef_gun)})` : ''} iptal edildi</> : 'Bir kayıt iptal edildi'} · {x.sebep}{x.kaydeden ? ` · ${x.kaydeden}` : ''}</span>
             </div>
           ))}
           {veri.hareketler.length === 0

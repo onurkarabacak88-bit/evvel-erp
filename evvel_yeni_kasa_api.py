@@ -331,7 +331,21 @@ def _ham(cur):
         rows.append(r)
     iptaller = [r for r in rows if r["tur"] == "iptal"]
     iptal_edilen = {r["veri"].get("hedef_id") for r in iptaller}
+    by_id = {r["id"]: r for r in rows}
+    for i in iptaller:   # F3.3 (sim 25 Eki): iptal satırı neyin iptal edildiğini söylesin — hedef geçerli listede YOK (düşüldü)
+        i["_hedef"] = by_id.get(i["veri"].get("hedef_id"))
     return [r for r in rows if r["tur"] != "iptal" and r["id"] not in iptal_edilen], iptaller
+
+
+def _iptal_hedef(h: Optional[dict], C: dict) -> dict:
+    """İptal edilen kaydın kısa kimliği: tür · tutar · cep(ler) · iş günü (Kasam › Günlük hareketler iptal satırı)."""
+    if not h:
+        return {"hedef_tur": None}
+    ad = lambda cid: C.get(cid, {}).get("ad", cid) if cid else None  # noqa: E731
+    v = h.get("veri") or {}
+    tut = int(v["sayilan"]) if h["tur"] == "sayim" and v.get("sayilan") is not None else h.get("tutar")
+    yer = ad(h.get("cep")) or " → ".join(x for x in (ad(h.get("kaynak")), ad(h.get("hedef"))) if x) or (v.get("aciklama") or "")[:60] or None
+    return {"hedef_tur": h["tur"], "hedef_tutar": _tl_sayi(int(tut)) if tut is not None else None, "hedef_yer": yer, "hedef_gun": h.get("is_gunu")}
 
 
 def _olaylar(kayitlar: List[dict]) -> List[dict]:
@@ -680,9 +694,16 @@ def _cep_durum(c: dict, ol: List[dict], D: dict, ref: str, fl: List[dict], C: di
                    else f"O gün kapanış girilmedi — satış nakdi eksik (şu an {_tl(bal)})")   # B61: geçmiş gün 'açık' değildir
     elif bal < 0:
         kir.append(f"Eksi bakiye {_tl(bal)} — açılış bakiyesi ya da bir giriş eksik")
-    for x in fl:
-        if not x["coz"] and (x["cep"] == cid or x["sube_cep"] == cid):
-            kir.append(f"{_tl(abs(x.get('kalan', x['f'])))} {'eksik' if x['f'] > 0 else 'fazla'} · açık fark ({'teslim' if x['tur'] == 'teslim' else 'sayım'}, {str(x['tarih'])[8:10]}.{str(x['tarih'])[5:7]})")
+    gg = lambda t: f"{str(t)[8:10]}.{str(t)[5:7]}"  # noqa: E731
+    acik_f = [x for x in fl if not x["coz"] and (x["cep"] == cid or x["sube_cep"] == cid)]
+    if len(acik_f) == 1:
+        x = acik_f[0]
+        kir.append(f"{_tl(abs(x.get('kalan', x['f'])))} {'eksik' if x['f'] > 0 else 'fazla'} · açık fark ({'teslim' if x['tur'] == 'teslim' else 'sayım'}, {gg(x['tarih'])})")
+    elif acik_f:   # F3.2 (sim 25 Eki, patron gözü): farklar alt alta yığılmasın — tek satır özet, ayrıntı Açık farklar'da
+        net = sum(x.get("kalan", x["f"]) for x in acik_f)
+        eks = sum(1 for x in acik_f if x["f"] > 0)
+        kir.append(f"{len(acik_f)} açık fark · net {_tl(abs(net))} {'eksik' if net > 0 else 'fazla' if net < 0 else '(birbirini götürüyor)'}"
+                   + (f" · {eks} eksik, {len(acik_f) - eks} fazla" if 0 < eks < len(acik_f) else "") + f" · en eskisi {gg(min(str(x['tarih']) for x in acik_f))} → Açık farklar")
     cikislar = {o["id"]: o for o in ol if o["olay"] == "teslim_cikis"}
     alimlar = {o["id"] for o in ol if o["olay"] == "teslim_alim"}
     for hid, o in cikislar.items():
@@ -1053,7 +1074,6 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
         cd["seviye"] = "kirmizi" if cd["kirmizi"] else "sari" if cd["sari"] else cd["seviye"]
     alimlar = [o for o in gunun_ol if o["olay"] == "teslim_alim" and o["gun"] != o["is_gunu"]] if not hepsi else []
     gunun_iptal = iptaller if hepsi else [i for i in iptaller if i["kayit_zamani"].date().isoformat() == g]
-    tum_ad = {h["id"]: h for h in kayit}
     return {
         "gun": g, "hepsi": hepsi, "baslangic": bas.isoformat(), "bugun": bugun, "senkron": senkron,
         "ozet": _ozet(D, fl),
@@ -1069,7 +1089,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
         "gec_alimlar": [{"id": o["id"], "teslim_gunu": o["is_gunu"], "ad": f"{C.get(o['kaynak'], {}).get('ad')} → {C.get(o['hedef'], {}).get('ad')}",
                          "alinan": _tl_sayi(int(o["veri"].get("alinan", o["tutar"])))} for o in alimlar],
         "iptaller": [{"id": i["id"], "hedef_id": i["veri"].get("hedef_id"), "sebep": i["veri"].get("sebep"), "kaydeden": i.get("kaydeden"),
-                      "hedef_tur": (tum_ad.get(i["veri"].get("hedef_id")) or {}).get("tur")} for i in gunun_iptal],
+                      **_iptal_hedef(i.get("_hedef"), C)} for i in gunun_iptal],
         "isler": _isler(kayit, C, _farklar(ol_tum, C), bas, ilk_gun) + kart_isleri,
         "dis_turleri": [{"kod": k, "ad": v[0], "geri_odenecek": v[2]} for k, v in DIS_TURLERI.items()],
         "anlik_bakiye": {cid: _tl_sayi(v) for cid, v in _bakiye(ol_tum, C)["b"].items() if cid in C},
