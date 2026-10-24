@@ -204,7 +204,7 @@ function Yoldakiler({ onToast, mod }) {
                 <td style={{ ...hucre, whiteSpace: 'nowrap' }}>{x.sevk_gunu ? tKisa(x.sevk_gunu) : '—'}</td>
                 <td style={hucre}><b>{x.urun}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.nereden} → {x.nereye}</div>
                   <div style={{ fontSize: 11.5, color: R.not }}>📤 Gönderen: <b>{x.sevk_eden || '—'}</b> · 📥 Kabul eden: <b>{x.kabul_eden || '—'}</b>{x.merkez_kabul ? ' (merkez adına — şube saymadı)' : ''}</div></td>
-                <td style={{ ...hucre, textAlign: 'right', ...num }}>sevk {x.sevk} · kabul {x.kabul + Math.max(0, x.fazla)}</td>
+                <td style={{ ...hucre, textAlign: 'right', whiteSpace: 'nowrap', ...num }}>sevk {x.sevk} · kabul {x.kabul + Math.max(0, x.fazla)}</td>{/* Y12 (sim 24 Eki): rakamlar alt alta kırılıyordu */}
                 <td style={{ ...hucre, textAlign: 'right', color: x.fazla > 0 || x.hasar > 0 ? R.amber : R.kirmizi, fontWeight: 700 }}>
                   {x.hasar > 0 ? <>{x.hasar} adet HASARLI geldi — ASKIDA
                     <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>

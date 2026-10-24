@@ -42,7 +42,14 @@ export default function SiparisModulu({ onToast }) {
   const is_ = async (sid, yol, govde, mesaj) => {
     setMesgul((m) => ({ ...m, [sid]: true })); setHata('');
     try { const d = await api(`/evvel-yeni/siparis/${sid}/${yol}`, { method: 'POST', body: govde }); onToast?.(mesaj || d?.mesaj || 'Kaydedildi'); await yukle(sid); }
-    catch (e) { setHata(e?.message || 'İşlenemedi'); }
+    catch (e) {
+      // L1 (sim 24 Eki): depocu hazırlamaya başladıysa sunucu onay ister — merkez bilerek değiştirsin
+      if (e?.status === 409 && (yol === 'yon' || yol === 'iptal') && !govde.hazir_onay && /hazırlamaya başladı/.test(e?.message || '') && window.confirm(e.message)) {
+        setMesgul((m) => { const y = { ...m }; delete y[sid]; return y; });
+        return is_(sid, yol, { ...govde, hazir_onay: true }, mesaj);
+      }
+      setHata(e?.message || 'İşlenemedi');
+    }
     setMesgul((m) => { const y = { ...m }; delete y[sid]; return y; });
   };
   // kalemin DÜZENLENEBİLİR yönleri: taslak varsa o, yoksa mevcut kilitsiz yönler; hiç yoksa öneri kaynağıyla yönsüz adet
@@ -64,14 +71,19 @@ export default function SiparisModulu({ onToast }) {
     const t = taslak[s.id] || {};
     const kalemler = Object.entries(t).map(([i, ys]) => ({ i: Number(i), yonler: ys.filter((y) => y.kaynak && Number(y.adet) > 0).map((y) => ({ kaynak: y.kaynak, adet: Number(y.adet) })) }));
     if (!kalemler.length) { setHata('Değişiklik yok'); return; }
+    // Y6 ek (sim 24 Eki): varsayılan boş ("Nereden…") gelebilir — kaynaksız satır sessizce düşmesin, ne eksik söylensin
+    const kaynaksiz = Object.entries(t).filter(([, ys]) => ys.some((y) => !y.kaynak && Number(y.adet) > 0)).map(([i]) => (s.kalemler.find((x) => x.i === Number(i)) || {}).ad);
+    if (kaynaksiz.length) { setHata(`Kaynak seç: ${kaynaksiz.join(', ')} (depo ya da toptancı)`); return; }
     const bosalan = kalemler.filter((k) => !k.yonler.length).map((k) => (s.kalemler.find((x) => x.i === k.i) || {}).ad);
     if (bosalan.length && !window.confirm(`${bosalan.join(', ')}: bütün kaynaklar kaldırıldı — kalem 'Yönlendirilmedi'ye döner. Devam?`)) return;   // Fable D5-S1
     is_(s.id, 'yon', { surum: s.surum, kalemler }, 'Yönlendirildi');
   };
 
   // G61 (sim 23 Eki): yönlendirilmeyi BEKLEYEN sipariş en üstte (eskiden yeniye sırada bugünkü talep en altta kalıyordu)
-  const liste = [...(v?.siparisler || [])].sort((a, b) => Number((b.kalemler || []).some((k) => k.durum === 'yonlendirilmedi'))
-    - Number((a.kalemler || []).some((k) => k.durum === 'yonlendirilmedi')));
+  // Y1 (sim 24 Eki): Bekleyen işler'den gelince (?odak=…) o sipariş en üstte ve vurgulu
+  const odak = useMemo(() => { try { return new URLSearchParams(window.location.search).get('odak'); } catch { return null; } }, []);
+  const liste = [...(v?.siparisler || [])].sort((a, b) => Number(b.id === odak) - Number(a.id === odak)
+    || Number((b.kalemler || []).some((k) => k.durum === 'yonlendirilmedi')) - Number((a.kalemler || []).some((k) => k.durum === 'yonlendirilmedi')));
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
@@ -88,7 +100,7 @@ export default function SiparisModulu({ onToast }) {
         const acik = gorunum === 'acik' && s.durum === 'acik';
         const degisti = !!taslak[s.id] && Object.keys(taslak[s.id]).length > 0;
         return (
-          <div key={s.id} style={{ ...kart, padding: '10px 14px', display: 'grid', gap: 8 }}>
+          <div key={s.id} style={{ ...kart, padding: '10px 14px', display: 'grid', gap: 8, ...(s.id === odak ? { outline: `2px solid ${R.bakirAcik}`, outlineOffset: 2 } : {}) }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <b style={{ fontSize: 16 }}>{s.sube}</b>
               <span style={{ color: R.not, fontSize: 12.5 }}>{tKisa(s.gun)} · {s.kim || '—'}</span>
@@ -120,7 +132,7 @@ export default function SiparisModulu({ onToast }) {
               const ys = yonlerOf(s, k);
               const duzenlenir = acik && k.durum !== 'iptal' && k.durum !== 'oneri' && !!k.urun_id;
               const kilitler = k.yonler.filter(kilitli);
-              const toplam = kilitler.reduce((a, y) => a + (y.adet || 0), 0) + ys.reduce((a, y) => a + (Number(y.adet) || 0), 0);
+              const toplam = kilitler.reduce((a, y) => a + (y.kilit ?? y.adet ?? 0), 0) + ys.reduce((a, y) => a + (Number(y.adet) || 0), 0);   // Codex I-2: teslim alınmış/farkı çözülmüş satır GELEN adetle kilitli
               return (
                 <div key={k.i} style={{ borderTop: `1px solid ${R.cizgi}`, paddingTop: 8, display: 'grid', gap: 6 }}>
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -128,6 +140,11 @@ export default function SiparisModulu({ onToast }) {
                     <b style={num}>{k.adet}</b>
                     <Cip tur={dTur}>{dAd}</Cip>
                     {k.depo_yok && <Cip tur="sari">depo YOK dedi ({k.depo_yok})</Cip>}
+                    {k.fark_bekliyor && <Cip tur="sari">sevk farkı çözülmeyi bekliyor (Depo › Sevk farkları)</Cip>}   {/* Codex H: eksik ancak fark çözülünce */}
+                    {acik && k.depo_stok != null && k.durum !== 'karsilandi' && k.durum !== 'iptal' && (   /* Y3 (sim 24 Eki): yönlendirirken depo KAYDI */
+                      // sahip 24 Eki: kayıt sayım hatasıyla 0/eksi olup rafta mal olabilir → "yok" denmez; tek gerçek depocunun VAR/YOK'u
+                      <span style={{ fontSize: 12, color: k.depo_stok > 0 ? R.metin2 : R.amber }} title="Sistem kaydı — rafta olup olmadığını depocu VAR / YOK ile söyler">
+                        depo kaydı: <b style={num}>{k.depo_stok}</b>{k.depo_stok <= 0 ? ' · sayım gerekli' : ''}</span>)}
                     {k.eksik > 0 && k.durum !== 'yonlendirilmedi' && <Cip tur="kirmizi">{k.eksik} eksik geldi</Cip>}   {/* G29: yönlendirilmedi etiketi zaten söylüyor */}
                     {acik && k.durum !== 'iptal' && kilitler.length === 0 && (
                       <Dugme kucuk disabled={mesgul[s.id]} onClick={() => { const r = window.prompt(`${k.ad} kalemi neden iptal ediliyor?`); if (r && r.trim()) is_(s.id, 'yon', { surum: s.surum, kalemler: [{ i: k.i, iptal: r.trim() }] }, 'Kalem iptal edildi'); }}>Kalemi iptal</Dugme>
@@ -135,7 +152,7 @@ export default function SiparisModulu({ onToast }) {
                   </div>
                   {kilitler.map((y) => (
                     <div key={y.id} style={{ fontSize: 12.5, color: R.metin2, paddingLeft: 12 }}>
-                      🔒 {y.kaynak_ad} · <b style={num}>{y.adet}</b>{y.gelen != null ? ` · gelen ${y.gelen}` : ''} · {y.durum === 'karsilandi' && y.gelen != null && y.gelen < y.adet ? 'eksik kapandı' : (DURUM[y.durum] || [y.durum])[0]}
+                      🔒 {y.kaynak_ad} · <b style={num}>{y.adet}</b>{y.gelen != null ? ` · gelen ${y.gelen}` : ''} · {y.durum === 'karsilandi' && y.gelen != null && y.gelen < y.adet ? (k.eksik_kapandi ? 'eksik kapandı' : 'eksik geldi') : (DURUM[y.durum] || [y.durum])[0]}{/* Y13 (sim 24 Eki): kapanmamış eksiğe "eksik kapandı" yazıyordu */}
                     </div>
                   ))}
                   {k.durum === 'oneri' && acik && <OneriBagla s={s} k={k} urunler={urunler} mesgul={mesgul[s.id]} is_={is_} />}

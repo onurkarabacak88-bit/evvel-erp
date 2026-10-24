@@ -10,7 +10,7 @@ import { tarihNokta } from '../../utils/trTarih';
 
 const DURUM = {
   oneri: ['💡 merkez kararı bekliyor', C.sari], yonlendirilmedi: ['⏳ merkez bakıyor', C.sari], hazirlaniyor: ['📦 hazırlanıyor', C.mavi],
-  bekleniyor: ['🚚 toptancıdan bekleniyor', C.mavi], yolda: ['🚚 yolda', C.mavi], karsilandi: ['✓ geldi', C.yesil], iptal: ['iptal', C.soluk],
+  bekleniyor: ['🚚 toptancıdan bekleniyor', C.mavi], yolda: ['🚚 yolda', C.mavi], karsilandi: ['✓ teslim alındı · merkez kontrolünde', C.yesil]   /* M2 + Codex C (24 Eki): eksik gelen de "✓ geldi" görünüyordu; 'eksik' demek de sızdırır → herkese aynı dürüst yazı */, iptal: ['iptal', C.soluk],
 };
 const tarih = tarihNokta;   // gün yazımı TEK kaynak (F#65)
 
@@ -286,12 +286,13 @@ export function Gonderilecek({ d, subeId, adaylar, bitti }) {
             const s = sec[k.yon_id] || {};
             const t = (tur, n) => setSec((o) => ({ ...o, [k.yon_id]: { tur, n } }));
             return (
-              <div key={k.yon_id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', padding: 8, borderRadius: 10, background: s.tur ? 'rgba(34,197,94,.08)' : C.bg2 }}>
-                <span style={{ flex: 1, minWidth: 150, fontWeight: 700, fontSize: 16 }}>{k.ad} <span style={{ color: C.soluk }}>× {k.adet}</span></span>
+              // D2 (sim 24 Eki): KISMİ seçilince kutu araya giriyor, YOK alt satıra iniyordu → sabit ızgara, kutu yeri hep ayrılı (yanlış dokunma)
+              <div key={k.yon_id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto auto 80px auto', gap: 8, alignItems: 'center', padding: 8, borderRadius: 10, background: s.tur ? 'rgba(34,197,94,.08)' : C.bg2 }}>
+                <span style={{ minWidth: 0, fontWeight: 700, fontSize: 16 }}>{k.ad} <span style={{ color: C.soluk }}>× {k.adet}</span></span>
                 <button type="button" className={'sp-btn' + (s.tur === 'var' ? ' sp-yesil' : '')} style={{ minHeight: 44 }} onClick={() => t('var', k.adet)}>VAR</button>
                 <button type="button" className={'sp-btn' + (s.tur === 'kismi' ? ' sp-ana' : '')} style={{ minHeight: 44 }} onClick={() => t('kismi', '')}>KISMİ</button>
-                {s.tur === 'kismi' && <input className="sp-in" style={{ width: 80, textAlign: 'center', fontSize: 20 }} inputMode="numeric" placeholder="kaç?" value={s.n ?? ''}
-                  onChange={(e) => t('kismi', e.target.value.replace(/\D/g, '').slice(0, 5))} />}
+                <input className="sp-in" style={{ width: 80, textAlign: 'center', fontSize: 20, visibility: s.tur === 'kismi' ? 'visible' : 'hidden' }} inputMode="numeric" placeholder="kaç?" value={s.n ?? ''}
+                  tabIndex={s.tur === 'kismi' ? 0 : -1} onChange={(e) => t('kismi', e.target.value.replace(/\D/g, '').slice(0, 5))} />
                 <button type="button" className={'sp-btn' + (s.tur === 'yok' ? ' sp-ana' : '')} style={{ minHeight: 44 }} onClick={() => t('yok', 0)}>YOK</button>
               </div>
             );
@@ -300,11 +301,12 @@ export function Gonderilecek({ d, subeId, adaylar, bitti }) {
             const secilmedi = g.kalemler.filter((k) => !sec[k.yon_id]?.tur).length;
             const kismiBos = g.kalemler.filter((k) => sec[k.yon_id]?.tur === 'kismi' && (sec[k.yon_id]?.n ?? '') === '').length;   // henüz yazılmadı → sakin ipucu
             const gecersiz = eksikSecim - secilmedi - kismiBos;
-            return (<>
-              {secilmedi > 0 && <div style={{ color: C.soluk, fontSize: 13 }}>Her kaleme VAR / KISMİ / YOK seç — {g.kalemler.length - secilmedi}/{g.kalemler.length} seçildi</div>}
-              {kismiBos > 0 && <div style={{ color: C.soluk, fontSize: 13 }}>KISMİ seçtiğin kaleme kaç tane gönderdiğini yaz</div>}
-              {gecersiz > 0 && <div style={{ color: C.sari, fontSize: 13, fontWeight: 700 }}>KISMİ adedi 1 ile istenen arasında olmalı ({gecersiz} kalem)</div>}
-            </>);
+            // D2: ipucu TEK satırda, yeri hep ayrılı — yazı değişse de alttaki düğmeler kaymaz
+            const ipucu = gecersiz > 0 ? [`KISMİ adedi 1 ile istenen arasında olmalı (${gecersiz} kalem)`, C.sari]
+              : kismiBos > 0 ? ['KISMİ seçtiğin kaleme kaç tane gönderdiğini yaz', C.soluk]
+                : secilmedi > 0 ? [`Her kaleme VAR / KISMİ / YOK seç — ${g.kalemler.length - secilmedi}/${g.kalemler.length} seçildi`, C.soluk]
+                  : [`Hepsi seçildi ✓ — ${g.kalemler.length}/${g.kalemler.length}`, C.yesil];
+            return <div style={{ color: ipucu[1], fontSize: 13, fontWeight: gecersiz > 0 ? 700 : 400, minHeight: 20 }}>{ipucu[0]}</div>;
           })()}
           <div style={{ display: 'flex', gap: 8 }}>
             <button className="sp-btn" style={{ flex: 1 }} onClick={() => { setHataG(''); setOnay('hazirlik'); }}>💾 Hazırlığı kaydet</button>

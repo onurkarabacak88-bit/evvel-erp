@@ -1671,7 +1671,7 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
     );
   }
   if (x.genel) {   // 🧩 tak-çıkar: modülün kendi tarif ettiği satır (etiket · ad · alt · sayfa) — Kasa modülü tanımaz
-    const git = () => { sayfayaGit(x.sayfa); };
+    const git = () => { sayfayaGit(x.sayfa, x.sorgu || ''); };   // Y1 (sim 24 Eki): satır ilgili kaydı da taşır (?odak=…)
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(R.amber, 55)}` }}>
         <Cip tur="sari">{x.etiket}</Cip>

@@ -249,7 +249,7 @@ export default function SubePaneli({ subeId }) {
     { k: 'siparisTakip', i: '📊', ad: 'Sipariş Takip', acikKapali: true },
     { k: 'ac', i: '🔓', ad: 'Ürün Aç' },
     { k: 'fire', i: '🔥', ad: 'Fire Bildirimi' },
-    ...(d.sube.depo ? [{ k: 'gonderilecek', i: '📤', ad: 'Gönderilecek siparişler', acikKapali: true }] : []),
+    ...(d.sube.depo ? [{ k: 'gonderilecek', i: '📤', ad: 'Gönderilecek siparişler', acikKapali: true, rozet: d.gonderilecek_sayi || 0 }] : []),   // D1 (sim 24 Eki): depocu barda iken işi görsün
     { b: 'GÜN SONU' },
     { k: 'araTeslim', i: '💵', ad: 'Ara Teslim' },
     { k: 'devir', i: '🔄', ad: 'Kasa Devri' },
@@ -295,7 +295,7 @@ export default function SubePaneli({ subeId }) {
             <button key={m.k} className={'sp-sol' + (m.k === sekme ? ' akt' : '')} disabled={m.kapanisKarti ? (kapali && !dunTaslak) : kapali && !m.acikKapali && ['ac', 'teslim', 'fire', 'araTeslim', 'devir'].includes(m.k)} title={m.yakinda ? 'Kendi basamağında açılacak' : ''}
               onClick={() => (m.yakinda ? yakinda(`${m.ad} — kendi basamağında açılacak`) : ac(m.k))}>
               <span style={{ fontSize: 18, width: 24 }}>{m.i}</span><span style={{ flex: 1 }}>{m.ad}</span>{m.yakinda && <small style={{ opacity: 0.7 }}>yakında</small>}
-              {m.rozet > 0 && <span className="sp-rozet" style={{ background: C.yesil }} title={`${m.rozet} paket kabul bekliyor`}>{m.rozet}</span>}
+              {m.rozet > 0 && <span className="sp-rozet" style={{ background: C.yesil }} title={m.k === 'gonderilecek' ? `${m.rozet} kalem hazırlanıp gönderilecek` : `${m.rozet} paket kabul bekliyor`}>{m.rozet}</span>}
               {m.k === 'ac' && acSecim > 0 && <span className="sp-rozet" style={{ background: C.sari }} title={`${acSecim} kalem seçili — PIN onayı bekleniyor`}>{acSecim}</span>}
             </button>
           )))}

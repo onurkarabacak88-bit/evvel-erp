@@ -375,6 +375,13 @@ def panel_durum(sube_id: str):
                     depo_mu = depo_sube_id(cur) == str(sube_id)
             except Exception:  # noqa: BLE001
                 log.warning("panel durum: depo okunamadı", exc_info=True)
+        gonderilecek_sayi = 0
+        if depo_mu and _modul_acik("siparis"):   # D1 (sim 24 Eki): Tema menüsünde 'Gönderilecek' rozeti yoktu — depocu barda iken işi göremiyordu
+            try:
+                with savepoint(cur, "sp_panel_gonderilecek"):
+                    gonderilecek_sayi = sum(len(g["kalemler"]) for g in _siparis().gonderilecek(cur, str(sube_id)))
+            except Exception:  # noqa: BLE001
+                log.warning("panel durum: gönderilecek okunamadı", exc_info=True)
         # ⑥ SON TESLİM / KABUL (eski ana sayfa kartı, S11-3 KALIR): son 3 gün tedarikçi teslimi + depodan kabul — olay defterinden, ADETSİZ
         son_teslimler, geri_refler = [], set()
         for o in olaylar(cur, sube_id=sube_id, bas=gun - timedelta(days=2), son=gun, turler={"teslim_al", "depo_kabul", "teslim_geri_al"}):
@@ -414,7 +421,7 @@ def panel_durum(sube_id: str):
     def _u(x):
         return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici"),
                 "bardak": __import__("evvel_yeni_urun_api").bardak_mi(x["ad"])}   # TEK bardak kuralı (F#9) — ekran tahmin etmez
-    return {"sube": {"id": s["id"], "ad": s["ad"], "depo": depo_mu}, "depo_acik": depo_acik, "depo_yolda": depo_yolda, "avans_elden": avans_elden, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
+    return {"sube": {"id": s["id"], "ad": s["ad"], "depo": depo_mu}, "depo_acik": depo_acik, "depo_yolda": depo_yolda, "gonderilecek_sayi": gonderilecek_sayi, "avans_elden": avans_elden, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
             "personel": per, "teslim_alanlar": [{"id": c, "ad": a} for a, c in _TH.items()],
             "sayilan": [{"kategori": k["ad"], "urunler": [_u(x) for x in k["urunler"] if tezgahta_sayilir(x)]}
                         for k in kat],
@@ -1165,7 +1172,6 @@ def panel_gonderilecek(sube_id: str, b: GonderBody):
         _olay(cur, sube_id=sube_id, tur="sevk_cikis", is_gunu=c["gun"], kok=panel_kok("sevk", sube_id, b.istek_id), kaynak_tablo="panel",
               personel_id=p["id"], personel_ad=p["ad"], veri={"hedef": b.hedef, "parti_id": r.get("parti_id"), "istek_id": b.istek_id})
         return {"parti_id": r.get("parti_id"), "mesaj": (f"🚚 {r['kalem']} ürün yola çıktı" if r.get("kalem") else "Gönderilen ürün yok")
-                + (f" ({r['paket']} paket — aynı ürün iki siparişte)" if r.get("paket", 1) > 1 else "")
                 + (f" · {r['yok']} kalem YOK — merkez yeniden karar verecek" if r.get("yok") else "")
                 + (f" · {r['kismi']} kalem kısmi — kalanı merkeze döndü" if r.get("kismi") else "")}
     return _calistir(sube_id, b.istek_id, is_, tur="gonderilecek", govde=b.model_dump(mode="json"))
@@ -1186,6 +1192,7 @@ class TeslimAlBody(BaseModel):
     aciklama: Optional[str] = None
     koli: Optional[dict] = None           # yalnız iz: {urun_id: {koli, koli_ici, tek}} (hesap ekranda)
     siparis_yon: Optional[List[str]] = None   # S5 (A10): seçilen "beklenen toptancı siparişi" kart satırları
+    siparis_disi: bool = False   # Codex F (24 Eki): açık kart varken işaretlemeden aynı ürün → personel "sipariş dışı" diye bilerek seçti
     istek_id: str
 
 
@@ -1213,6 +1220,14 @@ def teslim_al(sube_id: str, b: TeslimAlBody):
             tutar = None
         if b.fatura_geldi and not tutar:
             raise HTTPException(400, "Fatura geldiyse faturadaki TOPLAM tutarı yaz")
+        if not b.siparis_disi and _modul_acik("siparis"):   # Codex F (24 Eki): kart işaretlenmeden teslim → sipariş sonsuza "bekleniyor" kalıyordu
+            from evvel_yeni_siparis_api import toptanci_beklenen
+            acik = next((g for g in toptanci_beklenen(cur, str(sube_id)) if str(g["toptanci_id"]) == str(t["id"])), {"kalemler": []})["kalemler"]
+            secili = set(b.siparis_yon or [])
+            bagli_urun = {y["urun_id"] for y in acik if y["yon_id"] in secili}   # o üründen bir kart işaretlendiyse teslim zaten bağlı (sim 24 Eki F3)
+            bagsiz = sorted({y["ad"] for y in acik if y["urun_id"] in {x["urun_id"] for x in k} and y["urun_id"] not in bagli_urun})
+            if bagsiz:
+                raise HTTPException(409, f"Açık sipariş kartı var: {', '.join(bagsiz[:3])} — kartı işaretle ya da 'Sipariş dışı teslim' seç")
         ozet = hashlib.sha1(json.dumps(sorted((x["urun_id"], x["adet"]) for x in k)).encode()).hexdigest()[:16] + ":" + str(t["id"])
         if not c["kuru"]:   # Fable: "kaydedildi mi?" deyip yeni istekle ikinci basış → 3 dk aynı içerik kilidi (eski SUBE-004)
             cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_teslim_al:{sube_id}",))

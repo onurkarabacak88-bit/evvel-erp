@@ -27,7 +27,7 @@ from pydantic import BaseModel
 
 from database import db, savepoint
 from evvel_yeni_cekirdek import adet_oku, kalem_topla, merkez_aktor
-from evvel_yeni_cekirdek import aktor as _aktor, bekleyen_is_kaydet, deneme_mi, is_gunu as _is_gunu   # K1/F#23: Depo'da tek gün = İŞ GÜNÜ
+from evvel_yeni_cekirdek import bekleyen_is_kaydet, deneme_mi, is_gunu as _is_gunu   # K1/F#23: Depo'da tek gün = İŞ GÜNÜ
 
 router = APIRouter(prefix="/api/evvel-yeni/depo", tags=["evvel-yeni-depo"])
 log = logging.getLogger(__name__)
@@ -620,56 +620,51 @@ def depo_iz(urun_id: str, konum: str):
     return {"urun_id": urun_id, "konum": konum, "konum_ad": konum_ad.get(konum, konum), "iz": out[::-1], "kalan": kalan}
 
 
-@router.get("/yolda")
-def depo_yolda(evren: Optional[str] = None):
-    """Yoldakiler (sevk edildi, kabul edilmedi) + sevk ≠ kabul olanlar. GEC_KABUL_GUN'den eski olan kırmızı.
-    ?evren=eski|yeni (Fable #3): 31 Ekim akşamı eski açık sevkler 1 Kasım sabahı da kapatılabilsin; deneme sevkleri önceden görülsün."""
-    _otomatik_senkron()
+def yolda_listesi(cur, yeni_mi: bool):
+    """(bekleyen, fark) — Yoldakiler / Sevk farkları ekranı ile Bekleyen işler satırı AYNI hesabı kullanır (Y11, sim 24 Eki).
+    Çağıranın imleciyle çalışır (ayrı bağlantı açmaz)."""
     bugun = _is_gunu()
-    with db() as (conn, cur):
-        depo_hazirla(cur)
-        yeni_mi = evren == "yeni" if evren in ("yeni", "eski") else evren_yeni(cur)
-        cur.execute("""SELECT bag, MAX(urun_ad) AS urun_ad, MAX(urun_id) AS urun_id,
-                              SUM(CASE WHEN tur='sevk' THEN adet ELSE 0 END) AS sevk,
-                              SUM(CASE WHEN tur='kabul' THEN adet ELSE 0 END) AS kabul,
-                              COUNT(*) FILTER (WHERE tur='kabul') AS kabul_kayit,
-                              BOOL_OR(tur='kabul' AND kaynak_ref LIKE '%%:merkez_kabul') AS merkez,
-                              SUM(CASE WHEN tur IN ('kayip','iade_geri') THEN adet ELSE 0 END) AS cozulen,
-                              SUM(CASE WHEN tur='hasar' THEN adet WHEN tur IN ('hasar_fire','hasar_iade') THEN -adet ELSE 0 END) AS hasar,
-                              SUM(CASE WHEN tur='hasar' THEN adet ELSE 0 END) AS hasar_top,
-                              SUM(CASE WHEN tur='fazla_kabul' THEN adet WHEN tur IN ('fazla_onay','fazla_ret') THEN -adet ELSE 0 END) AS fazla,
-                              MIN(CASE WHEN tur='sevk' THEN is_gunu END) AS sevk_gunu,
-                              MAX(CASE WHEN tur='sevk' THEN kaynak END) AS kaynak,
-                              MAX(CASE WHEN tur IN ('kabul','fazla_kabul') THEN hedef END) AS hedef_k,
-                              MAX(kim) FILTER (WHERE tur='sevk') AS sevk_kim,
-                              MAX(kim) FILTER (WHERE tur='kabul') AS kabul_kim
-                         FROM ey_stok_hareket WHERE bag IS NOT NULL AND NOT iptal AND yeni = %s
-                          AND bag IN (SELECT bag FROM ey_stok_hareket WHERE tur='sevk' AND NOT iptal AND bag IS NOT NULL)
-                        GROUP BY bag""", (yeni_mi,))
-        rs = [dict(r) for r in cur.fetchall() or []]
-        hedefler = _parti_hedefleri(cur)   # yeni sevk: hedef parti başlığında (kimlik kaynakta)
-        eski_kisi = {}
-        if not yeni_mi:   # eski aktarım (geçiş) — hedef eski stok_yolda'da; kesimde bu dal silinir
-            try:
-                with savepoint(cur, "sp_dp_yolda_eski"):
-                    cur.execute("SELECT id, sube_id::text AS hedef FROM stok_yolda WHERE sevk_ts >= %s", (BASLANGIC,))
-                    hedefler.update({dict(r)["id"]: dict(r)["hedef"] for r in cur.fetchall() or []})
-                with savepoint(cur, "sp_dp_yolda_eski_kisi"):
-                    # sahip 21 Eki + Fable P1: Ekim sevklerinde kişi = eski olay defteri (SEVK_CIKTI → gönderen, KABUL_TAM/EKSIK → kabul eden;
-                    # ref_event_id = sipariş). Bir siparişte birden çok sevk olabilir → o kalemin sevk/kabul SAATİNE en yakın olay (±10 dk — olay ve kalem AYNI işlemde yazılır; Codex 22 Eki: en yakın olayın adı boşsa '—', başka sevkin kişisi atanmaz).
-                    cur.execute("""SELECT y.id,
-                                      (SELECT d.personel_ad FROM operasyon_defter d WHERE d.ref_event_id = y.siparis_talep_id AND d.etiket = 'SEVK_CIKTI'
-                                          AND ABS(EXTRACT(EPOCH FROM d.olay_ts - y.sevk_ts::timestamp)) < 600
-                                        ORDER BY ABS(EXTRACT(EPOCH FROM d.olay_ts - y.sevk_ts::timestamp)) LIMIT 1) AS gonderen,
-                                      (SELECT d.personel_ad FROM operasyon_defter d WHERE d.ref_event_id = y.siparis_talep_id
-                                          AND d.etiket IN ('KABUL_TAM','KABUL_EKSIK') AND y.kabul_ts IS NOT NULL
-                                          AND ABS(EXTRACT(EPOCH FROM d.olay_ts - y.kabul_ts::timestamp)) < 600
-                                        ORDER BY ABS(EXTRACT(EPOCH FROM d.olay_ts - y.kabul_ts::timestamp)) LIMIT 1) AS kabul_eden
-                                 FROM stok_yolda y WHERE y.sevk_ts >= %s AND y.siparis_talep_id IS NOT NULL""", (BASLANGIC,))
-                    eski_kisi = {dict(r)["id"]: (dict(r)["gonderen"], dict(r)["kabul_eden"]) for r in cur.fetchall() or []}
-            except Exception:  # noqa: BLE001
-                log.warning("depo yolda: eski hedefler / kişiler okunamadı", exc_info=True)
-        konum_ad = {k["id"]: k["ad"] for k in _konumlar(cur)}
+    cur.execute("""SELECT bag, MAX(urun_ad) AS urun_ad, MAX(urun_id) AS urun_id,
+                          SUM(CASE WHEN tur='sevk' THEN adet ELSE 0 END) AS sevk,
+                          SUM(CASE WHEN tur='kabul' THEN adet ELSE 0 END) AS kabul,
+                          COUNT(*) FILTER (WHERE tur='kabul') AS kabul_kayit,
+                          BOOL_OR(tur='kabul' AND kaynak_ref LIKE '%%:merkez_kabul') AS merkez,
+                          SUM(CASE WHEN tur IN ('kayip','iade_geri') THEN adet ELSE 0 END) AS cozulen,
+                          SUM(CASE WHEN tur='hasar' THEN adet WHEN tur IN ('hasar_fire','hasar_iade') THEN -adet ELSE 0 END) AS hasar,
+                          SUM(CASE WHEN tur='hasar' THEN adet ELSE 0 END) AS hasar_top,
+                          SUM(CASE WHEN tur='fazla_kabul' THEN adet WHEN tur IN ('fazla_onay','fazla_ret') THEN -adet ELSE 0 END) AS fazla,
+                          MIN(CASE WHEN tur='sevk' THEN is_gunu END) AS sevk_gunu,
+                          MAX(CASE WHEN tur='sevk' THEN kaynak END) AS kaynak,
+                          MAX(CASE WHEN tur IN ('kabul','fazla_kabul') THEN hedef END) AS hedef_k,
+                          MAX(kim) FILTER (WHERE tur='sevk') AS sevk_kim,
+                          MAX(kim) FILTER (WHERE tur='kabul') AS kabul_kim
+                     FROM ey_stok_hareket WHERE bag IS NOT NULL AND NOT iptal AND yeni = %s
+                      AND bag IN (SELECT bag FROM ey_stok_hareket WHERE tur='sevk' AND NOT iptal AND bag IS NOT NULL)
+                    GROUP BY bag""", (yeni_mi,))
+    rs = [dict(r) for r in cur.fetchall() or []]
+    hedefler = _parti_hedefleri(cur)   # yeni sevk: hedef parti başlığında (kimlik kaynakta)
+    eski_kisi = {}
+    if not yeni_mi:   # eski aktarım (geçiş) — hedef eski stok_yolda'da; kesimde bu dal silinir
+        try:
+            with savepoint(cur, "sp_dp_yolda_eski"):
+                cur.execute("SELECT id, sube_id::text AS hedef FROM stok_yolda WHERE sevk_ts >= %s", (BASLANGIC,))
+                hedefler.update({dict(r)["id"]: dict(r)["hedef"] for r in cur.fetchall() or []})
+            with savepoint(cur, "sp_dp_yolda_eski_kisi"):
+                # sahip 21 Eki + Fable P1: Ekim sevklerinde kişi = eski olay defteri (SEVK_CIKTI → gönderen, KABUL_TAM/EKSIK → kabul eden;
+                # ref_event_id = sipariş). Bir siparişte birden çok sevk olabilir → o kalemin sevk/kabul SAATİNE en yakın olay (±10 dk — olay ve kalem AYNI işlemde yazılır; Codex 22 Eki: en yakın olayın adı boşsa '—', başka sevkin kişisi atanmaz).
+                cur.execute("""SELECT y.id,
+                                  (SELECT d.personel_ad FROM operasyon_defter d WHERE d.ref_event_id = y.siparis_talep_id AND d.etiket = 'SEVK_CIKTI'
+                                      AND ABS(EXTRACT(EPOCH FROM d.olay_ts - y.sevk_ts::timestamp)) < 600
+                                    ORDER BY ABS(EXTRACT(EPOCH FROM d.olay_ts - y.sevk_ts::timestamp)) LIMIT 1) AS gonderen,
+                                  (SELECT d.personel_ad FROM operasyon_defter d WHERE d.ref_event_id = y.siparis_talep_id
+                                      AND d.etiket IN ('KABUL_TAM','KABUL_EKSIK') AND y.kabul_ts IS NOT NULL
+                                      AND ABS(EXTRACT(EPOCH FROM d.olay_ts - y.kabul_ts::timestamp)) < 600
+                                    ORDER BY ABS(EXTRACT(EPOCH FROM d.olay_ts - y.kabul_ts::timestamp)) LIMIT 1) AS kabul_eden
+                             FROM stok_yolda y WHERE y.sevk_ts >= %s AND y.siparis_talep_id IS NOT NULL""", (BASLANGIC,))
+                eski_kisi = {dict(r)["id"]: (dict(r)["gonderen"], dict(r)["kabul_eden"]) for r in cur.fetchall() or []}
+        except Exception:  # noqa: BLE001
+            log.warning("depo yolda: eski hedefler / kişiler okunamadı", exc_info=True)
+    konum_ad = {k["id"]: k["ad"] for k in _konumlar(cur)}
     def kisi(k):   # 'şube paneli · Ayşe' → 'Ayşe' · ortak giriş → 'merkez' · Fable P2: 'oturumsuz' / 'bilinmiyor' kişi değil → None
         k = (str(k).rsplit(" · ", 1)[-1].strip() if k else "") or None
         if k in ("oturumsuz", "bilinmiyor"):
@@ -680,7 +675,7 @@ def depo_yolda(evren: Optional[str] = None):
         hedef = r.get("hedef_k") or (f"depo:{hedefler.get(r['bag'])}" if hedefler.get(r["bag"]) else None)
         x = {"id": r["bag"], "urun": r["urun_ad"], "urun_id": r["urun_id"], "sevk": int(r["sevk"] or 0), "kabul": int(r["kabul"] or 0),
              "fazla": int(r["fazla"] or 0), "cozulen": int(r["cozulen"] or 0), "merkez_kabul": bool(r.get("merkez")), "sevk_gunu": r["sevk_gunu"].isoformat() if r["sevk_gunu"] else None,
-             "hasar": int(r["hasar"] or 0), "nereden": konum_ad.get(r["kaynak"], r["kaynak"]), "nereye": konum_ad.get(hedef, hedef)}
+             "hasar": int(r["hasar"] or 0), "nereden": konum_ad.get(r["kaynak"], r["kaynak"]), "nereye": konum_ad.get(hedef, hedef), "hedef": hedef}
         # sahip 21 Eki: farkta gönderen + kabul eden personel adı (yoksa None → ekran '—')
         ek = eski_kisi.get(r["bag"], (None, None))
         x["sevk_eden"] = kisi(r.get("sevk_kim")) or ek[0]
@@ -694,6 +689,18 @@ def depo_yolda(evren: Optional[str] = None):
             fark.append(x)
     bekleyen.sort(key=lambda z: z["sevk_gunu"] or "")
     fark.sort(key=lambda z: z["sevk_gunu"] or "", reverse=True)
+    return bekleyen, fark
+
+
+@router.get("/yolda")
+def depo_yolda(evren: Optional[str] = None):
+    """Yoldakiler (sevk edildi, kabul edilmedi) + sevk ≠ kabul olanlar. GEC_KABUL_GUN'den eski olan kırmızı.
+    ?evren=eski|yeni (Fable #3): 31 Ekim akşamı eski açık sevkler 1 Kasım sabahı da kapatılabilsin; deneme sevkleri önceden görülsün."""
+    _otomatik_senkron()
+    with db() as (conn, cur):
+        depo_hazirla(cur)
+        yeni_mi = evren == "yeni" if evren in ("yeni", "eski") else evren_yeni(cur)
+        bekleyen, fark = yolda_listesi(cur, yeni_mi)
     return {"bekleyen": bekleyen, "fark": fark, "gec_sayi": sum(1 for x in bekleyen if x["gec"]), "gec_gun": GEC_KABUL_GUN,
             "evren": "yeni" if yeni_mi else "eski"}
 
@@ -713,7 +720,7 @@ def depo_sayim(body: SayimBody, x_evvel_oturum: Optional[str] = Header(default=N
         depo_hazirla(cur)
         if body.konum not in {k["id"] for k in _konumlar(cur)} or body.konum == "yolda":
             raise HTTPException(400, "Sayım yalnız bir şube deposunda yapılır")
-        kim = _aktor(cur, x_evvel_oturum)
+        kim = merkez_aktor(cur, x_evvel_oturum)   # Codex I-1 (24 Eki): oturumsuz stok yazımı kapandı (sevk et / geri al ile aynı kapı)
         yeni = body.evren == "yeni" if body.evren in ("yeni", "eski") else evren_yeni(cur)
         if not yeni and evren_yeni(cur):
             raise HTTPException(400, "1 Kasım'dan sonra eski katalogla sayım yapılmaz — ekranda 'Yeni katalog'a geç")
@@ -739,7 +746,7 @@ def merkez_kabul(yid: str, body: KabulBody, x_evvel_oturum: Optional[str] = Head
     Şube sonradan kabul ederse aynı kayıt kimliği olduğu için İKİNCİ kez yazılmaz."""
     with db() as (conn, cur):
         depo_hazirla(cur)
-        kim = _aktor(cur, x_evvel_oturum)
+        kim = merkez_aktor(cur, x_evvel_oturum)   # Codex I-1 (24 Eki): oturumsuz stok yazımı kapandı (sevk et / geri al ile aynı kapı)
         on = _on_ek(yid)
         hedef_sube = _hedef_sube(cur, yid)
         if not hedef_sube:
@@ -779,7 +786,7 @@ def fark_coz(yid: str, body: FarkCozBody, x_evvel_oturum: Optional[str] = Header
     """Sevk ≠ kabul çözümü (Fable): EKSİK (yolda kalan) → kayıp ya da kaynağa iade; FAZLA (askıda) → onay (şubeye) ya da ret."""
     with db() as (conn, cur):
         depo_hazirla(cur)
-        kim = _aktor(cur, x_evvel_oturum)
+        kim = merkez_aktor(cur, x_evvel_oturum)   # Codex I-1 (24 Eki): oturumsuz stok yazımı kapandı (sevk et / geri al ile aynı kapı)
         cur.execute("SELECT DISTINCT kaynak, hedef FROM ey_stok_hareket WHERE bag=%s AND NOT iptal", (yid,))
         _konum_kilidi(cur, *{k for r in cur.fetchall() or [] for k in (dict(r)["kaynak"], dict(r)["hedef"])})   # F2 sıra
         _bag_kilidi(cur, yid)   # Codex #5: aynı anda iki çözüm çift yazmasın — kilit altında yeniden hesaplanır
@@ -922,6 +929,16 @@ def _not_denetle(notu: Optional[str]) -> None:
     t = re.sub(r"\b\d{1,2}\.\d{1,2}(\.\d{2,4})?\b", "", notu or "")
     if re.search(r"\d", t):
         raise HTTPException(400, "Nota adet/sayı yazma — şube görür (kör sayım). Tarih (22.10) yazılabilir.")
+
+
+def sevk_istekle(cur, istek_id: str) -> Optional[dict]:
+    """PUBLIC (Codex I-3, 24 Eki): bu istek kimliğiyle yazılmış paket — {parti_id, kalem, iptal} ya da None. 'Yola çıkar' tekrarı önceki
+    başarıyı döndürebilsin (sipariş Depo tablosuna uzanmasın)."""
+    if not _var_tablo(cur, "ey_sevk_parti"):
+        return None
+    cur.execute("SELECT id, kalemler, iptal FROM ey_sevk_parti WHERE istek_id=%s", (str(istek_id),))
+    r = cur.fetchone()
+    return {"parti_id": dict(r)["id"], "kalem": len(dict(r)["kalemler"] or []), "iptal": bool(dict(r)["iptal"])} if r else None
 
 
 def sevk_yaz(cur, *, kaynak_sube: str, hedef_sube: str, kalemler: List[dict], kim: str, istek_id: str,
@@ -1102,8 +1119,10 @@ def yoldakiler(cur, hedef_sube: str) -> list:
 
 
 def sevk_kalem_durumlari(cur, baglar: List[str]) -> dict:
-    """PUBLIC — sevk kalemi durumu TEK hesap (merkez 'Son paketler' + Sipariş takibi): {bag: {iptal, kabul (None = kabul yok), hasar, fazla}}.
-    iptal = paket merkezce geri alındı. Kabul = şubenin ya da merkez adına kabul satırı (iptal olmayan)."""
+    """PUBLIC — sevk kalemi durumu TEK hesap (merkez 'Son paketler' + Sipariş takibi): {bag: {iptal, kabul (None = kabul yok), hasar, fazla, acik}}.
+    iptal = paket merkezce geri alındı. Kabul = şubenin ya da merkez adına kabul satırı (iptal olmayan).
+    acik (Codex H/I-2, 24 Eki) = kabul var ama fark (yolda kalan eksik · askıdaki hasarlı · askıdaki fazla) henüz merkezce ÇÖZÜLMEDİ —
+    fark_coz ile aynı hesap; sipariş tarafı eksiği ancak çözülünce 'gerçek eksik' sayar."""
     baglar = sorted({b for b in baglar or [] if str(b).startswith("sevk:")})
     if not baglar or not _var_tablo(cur, "ey_sevk_parti"):
         return {}
@@ -1118,8 +1137,14 @@ def sevk_kalem_durumlari(cur, baglar: List[str]) -> dict:
     out = {}
     for b in baglar:
         t = T.get(b, {})
-        out[b] = {"iptal": piptal.get(_parti_id(b), True), "kabul": t["kabul"][0] if t.get("kabul", (0, 0))[1] else None,
-                  "hasar": t.get("hasar", (0, 0))[0], "fazla": t.get("fazla_kabul", (0, 0))[0]}
+        a = lambda *turler: sum(t.get(x, (0, 0))[0] for x in turler)   # noqa: E731
+        kabul_var = bool(t.get("kabul", (0, 0))[1])
+        eksik_kalan = a("sevk") - a("kabul") - a("kayip", "iade_geri") - a("hasar")   # fark_coz 'kalan' ile aynı
+        hasar_askida = a("hasar") - a("hasar_fire", "hasar_iade")
+        fazla_askida = a("fazla_kabul") - a("fazla_onay", "fazla_ret")
+        out[b] = {"iptal": piptal.get(_parti_id(b), True), "kabul": t["kabul"][0] if kabul_var else None,
+                  "hasar": t.get("hasar", (0, 0))[0], "fazla": t.get("fazla_kabul", (0, 0))[0],
+                  "acik": kabul_var and (eksik_kalan > 0 or hasar_askida > 0 or fazla_askida > 0)}
     return out
 
 
@@ -1222,6 +1247,18 @@ def depo_isleri(cur) -> list:
     if rs:
         out.append({"tur": "depo_yolda", "grup": "tedarik", "id": "dy", "tarih": min(r["gun"] for r in rs).isoformat(), "ad": f"{len(rs)} sevk kalemi",
                     "sayi": len(rs), "ornek": ", ".join(str(r["urun"]) for r in rs[:3])})
+    if evren_yeni(cur):   # Y11 (sim 24 Eki): kabul farkı (eksik / hasarlı / fazla) Bekleyen işler'e hiç düşmüyordu — 2 günlük fark kimsenin önüne çıkmadı
+        _, fark = yolda_listesi(cur, True)
+        sube = {}
+        for x in fark:   # Codex H: anahtar şube KİMLİĞİ (ad değil)
+            sube.setdefault(x.get("hedef") or x["nereye"] or "—", []).append(x)
+        for hid, xs in sorted(sube.items()):
+            ad = xs[0]["nereye"] or "—"
+            parca = [f"{x['urun']} " + " · ".join(p for p in (f"{x['eksik']} eksik" if x["eksik"] else "", f"{x['hasar']} hasarlı" if x["hasar"] else "",
+                                                               f"{x['fazla']} fazla" if x["fazla"] > 0 else "") if p) for x in xs]
+            out.append({"genel": True, "tur": "depo_fark", "grup": "tedarik", "id": f"df-{hid}", "tarih": min(x["sevk_gunu"] or _is_gunu().isoformat() for x in xs),
+                        "etiket": "📦 Sevk farkı", "ad": f"{ad} · {len(xs)} kalem", "alt": ", ".join(parca[:3]) + (" …" if len(parca) > 3 else "")
+                        + " — kayıp mı, depo mu az koydu, hasar kimde? karar ver", "sayfa": "depo_fark", "dugme": "Çöz"})
     if evren_yeni(cur):   # sahip P2 + Fable F4: sevk eksiye yazılabilir → saklanmaz, bakiyeden TÜRETİLİR (sayımla düzelince kendiliğinden kalkar)
         eksi = {}
         for (u, k), a in _bakiyeler(cur, yeni=True).items():
