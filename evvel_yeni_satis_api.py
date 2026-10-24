@@ -641,6 +641,7 @@ def _devir_defteri_yeni(ay: Optional[str] = None):
         for o in _panel_olaylari(cur, ay_bas - timedelta(days=ZINCIR_GERI_GUN), ay_son + timedelta(days=1), {"acilis", "kapanis", "vardiya", "teslim"}):
             ev.setdefault((str(o["sube_id"]), o["is_gunu"].isoformat(), o["tur"]), []).append(o)
     elle_tes = _elle_teslimler()
+    vk_bekleyen = []
     tl = _kr_tl
     son = lambda lst: lst[-1] if lst else None  # noqa: E731
     out = []
@@ -669,13 +670,22 @@ def _devir_defteri_yeni(ay: Optional[str] = None):
             sab = tl(a["v"].get("kasa_sayim")) if a else None
             sabah = {"kim": a.get("personel_ad"), "saat": tr_saat(a.get("olay_zamani"), g), "sayilan": sab, "dun_birakilan": dun_birak, "dun_gunu": dk_gun,
                      "fark": round(sab - dun_birak, 2) if (sab is not None and dun_birak is not None) else None} if a else None
-            vardiya = None
-            if vd:
-                vv = vd["v"]
-                vardiya = {"devreden": (vv.get("devreden") or {}).get("ad") or "?", "devralan": (vv.get("devralan") or {}).get("ad") or "?",
-                           "saat": tr_saat(vd.get("olay_zamani"), g), "nakit": tl(vv.get("sayilan")), "teslim": None,
-                           "birakilan": tl(vv.get("sayilan")),   # Fable D-3: yeni devirde çekmece BÜTÜN devredilir (ara teslim ayrı satır)
-                           "durum": "tamam" if vv.get("tutuyor", True) else "tutmadi"}
+            def _vrd(o):   # devir v2 (sahip 23 Eki): 'sayilan' = RESMİ rakam (tutmadıysa devralanın); iki kör sayım + fark ayrıca
+                vv = o["v"]
+                return {"devreden": (vv.get("devreden") or {}).get("ad") or "?", "devralan": (vv.get("devralan") or {}).get("ad") or "?",
+                        "saat": tr_saat(o.get("olay_zamani"), g), "nakit": tl(vv.get("sayilan")), "teslim": None,
+                        "birakilan": tl(vv.get("sayilan")),   # Fable D-3: yeni devirde çekmece BÜTÜN devredilir (ara teslim ayrı satır)
+                        "durum": "merkez" if vv.get("merkez_istisna") else ("tamam" if vv.get("tutuyor", True) else "tutmadi"), "tur": vv.get("tur") or 1,
+                        "merkez_not": vv.get("aciklama") if vv.get("merkez_istisna") else None,   # Opus B5: merkezin kapattığı devir işaretli
+                        "devreden_sayilan": tl(vv.get("devreden_sayilan")), "devralan_sayilan": tl(vv.get("devralan_sayilan")),
+                        "fark": tl(vv.get("fark")), "fark_kalem": vv.get("fark_kalem") or [],
+                        # G64 (sim 23 Eki): 1. sayım tutmadıysa iki taraf ne saymıştı — merkez kişi desenini izler
+                        "tur1": ({"devreden": tl(((vv.get("tur1") or {}).get("devreden") or {}).get("kasa")),
+                                  "devralan": tl(((vv.get("tur1") or {}).get("devralan") or {}).get("kasa")),
+                                  "fark_kalem": (vv.get("tur1") or {}).get("fark_kalem") or []} if vv.get("tur1") else None)}
+            # D4 (sim 23 Eki): günde birden çok devir olur — HEPSİ (saat sırasıyla); 'vardiya' = son devir (eski okuyucular için)
+            vardiyalar = [_vrd(o) for o in sorted(ev.get((sid, gi, "vardiya"), []), key=lambda o: o.get("olay_zamani") or g)]
+            vardiya = _vrd(vd) if vd else None
             ara = [f"{alan_ad.get(t['v'].get('alan'), t['v'].get('alan'))} {tl(t['v'].get('tutar')) or 0:.0f}" for t in ev.get((sid, gi, "teslim"), [])]
             aksam = None
             if k:
@@ -690,15 +700,120 @@ def _devir_defteri_yeni(ay: Optional[str] = None):
             kopuk = None
             if aksam and ertesi and aksam["birakilan"] is not None and ertesi["sayilan"] is not None:
                 kopuk = round(ertesi["sayilan"] - aksam["birakilan"], 2)
-            gunler.append({"gun": gi, "sabah": sabah, "vardiya": vardiya, "aksam": aksam, "ertesi_sabah": ertesi,
+            gunler.append({"gun": gi, "sabah": sabah, "vardiya": vardiya, "vardiyalar": vardiyalar, "aksam": aksam, "ertesi_sabah": ertesi,
+                           "vardiya_kasa": None,
                            "elle_teslim": ", ".join(elle_tes.get((sid, gi), [])) or None,
                            "zincir_fark": kopuk, "zincir_tutuyor": (kopuk is not None and abs(kopuk) < 1)})
+            if a and vd and k and len(ev.get((sid, gi, "vardiya"), [])) > 1:   # Opus E1: iki vardiyaya bölme tek devir içindir
+                gunler[-1]["vardiya_kasa"] = {"neden": "günde birden çok devir — vardiyalara bölünmedi"}
+            elif a and vd and k:   # Faz 2 — ay sonunda TEK bağlantıda doldurulur (Opus Y7)
+                vk_bekleyen.append((gunler[-1], sid, g, a, vd, k, ev.get((sid, gi, "teslim"), [])))
             g += timedelta(days=1)
         out.append({"sube_id": sid, "ad": s_["ad"], "gunler": gunler,
                     "panel_yok": not any(x["sabah"] or x["aksam"] for x in gunler),
                     "ozet": {"tutan": sum(1 for x in gunler if x["zincir_tutuyor"]),
                              "kopuk": sum(1 for x in gunler if x["zincir_fark"] is not None and not x["zincir_tutuyor"])}})
+    _vardiya_kasa_doldur(vk_bekleyen)
     return {"ay": a_, "subeler": out, "not": "Zincir: akşam bırakılan = ertesi sabah sayılan olmalı. Kopukluk kırmızı. (Yeni panel kayıtları)"}
+
+
+def _zaman(x):
+    """Opus Y9: kaynak zamanı (aware datetime ya da ISO metin) → karşılaştırılabilir aware datetime; okunamazsa None."""
+    from datetime import datetime as _dt
+    if x is None:
+        return None
+    if isinstance(x, str):
+        try:
+            x = _dt.fromisoformat(x)
+        except ValueError:
+            return None
+    return x if getattr(x, "tzinfo", None) else None
+
+
+def _vardiya_kasa_doldur(bekleyen: list) -> None:
+    """FAZ 2 (DEVIR_KURGU_V2, sahip 24 Eki): günü kasa devriyle iki vardiyaya böler — YALNIZ OKUR, yeni tablo yok. Ay başına TEK bağlantı +
+    TEK defter yüklemesi (Opus Y7). Nakit satış / gider / ara teslim / kör sayım güvenilirliği Kasa mutabakatının TEK HESABINDAN
+    (mutabakat_hesapla + kartla-nakit düzeltmesi — Opus Y3/Y4/Y5), bardak Bar PUBLIC'ten (yumuşak bağ — Y8):
+      1. vardiya nakit = devir sayımı − sabah sayımı + (devre kadar) çekmece çıkışı + ara teslim (panel + merkez)
+      2. vardiya nakit = akşam kör sayım − devir sayımı + (devirden sonra) çekmece çıkışı + ara teslim
+      beklenen = günün nakit satışı × vardiyanın bardak payı (kart vardiyada bilinmez — devirde X yok, sahip).
+    Bölünemeyen gün (saati belirsiz kayıt, kör sayım teslimden sonra, bardak eksik) hesaplanmaz, NEDENİ yazılır. Eşik günlük kontrolle
+    AYNI (ESIK_ORAN / TL_TABAN, en az MIN_BARDAK — Y10). Fire düşülmez — günlük hesapla aynı (Y11)."""
+    if not bekleyen:
+        return
+    try:
+        from evvel_yeni_moduller import acik as _acik
+        if not _acik("bar"):
+            for gun_d, *_r in bekleyen:
+                gun_d["vardiya_kasa"] = {"neden": "Bar modülü kapalı"}
+            return
+        from evvel_yeni_bar_api import vardiya_bardaklari
+        from evvel_yeni_kasa_api import cekmece_cikislari, merkez_teslimleri, cift_kayit_duzeltmeleri, kasa_kayitlari
+        fn = (vardiya_bardaklari, cekmece_cikislari, merkez_teslimleri, cift_kayit_duzeltmeleri)
+        with db() as (conn, cur):
+            _cl, C, kayit, _ = kasa_kayitlari(cur, tum_donemler=True)
+            for gun_d, sid, g, a, vd, k, teslimler in bekleyen:
+                try:
+                    with savepoint(cur, "sp_ey_vardiya_kasa"):
+                        gun_d["vardiya_kasa"] = _vardiya_kasa(cur, kayit, C, sid, g, a, vd, k, teslimler, *fn)
+                except Exception:  # noqa: BLE001
+                    log.warning("satış: vardiya kasası okunamadı %s %s", sid, g, exc_info=True)
+                    gun_d["vardiya_kasa"] = {"neden": "okunamadı"}
+    except Exception:  # noqa: BLE001 — Y8: Faz 2 düşerse defterin geri kalanı yine gelir
+        log.warning("satış: vardiya kasası (Faz 2) okunamadı", exc_info=True)
+        for gun_d, *_r in bekleyen:
+            gun_d["vardiya_kasa"] = gun_d.get("vardiya_kasa") or {"neden": "okunamadı"}
+
+
+def _vardiya_kasa(cur, kayit, C, sid, g, a, vd, k, teslimler, vardiya_bardaklari, cekmece_cikislari, merkez_teslimleri,
+                  cift_kayit_duzeltmeleri) -> dict:
+    vv, kv, av = vd["v"], k["v"], a["v"]
+    if vv.get("merkez_istisna") and not _zaman(vv.get("sayim_ts")):   # Opus N1: merkez kapattı, sayım anı yok → kapatma anı sınır OLAMAZ
+        return {"neden": "merkez kapattı, sayım anı belirsiz — vardiyaya bölünemedi"}
+    kesim = _zaman(vv.get("sayim_ts")) or _zaman(vd.get("olay_zamani"))   # Opus Y2: gerçek SAYIM anı (merkez saatler sonra kapatsa da)
+    kap_ts = _zaman(k.get("olay_zamani"))
+    if None in (av.get("kasa_sayim"), vv.get("sayilan"), kv.get("kor_sayim"), kv.get("nakit")) or not kesim or not kap_ts:
+        return {"neden": "sabah / devir / akşam sayımı ya da nakit satış eksik"}
+    gi = g.isoformat()
+    cik = [c for c in cekmece_cikislari(cur, gi, kayit, C) if str(c["sube_id"]) == str(sid)]
+    mt = [t for t in merkez_teslimleri(cur, gi, kayit, C) if str(t["sube_id"]) == str(sid)]
+    # Opus Y6/Y3: saati olay anı olmayan (merkezin sonradan girdiği) ya da kapanıştan SONRA kaydedilen çıkış vardiyaya bölünemez
+    belirsiz = [c for c in cik if not c.get("panel") or not _zaman(c.get("zaman")) or _zaman(c.get("zaman")) > kap_ts]
+    belirsiz += mt   # Opus N2: merkezin Kasa'dan girdiği teslimin kayıt anı teslim anı DEĞİL → gün bölünmez
+    belirsiz += [t for t in teslimler if not _zaman(t.get("olay_zamani"))]   # Opus N4
+    if belirsiz:
+        return {"neden": "saati belirsiz çekmece çıkışı / merkez teslimi var — vardiyaya bölünemedi"}
+    # Kasa mutabakatının TEK hesabı (kör sayım güvenilir mi · kartla-nakit düzeltmesi) — Opus Y4/Y5
+    x = {**mut_bos(), "kor_ara_dahil": False, "acilis": int(av["kasa_sayim"]) / 100, "z_nakit": int(kv["nakit"]) / 100,
+         "kor_sayim": int(kv["kor_sayim"]) / 100, "devir": _kr_tl(kv.get("birakilan")),
+         "teslim": sum(int(t.get("tutar") or 0) for t in kv.get("teslimler") or []) / 100,
+         "giderler": [{"tutar": c["tutar"]} for c in cik],
+         "ara_teslimler": [{"tutar": int(t["v"].get("tutar") or 0) / 100} for t in teslimler] + [{"tutar": t["tutar"]} for t in mt]}
+    x["z_nakit"] = round(x["z_nakit"] - (cift_kayit_duzeltmeleri(cur, gi, kayit, C).get(str(sid)) or 0), 2)
+    mutabakat_hesapla(x)
+    if x.get("kor_belirsiz"):
+        return {"neden": "akşam kör sayımı teslimden sonra yapılmış — vardiyaya bölünemedi"}
+    b = vardiya_bardaklari(cur, sid, g, kesim, vv.get("bardak") or [])
+    if not b or b["v1"] < 0 or b["v2"] < 0:
+        return {"neden": "bardak sayımı eksik ya da eksiye düştü (ürün aç eksik)"}
+    hareket = [(c["tutar"], c.get("zaman")) for c in cik] + [(t["tutar"], t.get("zaman")) for t in mt]
+    hareket += [(int(t["v"].get("tutar") or 0) / 100, t.get("olay_zamani")) for t in teslimler]
+    c1 = sum(tt for tt, zz in hareket if _zaman(zz) and _zaman(zz) <= kesim)
+    c2 = sum(tt for tt, zz in hareket) - c1
+    sab, dsay, kor, z = x["acilis"], int(vv["sayilan"]) / 100, x["kor_sayim"], x["z_nakit"]
+    n1, n2 = dsay - sab + c1, kor - dsay + c2
+    tb = b["v1"] + b["v2"]
+    out = {}
+    for ad, kim, bardak, nakit in (("v1", (vv.get("devreden") or {}).get("ad"), b["v1"], n1),
+                                   ("v2", (vv.get("devralan") or {}).get("ad"), b["v2"], n2)):
+        bek = z * bardak / tb if tb else None
+        fark = round(nakit - bek, 2) if bek is not None else None
+        az = bardak < MIN_BARDAK
+        bak = (not az) and fark is not None and fark < -max(TL_TABAN, ESIK_ORAN * (bek or 0))
+        out[ad] = {"kim": kim, "bardak": bardak, "nakit": round(nakit, 2), "beklenen": round(bek, 2) if bek is not None else None,
+                   "fark": fark, "durum": "bak" if bak else ("az" if az else "normal"),
+                   "nakit_bardak": round(nakit / bardak, 2) if bardak else None}
+    return out
 
 
 def _devir_defteri_eski(ay: Optional[str] = None):

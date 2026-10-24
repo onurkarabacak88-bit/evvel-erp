@@ -14,7 +14,7 @@ import { bardakOzet } from '../../utils/devirOzet';
 export const YOKLAMA_SAYFALAR = [
   { id: 'personel_telefon', ad: 'Telefonlar', alt: 'Telefon bağla · şube PC onayı · çıkış düzelt' },
   { id: 'personel_mola', ad: 'Yemek molaları', alt: 'Gün gün mola · süre · yemek hakkı ✓/✗ · elle hak' },
-  { id: 'personel_devir', ad: 'Devirler', alt: 'Kasa devri çift onay · tutmuyor notları · tamamlanmayanı kapat' },
+  { id: 'personel_devir', ad: 'Devirler', alt: 'Kasa devri · iki kör sayım · tutmayan merkeze bilgi · tamamlanmayanı kapat' },
 ];
 const alan = { ...ALAN, padding: '6px 9px', borderRadius: 9, fontSize: 13.5 };   // temel stil KasaModulu ALAN (T4-15)
 const satir = { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${R.cizgi}`, padding: '8px 0', fontSize: 13.5 };
@@ -312,9 +312,13 @@ export function YemekMolalari({ onToast }) {
 const tlYazi = (x) => tlYaz(x);   // ₺ biçimi TEK kaynak (F#58)
 
 function devirCip(s) {
+  if (s.durum === 'baslatildi') return <Cip tur="sari">⏳ başladı · kimse okutmadı</Cip>;
+  if (s.durum === 'sayiliyor') return <Cip tur="sari">⏳ sayım sürüyor</Cip>;
+  if (s.durum === 'yeniden') return <Cip tur="sari">⏳ 2. sayım bekleniyor</Cip>;
+  if (s.durum === 'tutmadi') return <Cip tur="kirmizi">⚠ tutmadı (2 kör sayım)</Cip>;
   if (s.durum === 'hazir') return <Cip tur="sari">⏳ devreden bekleniyor</Cip>;
   if (s.durum === 'devreden_onayladi') return <Cip tur="sari">⏳ devralan bekleniyor</Cip>;
-  if (s.durum === 'tamam') return <Cip tur="yesil">✓ tamam</Cip>;
+  if (s.durum === 'tamam') return <Cip tur="yesil">✓ tuttu{(s.tur || 1) > 1 ? ' (2. sayımda)' : ''}</Cip>;
   if (s.durum === 'tutmuyor') return <Cip tur="kirmizi">⚠ tutmuyor</Cip>;
   if (s.durum === 'merkez_kapatti') return <Cip tur="bakir">🏢 merkez kapattı · {s.merkez_sonuc === 'kapandi' ? 'devir sayıldı' : 'iptal'}</Cip>;
   if (s.durum === 'iptal') return <Cip>iptal (panel)</Cip>;
@@ -324,20 +328,14 @@ function devirCip(s) {
 function DevirSatir({ s, duz, setDuz, mesgul, yap }) {
   const d = duz[s.id] || {};
   const set = (k, x) => setDuz((o) => ({ ...o, [s.id]: { ...d, [k]: x } }));
-  const acikDevir = s.durum === 'hazir' || s.durum === 'devreden_onayladi';
+  const acikDevir = ['baslatildi', 'hazir', 'devreden_onayladi', 'sayiliyor', 'yeniden'].includes(s.durum);
   const kapat = (sonuc) => yap(s.id, `/evvel-yeni/yoklama/devir/${s.id}/merkez-kapat`, { sonuc, aciklama: (d.aciklama || '').trim() });
   return (
     <tr>
       <td style={{ color: R.not }}>{gunKisa(s.gun)}</td>
       <td style={{ color: R.not }}>{s.sube || '—'}</td>
-      <td><b>{s.devreden || '?'}</b> → <b>{s.devralan || '?'}</b>{s.vekil && s.ustlenen ? <div style={{ fontSize: 12, color: R.not }}>{s.ustlenen} adına doldurdu</div> : null}</td>
-      <td style={num}>{s.sayilan == null ? '—' : tlYazi(s.sayilan)}{s.devralan_sayilan != null && <div style={{ fontSize: 12, color: R.kirmizi }}>devralan: {tlYazi(s.devralan_sayilan)}</div>}</td>
-      <td style={{ color: R.metin2 }}>{s.bardak?.length ? bardakOzet(s.bardak) : '—'}
-        {s.urunler?.length ? <div style={{ fontSize: 12 }}>{s.urunler.map((u) => `${u.ad} ${u.sayilan}`).join(' · ')}</div> : null}
-        {s.pasta != null ? <div style={{ fontSize: 12 }}>pasta {s.pasta}</div> : null}</td>
-      <td style={{ ...num, color: R.not }} title="form · devretti · kabul">{s.panel || '—'} · {s.devreden_saat || '—'} · {s.devralan_saat || '—'}</td>
+      <td>{!s.devreden && !s.devralan ? <span style={{ color: R.not }}>henüz kimse okutmadı</span> : <><b>{s.devreden || '—'}</b> → <b>{s.devralan || '—'}</b></>}{s.vekil && s.ustlenen ? <div style={{ fontSize: 12, color: R.not }}>{s.ustlenen_id === s.devreden_id ? 'kasa sahibi içeride değildi' : `${s.ustlenen}, ${s.devreden} adına saydı`}</div> : null}</td>
       <td>{devirCip(s)}</td>
-      <td style={{ color: s.durum === 'tutmuyor' ? R.kirmizi : R.metin2, maxWidth: 220 }}>{s.not || '—'}</td>
       <td>
         {acikDevir && (
           <span style={{ display: 'inline-flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -347,14 +345,23 @@ function DevirSatir({ s, duz, setDuz, mesgul, yap }) {
               onClick={() => kapat('kapandi')}>Devir sayıldı</Dugme>
           </span>
         )}
-        {(s.durum === 'tutmuyor' || (s.durum === 'tamam' && s.vekil)) && !s.gorulen && <Dugme kucuk ana disabled={mesgul[s.id]} onClick={() => yap(s.id, `/evvel-yeni/yoklama/devir/${s.id}/gorundu`, {})}>Gördüm</Dugme>}
-        {(s.durum === 'tutmuyor' || (s.durum === 'tamam' && s.vekil)) && s.gorulen && <span style={{ fontSize: 12, color: R.not }}>görüldü: {s.gorulen}</span>}
+        {(['tutmadi', 'tutmuyor'].includes(s.durum) || (s.durum === 'tamam' && s.vekil)) && !s.gorulen && <Dugme kucuk ana disabled={mesgul[s.id]} onClick={() => yap(s.id, `/evvel-yeni/yoklama/devir/${s.id}/gorundu`, {})}>Gördüm</Dugme>}
+        {(['tutmadi', 'tutmuyor'].includes(s.durum) || (s.durum === 'tamam' && s.vekil)) && s.gorulen && <span style={{ fontSize: 12, color: R.not }}>görüldü: {s.gorulen}</span>}
       </td>
+      <td style={num}>{s.sayilan == null ? '—' : tlYazi(s.sayilan)}
+        {s.devralan_sayilan != null && <div style={{ fontSize: 12, color: s.fark ? R.kirmizi : R.not }}>devralan: {tlYazi(s.devralan_sayilan)}{s.fark ? ` · fark ${s.fark > 0 ? '+' : ''}${tlYazi(s.fark)}` : ''}</div>}
+        {s.fark_kalem?.length ? <div style={{ fontSize: 12, color: R.kirmizi }}>tutmayan: {s.fark_kalem.join(', ')}</div> : null}
+        {s.tur1 ? <div style={{ fontSize: 12, color: R.amber }} title="1. sayım tutmadı → birlikte yeniden sayıldı">1. sayım: devreden {tlYazi((s.tur1.devreden?.kasa ?? 0) / 100)} · devralan {tlYazi((s.tur1.devralan?.kasa ?? 0) / 100)}{s.tur1.fark_kalem?.length ? ` · tutmayan: ${s.tur1.fark_kalem.join(', ')}` : ''}</div> : null}</td>
+      <td style={{ color: R.metin2, minWidth: 160 }}>{s.bardak?.length ? bardakOzet(s.bardak) : '—'}
+        {s.urunler?.length ? <div style={{ fontSize: 12 }}>{s.urunler.map((u) => `${u.ad} ${u.sayilan}`).join(' · ')}</div> : null}
+        {s.pasta != null ? <div style={{ fontSize: 12 }}>pasta {s.pasta}</div> : null}</td>
+      <td style={{ ...num, color: R.not }} title="form · devretti · kabul">{s.panel || '—'} · {s.devreden_saat || '—'} · {s.devralan_saat || '—'}</td>
+      <td style={{ color: s.durum === 'tutmuyor' ? R.kirmizi : R.metin2, maxWidth: 220 }}>{s.not || '—'}</td>
     </tr>
   );
 }
 
-const DEVIR_TH = ['Tarih', 'Şube', 'Devreden → Devralan', 'Sayılan', 'Bardak', 'Form · devretti · kabul', 'Durum', 'Not', ''];
+const DEVIR_TH = ['Tarih', 'Şube', 'Devreden → Devralan', 'Durum', '', 'Sayılan (devreden · devralan)', 'Bardak', 'Başladı · devreden · devralan', 'Not'];   // G69: durum + düğme öne (1366'da ekranda kalsın)
 
 function DevirTablo({ satirlar, bos, ...p }) {
   return (
@@ -399,7 +406,8 @@ export function Devirler({ onToast }) {
         <AySecici ay={ay} setAy={setAy} style={{ ...alan, marginLeft: 'auto' }} />
       </div>
       <div style={{ fontSize: 13, color: R.metin2 }}>
-        Kasa devri panelde sayılır, onaylar kişilerin kendi telefonunda: devreden "Devrediyorum", devralan "Kabul ediyorum" ya da "Tutmuyor" + not (devir yine tamamlanır, not burada görünür).
+        Kasa devri (v2): kasa sahibi ve kasayı alan kişi kendi telefonlarında AYRI ve KÖR sayar (birbirinin rakamını görmez); sistem karşılaştırır.
+        Tutmazsa bir kez birlikte yeniden sayılır; yine tutmazsa devir tamamlanır (resmi rakam devralanın) ve burada bilgi olarak görünür — "Gördüm".
         Onayı gelmeyen devri burada kapatırsın — "iptal" iz bırakmaz, "devir sayıldı" vardiya kaydını merkez istisnası olarak yazar; ikisi de kişi onayı yerine geçmez, satırda "merkez kapattı" yazar.
       </div>
       {hata && <div style={{ color: R.kirmizi }}>{hata} <Dugme kucuk onClick={yukle}>Yeniden dene</Dugme></div>}
@@ -413,7 +421,7 @@ export function Devirler({ onToast }) {
       )}
 
       <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 6 }}>
-        <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>⏳ Bekleyenler — 2 saattir tamamlanmamış devirler + görülmemiş "tutmuyor" (Bekleyen işler › Personel ile aynı liste; yeni başlayan devir 2 saat beklenir)</div>
+        <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>⏳ Bekleyenler — şu an AÇIK devirler (takıldıysa buradan kapat) + görülmemiş "tutmadı" · Bekleyen işler'e 2 saat sonra düşer</div>
         {acik === null && <div style={{ color: R.not, padding: 6 }}>Okunuyor…</div>}
         {acik && <DevirTablo satirlar={acik} bos="Bekleyen devir yok." {...ortak} />}
       </div>

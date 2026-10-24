@@ -151,6 +151,40 @@ def _bos():
 from evvel_yeni_cekirdek import tr_duvar as _tr_saat, tr_tarih_saat as _saat   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek
 
 
+def vardiya_bardaklari(cur, sube_id: str, gun: date, kesim_ts, kesim_say: list) -> Optional[dict]:
+    """PUBLIC (Satış › Kasa devir defteri, DEVIR_KURGU_V2 Faz 2 — sahip 24 Eki "Faz 2 başla"): günü kasa devriyle İKİ vardiyaya böler.
+    Formül bar_ozet ile AYNI (net eksilme = baştaki sayım + arada bara giren − sondaki sayım), yalnız bardak kalemleri:
+      1. vardiya = açılış sayımı + (açılış→devir) açılan − DEVİR sayımı · 2. vardiya = devir sayımı + (devir→kapanış) açılan − kapanış sayımı.
+    kesim_say: devir olayının resmi bardak sayımı [{urun_id, sayilan}]. Açılış / kapanış / devirde bardak eksikse None (hesaplanmaz)."""
+    # G73 (sim 24 Eki): kalemler = DEVİRDE SAYILAN bardaklar (katalogda pasif eski bardak kaydı varsa iki liste ayrışıyordu)
+    bid = {str(x.get("urun_id")) for x in kesim_say or [] if x.get("urun_id")}
+    if not bid:
+        return None
+    ev, ac = {}, []
+    for o in __import__("evvel_yeni_olay").panel_olaylari(cur, sube_id=str(sube_id), bas=gun, son=gun, turler={"acilis", "kapanis", "urun_ac"}):
+        v = o["v"]
+        if o["tur"] == "urun_ac":
+            ac += [(o["olay_zamani"], str(x.get("urun_id")), int(x.get("adet") or 0)) for x in v.get("kalemler") or [] if str(x.get("urun_id")) in bid]
+            continue
+        ev[o["tur"]] = {"ts": o["olay_zamani"], "say": {str(x.get("urun_id")): x.get("sayilan") for x in v.get("sayim") or []}}
+    dv = {str(x.get("urun_id")): x.get("sayilan") for x in kesim_say or []}
+    if "acilis" not in ev or "kapanis" not in ev or not kesim_ts:
+        return None
+
+    def toplam(say):
+        n = [say.get(i) for i in bid]
+        return None if any(x is None for x in n) else sum(int(x) for x in n)
+
+    def acilan(t0, t1):
+        t0, t1 = _tr_saat(t0), _tr_saat(t1)
+        return sum(a for ts, _i, a in ac if t0 < _tr_saat(ts) <= t1)
+
+    A, D, K = toplam(ev["acilis"]["say"]), toplam(dv), toplam(ev["kapanis"]["say"])
+    if None in (A, D, K):
+        return None
+    return {"v1": A + acilan(ev["acilis"]["ts"], kesim_ts) - D, "v2": D + acilan(kesim_ts, ev["kapanis"]["ts"]) - K}
+
+
 def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
     """YENİ DÖNEM (1 Kasım — panel_baslangic): Evvel Yeni defterlerinden. Formül AYNI (eski panel):
     DEVİR FARKI = bugün açılış − (dün kapanış + gece bara giren) · NET EKSİLME = açılış + gün içi bara giren − kapanış.

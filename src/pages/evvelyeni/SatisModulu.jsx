@@ -281,9 +281,27 @@ export function DevirDefteri() {
                   <td style={{ ...hucre, ...num, whiteSpace: 'nowrap' }}><b>{tKisa(g.gun)}</b></td>
                   <td style={hucre}>{g.sabah ? <><b>{g.sabah.kim || '?'}</b> · {g.sabah.saat}<br />sayılan <b style={num}>{tut(g.sabah.sayilan)}</b>
                     {g.sabah.dun_birakilan != null && <span style={{ color: R.not }}> · {dunAd(g.sabah.dun_gunu)} bırakılan {tut(g.sabah.dun_birakilan)}</span>}{fark(g.sabah.fark)}</> : <span style={{ color: R.not }}>açılış yok</span>}</td>
-                  <td style={hucre}>{g.vardiya ? <><b>{g.vardiya.devreden}</b> → <b>{g.vardiya.devralan}</b> · {g.vardiya.saat}<br />
-                    nakit {tut(g.vardiya.nakit)}{g.vardiya.teslim ? ` · teslim ${tut(g.vardiya.teslim)}` : ''} · bıraktı <b style={num}>{tut(g.vardiya.birakilan)}</b>
-                    {g.vardiya.durum === 'acilis_bekliyor' && <div style={{ color: R.amber }}>devralan henüz onaylamadı</div>}</> : <span style={{ color: R.not }}>—</span>}</td>
+                  <td style={hucre}>{(g.vardiyalar?.length ? g.vardiyalar : g.vardiya ? [g.vardiya] : []).map((vy, i) => (   /* D4: günün BÜTÜN devirleri */
+                    <div key={i} style={i ? { borderTop: `1px dashed ${R.cizgi}`, marginTop: 4, paddingTop: 4 } : undefined}>
+                      <b>{vy.devreden}</b> → <b>{vy.devralan}</b> · {vy.saat}<br />
+                      {vy.durum === 'merkez' ? <span style={{ color: R.bakirAcik || R.amber }}>🏢 merkez kapattı · bıraktı <b style={num}>{tut(vy.birakilan)}</b>{vy.merkez_not ? ` · ${vy.merkez_not}` : ''}</span>
+                        : vy.durum === 'tutmadi'
+                        ? <span style={{ color: R.kirmizi }}>⚠ tutmadı · devreden {tut(vy.devreden_sayilan)} · devralan <b style={num}>{tut(vy.devralan_sayilan)}</b>{vy.fark_kalem?.length ? ` · ${vy.fark_kalem.join(', ')}` : ''}</span>
+                        : <>{vy.teslim ? `teslim ${tut(vy.teslim)} · ` : ''}bıraktı <b style={num}>{tut(vy.birakilan)}</b>{vy.devralan_sayilan != null ? <span style={{ color: R.yesil }}> ✓ iki sayım tuttu{vy.tur > 1 ? ' (2. sayımda)' : ''}</span> : null}</>}
+                      {vy.tur1 && <div style={{ fontSize: 12, color: R.amber }}>1. sayım: devreden {tut(vy.tur1.devreden)} · devralan {tut(vy.tur1.devralan)}{vy.tur1.fark_kalem?.length ? ` · ${vy.tur1.fark_kalem.join(', ')}` : ''}</div>}
+                      {vy.durum === 'acilis_bekliyor' && <div style={{ color: R.amber }}>devralan henüz onaylamadı</div>}
+                    </div>))}
+                    {!g.vardiyalar?.length && !g.vardiya && <span style={{ color: R.not }}>—</span>}
+                    {g.vardiya_kasa?.v1 && (   /* Faz 2 (sahip 24 Eki): vardiya bazında bardak → nakit — kart vardiyada bilinmez, oran izlenir */
+                      <div style={{ marginTop: 6, paddingTop: 6, borderTop: `1px dashed ${R.cizgi}`, display: 'grid', gap: 2, fontSize: 12 }}>
+                        {['v1', 'v2'].map((k, i) => { const x = g.vardiya_kasa[k]; return (
+                          <div key={k} style={{ color: x.durum === 'bak' ? R.kirmizi : R.metin2 }} title="Beklenen = günün nakit satışı × bu vardiyanın bardak payı. Kimseye suç yazılmaz.">
+                            {i ? '🌙' : '☀'} <b>{x.kim || '?'}</b> · {x.bardak} bardak · kasaya {tut(x.nakit)} · beklenen ≈{tut(x.beklenen)}
+                            {x.fark != null && <b style={num}> ({x.fark > 0 ? '+' : ''}{tut(x.fark)})</b>}{x.durum === 'bak' ? ' · bak' : x.durum === 'az' ? ' · az bardak (karşılaştırılmaz)' : ''}
+                          </div>); })}
+                      </div>
+                    )}
+                    {g.vardiya_kasa?.neden && <div style={{ marginTop: 4, fontSize: 12, color: R.not }}>vardiya kasası: {g.vardiya_kasa.neden}</div>}</td>
                   <td style={hucre}>{g.aksam ? <><b>{g.aksam.kim || '?'}</b> · {g.aksam.saat}<br />kör toplam <b style={num}>{tut(g.aksam.kor_toplam)}</b>
                     {g.aksam.teslim ? <> · teslim <b style={num}>{tut(g.aksam.teslim)}</b> → {g.aksam.kime || <span style={{ color: R.kirmizi }}>kime? kayıt yok</span>}</> : ' · teslim yok'}
                     {g.aksam.ara_teslim && <div style={{ color: R.not }}>ara teslim: {g.aksam.ara_teslim}</div>}

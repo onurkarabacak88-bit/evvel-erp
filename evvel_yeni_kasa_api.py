@@ -2195,10 +2195,11 @@ def cep_kisa_adlari(cur, gun: str) -> Dict[str, str]:
     return {cid: c.get("kisa") or c.get("ad") or cid for cid, c in C.items()}
 
 
-def cift_kayit_duzeltmeleri(cur, gun: str) -> Dict[str, float]:
+def cift_kayit_duzeltmeleri(cur, gun: str, kayit: Optional[list] = None, C: Optional[dict] = None) -> Dict[str, float]:
     """PUBLIC (Satış mutabakatı): o gün şube kapanışlarına uygulanan 'kartla ödenmiş — nakit olarak da yazılmış' düzeltmeleri
-    {sube_id: TL}. Satış nakdi panel olayından okur; düzeltme yalnız Kasa'da → sağlamada düşülür (Fable + Codex 21 Eki)."""
-    kayit, C = _kayit_ve_cepler(cur, gun, None, None)
+    {sube_id: TL}. Satış nakdi panel olayından okur; düzeltme yalnız Kasa'da → sağlamada düşülür (Fable + Codex 21 Eki).
+    kayit/C verilirse defter yeniden yüklenmez (Faz 2 ay görünümü — Opus Y7)."""
+    kayit, C = _kayit_ve_cepler(cur, gun, kayit, C)
     out: Dict[str, float] = {}
     for h in kayit:
         if h["tur"] != "kapanis" or h["is_gunu"] != gun or not str(h.get("cep") or "").startswith("sube:"):
@@ -2210,11 +2211,12 @@ def cift_kayit_duzeltmeleri(cur, gun: str) -> Dict[str, float]:
     return out
 
 
-def merkez_teslimleri(cur, gun: str) -> List[dict]:
+def merkez_teslimleri(cur, gun: str, kayit: Optional[list] = None, C: Optional[dict] = None) -> List[dict]:
     """PUBLIC (Satış mutabakatı): o gün merkezin Kasa'dan (Kasam › + Teslim) şube dükkân nakdinden aldığı teslimler, iptaller düşülmüş.
     Panelin kendi teslimleri ('panel:' kök) ve eski köprü ('kasa_teslim:') panel olayından / eski tablodan zaten okunur → hariç (çift sayım yok).
-    S-B4 (sim 23 Eki): bu teslim sağlamada düşülmüyordu → Kasa temizken Satış kontrolü 'KASA AÇIĞI' gösteriyordu."""
-    kayit, C = _kayit_ve_cepler(cur, gun, None, None)
+    S-B4 (sim 23 Eki): bu teslim sağlamada düşülmüyordu → Kasa temizken Satış kontrolü 'KASA AÇIĞI' gösteriyordu.
+    'zaman' = kayıt anı (Faz 2 vardiyaya böler — Opus Y3). kayit/C verilirse defter yeniden yüklenmez (Y7)."""
+    kayit, C = _kayit_ve_cepler(cur, gun, kayit, C)
     out = []
     for h in kayit:
         ref = str(h.get("kaynak_ref") or "")
@@ -2224,15 +2226,17 @@ def merkez_teslimleri(cur, gun: str) -> List[dict]:
         v = h["veri"] or {}
         out.append({"sube_id": h["kaynak"][len("sube:"):], "tutar": _tl_sayi(int(h["tutar"])), "alan": h.get("hedef"),
                     "alan_ad": C.get(h.get("hedef") or "", {}).get("kisa") or h.get("hedef"),
-                    "eden": v.get("teslim_eden") or None, "not": "merkez Kasa'dan" + (f" · {v['not']}" if v.get("not") else "")})
+                    "eden": v.get("teslim_eden") or None, "not": "merkez Kasa'dan" + (f" · {v['not']}" if v.get("not") else ""),
+                    "zaman": h.get("kayit_zamani")})
     return out
 
 
-def cekmece_cikislari(cur, gun: str) -> List[dict]:
+def cekmece_cikislari(cur, gun: str, kayit: Optional[list] = None, C: Optional[dict] = None) -> List[dict]:
     """PUBLIC (Satış mutabakatı): o gün şube ÇEKMECESİNDEN çıkan nakit — anlık gider + elden avans, iptaller düşülmüş.
     Tek gerçek Kasa: merkez burada iptal ederse mutabakat da görür (Fable O-5; önce panel olayından okunuyordu).
-    Her satır: sube_id, tutar (₺), ad (ekranda), tur ('gider' | 'avans'), kim (giren)."""
-    kayit, _C = _kayit_ve_cepler(cur, gun, None, None)
+    Her satır: sube_id, tutar (₺), ad (ekranda), tur ('gider' | 'avans'), kim (giren), zaman (kayıt anı), panel (panelden mi —
+    değilse kayıt anı olay anı değildir; Faz 2 bölmez — Opus Y6). kayit/C verilirse defter yeniden yüklenmez (Y7)."""
+    kayit, _C = _kayit_ve_cepler(cur, gun, kayit, C)
     out = []
     # Codex (21 Eki): yalnız panel gideri / elden avans okunuyordu → Kasa ekranından ya da köprüden girilen şube ödemesi sağlamada
     # eksik kalıyordu. Artık şube cebinden çıkan HER ödeme parçası (Kasa defteriyle aynı kapsam — tek gerçek)
@@ -2250,7 +2254,9 @@ def cekmece_cikislari(cur, gun: str) -> List[dict]:
             if v.get("kaynak") not in ("dukkan_gideri", "sube_avansi"):
                 ad += " (Kasa'dan)"   # Fable R: panel dışı ödeme — sahip çift kaydı görebilsin
             out.append({"sube_id": cep[len("sube:"):], "tutar": _tl_sayi(int(p["tutar"])), "ad": ad, "tur": "avans" if avans else "gider",
-                        "kim": v.get("giren") or h.get("kaydeden")})   # Fable B5: elden avansta 'giren' yok → kaydeden (panelde veren)
+                        "kim": v.get("giren") or h.get("kaydeden"),   # Fable B5: elden avansta 'giren' yok → kaydeden (panelde veren)
+                        "zaman": h.get("kayit_zamani"),   # Faz 2 (sahip 24 Eki): Satış devir defteri çıkışı vardiyaya böler
+                        "panel": v.get("kaynak") in ("dukkan_gideri", "sube_avansi")})
     return out
 
 

@@ -64,7 +64,9 @@ export default function AnaSayfa({ d, yok, tabletVar, kapali, ac, setQrBuyuk, se
                 {yok.son_okutanlar.map((o, i) => (
                   <div key={i} style={{ display: 'flex', gap: 10, padding: '3px 0', fontSize: 13 }}>
                     <span style={{ color: C.soluk, width: 44 }}>{o.saat}</span><b style={{ flex: 1 }}>{o.ad}</b>
-                    <span style={{ color: o.islem === 'giris' ? C.yesil : C.sari }}>{{ giris: 'giriş', cikis: 'çıkış', mola_bas: '🍽 mola', mola_bit: '🍽 mola bitti', devret: 'devretti', kabul: 'devraldı' }[o.islem] || (String(o.islem).startsWith('onay') ? 'onay' : o.islem)}</span>
+                    <span style={{ color: o.islem === 'giris' ? C.yesil : C.sari }}>{{ giris: 'giriş', cikis: 'çıkış', mola_bas: '🍽 mola', mola_bit: '🍽 mola bitti', devret: 'devretti', kabul: 'devraldı', ustlen: 'devir sayımı' }[o.islem]
+                      || (String(o.islem).startsWith('devir_devreden') ? '💵 devir · veren' : String(o.islem).startsWith('devir_devralan') ? '💵 devir · alan'
+                        : String(o.islem).startsWith('onay') ? 'onay' : o.islem)}</span>
                   </div>
                 ))}
               </div>
