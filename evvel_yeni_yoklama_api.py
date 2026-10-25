@@ -822,10 +822,14 @@ async def ben(request: Request, sube: Optional[str] = None, qr: Optional[str] = 
         mola = _mola_durum(cur, p["id"], is_gunu())
         burada = acik and son.get("sube_id") == sube
         yap = ["giris"] if not acik and sube else []
+        from evvel_yeni_olay import gun_kapandi as _gk
+        gun_kapali = bool(sube) and _gk(cur, str(sube), is_gunu())   # Q-1 (sim 26 Eki · Opus + Codex + Fable A): kapanmış güne giriş yok
+        if gun_kapali:
+            yap = [x for x in yap if x != "giris"]
         if burada:
             yap = (["mola_bitir"] if mola and mola["durum"] == "suruyor" else ([] if mola else ["mola_baslat"])) + ["cikis"]
         devir = None
-        if sube:
+        if sube and not gun_kapali:   # Codex (Q-1): kapanmış günde devir sunulmaz (devir zaten yasak) — çıkış düğmesi süzülmesin
             d = devir_durum(cur, sube)
             # v2 (sahip 23 Eki): devir açıkken şube QR'ını okutan → devir sayfasına davet (KÖR: rakam yok). Kasa sahibi "devret",
             # diğeri "kasayı devral" (devralanın vardiyası devirle başlar — ayrı 'giriş' yerine). Geçerli QR şart (Codex P1).
@@ -843,7 +847,7 @@ async def ben(request: Request, sube: Optional[str] = None, qr: Optional[str] = 
                 ikincil = devir["rol"] == "devralan" and not acik and not _devir_tarafi(cur, str(sube), p["id"])
                 yap = [x for x in yap if x == "mola_bitir" or (ikincil and x == "giris")]
                 devir["giris_ikincil"] = ikincil
-        elif acik and son.get("sube_id"):   # EV (/q, şubesiz) — yalnız ROL + ad (tutar yok; işlem devir QR'ında)
+        elif not sube and acik and son.get("sube_id"):   # EV (/q, şubesiz) — yalnız ROL + ad (tutar yok; işlem devir QR'ında)
             d = devir_durum(cur, str(son["sube_id"]))
             if d and d["durum"] in DEVIR_YENI_ACIK and p["id"] in (d.get("devreden_id"), d.get("devralan_id")):
                 devir = {"rol": "devreden" if p["id"] == d.get("devreden_id") else "devralan", "devreden": d.get("devreden"), "ev": True}
@@ -856,7 +860,7 @@ async def ben(request: Request, sube: Optional[str] = None, qr: Optional[str] = 
                 "giris_ts": son["giris_ts"].isoformat() if son and son.get("is_gunu") == is_gunu() and son.get("giris_ts") else None,   # ev kartı süre halkası
                 "mola_limit_dk": mola_limit(cur), "mola_en_az_dk": mola_en_az(cur),
                 "cikis": _saat(son.get("cikis_ts")) if son and son.get("is_gunu") == is_gunu() else None,
-                "yapabilir": yap}
+                "yapabilir": yap, "gun_kapali": gun_kapali}
     return await _telefon(request, fn)
 
 
@@ -941,6 +945,9 @@ async def giris(request: Request):
     """QR + konum ile giriş. Açık girişi varsa: aynı şubeyse aynı kayıt; başka şubeyse önce çıkış (K11). Çıkıştan sonra yeni satır (K4)."""
     def fn(cur, c, p, v):
         ist = _istek(v)
+        _sb = str(v.get("sube") or "")
+        if _sb:   # Q-1 (Codex P1 + Fable): kapanışı YAZAN işlemle aynı gün kilidi, kişi kilidinden ÖNCE (kapanışla aynı sıra → kilitlenme yok)
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_gun:{_sb}:{is_gunu().isoformat()}",))
         personel_kilidi(cur, p["id"])
         r = _istek_kaydi(cur, "ey_yoklama", "istek_id", ist, "personel_id, giris_ts", {"personel_id": p["id"]})   # K2: tekrar bloğu tek
         if r:
@@ -948,11 +955,16 @@ async def giris(request: Request):
         cur.execute("SELECT y.id, y.sube_id FROM ey_yoklama y WHERE y.personel_id=%s AND y.cikis_ts IS NULL", (p["id"],))
         a = cur.fetchone()
         sube, k = _qr_islem(cur, c, p, v, "giris")
+        if a and dict(a)["sube_id"] == sube:
+            return {"ok": True, "tekrar": True, "mesaj": "Zaten girişin var"}
+        # Q-1 (sim 26 Eki · Opus + Codex + Fable A): gün kapandıktan sonra o şubeye GİRİŞ yok (D7 · hayalet "çalışılan gün" olmasın);
+        # çıkış her zaman serbest. Gün kilidi fn başında alındı (eşzamanlı kapanış görülür). Kapanış iptal edilirse kendiliğinden açılır.
+        from evvel_yeni_olay import gun_kapandi as _gk
+        if _gk(cur, str(sube), is_gunu()):
+            raise HTTPException(409, "Bu şubenin günü kapandı — yeni iş günü 02:00'de başlar")
         if a:
             a = dict(a)
             a["ad"] = adlar(cur, "ey_sube", [a["sube_id"]]).get(str(a["sube_id"]))
-            if a["sube_id"] == sube:
-                return {"ok": True, "tekrar": True, "mesaj": "Zaten girişin var"}
             raise HTTPException(409, f"Önce {a['ad'] or 'diğer şube'}'den çıkış yap")
         cur.execute("""INSERT INTO ey_yoklama (id, sube_id, personel_id, is_gunu, giris_ts, giris_mesafe_m, giris_muaf, giris_cihaz_id, istek_id)
                        VALUES (%s,%s,%s,%s,NOW(),%s,%s,%s,%s)""",
@@ -1733,6 +1745,9 @@ def _devralan_giris(cur, d: dict) -> None:
     Devrin sonuçlandığı HER yol (tuttu · tutmadı · merkez 'kapandı') bunu çağırır (D12, sim 23 Eki)."""
     sube = d["sube_id"]
     if acik_mi(cur, sube, d["devralan_id"]):
+        return
+    from evvel_yeni_olay import gun_kapandi as _gk
+    if _gk(cur, str(sube), is_gunu()):   # Q-1 (Fable): merkez eski devri gün kapandıktan sonra bitirirse kapalı güne giriş açılmasın
         return
     cur.execute("SELECT sube_id FROM ey_yoklama WHERE personel_id=%s AND cikis_ts IS NULL", (d["devralan_id"],))
     if cur.fetchone():

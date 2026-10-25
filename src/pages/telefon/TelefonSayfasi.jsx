@@ -234,7 +234,7 @@ function QrIslem({ sube, jeton }) {
                 {dugmeYazi('cikis')}
               </button>
             )}
-            {!islemVar && !ben.acik && qrOk && <div className="tq-silik">Bu QR ile yapılacak işlem yok.</div>}
+            {!islemVar && !ben.acik && qrOk && <div className="tq-silik">{ben.gun_kapali ? "Bu şubenin günü kapandı — yeni iş günü 02:00'de başlar." : 'Bu QR ile yapılacak işlem yok.'}</div>}{/* Q-1 */}
           </>)}
         </div>
       )}

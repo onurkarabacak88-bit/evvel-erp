@@ -47,7 +47,7 @@ export default function AnaSayfa({ d, yok, tabletVar, kapali, ac, setQrBuyuk, se
           <div style={{ display: 'grid', gap: 6, minWidth: 0 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
               <b>📱 Vardiyaya giriş</b>
-              <span style={{ color: C.soluk, fontSize: 13 }}>{tabletVar ? "Sabahçı, aracı veya kapanış — QR'ı telefonunla okut, sistem seni tanır" : 'Bu bilgisayar kayıtlı değil — merkezden bağlantı iste'}</span>
+              <span style={{ color: C.soluk, fontSize: 13 }}>{!tabletVar ? 'Bu bilgisayar kayıtlı değil — merkezden bağlantı iste' : kapali ? 'Gün kapandı · QR yalnız ÇIKIŞ için (yeni iş günü 02:00)' : "Sabahçı, aracı veya kapanış — QR'ı telefonunla okut, sistem seni tanır"}</span>
               {yok.kapanis_sorumlusu?.ad && <span style={{ marginLeft: 'auto', color: C.yesil, fontWeight: 700 }}>🌙 Kapanış sorumlusu: {yok.kapanis_sorumlusu.ad}</span>}
             </div>
             {(yok.girenler || []).length === 0 && <div style={{ color: C.soluk }}>Henüz QR ile giren yok.</div>}
