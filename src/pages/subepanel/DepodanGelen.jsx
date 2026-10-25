@@ -53,7 +53,7 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
         satirlar: kalemler.map((k) => ({ bag: k.bag, sayilan: Number(say[k.bag]?.n || 0), hasarli: Number(say[k.bag]?.h || 0) })) } });
       taslakKaldir(anahtar);
       setOnay(0); setPin(''); setKisi(''); setSay({}); setSecPid(null);
-      bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : (r.mesaj || 'Paket kabul edildi'), !!r.kuru);
+      bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : (r.mesaj || 'Paket kabul edildi') + (p.not ? ` · 📝 depo notu: ${p.not}` : ''), !!r.kuru);
     } catch (e) {
       // TEK hata kuralı (Dalga 5, F#54): internet · PIN · 409 'zaten' (farklı içerik → yeni istek, form durur)
       const t = panelHata(e, { setHata, pinSifirla: () => { setPin(''); setOnay(1); }, yeniIstekVer: () => setIstek(yeniIstek()) });
@@ -76,7 +76,7 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
               style={{ textAlign: 'left', cursor: 'pointer', display: 'grid', gap: 4, font: 'inherit', color: C.yazi }}>
               <b style={{ fontSize: 17 }}>📦 {x.nereden}</b>
               <span style={{ color: C.soluk, fontSize: 13 }}>{tarihNokta(x.gun)} · {x.kalemler.length} ürün{x.kalemler.length < x.toplam_kalem ? ` (${x.toplam_kalem - x.kalemler.length} kabul edildi)` : ''}</span>
-              {x.not && <span style={{ fontSize: 13 }}>📝 {x.not}</span>}
+              {/* R4-3 (sim 25 Eki · Opus): depocunun serbest notu ("5 süt") kör sayımı bozuyordu → not yalnız kabulden SONRA (onay mesajında) */}
               <span style={{ color: C.yesil, fontWeight: 800, marginTop: 4 }}>Aç ve say →</span>
             </button>
           ))}
@@ -87,7 +87,6 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <button type="button" className="sp-btn" style={{ minHeight: 40 }} onClick={() => setSecPid(null)}>« Paketler</button>
             <b style={{ fontSize: 17 }}>📦 {p.nereden} · {tarihNokta(p.gun)}</b>
-            {p.not && <span style={{ color: C.soluk }}>📝 {p.not}</span>}
           </div>
           <div style={{ height: 10, borderRadius: 999, background: C.bg3, overflow: 'hidden' }}>
             <div style={{ width: `${kalemler.length ? Math.round((sayilan / kalemler.length) * 100) : 0}%`, height: '100%', background: C.yesil, transition: 'width .2s' }} />

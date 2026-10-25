@@ -3,4 +3,4 @@
 /** [{ad, sayilan}] → "8oz 12 · 14oz 30" (boşsa —) */
 export const kalemYazi = (l) => (l || []).map((u) => `${u.ad} ${u.sayilan}`).join(' · ') || '—';
 /** bardak listesi kısa: "8oz 12 / 14oz 30" (adın başındaki 'bardak' düşer) */
-export const bardakOzet = (b) => (b || []).map((x) => `${String(x.ad || '').replace(/^bardak\s*/i, '') || 'bardak'} ${x.sayilan}`).join(' / ');
+export const bardakOzet = (b) => (b || []).map((x) => `${String(x.ad || '').replace(/^bardak\s*/i, '').replace(/\s*bardak$/i, '') || 'bardak'} ${x.sayilan}`).join(' / ');   // R5 (sim 25 Eki): adlar "Plastik Bardak" — sondaki de düşer

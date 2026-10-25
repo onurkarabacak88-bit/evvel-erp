@@ -634,6 +634,7 @@ def yolda_listesi(cur, yeni_mi: bool):
                           SUM(CASE WHEN tur='hasar' THEN adet ELSE 0 END) AS hasar_top,
                           SUM(CASE WHEN tur='fazla_kabul' THEN adet WHEN tur IN ('fazla_onay','fazla_ret') THEN -adet ELSE 0 END) AS fazla,
                           MIN(CASE WHEN tur='sevk' THEN is_gunu END) AS sevk_gunu,
+                          MAX(CASE WHEN tur IN ('kabul','fazla_kabul','hasar') THEN is_gunu END) AS kabul_gunu,
                           MAX(CASE WHEN tur='sevk' THEN kaynak END) AS kaynak,
                           MAX(CASE WHEN tur IN ('kabul','fazla_kabul') THEN hedef END) AS hedef_k,
                           MAX(kim) FILTER (WHERE tur='sevk') AS sevk_kim,
@@ -675,6 +676,7 @@ def yolda_listesi(cur, yeni_mi: bool):
         hedef = r.get("hedef_k") or (f"depo:{hedefler.get(r['bag'])}" if hedefler.get(r["bag"]) else None)
         x = {"id": r["bag"], "urun": r["urun_ad"], "urun_id": r["urun_id"], "sevk": int(r["sevk"] or 0), "kabul": int(r["kabul"] or 0),
              "fazla": int(r["fazla"] or 0), "cozulen": int(r["cozulen"] or 0), "merkez_kabul": bool(r.get("merkez")), "sevk_gunu": r["sevk_gunu"].isoformat() if r["sevk_gunu"] else None,
+             "kabul_gunu": r["kabul_gunu"].isoformat() if r.get("kabul_gunu") else None,
              "hasar": int(r["hasar"] or 0), "nereden": konum_ad.get(r["kaynak"], r["kaynak"]), "nereye": konum_ad.get(hedef, hedef), "hedef": hedef}
         # sahip 21 Eki: farkta gönderen + kabul eden personel adı (yoksa None → ekran '—')
         ek = eski_kisi.get(r["bag"], (None, None))
@@ -1256,8 +1258,12 @@ def depo_isleri(cur) -> list:
             ad = xs[0]["nereye"] or "—"
             parca = [f"{x['urun']} " + " · ".join(p for p in (f"{x['eksik']} eksik" if x["eksik"] else "", f"{x['hasar']} hasarlı" if x["hasar"] else "",
                                                                f"{x['fazla']} fazla" if x["fazla"] > 0 else "") if p) for x in xs]
-            out.append({"genel": True, "tur": "depo_fark", "grup": "tedarik", "id": f"df-{hid}", "tarih": min(x["sevk_gunu"] or _is_gunu().isoformat() for x in xs),
+            # R4-4 (sim 25 Eki · Opus): süre farkın DOĞDUĞU kabul gününden (sevk günü sahte aciliyet veriyordu); sevk tarihi küçük bilgi
+            fark_g = min(x.get("kabul_gunu") or x["sevk_gunu"] or _is_gunu().isoformat() for x in xs)
+            sevk_g = min(x["sevk_gunu"] or fark_g for x in xs)
+            out.append({"genel": True, "tur": "depo_fark", "grup": "tedarik", "id": f"df-{hid}", "tarih": fark_g,
                         "etiket": "📦 Sevk farkı", "ad": f"{ad} · {len(xs)} kalem", "alt": ", ".join(parca[:3]) + (" …" if len(parca) > 3 else "")
+                        + (f" · sevk {sevk_g[8:10]}.{sevk_g[5:7]}" if sevk_g != fark_g else "")
                         + " — kayıp mı, depo mu az koydu, hasar kimde? karar ver", "sayfa": "depo_fark", "dugme": "Çöz"})
     if evren_yeni(cur):   # sahip P2 + Fable F4: sevk eksiye yazılabilir → saklanmaz, bakiyeden TÜRETİLİR (sayımla düzelince kendiliğinden kalkar)
         eksi = {}

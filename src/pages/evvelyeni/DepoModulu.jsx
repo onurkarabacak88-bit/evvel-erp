@@ -199,29 +199,35 @@ function Yoldakiler({ onToast, mod }) {
         <div style={{ padding: '10px 14px', fontWeight: 700 }}>⚖️ Sevk ≠ kabul — eksik gelen yolda bekler, fazla gelen askıda bekler; karar verince kapanır</div>
         {v.fark.length === 0 ? <div style={{ padding: '0 14px 14px', color: R.not, fontSize: 13 }}>Fark yok ✓</div> : (
           <table style={{ borderCollapse: 'collapse', width: '100%' }}><tbody>
-            {v.fark.map((x) => (
-              <tr key={x.id}>
-                <td style={{ ...hucre, whiteSpace: 'nowrap' }}>{x.sevk_gunu ? tKisa(x.sevk_gunu) : '—'}</td>
-                <td style={hucre}><b>{x.urun}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.nereden} → {x.nereye}</div>
-                  <div style={{ fontSize: 11.5, color: R.not }}>📤 Gönderen: <b>{x.sevk_eden || '—'}</b> · 📥 Kabul eden: <b>{x.kabul_eden || '—'}</b>{x.merkez_kabul ? ' (merkez adına — şube saymadı)' : ''}</div></td>
-                <td style={{ ...hucre, textAlign: 'right', whiteSpace: 'nowrap', ...num }}>sevk {x.sevk} · kabul {x.kabul + Math.max(0, x.fazla)}</td>{/* Y12 (sim 24 Eki): rakamlar alt alta kırılıyordu */}
-                <td style={{ ...hucre, textAlign: 'right', color: x.fazla > 0 || x.hasar > 0 ? R.amber : R.kirmizi, fontWeight: 700 }}>
-                  {x.hasar > 0 ? <>{x.hasar} adet HASARLI geldi — ASKIDA
-                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>
-                      <Dugme kucuk onClick={() => coz(x, 'hasar_fire', `${x.urun}: ${x.hasar} hasarlı adet FİRE yazılsın mı?`)}>Fire yaz</Dugme>
-                      <Dugme kucuk onClick={() => coz(x, 'hasar_iade', `${x.urun}: ${x.hasar} hasarlı adet ${x.nereden} deposuna GERİ dönsün mü?`)}>Kaynağa geri</Dugme></div>
-                    {x.fazla > 0 && <div style={{ fontSize: 11.5, color: R.not, marginTop: 4 }}>+{x.fazla} sağlam fazla da var — hasarı çözünce görünür</div>}</>
-                  : x.fazla > 0 ? <>+{x.fazla} fazla geldi — ASKIDA (birim karışmış olabilir)
-                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>
-                      <Dugme kucuk onClick={() => coz(x, 'fazla_onay', `${x.urun}: ${x.fazla} adet fazla GERÇEKTEN geldi mi? Şube stoğuna eklensin mi?`)}>Gerçekten geldi</Dugme>
-                      <Dugme kucuk onClick={() => coz(x, 'fazla_ret', `${x.urun}: ${x.fazla} adet fazla yanlış (birim hatası) — reddedilsin mi?`)}>Yanlış, reddet</Dugme></div></>
-                    : <>{x.eksik} adet eksik geldi — yolda kaldı
-                    <div style={{ display: 'flex', gap: 4, justifyContent: 'flex-end', marginTop: 4 }}>
-                      <Dugme kucuk onClick={() => coz(x, 'kayip', `${x.urun}: ${x.eksik} adet KAYIP olarak kapatılsın mı?`)}>Kayıp</Dugme>
-                      <Dugme kucuk onClick={() => coz(x, 'iade', `${x.urun}: ${x.eksik} adet ${x.nereden} deposuna GERİ yazılsın mı (hiç çıkmamış)?`)}>Kaynağa geri</Dugme>
-                      <Dugme kucuk onClick={() => coz(x, 'sube_saydi', `${x.urun}: gelen TAMMIŞ, şube yanlış saymış — ${x.eksik} adet şube stoğuna eklensin mi?`)}>Şube yanlış saydı</Dugme></div></>}</td>
-              </tr>
-            ))}
+            {v.fark.map((x) => {
+              // R4-5 (sim 25 Eki · Opus): karar düğmeleri dar hücrede ürün/şube sütununu eziyor, taşıyordu → aynı kaydın ALTINDA tam genişlik satır
+              const satir = { display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' };
+              const durum = x.hasar > 0 ? <>{x.hasar} adet HASARLI geldi — ASKIDA{x.fazla > 0 && <div style={{ fontSize: 11.5, color: R.not, marginTop: 4, fontWeight: 400 }}>+{x.fazla} sağlam fazla da var — hasarı çözünce görünür</div>}</>
+                : x.fazla > 0 ? <>+{x.fazla} fazla geldi — ASKIDA (birim karışmış olabilir)</>
+                  : <>{x.eksik} adet eksik geldi — yolda kaldı</>;
+              const dugmeler = x.hasar > 0 ? (<>
+                <Dugme kucuk onClick={() => coz(x, 'hasar_fire', `${x.urun}: ${x.hasar} hasarlı adet FİRE yazılsın mı?`)}>Fire yaz</Dugme>
+                <Dugme kucuk onClick={() => coz(x, 'hasar_iade', `${x.urun}: ${x.hasar} hasarlı adet ${x.nereden} deposuna GERİ dönsün mü?`)}>Kaynağa geri</Dugme></>)
+                : x.fazla > 0 ? (<>
+                  <Dugme kucuk onClick={() => coz(x, 'fazla_onay', `${x.urun}: ${x.fazla} adet fazla GERÇEKTEN geldi mi? Şube stoğuna eklensin mi?`)}>Gerçekten geldi</Dugme>
+                  <Dugme kucuk onClick={() => coz(x, 'fazla_ret', `${x.urun}: ${x.fazla} adet fazla yanlış (birim hatası) — reddedilsin mi?`)}>Yanlış, reddet</Dugme></>)
+                  : (<>
+                    <Dugme kucuk onClick={() => coz(x, 'kayip', `${x.urun}: ${x.eksik} adet KAYIP olarak kapatılsın mı?`)}>Kayıp</Dugme>
+                    <Dugme kucuk onClick={() => coz(x, 'iade', `${x.urun}: ${x.eksik} adet ${x.nereden} deposuna GERİ yazılsın mı (hiç çıkmamış)?`)}>Kaynağa geri</Dugme>
+                    <Dugme kucuk onClick={() => coz(x, 'sube_saydi', `${x.urun}: gelen TAMMIŞ, şube yanlış saymış — ${x.eksik} adet şube stoğuna eklensin mi?`)}>Şube yanlış saydı</Dugme></>);
+              return (
+                <React.Fragment key={x.id}>
+                  <tr>
+                    <td style={{ ...hucre, whiteSpace: 'nowrap', borderBottom: 'none' }}>{x.sevk_gunu ? tKisa(x.sevk_gunu) : '—'}</td>
+                    <td style={{ ...hucre, borderBottom: 'none' }}><b>{x.urun}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.nereden} → {x.nereye}</div>
+                      <div style={{ fontSize: 11.5, color: R.not }}>📤 Gönderen: <b>{x.sevk_eden || '—'}</b> · 📥 Kabul eden: <b>{x.kabul_eden || '—'}</b>{x.merkez_kabul ? ' (merkez adına — şube saymadı)' : ''}</div></td>
+                    <td style={{ ...hucre, textAlign: 'right', whiteSpace: 'nowrap', ...num, borderBottom: 'none' }}>sevk {x.sevk} · kabul {x.kabul + Math.max(0, x.fazla)}</td>{/* Y12 (sim 24 Eki): rakamlar alt alta kırılıyordu */}
+                    <td style={{ ...hucre, textAlign: 'right', color: x.fazla > 0 || x.hasar > 0 ? R.amber : R.kirmizi, fontWeight: 700, borderBottom: 'none' }}>{durum}</td>
+                  </tr>
+                  <tr><td colSpan={4} style={{ ...hucre, paddingTop: 0 }}><div style={satir}>{dugmeler}</div></td></tr>
+                </React.Fragment>
+              );
+            })}
           </tbody></table>
         )}
       </div>)}

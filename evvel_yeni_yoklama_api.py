@@ -559,6 +559,11 @@ def cihaz_davet(b: DavetBody, x_evvel_oturum: Optional[str] = Header(default=Non
     with db() as (conn, cur):
         kim = _merkez(cur, x_evvel_oturum)
         if b.personel_id:
+            pr = tanim_oku(cur, "ey_personel", b.personel_id, ("ad", "cikis"))   # R4-6 (sim 25 Eki · Opus): merkeze telefon diliyle hata dönüyordu
+            if pr and __import__("evvel_yeni_tanim_api").ayrildi_mi(dict(pr).get("cikis"), is_gunu()):
+                c_ = dict(pr)["cikis"]
+                c_ = c_.strftime("%d.%m") if hasattr(c_, "strftime") else str(c_)[8:10] + "." + str(c_)[5:7]
+                raise HTTPException(409, f"{dict(pr)['ad']} {c_} tarihinde ayrıldı — bağlantı üretilmez. Geri döndüyse önce Tanımlar'dan ayrılış tarihini kaldır.")
             p = _personel(cur, b.personel_id)
             ad = p["ad"]
         else:
@@ -672,11 +677,13 @@ def cihazlar(x_evvel_oturum: Optional[str] = Header(default=None)):
     with db() as (conn, cur):
         _merkez(cur, x_evvel_oturum)
         sad = adlar(cur, "ey_sube")
+        _ayr = __import__("evvel_yeni_tanim_api").ayrildi_mi
         per = [{"id": p["id"], "ad": p["ad"], "sube_id": p["sube_id"], "sube_ad": sad.get(str(p["sube_id"])), "konum_muaf": p["konum_muaf"],
-                "mudur": mudur_mu(p.get("gorev"))}
-               for p in tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "konum_muaf", "gorev"), aktif=True)]
+                "mudur": mudur_mu(p.get("gorev")),
+                "ayrildi": (str(p.get("cikis"))[:10] if _ayr(p.get("cikis"), is_gunu()) else None)}   # R4-7: yeşil "bağlı" yanlış bilgi veriyordu
+               for p in tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "konum_muaf", "gorev", "cikis"), aktif=True)]
         from evvel_yeni_cekirdek import tr_sira
-        per.sort(key=lambda p: (p["sube_ad"] is None, tr_sira(p["sube_ad"]), tr_sira(p["ad"])))   # Türkçe sıra (Fable B6)
+        per.sort(key=lambda p: (bool(p["ayrildi"]), p["sube_ad"] is None, tr_sira(p["sube_ad"]), tr_sira(p["ad"])))   # Türkçe sıra (Fable B6) · ayrılanlar en altta
         cur.execute("""SELECT id, tur, personel_id, sube_id, guc, etiket, durum, davet_son, olusturma, son_kullanim
                          FROM ey_cihaz WHERE durum<>'iptal' ORDER BY olusturma DESC""")
         cz = [dict(r) for r in cur.fetchall() or []]
