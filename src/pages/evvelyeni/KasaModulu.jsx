@@ -1450,7 +1450,10 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
       </>)}
       {(sekme === 'isler' || String(sekme).startsWith('isler_')) && (
           (() => { const isler = isGrup ? veri.isler.filter((x) => isGrubu(x) === isGrup) : veri.isler;
-            const isSatirCiz = (x) => (<IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })}
+            // K-3: onay bekleyen kapanışın günü + şubesi için görülmemiş "kapanış uyarılı" kaydı sayısı (aynı liste — ayrı uç yok)
+            const kapanisUyari = (x) => (x.tur !== 'kapanis' ? 0 : veri.isler.filter((u) => u.tur === 'kapanis_uyarili' && u.tarih === x.tarih
+              && (u.sube_id && x.sube_id ? String(u.sube_id) === String(x.sube_id) : !!u.ad && String(x.ad || '').startsWith(`${u.ad} `))).length);   // Fable: şube kimliğiyle eşle
+            const isSatirCiz = (x) => (<IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} uyariSay={kapanisUyari(x)} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })}
               onPosKabul={async (id) => { try { const r = await api('/evvel-yeni/kasa/pos-sifir-kabul', { method: 'POST', body: { id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); } }}
               onGecKapanis={async (x) => {
                 if (!window.confirm(`${x.ad} ${tKisa(x.tarih)} kapanışı, personelin girdiği verilerle GEÇ KAPANIŞ olarak işlensin mi?
@@ -1470,13 +1473,18 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
             {(() => {
               const kp = isler.filter((x) => x.tur === 'kapanis');
               if (kp.length < 2) return null;
+              // K-3 (Opus A): kasa farkı olan (eşik yok) ya da uyarılı kapanış toplu onaya GİRMEZ — tek tek bakılır
+              const temiz = kp.filter((x) => typeof x.kasa_fark === 'number' && Math.abs(x.kasa_fark) < 0.005 && !kapanisUyari(x));   // Codex: hesaplanamayan (null) temiz SAYILMAZ
+              const bak = kp.length - temiz.length;
+              if (temiz.length < 1) return <div style={{ fontSize: 12.5, color: R.not, padding: '6px 2px' }}>{bak} kapanışın kasa farkı, uyarısı ya da hesaplanamayan kasası var — tek tek bakılacak</div>;
               return (
                 <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5, padding: '6px 2px' }}>
-                  {!topluSor ? (
-                    <Dugme kucuk onClick={() => setTopluSor(true)}>{kp.length} kapanışı toplu onayla</Dugme>
-                  ) : (<>
-                    <span style={{ color: R.amber }}>{kp.length} kapanış onaylanacak — her birini kontrol ettiysen onayla.</span>
-                    <Dugme kucuk ana onClick={() => topluOnay(kp.map((x) => x.id))}>Evet, hepsini onayla</Dugme>
+                  {!topluSor ? (<>
+                    <Dugme kucuk onClick={() => setTopluSor(true)}>{temiz.length} temiz kapanışı onayla</Dugme>
+                    {bak > 0 && <span style={{ color: R.not }}>· {bak} tanesi tek tek bakılacak (kasa farkı / uyarı / hesaplanamadı)</span>}
+                  </>) : (<>
+                    <span style={{ color: R.amber }}>{temiz.length} temiz kapanış onaylanacak (kasa tuttu, uyarı yok){bak > 0 ? ` · ${bak} tanesi listede kalır` : ''}.</span>
+                    <Dugme kucuk ana onClick={() => topluOnay(temiz.map((x) => x.id))}>Evet, onayla</Dugme>
                     <Dugme kucuk onClick={() => setTopluSor(false)}>Vazgeç</Dugme>
                   </>)}
                 </div>
@@ -1641,7 +1649,7 @@ function AcikSayfa({ onCoz, onCepAc, onKapanis, yenile }) {
   );
 }
 
-function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, onGecKapanis, onKapanisGordum, onGenelGordum }) {
+function IsSatir({ x, bugun, uyariSay = 0, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, onGecKapanis, onKapanisGordum, onGenelGordum }) {
   const [say, setSay] = useState('');   // Codex: dolu gelirse saymadan onaylanır — boş başlar
   const g = Math.max(0, Math.round((new Date(`${bugun}T12:00:00`) - new Date(`${x.tarih}T12:00:00`)) / 864e5));
   const yas = g === 0 ? 'bugün' : `${g} gündür`;
@@ -1650,7 +1658,13 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
     return (
       <div style={satir}>
         <Cip tur="sari">Kapanış onayı</Cip>
-        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)} {x.eski_sistem && <Cip>eski sistemden</Cip>}<div style={{ fontSize: 11.5, color: R.not }}>Nakit <b style={num}>{fmt(x.nakit)}</b> · kart <b style={num}>{fmt(x.kart)}</b> · karşılaştır, doğruysa onayla · {yas}</div></div>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)} {x.eski_sistem && <Cip>eski sistemden</Cip>}
+          {/* K-3 (sim 25 Eki · Opus A): patron uyarıyı / kasa açığını görmeden onaylıyordu → rakamlı çip, o günün Satış kontrolüne bağ */}
+          <a href={`/evvel-yeni/satis_kontrol?gun=${x.tarih}`} title="O günün Satış kontrolü (kasa açığı dökümü)" style={{ textDecoration: 'none', marginLeft: 4 }}>
+            {typeof x.kasa_fark !== 'number' ? <Cip>kasa hesaplanamadı</Cip> : (Math.abs(x.kasa_fark) < 0.005 ? <Cip tur="yesil">kasa tuttu ✓</Cip>
+              : x.kasa_fark > 0 ? <Cip tur="kirmizi">kasa {fmt(x.kasa_fark)} ₺ açık</Cip> : <Cip tur="sari">kasa {fmt(-x.kasa_fark)} ₺ fazla</Cip>)}
+            {uyariSay > 0 && <> <Cip tur="sari">⚠ {uyariSay} uyarı</Cip></>}</a>
+          <div style={{ fontSize: 11.5, color: R.not }}>Nakit <b style={num}>{fmt(x.nakit)}</b> · kart <b style={num}>{fmt(x.kart)}</b> · X raporuyla karşılaştır, doğruysa onayla · {yas}</div></div>
         <Dugme ana kucuk onClick={() => onTeyit(x.id)}>Onayla</Dugme>
       </div>
     );

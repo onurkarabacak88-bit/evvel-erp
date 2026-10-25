@@ -569,7 +569,8 @@ def satis_gun(gun: Optional[str] = None):
                 tes.setdefault(str(ksid), []).append({
                     "tutar": h["tutar"] / 100, "alan": (C.get(h.get("hedef")) or {}).get("kisa") or h.get("hedef"),
                     "durum": "alindi" if onayli else "bekliyor",
-                    "otomatik": bool(onayli and "otomatik" in str(h.get("onaylayan") or "")),
+                    # T-4 (sim 25 Eki): otomatik kabulden SONRA "Düzelt" ile sayılan yazıldıysa artık "kimse saymadı" değil → fark görünsün
+                    "otomatik": bool(onayli and "otomatik" in str(h.get("onaylayan") or "") and not v.get("duzeltmeler")),
                     "alinan": int(v.get("alinan", h["tutar"])) / 100 if onayli else None,
                     "fark": (h["tutar"] - int(v.get("alinan", h["tutar"]))) / 100 if onayli else None,
                     "onaylayan": h.get("onaylayan")})

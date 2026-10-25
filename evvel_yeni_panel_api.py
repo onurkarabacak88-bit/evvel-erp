@@ -2109,7 +2109,7 @@ def _kapanis_isleri(cur) -> list:
                     WHERE tur='kapanis' AND sonuc='ok_uyarili' AND goruldu IS NULL AND zaman >= NOW() - INTERVAL '7 days'
                       AND is_gunu >= %s ORDER BY zaman DESC""", (_baslangic(cur),))
     for r in [dict(x) for x in cur.fetchall() or []]:
-        out.append({"tur": "kapanis_uyarili", "grup": "kasa", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
+        out.append({"tur": "kapanis_uyarili", "grup": "kasa", "id": r["id"], "tarih": r["is_gunu"].isoformat(), "sube_id": str(r["sube_id"]),
                     "ad": adlar.get(str(r["sube_id"]), r["sube_id"]), "uyarilar": r.get("uyarilar") or [],
                     "saat": __import__("evvel_yeni_cekirdek").tr_tarih_saat(r["zaman"]),   # B97: GG.AA SS:DD (ay.gün değil)
                     "gordum": "/evvel-yeni/panel/kapanis-uyari-gordum"})

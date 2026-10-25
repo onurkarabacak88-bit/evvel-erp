@@ -866,6 +866,39 @@ def _isler(kayitlar: List[dict], C: dict, fl: List[dict], bas: Optional[date] = 
     return out
 
 
+def _kapanis_fark_oku(cur, gunler: List[str]) -> Dict[tuple, Optional[float]]:
+    """K-3 (sim 25 Eki · Opus A): onay bekleyen kapanış günlerinin KASA FARKI (patron uyarıyı / açığı görmeden onaylıyordu).
+    Hesap Satış'ın PUBLIC kapısından (kasa_mutabakat — tek hesap, tekrar yazılmaz); Satış kapalıysa boş (yumuşak bağ)."""
+    fark: Dict[tuple, Optional[float]] = {}
+    gunler = sorted(set(gunler))
+    if not gunler:
+        return fark
+    try:
+        from evvel_yeni_moduller import acik as _modul_acik
+        if not _modul_acik("satis"):
+            return fark
+        from evvel_yeni_satis_api import kasa_mutabakat
+    except Exception as e:  # noqa: BLE001
+        log.warning("kapanış kasa farkı: Satış kapısı yok: %s", str(e)[:150])
+        return fark
+    for g in gunler:   # Fable: bir günün hesabı patlarsa öteki günler boş kalmasın
+        try:
+            with savepoint(cur, "sp_kap_kasa_fark"):
+                for sid, m in (kasa_mutabakat(cur, g) or {}).items():
+                    fark[(g, str(sid))] = m.get("fark")
+        except Exception as e:  # noqa: BLE001 — bilgi alanı; onay listesini asla düşürmez
+            log.warning("kapanış kasa farkı okunamadı (%s): %s", g, str(e)[:150])
+    return fark
+
+
+def _kapanis_kasa_farki(isler: List[dict], fark: Dict[tuple, Optional[float]], C: dict) -> List[dict]:
+    for x in isler:
+        if x.get("tur") == "kapanis":
+            x["sube_id"] = str((C.get(x.get("cep")) or {}).get("sube_id") or "") or None
+            x["kasa_fark"] = fark.get((x["tarih"], str(x["sube_id"])))
+    return isler
+
+
 def ilk_kayit_gunleri(kayitlar: List[dict]) -> Dict[str, str]:
     """B18: cep → defterdeki İLK kaydın günü (TÜM dönem kayıtlarıyla çağrılmalı — dönem süzgeçli liste eski şubeyi 'yeni' sanar)."""
     ilk: Dict[str, str] = {}
@@ -1052,6 +1085,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
         from evvel_yeni_tanim_api import subeler as _sb_hepsi
         pasif_sube = {str(x["id"]) for x in _sb_hepsi(cur, hepsi=True) if not x["aktif"]}   # B13
         ilk_gun = ilk_kayit_gunleri(kayit_tum)   # B18 (Fable): şubenin ilk kaydı TÜM dönemden
+        kap_fark = _kapanis_fark_oku(cur, [h["is_gunu"] for h in kayit if h["tur"] == "kapanis" and h["durum"] != "onaylandi"])   # K-3
     bugun = _bugun().isoformat()
     g = _gun_coz(gun)
     ref = bugun if hepsi else g
@@ -1118,7 +1152,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
                          "alinan": _tl_sayi(int(o["veri"].get("alinan", o["tutar"])))} for o in alimlar],
         "iptaller": [{"id": i["id"], "hedef_id": i["veri"].get("hedef_id"), "sebep": i["veri"].get("sebep"), "kaydeden": i.get("kaydeden"),
                       **_iptal_hedef(i.get("_hedef"), C)} for i in gunun_iptal],
-        "isler": _isler(kayit, C, _farklar(ol_tum, C), bas, ilk_gun) + kart_isleri,
+        "isler": _kapanis_kasa_farki(_isler(kayit, C, _farklar(ol_tum, C), bas, ilk_gun), kap_fark, C) + kart_isleri,
         "dis_turleri": [{"kod": k, "ad": v[0], "geri_odenecek": v[2]} for k, v in DIS_TURLERI.items()],
         "anlik_bakiye": {cid: _tl_sayi(v) for cid, v in _bakiye(ol_tum, C)["b"].items() if cid in C},
         "acilis_girilen": sorted({h["cep"] for h in kayit if h["tur"] == "acilis" and h["is_gunu"] == bas.isoformat()}),
