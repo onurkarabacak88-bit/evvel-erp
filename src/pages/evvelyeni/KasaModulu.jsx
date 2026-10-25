@@ -1456,8 +1456,10 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
             const isSatirCiz = (x) => (<IsSatir key={`${x.tur}${x.id}`} x={x} bugun={veri.bugun} uyariSay={kapanisUyari(x)} onTeyit={teyit} onTeslim={teslimAl} onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })}
               onPosKabul={async (id) => { try { const r = await api('/evvel-yeni/kasa/pos-sifir-kabul', { method: 'POST', body: { id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); } }}
               onGecKapanis={async (x) => {
-                if (!window.confirm(`${x.ad} ${tKisa(x.tarih)} kapanışı, personelin girdiği verilerle GEÇ KAPANIŞ olarak işlensin mi?
-(${/^Telefonsuz/.test(x.sebep || '') ? 'Not' : 'Reddin sebebi'}: ${x.sebep})`)) return;
+                // K-4 (sim 26 Eki): window.confirm simde / dokunmatikte görünmüyordu (Y8) → ortak sayfa içi soru + personelin rakamları
+                if (!(await sor({ soru: `${x.ad} ${tKisa(x.tarih)} kapanışı, personelin girdiği verilerle GEÇ KAPANIŞ olarak işlensin mi?${x.ozet ? `
+${x.ozet}` : ''}
+(${/^Telefonsuz/.test(x.sebep || '') ? 'Not' : 'Reddin sebebi'}: ${x.sebep})`, tamam: 'Geç kapanış olarak işle' }))) return;
                 try { const r = await api(x.islem || '/evvel-yeni/kasa/gec-kapanis', { method: 'POST', body: { deneme_id: x.id } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); }
               }}
               onKapanisGordum={async (x) => { try { await api(x.gordum || '/evvel-yeni/kasa/kapanis-uyari-gordum', { method: 'POST', body: { deneme_id: x.id } }); yukle(); } catch (e) { onToast?.(e.message); } }}
@@ -1704,6 +1706,7 @@ function IsSatir({ x, bugun, uyariSay = 0, onTeyit, onTeslim, onCoz, onKapanis, 
         <Cip tur="kirmizi">{x.merkeze ? '📨 Kapanış merkeze gönderildi' : '❌ Kapanış REDDEDİLDİ'}</Cip>
         <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b> · {tUzun(x.tarih)} · {x.saat}
           <div style={{ fontSize: 11.5, color: R.kirmizi }}>{x.merkeze ? '' : 'Sebep: '}{x.sebep}</div>
+          {x.ozet && <div style={{ fontSize: 12, color: R.metin2, fontVariantNumeric: 'tabular-nums' }}>{x.ozet}</div>}{/* K-4: kendini anlatsın */}
           <div style={{ fontSize: 11.5, color: R.not }}>Personelin girdiği veri kayıtlı — geç kapanış olarak işlenebilir</div></div>
         <Dugme ana kucuk onClick={() => onGecKapanis?.(x)}>Geç kapanış olarak işle</Dugme>
       </div>

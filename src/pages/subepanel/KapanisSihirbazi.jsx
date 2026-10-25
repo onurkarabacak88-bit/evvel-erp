@@ -338,7 +338,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
                 ) : (
                   <div className="sp-kart" style={{ alignSelf: 'stretch', textAlign: 'left', display: 'grid', gap: 8 }}>
                     <b>📨 Merkeze gönder</b>
-                    <span style={{ fontSize: 13, color: C.soluk }}>Önce içeride telefonu olan başka biri QR'ı okutup onaylayabilir (kapanışçı o olur). Kimse yoksa: adını seç + PIN → rakamlar kaybolmaz, <b>merkez işleyince gün kapanır</b>.</span>
+                    <span style={{ fontSize: 13, color: C.soluk }}>Önce içeride telefonu olan başka biri QR'ı okutup onaylayabilir (kapanışçı o olur). Kimse yoksa: adını seç + PIN → rakamlar kaybolmaz, <b>merkez işleyince gün kapanır</b>. Göndermek "işim bitti, çıkıyorum" demektir — merkez işleyince <b>çıkışın gönderdiğin saatle</b> yazılır.</span>{/* K-5 (Codex): gönderim = ayrılma beyanı */}
                     <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
                       {iceride.length === 0 ? <span style={{ color: C.sari }}>İçeride kimse yok — önce QR ile giriş yap.</span>
                         : iceride.map((g) => <button key={g.personel_id} type="button" className={'aw-btn' + (mKisi === g.personel_id ? ' ana' : '')} onClick={() => setMKisi(g.personel_id)}>{g.ad}</button>)}

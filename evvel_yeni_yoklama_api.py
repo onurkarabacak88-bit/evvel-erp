@@ -357,6 +357,15 @@ def acik_mi(cur, sube_id: str, personel_id: str) -> bool:
     return bool(cur.fetchone())
 
 
+def acik_giris_id(cur, sube_id: str, personel_id: str) -> Optional[str]:
+    """PUBLIC: kişinin bu şubede BUGÜN açık girişinin kimliği (yoksa None) — K-5 telefonsuz gönderimde sabitlenir."""
+    yoklama_hazirla()
+    cur.execute("""SELECT id FROM ey_yoklama WHERE personel_id=%s AND sube_id=%s AND cikis_ts IS NULL AND is_gunu >= %s
+                   ORDER BY giris_ts DESC LIMIT 1""", (personel_id, sube_id, is_gunu()))
+    r = cur.fetchone()
+    return dict(r)["id"] if r else None
+
+
 def gece_kapat(cur) -> int:
     """PUBLIC: geçmiş iş gününden açık kalan girişleri ve molaları kapatır (tür 'gece_otomatik'). Çıkış saati bilinmediği için
     giriş anı yazılır (süre uydurulmaz; ileride vardiya planı gelince oradan alınabilir). Maaşa etkisi YOK: maaş yoklamadan yalnız
@@ -415,6 +424,30 @@ def cikis_yaz(cur, personel_id: str, tur: str, kim: Optional[str] = None, mesafe
                           degistiren=COALESCE(%s, degistiren) WHERE id=%s""", (tur, mesafe, cihaz_id, istek_id, kim, yid))
     _mola_kapat(cur, personel_id, tur, kim=kim)   # D6: çıkış / devir / kapanış açık molayı da kapatır (hak o anda hesaplanır)
     return yid
+
+
+def telefonsuz_kapanis_cikisi(cur, personel_id: str, yoklama_id: str, ts, kim: str) -> Optional[str]:
+    """PUBLIC — K-5 (sim 26 Eki · Opus + Codex + Fable A): telefonsuz kapanış merkezde GEÇ KAPANIŞ olarak işlenince, gönderen kişinin
+    çıkışı "Merkeze gönder" saatiyle yazılır (telefonlu yolda onay anında yazılan çıkışın karşılığı; ertesi gün "Çıkışı yapılmamışlar"a
+    elle iş düşmesin). YALNIZ gönderim anında sabitlenen giriş satırı (Codex: sonradan yeniden giriş kapatılmasın) ve yalnız açık ya da
+    gece işinin saatsiz kapattığı hâliyle (qr / merkez / devir çıkışı EZİLMEZ). Saat girişten önce görünürse girişe kırpılır."""
+    yoklama_hazirla()
+    personel_kilidi(cur, personel_id)
+    cur.execute("""SELECT id, giris_ts FROM ey_yoklama WHERE id=%s AND personel_id=%s
+                     AND (cikis_ts IS NULL OR cikis_tur = 'gece_otomatik') FOR UPDATE""", (yoklama_id, personel_id))
+    r = cur.fetchone()
+    if not r:
+        return None
+    r = dict(r)
+    cur.execute("SELECT GREATEST(%s::timestamptz, %s::timestamptz) AS t", (ts, r["giris_ts"]))
+    t = dict(cur.fetchone())["t"]
+    cur.execute("UPDATE ey_yoklama SET cikis_ts=%s, cikis_tur='kapanis_telefonsuz', degistiren=%s WHERE id=%s", (t, kim, r["id"]))
+    try:   # Fable: mola başlangıcı gönderimden sonraysa _mola_kapat 400 atar — geç kapanışın tamamı geri alınmasın
+        with savepoint(cur, "sp_tel_kap_mola"):
+            _mola_kapat(cur, personel_id, "kapanis_telefonsuz", ts=t, kim=kim)
+    except HTTPException:
+        log.warning("telefonsuz kapanış çıkışı: mola kapatılamadı (%s) — gece kuralı kapatır", personel_id)
+    return r["id"]
 
 
 # ─────────────────────────── Yemek molası (K7 / K8) ───────────────────────────

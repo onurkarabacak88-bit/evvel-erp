@@ -231,6 +231,31 @@ def _deneme_hazirla() -> None:
     _DENEME_HAZIR = True
 
 
+def _kapanis_govde_ozet(govde) -> Optional[str]:
+    """Personelin kapanış formundaki rakamlar tek satır (merkez Bekleyen işler 'geç kapanış' satırı — kendini anlatsın)."""
+    g = govde if isinstance(govde, dict) else {}
+    if not any(g.get(k) not in (None, "") for k in ("nakit", "pos", "online", "kor_sayim", "birakilan")):
+        return None   # gövde yok / bozuk → satır yazılmaz
+    try:
+        def t(k):
+            v = g.get(k)
+            return None if v in (None, "") or not _tl(v, k) else _tl_tr(_tl(v, k))   # sıfır yazılmaz (online 0 ₺ gürültü)
+        tes = [x for x in (g.get("teslimler") or []) if isinstance(x, dict) and x.get("tutar") not in (None, "") and _tl(x.get("tutar"), "Teslim")]
+        par = [f"nakit {t('nakit') or '0 ₺'}", f"POS {t('pos') or '0 ₺'}"]
+        if t("online"):
+            par.append(f"online {t('online')}")
+        if t("kor_sayim"):
+            par.append(f"çekmece {t('kor_sayim')}")
+        if tes:
+            _ad = {c: a for a, c in _TH.items()}   # ev:onur → Onur (ham kimlik yazılmasın)
+            par.append("teslim " + ", ".join(f"{_ad.get(x.get('alan'), x.get('alan'))} {_tl_tr(_tl(x.get('tutar'), 'Teslim'))}" for x in tes))
+        if t("birakilan"):
+            par.append(f"bırakılan {t('birakilan')}")
+        return " · ".join(par)
+    except Exception:  # noqa: BLE001 — bilgi satırı; bozuk gövde listeyi düşürmez
+        return None
+
+
 def _deneme_ac(sube_id: str, tur: str, gun, govde: dict) -> Optional[str]:
     try:
         _deneme_hazirla()
@@ -687,7 +712,8 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
     return u, ek
 
 
-def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str] = None, isle_deneme: Optional[str] = None) -> dict:
+def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str] = None, isle_deneme: Optional[str] = None,
+                 telefonsuz: Optional[dict] = None) -> dict:
     """Kapanış: ciro (nakit / POS / online) → Kasa kapanış beyanı; teslimler → Kasa teslim; sayım → Depo günlük sayımı
     (düşüş = kullanılan, sahip kararı); hepsi tek işlemde. Aynı gün ikinci kapanış Kasa'da reddedilir (düzeltme merkezde)."""
     _TUR = "kapanis"
@@ -765,6 +791,13 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
             if _qr_gerekli(cur) and not y.acik_mi(cur, sube_id, p["id"]):
                 raise HTTPException(400, "Önce telefonundan QR ile giriş yap")   # yeni kapanış; işlem geri alınır
             y.cikis_yaz(cur, p["id"], "kapanis", kim=kim, sube_id=str(sube_id))   # tasarım: kapanış = kapanışçının çıkışı
+        # K-5: telefonsuz kapanış merkezde işlenince gönderenin çıkışı GÖNDERİM saatiyle — aynı işlemde (yarıda kalmaz), deneme dönemi ve
+        # tekrar (oid None) hariç. Kimlik + saat gönderim anında sunucuda sabitlendi (açıklama metninden karar verilmez — Codex)
+        if (telefonsuz and y is not None and not c["kuru"] and oid is not None
+                and telefonsuz.get("personel_id") and telefonsuz.get("yoklama_id") and telefonsuz.get("zaman")):
+            if not y.telefonsuz_kapanis_cikisi(cur, str(telefonsuz["personel_id"]), str(telefonsuz["yoklama_id"]), telefonsuz["zaman"],
+                                               kim=f"telefonsuz kapanış — merkez işledi · {c.get('merkez') or kim}"):
+                merkez_uyarilari.append("Telefonsuz kapanış: gönderenin çıkışı yazılamadı (giriş satırı değişmiş) — Çıkışı yapılmamışlar'dan bak")   # Fable nit
         return {"olay": oid, "tekrar": oid is None and bool(k.get("tekrar")), "sayilan": len(satir) if d else 0,
                 "mesaj": "Kapanış kaydedildi" + (" — ürün sayımı geçmiş güne uygulanmadı (olayda duruyor)" if satir and gecmis else ""),
                 "saat_engeli": engel, "uyarilar": uyarilar, "merkez_uyarilari": merkez_uyarilari, "kapanisci": p["ad"]}
@@ -810,6 +843,12 @@ def _kapanis_merkeze(sube_id: str, b: KapanisBody) -> dict:
     except ValueError:
         pass
     govde = {k: v for k, v in b.model_dump(mode="json").items() if k not in ("pin", "merkeze")}
+    # K-5: kimlik + gönderim saati SUNUCUDA sabitlenir (geç kapanış işlenince çıkış bu saatle yazılır — ad / açıklama metninden karar yok)
+    _y = _yoklama()
+    with db() as (_c, cur):   # Codex: gönderim anındaki AÇIK giriş satırı sabitlenir (sonradan yeniden giriş kapatılmasın)
+        _yid = _y.acik_giris_id(cur, str(sube_id), p["id"]) if _y is not None else None
+    govde["_telefonsuz"] = {"personel_id": p["id"], "yoklama_id": _yid,
+                            "zaman": __import__("datetime").datetime.now(__import__("datetime").timezone.utc).isoformat()}
     did = _deneme_ac(sube_id, "kapanis", gun, govde)
     _deneme_kapat(did, "ret", f"Telefonsuz — {p['ad']} merkeze gönderdi (geç kapanış olarak işleyin)")
     with db() as (_c, cur):
@@ -2075,11 +2114,13 @@ def gec_kapanis(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default
     govde = __import__("evvel_yeni_cekirdek").json_ac(r["govde"], {})
     govde["istek_id"] = "gec-" + body.deneme_id.replace("-", "")[:32]   # sabit: yarıda kalırsa tekrar = aynı kayıt (çift yazım yok)
     govde.pop("istemci_gunu", None)
+    telefonsuz = govde.pop("_telefonsuz", None)   # K-5: yalnız telefonsuz gönderimde var
     try:
         kb = KapanisBody(**govde)
     except Exception as e:  # noqa: BLE001
         raise HTTPException(400, f"Kayıtlı kapanış verisi okunamadı: {str(e)[:150]}")
-    sonuc = _kapanis_yaz(r["sube_id"], kb, gun=r["is_gunu"], merkez=kim, isle_deneme=body.deneme_id)
+    sonuc = _kapanis_yaz(r["sube_id"], kb, gun=r["is_gunu"], merkez=kim, isle_deneme=body.deneme_id,
+                         telefonsuz=telefonsuz if isinstance(telefonsuz, dict) else None)
     return {"ok": True, "mesaj": "Geç kapanış işlendi", "sonuc": sonuc}
 
 
@@ -2089,7 +2130,7 @@ def _kapanis_isleri(cur) -> list:
     if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_panel_deneme"):
         return []
     _deneme_hazirla()   # uyarilar / goruldu sütunları (ayrı kısa işlem)
-    cur.execute("""SELECT DISTINCT ON (sube_id, is_gunu) id, sube_id, is_gunu, sonuc, sebep, zaman FROM ey_panel_deneme
+    cur.execute("""SELECT DISTINCT ON (sube_id, is_gunu) id, sube_id, is_gunu, sonuc, sebep, zaman, govde FROM ey_panel_deneme
                     WHERE tur='kapanis' AND zaman >= NOW() - INTERVAL '7 days' AND NOT islendi
                       AND (sonuc IN ('ret','hata') OR (sonuc = 'bekliyor' AND zaman < NOW() - INTERVAL '10 minutes'))
                       AND is_gunu >= %s
@@ -2104,7 +2145,8 @@ def _kapanis_isleri(cur) -> list:
         out.append({"tur": "kapanis_red", "merkeze": (r.get("sebep") or "").startswith("Telefonsuz"),
                     "grup": "kasa", "id": r["id"], "tarih": r["is_gunu"].isoformat(),
                     "ad": adlar.get(str(r["sube_id"]), r["sube_id"]), "sebep": r.get("sebep") or "sonuç alınamadı",
-                    "saat": __import__("evvel_yeni_cekirdek").tr_tarih_saat(r["zaman"]), "islem": "/evvel-yeni/panel/gec-kapanis"})
+                    "saat": __import__("evvel_yeni_cekirdek").tr_tarih_saat(r["zaman"]), "islem": "/evvel-yeni/panel/gec-kapanis",
+                    "ozet": _kapanis_govde_ozet(__import__("evvel_yeni_cekirdek").json_ac(r.get("govde"), {}))})   # K-4 (sim 26 Eki): patron neyi işlediğini görmeden "geç kapanış" diyordu
     cur.execute("""SELECT id, sube_id, is_gunu, uyarilar, zaman FROM ey_panel_deneme
                     WHERE tur='kapanis' AND sonuc='ok_uyarili' AND goruldu IS NULL AND zaman >= NOW() - INTERVAL '7 days'
                       AND is_gunu >= %s ORDER BY zaman DESC""", (_baslangic(cur),))
