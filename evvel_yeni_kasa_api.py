@@ -648,9 +648,11 @@ def _iz_kim(o: dict, C: dict) -> dict:
     for on in ("şube paneli · ", "eski sistem aktarımı · ", "otomatik köprü (eski sistem)"):
         kaydeden = kaydeden.replace(on, "")
     if t in ("teslim_cikis", "teslim_alim"):
-        alan = None
-        if t == "teslim_alim":
+        # F3.2 (sim 25 Eki): şube çekmecesi ÇIKIŞ satırını gösterir — alındı mı orada da görünsün (eskiden hep "—")
+        if o.get("durum") == "onaylandi":
             alan = (kisa(o["hedef"]) or "") + (" · otomatik" if v.get("otomatik") else (" · " + o["onaylayan"] if o.get("onaylayan") else ""))
+        else:
+            alan = "⏳ bekliyor" if t == "teslim_cikis" else None
         return {"sube": kisa(o["kaynak"]), "personel": v.get("teslim_eden") or None, "alan": alan}
     if t == "kapanis":
         return {"sube": kisa(o["cep"]), "personel": kaydeden or None, "alan": None}
@@ -995,6 +997,11 @@ def _eksi_denetle(ol: List[dict], cepler: set, bas_gun: str, C: dict) -> None:
     for g in sorted(gunler):
         for c, v in gunler[g].items():
             if v < 0:
+                # F3.2 (sim 25 Eki): açık günde (kapanış yok) asıl neden satış nakdinin henüz girmemesi — yanlış ipucu verme
+                kapanissiz = C.get(c, {}).get("tur") == "sube" and not any(o["olay"] == "kapanis" and o.get("cep") == c and o["gun"] == g for o in ol)
+                if kapanissiz:
+                    raise HTTPException(400, f"{C[c]['ad']} {g[8:10]}.{g[5:7]}.{g[:4]} kapanışı henüz girilmedi — o günün satış nakdi kapanışta girer, "
+                                             f"şu an defterde {_tl(v)} kalıyor. Teslimi kapanıştan sonra gir ya da şube panelinden ara teslim yaptır.")
                 raise HTTPException(400, f"{C[c]['ad']} {g[8:10]}.{g[5:7]}.{g[:4]} günü sonunda eksiye düşüyor ({_tl(v)}). "
                                          f"O gün o cepte bu kadar para yok — açılış bakiyesi ya da bir giriş eksik olabilir.")
 
@@ -1081,6 +1088,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
         # B6 (sim 25 Eki + Codex B): manşet TOPLAM KASA kira dahil → değişimi de kira dahil; işletme değişimi AYRI adla (sessiz anlam değişimi yok)
         "degisim_toplam": None if onceki is None else _tl_sayi(D["hepsi"] - onceki["hepsi"]),
         "degisim_isletme": None if onceki is None else _tl_sayi(D["toplam"] - onceki["toplam"]),
+        "acik_fark_simdi": sum(1 for x in (fl if hepsi or g >= bugun else _farklar(ol_tum, C)) if not x["coz"]),   # menü rozeti seçili günden bağımsız (F3.2)
         "cepler": cep_durumlari,
         "seviye_sayim": {"kirmizi": sum(1 for c in cep_durumlari if c["seviye"] == "kirmizi"),
                          "sari": sum(1 for c in cep_durumlari if c["seviye"] == "sari")},
@@ -1425,6 +1433,7 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
 
     tut = _kurus(body.tutar) if body.tutar is not None else 0
     yeni = None
+    gec_kilitli = False
     if t == "acilis":
         cep_var(body.cep)
         if tut < 0:
@@ -1448,6 +1457,15 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
             evo_yerine = mevcut
             kayit = [h for h in kayit if h["id"] != mevcut["id"]]
         yeni = _sahte(t, gun, cep=body.cep, tutar=tut, durum="bekliyor", veri={"kart": kart + onl, "pos": kart, "online": onl})
+        if not kor and not mevcut and body.cep in kilit and gun <= kilit[body.cep]:
+            # F3.2 (sim 25 Eki · L4b Codex): kapanışı HİÇ girilmemiş gün sonradan sayıldıysa "Kapanışı gir" 409 veriyordu (iş bitmiyordu).
+            # Panelin geç kapanış deseni (panel_kapanis_yaz) AYNEN: defter nakdi 0 (sayım bozulmaz, çift sayım yok) · ciro BEYANI saklı
+            # (Gelir/Satış kapanis_kanallari'ndan okur) · POS korunur · fazla sayım farkı merkez kararına kalır (otomatik çözüm YOK).
+            yeni = _sahte(t, gun, cep=body.cep, tutar=0, durum="onaylandi",
+                          veri={"kart": kart + onl, "pos": kart, "online": onl, "eski_kaynak": "merkez", "sayimdan_sonra": True,
+                                "sonradan_goruldu": True,   # merkez kendisi girdi → "panel kapanışı sonradan değişti" işi doğmasın
+                                "panel_sonradan": [{"nakit": tut, "kart": kart + onl, "pos": kart, "online": onl, "zaman": _simdi_iso()}]})
+            gec_kilitli = True
     elif t == "dis":
         cep_var(body.cep)
         alt = body.alt if body.alt in DIS_TURLERI else None
@@ -1589,7 +1607,7 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
         y["id"] = f"__yeni{i}__"
     yeni_ol = _olaylar(yeniler)
     etkiler = [(e["cep"], o["gun"]) for o in yeni_ol for e in _etki(o, C)]
-    if t != "cozum":   # fark çözümü sayımın kendi kapanış yoludur — kilide takılmaz
+    if t != "cozum" and not gec_kilitli:   # fark çözümü sayımın kendi kapanış yoludur — kilide takılmaz; geç kapanış deftere 0 yazar (F3.2)
         # sahip 24 Eki: sayım günü BUGÜN ise sayımdan sonra yazılan yeni kayıt serbest (panelde iş günü, merkezde takvim günü — Codex)
         # Fable #2 incelemesi (24 Eki): KAPANIŞ günün TOPLAM satış nakdidir (tek an değil) — gün içi sayımdan önceki satış nakdi sayılan
         # paranın içinde zaten var → sayımdan sonra da kilitli kalır (çift sayım); saat istisnası yalnız ANLIK hareketlere

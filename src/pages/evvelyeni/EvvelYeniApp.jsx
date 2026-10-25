@@ -121,8 +121,9 @@ export default function EvvelYeniApp() {
   const BOLUMLER = GORUNUR.filter((b) => !b.bolum).map((b) => ({
     ...b, sayfalar: [...b.sayfalar.filter((x) => !x.mod || !acikMod || [].concat(x.mod).some((m) => acikMod.has(m))), ...GORUNUR.filter((e) => e.bolum === b.mod).flatMap((e) => e.sayfalar)],
   }));
+  // F3.2 (sim 25 Eki): rozet ŞİMDİYİ sayar — geçmiş gün seçiliyken (ör. kayıttan sonra o güne atlayınca) 18 → 4 oluyordu
   const veriGeldi = (v) => setRozet({
-    teslim: v.isler.filter((x) => x.tur === 'teslim').length, farklar: v.ozet.acik_fark_sayisi,
+    teslim: v.isler.filter((x) => x.tur === 'teslim').length, farklar: v.acik_fark_simdi ?? v.ozet.acik_fark_sayisi,
     // Bekleyen işler alt sekmeleri: her biri kendi sayısı (bölüm başlığında toplamı)
     ...Object.fromEntries(IS_GRUPLARI.map((g) => [g.id, v.isler.filter((x) => isGrubu(x) === g.grup).length])),
   });
