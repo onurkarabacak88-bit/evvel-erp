@@ -5,7 +5,7 @@
 // Ortak parçalar KasaModulu'ndan (PI_CSS, R, kart, Dugme, Cip) — yeni stil yazılmaz. Listeler: /odeme/listeler (toptancılar) + /urun/katalog.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { ALAN, Cip, Dugme, kart, num, PI_CSS, R, tKisa } from './KasaModulu';
+import { ALAN, Cip, Dugme, kart, num, PI_CSS, R, sor, tKisa } from './KasaModulu';
 
 export const SIPARIS_SAYFALAR = [{ id: 'siparis_yon', ad: 'Sipariş yönlendirme', alt: 'Şube talepleri → depo / toptancı' }];
 const alan = { ...ALAN, padding: '5px 8px', borderRadius: 8, fontSize: 13 };   // temel stil KasaModulu ALAN (T4-15)
@@ -44,7 +44,7 @@ export default function SiparisModulu({ onToast }) {
     try { const d = await api(`/evvel-yeni/siparis/${sid}/${yol}`, { method: 'POST', body: govde }); onToast?.(mesaj || d?.mesaj || 'Kaydedildi'); await yukle(sid); }
     catch (e) {
       // L1 (sim 24 Eki): depocu hazırlamaya başladıysa sunucu onay ister — merkez bilerek değiştirsin
-      if (e?.status === 409 && (yol === 'yon' || yol === 'iptal') && !govde.hazir_onay && /hazırlamaya başladı/.test(e?.message || '') && window.confirm(e.message)) {
+      if (e?.status === 409 && (yol === 'yon' || yol === 'iptal') && !govde.hazir_onay && /hazırlamaya başladı/.test(e?.message || '') && await sor({ soru: e.message, tamam: 'Yine de değiştir' })) {
         setMesgul((m) => { const y = { ...m }; delete y[sid]; return y; });
         return is_(sid, yol, { ...govde, hazir_onay: true }, mesaj);
       }
@@ -67,7 +67,7 @@ export default function SiparisModulu({ onToast }) {
     });
     setTaslak((o) => ({ ...o, [s.id]: { ...(o[s.id] || {}), ...ek } }));
   };
-  const kaydet = (s) => {
+  const kaydet = async (s) => {
     const t = taslak[s.id] || {};
     const kalemler = Object.entries(t).map(([i, ys]) => ({ i: Number(i), yonler: ys.filter((y) => y.kaynak && Number(y.adet) > 0).map((y) => ({ kaynak: y.kaynak, adet: Number(y.adet) })) }));
     if (!kalemler.length) { setHata('Değişiklik yok'); return; }
@@ -75,7 +75,7 @@ export default function SiparisModulu({ onToast }) {
     const kaynaksiz = Object.entries(t).filter(([, ys]) => ys.some((y) => !y.kaynak && Number(y.adet) > 0)).map(([i]) => (s.kalemler.find((x) => x.i === Number(i)) || {}).ad);
     if (kaynaksiz.length) { setHata(`Kaynak seç: ${kaynaksiz.join(', ')} (depo ya da toptancı)`); return; }
     const bosalan = kalemler.filter((k) => !k.yonler.length).map((k) => (s.kalemler.find((x) => x.i === k.i) || {}).ad);
-    if (bosalan.length && !window.confirm(`${bosalan.join(', ')}: bütün kaynaklar kaldırıldı — kalem 'Yönlendirilmedi'ye döner. Devam?`)) return;   // Fable D5-S1
+    if (bosalan.length && !(await sor({ soru: `${bosalan.join(', ')}: bütün kaynaklar kaldırıldı — kalem 'Yönlendirilmedi'ye döner. Devam?`, tamam: 'Devam' }))) return;   // Fable D5-S1
     is_(s.id, 'yon', { surum: s.surum, kalemler }, 'Yönlendirildi');
   };
 
@@ -109,7 +109,7 @@ export default function SiparisModulu({ onToast }) {
               <span style={{ flex: 1 }} />
               {acik && <Dugme kucuk disabled={mesgul[s.id]} onClick={() => varsayilan(s)} title="Yönlendirilmemiş kalemleri son toptancıya / merkez depoya doldur">Varsayılanları uygula</Dugme>}
               {acik && <Dugme kucuk ana disabled={mesgul[s.id] || !degisti} onClick={() => kaydet(s)}>{mesgul[s.id] ? 'Kaydediliyor…' : 'Yönlendir'}</Dugme>}
-              {acik && <Dugme kucuk disabled={mesgul[s.id]} onClick={() => { const r = window.prompt('Sipariş neden iptal ediliyor?'); if (r && r.trim()) is_(s.id, 'iptal', { sebep: r.trim(), surum: s.surum }, 'Sipariş iptal edildi'); }}>Siparişi iptal</Dugme>}
+              {acik && <Dugme kucuk disabled={mesgul[s.id]} onClick={async () => { const r = await sor({ soru: 'Sipariş neden iptal ediliyor?', giris: true, tamam: 'Siparişi iptal et' }); if (r && r.trim()) is_(s.id, 'iptal', { sebep: r.trim(), surum: s.surum }, 'Sipariş iptal edildi'); }}>Siparişi iptal</Dugme>}
             </div>
             {s.notu && <div style={{ fontSize: 12.5, color: R.metin2 }}>📝 {s.notu}</div>}
             {s.kalemler.map((k) => {
@@ -119,7 +119,8 @@ export default function SiparisModulu({ onToast }) {
               let dTur = dTur0;
               // G29 (sahip ekran denemesi 23 Eki): bölünmüş kalemde (8 depo yolda + 4 toptancı bekleniyor) tek "Yolda" yarım anlatıyordu
               const parcalar = {};
-              k.yonler.filter((y) => y.durum !== 'iptal').forEach((y) => { parcalar[y.durum] = (parcalar[y.durum] || 0) + (y.adet || 0); });
+              // R4 (sim 25 Eki): "geldi" parçası GELEN adetle (4 istendi 3 geldi + 1 toptancıya → "4 geldi · 1 bekleniyor" yazıyordu)
+              k.yonler.filter((y) => y.durum !== 'iptal').forEach((y) => { parcalar[y.durum] = (parcalar[y.durum] || 0) + (y.durum === 'karsilandi' && y.gelen != null ? y.gelen : (y.adet || 0)); });
               const KISA = { hazirlaniyor: 'depoda hazırlanıyor', bekleniyor: 'toptancıdan bekleniyor', yolda: 'yolda', karsilandi: 'geldi' };
               if (k.durum !== 'yonlendirilmedi' && k.durum !== 'karsilandi' && Object.keys(parcalar).length > 1) {
                 dAd = Object.entries(parcalar).map(([d, n]) => `${n} ${KISA[d] || d}`).join(' · ');
@@ -147,7 +148,7 @@ export default function SiparisModulu({ onToast }) {
                         depo kaydı: <b style={num}>{k.depo_stok}</b>{k.depo_stok <= 0 ? ' · sayım gerekli' : ''}</span>)}
                     {k.eksik > 0 && k.durum !== 'yonlendirilmedi' && <Cip tur="kirmizi">{k.eksik} eksik geldi</Cip>}   {/* G29: yönlendirilmedi etiketi zaten söylüyor */}
                     {acik && k.durum !== 'iptal' && kilitler.length === 0 && (
-                      <Dugme kucuk disabled={mesgul[s.id]} onClick={() => { const r = window.prompt(`${k.ad} kalemi neden iptal ediliyor?`); if (r && r.trim()) is_(s.id, 'yon', { surum: s.surum, kalemler: [{ i: k.i, iptal: r.trim() }] }, 'Kalem iptal edildi'); }}>Kalemi iptal</Dugme>
+                      <Dugme kucuk disabled={mesgul[s.id]} onClick={async () => { const r = await sor({ soru: `${k.ad} kalemi neden iptal ediliyor?`, giris: true, tamam: 'Kalemi iptal et' }); if (r && r.trim()) is_(s.id, 'yon', { surum: s.surum, kalemler: [{ i: k.i, iptal: r.trim() }] }, 'Kalem iptal edildi'); }}>Kalemi iptal</Dugme>
                     )}
                   </div>
                   {kilitler.map((y) => (
@@ -176,7 +177,7 @@ export default function SiparisModulu({ onToast }) {
                   )}
                   {acik && k.eksik > 0 && (
                     <div style={{ paddingLeft: 12 }}>
-                      <Dugme kucuk disabled={mesgul[s.id]} onClick={() => { const r = window.prompt(`${k.ad}: ${k.eksik} eksik — neden kapatılıyor? (ör. toptancıda yoktu, gerek kalmadı)`); if (r && r.trim()) is_(s.id, `kalem/${k.i}/eksik-kapat`, { surum: s.surum, sebep: r.trim() }, 'Eksik kapatıldı'); }}>Eksiği kapat</Dugme>
+                      <Dugme kucuk disabled={mesgul[s.id]} onClick={async () => { const r = await sor({ soru: `${k.ad}: ${k.eksik} eksik — neden kapatılıyor?`, ipucu: 'ör. toptancıda yoktu, gerek kalmadı', giris: true, tamam: 'Eksiği kapat' }); if (r && r.trim()) is_(s.id, `kalem/${k.i}/eksik-kapat`, { surum: s.surum, sebep: r.trim() }, 'Eksik kapatıldı'); }}>Eksiği kapat</Dugme>
                     </div>
                   )}
                 </div>
@@ -210,7 +211,7 @@ function OneriBagla({ s, k, urunler, mesgul, is_ }) {
         {aday.map((u) => <option key={u.id} value={u.id}>{u.ad} · {u.kategori}</option>)}
       </select>
       <Dugme kucuk ana disabled={mesgul || !sec} onClick={() => is_(s.id, `kalem/${k.i}/oneri`, { surum: s.surum, urun_id: sec }, 'Ürüne bağlandı — şimdi yönlendir')}>Bağla</Dugme>
-      <Dugme kucuk disabled={mesgul} onClick={() => { const r = window.prompt('Öneri neden reddediliyor?'); if (r && r.trim()) is_(s.id, `kalem/${k.i}/oneri`, { surum: s.surum, urun_id: null, sebep: r.trim() }, 'Öneri reddedildi'); }}>Reddet</Dugme>
+      <Dugme kucuk disabled={mesgul} onClick={async () => { const r = await sor({ soru: 'Öneri neden reddediliyor?', giris: true, tamam: 'Reddet' }); if (r && r.trim()) is_(s.id, `kalem/${k.i}/oneri`, { surum: s.surum, urun_id: null, sebep: r.trim() }, 'Öneri reddedildi'); }}>Reddet</Dugme>
     </div>
   );
 }

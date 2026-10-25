@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api, apiBlob } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cekmece, Cip, Dugme, Etiket, fmt, kart, num, PI_CSS, R, sayfayaGit, tKisa } from './KasaModulu';
+import { ALAN, Cekmece, Cip, Dugme, Etiket, fmt, kart, num, PI_CSS, R, sayfayaGit, sor, tKisa } from './KasaModulu';
 import { Pencere as OrtakPencere } from './AyTakvim';
 
 export const TOPTANCI_SAYFALAR = [
@@ -79,7 +79,7 @@ function BelgeKitap({ h, t, onKapat, onToast, yenile }) {
     setMesgul(false);
   };
   const kaldir = async () => {
-    if (!s || !window.confirm(`Sayfa ${s.sayfa} kaldırılsın mı? (silinmez — iz kalır)`)) return;
+    if (!s || !(await sor({ soru: `Sayfa ${s.sayfa} kaldırılsın mı?`, ipucu: 'Silinmez — iz kalır.', tamam: 'Kaldır' }))) return;
     try { const r = await api(`/evvel-yeni/toptanci/belge/${encodeURIComponent(s.id)}/kaldir`, { method: 'POST', body: {} }); onToast?.(r.mesaj); setI(0); await liste(); yenile?.(); }
     catch (er) { onToast?.(er?.message || 'Kaldırılamadı'); }
   };
@@ -341,10 +341,10 @@ export default function ToptanciModulu({ onToast }) {
                           <td style={{ padding: '6px 8px', textAlign: 'right', whiteSpace: 'nowrap' }}>
                             {h.tur === 'teslim' && !h.iptal && <span style={{ display: 'inline-flex', gap: 4 }}>
                               {h.kesin_kaynak === 'şube' && h.kesin != null && (   // E5: şubenin tutarı merkez onaylayınca kesinleşir + fiyat öğrenilir
-                                <Dugme kucuk ana disabled={mesgul} onClick={() => { if (window.confirm(`Şubenin yazdığı ${fmt(h.kesin)} ₺ doğru mu? Onaylarsan ürün fiyatları bu tutardan öğrenilir.`)) gonder(`/evvel-yeni/toptanci/teslim/${h.id}/tutar`, { tutar: h.kesin, fatura_geldi: h.fatura_geldi !== false, fatura_no: h.fatura_no || null, sebep: 'şube tutarı merkezce onaylandı' }); }}>✔ Onayla</Dugme>
+                                <Dugme kucuk ana disabled={mesgul} onClick={async () => { if (await sor({ soru: `Şubenin yazdığı ${fmt(h.kesin)} ₺ doğru mu?`, ipucu: 'Onaylarsan ürün fiyatları bu tutardan öğrenilir.', tamam: '✔ Onayla' })) gonder(`/evvel-yeni/toptanci/teslim/${h.id}/tutar`, { tutar: h.kesin, fatura_geldi: h.fatura_geldi !== false, fatura_no: h.fatura_no || null, sebep: 'şube tutarı merkezce onaylandı' }); }}>✔ Onayla</Dugme>
                               )}
                               <Dugme kucuk ana={h.durum !== 'kesin'} onClick={() => setTutarForm({ h, tutar: h.kesin != null ? String(h.kesin) : '', fatura_no: h.fatura_no || '', sebep: '', kaynak: h.fatura_geldi === false ? 'ekstre' : 'fatura' })}>{h.durum === 'kesin' ? 'Düzelt' : 'Tutar gir'}</Dugme>
-                              <Dugme kucuk onClick={() => { const s = window.prompt('Bu teslim neden iptal ediliyor?'); if (s) gonder(`/evvel-yeni/toptanci/teslim/${h.id}/iptal`, { sebep: s }); }}>İptal</Dugme>
+                              <Dugme kucuk onClick={async () => { const s = await sor({ soru: 'Bu teslim neden iptal ediliyor?', giris: true, tamam: 'Teslimi iptal et' }); if (s) gonder(`/evvel-yeni/toptanci/teslim/${h.id}/iptal`, { sebep: s }); }}>İptal</Dugme>
                             </span>}
                           </td>
                         </tr>

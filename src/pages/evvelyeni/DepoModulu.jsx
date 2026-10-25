@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { ALAN, Cekmece, Cip, Dugme, kart, num, PI_CSS, R, tKisa } from './KasaModulu';
+import { ALAN, Cekmece, Cip, Dugme, kart, num, PI_CSS, R, sor, tKisa } from './KasaModulu';
 import { yeniIstekId as yeniIstek } from '../../utils/cihazImza';
 
 export const DEPO_SAYFALAR = [
@@ -157,12 +157,12 @@ function Yoldakiler({ onToast, mod }) {
   }, [evren]);
   useEffect(() => { yukle(); }, [yukle]);
   const kabul = async (x) => {
-    if (!window.confirm(`${x.urun} (${x.sevk} adet) → ${x.nereye}\nŞube kabul etmedi. Merkez adına SEVK ADEDİYLE kabul edilsin mi?`)) return;
+    if (!(await sor({ soru: `${x.urun} (${x.sevk} adet) → ${x.nereye}\nŞube kabul etmedi. Merkez adına SEVK ADEDİYLE kabul edilsin mi?`, tamam: 'Merkez adına kabul et' }))) return;
     try { const r = await api(`/evvel-yeni/depo/yolda/${encodeURIComponent(x.id)}/merkez-kabul`, { method: 'POST', body: {} }); onToast?.(r.mesaj); yukle(); }
     catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
   };
   const coz = async (x, karar, soru) => {
-    if (!window.confirm(soru)) return;
+    if (!(await sor({ soru, tamam: 'Evet, böyle kapat' }))) return;
     try { const r = await api(`/evvel-yeni/depo/yolda/${encodeURIComponent(x.id)}/fark-coz`, { method: 'POST', body: { karar } }); onToast?.(r.mesaj); yukle(); }
     catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
   };
@@ -265,7 +265,7 @@ function SevkEt({ onToast }) {
     if (!hedef) { onToast?.('Hangi şubeye? Hedef seç'); return; }
     if (!secili.length) { onToast?.('En az bir ürün seç'); return; }
     const h = hedefler.find((k) => k.sube_id === hedef);
-    if (!window.confirm(`${merkez?.ad || 'Merkez depo'} → ${h?.ad}\n\n${secili.map((u) => `• ${u.ad}: ${toplam(u)}`).join('\n')}\n\nYola çıksın mı?`)) return;
+    if (!(await sor({ soru: `${merkez?.ad || 'Merkez depo'} → ${h?.ad}\n\n${secili.map((u) => `• ${u.ad}: ${toplam(u)}`).join('\n')}\n\nYola çıksın mı?`, tamam: '🚚 Yola çıkar' }))) return;
     setMesgul(true);
     try {
       const r = await api('/evvel-yeni/depo/sevk', { method: 'POST',
@@ -276,7 +276,7 @@ function SevkEt({ onToast }) {
     } catch (e) { onToast?.(e?.message || 'Gönderilemedi'); } finally { setMesgul(false); }
   };
   const geriAl = async (p) => {
-    const sebep = window.prompt(`${p.nereye} paketi geri alınsın mı? (şube henüz kabul etmedi)\nSebep:`);
+    const sebep = await sor({ soru: `${p.nereye} paketi geri alınsın mı?`, ipucu: 'Şube henüz kabul etmedi. Sebep yaz (en az 3 harf).', giris: true, tamam: 'Paketi geri al' });
     if (!sebep || sebep.trim().length < 3) return;
     try { const r = await api(`/evvel-yeni/depo/sevk/${encodeURIComponent(p.id)}/iptal`, { method: 'POST', body: { sebep: sebep.trim() } }); onToast?.(r.mesaj); yukle(); }
     catch (e) { onToast?.(e?.message || 'Geri alınamadı'); }
@@ -368,7 +368,7 @@ function DepoSayim({ onToast }) {
     const satirlar = Object.entries(deger).filter(([, d]) => String(d).trim() !== '').map(([urun_id, d]) => ({ urun_id, sayilan: Number(String(d).replace(',', '.')) }));
     if (!satirlar.length) { onToast?.('En az bir ürün say'); return; }
     if (satirlar.some((s) => !Number.isInteger(s.sayilan) || s.sayilan < 0)) { onToast?.('Adetler tam sayı ve 0 ya da üstü olmalı'); return; }
-    if (!window.confirm(`${k?.ad} · ${satirlar.length} ürün ${acilis ? 'AÇILIŞ SAYIMI' : 'sayımı'} olarak kaydedilsin mi?`)) return;
+    if (!(await sor({ soru: `${k?.ad} · ${satirlar.length} ürün ${acilis ? 'AÇILIŞ SAYIMI' : 'sayımı'} olarak kaydedilsin mi?`, tamam: 'Kaydet' }))) return;
     setMesgul(true);
     try {
       const r = await api('/evvel-yeni/depo/sayim', { method: 'POST', body: { konum, satirlar, acilis, evren: v.evren } });

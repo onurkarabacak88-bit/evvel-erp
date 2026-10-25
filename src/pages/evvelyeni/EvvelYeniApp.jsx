@@ -11,7 +11,7 @@ import React, { useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import { MODULLER, TUM_SAYFALAR } from './moduller';
 import { kabukDegiskenleri } from './tema';   // renkler TEK kaynak (T4-16)
-import { IS_GRUPLARI, isGrubu } from './KasaModulu';
+import { IS_GRUPLARI, isGrubu, SorKatmani } from './KasaModulu';
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
@@ -166,6 +166,7 @@ export default function EvvelYeniApp() {
   return (
     <div className="piapp">
       <style>{KABUK_CSS}</style>
+      <SorKatmani />
       {durum === 'soruluyor' && <div style={{ padding: 40, color: 'var(--ink3)' }}>Evvel Yeni açılıyor…</div>}
       {durum === 'giris' && <Giris onTamam={() => setDurum('tamam')} />}
       {durum === 'tamam' && (

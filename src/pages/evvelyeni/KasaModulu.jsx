@@ -112,6 +112,41 @@ const kart = { background: 'var(--pi-paper)', border: '1px solid var(--pi-line)'
 const etiketStil = { fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: R.not2, fontWeight: 600 };
 const num = { fontFamily: 'var(--pi-f-num)', fontVariantNumeric: 'tabular-nums' };
 
+// 🗨️ SOR — sayfa içi soru/onay penceresi (Y8, sim 25 Eki): window.prompt/confirm tasarım dışı, simde/dokunmatikte görünmüyor,
+// Esc ile sessizce kapanıyordu. TEK parça: sor({ soru, giris, ipucu, tamam }) → giris ise metin|null, değilse true|false.
+// <SorKatmani /> kabukta bir kez durur; takılı değilse (ör. başka kabuk) tarayıcı penceresine düşer.
+let sorDinle = null;
+function sor(o) {
+  return new Promise((coz) => {
+    if (!sorDinle) { coz(o.giris ? window.prompt(o.soru) : window.confirm(o.soru)); return; }   // eslint-disable-line no-alert
+    sorDinle({ ...o, coz });
+  });
+}
+function SorKatmani() {
+  const [s, setS] = useState(null);
+  const [m, setM] = useState('');
+  useEffect(() => { sorDinle = (o) => { setM(''); setS((onceki) => { if (onceki) onceki.coz(onceki.giris ? null : false); return o; }); }; return () => { sorDinle = null; }; }, []);   // Fable 7-A: üst üste soruda öncekini 'vazgeç' ile çöz
+  if (!s) return null;
+  const bitir = (v) => { const c = s.coz; setS(null); c(v); };
+  const hazir = !s.giris || m.trim().length > 0;
+  return (
+    <div className="pi" role="dialog" aria-modal="true" aria-label={s.soru} onClick={() => bitir(s.giris ? null : false)}
+      style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(30,20,12,.45)', display: 'grid', placeItems: 'center', padding: 16 }}>
+      <style>{PI_CSS}</style>
+      <div onClick={(e) => e.stopPropagation()} style={{ ...kart, width: 'min(460px, 100%)', padding: '18px 20px', display: 'flex', flexDirection: 'column', gap: 12 }}>
+        <b style={{ fontSize: 15, lineHeight: 1.35, whiteSpace: 'pre-line' }}>{s.soru}</b>
+        {s.ipucu && <div style={{ fontSize: 12.5, color: R.not }}>{s.ipucu}</div>}
+        {s.giris && <input autoFocus value={m} onChange={(e) => setM(e.target.value)} placeholder={s.yer || 'kısaca yaz'}
+          onKeyDown={(e) => { if (e.key === 'Enter' && hazir) bitir(m.trim()); }} style={{ ...alanStil }} />}
+        <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+          <Dugme onClick={() => bitir(s.giris ? null : false)}>Vazgeç</Dugme>
+          <Dugme ana disabled={!hazir} onClick={() => bitir(s.giris ? m.trim() : true)}>{s.tamam || 'Tamam'}</Dugme>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Dugme({ children, onClick, ana, kucuk, disabled, title, renk }) {
   return (
     <button type="button" onClick={onClick} disabled={disabled} title={title} style={{
@@ -1720,4 +1755,4 @@ function IsSatir({ x, bugun, onTeyit, onTeslim, onCoz, onKapanis, onPosKabul, on
 }
 
 // Diğer Evvel Yeni bölümleri (Gelir, Gider…) aynı görsel dili kullanır
-export { ALAN, AySecici, Etiket, OzetKutusu, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
+export { sor, SorKatmani, ALAN, AySecici, Etiket, OzetKutusu, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
