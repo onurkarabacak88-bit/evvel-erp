@@ -431,7 +431,6 @@ export default function SubePaneli({ subeId }) {
       )}
       {modal === 'araTeslim' && (
         <Modal baslik="💵 Ara Teslim" kapat={() => setModal(null)}>
-          {kimSec('Teslim eden', true)}
           <b>Kime?</b>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3,1fr)', gap: 8 }}>
             {d.teslim_alanlar.map((a) => <button key={a.id} className={'sp-btn' + (f.alan === a.id ? ' sp-ana' : '')} onClick={() => setF({ ...f, alan: a.id })}>{a.ad}</button>)}
@@ -442,6 +441,7 @@ export default function SubePaneli({ subeId }) {
             <input className="sp-in" value={f.aciklama ?? ''} maxLength={120} onChange={(e) => setF({ ...f, aciklama: e.target.value })} placeholder="Açıklama (isteğe bağlı)" /></label>
           {/* Fable (21 Eki): 'sigara aldım' gibi harcamalar teslim yazılıyordu — kapıyı göster (kasa derinliği vermez) */}
           <div style={{ color: C.soluk, fontSize: 12 }}>Çekmeceden harcama yaptıysan <b>Anlık gider</b>'i kullan.</div>
+          {kimSec('Teslim eden', true)}{/* T-1 (sim 25 Eki): kişi + PIN en üstteydi — sahip kuralı "onay işlem SONUNDA" (Ürün Aç / Fire / Gider ile aynı sıra) */}
           <button className="sp-btn sp-yesil" disabled={mesgul || !f.alan || !tutarNum(f.tutar)}
             onClick={() => gonder('ara-teslim', { personel_id: kisi, alan: f.alan, tutar: tutarNum(f.tutar), aciklama: (f.aciklama || '').trim() || null })}>✔ Teslimi Kaydet</button>
         </Modal>

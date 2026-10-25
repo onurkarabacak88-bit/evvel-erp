@@ -249,7 +249,7 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit, onFis }) {
   if (h.tur === 'dis') { ust = h.alt_ad + (h.kimden ? ` · ${h.kimden}` : ''); alt = `${cepAd(h.cep)} cebine girdi${h.not_ ? ` · ${h.not_}` : ''}`; renk = R.yesil; tutar = `+${tutar}`; cip = h.geri_odenecek ? <Cip tur="sari">geri ödenecek</Cip> : null; cipTur = 'yesil'; }
   if (h.tur === 'teslim') {
     ust = `${cepAd(h.kaynak)} → ${cepAd(h.hedef)}`;
-    alt = 'Dükkân nakdinden çıktı · "aldım" denene kadar Yolda (ev bakiyesine girmez); 7 gün içinde denmezse girildiği gün alınmış sayılır' + (h.not_ ? ` · 📝 ${h.not_}` : '');
+    alt = 'Dükkân nakdinden çıktı · girildiği gün alınmış sayılır (eksik / gelmediyse 7 gün içinde Teslim onayları › Düzelt)' + (h.not_ ? ` · 📝 ${h.not_}` : '');
     cip = h.durum !== 'onaylandi' ? <Cip tur="sari">onay bekliyor</Cip>
       : (h.fark ? <Cip tur="kirmizi">sayılan {fmt(h.alinan)} · {h.fark > 0 ? 'eksik' : 'fazla'} {fmt(Math.abs(h.fark))}</Cip> : <Cip tur="yesil">alındı</Cip>);
     if (h.durum === 'onaylandi' && h.onay_gunu && h.onay_gunu !== h.tarih) alt = `${tUzun(h.onay_gunu)} günü alındı — o güne kadar "yolda"${h.kilit_sonrasi ? ' · ev sayımından sonra alındı' : ''}`;
@@ -806,10 +806,13 @@ function TeslimSekmesi({ onToast, onDegisti }) {
   }, []);
   useEffect(() => { yukle(); }, [yukle]);
   // Sahip: "annem 65 yaşında, her gün nasıl onaylayacak?" → TEK DOKUNUŞ: rakam yazmadan
-  // "aldım, tuttu"; yalnız farklıysa tutar yazılır. Dokunulmazsa ertesi gün kendiliğinden kabul.
+  // "aldım, tuttu"; yalnız farklıysa tutar yazılır. Dokunulmazsa aynı gün kendiliğinden kabul (OTOMATIK_KABUL_GUN 0, sahip 17 Eki).
+  const alMesgul = useRef(false);   // Fable nit: çift tıklamada 2. istek 409 → boş düzeltme kaydı yazmasın
   const al = async (x, tutar) => {
     const t = tutar !== undefined ? tutar : say[x.id];
     if (t === undefined || t === '') { onToast?.('Önce saydığın tutarı yaz'); return; }
+    if (alMesgul.current) return;
+    alMesgul.current = true;
     try {
       await api(`/evvel-yeni/kasa/hareket/${x.id}/onay`, { method: 'POST', body: { alinan: Number(t) } });
       const f = x.tutar - Number(t);
@@ -817,7 +820,24 @@ function TeslimSekmesi({ onToast, onDegisti }) {
       setSay((s0) => { const k = { ...s0 }; delete k[x.id]; return k; });
       setAcikGiris((s0) => ({ ...s0, [x.id]: false }));
       yukle(); onDegisti?.();
-    } catch (e) { onToast?.(e.message); }
+    } catch (e) {
+      // T-3 (sim 25 Eki): ekran açıkken otomatik iş teslimi kabul ettiyse "Zaten onaylanmış" deyip sayılan tutarı kaybediyordu →
+      // farklı sayıldıysa aynı tutar 7 günlük Düzelt yoluna yazılır (anlamı aynı: kabul edilmiş teslimde "aslında farklıydı")
+      if (e?.status === 409 && /onaylanm/i.test(e?.message || '')) {
+        try {
+          if (Number(t) !== x.tutar) {
+            await api(`/evvel-yeni/kasa/hareket/${x.id}/teslim-duzelt`, { method: 'POST', body: { alinan: Number(t) } });
+            const f = x.tutar - Number(t);
+            onToast?.(`Teslim kendiliğinden kabul edilmişti — saydığın tutar düzeltme olarak yazıldı (${fmt(Math.abs(f))} ₺ ${f > 0 ? 'eksik' : 'fazla'})`);
+          } else onToast?.('Teslim kendiliğinden kabul edilmişti ✓');
+        } catch (e2) { onToast?.(e2.message); return; }   // Codex: düzeltme yazılamadıysa sayılan tutar ve giriş kalsın (yeniden dene)
+        setSay((s0) => { const k = { ...s0 }; delete k[x.id]; return k; });
+        setAcikGiris((s0) => ({ ...s0, [x.id]: false }));
+        yukle(); onDegisti?.();
+        return;
+      }
+      onToast?.(e.message);
+    } finally { alMesgul.current = false; }
   };
   const duzelt = async (x) => {
     const t = duz[x.id];
@@ -835,7 +855,11 @@ function TeslimSekmesi({ onToast, onDegisti }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <div style={{ ...kart, padding: '10px 14px', fontSize: 13, color: R.metin2, background: 'var(--pi-bg)' }}>
-        Teslim "aldım" denene kadar <b>Yolda</b> görünür, ev bakiyesine girmez; {v.duzeltme_suresi_gun} gün içinde denmezse <b>girildiği gün alınmış sayılır</b>. Para gelmediyse ya da eksik geldiyse{' '}
+        {/* T-2 (sim 25 Eki): eski "7 gün içinde denmezse" kuralını anlatıyordu — sahip 17 Eki (envanter 3-b): girildiği AN alınmış sayılır */}
+        {v.otomatik_kabul_gun > 0
+          ? <>Teslim "aldım" denene kadar <b>Yolda</b> görünür, ev bakiyesine girmez; {v.otomatik_kabul_gun} gün içinde denmezse <b>girildiği gün alınmış sayılır</b>. </>
+          : <>Teslim <b>girildiği gün alınmış sayılır</b> — "aldım" beklenmez (otomatik iş en geç 10 dk içinde kabul eder, o ana kadar <b>Yolda</b> görünür). </>}
+        Para gelmediyse ya da eksik geldiyse{' '}
         {v.duzeltme_suresi_gun} gün içinde "Düzelt" ile yazılır ya da evdeki sayımda ortaya çıkar.
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 10 }}>
