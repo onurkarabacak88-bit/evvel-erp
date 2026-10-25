@@ -716,7 +716,8 @@ function Cekmece({ v, onKapat }) {
                 {v.aksiyonlar.map((a) => <Dugme key={a.ad} ana={a.birincil} onClick={() => { onKapat(); a.onTikla?.(); }}>{a.ad}</Dugme>)}
               </div>
             )}
-          </>) : v.tablo ? (
+          </>) : v.tablo ? (<>
+            {v.tabloUst && <button type="button" onClick={() => setSekme('ozet')} style={{ alignSelf: 'flex-start', border: `1px solid ${alfa(R.kirmizi, 45)}`, background: 'var(--pi-bad-soft)', color: R.kirmizi, borderRadius: 9, padding: '6px 12px', font: 'inherit', fontSize: 12.5, fontWeight: 600, cursor: 'pointer' }}>🔴 {v.tabloUst}</button>}
             <div style={{ overflowX: 'auto', border: '1px solid var(--pi-line)', borderRadius: 10 }}>
               <table className="pi-tablo pi-excel">
                 <thead><tr>{v.tablo.kolonlar.map((k, i) => <th key={i} style={{ textAlign: k.sag ? 'right' : 'left' }}>{k.ad}</th>)}</tr></thead>
@@ -734,7 +735,7 @@ function Cekmece({ v, onKapat }) {
                 </tbody>
               </table>
             </div>
-          ) : (
+          </>) : (
             <div style={{ overflowX: 'auto' }}>
               <table className="pi-tablo">
                 <thead><tr><th>Gün</th><th>Hareket</th></tr></thead>
@@ -1154,13 +1155,19 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
               onTikla: x.cep ? () => cekmeceAc({ tur: 'cep', id: x.cep, ad: x.kaynak }, false) : undefined,
             })),
             ...r.farklar.map((x) => ({
-              ad: `${x.coz ? '✓' : '🔴'} ${x.ad}`, detay: `${tUzun(x.tarih)} · ${x.coz ? `kapandı: ${x.coz.sebep_ad}` : 'çözülmedi'}`,
+              ad: `${x.coz ? '✓' : '🔴'} ${x.ad}`, detay: `${tUzun(x.tarih)} · ${x.coz ? `kapandı: ${x.coz.sebep_ad}` : 'çözülmedi'}${!x.coz && x.kapanis_yok ? ' · ⚠ o gün kapanış yok' : ''}`,
               tutar: tl(Math.abs(x.f)), onTikla: () => cekmeceAc({ tur: 'fark', id: x.id, ad: x.ad }, false),
             })),
           ],
           // 📊 Sahip: "kasada nakit geleni Excel tablosu gibi; tıkladığımızda teslim şubesi ve
           // teslimi yapan personel görünmeli" → cebe tıklayınca İLK bu tablo açılır.
           varsayilan: 'iz',
+          tabloUst: (() => {   // Opus S4: varsayılan sekme sabit; açık fark varsa tablonun üstünde tek satır → Özet
+            const a = r.farklar.filter((x) => !x.coz);
+            if (!a.length) return null;
+            const net = a.reduce((t, x) => t + (x.kalan ?? x.f), 0);
+            return `${a.length} açık fark · net ${fmt(Math.abs(net))} ₺ ${net > 0 ? 'eksik' : net < 0 ? 'fazla' : ''} → Özet`;
+          })(),
           tablo: {
             ad: 'Nakit hareketleri',
             kolonlar: [{ ad: 'Gün' }, { ad: 'Hareket', sar: true }, { ad: 'Şube' }, { ad: 'Teslim eden / yapan' }, { ad: 'Alan' },
@@ -1286,7 +1293,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
 
       {sekme === 'banka' ? <BankaSekmesi onToast={onToast} onDegisti={yukle} />
         : sekme === 'teslim' ? <TeslimSekmesi onToast={onToast} onDegisti={yukle} />
-        : sekme === 'farklar' ? <AcikSayfa onCoz={(id) => formAc('coz', { id })} onCepAc={(id, ad) => cekmeceAc({ tur: 'cep', id, ad }, true)} yenile={veri.hareket_sayisi} />
+        : sekme === 'farklar' ? <AcikSayfa onCoz={(id) => formAc('coz', { id })} onKapanis={(x) => formAc('kapanis', { gun: x.tarih, cep: x.cep })} onCepAc={(id, ad) => cekmeceAc({ tur: 'cep', id, ad }, true)} yenile={veri.hareket_sayisi} />
         : (<>
       {/* KAYIT GİR + GÜN SEÇİCİ */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
@@ -1502,7 +1509,7 @@ const acikOzet = (a) => {
   ];
 };
 
-function AcikSayfa({ onCoz, onCepAc, yenile }) {
+function AcikSayfa({ onCoz, onCepAc, onKapanis, yenile }) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   useEffect(() => {
@@ -1528,6 +1535,12 @@ function AcikSayfa({ onCoz, onCepAc, yenile }) {
               {(x.notlar || []).map((n) => <div key={n.id} style={{ fontSize: 12, color: R.krem, background: R.girinti, borderRadius: 7, padding: '4px 8px', marginTop: 3 }}>📝 {tUzun(n.is_gunu)} {n.saat} · <b>{n.personel}</b>: {n.metin}</div>)}
               {x.tekrar_uyari && <div style={{ fontSize: 12, color: R.amber, fontWeight: 600 }}>🔁 {x.tekrar_uyari}</div>}
               {x.defter_eksi && <div style={{ fontSize: 12, color: R.kirmizi }}>⚠ Sayım anında defter eksideydi</div>}
+              {x.kapanis_yok && (   /* Opus S3: fark büyük olasılıkla satış nakdi — önce kapanış */
+                <div style={{ fontSize: 12, color: R.amber, fontWeight: 600, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 3 }}>
+                  ⚠ {tKisa(x.tarih)} kapanışı yok — önce kapanışı gir
+                  {onKapanis && <Dugme kucuk onClick={() => onKapanis(x)}>Kapanışı gir</Dugme>}
+                </div>
+              )}
             </div>
             <Dugme ana kucuk onClick={() => onCoz(x.id)}>Farkı çöz</Dugme>
           </div>

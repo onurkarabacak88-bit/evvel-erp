@@ -387,6 +387,10 @@ def _etki(o: dict, C: dict) -> List[dict]:
     if t == "acilis":
         return [{"cep": o["cep"], "d": o["tutar"], "etiket": "Açılış bakiyesi (" + o["gun"] + ")", "kaynak": "Açılış"}]
     if t == "kapanis":
+        if v.get("sayimdan_sonra") and v.get("panel_sonradan"):   # F3.2 (sim 25 Eki): 0 tutarlı satır "kayboldu mu?" sorusu doğurmasın
+            bey = int((v["panel_sonradan"][-1] or {}).get("nakit") or 0)
+            return [{"cep": o["cep"], "d": o["tutar"], "etiket": f"Kapanış (sayımdan sonra) · beyan nakit {_tl(bey)} — para deftere sayımla girdi",
+                     "kaynak": "Satış"}]
         return [{"cep": o["cep"], "d": o["tutar"],
                  "etiket": "Kapanış nakdi" + ("" if o["durum"] == "onaylandi" else " (onay bekliyor)"), "kaynak": "Satış"}]
     if t == "pos_yatis":
@@ -475,8 +479,13 @@ def _farklar(ol: List[dict], C: dict) -> List[dict]:
                 out.append({"id": o["id"], "tarih": o["gun"], "tur": "sayim", "f": f, "cep": o["cep"], "sube_cep": None,
                             "ad": f"{C.get(o['cep'], {}).get('ad', '?')} sayımı"})
     sayimlar = {o["id"]: o for o in ol if o["olay"] == "sayim"}
+    kapanisli = {(o.get("cep"), o["gun"]) for o in ol if o["olay"] == "kapanis"}
     for x in out:
         s = sayimlar.get(x["id"])
+        # F3.2 Opus S3 (25 Eki): şube cebinde o günün kapanışı YOKSA fark büyük olasılıkla satış nakdi → "önce kapanışı gir"
+        if (s and C.get(x["cep"], {}).get("tur") == "sube" and (x["cep"], x["tarih"]) not in kapanisli
+                and not s["veri"].get("baslangic")):   # başlangıç sayımı veri.baslangic=True ile işaretlenir (Fable 5)
+            x["kapanis_yok"] = True
         if s:
             if s["veri"].get("kaynak") == "acilis_sayimi":   # Fable R: sabah sayımı bir önceki günün defterine yazılır
                 g1 = date.fromisoformat(x["tarih"]) + timedelta(days=1)
