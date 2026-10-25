@@ -276,8 +276,8 @@ export function DevirDefteri() {
               <thead><tr style={{ textAlign: 'left', fontSize: 12, color: R.metin2 }}>
                 <th style={hucre}>Gün</th><th style={hucre}>🌅 Sabah sayımı</th><th style={hucre}>🔁 Vardiya devri</th><th style={hucre}>🌙 Akşam kapanış</th><th style={hucre}>➡️ Ertesi sabah</th><th style={hucre}>Zincir</th>
               </tr></thead>
-              <tbody>{s.gunler.map((g) => (
-                <tr key={g.gun} style={{ background: g.zincir_durum === 'celiskili' ? 'rgba(201,138,30,.07)' : g.zincir_fark != null && !g.zincir_tutuyor ? 'rgba(192,58,43,.06)' : undefined }}>
+              <tbody>{s.gunler.slice(Math.max(0, s.gunler.findIndex((g) => g.sabah || g.aksam || g.vardiya || g.vardiyalar?.length))).map((g) => (   /* R6-1 (sim 25 Eki): şubenin ilk kaydından önceki boş günler gizli */
+                <tr key={g.gun} ref={g.gun === s.gunler[s.gunler.length - 1]?.gun ? (el) => el?.scrollIntoView({ block: 'nearest' }) : undefined} style={{ background: g.zincir_durum === 'celiskili' ? 'rgba(201,138,30,.07)' : g.zincir_fark != null && !g.zincir_tutuyor ? 'rgba(192,58,43,.06)' : undefined }}>
                   <td style={{ ...hucre, ...num, whiteSpace: 'nowrap' }}><b>{tKisa(g.gun)}</b></td>
                   <td style={hucre}>{g.sabah ? <><b>{g.sabah.kim || '?'}</b> · {g.sabah.saat}<br />sayılan <b style={num}>{tut(g.sabah.sayilan)}</b>
                     {g.sabah.dun_birakilan != null && <span style={{ color: R.not }}> · {dunAd(g.sabah.dun_gunu)} bırakılan {tut(g.sabah.dun_birakilan)}</span>}{fark(g.sabah.fark)}</> : <span style={{ color: R.not }}>açılış yok</span>}</td>
