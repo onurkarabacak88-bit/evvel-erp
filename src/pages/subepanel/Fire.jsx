@@ -69,10 +69,16 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
   // aynı kategori önerilende ve katalogda AYNI renk (D6-R)
   const ton = (k) => TONLAR[(k.id === BARDAK ? 0 : Math.max(0, katalog.findIndex((x) => x.id === k.id))) % 4];
 
+  // sunucuyla aynı kural (panel_api fire): 5 dk pay · gece 02:00'ye kadar dünkü saat geçerli — asıl güvence sunucuda
+  const saatIleri = (hm) => { const [h, m] = hm.split(':').map(Number); const [sh, sm] = new Intl.DateTimeFormat('tr-TR', { timeZone: 'Europe/Istanbul', hour: '2-digit', minute: '2-digit', hourCycle: 'h23' })
+      .format(new Date()).split(':').map(Number);   // Codex: cihaz saat dilimi değil, sunucu gibi Türkiye saati
+    const n = sh * 60 + sm, t = h * 60 + m;
+    return h > 23 || m > 59 || (!(n < 120 && t >= 120) && t > n + 5); };   // Fable nit: elle 24:30 / 12:75 da PIN'den önce
   const sebepTamam = sebep && (sebep !== 'hazirlik_deneme' || hazirlik) && (sebep !== 'iade' || iadeSebep);
   const onayEksik = sebep === 'diger' && aciklama.trim().length < 10 ? 'Ne olduğunu en az 10 harfle yaz'
     : sebep === 'iade' && !fis.trim() ? 'Fiş numarasını yaz'
-      : sebep === 'iade' && !/^\d{1,2}:\d{2}$/.test(iadeSaat) ? 'İade saatini gir' : '';
+      : sebep === 'iade' && !/^\d{1,2}:\d{2}$/.test(iadeSaat) ? 'İade saatini gir'
+        : sebep === 'iade' && saatIleri(iadeSaat) ? 'İade saati şu andan ileri olamaz' : '';   // F-1 (sim 25 Eki · Opus): PIN'den SONRA reddediliyordu
   const hazirlikAd = (d.hazirlik_turleri || []).find((x) => x.kod === hazirlik)?.ad;
   const iadeAd = (d.iade_sebepleri || []).find((x) => x.kod === iadeSebep)?.ad;
 

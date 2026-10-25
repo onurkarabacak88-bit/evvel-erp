@@ -490,6 +490,7 @@ def _fire_yeni(cur, gun: str) -> dict:
     bil = urun_bilgi(cur, sorted({str(k.get("urun_id")) for _, v in vs for k in v.get("kalemler") or [] if k.get("urun_id")}))
     out = {}
     for o, v in vs:
+        iv = v.get("iade") or {}
         for k in v.get("kalemler") or []:
             uid = str(k.get("urun_id") or "")
             adet = int(k.get("adet") or 0)
@@ -500,7 +501,9 @@ def _fire_yeni(cur, gun: str) -> dict:
             kod = "pasta" if __import__("evvel_yeni_urun_api").gununde_tuketilir(b) else (_anahtar_ad(ad) or uid)
             out.setdefault(str(o["sube_id"]), []).append({"kod": kod, "ad": ad, "adet": adet, "sebep": v.get("sebep_ad"),
                                                           "aciklama": v.get("aciklama"), "kim": o.get("personel_ad"),
-                                                          "saat": tr_saat(o.get("olay_zamani"), g)})
+                                                          "saat": tr_saat(o.get("olay_zamani"), g),
+                                                          # F-2 (sim 25 Eki): iade ayrıntısı yazılıyor ama hiçbir ekran okumuyordu — panel "yalnız merkezde görünür" diyor
+                                                          "iade": ({kk: iv.get(kk) for kk in ("sebep_ad", "fis_no", "iade_saat", "musteri_ad", "musteri_tel")} if iv else None)})
     return out
 
 
