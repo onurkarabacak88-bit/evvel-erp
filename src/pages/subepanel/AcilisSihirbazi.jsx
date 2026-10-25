@@ -199,6 +199,10 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
             {adim === 3 && <div className="aw-izgara">{digerleri.map(sayiKutu)}</div>}
             {adim === 4 && (
               <div style={{ maxWidth: 220, margin: '0 auto 8px' }}>
+                {/* R8-1 (sim 25 Eki · Opus a — geçici; kalıcı çözüm 5d): sabah gelen pasta sayılınca sahte devir farkı + çift giriş */}
+                <div className="aw-uyari" style={{ fontSize: 13, fontWeight: 700, color: C.sari, textAlign: 'center', marginBottom: 8, lineHeight: 1.35 }}>
+                  ⚠️ Bu sabah gelen pastayı SAYMA — açılıştan sonra "Tedarikçiden Gelen"den teslim al, sonra vitrine koy
+                </div>
                 <div className="aw-lbl" style={{ textAlign: 'center' }}>Pasta (toplam adet)</div>
                 <input className="aw-in" style={{ fontSize: 22, fontWeight: 800, height: 52, textAlign: 'center' }} inputMode="numeric" placeholder="0"
                   value={pasta} onChange={(e) => setPasta(sayi(e.target.value).slice(0, 5))} />
