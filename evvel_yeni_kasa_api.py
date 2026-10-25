@@ -690,6 +690,15 @@ def _cep_iz(cid: str, ol: List[dict], C: dict) -> dict:
     return {"bal": bal, "seg": seg, "tum": tum, "bosaldi": bosaldi}
 
 
+def _son_sayim_yazi(cid: str, ol: List[dict]) -> Optional[str]:
+    """R3 (sim 25 Eki): "bu cep en son ne zaman sayıldı, tuttu mu?" — tutan sayım tutar hareketi doğurmaz, hiçbir yerde görünmüyordu."""
+    s = next((o for o in reversed(ol) if o["olay"] == "sayim" and o.get("cep") == cid), None)
+    if not s:
+        return None
+    f = int(s["veri"].get("beklenen", 0)) - int(s["veri"].get("sayilan", 0))
+    return f"Son sayım {s['gun'][8:10]}.{s['gun'][5:7]} · " + ("tuttu" if f == 0 else f"{_tl(abs(f))} {'eksik' if f > 0 else 'fazla'}")
+
+
 def _cep_durum(c: dict, ol: List[dict], D: dict, ref: str, fl: List[dict], C: dict) -> dict:
     cid = c["id"]
     iz = _cep_iz(cid, ol, C)
@@ -760,7 +769,7 @@ def _cep_durum(c: dict, ol: List[dict], D: dict, ref: str, fl: List[dict], C: di
             "seviye": seviye, "kirmizi": kir, "sari": sar,
             "gelen": [{"kaynak": k, "tutar": _tl_sayi(v), "cep": kisa_cep.get(k)} for k, v in gelen.items()],
             "gelen_toplam": _tl_sayi(sum(gelen.values())), "cikan": _tl_sayi(cikan), "son_teslim": son_teslim,
-            "son_sayim": son_sayim,
+            "son_sayim": son_sayim, "son_sayim_yazi": _son_sayim_yazi(cid, ol),
             "bosaldi": None if not iz["bosaldi"] or not bos else {"tarih": iz["bosaldi"]["tarih"], "etiket": iz["bosaldi"]["etiket"]}}
 
 
@@ -1466,7 +1475,11 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
             evo_yerine = mevcut
             kayit = [h for h in kayit if h["id"] != mevcut["id"]]
         yeni = _sahte(t, gun, cep=body.cep, tutar=tut, durum="bekliyor", veri={"kart": kart + onl, "pos": kart, "online": onl})
-        if not kor and not mevcut and body.cep in kilit and gun <= kilit[body.cep]:
+        gun_ici_sayim = any(o["olay"] == "sayim" and o.get("cep") == body.cep and o["gun"] == gun
+                            and o["veri"].get("kaynak") != "acilis_sayimi" for o in ol)
+        # K10 (Fable #2) korunur: aynı GÜN İÇİNDE sayılmış çekmeceye kapanış 409 — geç kapanış yalnız günün TAMAMI sayımdan önce bittiyse
+        # (gün < son sayım günü, ya da o günün sayımı ertesi sabahın açılış sayımı)
+        if not kor and not mevcut and body.cep in kilit and gun <= kilit[body.cep] and not gun_ici_sayim:
             # F3.2 (sim 25 Eki · L4b Codex): kapanışı HİÇ girilmemiş gün sonradan sayıldıysa "Kapanışı gir" 409 veriyordu (iş bitmiyordu).
             # Panelin geç kapanış deseni (panel_kapanis_yaz) AYNEN: defter nakdi 0 (sayım bozulmaz, çift sayım yok) · ciro BEYANI saklı
             # (Gelir/Satış kapanis_kanallari'ndan okur) · POS korunur · fazla sayım farkı merkez kararına kalır (otomatik çözüm YOK).

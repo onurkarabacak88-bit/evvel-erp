@@ -167,6 +167,7 @@ function CepKart({ c, onAc, serit }) {
       {bos && !c.kirmizi.length && !c.sari.length && (
         <span style={{ fontSize: 11.5, color: R.not2 }}>{c.bosaldi ? `Boşaldı ${tKisa(c.bosaldi.tarih)}` : 'Hareket yok'}</span>
       )}
+      {c.son_sayim_yazi && <span style={{ fontSize: 11.5, color: R.not2 }}>🧮 {c.son_sayim_yazi}</span>}
     </button>
   );
 }
@@ -1141,7 +1142,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         g.ad = c.ad;
         onCekmece?.({
           ...temel, tip: { ev: 'PATRON EVİ', sube: 'ŞUBE KASASI', hesap: 'GEÇİŞ HESABI' }[c.tur], baslik: c.ad,
-          alt: hepsi ? 'Şu an' : `${tUzun(gun)} akşamı`,
+          alt: (hepsi ? 'Şu an' : `${tUzun(gun)} akşamı`) + (c.son_sayim_yazi ? ` · ${c.son_sayim_yazi}` : ''),
           kpi: [
             { etiket: 'Bakiye', deger: tl(c.bakiye), renk: R.krem },
             { etiket: 'Gelen', deger: tl(c.gelen_toplam), renk: R.yesil },
