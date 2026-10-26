@@ -312,6 +312,8 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
         _sinif_tablosu(cur)
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
         oranlar = _oranlar(cur)
+        from evvel_yeni_tanim_api import subeler as _sb_hepsi
+        pasif_sube = {str(x["id"]) for x in _sb_hepsi(cur, hepsi=True) if not x["aktif"]}   # F3.13: Kasam B13 kuralı
         from evvel_yeni_cekirdek import yeni_donem
         # A2/B4: kaynak BAKILAN ayın son (görülen) gününe göre — 1 Kasım'dan sonra Ekim gideri boş görünmesin
         yeni = (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur, min(ay_son, bugun))
@@ -469,6 +471,8 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
     out = []
     for sid, s in S.items():
         top = sum(s[k] for k in KALEMLER)
+        if str(sid) in pasif_sube and not top and not s["sevk"] and not s["satirlar"] and not s["sevk_satir"]:
+            continue   # F3.13 (sim 26 Eki): PASİF şube bu ay boşsa "0 ₺ gider yok" kartı çıkmaz (Kasam B13 ile aynı; harcaması varsa görünür)
         out.append({"sube_id": sid, "cep": sube_cep[sid], "ad": subeler[sid]["kisa"], "depo_mu": sid == depo,
                     "toplam": _tl_sayi(top), **{k: _tl_sayi(s[k]) for k in KALEMLER},
                     "fiyat_eksik": s["fiyat_eksik"], "katalog_fiyatli": s["katalog"], "kesin_olmayan_gun": sorted(s["kesin_degil"]),

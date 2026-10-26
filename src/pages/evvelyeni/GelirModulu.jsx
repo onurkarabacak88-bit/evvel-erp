@@ -8,8 +8,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useState } from 'react';
 import { api } from '../../utils/api';
-import { AySecici, Cekmece, Cip, Dugme, etiketStil, fmt, gunAdi, kart, num, PI_CSS, R, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
-import { ayTR } from '../../utils/trTarih';
+import { AySecici, Cekmece, Cip, Dugme, dugmeSade, etiketStil, fmt, gunAdi, kart, num, PI_CSS, R, sayfayaGit, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
+import { ayTR, gunKisa } from '../../utils/trTarih';
 
 export const GELIR_SAYFALAR = [
   { id: 'gelirler', ad: 'Gelirlerim', alt: 'Şube şube · gün gün satış' },
@@ -91,8 +91,9 @@ export default function GelirModulu() {
           ))}
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {v.eksik_gun_toplam > 0 ? <Cip tur="kirmizi">{v.eksik_gun_toplam} kapanış eksik</Cip> : <Cip tur="yesil">eksik gün yok</Cip>}
-          {v.onaysiz_toplam > 0 && <Cip tur="sari">{v.onaysiz_toplam} onaysız</Cip>}
+          {/* F3.13 (sim 26 Eki): üst rozetler tıklanmıyordu (ölü sayı) → işin yapıldığı yer: Bekleyen işler › Kasa & kapanış ("Kapanışı gir" / onay) */}
+          {v.eksik_gun_toplam > 0 ? <button type="button" onClick={() => sayfayaGit('isler_kasa')} title="Bekleyen işler › Kasa & kapanış" style={dugmeSade}><Cip tur="kirmizi">{v.eksik_gun_toplam} kapanış eksik ›</Cip></button> : <Cip tur="yesil">eksik gün yok</Cip>}
+          {v.onaysiz_toplam > 0 && <button type="button" onClick={() => sayfayaGit('isler_kasa')} title="Bekleyen işler › Kasa & kapanış" style={dugmeSade}><Cip tur="sari">{v.onaysiz_toplam} onaysız ›</Cip></button>}
         </div>
       </div>
 
@@ -135,7 +136,7 @@ export default function GelirModulu() {
             <tbody>
               {v.matris.slice().reverse().map((m) => (
                 <tr key={m.gun}>
-                  <td style={{ ...num, whiteSpace: 'nowrap' }}>{tKisa(m.gun)} <span style={{ color: R.not }}>{gunAdi(m.gun).slice(0, 3)}</span></td>
+                  <td style={{ ...num, whiteSpace: 'nowrap' }}>{tKisa(m.gun)} <span style={{ color: R.not }}>{gunKisa(m.gun)}</span></td>
                   {v.subeler.filter((s) => !s.gizle).map((s) => {
                     const t = m.subeler[s.cep];
                     return <td key={s.cep} style={{ ...num, background: t == null ? 'var(--pi-bad-soft)' : undefined, color: t == null ? R.kirmizi : undefined }}>{t == null ? 'yok' : fmt(t)}</td>;

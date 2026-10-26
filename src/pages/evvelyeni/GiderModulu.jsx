@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useState } from 'react';
 import { api } from '../../utils/api';
-import { AySecici, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, soruOnay, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
+import { AySecici, Cekmece, Cip, Dugme, dugmeSade, etiketStil, fmt, kart, num, PI_CSS, R, soruOnay, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';
 
 export const GIDER_SAYFALAR = [
@@ -58,6 +58,32 @@ export default function GiderModulu({ onToast }) {
     },
   });
 
+  // F3.13 (sim 26 Eki): üstteki kalem rakamları tıklanmıyordu (ölü sayı) → o kalemin BÜTÜN şubelerdeki satırları tek çekmecede
+  // (veri yeni değil: aynı v.subeler[].satirlar / sevk_satirlar; düzeltme / sınıflandırma şube kartında). k = 'fiyatsiz' → fiyatı eksik satırlar.
+  const kalemAc = (k, ad) => {
+    const satirlariOf = (s) => (k === 'sevk' ? (s.sevk_satirlar || []) : k === 'fiyatsiz'
+      ? s.satirlar.filter((x) => x.not === 'FİYATI EKSİK')   // rozetteki sayıyla aynı satırlar (fiyat_eksik)
+      : s.satirlar.filter((x) => x.tur === k));
+    const satir = v.subeler.flatMap((s) => satirlariOf(s).map((x) => ({ ...x, sube: s.ad })))
+      .concat(k === 'sevk' || k === 'fiyatsiz' ? [] : (v.ortak?.satirlar || []).filter((x) => x.tur === k).map((x) => ({ ...x, sube: 'Ortak' })))
+      .sort((a, c) => (a.gun < c.gun ? -1 : a.gun > c.gun ? 1 : 0));
+    setCk({
+      tip: 'GİDER KALEMİ', baslik: `${ad} · ${tUzun(v.ay_basi).split(' ')[1]}`, varsayilan: 'iz',
+      alt: k === 'sevk' ? 'Depodan sevk bedeli — stok, gider DEĞİL (şubenin rafına girer).' : 'Şube şube satırlar · düzeltme ve patron harcaması ayırma şube kartında.',
+      kpi: k === 'fiyatsiz' ? [{ etiket: 'Fiyatı eksik satır', deger: String(satir.length), renk: R.kirmizi }]
+        : v.subeler.map((s) => [s.ad, satirlariOf(s).reduce((t, x) => t + (Number(x.tutar) || 0), 0)]).filter(([, t]) => t)
+          .map(([a, t]) => ({ etiket: a, deger: tl(t) }))
+          // Fable: Ortak satırlar tabloda var, başlıktaki kalem rakamı yalnız ŞUBE toplamı → Ortak ayrı ve açıkça
+          .concat(satir.some((x) => x.sube === 'Ortak') ? [{ etiket: 'Ortak (başlık rakamına dahil değil)', deger: tl(satir.filter((x) => x.sube === 'Ortak').reduce((t, x) => t + (Number(x.tutar) || 0), 0)) }] : []),
+      tablo: {
+        ad: `${satir.length} satır`,
+        kolonlar: [{ ad: 'Gün' }, { ad: 'Şube' }, { ad: 'Açıklama', sar: true }, { ad: 'Adet', sag: true }, { ad: 'Tutar', sag: true }, { ad: 'Not', sar: true }],
+        satirlar: satir.map((x) => [tKisa(x.gun), x.sube, x.aciklama, x.adet == null ? '' : fmt(x.adet),
+          x.not === 'FİYATI EKSİK' || (x.birim === null && x.adet != null) ? { t: 'fiyat yok', renk: R.kirmizi } : { t: fmt(x.tutar), kalin: true }, x.not || '']),
+      },
+    });
+  };
+
   if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>Giderler okunamadı: {hata} <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme></div></div>;
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Giderler okunuyor…</div></div>;
 
@@ -78,12 +104,16 @@ export default function GiderModulu({ onToast }) {
           <div style={{ ...num, fontSize: 40, fontWeight: 700, color: R.kirmizi, lineHeight: 1.05 }}>{tl(v.toplam)}</div>
         </div>
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-          {KALEM.filter((k) => v[k]).map((k) => [TUR_AD[k], v[k]]).concat([['Depodan gelen mal (ayrı)', v.sevk_bedeli]]).map(([a, t]) => (
-            <div key={a}><div style={etiketStil}>{a}</div><div style={{ ...num, fontSize: 17 }}>{fmt(t)}</div></div>
+          {KALEM.filter((k) => v[k]).map((k) => [k, TUR_AD[k], v[k]]).concat([['sevk', 'Depodan gelen mal (ayrı)', v.sevk_bedeli]]).map(([k, a, t]) => (
+            <button key={a} type="button" onClick={() => kalemAc(k, a)} title="Şube şube satırlar" style={dugmeSade}>
+              <div style={etiketStil}>{a} ›</div><div style={{ ...num, fontSize: 17 }}>{fmt(t)}</div>
+            </button>
           ))}
         </div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-          {v.fiyat_eksik_toplam > 0 ? <Cip tur="kirmizi">{v.fiyat_eksik_toplam} satır fiyatsız</Cip> : <Cip tur="yesil">her satır fiyatlı</Cip>}
+          {v.fiyat_eksik_toplam > 0
+            ? <button type="button" onClick={() => kalemAc('fiyatsiz', 'Fiyatı eksik satırlar')} style={dugmeSade}><Cip tur="kirmizi">{v.fiyat_eksik_toplam} satır fiyatsız ›</Cip></button>
+            : <Cip tur="yesil">her satır fiyatlı</Cip>}
         </div>
       </div>
       <div style={{ fontSize: 12.5, color: R.not }}>{v.kapsam_notu}</div>

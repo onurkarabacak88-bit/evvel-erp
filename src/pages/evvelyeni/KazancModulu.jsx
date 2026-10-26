@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useState } from 'react';
 import { api } from '../../utils/api';
-import { AySecici, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tl, tUzun, useSonIstek } from './KasaModulu';
+import { AySecici, Cekmece, Cip, Dugme, dugmeSade, etiketStil, fmt, kart, num, PI_CSS, R, sayfayaGit, tl, tUzun, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';
 
 export const KAZANC_SAYFALAR = [
@@ -59,8 +59,11 @@ export default function KazancModulu() {
           <div style={{ ...num, fontSize: 40, fontWeight: 700, color: renk(v.isletme_kazanci), lineHeight: 1.05 }}>{tl(v.isletme_kazanci)}</div>
         </div>
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
-          {[['Gelir', v.gelir], ['Şube giderleri', -v.sube_gideri], ['Ortak giderler', -v.ortak_gider]].map(([a, t]) => (
-            <div key={a}><div style={etiketStil}>{a}</div><div style={{ ...num, fontSize: 17 }}>{fmt(t)}</div></div>
+          {/* F3.13 (sim 26 Eki): rakamlar tıklanmıyordu (ölü sayı) → kaynağı olan ekran (o ekran kendi ay seçicisiyle açılır) */}
+          {[['Gelir', v.gelir, 'gelirler'], ['Şube giderleri', -v.sube_gideri, 'giderler'], ['Ortak giderler', -v.ortak_gider, 'giderler']].map(([a, t, s]) => (
+            <button key={a} type="button" onClick={() => sayfayaGit(s)} title={s === 'gelirler' ? 'Gelirlerim' : 'Giderlerim'} style={dugmeSade}>
+              <div style={etiketStil}>{a} ›</div><div style={{ ...num, fontSize: 17 }}>{fmt(t)}</div>
+            </button>
           ))}
         </div>
         {v.cekis_toplam > 0 && <div style={{ marginLeft: 'auto', fontSize: 12.5, color: R.not }}>Patron çekişi {fmt(v.cekis_toplam)} ₺ (kazançtan ayrı)</div>}
