@@ -211,8 +211,14 @@ def _odemeler(cur) -> dict:
     return out
 
 
-def _eski_ekim(cur, ay: str) -> dict:
-    """Eski sistemin ay kaydı: hesaplanan_net (avans DÜŞÜLMÜŞ) + avans_mahsup → hak ediş."""
+def _eski_ekim(cur, ay: str, arsivden: bool = True) -> dict:
+    """Eski sistemin ay kaydı: hesaplanan_net (avans DÜŞÜLMÜŞ) + avans_mahsup → hak ediş.
+    1 Kasım kesimi (Opus karar 1): son aktarım 1 Kas 02:00 SONRASI eski bordroyu son kez hesaplayıp buraya DONDURUR; sonra arşivden."""
+    if arsivden:
+        from evvel_yeni_cekirdek import arsiv_oku
+        ar = arsiv_oku(cur, "maas", f"eski_ay:{ay}")
+        if ar is not None:
+            return ar
     out = {}
     try:
         with savepoint(cur, "sp_ey_maas_eski"):
@@ -228,8 +234,14 @@ def _eski_ekim(cur, ay: str) -> dict:
     return out
 
 
-def _eski_odenen(cur, ay: str) -> dict:
-    """Eski sistemden ÖDENMİŞ maaş: odeme_plani kaynak_tablo='personel', referans_ay = ÖDEME ayı (çalışma ayı + 1)."""
+def _eski_odenen(cur, ay: str, arsivden: bool = True) -> dict:
+    """Eski sistemden ÖDENMİŞ maaş: odeme_plani kaynak_tablo='personel', referans_ay = ÖDEME ayı (çalışma ayı + 1).
+    1 Kasım kesimi: son aktarımda dondurulur (M3); sonra arşivden."""
+    if arsivden:
+        from evvel_yeni_cekirdek import arsiv_oku
+        ar = arsiv_oku(cur, "maas", f"eski_odenen:{ay}")
+        if ar is not None:
+            return ar
     out = {}
     try:
         with savepoint(cur, "sp_ey_maas_eski_od"):
@@ -1050,3 +1062,37 @@ def _ey_subeler_aktif():
     from evvel_yeni_tanim_api import subeler as _s
     with db() as (conn, cur):
         return _s(cur)
+
+
+# ✂️ 1 KASIM SON AKTARIM (KESIM_1KASIM_ENVANTERI ⚖️ · manifest 'kesim') — çekirdek (evvel_yeni_moduller /kesim) çağırır, kendi
+# savepoint'inde; kuru denemede sonra geri alınır. Modül YALNIZ kendi arşiv anahtarını yazar. Kesim yayınında eski okuyucularla birlikte silinir.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    """Maaş (Opus karar 1 + M3): Ekim bordrosu eski gece işiyle SON KEZ hesaplanır (31 Eki vardiyası 02:00'de kapandı), sonra eski
+    sistemin bütün ay kayıtları (personel_aylik) ve ödenmiş maaşları (odeme_plani) dondurulur — EY Maaş eski ayları buradan okur."""
+    from evvel_yeni_cekirdek import arsiv_yaz, ay_kaydir
+    from maas_service import aylik_vardiya_senkronize   # eski bordro servisi — yalnız bu son çalıştırma (kesim yayınında silinir)
+    y, a = int(ay[:4]), int(ay[5:7])
+    cur.execute("""SELECT * FROM personel WHERE aktif=TRUE OR (cikis_tarihi IS NOT NULL AND cikis_tarihi >= MAKE_DATE(%s,%s,1))
+                    ORDER BY ad_soyad""", (y, a))
+    senkron = 0
+    for p in cur.fetchall() or []:
+        r = aylik_vardiya_senkronize(cur, dict(p), y, a)
+        senkron += 0 if (r or {}).get("atlandi") else 1
+    cur.execute("SELECT DISTINCT yil, ay FROM personel_aylik ORDER BY 1, 2")
+    aylar = [f"{dict(r)['yil']:04d}-{dict(r)['ay']:02d}" for r in cur.fetchall() or []]
+    kisi_ay, net_top = 0, 0
+    for x in aylar:
+        v = _eski_ekim(cur, x, arsivden=False)
+        arsiv_yaz(cur, "maas", f"eski_ay:{x}", v, yazan)
+        kisi_ay += len(v)
+        net_top += sum(k["net"] for k in v.values())
+    cur.execute("""SELECT DISTINCT to_char(referans_ay, 'YYYY-MM') AS r FROM odeme_plani
+                    WHERE kaynak_tablo='personel' AND durum='odendi' AND referans_ay IS NOT NULL""")
+    od_aylar = sorted(ay_kaydir(dict(r)["r"], -1) for r in cur.fetchall() or [])
+    od_top = 0
+    for x in od_aylar:
+        v = _eski_odenen(cur, x, arsivden=False)
+        arsiv_yaz(cur, "maas", f"eski_odenen:{x}", v, yazan)
+        od_top += sum(v.values())
+    return {"ekim_senkron_kisi": senkron, "ay": len(aylar), "kisi_ay": kisi_ay, "net_toplam_tl": net_top / 100,
+            "odenen_ay": len(od_aylar), "odenen_toplam_tl": od_top / 100}

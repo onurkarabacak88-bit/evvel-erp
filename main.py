@@ -856,6 +856,13 @@ def _gece_yarisi_scheduler():
                     _donemler.append((_onc.year, _onc.month))
                 _bordro_log = []
                 _donemler = [d for d in _donemler if _eski_ay_mi(*d)]   # A5: yeni dönem ayı eski bordroya yazılmaz (Ekim sürer)
+                try:   # F6.3 (Fable): 1 Kasım son aktarımı Ekim bordrosunu dondurduysa eski gece işi Ekim'e bir daha YAZMAZ (arşiv eskimesin)
+                    from evvel_yeni_cekirdek import ayar_oku as _ey_ayar_oku
+                    with db() as (_c, _cur):
+                        if _ey_ayar_oku(_cur, "kesim_son:maas"):
+                            _donemler = []
+                except Exception as _e_k:  # noqa: BLE001
+                    logger.warning(f"⏰ Bordro: kesim işareti okunamadı: {_e_k}")
                 for _yb, _ab in _donemler:
                     with db() as (conn, cur):
                         cur.execute(

@@ -308,6 +308,11 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
     _hazirla()
     a_, ay_bas, ay_son, bugun = _ay_sinirlari(ay)
     bas_i, son_i = ay_bas.isoformat(), ay_son.isoformat()
+    with db() as (conn, cur):   # 1 Kasım kesimi: eski ay dondurulmuş çıktıdan (eski tablo okunmaz); evren='eski' = son aktarımın kendisi
+        from evvel_yeni_cekirdek import arsiv_oku, yeni_donem as _yd
+        ar = None if evren is not None or _yd(cur, min(ay_son, bugun)) else arsiv_oku(cur, "gider", f"ozet:{a_}")
+    if ar is not None:
+        return {**ar, "dondu": True}
     with db() as (conn, cur):
         _sinif_tablosu(cur)
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
@@ -526,3 +531,13 @@ def sinif_yaz(cur, kaynak_ref: str, tur: str, kimin: Optional[str], kim: Optiona
 
 # ── AÇIK KAPILAR (sök-tak): başka modüller iç '_' fonksiyonu değil BU adları kullanır — içerik aynı, kapı tek ──
 sinif_tablosu = _sinif_tablosu
+
+
+# ✂️ 1 KASIM SON AKTARIM (KESIM_1KASIM_ENVANTERI ⚖️ · manifest 'kesim') — çekirdek (evvel_yeni_moduller /kesim) çağırır, kendi
+# savepoint'inde; kuru denemede sonra geri alınır. Modül YALNIZ kendi arşiv anahtarını yazar. Kesim yayınında eski okuyucularla birlikte silinir.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    """Gider: Ekim'in şube gideri (mal sevk × fiyat eski köprüden)."""
+    from evvel_yeni_cekirdek import arsiv_yaz
+    v = gider_ozet(ay, evren="eski")
+    arsiv_yaz(cur, "gider", f"ozet:{ay}", v, yazan)
+    return {"sube": len(v.get("subeler") or [])}

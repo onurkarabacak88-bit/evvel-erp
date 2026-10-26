@@ -72,8 +72,9 @@ def _teslim_pid_kolonu(cur) -> None:
                 __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, _lt)
         except Exception:  # noqa: BLE001
             log.warning("avans teslim_pid kolonu eklenemedi — sonraki istekte yeniden", exc_info=True)
-            return
-    _TESLIM_PID = True
+        return   # Codex P1 (adım 62): kuran işlem sonradan geri alınabilir → bayrak ancak SONRAKİ istekte kolon görülünce açılır
+    if not __import__("evvel_yeni_cekirdek").ddl_bu_islemde(cur):
+        _TESLIM_PID = True
 
 
 def _veren(r: dict, pad: dict) -> tuple:
@@ -189,6 +190,8 @@ def _yeni_talepler(cur, acik: bool = True, ayrinti: bool = False) -> list:
                                                                                        idler={str(r["personel_id"]) for r in rows}) if p.get("cikis")}
     return [{"id": r["id"], "personel_id": r["personel_id"], "ad": pad.get(str(r["personel_id"])) or "—", "tutar": int(r["tutar"]) / 100, "durum": r["durum"],
              "ayrilis": cik[str(r["personel_id"])].strftime("%d.%m") if str(r["personel_id"]) in cik else None,   # S-B8: ekranda 'ayrıldı' işareti
+             # Codex P2 (adım 62): ödeme düğmeleri yalnız GERÇEKTEN ayrılmışta gizlenir (ileri tarihli ayrılış = hâlâ çalışıyor; sunucu kuralı tek)
+             "ayrildi": __import__("evvel_yeni_tanim_api").ayrildi_mi(cik.get(str(r["personel_id"])), __import__("evvel_yeni_cekirdek").is_gunu()),
              "yontem": r.get("yontem"), "sube": sad.get(r.get("sube_id")), "sube_id": r.get("sube_id"), "donem": r["donem"],
              "talep": str(r["talep_ts"])[:16], "onay": str(r.get("karar_ts") or "")[:16],
              "not": " · ".join(x for x in (r.get("not_"), r.get("karar_not")) if x) or None,   # Fable: talep notu varken şube izi de görünsün
@@ -245,7 +248,10 @@ def elden_teslim_yaz(cur, *, talep_id: str, sube_id: str, kim: str, gun: date, v
         return {"tekrar": True}
     if t["durum"] != "onaylandi" or t.get("yontem") != "elden" or t.get("sube_id") != str(sube_id):
         raise HTTPException(409, "Bu avans bu şubeden elden verilecek değil — sayfayı yenile")
-    from evvel_yeni_tanim_api import adlar
+    from evvel_yeni_tanim_api import adlar, ayrildi_mi, tanim_oku
+    p = tanim_oku(cur, "ey_personel", t["personel_id"], ("aktif", "cikis"))   # Codex P2 (adım 62): onaydan sonra ayrılan kişiye çekmeceden para verilmesin
+    if not p or not p["aktif"] or ayrildi_mi(p.get("cikis"), gun):
+        raise HTTPException(409, "Bu personel ayrıldı — avans verilemez; merkez talebi kapatsın")
     pad = adlar(cur, "ey_personel", [t["personel_id"]]).get(str(t["personel_id"]))
     ref = f"avans:{talep_id}"
     sube_avansi_yaz(cur, sube_id=str(sube_id), gun=gun.isoformat(), tutar=int(t["tutar"]), personel_id=t["personel_id"], personel_ad=pad,

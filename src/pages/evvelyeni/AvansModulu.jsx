@@ -47,15 +47,15 @@ export default function AvansModulu({ onToast }) {
                   {t.tavan != null && <div style={{ fontSize: 12, color: t.kullanilan > t.tavan ? R.kirmizi : R.metin2 }}>bu ay tavan {fmt(t.tavan)} ₺ · bu talep dahil {fmt(t.kullanilan)} ₺</div>}{t.not && <div style={{ fontSize: 12.5 }}>📝 {t.not}</div>}</span>
                 <b style={{ ...num, width: 90, textAlign: 'right' }}>{fmt(t.tutar)} ₺</b>
                 <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                  {!t.ayrilis && t.yeni && <select value={s.cep || ''} onChange={(e) => set('cep', e.target.value)} style={alan}>
+                  {!t.ayrildi && t.yeni && <select value={s.cep || ''} onChange={(e) => set('cep', e.target.value)} style={alan}>
                     <option value="">Banka…</option>{(L?.banka_cepler || []).filter((b) => Number(b.bakiye) > 0).map((b) => <option key={b.id} value={b.id}>{b.ad} · şu an {fmt(b.bakiye)} ₺</option>)}
                   </select>}
-                  {!t.ayrilis && <Dugme kucuk ana disabled={mesgul[t.id] || (t.yeni && !(L?.banka_cepler || []).some((x) => x.id === s.cep && Number(x.bakiye) > 0))} onClick={async () => { const b = (L?.banka_cepler || []).find((x) => x.id === s.cep); if (await soruOnay(`${t.ad} · ${fmt(t.tutar)} ₺ ${b ? b.ad + "'ndan " : ''}havale ettin mi?
+                  {!t.ayrildi && <Dugme kucuk ana disabled={mesgul[t.id] || (t.yeni && !(L?.banka_cepler || []).some((x) => x.id === s.cep && Number(x.bakiye) > 0))} onClick={async () => { const b = (L?.banka_cepler || []).find((x) => x.id === s.cep); if (await soruOnay(`${t.ad} · ${fmt(t.tutar)} ₺ ${b ? b.ad + "'ndan " : ''}havale ettin mi?
 Önce bankadan gönder, sonra onayla — bankadan düşer, maaştan mahsup edilir, personel "hesabına havale edildi" görür.`)) yap(t, 'onayla', { yontem: 'havale', cep: s.cep }); }}>Havaleyi gönderdim</Dugme>}
-                  {!t.ayrilis && <select value={s.sube_id ?? t.kisi_sube_id ?? ''} onChange={(e) => set('sube_id', e.target.value)} style={alan}>
+                  {!t.ayrildi && <select value={s.sube_id ?? t.kisi_sube_id ?? ''} onChange={(e) => set('sube_id', e.target.value)} style={alan}>
                     <option value="">Şube…</option>{(L?.subeler || []).map((b) => <option key={b.id} value={b.id}>{b.ad}</option>)}
                   </select>}
-                  {!t.ayrilis && <Dugme kucuk disabled={!(s.sube_id ?? t.kisi_sube_id) || mesgul[t.id]} onClick={() => yap(t, 'onayla', { yontem: 'elden', sube_id: s.sube_id ?? t.kisi_sube_id })}>Elden ver</Dugme>}
+                  {!t.ayrildi && <Dugme kucuk disabled={!(s.sube_id ?? t.kisi_sube_id) || mesgul[t.id]} onClick={() => yap(t, 'onayla', { yontem: 'elden', sube_id: s.sube_id ?? t.kisi_sube_id })}>Elden ver</Dugme>}
                   <Dugme kucuk disabled={mesgul[t.id]} onClick={() => yap(t, 'kapat', { not_: 'daha önce verildi' })}>Kapat (verildi)</Dugme>
                   <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { const n = await soruYaz(`${t.ad} · ${fmt(t.tutar)} ₺ avans talebi neden reddediliyor? (personel görür)`, false, 2); if (n && n.trim().length >= 2) yap(t, 'reddet', { neden: n.trim() }); }}>Reddet</Dugme>
                 </span>
