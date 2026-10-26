@@ -827,13 +827,14 @@ function TeslimSekmesi({ onToast, onDegisti }) {
       // T-3 (sim 25 Eki): ekran açıkken otomatik iş teslimi kabul ettiyse "Zaten onaylanmış" deyip sayılan tutarı kaybediyordu →
       // farklı sayıldıysa aynı tutar 7 günlük Düzelt yoluna yazılır (anlamı aynı: kabul edilmiş teslimde "aslında farklıydı")
       if (e?.status === 409 && /onaylanm/i.test(e?.message || '')) {
+        // T-3 geriye dönük L4b (Opus + Codex değiştir · Fable ifade): karar SUNUCUDA — yalnız kendiliğinden kabul edilmiş, elle
+        // dokunulmamış teslime yazar ve şimdiki 'alınan'la karşılaştırır; başkası onayladıysa onun saydığı ezilmez (409 + kim/ne kadar)
         try {
-          if (Number(t) !== x.tutar) {
-            await api(`/evvel-yeni/kasa/hareket/${x.id}/teslim-duzelt`, { method: 'POST', body: { alinan: Number(t) } });
-            const f = x.tutar - Number(t);
-            onToast?.(`Teslim kendiliğinden kabul edilmişti — saydığın tutar düzeltme olarak yazıldı (${fmt(Math.abs(f))} ₺ ${f > 0 ? 'eksik' : 'fazla'})`);
-          } else onToast?.('Teslim kendiliğinden kabul edilmişti ✓');
-        } catch (e2) { onToast?.(e2.message); return; }   // Codex: düzeltme yazılamadıysa sayılan tutar ve giriş kalsın (yeniden dene)
+          const r = await api(`/evvel-yeni/kasa/hareket/${x.id}/teslim-duzelt`, { method: 'POST', body: { alinan: Number(t), yaris: true } });
+          const f = x.tutar - Number(t);
+          onToast?.(r?.degismedi || !f ? 'Teslim kendiliğinden kabul edilmişti — saydığın tutar tuttu ✓'
+            : `Teslim kendiliğinden kabul edilmişti — saydığın tutar düzeltme olarak yazıldı (${fmt(Math.abs(f))} ₺ ${f > 0 ? 'eksik' : 'fazla'})`);
+        } catch (e2) { onToast?.(e2.message); return; }   // başkası onayladı / yazılamadı: sayılan tutar ve giriş kalsın
         setSay((s0) => { const k = { ...s0 }; delete k[x.id]; return k; });
         setAcikGiris((s0) => ({ ...s0, [x.id]: false }));
         yukle(); onDegisti?.();

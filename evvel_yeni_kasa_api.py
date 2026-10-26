@@ -2012,6 +2012,7 @@ def _pos_otomatik(cur) -> int:
 
 class DuzeltBody(BaseModel):
     alinan: TrTutar
+    yaris: bool = False   # T-3: "Aldım / Farklı saydım" basılırken teslim arada kabul edildiyse (409 sonrası) — yalnız OTOMATİK kabule yazılır
 
 
 @router.post("/hareket/{hid}/teslim-duzelt")
@@ -2034,12 +2035,21 @@ def teslim_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = He
         al = _kurus(body.alinan)
         if al < 0:
             raise HTTPException(400, "Sayılan tutar eksi olamaz")
+        if body.yaris:   # T-3 geriye dönük L4b (Opus + Codex değiştir · Fable ifade): yarış düzeltmesi YALNIZ kendiliğinden kabul edilmiş ve
+            # kimsenin elle dokunmadığı teslime — başkası elle onayladıysa onun saydığı ezilmez; karşılaştırma şimdiki ALINAN'la
+            simdiki = int(h["veri"].get("alinan", h["tutar"]))
+            if not h["veri"].get("otomatik") or h["veri"].get("duzeltmeler"):
+                _son = (h["veri"].get("duzeltmeler") or [{}])[-1].get("kim")   # Fable: elle düzeltilmişse son düzelteni söyle
+                raise HTTPException(409, f"Bu teslimi {_son or h.get('onaylayan') or 'başkası'} {'düzeltti' if _son else 'onayladı'} ({_tl(simdiki)}) — sen farklı saydıysan alınanlardan Düzelt'e bas")
+            if al == simdiki:
+                return {"ok": True, "degismedi": True}
         _ol = _olaylar(kayit)   # Codex: hedefte ÖZGÜN alım olayının anı (onay) sayımdan sonraysa düzeltme sayımı bozmaz
         _an = h["onay_zamani"].isoformat() if hasattr(h.get("onay_zamani"), "isoformat") else None
         if not _sayimdan_sonra(h["hedef"], og, _an, _sayim_anlari(_ol)):
             _kilit_denetle([(h["hedef"], og)], _sayim_kilidi(_ol), C)
         veri = dict(h["veri"])
-        veri.setdefault("duzeltmeler", []).append({"eski": int(veri.get("alinan", h["tutar"])), "yeni": al, "kim": kim})
+        veri.setdefault("duzeltmeler", []).append({"eski": int(veri.get("alinan", h["tutar"])), "yeni": al, "kim": kim, "zaman": _simdi_iso(),
+                                                  **({"yaris": True} if body.yaris else {})})   # Codex: izde işlem zamanı
         veri["alinan"] = al
         # E2E #1: alınan AZALINCA hedef cep (patron evi) o günden sonra eksiye düşmesin (para zaten harcanmış olabilir).
         # Fable: yönlü — artış (1.000 değil 1.200 saydım) bakiyeyi iyileştirir, eski bir eksik yüzünden reddedilmez.
