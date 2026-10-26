@@ -2116,12 +2116,34 @@ def toplu_onay(body: TopluOnayBody, x_evvel_oturum: Optional[str] = Header(defau
     with db() as (conn, cur):
         _kilit(cur)
         kim = _aktor(cur, x_evvel_oturum)
-        cur.execute("""UPDATE para_izi_hareket h SET durum='onaylandi', onay_zamani=NOW(), onaylayan=%s
-                        WHERE h.id = ANY(%s) AND h.tur='kapanis' AND COALESCE(h.durum,'') <> 'onaylandi'
-                          AND NOT EXISTS (SELECT 1 FROM para_izi_hareket i WHERE i.tur='iptal' AND i.veri->>'hedef_id' = h.id)""",
-                    (kim, idler))   # E2E #14: iptal edilmiş kapanış onaylanmaz
-        n = cur.rowcount
-    return {"ok": True, "onaylanan": n}
+        # K-3 sunucu kapısı (F1.11 · geriye dönük L4b Opus + Fable + Codex: toplu onay YALNIZ temiz kapanış; Fable: süzgeç yalnız
+        # ekrandaydı — son söz sunucuda). Temiz = kasa farkı hesaplanmış VE tam 0 VE uyarısız; fark ve uyarı ekranla AYNI kaynaktan
+        # (Satış PUBLIC kasa_mutabakat · çekirdek bekleyen_isler 'kapanis_uyarili'). Temiz olmayan atlanır, tek tek onaylanır.
+        _, C, kayit, _ = _yukle(cur)
+        istenen = set(idler)
+        hedef = [h for h in kayit if h["id"] in istenen and h["tur"] == "kapanis" and h["durum"] != "onaylandi"]
+        fark = _kapanis_fark_oku(cur, [h["is_gunu"] for h in hedef])
+        okunamayan: List[str] = []
+        _bg = {"kayit": kayit, "C": C}
+        uyarili = {(str(x.get("tarih")), str(x.get("sube_id") or "")) for x in bekleyen_isler(cur, _bg, hatalar=okunamayan)
+                   if x.get("tur") == "kapanis_uyarili"}
+        okunamayan += _bg.get("_okunamayan", [])   # sağlayıcının KENDİ içinde yuttuğu okuma hatası (panel kapanış denemeleri)
+        if okunamayan:   # Codex: uyarılar okunamadıysa "uyarısız" sayılıp onaylanmasın — kapalı kal
+            raise HTTPException(409, "Kapanış uyarıları şu an okunamadı — toplu onay yapılmadı, kapanışları tek tek onayla")
+        temiz = []
+        for h in hedef:
+            sid = str((C.get(h.get("cep")) or {}).get("sube_id") or "")
+            f = fark.get((h["is_gunu"], sid))
+            if isinstance(f, (int, float)) and abs(f) < 0.005 and (str(h["is_gunu"]), sid) not in uyarili:
+                temiz.append(h["id"])
+        n = 0
+        if temiz:
+            cur.execute("""UPDATE para_izi_hareket h SET durum='onaylandi', onay_zamani=NOW(), onaylayan=%s
+                            WHERE h.id = ANY(%s) AND h.tur='kapanis' AND COALESCE(h.durum,'') <> 'onaylandi'
+                              AND NOT EXISTS (SELECT 1 FROM para_izi_hareket i WHERE i.tur='iptal' AND i.veri->>'hedef_id' = h.id)""",
+                        (kim, temiz))   # E2E #14: iptal edilmiş kapanış onaylanmaz
+            n = cur.rowcount
+    return {"ok": True, "onaylanan": n, "atlanan": len(hedef) - n}
 
 
 class DonemBody(BaseModel):
@@ -2887,7 +2909,7 @@ def _kapanis_deneme_isleri(cur, C: dict) -> List[dict]:
             out.append({"tur": "kapanis_red", "id": r["id"], "tarih": gun, "ad": ad, "sebep": r.get("sebep") or "sonuç alınamadı",
                         "saat": _tr_zaman(r["zaman"])})
         elif r["sonuc"] == "ok_uyarili" and not r.get("goruldu"):
-            out.append({"tur": "kapanis_uyarili", "id": r["id"], "tarih": gun, "ad": ad, "uyarilar": r.get("uyarilar") or [],
+            out.append({"tur": "kapanis_uyarili", "id": r["id"], "tarih": gun, "ad": ad, "sube_id": str(r["sube_id"]), "uyarilar": r.get("uyarilar") or [],   # Fable: toplu onay sunucu kapısı şubeyle eşler
                         "saat": _tr_zaman(r["zaman"])})
     return out
 

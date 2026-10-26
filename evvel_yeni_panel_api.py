@@ -2179,6 +2179,7 @@ def _bekleyen(cur, baglam: dict) -> list:
         out.extend(_kapanis_isleri(cur))   # 🛟 reddedilen kapanış — panel açılmadan da (deneme dışı) görünür
     except Exception as e:  # noqa: BLE001
         log.warning("panel kapanış denemeleri okunamadı: %s", str(e)[:150])
+        baglam.setdefault("_okunamayan", []).append("panel:kapanis")   # Codex: karar veren çağıran (toplu onay) eksik uyarıyla onaylamasın
     try:
         with savepoint(cur, "sp_panel_ara_isleri"):
             out.extend(_ara_sayim_isleri(cur))   # ⏱ yalnız 'yapılmadı'

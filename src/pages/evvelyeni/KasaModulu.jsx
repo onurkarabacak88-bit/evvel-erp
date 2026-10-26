@@ -1179,7 +1179,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
   const topluOnay = async (idler) => {
     try {
       const r = await api('/evvel-yeni/kasa/onay-toplu', { method: 'POST', body: { idler } });
-      onToast?.(`${r.onaylanan} kapanış onaylandı`); setTopluSor(false); yukle();
+      onToast?.(`${r.onaylanan} kapanış onaylandı${r.atlanan ? ` · ${r.atlanan} tanesi temiz değil (kasa farkı / uyarı) — tek tek bakılacak` : ''}`); setTopluSor(false); yukle();   // K-3: sunucu da süzer
     } catch (e) { onToast?.(e.message); }
   };
   const teslimAl = async (id, sayilan) => {

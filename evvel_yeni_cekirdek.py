@@ -533,8 +533,9 @@ def bekleyen_is_kaydet(ad: str, saglayici: Callable) -> None:
     _BEKLEYEN_IS[ad] = saglayici
 
 
-def bekleyen_isler(cur, baglam: dict) -> List[dict]:
-    """Kayıtlı bütün sağlayıcıları — her biri kendi savepoint'inde; biri hata verirse diğerleri yine gelir."""
+def bekleyen_isler(cur, baglam: dict, hatalar: Optional[List[str]] = None) -> List[dict]:
+    """Kayıtlı bütün sağlayıcıları — her biri kendi savepoint'inde; biri hata verirse diğerleri yine gelir.
+    hatalar: verilirse okunamayan sağlayıcıların adları eklenir (Codex: karar veren çağıran — ör. toplu onay — eksik bilgiyle onaylamasın)."""
     out: List[dict] = []
     for ad, f in list(_BEKLEYEN_IS.items()):
         try:
@@ -542,6 +543,8 @@ def bekleyen_isler(cur, baglam: dict) -> List[dict]:
                 out.extend(f(cur, baglam) or [])
         except Exception as e:  # noqa: BLE001
             log.warning("bekleyen işler sağlayıcısı '%s' okunamadı: %s", ad, str(e)[:150])
+            if hatalar is not None:
+                hatalar.append(ad)
     return out
 
 
