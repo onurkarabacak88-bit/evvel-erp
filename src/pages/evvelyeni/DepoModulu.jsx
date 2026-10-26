@@ -66,7 +66,8 @@ export default function DepoModulu({ gorunum, onToast }) {
 function Nerede() {
   const [v, hata, yukle, setEvren] = useOzet();
   const [ara, setAra] = useState('');
-  const [sadeceEksi, setSadeceEksi] = useState(false);
+  // F5.3 S-1: Bekleyen "Stok eksi › Depo" ?eksi=1 ile gelir → yalnız eksiler süzülü açılır
+  const [sadeceEksi, setSadeceEksi] = useState(() => { try { return new window.URLSearchParams(window.location.search).get('eksi') === '1'; } catch { return false; } });
   const [ck, setCk] = useState(null);
   const izAc = async (s, k) => {
     try {

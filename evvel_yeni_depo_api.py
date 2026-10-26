@@ -325,6 +325,25 @@ def otomatik_senkron_gorevi() -> dict:
         return senkron(cur)
 
 
+def _eksi_baslangic(cur, eksi: dict) -> dict:
+    """{(urun, konum): gün} — eksi bakiyenin SON KEZ sıfırın altına düştüğü iş günü (yeni evren, iptalsiz hareketler, gün + kayıt sırası)."""
+    out = {}
+    for k, urunler in eksi.items():
+        cur.execute("""SELECT urun_id, is_gunu, SUM(d) AS d FROM (
+                         SELECT urun_id, is_gunu, zaman, adet AS d FROM ey_stok_hareket WHERE NOT iptal AND yeni AND hedef=%s AND urun_id = ANY(%s)
+                         UNION ALL SELECT urun_id, is_gunu, zaman, -adet AS d FROM ey_stok_hareket WHERE NOT iptal AND yeni AND kaynak=%s AND urun_id = ANY(%s)) x
+                        GROUP BY urun_id, is_gunu ORDER BY urun_id, is_gunu""", (k, list(urunler), k, list(urunler)))
+        bak = {}
+        for r in cur.fetchall() or []:
+            r = dict(r)
+            u = r["urun_id"]
+            onceki = bak.get(u, 0)
+            bak[u] = onceki + int(r["d"] or 0)
+            if onceki >= 0 and bak[u] < 0:
+                out[(u, k)] = r["is_gunu"]
+    return out
+
+
 def _bakiyeler(cur, yeni: Optional[bool] = None) -> dict:
     """{(urun_id, konum): adet} — iptal olmayan hareketlerden. yeni=True/False: yalnız o kimlik evreni; None: hepsi."""
     q = "" if yeni is None else (" AND yeni" if yeni else " AND NOT yeni")
@@ -1283,8 +1302,12 @@ def depo_isleri(cur) -> list:
                 eksi.setdefault(k, []).append(u)
         if eksi:
             ad = {x["id"]: x["ad"] for x in _konumlar(cur)}
-            out.append({"tur": "depo_eksi", "grup": "tedarik", "id": "de", "tarih": _is_gunu().isoformat(),
+            bas = _eksi_baslangic(cur, eksi)   # F5.3 S-2 (sim 27 Eki): "bekleyen iş kendini anlatsın" — ne zamandan beri eksi
+            en_eski = min(bas.values()) if bas else _is_gunu()
+            gun = (_is_gunu() - en_eski).days
+            out.append({"tur": "depo_eksi", "grup": "tedarik", "id": "de", "tarih": en_eski.isoformat(),
                         "ad": " · ".join(f"{ad.get(k, k)}: {len(v)} ürün" for k, v in sorted(eksi.items())),
+                        "sure": (f"en eskisi {gun} gündür eksi" if gun > 0 else "bugün eksiye düştü"),
                         "sayi": sum(len(v) for v in eksi.values())})
     return out
 

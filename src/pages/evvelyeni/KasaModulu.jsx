@@ -1765,11 +1765,11 @@ function IsSatir({ x, bugun, uyariSay = 0, onTeyit, onTeslim, onCoz, onKapanis, 
     );
   }
   if (x.tur === 'depo_eksi') {   // sahip P2: sevk eksiye yazılabilir → depo sayımıyla düzelir (kayıt saklanmaz, türetilir)
-    const git = () => { sayfayaGit('depo_nerede'); };
+    const git = () => { sayfayaGit('depo_nerede', '?eksi=1'); };   // F5.3 S-1: yalnız eksiler süzülmüş açılır
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(R.kirmizi, 55)}` }}>
         <Cip tur="kirmizi">📦 Stok eksi</Cip>
-        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b><div style={{ fontSize: 11.5, color: R.not }}>Depoda olmayan mal çıkmış görünüyor — kayıt eksik olabilir; sayımla düzelt</div></div>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b><div style={{ fontSize: 11.5, color: R.not }}>Depoda olmayan mal çıkmış görünüyor — kayıt eksik olabilir; sayımla düzelt{x.sure ? ` · ${x.sure}` : ''}</div></div>
         <Dugme kucuk onClick={git}>Depo</Dugme>
       </div>
     );
