@@ -37,6 +37,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
   const [f, setF] = useState(BOS);
   const [benzer, setBenzer] = useState(false);
   const [pd, setPd] = useState(null);   // seçili personele bu ay ne ödendi
+  const [tb, setTb] = useState(null);   // O-1 (F3.6): seçili toptancının borcu — Toptancılar'ın kendi özetinden (aynı hesap)
   const [ck, setCk] = useState(null);   // ödeme fişi
   const [duz, setDuz] = useState(null);  // {id, konu_tip, kimin, ait_ay, aciklama} — gider tarafı düzeltme
   const [ucretDuz, setUcretDuz] = useState(null);   // {maas, yemek} — tanım düzenleniyor
@@ -48,6 +49,10 @@ export default function OdemeModulu({ onToast, gorunum }) {
   const [gun, setGun] = useState(gunBugun());      // Ödeme defteri: seçili gün
   const [tumAy, setTumAy] = useState(false);       // Ödeme defteri: bütün ay
   const gunKaydir = (n) => { const g = trGunKaydir(gun, n); setGun(g); setAy(g.slice(0, 7)); };
+  useEffect(() => {
+    if (f.konu !== 'toptanci' || tb) return;
+    api('/evvel-yeni/toptanci/ozet').then((d) => setTb(d?.toptancilar || [])).catch(() => setTb([]));   // Toptancılar kapalıysa satır çıkmaz
+  }, [f.konu, tb]);
   // Codex: 'Bütün ay'da ay değişip 'Gün gün'e dönülünce gün o ayın içinde olsun (yoksa liste 0 görünüyordu)
   const modDegis = () => setTumAy((x) => { if (x && gun.slice(0, 7) !== ay) setGun(ay === ayBugun() ? gunBugun() : `${ay}-01`); return !x; });
   // 🏦 Krediler modülü açıksa: 'Kredi taksiti' hangi krediye (takvimde 'ödendi'). Kapalıysa liste gelmez, alan görünmez (tak-çıkar).
@@ -138,7 +143,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
   const iptalEt = async (x) => {
     const sebep = await soruYaz(`"${x.aciklama}" (${fmt(x.toplam)} ₺) iptal edilsin mi?\nKısaca neden yaz:`);
     if (!sebep || !sebep.trim()) return;
-    try { await api(`/evvel-yeni/kasa/hareket/${x.id}/iptal`, { method: 'POST', body: { sebep: sebep.trim() } }); onToast?.('Ödeme iptal edildi — para cebine geri döndü'); listeYukle(); api('/evvel-yeni/odeme/listeler').then(setL).catch(() => {}); }
+    try { await api(`/evvel-yeni/kasa/hareket/${x.id}/iptal`, { method: 'POST', body: { sebep: sebep.trim() } }); onToast?.('Ödeme iptal edildi — para cebine geri döndü'); setTb(null); listeYukle(); api('/evvel-yeni/odeme/listeler').then(setL).catch(() => {}); }
     catch (e) { onToast?.(e?.message || 'İptal edilemedi'); }
   };
   const parcaSet = (i, k, v) => setF((x) => ({ ...x, parcalar: x.parcalar.map((p, j) => (j === i ? { ...p, [k]: v } : p)) }));
@@ -152,6 +157,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
       onToast?.(r.mesaj);
       setBenzer(false);
       setF({ ...BOS(), tarih: f.tarih });
+      setTb(null);   // Fable: toptancı borcu ödemeden sonra bayat kalmasın (sonraki seçimde taze okunur)
       api('/evvel-yeni/odeme/listeler').then(setL).catch(() => {});
       listeYukle();
     } catch (e) { const m = e?.message || 'Kaydedilemedi'; setBenzer(m.startsWith('BENZER KAYIT') || m.startsWith('KALANI AŞIYOR')); setHata(m); } finally { setMesgul(false); }
@@ -199,7 +205,19 @@ export default function OdemeModulu({ onToast, gorunum }) {
             {f.konu === 'toptanci' && (
               <Etiket ad="Toptancı"><select style={alan} value={f.toptanci_id || ''} onChange={(e) => set('toptanci_id', e.target.value)}>
                 <option value="">Seç…</option>{L.toptancilar.map((t) => <option key={t.id} value={t.id}>{t.ad}{t.kategori ? ` · ${t.kategori}` : ''}</option>)}
-              </select></Etiket>
+              </select>
+              {(() => {   // O-1 (F3.6 · sim 26 Eki): ödemeden ÖNCE borç görünsün (Toptancılar › Öde yolunda görünüyordu, bu formda yoktu)
+                const x = f.toptanci_id && (tb || []).find((t) => String(t.id) === String(f.toptanci_id));
+                if (!x) return null;
+                return (
+                  <span style={{ display: 'block', fontSize: 12.5, marginTop: 4, color: x.bakiye > 0 ? R.metin2 : R.not }}>
+                    {x.bakiye > 0 ? `Borç ${fmt(x.bakiye)} ₺` : x.bakiye < 0 ? `Alacak ${fmt(-x.bakiye)} ₺ (fazla ödenmiş)` : 'Borç yok'}
+                    {x.vadesi_gecen > 0 && <b style={{ color: R.kirmizi }}> · vadesi geçen {fmt(x.vadesi_gecen)} ₺</b>}
+                    {x.bilinmeyen_sayi > 0 && ` · ${x.bilinmeyen_sayi} teslimin tutarı bilinmiyor`}
+                  </span>
+                );
+              })()}
+              </Etiket>
             )}
             {f.konu === 'anlik' && (
               <Etiket ad="Şube gideri mi, şahsi mi?"><select style={alan} value={f.kimin === 'patron' ? 'patron' : 'sube'} onChange={(e) => set('kimin', e.target.value === 'patron' ? 'patron' : '')}>

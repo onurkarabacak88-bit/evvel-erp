@@ -56,7 +56,7 @@ Bankadan düşer, maaştan mahsup edilir.`)) yap(t, 'onayla', { yontem: 'havale'
                   </select>
                   <Dugme kucuk disabled={!s.sube_id || mesgul[t.id]} onClick={() => yap(t, 'onayla', { yontem: 'elden', sube_id: s.sube_id })}>Elden ver</Dugme>
                   <Dugme kucuk disabled={mesgul[t.id]} onClick={() => yap(t, 'kapat', { not_: 'daha önce verildi' })}>Kapat (verildi)</Dugme>
-                  <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { const n = await soruYaz(`${t.ad} · ${fmt(t.tutar)} ₺ avans talebi neden reddediliyor? (personel görür)`); if (n && n.trim().length >= 2) yap(t, 'reddet', { neden: n.trim() }); }}>Reddet</Dugme>
+                  <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { const n = await soruYaz(`${t.ad} · ${fmt(t.tutar)} ₺ avans talebi neden reddediliyor? (personel görür)`, false, 2); if (n && n.trim().length >= 2) yap(t, 'reddet', { neden: n.trim() }); }}>Reddet</Dugme>
                 </span>
               </div>
             );
