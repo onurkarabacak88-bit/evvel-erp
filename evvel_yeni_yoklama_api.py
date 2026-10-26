@@ -195,13 +195,20 @@ def _haversine_m(a1, o1, a2, o2) -> float:
     return 2 * r * math.asin(math.sqrt(h))
 
 
+def konum_gerekli(cur, sube_id: str, personel: dict) -> bool:
+    """PUBLIC: bu kişi bu şubede konum göstermek zorunda mı — konum_kontrol ile AYNI kural, tek yer (F1.2 · L4b Opus + Fable + Codex C:
+    telefon bilmeden düğmeyi açık bırakıyordu → bas, bekle, 403). Yönetici muaf (K2); şube koordinatsızsa gerekmez (K3)."""
+    if personel.get("konum_muaf") or not sube_id:
+        return False
+    s = tanim_oku(cur, "ey_sube", sube_id, ("lat", "lng")) or {}
+    return s.get("lat") is not None and s.get("lng") is not None
+
+
 def konum_kontrol(cur, sube_id: str, personel: dict, lat, lng) -> dict:
     """PUBLIC: {mesafe_m, muaf}. Yönetici muaf (K2); şube koordinatsızsa serbest (K3). Uzaksa 403."""
-    if personel.get("konum_muaf"):
-        return {"mesafe_m": None, "muaf": True}
+    if not konum_gerekli(cur, sube_id, personel):
+        return {"mesafe_m": None, "muaf": bool(personel.get("konum_muaf"))}
     s = tanim_oku(cur, "ey_sube", sube_id, ("lat", "lng", "yaricap_m")) or {}
-    if s.get("lat") is None or s.get("lng") is None:
-        return {"mesafe_m": None, "muaf": False}
     if lat is None or lng is None:
         raise HTTPException(403, "Konum izni gerekli")
     m = _haversine_m(float(lat), float(lng), float(s["lat"]), float(s["lng"]))
@@ -851,7 +858,7 @@ async def ben(request: Request, sube: Optional[str] = None, qr: Optional[str] = 
             d = devir_durum(cur, str(son["sube_id"]))
             if d and d["durum"] in DEVIR_YENI_ACIK and p["id"] in (d.get("devreden_id"), d.get("devralan_id")):
                 devir = {"rol": "devreden" if p["id"] == d.get("devreden_id") else "devralan", "devreden": d.get("devreden"), "ev": True}
-        return {"kisi": p["ad"], "muaf": bool(p.get("konum_muaf")), "gun": is_gunu().isoformat(), "sube": sube, "sube_ad": sube_ad,
+        return {"kisi": p["ad"], "muaf": bool(p.get("konum_muaf")), "konum_gerekli": konum_gerekli(cur, str(sube or ""), p), "gun": is_gunu().isoformat(), "sube": sube, "sube_ad": sube_ad,
                 "mola": mola, "devir": devir,
                 "qr_gecerli": (qr_dogrula(cur, str(sube), qr or "") is not None) if sube else None,   # Fable #7: süresi dolan QR baştan söylensin
                 "yemek_tam": bool(p.get("mudur")),   # müdür: yemek mola şartsız tam (Maaş ile aynı kural; _personel 'mudur' hesaplar)
@@ -1563,7 +1570,7 @@ async def devir_telefon(did: str, request: Request, sube: Optional[str] = None, 
         ac = cur.fetchone()
         ad = adlar(cur, "ey_personel", [sahip] if sahip else [])
         rol = _devir_rol(tam, p, sahip, sahip_icerde, icerde)
-        return {"kisi": p["ad"], "muaf": bool(p.get("konum_muaf")), "sube": s, "sube_ad": adlar(cur, "ey_sube", [s]).get(str(s)),
+        return {"kisi": p["ad"], "muaf": bool(p.get("konum_muaf")), "konum_gerekli": konum_gerekli(cur, str(s or ""), p), "sube": s, "sube_ad": adlar(cur, "ey_sube", [s]).get(str(s)),
                 "gun": is_gunu().isoformat(), "devir": _devir_gizli(tam), "rol": rol, "icerde": icerde,
                 "sahip": {"id": sahip, "ad": ad.get(sahip) if sahip else None, "icerde": sahip_icerde},
                 # vekil: kasa sahibi içeride ama telefonu yok → içerideki başka biri ONUN ADINA devreden sayabilir (merkeze bildirilir)

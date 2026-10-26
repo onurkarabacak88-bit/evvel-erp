@@ -85,6 +85,25 @@ function KonumSatiri({ muaf, konum, konumAl }) {
 }
 
 // ── Konum: sayfa açılınca bir kez, 10 sn zaman aşımı; muaf kişide hata engel değil — sunucu karar verir (konum yine gönderilir) ──
+// 📍 KONUM — tek kural (F1.2 · sim 26 Eki · L4b Opus + Fable + Codex C): sunucu 'konum_gerekli' söyler (konum_kontrol ile aynı yardımcı).
+// Gerekiyorsa konum gelmeden düğme açılmaz ve büyük kart çıkar (bas → bekle → 403 döngüsü yok); gerekmiyorsa (muaf / koordinatsız
+// şube) beklemeden açılır. Son söz yine sunucuda — ret QR'ı harcamaz. Alan yoksa (eski sunucu) önceki davranış.
+const konumHazirMi = (ben, konum) => (ben?.konum_gerekli === undefined ? (konum.durum !== 'bekliyor' || !!ben?.muaf) : (!ben.konum_gerekli || konum.durum === 'ok'));
+const konumYok = (ben) => !!ben?.muaf || ben?.konum_gerekli === false;   // konum hiç gerekmiyorsa satır da yok (Tema'da "izin gerekli" yanıltıyordu)
+const konumRet = (metin) => /^Konum (izni gerekli|alınamadı)/.test(metin || '');
+const konumKartiVar = (ben, konum, hataMetin) => !!ben?.konum_gerekli && konum.durum !== 'ok' && (konum.durum === 'hata' || konumRet(hataMetin));
+function KonumKarti({ konum, konumAl }) {
+  const izin = konum.hata === 'Konum izni gerekli' || konum.durum !== 'hata';
+  return (
+    <div style={{ background: '#FFF1EC', border: `2px solid ${T.kirmizi}`, borderRadius: 14, padding: 14, display: 'grid', gap: 10 }}>
+      <b style={{ fontSize: 20 }}>📍 {izin ? 'Konum izni kapalı' : 'Konum alınamadı'}</b>
+      <div className="tq-not">{izin ? 'Bu işlem için telefonun konumu gerekiyor. Tarayıcının site ayarlarından bu sayfaya konum izni ver, sonra Tekrar dene.'
+        : 'Telefonun konumu açık mı? Açıksa kapıya / pencereye birkaç adım yaklaş, sonra Tekrar dene.'}</div>
+      <button type="button" className="tq-btn tq-ana" onClick={konumAl}>📍 Tekrar dene</button>
+      <div className="tq-silik">Konum gelince aşağıdaki düğmeler açılır.</div>
+    </div>
+  );
+}
 function useKonum(aktif) {
   const [k, setK] = useState({ durum: 'bekliyor', lat: null, lng: null, hata: '' });
   const al = useCallback(() => {
@@ -204,7 +223,8 @@ function QrIslem({ sube, jeton }) {
   const devir = ben?.devir || null;
   const devirVar = !!devir?.dv && qrOk;
   const islemVar = !!ana || cikisVar || devirVar;
-  const konumHazir = konum.durum !== 'bekliyor' || !!ben?.muaf;
+  const konumHazir = konumHazirMi(ben, konum);
+  const konumKarti = konumKartiVar(ben, konum, isHata?.metin);
   // islem: giris | cikis | mola-baslat | mola-bitir (devir v2 kendi sayfasında — ?dv=)
   const yap = async (islem) => {
     if (!islem || mesgul) return;
@@ -242,14 +262,14 @@ function QrIslem({ sube, jeton }) {
           {!hata && !ben && <div className="tq-not">Hazırlanıyor…</div>}
           {ben && (<>
             <div style={{ fontSize: 22, fontWeight: 800 }}>👤 {ben.kisi}</div>
-            <div className="tq-not">
-              <KonumSatiri muaf={ben.muaf} konum={konum} konumAl={konumAl} />
-            </div>
+            {konumKarti ? <KonumKarti konum={konum} konumAl={konumAl} /> : <div className="tq-not">
+              <KonumSatiri muaf={konumYok(ben)} konum={konum} konumAl={konumAl} />
+            </div>}
             {(ben.giris || ben.cikis) && <div className="tq-silik">Bugün: giriş {ben.giris || '—'} · çıkış {ben.cikis || '—'}</div>}
             <MolaSatiri mola={ben.mola} />
             {!qrOk && <div style={{ color: T.kirmizi, fontWeight: 700 }}>QR süresi doldu — paneldeki QR'ı yeniden okut</div>}
             {ben.acik && ben.acik_sube && ben.acik_sube !== sube && <div style={{ color: T.kirmizi, fontWeight: 700 }}>Önce {ben.acik_sube_ad || 'diğer şube'}'den çıkış yap</div>}
-            {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
+            {isHata && !(konumKarti && konumRet(isHata.metin)) && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
             {devirVar && (<>   {/* v2: devir sayfasına davet — KÖR (rakam yok) */}
               <div style={{ background: '#FFF6EC', border: `1px solid ${T.aksan}`, borderRadius: 12, padding: '10px 12px', fontWeight: 700 }}>
                 💵 Kasa devri sürüyor — {devir.rol === 'devreden' ? 'kasa sende, sayıp devredeceksin' : `kasayı sen alacaksan kendi say${devir.devreden ? ` (veren: ${devir.devreden})` : ''}`}
@@ -367,7 +387,8 @@ function OnayIslem({ sube, jeton, onay }) {
   useEffect(() => { yukle(); }, [yukle]);
   if (!bagli) return <TanimliDegil />;
 
-  const konumHazir = konum.durum !== 'bekliyor' || !!ben?.muaf;
+  const konumHazir = konumHazirMi(ben, konum);
+  const konumKarti = konumKartiVar(ben, konum, isHata?.metin);
   const girisGerek = (ben?.yapabilir || []).includes('giris');
   const gecerli = ozet && (ozet.durum === 'bekliyor' || ozet.durum === 'hata');
   const yap = async (islem) => {
@@ -412,10 +433,11 @@ function OnayIslem({ sube, jeton, onay }) {
               {/* G40 (sim 23 Eki): tek paragraf okunmuyordu → her parça ayrı satır, ilki (kasa/tutar) kalın */}
               {(ozet.ozet || '—').split(' · ').map((p, i) => <div key={i} style={i === 0 ? { fontWeight: 800, fontSize: 20 } : undefined}>{p.charAt(0).toLocaleUpperCase('tr') + p.slice(1)}</div>)}   {/* G49: her satır büyük harfle (online → Online) */}
             </div>
-            <div className="tq-not">Onaylayan: <b>👤 {ozet.kisi}</b>{ben?.muaf ? '' : ' · '}<KonumSatiri muaf={!!ben?.muaf} konum={konum} konumAl={konumAl} />
+            <div className="tq-not">Onaylayan: <b>👤 {ozet.kisi}</b>{konumYok(ben) || konumKarti ? '' : ' · '}{!konumKarti && <KonumSatiri muaf={konumYok(ben)} konum={konum} konumAl={konumAl} />}
             </div>
+            {konumKarti && <KonumKarti konum={konum} konumAl={konumAl} />}
             {girisMesaj && <div style={{ color: T.yesil, fontWeight: 700 }}>{girisMesaj}</div>}
-            {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
+            {isHata && !(konumKarti && konumRet(isHata.metin)) && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
             {!gecerli && <div style={{ color: T.kirmizi, fontWeight: 700 }}>
               {ozet.durum === 'onaylandi' ? `Bu işlem zaten onaylandı${ozet.mesaj ? ' — ' + ozet.mesaj : ''}` : ozet.durum === 'sure_doldu' ? 'Onayın süresi doldu — panelden yeniden iste' : 'Bu onay artık geçerli değil — panelden yeniden iste'}
             </div>}
@@ -777,7 +799,8 @@ function DevirIslem({ sube, jeton, did }) {
     setTur(2); setAdim(1); setIsHata('');
   }, [d, tur, liste.bardak, liste.urun]);
 
-  const konumHazir = konum.durum !== 'bekliyor' || !!b?.muaf;
+  const konumHazir = konumHazirMi(b, konum);
+  const konumKarti = konumKartiVar(b, konum, isHata);
   const gonder = async (yol, govde, anahtar) => {
     if (mesgul) return null;
     if (!istek.current[anahtar]) istek.current[anahtar] = yeniIstekId();
@@ -870,9 +893,8 @@ function DevirIslem({ sube, jeton, did }) {
           {!hata && !b && <div className="tq-not">Hazırlanıyor…</div>}
           {b && (<>
             <div style={{ fontSize: 20, fontWeight: 800 }}>👤 {b.kisi}</div>
-            <div className="tq-not">{b.muaf ? '' : konum.durum === 'ok' ? 'konum ✓' : konum.durum === 'bekliyor' ? 'konum alınıyor…' : konum.hata}
-              {!b.muaf && konum.durum === 'hata' && <> · <button type="button" onClick={konumAl} style={{ font: 'inherit', color: T.aksanKoyu, background: 'none', border: 'none', padding: '0 6px', fontWeight: 700, minHeight: 48, minWidth: 48 }}>tekrar dene</button></>}</div>
-            {isHata && !(hata && /süresi doldu/i.test(hata) && /süresi doldu/i.test(isHata)) && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata}</div>}   {/* G57 */}
+            {konumKarti ? <KonumKarti konum={konum} konumAl={konumAl} /> : <div className="tq-not"><KonumSatiri muaf={konumYok(b)} konum={konum} konumAl={konumAl} /></div>}
+            {isHata && !(konumKarti && konumRet(isHata)) && !(hata && /süresi doldu/i.test(hata) && /süresi doldu/i.test(isHata)) && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata}</div>}   {/* G57 */}
             {d?.durum === 'yeniden' && (   // KÖR: yalnız tutmayan KALEM ADI — rakam yok
               <div style={{ background: '#FDECEC', border: `2px solid ${T.kirmizi}`, borderRadius: 12, padding: '10px 12px', fontWeight: 800, color: T.kirmizi }}>
                 ⚠ Tutmadı — birlikte bir kez daha sayın: {(d.fark_kalem || []).join(', ')}
