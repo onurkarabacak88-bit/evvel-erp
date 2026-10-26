@@ -115,7 +115,8 @@ def liste(gun: int = 45, durum: str = "bekliyor"):
         gec = (_bugun() - date.fromisoformat(x["tarih"])).days
         out.append({**x, "giren": x.get("giren") or o.get("giren") or "—", "durum": d,
                     "notu": (e or {}).get("notu") or o.get("notu"), "isaretleyen": (e or {}).get("kim"),
-                    "panel_gonderildi": bool(o.get("gonderildi") or x.get("fis_gonderildi")), "gecikme_gun": gec})   # yeni panel: veri.fis_gonderildi
+                    "panel_gonderildi": bool(o.get("gonderildi") or x.get("fis_gonderildi")), "gecikme_gun": gec,
+                    "panel_fis_yok": x.get("fis_gonderildi") is False})   # G-1 (F1.6): panelde açıkça "fiş alınmadı (HAYIR)" dendi — merkezde görünsün   # yeni panel: veri.fis_gonderildi
     tum = out
     if durum in ("bekliyor", "gelmedi"):
         out = [x for x in out if x["durum"] == durum]

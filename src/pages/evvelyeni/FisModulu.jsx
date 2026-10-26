@@ -56,6 +56,7 @@ export default function FisModulu({ onToast }) {
                   <span style={{ color: x.durum === 'gelmedi' ? R.kirmizi : R.not }}> · giren: <b>{x.giren}</b></span>
                   {x.kart && <span style={{ color: R.not }}> · kart/havale</span>}
                   {x.panel_gonderildi && x.durum === 'bekliyor' && <span style={{ color: R.not }}> · panelde "fiş gönderildi" dendi</span>}
+                  {x.panel_fis_yok && x.durum === 'bekliyor' && <span style={{ color: R.kirmizi }}> · panelde "fiş alınmadı" dendi</span>}{/* G-1 (F1.6) */}
                 </span>
                 <b style={{ ...num, width: 80, textAlign: 'right' }}>{fmt(x.tutar)}</b>
                 <Cip tur={cipTur}>{cipAd}</Cip>
