@@ -107,8 +107,12 @@ def kira_yaz(cur, sube_id: str, kim: str, tutar=None, gecerli_ay=None, artis_ayi
         tanim_guncelle(cur, "ey_sube", sube_id, {k: v for k, v in (("kira_artis_ayi", artis_ayi), ("kira_odeme_gunu", odeme_gunu)) if v is not None})
 
 
-def _eski_odenenler(cur) -> dict:
-    """Eski sistemde ödenmiş kiralar: {(sube_id, 'YYYY-MM'): kuruş}. Plan + elden (çift sayım elenir)."""
+def _eski_odenenler(cur, arsivden: bool = True) -> dict:
+    """Eski sistemde ödenmiş kiralar: {(sube_id, 'YYYY-MM'): kuruş}. Plan + elden (çift sayım elenir). 1 Kasım son aktarımından sonra arşivden."""
+    if arsivden:
+        ar = __import__("evvel_yeni_cekirdek").arsiv_cift_oku(cur, "kira", "eski_odenen")
+        if ar is not None:
+            return ar
     out = {}
     try:
         with savepoint(cur, "sp_ey_kira_eski"):
@@ -132,7 +136,8 @@ def _eski_odenenler(cur) -> dict:
                 k = (r["sid"], r["ay"])
                 out[k] = out.get(k, 0) + _kurus(r["t"] or 0)
     except Exception:  # noqa: BLE001
-        pass
+        if not arsivden:   # son aktarım: hata YUTULMAZ (boş arşiv yazılmasın)
+            raise
     return out
 
 
@@ -271,3 +276,11 @@ def _bekleyen(cur, baglam: dict) -> list:
 
 from evvel_yeni_cekirdek import bekleyen_is_kaydet  # noqa: E402
 bekleyen_is_kaydet("kira_sube", _bekleyen)
+
+
+# ✂️ 1 KASIM SON AKTARIM (manifest 'kesim') — eski "Öde" ekranında ödenmişler BİR KEZ arşive; sonra takvim eski tabloyu okumaz.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "odeme_plani"):   # eski okuyucu hatayı yutup {} döner — boş arşiv yazılmasın
+        raise RuntimeError("eski odeme_plani okunamıyor — arşiv yazılmadı")
+    n = __import__("evvel_yeni_cekirdek").arsiv_cift_yaz(cur, "kira", "eski_odenen", _eski_odenenler(cur, arsivden=False), yazan)
+    return {"sube_ay": n, "uyari": None if n else "0 satır — eski ödenen bulunamadı, kontrol et"}   # Fable: HTTP 200 ≠ yazıldı

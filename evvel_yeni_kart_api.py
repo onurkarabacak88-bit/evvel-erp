@@ -262,9 +262,13 @@ def kart_isleri(cur, kayit) -> list:
 from evvel_yeni_cekirdek import ay_gunu as _son_gun  # noqa: E402 — vade günü TEK kural (T1-10)
 
 
-def _eski_plan(cur) -> dict:
+def _eski_plan(cur, arsivden: bool = True) -> dict:
     """KÖPRÜ (eski sistem kalkınca SİL — KESIM_LISTESI): eski odeme_plani kart satırları {(kart_id, 'YYYY-AA'): {ekstre, odenen}}.
-    Geçiş süresince kart borcu hâlâ eski 'Öde' ile ödeniyor; yoksa takvim yanlış 'gecikti' der."""
+    Geçiş süresince kart borcu hâlâ eski 'Öde' ile ödeniyor; yoksa takvim yanlış 'gecikti' der. 1 Kasım son aktarımından sonra arşivden."""
+    if arsivden:
+        ar = __import__("evvel_yeni_cekirdek").arsiv_cift_oku(cur, "kart", "eski_plan")
+        if ar is not None:
+            return ar
     out = {}
     try:
         with savepoint(cur, "sp_ey_kart_eski_plan"):
@@ -277,7 +281,8 @@ def _eski_plan(cur) -> dict:
                 r = dict(r)
                 out[(r["kid"], r["ay"])] = {"ekstre": _kurus(round(float(r["ekstre"] or 0), 2)), "odenen": _kurus(round(float(r["odenen"] or 0), 2))}
     except Exception:  # noqa: BLE001
-        pass
+        if not arsivden:   # son aktarım: hata YUTULMAZ (boş arşiv yazılmasın)
+            raise
     return out
 
 
@@ -442,3 +447,11 @@ def teyit_sil(tid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
 
 # 🧩 Bekleyen işler kayıt defterine (Kasa bu modülü tanımaz; modül kapanınca satırları da kalkar)
 bekleyen_is_kaydet("kart", lambda cur, b: kart_isleri(cur, b["kayit"]))
+
+
+# ✂️ 1 KASIM SON AKTARIM (manifest 'kesim') — eski "Öde" ekranında ödenmişler BİR KEZ arşive; sonra takvim eski tabloyu okumaz.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "odeme_plani"):   # eski okuyucu hatayı yutup {} döner — boş arşiv yazılmasın
+        raise RuntimeError("eski odeme_plani okunamıyor — arşiv yazılmadı")
+    n = __import__("evvel_yeni_cekirdek").arsiv_cift_yaz(cur, "kart", "eski_plan", _eski_plan(cur, arsivden=False), yazan)
+    return {"kart_ay": n, "uyari": None if n else "0 satır — eski ödenen bulunamadı, kontrol et"}   # Fable: HTTP 200 ≠ yazıldı

@@ -74,8 +74,12 @@ def _ilk_kopya(cur) -> None:
         log.warning("krediler: eski tanımlar kopyalanamadı: %s", str(e)[:150])
 
 
-def _eski_odenen(cur) -> dict:
-    """KÖPRÜ: eski sistemde ödenmiş taksitler {(eski_kredi_id, 'YYYY-AA'): kuruş}."""
+def _eski_odenen(cur, arsivden: bool = True) -> dict:
+    """KÖPRÜ: eski sistemde ödenmiş taksitler {(eski_kredi_id, 'YYYY-AA'): kuruş}. 1 Kasım son aktarımından sonra arşivden."""
+    if arsivden:
+        ar = __import__("evvel_yeni_cekirdek").arsiv_cift_oku(cur, "kredi", "eski_odenen")
+        if ar is not None:
+            return ar
     out = {}
     try:
         with savepoint(cur, "sp_ey_kredi_eski"):
@@ -86,7 +90,8 @@ def _eski_odenen(cur) -> dict:
                 r = dict(r)
                 out[(r["kid"], r["ay"])] = out.get((r["kid"], r["ay"]), 0) + _kurus(round(float(r["t"] or 0), 2))
     except Exception:  # noqa: BLE001 — eski sistem kalkmış olabilir
-        pass
+        if not arsivden:   # son aktarım: hata YUTULMAZ (boş arşiv yazılmasın)
+            raise
     return out
 
 
@@ -223,3 +228,11 @@ def kredi_duzelt(kid: str, b: KrediBody, x_evvel_oturum: Optional[str] = Header(
         if not cur.rowcount:
             raise HTTPException(404, "Kredi bulunamadı")
     return {"ok": True, "mesaj": "Kredi güncellendi" if b.aktif else "Kredi kapatıldı (takvimden kalktı)"}
+
+
+# ✂️ 1 KASIM SON AKTARIM (manifest 'kesim') — eski "Öde" ekranında ödenmişler BİR KEZ arşive; sonra takvim eski tabloyu okumaz.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "odeme_plani"):   # eski okuyucu hatayı yutup {} döner — boş arşiv yazılmasın
+        raise RuntimeError("eski odeme_plani okunamıyor — arşiv yazılmadı")
+    n = __import__("evvel_yeni_cekirdek").arsiv_cift_yaz(cur, "kredi", "eski_odenen", _eski_odenen(cur, arsivden=False), yazan)
+    return {"kredi_ay": n, "uyari": None if n else "0 satır — eski ödenen bulunamadı, kontrol et"}   # Fable: HTTP 200 ≠ yazıldı
