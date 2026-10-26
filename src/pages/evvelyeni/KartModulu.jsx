@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cip, Dugme, Etiket, fmt, kart, num, OzetKutusu, PI_CSS, R, tKisa, tUzun, useSonIstek } from './KasaModulu';
+import { ALAN, Cip, Dugme, Etiket, fmt, kart, num, OzetKutusu, PI_CSS, R, soruOnay, tKisa, tUzun, useSonIstek } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, tutarYaz, YilSecici } from './AyTakvim';
 import { bugunTR } from '../../utils/trTarih';
 
@@ -48,9 +48,9 @@ export default function KartModulu({ onToast }) {
 
   // Sahip: "kartları silmek de olsun" — her yerden kalkar (liste, ödeme formu, toplam); geçmiş ödemelerde adı kalır
   const sil = async (k) => {
-    if (!window.confirm(`"${k.ad.trim()}" kartı silinsin mi?
+    if (!(await soruOnay(`"${k.ad.trim()}" kartı silinsin mi?
 
-Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır. Tanımlar → Kartlar'dan geri açılabilir.`)) return;
+Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır. Tanımlar → Kartlar'dan geri açılabilir.`))) return;
     try { await api(`/evvel-yeni/tanim/kart/${encodeURIComponent(k.id)}`, { method: 'POST', body: { aktif: false } }); onToast?.('Kart silindi'); yukle(); }
     catch (x) { onToast?.(x?.message || 'Silinemedi'); }
   };

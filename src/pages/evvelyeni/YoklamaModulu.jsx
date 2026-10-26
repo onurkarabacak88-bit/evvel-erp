@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import { ayTR, bugunTR, ggaaSaat } from '../../utils/trTarih';
-import { ALAN, AySecici, Cip, Dugme, kart, num, PI_CSS, R, tKisa } from './KasaModulu';
+import { ALAN, AySecici, Cip, Dugme, kart, num, PI_CSS, R, soruOnay, tKisa } from './KasaModulu';
 import { tlYaz } from '../../utils/trSayi';
 import { bardakOzet } from '../../utils/devirOzet';
 
@@ -61,7 +61,7 @@ export default function YoklamaModulu({ onToast }) {
   // her satır ne: bağlı cihaz (son kullanım) / onay bekleyen / kullanılmamış link (son geçerlilik) — iki "İptal" karışmasın
   const cihazNe = (c) => (c.durum === 'aktif' ? `bağlı${c.son_kullanim ? ' · son ' + ggaaSaat(c.son_kullanim) : ' · hiç kullanılmadı'}`
     : c.durum === 'onay' ? 'onay bekleyen' : `kullanılmamış link${c.davet_son ? ' · ' + ggaaSaat(c.davet_son) + "'e kadar" : ''}`);
-  const iptal = (c, ad) => { if (window.confirm(`${ad} cihazı iptal edilsin mi? Bu telefon / şube bilgisayarı bir daha çalışmaz.`)) yap(c.id, `/evvel-yeni/yoklama/cihaz/${c.id}/iptal`, {}); };
+  const iptal = async (c, ad) => { if (await soruOnay(`${ad} cihazı iptal edilsin mi? Bu telefon / şube bilgisayarı bir daha çalışmaz.`)) yap(c.id, `/evvel-yeni/yoklama/cihaz/${c.id}/iptal`, {}); };
 
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>

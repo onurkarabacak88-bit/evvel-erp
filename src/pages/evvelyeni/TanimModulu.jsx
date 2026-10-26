@@ -8,7 +8,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { tarihNokta } from '../../utils/trTarih';
-import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R } from './KasaModulu';
+import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, soruOnay } from './KasaModulu';
 
 export const TANIM_SAYFALAR = [
   { id: 'tanim_sube', ad: 'Şubeler', alt: 'Ekle · komisyon oranı' },
@@ -116,7 +116,7 @@ export default function TanimModulu({ gorunum, onToast }) {
   };
   const aktiflik = async (x) => {
     const soru = y.tur === 'kart' ? `"${x.ad}" kartı silinsin mi?\nListelerden ve Kartlar ekranından kalkar; geçmiş ödemelerde adı kalır.` : `"${x.ad}" pasif yapılsın mı?\nSilinmez; listelerde çıkmaz, geçmiş kayıtlarda adı kalır.${['banka', 'toptanci'].includes(y.tur) ? '\nParası / borcu sıfır değilse pasif yapılamaz.' : ''}`;
-    if (x.aktif && !window.confirm(soru)) return;
+    if (x.aktif && !(await soruOnay(soru))) return;
     try { const r = await api(`/evvel-yeni/tanim/${y.tur}/${encodeURIComponent(x.id)}`, { method: 'POST', body: { aktif: !x.aktif } }); onToast?.(x.aktif ? (y.tur === 'kart' ? 'Kart silindi' : 'Pasif yapıldı') : 'Yeniden aktif'); yukle(); void r; }
     catch (e) { onToast?.(e?.message || 'Olmadı'); }
   };

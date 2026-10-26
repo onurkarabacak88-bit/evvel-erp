@@ -10,7 +10,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useState } from 'react';
 import { api } from '../../utils/api';
-import { AySecici, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
+import { AySecici, Cekmece, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, soruOnay, tKisa, tl, tUzun, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';
 
 export const GIDER_SAYFALAR = [
@@ -46,7 +46,7 @@ export default function GiderModulu({ onToast }) {
     listeBaslik: 'Dükkân giderleri · patron harcaması mı?',
     satirlar: s.satirlar.filter((x) => x.tur === 'dukkan').map((x) => ({
       ad: `${tKisa(x.gun)} · ${x.aciklama}${x.oneri_cekis ? '  ⚠ patron harcaması olabilir' : ''}`, tutar: tl(x.tutar), detay: 'Patron harcamasıysa tıkla',
-      onTikla: () => window.confirm(`"${x.aciklama}" (${fmt(x.tutar)} ₺) patron harcaması mı? Şube giderinden çıkar.`) && sinifla(x.kaynak_ref, 'cekis', null),
+      onTikla: async () => (await soruOnay(`"${x.aciklama}" (${fmt(x.tutar)} ₺) patron harcaması mı? Şube giderinden çıkar.`)) && sinifla(x.kaynak_ref, 'cekis', null),
     })),
     tablo: {
       ad: 'Gider satırları',
@@ -123,7 +123,7 @@ export default function GiderModulu({ onToast }) {
           <div style={{ ...kart, padding: 14, borderLeft: '5px solid var(--pi-warn)', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
             <span>🚬 <b>{aday.length} dükkân gideri patron harcaması mı?</b> ({aday.map((x) => `${x.sube} ${tKisa(x.gun)} ${fmt(x.tutar)}`).join(', ')})</span>
             <Dugme ana kucuk onClick={async () => {
-              if (!window.confirm(`${aday.length} kayıt patron harcaması olarak ayrılsın mı? Şube giderinden çıkar; hangi patron olduğu Patron harcamaları'nda seçilir.`)) return;
+              if (!(await soruOnay(`${aday.length} kayıt patron harcaması olarak ayrılsın mı? Şube giderinden çıkar; hangi patron olduğu Patron harcamaları'nda seçilir.`))) return;
               for (const x of aday) { try { await api('/evvel-yeni/gider/siniflandir', { method: 'POST', body: { kaynak_ref: x.kaynak_ref, tur: 'cekis', kimin: null } }); } catch { /* devam */ } }
               onToast?.(`${aday.length} kayıt patron harcaması olarak ayrıldı`); yukle();
             }}>Evet, patron harcaması</Dugme>

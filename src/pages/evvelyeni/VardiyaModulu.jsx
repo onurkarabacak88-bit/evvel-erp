@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
 import { gunKaydir, gunKisa, tarihNokta } from '../../utils/trTarih';
-import { ALAN, Cip, Dugme, kart, num, PI_CSS, R } from './KasaModulu';
+import { ALAN, Cip, Dugme, kart, num, PI_CSS, R, soruOnay } from './KasaModulu';
 import { Pencere } from './AyTakvim';
 
 export const VARDIYA_SAYFALAR = [{ id: 'vardiya_plani', ad: 'Vardiya planı', alt: 'Hafta hafta kim nerede kaçta · taslak → yayın' }];
@@ -114,8 +114,8 @@ export default function VardiyaModulu({ onToast }) {
         <Dugme kucuk ana={gorunum === 'kisi'} onClick={() => setGorunum('kisi')}>Kişi</Dugme>
       </div>
       <div className="vd-gizle" style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-        <Dugme kucuk disabled={mesgul} onClick={() => { if (window.confirm('Geçen haftanın planı bu haftaya kopyalansın mı? (Dolu hücreler atlanır, taslak olarak gelir.)')) yap('hafta-kopyala', { pazartesi: hafta }); }}>📋 Geçen haftayı kopyala</Dugme>
-        {v.eski_kopya && <Dugme kucuk disabled={mesgul} onClick={() => { if (window.confirm('Eski vardiya ekranında bu hafta için yazılmış plan buraya alınsın mı? (Alınan hafta yayında sayılır.)')) yap('eski-kopya', { pazartesi: hafta }); }}>⤵ Eski plandan al</Dugme>}
+        <Dugme kucuk disabled={mesgul} onClick={async () => { if (await soruOnay('Geçen haftanın planı bu haftaya kopyalansın mı? (Dolu hücreler atlanır, taslak olarak gelir.)')) yap('hafta-kopyala', { pazartesi: hafta }); }}>📋 Geçen haftayı kopyala</Dugme>
+        {v.eski_kopya && <Dugme kucuk disabled={mesgul} onClick={async () => { if (await soruOnay('Eski vardiya ekranında bu hafta için yazılmış plan buraya alınsın mı? (Alınan hafta yayında sayılır.)')) yap('eski-kopya', { pazartesi: hafta }); }}>⤵ Eski plandan al</Dugme>}
         <Dugme kucuk onClick={() => setKalipAcik(true)}>⚙ Kalıplar</Dugme>
         <Dugme kucuk onClick={() => window.print()}>🖨 Yazdır</Dugme>
       </div>
@@ -159,7 +159,7 @@ export default function VardiyaModulu({ onToast }) {
               {(!s.yayin || s.degisen > 0) && s.satir > 0 && (
                 <Dugme kucuk ana disabled={mesgul} onClick={() => yap('yayinla', { pazartesi: hafta, sube_id: s.id })}>{s.yayin ? 'Yeniden yayınla' : 'Yayınla'}</Dugme>)}
               {!s.yayin && s.satir > 0 && (
-                <span className="vd-gizle"><Dugme kucuk disabled={mesgul} onClick={() => { if (window.confirm(`${s.ad} · bu haftanın taslağı (bugünden sonraki günler) temizlensin mi?`)) yap('taslak-temizle', { pazartesi: hafta, sube_id: s.id }); }}>🧹 Taslağı temizle</Dugme></span>)}
+                <span className="vd-gizle"><Dugme kucuk disabled={mesgul} onClick={async () => { if (await soruOnay(`${s.ad} · bu haftanın taslağı (bugünden sonraki günler) temizlensin mi?`)) yap('taslak-temizle', { pazartesi: hafta, sube_id: s.id }); }}>🧹 Taslağı temizle</Dugme></span>)}
             </div>
             <div style={{ overflowX: 'auto' }}>
               <table style={{ borderCollapse: 'collapse', width: '100%', fontSize: 13 }}>
@@ -282,7 +282,7 @@ function PlanFormu({ form, setForm, v, mesgul, yap }) {
           </>
         )}
         <div style={{ fontSize: 11.5, color: R.not }}>yazan: {form.degistiren || '—'}{form.zaman ? ` · ${form.zaman}` : ''}</div>
-        <div><Dugme kucuk disabled={mesgul} onClick={() => { if (window.confirm(form.tur === 'izin' ? 'İzin (bütün aralık) kaldırılsın mı?' : 'Bu vardiya plandan kaldırılsın mı?')) yap(form.tur === 'izin' ? `izin/${encodeURIComponent(form.id)}/kaldir` : `plan/${form.id}/iptal`, {}, kapat); }}>
+        <div><Dugme kucuk disabled={mesgul} onClick={async () => { if (await soruOnay(form.tur === 'izin' ? 'İzin (bütün aralık) kaldırılsın mı?' : 'Bu vardiya plandan kaldırılsın mı?')) yap(form.tur === 'izin' ? `izin/${encodeURIComponent(form.id)}/kaldir` : `plan/${form.id}/iptal`, {}, kapat); }}>
           {form.tur === 'izin' ? 'İzni kaldır' : 'Plandan kaldır'}</Dugme></div>
       </Pencere>
     );
@@ -381,7 +381,7 @@ function Kaliplar({ v, mesgul, yap, onKapat }) {
             <div key={k.id} style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
               {Satir({ k, d: (a) => deger(k, a), onDegis: (a, x) => set(k, a, x) })}
               {duz[k.id] && <Dugme kucuk ana disabled={mesgul} onClick={() => yap(`kalip/${k.id}/degistir`, duz[k.id], () => setDuz((d) => { const y = { ...d }; delete y[k.id]; return y; }))}>Kaydet</Dugme>}
-              <Dugme kucuk disabled={mesgul} onClick={() => { if (window.confirm(`${s.ad} · ${k.ad} kalıbı pasife alınsın mı?`)) yap(`kalip/${k.id}/degistir`, { aktif: false }); }}>Pasife al</Dugme>
+              <Dugme kucuk disabled={mesgul} onClick={async () => { if (await soruOnay(`${s.ad} · ${k.ad} kalıbı pasife alınsın mı?`)) yap(`kalip/${k.id}/degistir`, { aktif: false }); }}>Pasife al</Dugme>
             </div>
           ))}
           {yeni?.sube_id === s.id ? (

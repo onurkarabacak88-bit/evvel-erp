@@ -3,7 +3,7 @@
 // burada havaleyle öde (bankadan düşer, maaştan mahsup) · elden ver (şubeden) · reddet.
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R } from './KasaModulu';
+import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, soruOnay, soruYaz } from './KasaModulu';
 // B96: '2026-10-23 11:12' → '23.10 11:12'
 const trTalep = (x) => (/^\d{4}-\d{2}-\d{2}/.test(x || '') ? `${x.slice(8, 10)}.${x.slice(5, 7)}${x.length > 10 ? ' ' + x.slice(11, 16) : ''}` : x);
 
@@ -49,14 +49,14 @@ export default function AvansModulu({ onToast }) {
                   {t.yeni && <select value={s.cep || ''} onChange={(e) => set('cep', e.target.value)} style={alan}>
                     <option value="">Banka…</option>{(L?.banka_cepler || []).map((b) => <option key={b.id} value={b.id}>{b.ad}</option>)}
                   </select>}
-                  <Dugme kucuk ana disabled={mesgul[t.id] || (t.yeni && !s.cep)} onClick={() => { const b = (L?.banka_cepler || []).find((x) => x.id === s.cep); if (window.confirm(`${t.ad} · ${fmt(t.tutar)} ₺ ${b ? b.ad + "'ndan " : ''}havale edilsin mi?
+                  <Dugme kucuk ana disabled={mesgul[t.id] || (t.yeni && !s.cep)} onClick={async () => { const b = (L?.banka_cepler || []).find((x) => x.id === s.cep); if (await soruOnay(`${t.ad} · ${fmt(t.tutar)} ₺ ${b ? b.ad + "'ndan " : ''}havale edilsin mi?
 Bankadan düşer, maaştan mahsup edilir.`)) yap(t, 'onayla', { yontem: 'havale', cep: s.cep }); }}>Havaleyle öde</Dugme>
                   <select value={s.sube_id || ''} onChange={(e) => set('sube_id', e.target.value)} style={alan}>
                     <option value="">Şube…</option>{(L?.subeler || []).map((b) => <option key={b.id} value={b.id}>{b.ad}</option>)}
                   </select>
                   <Dugme kucuk disabled={!s.sube_id || mesgul[t.id]} onClick={() => yap(t, 'onayla', { yontem: 'elden', sube_id: s.sube_id })}>Elden ver</Dugme>
                   <Dugme kucuk disabled={mesgul[t.id]} onClick={() => yap(t, 'kapat', { not_: 'daha önce verildi' })}>Kapat (verildi)</Dugme>
-                  <Dugme kucuk disabled={mesgul[t.id]} onClick={() => { const n = window.prompt(`${t.ad} · ${fmt(t.tutar)} ₺ avans talebi neden reddediliyor? (personel görür)`); if (n && n.trim().length >= 2) yap(t, 'reddet', { neden: n.trim() }); }}>Reddet</Dugme>
+                  <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { const n = await soruYaz(`${t.ad} · ${fmt(t.tutar)} ₺ avans talebi neden reddediliyor? (personel görür)`); if (n && n.trim().length >= 2) yap(t, 'reddet', { neden: n.trim() }); }}>Reddet</Dugme>
                 </span>
               </div>
             );
@@ -82,7 +82,7 @@ Bankadan düşer, maaştan mahsup edilir.`)) yap(t, 'onayla', { yontem: 'havale'
               <span style={{ flex: 1 }}><b>{t.ad}</b>{t.ayrilis && <Cip tur="kirmizi">ayrılış {t.ayrilis}</Cip>} · {t.sube || '—'}</span><b style={num}>{fmt(t.tutar)} ₺</b><Cip tur="sari">{t.durum === 'teslim_edildi' ? 'personel onayı bekliyor' : 'elden verilecek — şube panelinde "teslim ettim"'}</Cip>
               {/* Fable O-2: şube teslim etmediyse (kişi ayrıldı, yanlış şube) talep merkezden kapatılır — yoksa kişi yeni talep açamaz */}
               {String(t.id).startsWith('av-') && t.durum === 'onaylandi' && (
-                <Dugme kucuk disabled={mesgul[t.id]} onClick={() => { if (window.confirm(`${t.ad} · ${fmt(t.tutar)} ₺ — şube teslim etmedi, talep kapatılsın mı? (para hareketi yok)`)) yap(t, 'kapat', { not_: 'şube teslim etmedi — merkez kapattı' }); }}>Kapat</Dugme>
+                <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { if (await soruOnay(`${t.ad} · ${fmt(t.tutar)} ₺ — şube teslim etmedi, talep kapatılsın mı? (para hareketi yok)`)) yap(t, 'kapat', { not_: 'şube teslim etmedi — merkez kapattı' }); }}>Kapat</Dugme>
               )}
             </div>
           ))}

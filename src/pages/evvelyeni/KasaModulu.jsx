@@ -122,13 +122,16 @@ function sor(o) {
     sorDinle({ ...o, coz });
   });
 }
+// Y8 (sim 26 Eki): kalan window.confirm / window.prompt'lar için kısa yollar (aynı ortak pencere)
+const soruOnay = (soru, tamam = 'Evet') => sor({ soru, tamam });
+const soruYaz = (soru, bos = false) => sor({ soru, giris: true, bos });
 function SorKatmani() {
   const [s, setS] = useState(null);
   const [m, setM] = useState('');
   useEffect(() => { sorDinle = (o) => { setM(''); setS((onceki) => { if (onceki) onceki.coz(onceki.giris ? null : false); return o; }); }; return () => { sorDinle = null; }; }, []);   // Fable 7-A: üst üste soruda öncekini 'vazgeç' ile çöz
   if (!s) return null;
   const bitir = (v) => { const c = s.coz; setS(null); c(v); };
-  const hazir = !s.giris || m.trim().length > 0;
+  const hazir = !s.giris || !!s.bos || m.trim().length > 0;   // bos: 'boş bırakabilirsin' soruları (Y8)
   return (
     <div className="pi" role="dialog" aria-modal="true" aria-label={s.soru} onClick={() => bitir(s.giris ? null : false)}
       style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(30,20,12,.45)', display: 'grid', placeItems: 'center', padding: 16 }}>
@@ -1512,7 +1515,7 @@ ${x.ozet}` : ''}
                 <span style={{ display: 'flex', gap: 6 }}>
                   <Dugme kucuk onClick={() => formAc('kapanis', { gun: xs[0].tarih, cep })}>Gerçeğini gir</Dugme>
                   <Dugme ana kucuk onClick={async () => {
-                    if (!window.confirm(`${xs[0].ad}: ${xs.length} günün Evo rakamı kabul edilsin mi? Rakam değişmez, yalnız uyarı kapanır.`)) return;
+                    if (!(await soruOnay(`${xs[0].ad}: ${xs.length} günün Evo rakamı kabul edilsin mi? Rakam değişmez, yalnız uyarı kapanır.`))) return;
                     try { const r = await api('/evvel-yeni/kasa/evo-kabul', { method: 'POST', body: { cep } }); onToast?.(r.mesaj); yukle(); } catch (e) { onToast?.(e.message); }
                   }}>Hepsini kabul et</Dugme>
                 </span>
@@ -1796,4 +1799,4 @@ function IsSatir({ x, bugun, uyariSay = 0, onTeyit, onTeslim, onCoz, onKapanis, 
 }
 
 // Diğer Evvel Yeni bölümleri (Gelir, Gider…) aynı görsel dili kullanır
-export { sor, SorKatmani, ALAN, AySecici, Etiket, OzetKutusu, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
+export { sor, soruOnay, soruYaz, SorKatmani, ALAN, AySecici, Etiket, OzetKutusu, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };

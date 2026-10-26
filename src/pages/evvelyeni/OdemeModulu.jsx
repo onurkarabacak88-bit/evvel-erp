@@ -8,7 +8,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, AySecici, Cekmece, Cip, Dugme, Etiket, etiketStil, fmt, kart, num, odemeFisi, PATRONLAR, PI_CSS, R, sayfayaGit, tKisa, tl, useSonIstek } from './KasaModulu';
+import { ALAN, AySecici, Cekmece, Cip, Dugme, Etiket, etiketStil, fmt, kart, num, odemeFisi, PATRONLAR, PI_CSS, R, sayfayaGit, soruOnay, soruYaz, tKisa, tl, useSonIstek } from './KasaModulu';
 import { ayAdi, ayKaydir, ayTR, bugunTR, gunKaydir as trGunKaydir } from '../../utils/trTarih';
 import { Pencere } from './AyTakvim';
 
@@ -136,7 +136,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
     } catch (e) { onToast?.(e?.message || 'Düzeltilemedi'); }
   };
   const iptalEt = async (x) => {
-    const sebep = window.prompt(`"${x.aciklama}" (${fmt(x.toplam)} ₺) iptal edilsin mi?\nKısaca neden yaz:`);
+    const sebep = await soruYaz(`"${x.aciklama}" (${fmt(x.toplam)} ₺) iptal edilsin mi?\nKısaca neden yaz:`);
     if (!sebep || !sebep.trim()) return;
     try { await api(`/evvel-yeni/kasa/hareket/${x.id}/iptal`, { method: 'POST', body: { sebep: sebep.trim() } }); onToast?.('Ödeme iptal edildi — para cebine geri döndü'); listeYukle(); api('/evvel-yeni/odeme/listeler').then(setL).catch(() => {}); }
     catch (e) { onToast?.(e?.message || 'İptal edilemedi'); }
@@ -505,7 +505,7 @@ export function PatronHarcama() {
                         <select value={x.patron || ''} onChange={(e) => e.target.value && ata(x, e.target.value)} style={{ ...alan, width: 'auto', padding: '4px 7px', fontSize: 13, borderColor: x.patron ? 'var(--pi-line)' : R.amber }}>
                           <option value="">hangi patron?</option>{(v.patronlar || []).map((p) => <option key={p}>{p}</option>)}
                         </select>
-                        {g.kod === 'cekis' && <Dugme kucuk onClick={() => window.confirm('Bu kayıt patron harcaması değil — şube giderine geri alınsın mı?') && ata(x, null, true)}>Şube gideri</Dugme>}
+                        {g.kod === 'cekis' && <Dugme kucuk onClick={async () => (await soruOnay('Bu kayıt patron harcaması değil — şube giderine geri alınsın mı?')) && ata(x, null, true)}>Şube gideri</Dugme>}
                       </td>
                     )}
                   </tr>

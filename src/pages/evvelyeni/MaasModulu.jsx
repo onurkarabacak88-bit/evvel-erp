@@ -8,7 +8,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, AySecici, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, tl, useSonIstek } from './KasaModulu';
+import { ALAN, AySecici, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, soruOnay, soruYaz, tl, useSonIstek } from './KasaModulu';
 import { ayAdi, ayKaydir, ayTR } from '../../utils/trTarih';
 import { Pencere } from './AyTakvim';
 // B39: tablo sütunlarında tutarlar aynı biçimde (35.200,00 · 20.533,33) — karışık ondalık gözü yanıltmasın
@@ -176,8 +176,8 @@ export function PersonelTakvim({ onToast }) {
   const no = useRef(0);
   const cevapla = async (s, karar) => {
     let izin_bitis = null;
-    if (karar === 'izin') { izin_bitis = window.prompt(`${s.ad} yıllık izinde — izin hangi gün bitiyor? (YYYY-AA-GG, boş bırakabilirsin)`) || null; }
-    if (karar === 'ayrildi' && !window.confirm(`${s.ad} ayrıldı olarak işaretlensin mi?\nPasife alınır; ayrılış = son QR girişi (${s.son_qr || '?'}).`)) return;
+    if (karar === 'izin') { izin_bitis = (await soruYaz(`${s.ad} yıllık izinde — izin hangi gün bitiyor? (YYYY-AA-GG, boş bırakabilirsin)`, true)) || null; }
+    if (karar === 'ayrildi' && !(await soruOnay(`${s.ad} ayrıldı olarak işaretlensin mi?\nPasife alınır; ayrılış = son QR girişi (${s.son_qr || '?'}).`))) return;
     try { const r = await api('/evvel-yeni/maas/takvim-karar', { method: 'POST', body: { personel_id: s.personel_id, karar, tarih: s.ilk_gun, izin_bitis } }); onToast?.(r.mesaj); setYenile((x) => x + 1); }
     catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
   };
