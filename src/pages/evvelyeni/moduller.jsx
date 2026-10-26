@@ -8,6 +8,7 @@
 import React from 'react';
 import KasaModulu, { SAYFALAR, IS_GRUPLARI } from './KasaModulu';
 import SistemDurumu, { SISTEM_SAYFALAR } from './SistemDurumu';
+import CepAna, { CEP_SAYFALAR } from './CepAna';
 import GelirModulu, { GELIR_SAYFALAR } from './GelirModulu';
 import GiderModulu, { GIDER_SAYFALAR } from './GiderModulu';
 import OdemeModulu, { ODEME_SAYFALAR, PatronHarcama } from './OdemeModulu';
@@ -65,6 +66,8 @@ export const MODULLER = [
       : <MaasModulu onToast={c.onToast} onSekme={c.onSekme} />) },
   { mod: 'tanim', ad: 'Tanımlar', ikon: '⚙️', sektor: 'genel', sayfalar: TANIM_SAYFALAR, g: (s, c) => <TanimModulu gorunum={s} onToast={c.onToast} /> },
   // ⚙️ IS 5c (sim 26 Eki): çekirdeğin Sistem durumu — modüller + arka plan işleri (sunucu: evvel_yeni_moduller.py); modül değil, hep görünür
+  // 📱 F7 /cep (sim 27 Eki · Fable): telefon girişi — 5 kart var olan ekranlara gider; 1 Kasım'da /cep buraya yönlenir
+  { mod: 'cep', her_zaman: true, ad: 'Telefon ana sayfası', ikon: '📱', sektor: 'genel', sayfalar: CEP_SAYFALAR, g: (s, c) => <CepAna onSekme={c.onSekme} /> },
   { mod: 'cekirdek', her_zaman: true, bolum: 'tanim', ad: 'Sistem durumu', ikon: '⚙️', sektor: 'genel', sayfalar: SISTEM_SAYFALAR, g: (s, c) => <SistemDurumu onToast={c.onToast} /> },
 ];
 

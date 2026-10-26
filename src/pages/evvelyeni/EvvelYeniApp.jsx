@@ -22,6 +22,7 @@ export const TABAN = '/evvel-yeni';
 
 const sekmeAdresten = () => {
   const p = (window.location.pathname || '').replace(/\/+$/, '');
+  if (/^\/cep(\/|$)/.test(p)) return 'cep_ana';   // F7: /cep = telefon ana sayfası (eski CepApp kalktı)
   const son = p.replace(/^\/evvel-yeni/, '').split('/').filter(Boolean).pop() || '';
   if (TUM_SAYFALAR.some((x) => x.id === son)) return son;
   // 4e (sahip 23 Eki: '/siparis' Kasam'a düşüyordu): modül adıyla gelen adres o modülün İLK sayfasına (ör. /evvel-yeni/siparis → Sipariş yönlendirme)

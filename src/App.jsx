@@ -48,7 +48,6 @@ import IsBasvuruListesi from './pages/IsBasvuruListesi';
 import Maliyet from './pages/Maliyet';
 import EvTasarim from './pages/EvTasarim';
 import FireFotoYukle from './pages/FireFotoYukle';
-import CepApp from './pages/cep/CepApp';
 import EvvelYeniApp from './pages/evvelyeni/EvvelYeniApp';
 import SubePaneli from './pages/subepanel/SubePaneli';
 import TelefonSayfasi from './pages/telefon/TelefonSayfasi';
@@ -330,9 +329,9 @@ export default function App() {
   if (qOkut) return <TelefonSayfasi mod="qr" sube={decodeURIComponent(qOkut[1])} jeton={decodeURIComponent(qOkut[2])} />;
   if (/^\/q\/?$/.test(window.location.pathname)) return <TelefonSayfasi mod="durum" />;
 
-  // EVVEL · CEP — işletme sahibi mobil kabuğu (sidebar yok, ayrı kabuk)
+  // 📱 EVVEL · CEP — F7 (sahip 27 Eki: "direk kaldırıp yeniyi aynı alana kur"): eski CepApp kalktı; /cep = Evvel Yeni'nin telefon ana sayfası
   if (window.location.pathname === '/cep' || window.location.pathname.startsWith('/cep/')) {
-    return <CepApp />;
+    return <EvvelYeniApp />;
   }
 
   // İş başvurusu — mobil form, sidebar yok
