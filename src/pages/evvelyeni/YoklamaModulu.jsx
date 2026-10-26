@@ -19,11 +19,14 @@ export const YOKLAMA_SAYFALAR = [
 const alan = { ...ALAN, padding: '6px 9px', borderRadius: 9, fontSize: 13.5 };   // temel stil KasaModulu ALAN (T4-15)
 const satir = { display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${R.cizgi}`, padding: '8px 0', fontSize: 13.5 };
 
+// B-1 (F1.1 · sim 26 Eki): süresi geçmiş davet "kullanılmamış link · …'e kadar" görünüyordu (telefon "süresi doldu" diyordu)
+const davetDoldu = (x) => x?.davet_doldu === true;   // sunucu hesaplar (saat dilimi güvenli)
 function cihazDurum(c) {
   if (!c.length) return <Cip tur="kirmizi">yok</Cip>;
   const aktif = c.find((x) => x.durum === 'aktif');
   if (aktif) return <><Cip tur="yesil">bağlı</Cip>{aktif.guc === 'jeton' && <Cip tur="sari">⚠️ zayıf bağ</Cip>}</>;
   if (c.some((x) => x.durum === 'onay')) return <Cip tur="sari">onay bekliyor</Cip>;
+  if (davetDoldu(c[0])) return <Cip tur="kirmizi">link süresi doldu — yeni link üret</Cip>;
   return <Cip tur="sari">link bekliyor{c[0].davet_son ? ` · son ${ggaaSaat(c[0].davet_son)}` : ''}</Cip>;
 }
 
@@ -60,7 +63,8 @@ export default function YoklamaModulu({ onToast }) {
   const kopyala = async (t) => { try { await navigator.clipboard.writeText(t); onToast?.('Kopyalandı'); } catch { onToast?.('Kopyalanamadı — linki elle seç'); } };
   // her satır ne: bağlı cihaz (son kullanım) / onay bekleyen / kullanılmamış link (son geçerlilik) — iki "İptal" karışmasın
   const cihazNe = (c) => (c.durum === 'aktif' ? `bağlı${c.son_kullanim ? ' · son ' + ggaaSaat(c.son_kullanim) : ' · hiç kullanılmadı'}`
-    : c.durum === 'onay' ? 'onay bekleyen' : `kullanılmamış link${c.davet_son ? ' · ' + ggaaSaat(c.davet_son) + "'e kadar" : ''}`);
+    : c.durum === 'onay' ? 'onay bekleyen' : davetDoldu(c) ? `süresi dolmuş link · ${ggaaSaat(c.davet_son)}`
+      : `kullanılmamış link${c.davet_son ? ' · son geçerlilik ' + ggaaSaat(c.davet_son) : ''}`);
   const iptal = async (c, ad) => { if (await soruOnay(`${ad} cihazı iptal edilsin mi? Bu telefon / şube bilgisayarı bir daha çalışmaz.`)) yap(c.id, `/evvel-yeni/yoklama/cihaz/${c.id}/iptal`, {}); };
 
   return (

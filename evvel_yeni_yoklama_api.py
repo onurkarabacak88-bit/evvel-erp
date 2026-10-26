@@ -732,7 +732,9 @@ def cihazlar(x_evvel_oturum: Optional[str] = Header(default=None)):
     def _c(x):
         return {"id": x["id"], "guc": x["guc"], "etiket": x["etiket"], "durum": x["durum"],
                 "son_kullanim": str(x["son_kullanim"])[:16] if x["son_kullanim"] else None,
-                "davet_son": str(x["davet_son"])[:16] if x["davet_son"] else None}
+                "davet_son": str(x["davet_son"])[:16] if x["davet_son"] else None,
+                # B-1 (F1.1): süre dolumu SUNUCUDA (davet_son saat dilimsiz metin gidiyor; telefonun "süresi doldu" kontrolüyle aynı kural)
+                "davet_doldu": bool(x["durum"] == "davet" and x["davet_son"] and x["davet_son"] < datetime.now(x["davet_son"].tzinfo))}
     return {"personel": [{**p, "cihazlar": [_c(x) for x in cz if x["personel_id"] == p["id"]]} for p in per],
             "subeler": [{**s, "tabletler": [_c(x) for x in cz if x["sube_id"] == s["id"]]} for s in subeler]}
 
