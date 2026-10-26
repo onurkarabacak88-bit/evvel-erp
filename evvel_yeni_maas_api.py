@@ -109,6 +109,45 @@ FM_GUNLUK_ESIK = 9.5   # günlük fazla mesai eşiği (eski vardiya_takip'in var
 PLAN_YOK = "__plan_yok__"   # _yeni_oneri sözlüğünde kişi değil BAYRAK anahtarı
 
 
+_ESKI_PLAN_SQL = """SELECT a.tarih, a.personel_id::text AS pid, s.sube_id::text AS sid, a.baslangic_saat, a.bitis_saat, s.ad AS slot
+                       FROM vardiya_atama a JOIN vardiya_slot s ON s.id = a.slot_id
+                      WHERE a.tarih BETWEEN %s AND %s AND a.tarih < %s AND COALESCE(a.durum,'') <> 'iptal'"""
+_ESKI_QR_SQL = """SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, vardiya_tip, giris_ts, {cikis} AS cikis_ts, vardiya_disi
+                     FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts"""
+_ESKI_PANEL_SQL = ("""SELECT personel_id::text AS pid, personel_ad AS ad, tarih, sube_id::text AS sid, cevap_ts AS ts, tip
+                        FROM sube_operasyon_event WHERE tarih BETWEEN %s AND %s AND tarih < %s AND durum='tamamlandi'
+                         AND tip IN ('ACILIS','KAPANIS')""",
+                   """SELECT teslim_eden_personel_id::text AS pid, teslim_eden_ad AS ad, tarih, sube_id::text AS sid, olusturma AS ts, 'TESLIM' AS tip
+                        FROM kasa_teslim WHERE tarih BETWEEN %s AND %s AND tarih < %s""")
+
+
+def _iz_tur(r: dict) -> dict:
+    """Arşivden (JSON) dönen eski iz satırının tarih / saat alanlarını türüne geri çevirir — ekran hesabı canlı satırla aynı çalışsın."""
+    from datetime import datetime as _dt, time as _time
+    out = dict(r)
+    for k, v in r.items():
+        if v is None or not isinstance(v, str):
+            continue
+        if k == "tarih":
+            out[k] = date.fromisoformat(v[:10])
+        elif k == "ts" or k.endswith("_ts"):
+            out[k] = _dt.fromisoformat(v)
+        elif k.endswith("_saat"):
+            out[k] = _time.fromisoformat(v)
+    return out
+
+
+def _eski_iz(cur, kaynak: str, bas: date, son: date):
+    """F6.3 (Fable 3. parti 🟡 M1/M4/M6–M8 · Opus sıra 5): 1 Kasım son aktarımından sonra Ekim'in eski QR / panel izi / plan satırları
+    ARŞİVDEN (ham satır — izin kararları gibi sonradan değişen şeyler ekran hesabında canlı kalır). Arşiv yoksa None → çağıran eskiyi okur."""
+    ar = __import__("evvel_yeni_cekirdek").arsiv_oku(cur, "maas", f"iz:{kaynak}")
+    if ar is None:
+        return None
+    if kaynak == "ad":
+        return ar
+    return [x for x in (_iz_tur(r) for r in ar) if bas <= x["tarih"] <= son]
+
+
 def _plan_satirlari(cur, bas: date, son: date) -> tuple:
     """B44 (Fable 22 Eki) — vardiya planının TEK okuyucusu (Maaş saat önerisi + Günlük yoklama): yeni Vardiya PUBLIC gun_plani
     (yalnız geçerli = yayınlanmış ya da günü gelmiş satır); plan_baslangic öncesi günler için ESKİ vardiya_atama yalnız tablo varsa
@@ -127,14 +166,14 @@ def _plan_satirlari(cur, bas: date, son: date) -> tuple:
                 out.append({"tarih": date.fromisoformat(r["gun"]), "pid": str(r["personel_id"]), "sid": str(r.get("sube_id") or ""),
                             "baslangic_saat": _time.fromisoformat(r["bas"]), "bitis_saat": _time.fromisoformat(r["bit"]),
                             "slot": r.get("etiket") or "", "saat": float(r.get("saat") or 0)})
-        if bas < pb and __import__("evvel_yeni_cekirdek").tablo_var(cur, "vardiya_atama", "vardiya_slot"):
+        ar_plan = _eski_iz(cur, "plan", bas, min(son, pb - timedelta(days=1))) if bas < pb else None
+        if bas < pb and (ar_plan is not None or __import__("evvel_yeni_cekirdek").tablo_var(cur, "vardiya_atama", "vardiya_slot")):
             try:
                 with savepoint(cur, "sp_ey_plan_eski"):
-                    cur.execute("""SELECT a.tarih, a.personel_id::text AS pid, s.sube_id::text AS sid, a.baslangic_saat, a.bitis_saat, s.ad AS slot
-                                     FROM vardiya_atama a JOIN vardiya_slot s ON s.id = a.slot_id
-                                    WHERE a.tarih BETWEEN %s AND %s AND a.tarih < %s AND COALESCE(a.durum,'') <> 'iptal'""", (bas, son, pb))
+                    if ar_plan is None:
+                        cur.execute(_ESKI_PLAN_SQL, (bas, son, pb))
                     yeni_var = {(x["pid"], x["tarih"]) for x in out}
-                    for x in cur.fetchall() or []:
+                    for x in (ar_plan if ar_plan is not None else cur.fetchall() or []):
                         x = dict(x)
                         if (x["pid"], x["tarih"]) in yeni_var:
                             continue
@@ -230,6 +269,8 @@ def _eski_ekim(cur, ay: str, arsivden: bool = True) -> dict:
                 mah = _kurus(r.get("avans_mahsup") or 0)
                 out[r["pid"]] = {"net": net, "mahsup": mah, "hak": net + mah, "durum": r.get("durum")}
     except Exception as e:  # noqa: BLE001
+        if not arsivden:   # son aktarım: hata YUTULMAZ (boş arşiv yazılmasın)
+            raise
         log.info("evvel-yeni maaş: eski personel_aylik okunamadı: %s", str(e)[:120])
     return out
 
@@ -251,6 +292,8 @@ def _eski_odenen(cur, ay: str, arsivden: bool = True) -> dict:
             for r in cur.fetchall() or []:
                 out[dict(r)["pid"]] = _kurus(dict(r)["t"] or 0)
     except Exception as e:  # noqa: BLE001
+        if not arsivden:   # son aktarım: hata YUTULMAZ (boş arşiv yazılmasın)
+            raise
         log.info("evvel-yeni maaş: eski ödeme planı okunamadı: %s", str(e)[:120])
     return out
 
@@ -633,11 +676,13 @@ def personel_takvim(ay: Optional[str] = None):
         pb, yeni_qr = _yeni_yoklama(cur, ay_bas, ay_son)   # 1 Kasım'dan itibaren YENİ QR (Y3); öncesi eski panel QR'ı
         yoklama_kapali = yeni_qr is None
         yeni_qr = yeni_qr or []
+        ar_qr = _eski_iz(cur, "qr", ay_bas, min(ay_son, pb - timedelta(days=1))) if ay_bas < pb else []   # Fable: Kasım+ arşivi boşuna okuma
         try:
             with savepoint(cur, "sp_ey_takvim"):
-                cur.execute("""SELECT personel_id::text AS pid, tarih, sube_id::text AS sid, vardiya_tip, giris_ts, vardiya_disi
-                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (ay_bas, ay_son, pb))
-                for r in cur.fetchall() or []:
+                if ar_qr is None:
+                    cur.execute("""SELECT personel_id::text AS pid, tarih, sube_id::text AS sid, vardiya_tip, giris_ts, vardiya_disi
+                                     FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (ay_bas, ay_son, pb))
+                for r in (ar_qr if ar_qr is not None else cur.fetchall() or []):
                     r = dict(r)
                     yok.setdefault((r["pid"], r["tarih"].isoformat()), []).append(r)
         except Exception as e:  # noqa: BLE001
@@ -656,10 +701,12 @@ def personel_takvim(ay: Optional[str] = None):
         yabanci = {k[0] for k in yok if k[0] not in ey_ids}
         eslesmeyen = []
         if yabanci:
+            eski_ad = _eski_iz(cur, "ad", ay_bas, ay_son)
             try:
-                with savepoint(cur, "sp_ey_takvim_ad"):
-                    cur.execute("SELECT id::text AS id, ad_soyad FROM personel WHERE id::text = ANY(%s)", (list(yabanci),))
-                    eski_ad = {dict(r)["id"]: dict(r)["ad_soyad"] for r in cur.fetchall() or []}
+                if eski_ad is None:
+                    with savepoint(cur, "sp_ey_takvim_ad"):
+                        cur.execute("SELECT id::text AS id, ad_soyad FROM personel WHERE id::text = ANY(%s)", (list(yabanci),))
+                        eski_ad = {dict(r)["id"]: dict(r)["ad_soyad"] for r in cur.fetchall() or []}
             except Exception:  # noqa: BLE001
                 eski_ad = {}
             for k in list(yok):
@@ -671,16 +718,14 @@ def personel_takvim(ay: Optional[str] = None):
                     yok.setdefault((hedef, k[1]), []).extend(rows)
                 else:
                     eslesmeyen.append({"ad": eski_ad.get(k[0]) or k[0], "gun": k[1], "sube": sube_ad.get(rows[0]["sid"], rows[0]["sid"])})
-        panel = []
+        ar_panel = _eski_iz(cur, "panel", ay_bas, min(ay_son, pb - timedelta(days=1))) if ay_bas < pb else []
+        panel = list(ar_panel or [])
         try:
-            with savepoint(cur, "sp_ey_takvim_panel"):
-                cur.execute("""SELECT personel_id::text AS pid, personel_ad AS ad, tarih, sube_id::text AS sid, cevap_ts AS ts, tip
-                                 FROM sube_operasyon_event WHERE tarih BETWEEN %s AND %s AND tarih < %s AND durum='tamamlandi'
-                                  AND tip IN ('ACILIS','KAPANIS')""", (ay_bas, ay_son, pb))
-                panel += [dict(r) for r in cur.fetchall() or []]
-                cur.execute("""SELECT teslim_eden_personel_id::text AS pid, teslim_eden_ad AS ad, tarih, sube_id::text AS sid, olusturma AS ts, 'TESLIM' AS tip
-                                 FROM kasa_teslim WHERE tarih BETWEEN %s AND %s AND tarih < %s""", (ay_bas, ay_son, pb))
-                panel += [dict(r) for r in cur.fetchall() or []]
+            if ar_panel is None:
+                with savepoint(cur, "sp_ey_takvim_panel"):
+                    for sql in _ESKI_PANEL_SQL:
+                        cur.execute(sql, (ay_bas, ay_son, pb))
+                        panel += [dict(r) for r in cur.fetchall() or []]
         except Exception as e:  # noqa: BLE001
             log.warning("personel takvim: panel izi okunamadı: %s", str(e)[:150])
         panel += [{**r, "tip": r["tip_ad"]} for r in _yeni_panel_izi(cur, ay_bas, ay_son, pb)]   # yeni dönem panel izi
@@ -932,7 +977,10 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
         yeni_qr = yeni_qr or []
         qr = []
         # B42 (Fable 22 Eki): ESKİ QR yalnız yeni dönemden önceki günler için ve tablo varsa — yoksa sessiz boş (kesimde bu blok silinir)
-        if bas < pb and __import__("evvel_yeni_cekirdek").tablo_var(cur, "gorev_yoklama"):
+        ar_qr = _eski_iz(cur, "qr", bas, min(son, pb - timedelta(days=1))) if bas < pb else None
+        if ar_qr is not None:
+            qr = [{k: r.get(k) for k in ("tarih", "pid", "sid", "giris_ts", "cikis_ts", "vardiya_tip")} for r in ar_qr]
+        elif bas < pb and __import__("evvel_yeni_cekirdek").tablo_var(cur, "gorev_yoklama"):
             try:
                 with savepoint(cur, "sp_ey_yok_qr"):
                     cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, cikis_ts, vardiya_tip
@@ -1094,5 +1142,28 @@ def kesim_dondur(cur, yazan: str, ay: str) -> dict:
         v = _eski_odenen(cur, x, arsivden=False)
         arsiv_yaz(cur, "maas", f"eski_odenen:{x}", v, yazan)
         od_top += sum(v.values())
-    return {"ekim_senkron_kisi": senkron, "ay": len(aylar), "kisi_ay": kisi_ay, "net_toplam_tl": net_top / 100,
+    # Fable 3. parti 🟡 (Opus sıra 5): Ekim (ve bir önceki ay) eski QR / panel izi / plan / eski adlar — ham satır, hata YUTULMAZ
+    from evvel_yeni_cekirdek import panel_baslangic, arsiv_yaz as _ay
+    pb = panel_baslangic(cur)
+    bas_iz = date.fromisoformat(ay_kaydir(ay, -1) + "-01")
+    son_iz = pb - timedelta(days=1)
+    try:
+        with savepoint(cur, "sp_ey_maas_kesim_qr"):
+            cur.execute(_ESKI_QR_SQL.format(cikis="cikis_ts"), (bas_iz, son_iz, pb))
+            qr = [dict(r) for r in cur.fetchall() or []]
+    except Exception:  # noqa: BLE001 — eski tabloda çıkış sütunu yoksa günlük yoklama da NULL okuyordu (aynı yedek)
+        cur.execute(_ESKI_QR_SQL.format(cikis="NULL"), (bas_iz, son_iz, pb))
+        qr = [dict(r) for r in cur.fetchall() or []]
+    panel = []
+    for sql in _ESKI_PANEL_SQL:
+        cur.execute(sql, (bas_iz, son_iz, pb))
+        panel += [dict(r) for r in cur.fetchall() or []]
+    cur.execute(_ESKI_PLAN_SQL, (bas_iz, son_iz, pb))
+    plan = [dict(r) for r in cur.fetchall() or []]
+    cur.execute("SELECT id::text AS id, ad_soyad FROM personel")
+    adlar_ = {dict(r)["id"]: dict(r)["ad_soyad"] for r in cur.fetchall() or []}
+    for k, v in (("qr", qr), ("panel", panel), ("plan", plan), ("ad", adlar_)):
+        _ay(cur, "maas", f"iz:{k}", v, yazan)
+    return {"iz_qr": len(qr), "iz_panel": len(panel), "iz_plan": len(plan),
+            "ekim_senkron_kisi": senkron, "ay": len(aylar), "kisi_ay": kisi_ay, "net_toplam_tl": net_top / 100,
             "odenen_ay": len(od_aylar), "odenen_toplam_tl": od_top / 100}

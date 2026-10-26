@@ -537,7 +537,12 @@ sinif_tablosu = _sinif_tablosu
 # savepoint'inde; kuru denemede sonra geri alınır. Modül YALNIZ kendi arşiv anahtarını yazar. Kesim yayınında eski okuyucularla birlikte silinir.
 def kesim_dondur(cur, yazan: str, ay: str) -> dict:
     """Gider: Ekim'in şube gideri (mal sevk × fiyat eski köprüden)."""
-    from evvel_yeni_cekirdek import arsiv_yaz
+    from evvel_yeni_cekirdek import arsiv_yaz, tablo_var
+    # eski okuyucular bölüm bölüm hatayı yutar (ekran açılsın diye) — son aktarımda eksik tablo = eksik arşiv; önce hepsi var mı
+    eksik = [t for t in ("stok_yolda", "siparis_talep", "urun_alis_fiyat", "merkez_stok_sevk", "operasyon_defter", "siparis_urun",
+                         "sube_operasyon_event") if not tablo_var(cur, t)]
+    if eksik:
+        raise RuntimeError("eski tablo okunamıyor: " + ", ".join(eksik) + " — arşiv yazılmadı")
     v = gider_ozet(ay, evren="eski")
     arsiv_yaz(cur, "gider", f"ozet:{ay}", v, yazan)
     return {"sube": len(v.get("subeler") or [])}

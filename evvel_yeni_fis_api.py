@@ -40,11 +40,16 @@ def _hazirla():
     _HAZIR = True
 
 
-def _eski_bilgi(cur, refler: List[str]) -> Dict[str, dict]:
-    """KÖPRÜ: eski anlik_giderler'den personel adı + eski fiş işareti (panelin 'fiş gönderildi' bilgisi dahil)."""
+def _eski_bilgi(cur, refler: List[str], arsivden: bool = True) -> Dict[str, dict]:
+    """KÖPRÜ: eski anlik_giderler'den personel adı + eski fiş işareti (panelin 'fiş gönderildi' bilgisi dahil).
+    1 Kasım son aktarımından sonra arşivden (G2 — eski tablo okunmaz)."""
     idler = [r.split(":", 1)[1] for r in refler if r and r.startswith("anlik_gider:")]
     if not idler:
         return {}
+    if arsivden:
+        ar = __import__("evvel_yeni_cekirdek").arsiv_oku(cur, "fis", "eski_bilgi")
+        if ar is not None:
+            return {r: ar[r] for r in refler if r in ar}
     try:
         with savepoint(cur, "sp_ey_fis_eski"):
             cur.execute("""SELECT g.id::text AS id, COALESCE(p.ad_soyad, u.ad) AS giren, g.personel_id::text AS personel_id,
@@ -56,13 +61,15 @@ def _eski_bilgi(cur, refler: List[str]) -> Dict[str, dict]:
                             WHERE g.id::text = ANY(%s)""", (idler,))
             return {"anlik_gider:" + dict(x)["id"]: dict(x) for x in cur.fetchall() or []}
     except Exception as e:  # noqa: BLE001
+        if not arsivden:   # son aktarım: hata YUTULMAZ (boş arşiv yazılmasın)
+            raise
         log.info("fiş kontrol: eski bilgi okunamadı (eski sistem kalkmış olabilir): %s", str(e)[:120])
         return {}
 
 
 def _eskiye_yaz(cur, ref: str, durum: str, notu: Optional[str]) -> bool:
     """KÖPRÜ: aynı işareti eski tabloya da bas (eski ekranlar aynı şeyi görsün)."""
-    if not ref.startswith("anlik_gider:"):
+    if not ref.startswith("anlik_gider:") or __import__("evvel_yeni_cekirdek").yeni_donem(cur):   # G3: 1 Kasım'dan sonra eskiye YAZILMAZ
         return False
     try:
         with savepoint(cur, "sp_ey_fis_eskiye"):
@@ -74,9 +81,13 @@ def _eskiye_yaz(cur, ref: str, durum: str, notu: Optional[str]) -> bool:
         return False
 
 
-def _eski_panel_kart_giderleri(cur, bas: str) -> list:
+def _eski_panel_kart_giderleri(cur, bas: str, arsivden: bool = True) -> list:
     """KÖPRÜ: panelden KART/HAVALE ile girilen giderler Kasa defterine girmez (dükkân nakdi değil) ama fiş kontrolüne girer
-    (Fable A6). Eski sistem kalkınca panel bunları doğrudan Evvel Yeni'ye yazacak (KESIM_LISTESI)."""
+    (Fable A6). Eski sistem kalkınca panel bunları doğrudan Evvel Yeni'ye yazacak (KESIM_LISTESI). 1 Kasım son aktarımından sonra arşivden (G4)."""
+    if arsivden:
+        ar = __import__("evvel_yeni_cekirdek").arsiv_oku(cur, "fis", "eski_kart")
+        if ar is not None:
+            return [x for x in ar if x["tarih"] >= str(bas)[:10]]
     try:
         with savepoint(cur, "sp_ey_fis_kart"):
             cur.execute("""SELECT g.id::text AS id, g.tarih, g.tutar, COALESCE(s.ad, g.sube::text) AS sube,
@@ -89,6 +100,8 @@ def _eski_panel_kart_giderleri(cur, bas: str) -> list:
                      "tutar": float(dict(r)["tutar"] or 0), "aciklama": dict(r)["aciklama"], "giren": None, "giren_id": None, "kart": True}
                     for r in cur.fetchall() or []]
     except Exception:  # noqa: BLE001
+        if not arsivden:
+            raise
         return []
 
 
@@ -166,3 +179,18 @@ def isaretle(body: IsaretBody, x_evvel_oturum: Optional[str] = Header(default=No
             _eskiye_yaz(cur, body.ref, body.durum, notu)
     return {"ok": True, "mesaj": {"geldi": "Fiş geldi", "gelmedi": "Fiş gelmedi — girişi yapan adıyla kaydedildi",
                                   "muaf": "Fiş gerekmez", "bekliyor": "Geri alındı"}[body.durum]}
+
+
+# ✂️ 1 KASIM SON AKTARIM (manifest 'kesim' · Fable 3. parti 🔴 G2–G4) — eski panel giderlerinin personel adı + fiş işareti ve panelden
+# KART / HAVALE ile girilmiş giderler BİR KEZ arşive; sonra fiş kontrolü eski tabloyu okumaz, eskiye yazmaz. Kesim yayınında köprü silinir.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    import evvel_yeni_kasa_api as kasa
+    from evvel_yeni_cekirdek import arsiv_yaz
+    _hazirla()
+    bas = __import__("evvel_yeni_cekirdek").ay_kaydir(ay, -1) + "-01"   # Fable 🟢: liste 45 gün geriye bakar — bir önceki ay da
+    kart = _eski_panel_kart_giderleri(cur, bas, arsivden=False)
+    refler = [x["ref"] for x in kasa.dukkan_giderleri(cur, bas) + kart if x.get("ref")]
+    bilgi = _eski_bilgi(cur, refler, arsivden=False)
+    arsiv_yaz(cur, "fis", "eski_bilgi", bilgi, yazan)
+    arsiv_yaz(cur, "fis", "eski_kart", kart, yazan)
+    return {"eski_gider_bilgi": len(bilgi), "kart_havale_gider": len(kart), "uyari": None if bilgi else "eski bilgi 0 satır — kontrol et"}
