@@ -379,6 +379,7 @@ function DepoSayim({ onToast }) {
     try {
       const r = await api('/evvel-yeni/depo/sayim', { method: 'POST', body: { konum, satirlar, acilis, evren: v.evren } });
       onToast?.(r.mesaj); setSonuc(r); setDeger({}); yukle();
+      try { window.scrollTo({ top: 0, behavior: 'smooth' }); } catch { /* yut */ }   // farklar üstte
     } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); } finally { setMesgul(false); }
   };
   let sonKat = null;
@@ -420,6 +421,10 @@ function DepoSayim({ onToast }) {
             </React.Fragment>
           );
         })}
+      </div>
+      <div style={{ ...kart, position: 'sticky', bottom: 0, padding: '8px 12px', display: 'flex', gap: 10, alignItems: 'center', boxShadow: '0 -4px 12px rgba(0,0,0,.08)' }}>
+        <span style={{ flex: 1, fontSize: 13, color: R.not }}>{Object.values(deger).filter((d) => String(d).trim() !== '').length} ürün sayıldı</span>
+        <Dugme ana onClick={kaydet} disabled={mesgul}>{mesgul ? 'Kaydediliyor…' : 'Sayımı kaydet'}</Dugme>
       </div>
     </div>
   );
