@@ -93,7 +93,6 @@ def avans_durumu(cur, personel_id: str, ay: Optional[str] = None) -> dict:
     """PUBLIC (telefon): tavan · o ay (verilmezse bu ay) kullanılan · kullanılabilir · açık talep (kuruş). Tavan Maaş'ın (eski oran).
     ay verilirse tavan O AYIN sonuna göre (Codex 2. tur: önceki aydan bekleyen talep onaylanırken bu ayın toplamına bakılıyordu)."""
     avans_hazirla(cur)
-    _eski_kopya_gerekirse(cur)   # eski açık talep taşınmadan ikinci talep açılmasın
     from evvel_yeni_maas_api import avans_tavani
     gun = None
     if ay and ay[:7] != __import__("evvel_yeni_cekirdek").is_gunu().strftime("%Y-%m"):   # Maaş tavanıyla aynı gün kuralı
@@ -231,7 +230,6 @@ def _kisi_subesi(cur, personel_id: str) -> Optional[str]:
 
 def elden_bekleyen(cur, sube_id: str) -> list:
     """PUBLIC (şube paneli): bu şubeden ELDEN verilecek onaylı avanslar (personel adı + tutar)."""
-    _eski_kopya_gerekirse(cur)   # 1 Kasım: eski onaylı-elden avanslar panelde kaybolmasın
     return [t for t in _yeni_talepler(cur) if t["durum"] == "onaylandi" and t["yontem"] == "elden" and t["sube_id"] == str(sube_id)]
 
 
@@ -315,11 +313,10 @@ def _eski_acik_kopyala(cur) -> None:
 
 
 def _eski_kopya_gerekirse(cur) -> bool:
-    """Yeni dönemse eski açıkları (bir kez) taşır; dönüş: yeni dönem mi. Panel / telefon / merkez — hangisi önce okursa."""
-    if not yeni_donem(cur):
-        return False
-    __import__("evvel_yeni_cekirdek").bir_kez(cur, "avans_eski_acik_kopya", _eski_acik_kopyala, "avans eski açık kopyası")
-    return True
+    """Dönüş: yeni dönem mi. Eski açıkları artık YALNIZ 1 Kasım son aktarımı taşır (Opus karar 5 + Fable 2. parti 🟡: ilk okumadaki
+    kendiliğinden kopya, sonradan eski ekranda onaylanan talebi EY'de 'açık' bırakıp çift ödemeye yol açabiliyordu). Son aktarıma kadar
+    eski açıklar _tum_acik'te eski tablodan okunmaya devam eder."""
+    return yeni_donem(cur)
 
 
 def _tum_acik(cur, ayrinti: bool = False) -> list:
@@ -337,8 +334,12 @@ def _tum_acik(cur, ayrinti: bool = False) -> list:
 bekleyen_is_kaydet("avans_talep", _bekleyen)
 
 
-def _kapananlar(cur) -> list:
-    """KÖPRÜ: son 60 günde kapatılan / reddedilen talepler (ekranda gri)."""
+def _kapananlar(cur, arsivden: bool = True) -> list:
+    """KÖPRÜ: son 60 günde kapatılan / reddedilen talepler (ekranda gri). 1 Kasım son aktarımından sonra arşivden."""
+    if arsivden:
+        ar = __import__("evvel_yeni_cekirdek").arsiv_oku(cur, "avans", "eski_kapananlar")
+        if ar is not None:
+            return ar
     try:
         with savepoint(cur, "sp_ey_avans_kapali"):
             cur.execute("""SELECT pa.id::text AS id, pa.tutar, pa.durum, pa.talep_ts, pa.not_aciklama, p.ad_soyad AS ad
@@ -348,6 +349,8 @@ def _kapananlar(cur) -> list:
             return [{"id": dict(r)["id"], "ad": dict(r)["ad"] or "—", "tutar": float(dict(r)["tutar"] or 0), "durum": dict(r)["durum"],
                      "talep": str(dict(r)["talep_ts"] or "")[:16], "not": dict(r).get("not_aciklama")} for r in cur.fetchall() or []]
     except Exception:  # noqa: BLE001
+        if not arsivden:   # son aktarım: hata YUTULMAZ
+            raise
         return []
 
 
@@ -488,3 +491,44 @@ def reddet(aid: str, body: RedBody, x_evvel_oturum: Optional[str] = Header(defau
     import avans_service as eski
     eski.avans_reddet(aid, eski.AvansRedModel(neden=(body.neden or "Merkez reddetti")[:200]))
     return {"ok": True, "mesaj": "Talep reddedildi"}
+
+
+# ✂️ 1 KASIM SON AKTARIM (manifest 'kesim', Maaş'tan ÖNCE) — (a) eski AÇIK talepler yeni deftere (Opus karar 5: 31 Eki gecesi, ilk
+# okumayı beklemez); (b) Ekim'de HAVALEYLE ödenmiş, dönemi Kasım ve sonrası avanslar → Ödeme'ye para hareketsiz devir + defterde 'odendi'
+# (Fable karar A). ELDEN verilenler TAŞINMAZ (Kasa'da zaten sube_avansi) · Ekim dönemli TAŞINMAZ (eski Ekim neti düşmüş) — çift mahsup yok.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    from evvel_yeni_cekirdek import ayar_yaz, panel_baslangic
+    from evvel_yeni_odeme_api import devir_kaydi_yaz
+    from evvel_yeni_tanim_api import adlar
+    avans_hazirla(cur)
+    cur.execute("SELECT COUNT(*) AS n FROM ey_avans_talep WHERE id LIKE 'av-e-%%'")
+    once = int(dict(cur.fetchone())["n"])
+    _eski_acik_kopyala(cur)   # okunamazsa istisna → adım hata verir, işaretlenmez
+    ayar_yaz(cur, "avans_eski_acik_kopya", "1", yazan)
+    cur.execute("SELECT COUNT(*) AS n FROM ey_avans_talep WHERE id LIKE 'av-e-%%'")
+    acik = int(dict(cur.fetchone())["n"]) - once
+    pb = panel_baslangic(cur)
+    cur.execute("""SELECT id::text AS id, personel_id::text AS pid, tutar, donem_yil, donem_ay, talep_ts, COALESCE(onay_ts, talep_ts) AS odeme_ts FROM personel_avans
+                    WHERE durum='odendi' AND LOWER(COALESCE(odeme_yontemi,''))='havale'
+                      AND (donem_yil, donem_ay) >= (%s, %s) ORDER BY talep_ts""", (pb.year, pb.month))
+    rows = [dict(r) for r in cur.fetchall() or []]
+    pad = adlar(cur, "ey_personel", {r["pid"] for r in rows})
+    devir, toplam, kadrosuz = 0, 0, []
+    for r in rows:
+        if r["pid"] not in pad:
+            kadrosuz.append(r["pid"])   # Fable risk 5: Evvel Yeni kadrosunda yok → Maaş satırı düşmez, elle bakılır
+            continue
+        ait = f"{int(r['donem_yil'])}-{int(r['donem_ay']):02d}"
+        kurus = int(round(float(r["tutar"] or 0) * 100))
+        hid = devir_kaydi_yaz(cur, personel_id=r["pid"], personel_ad=pad[r["pid"]], tutar=kurus, ait_ay=ait, gun=pb.isoformat(), kim=yazan,
+                              kaynak_ref=f"avans-eski:{r['id']}", aciklama=f"avans (Ekim havalesi) · {pad[r['pid']]}")
+        cur.execute("""INSERT INTO ey_avans_talep (id, personel_id, tutar, donem, not_, durum, yontem, istek_id, karar_kim, odeme_ref, teslim_ts)
+                       VALUES (%s,%s,%s,%s,'eski sistemden taşındı (Ekim havalesi)','odendi','havale',%s,'eski sistem',%s,%s)
+                       ON CONFLICT (id) DO NOTHING""",
+                    ("av-e-" + r["id"][:36], r["pid"], kurus, ait, "eski-" + r["id"][:60], f"avans-eski:{r['id']}", r.get("odeme_ts")))   # Fable 🟢: telefonda ödeme günü
+        devir += 1 if hid else 0
+        toplam += kurus
+    kap = _kapananlar(cur, arsivden=False)   # Fable 🟢: eski iptal / red gri listesi de (60 gün)
+    __import__("evvel_yeni_cekirdek").arsiv_yaz(cur, "avans", "eski_kapananlar", kap, yazan)
+    return {"eski_kapanan": len(kap), "acik_tasinan": acik, "kasim_havale": len(rows) - len(kadrosuz), "devir_yeni": devir, "devir_toplam_tl": toplam / 100,
+            "kadroda_yok": len(kadrosuz)}

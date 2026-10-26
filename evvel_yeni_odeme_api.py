@@ -462,9 +462,9 @@ def odeme_listesi(ay: Optional[str] = None):
                     "duzeltilebilir": v.get("kaynak") == "odeme_formu", "duzeltmeler": v.get("duzeltmeler") or [],
                     "patron": v.get("patron"), "kredi_id": (v.get("konu") or {}).get("kredi_id"),
                     "borc_ref": (v.get("konu") or {}).get("borc_ref"), "borc_ad": (v.get("konu") or {}).get("borc_ad"),
-                    "kart_id": (v.get("konu") or {}).get("kart_id")})
+                    "kart_id": (v.get("konu") or {}).get("kart_id"), "devir": v.get("kaynak") == "eski_devir"})
     out.sort(key=lambda x: x["tarih"], reverse=True)
-    return {"ay": a_, "odemeler": out, "toplam": round(sum(x["toplam"] for x in out), 2),
+    return {"ay": a_, "odemeler": out, "toplam": round(sum(x["toplam"] for x in out if not x["devir"]), 2),   # devir para değil
             "nakit_toplam": round(sum(n["tutar"] for x in out for n in x["nakit"]), 2),
             "kart_toplam": round(sum(k["tutar"] for x in out for k in x["kart"]), 2)}
 
@@ -628,3 +628,17 @@ def kart_harcamalari(cur, kart_id: str) -> list:
             if str(p.get("kart_id")) == str(kart_id):
                 out.append({"tarih": h["is_gunu"], "tutar": int(p["tutar"]), "aciklama": h["veri"].get("aciklama")})
     return out
+
+
+# ✂️ 1 KASIM — PARA HAREKETSİZ DEVİR KAYDI (Fable L4b 27 Eki, karar A): eski sistemde Ekim'de HAVALEYLE ödenmiş, mahsubu Kasım'a ait
+# avans. Para eski bankadan zaten çıktı → hiçbir cebe dokunmaz (parcalar boş); Maaş 'Avans' kalemini konu_odemeleri'nden doğal mahsup eder.
+# Yazan yalnız Avans modülünün son aktarım adımı. Ödeme defterinde görünür, ayın toplamına girmez.
+def devir_kaydi_yaz(cur, *, personel_id: str, personel_ad: Optional[str], tutar: int, ait_ay: str, gun: str, kim: str, kaynak_ref: str,
+                    aciklama: str) -> Optional[str]:
+    """PUBLIC — kuruş. Dönüş: hareket id ya da None (aynı kaynak_ref ile zaten yazılmış — kuru / yeniden koşmada tekrar yazmaz)."""
+    _kilit(cur)
+    veri = {"konu": {"tip": "personel", "ad": "Personel", "personel_id": str(personel_id), "personel_ad": personel_ad, "kalem": "Avans",
+                     "donem": str(ait_ay)[:7]},
+            "ait_ay": str(ait_ay)[:7], "toplam": int(tutar), "parcalar": [], "gider": False, "kaynak": "eski_devir",
+            "aciklama": f"Eski sistem devri · para hareketsiz · {aciklama}"[:120]}
+    return hareket_kaydet(cur, tur="odeme", gun=gun, tutar=int(tutar), veri=veri, kim=kim, kaynak_ref=kaynak_ref, para_cepleri=set())

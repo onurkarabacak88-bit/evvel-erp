@@ -405,6 +405,17 @@ def arsiv_yaz(cur, modul: str, anahtar: str, veri, yazan: str) -> None:
                 (modul, anahtar, json.dumps(veri, ensure_ascii=False, default=str), yazan))
 
 
+def arsiv_cift_oku(cur, modul: str, anahtar: str) -> Optional[dict]:
+    """PUBLIC — {(a, b): değer} biçimli eski çıktının arşivi (JSON'da demet anahtar olmaz → [a, b, değer] listesi). Yoksa None."""
+    ar = arsiv_oku(cur, modul, anahtar)
+    return None if ar is None else {(a, b): v for a, b, v in ar}
+
+
+def arsiv_cift_yaz(cur, modul: str, anahtar: str, veri: dict, yazan: str) -> int:
+    arsiv_yaz(cur, modul, anahtar, [[a, b, v] for (a, b), v in veri.items()], yazan)
+    return len(veri)
+
+
 def merkez_aktor(cur, jeton: Optional[str]) -> str:
     """PUBLIC — merkez ucu kapısı: geçerli oturumun adı, yoksa 401 (Dalga 4, F#2: aynı 3 satır 12 yerde)."""
     kim = aktor(cur, jeton)
@@ -590,7 +601,7 @@ def bekleyen_saglayicilar() -> List[str]:
 
 __all__ = ["TrTutar", "bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "kolon_var", "bir_kez", "ddl_kur", "ddl_bu_islemde", "lock_timeout_ayarla", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
-           "ayar_oku", "ayar_yaz", "arsiv_oku", "arsiv_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik", "eski_panel_zinciri_acik_onbellekli", "eski_yazim_kapisi"]
+           "ayar_oku", "ayar_yaz", "arsiv_oku", "arsiv_yaz", "arsiv_cift_oku", "arsiv_cift_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik", "eski_panel_zinciri_acik_onbellekli", "eski_yazim_kapisi"]
 
 
 def takvim_durumu(beklenen, odenen, vade, bugun, once: bool = False, tolerans=100) -> str:

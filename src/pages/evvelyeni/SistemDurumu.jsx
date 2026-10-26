@@ -25,7 +25,7 @@ const durumYaz = (d, liste) => {
 
 // ✂️ 1 KASIM SON AKTARIM (KESIM_1KASIM_ENVANTERI ⚖️ · sunucu: evvel_yeni_moduller /kesim) — eski dönemin çıktısı Evvel Yeni arşivine
 // BİR KEZ dondurulur. Adım adım: önce "Kuru dene" (sayar, yazmaz), sonra "Çalıştır" (yalnız 1 Kasım 02:00 sonrası açılır). Kesim yayınında kalkar.
-const sonucYaz = (s) => Object.entries(s || {}).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${typeof v === 'object' && v ? Object.entries(v).map(([a, b]) => `${a} ${b}`).join(', ') : v}`).join(' · ');
+const sonucYaz = (s) => Object.entries(s || {}).filter(([, v]) => v != null).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${typeof v === 'object' && v ? Object.entries(v).map(([a, b]) => `${a} ${b}`).join(', ') : v}`).join(' · ');
 
 function SonAktarim({ onToast }) {
   const [v, setV] = useState(null);
