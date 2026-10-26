@@ -75,6 +75,8 @@ def listeler():
         L = _listeler(cur)
         from evvel_yeni_tanim_api import subeler as _sb_hepsi
         pasif = {str(x["id"]) for x in _sb_hepsi(cur, hepsi=True) if not x["aktif"]}   # B13: pasif şube seçilemez
+        from evvel_yeni_kasa_api import alinan_borclar
+        acik_borclar = [x for x in alinan_borclar(cur) if x["alt"] == "borc" and not x["kapandi"]]   # D-1: geri ödenecek kişisel borçlar
     B = _bakiyeler(kayit, C)
     hepsi = [{"id": c["sube_id"], "ad": c["kisa"]} for c in cep_list if c["tur"] == "sube"]
     subeler = [s for s in hepsi if str(s["id"]) not in pasif]
@@ -84,7 +86,7 @@ def listeler():
     return {
         "konular": [{"kod": k, **v} for k, v in KONULAR.items()],
         "fatura_turleri": FATURA_TURLERI, "personel_kalemleri": PERSONEL_KALEMLERI, "vergi_turleri": VERGI_TURLERI,
-        "subeler": subeler, "sube_adlari": sube_ad, **L,
+        "subeler": subeler, "sube_adlari": sube_ad, **L, "alinan_borclar": acik_borclar,
         "nakit_cepler": [{"id": c["id"], "ad": c["ad"], "bakiye": _tl_sayi(B.get(c["id"], 0))} for c in cep_list if c["tur"] == "ev"],
         # Sahip (2026-10-15): "dükkân nakdinden ödenirse panelden girilir" → dükkân çekmecesi bu formda YOK (çift giriş biter)
         "banka_cepler": [{"id": c["id"], "ad": c["ad"], "bakiye": _tl_sayi(B.get(c["id"], 0))} for c in cep_list if c["tur"] in ("banka", "hesap")
@@ -96,7 +98,7 @@ def listeler():
 def _konu_kimlik(k) -> tuple:
     """BENZER KAYIT kıyası için konunun KİMLİĞİ: tür + kimlik alanları (ad / açıklama hariç — Tanımlar'da ad değişince kalkan kaçmasın)."""
     k = k or {}
-    return tuple(sorted((a, str(v)) for a, v in k.items() if a.endswith("_id") or a in ("tip", "kalem", "fatura_turu", "vergi_turu", "donem")))
+    return tuple(sorted((a, str(v)) for a, v in k.items() if a.endswith("_id") or a in ("tip", "kalem", "fatura_turu", "vergi_turu", "donem", "borc_ref")))
 
 class Parca(BaseModel):
     yontem: str                  # nakit | havale | kart
@@ -118,6 +120,7 @@ class OdemeBody(BaseModel):
     patron: Optional[str] = None          # kimin='patron' ise: Onur | Fethi | Fatma
     kredi_id: Optional[str] = None        # konu=kredi: hangi kredi (Krediler modülü — takvimde 'ödendi')
     kredi_ad: Optional[str] = None
+    borc_ref: Optional[str] = None        # konu=kredi: ALINAN BORÇ geri ödemesi — Kasa dış girişinin id'si (F3.9 D-1)
     vergi_turu: Optional[str] = None      # konu=vergi: KDV · stopaj · gelir/kurumlar · SGK · diğer
     aciklama: Optional[str] = None
     parcalar: List[Parca]
@@ -212,6 +215,16 @@ def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
         if body.konu == "vergi":
             konu["vergi_turu"] = body.vergi_turu
         etiket = (f"Vergi · {body.vergi_turu}" if body.konu == "vergi" else "SGK") + f" · {subeler[kimin]['kisa'] if kimin in subeler else 'Ortak'}"
+    elif body.konu == "kredi" and body.borc_ref:
+        # F3.9 D-1 (sim 26 Eki · Opus + Codex): yeni konu yok — "Kredi / borç taksiti" içinde alınan borç; liste Kasa'nın PUBLIC kapısından
+        # (Krediler kapalıyken de bağlı yazılır). Gider değil (kredi konusu). Kalandan fazlası reddedilir (aşağıda, toplam belli olunca).
+        kimin = "patron"
+        from evvel_yeni_kasa_api import alinan_borclar
+        borc = next((x for x in alinan_borclar(cur) if x["id"] == str(body.borc_ref) and x["alt"] == "borc"), None)
+        if not borc:
+            raise HTTPException(400, "Alınan borç bulunamadı (iptal edilmiş olabilir) — listeden seç")
+        konu.update(borc_ref=borc["id"], borc_ad=f'{borc.get("kimden") or "?"} · {_tl(int(round(borc["tutar"] * 100)))}')
+        etiket = f'Borç geri ödeme · {borc.get("kimden") or "?"}'
     elif body.konu in ("kredi", "kart_borcu"):
         kimin = "patron"
         kl = _kredi_listesi(cur) if body.konu == "kredi" else None
@@ -280,6 +293,12 @@ def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
     if len({x["cep"] for x in nakit_parca}) != len(nakit_parca):
         raise HTTPException(400, "Aynı cep iki kez seçilemez")
     toplam = sum(x["tutar"] for x in nakit_parca) + sum(x["tutar"] for x in kart_parca)
+    if konu.get("borc_ref"):   # D-1: kalandan fazla geri ödeme yok (iki borca birden de yok — her ödeme tek borca)
+        if str(gun) < str(borc["tarih"]):
+            raise HTTPException(400, f'Bu borç {borc["tarih"]} günü alındı — ondan önceki bir güne geri ödeme girilemez')
+        kalan = int(round((borc.get("kalan") or 0) * 100))
+        if toplam > kalan:
+            raise HTTPException(400, f"Bu borcun kalanı {_tl(kalan)} — daha fazlası ödenemez (fazlası başka borçsa ayrı gir)")
 
     veri = {"aciklama": etiket[:120], "kimin": (subeler[kimin]["kisa"] if kimin in subeler else {"ortak": "Ortak", "patron": "Patron"}.get(kimin, "Ortak")),
             "kimin_kod": kimin, "parcalar": [{"cep": x["cep"], "tutar": x["tutar"]} for x in nakit_parca],
@@ -329,6 +348,7 @@ def _kredi_listesi(cur) -> Optional[list]:
 
 class DuzeltBody(BaseModel):
     kredi_id: Optional[str] = None    # B67: krediye bağlanmamış kredi taksitini sonradan bağla (para oynamaz)
+    borc_ref: Optional[str] = None    # D-1: eski ödemeyi ALINAN BORCA bağla (para oynamaz, iz kalır)
     kimin: Optional[str] = None       # şube id | 'ortak' | 'patron'
     ait_ay: Optional[str] = None      # YYYY-AA (kira/fatura/personel)
     aciklama: Optional[str] = None
@@ -352,13 +372,32 @@ def odeme_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = Hea
             raise HTTPException(400, "Bu kayıt Ödeme formundan girilmemiş — şube panelden düzeltilir")
         tip = (v.get("konu") or {}).get("tip")
         subeler = {c["sube_id"]: c for c in cep_list if c["tur"] == "sube"}
-        eski = {"kimin": v.get("kimin"), "ait_ay": v.get("ait_ay"), "aciklama": v.get("aciklama"), "kredi": (v.get("konu") or {}).get("kredi_ad")}
-        eski_kid = (v.get("konu") or {}).get("kredi_id")
+        eski_kid = (v.get("konu") or {}).get("kredi_id")   # Fable: değişiklikten ÖNCE okunur (yoksa kıyas hep "aynı")
+        eski_bref = (v.get("konu") or {}).get("borc_ref")
+        eski = {"kimin": v.get("kimin"), "ait_ay": v.get("ait_ay"), "aciklama": v.get("aciklama"), "kredi": (v.get("konu") or {}).get("kredi_ad"),
+                "borc": (v.get("konu") or {}).get("borc_ad")}
+        if body.borc_ref and tip in ("kredi", "diger"):
+            # D-1 (Opus + Codex): 1 Kasım öncesi "Diğer" / bağsız kredi konusuyla ödenmiş borç geri ödemesi sonradan bağlanır —
+            # PARA OYNAMAZ, iz kalır. Borç geri ödemesi gider değildir → konu kredi, gider False. Kalandan fazlası bağlanamaz.
+            from evvel_yeni_kasa_api import alinan_borclar
+            borc = next((x for x in alinan_borclar(cur) if x["id"] == str(body.borc_ref) and x["alt"] == "borc"), None)
+            if not borc:
+                raise HTTPException(400, "Alınan borç bulunamadı")
+            if str(h["is_gunu"]) < str(borc["tarih"]):   # borç alınmadan önceki ödeme o borcun geri ödemesi olamaz
+                raise HTTPException(400, f'Bu ödeme {h["is_gunu"]} günü yapılmış, borç {borc["tarih"]} günü alındı — bağlanamaz')
+            if (v.get("konu") or {}).get("borc_ref") != borc["id"] and int(v.get("toplam", h["tutar"]) or 0) > int(round((borc["kalan"] or 0) * 100)):
+                raise HTTPException(400, f'Bu borcun kalanı {_tl(int(round((borc["kalan"] or 0) * 100)))} — bu ödeme daha büyük')
+            v["konu"] = {**{a: b for a, b in (v.get("konu") or {}).items() if a not in ("kredi_id", "kredi_ad")},   # Codex P1: bağlar birbirini dışlar
+                         "tip": "kredi", "borc_ref": borc["id"], "borc_ad": f'{borc.get("kimden") or "?"} · {_tl(int(round(borc["tutar"] * 100)))}'}
+            v["gider"] = False
+            v["kimin_kod"], v["kimin"] = "patron", "Patron"
+            body.kimin = None   # borç geri ödemesinde "kimin gideri" sorusu yok — formdan gelen şube seçimi kimin/gider'i geri çevirmesin
         if body.kredi_id and tip == "kredi":   # B67: hangi kredinin taksiti (sonradan bağla / değiştir)
             k = next((x for x in (_kredi_listesi(cur) or []) if x["id"] == str(body.kredi_id)), None)
             if not k:
                 raise HTTPException(400, "Kredi bulunamadı")
-            v["konu"] = {**(v.get("konu") or {}), "kredi_id": k["id"], "kredi_ad": k["ad"]}
+            v["konu"] = {**{a: b for a, b in (v.get("konu") or {}).items() if a not in ("borc_ref", "borc_ad")},
+                         "kredi_id": k["id"], "kredi_ad": k["ad"]}   # Codex P1: bağlar birbirini dışlar (çift mahsup yok)
         if body.kimin is not None and body.kimin != v.get("kimin_kod") and tip in ("vergi", "sgk"):   # Fable: vergi şubesi düzeltilebilsin (gider değil)
             if body.kimin not in list(subeler) + ["ortak"]:
                 raise HTTPException(400, "Geçerli bir şube seç ya da Ortak")
@@ -386,11 +425,15 @@ def odeme_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = Hea
                 v["konu"] = {**(v.get("konu") or {}), "donem": v["ait_ay"]}
         if body.aciklama is not None and body.aciklama.strip() and body.aciklama.strip()[:120] != v.get("aciklama"):
             v["aciklama"] = body.aciklama.strip()[:120]
-        yeni = {"kimin": v.get("kimin"), "ait_ay": v.get("ait_ay"), "aciklama": v.get("aciklama"), "kredi": (v.get("konu") or {}).get("kredi_ad")}
+        yeni = {"kimin": v.get("kimin"), "ait_ay": v.get("ait_ay"), "aciklama": v.get("aciklama"), "kredi": (v.get("konu") or {}).get("kredi_ad"),
+                "borc": (v.get("konu") or {}).get("borc_ad")}
         kid_degisti = eski_kid != (v.get("konu") or {}).get("kredi_id")   # Fable P3: aynı adlı iki kredi — kıyas kimlikle
-        if yeni == eski and not kid_degisti:
+        bref_degisti = eski_bref != (v.get("konu") or {}).get("borc_ref")   # Codex P2: aynı kişiden aynı tutarda iki borç — kıyas kimlikle
+        if yeni == eski and not kid_degisti and not bref_degisti:
             return {"ok": True, "mesaj": "Değişiklik yok"}
-        degisen = {k: [eski[k], yeni[k]] for k in eski if eski[k] != yeni[k]} or {"kredi": [f'{eski["kredi"]} ({eski_kid})', f'{yeni["kredi"]} ({(v.get("konu") or {}).get("kredi_id")})']}
+        degisen = {k: [eski[k], yeni[k]] for k in eski if eski[k] != yeni[k]} or (
+            {"borc": [f'{eski["borc"]} ({eski_bref})', f'{yeni["borc"]} ({(v.get("konu") or {}).get("borc_ref")})']} if bref_degisti
+            else {"kredi": [f'{eski["kredi"]} ({eski_kid})', f'{yeni["kredi"]} ({(v.get("konu") or {}).get("kredi_id")})']})
         v["duzeltmeler"] = list(v.get("duzeltmeler") or []) + [{"kim": kim, "zaman": _bugun().isoformat(), "degisen": degisen}]
         hareket_veri_degistir(cur, hid, v)   # Kasa'nın kapısı (C-T2-12)
     return {"ok": True, "mesaj": "Düzeltildi · " + " · ".join(f"{k}: {a or '—'} → {b or '—'}" for k, (a, b) in degisen.items())}
@@ -418,6 +461,7 @@ def odeme_listesi(ay: Optional[str] = None):
                     "fis": _hareket_dto(h, C, ol), "kimin_kod": v.get("kimin_kod"), "konu_tip": (v.get("konu") or {}).get("tip"),
                     "duzeltilebilir": v.get("kaynak") == "odeme_formu", "duzeltmeler": v.get("duzeltmeler") or [],
                     "patron": v.get("patron"), "kredi_id": (v.get("konu") or {}).get("kredi_id"),
+                    "borc_ref": (v.get("konu") or {}).get("borc_ref"), "borc_ad": (v.get("konu") or {}).get("borc_ad"),
                     "kart_id": (v.get("konu") or {}).get("kart_id")})
     out.sort(key=lambda x: x["tarih"], reverse=True)
     return {"ay": a_, "odemeler": out, "toplam": round(sum(x["toplam"] for x in out), 2),

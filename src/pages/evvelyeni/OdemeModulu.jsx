@@ -44,9 +44,10 @@ export default function OdemeModulu({ onToast, gorunum }) {
   const otoTutar = useRef(null);         // son kendiliğinden yazılan tutar (kullanıcı değiştirdiyse üstüne yazılmaz)
   const [hata, setHata] = useState('');
   const [mesgul, setMesgul] = useState(false);
-  const [ay, setAy] = useState(ayBugun());
+  const [ay, setAy] = useState(() => { const q = new URLSearchParams(window.location.search).get('gun') || ''; return /^\d{4}-\d{2}-\d{2}$/.test(q) && q <= gunBugun() ? q.slice(0, 7) : ayBugun(); });   // ?gun= ile gelen günün ayı
   const [liste, setListe] = useState(null);
-  const [gun, setGun] = useState(gunBugun());      // Ödeme defteri: seçili gün
+  // F3.13 (sim 26 Eki): başka ekrandan gelen bağ (ör. Krediler › bağlanmamış taksit) o günü açsın — ?gun=YYYY-AA-GG, ileri gün bugüne kırpılır
+  const [gun, setGun] = useState(() => { const q = new URLSearchParams(window.location.search).get('gun') || ''; const b = gunBugun(); return /^\d{4}-\d{2}-\d{2}$/.test(q) && q <= b ? q : b; });      // Ödeme defteri: seçili gün
   const [tumAy, setTumAy] = useState(false);       // Ödeme defteri: bütün ay
   const gunKaydir = (n) => { const g = trGunKaydir(gun, n); setGun(g); setAy(g.slice(0, 7)); };
   useEffect(() => {
@@ -134,10 +135,12 @@ export default function OdemeModulu({ onToast, gorunum }) {
   };
   const duzKaydet = async () => {
     try {
-      const govde = duz.konu_tip === 'kredi' ? { kredi_id: duz.kredi_id || undefined, ait_ay: duz.ait_ay, aciklama: duz.aciklama }   // B67: kredi gider değil — kimin yok
+      const govde = duz.borc_ref ? { borc_ref: duz.borc_ref, aciklama: duz.aciklama }   // D-1: alınan borca bağla (para oynamaz)
+        : duz.konu_tip === 'kredi' ? { kredi_id: duz.kredi_id || undefined, ait_ay: duz.ait_ay, aciklama: duz.aciklama }   // B67: kredi gider değil — kimin yok
         : { kimin: duz.kimin, ait_ay: duz.ait_ay, aciklama: duz.aciklama };
       const r = await api(`/evvel-yeni/odeme/${duz.id}/duzelt`, { method: 'POST', body: govde });
       onToast?.(r.mesaj); setDuz(null); listeYukle();
+      api('/evvel-yeni/odeme/listeler').then(setL).catch(() => {});   // Codex: başka borca taşınınca eski borcun kalanı hemen seçilebilsin
     } catch (e) { onToast?.(e?.message || 'Düzeltilemedi'); }
   };
   const iptalEt = async (x) => {
@@ -270,7 +273,24 @@ export default function OdemeModulu({ onToast, gorunum }) {
                 </div>
               )}
             </>)}
-            {f.konu === 'kredi' && krediler && krediler.length > 0 && (
+            {/* F3.9 D-1 (sim 26 Eki · Opus + Codex): yeni konu yok — "Kredi / borç taksiti" içinde ALINAN BORÇ (Kasam › Dış giriş › Borç alındı) */}
+            {f.konu === 'kredi' && (L.alinan_borclar || []).some((b) => b.tarih <= f.tarih) && (
+              <Etiket ad="Ne ödeniyor"><select style={alan} value={f.borc_ref || ''} onChange={(e) => {
+                const b = (L.alinan_borclar || []).find((x) => x.id === e.target.value);
+                setBenzer(false);
+                setF((x) => {
+                  const t0 = x.parcalar[0]?.tutar ?? '';
+                  const oto = b && (t0 === '' || t0 === otoTutar.current) ? String(b.kalan) : null;
+                  if (oto) otoTutar.current = oto;
+                  return { ...x, borc_ref: b?.id || '', kredi_id: b ? '' : x.kredi_id, kredi_ad: b ? '' : x.kredi_ad,
+                    parcalar: oto ? x.parcalar.map((q, j) => (j === 0 ? { ...q, tutar: oto } : q)) : x.parcalar };
+                });
+              }}>
+                <option value="">Tanımlı kredinin taksiti</option>
+                {(L.alinan_borclar || []).filter((b) => b.tarih <= f.tarih).map((b) => <option key={b.id} value={b.id}>Alınan borç · {b.kimden || '?'} · {tKisa(b.tarih)} · kalan {fmt(b.kalan)} ₺</option>)}
+              </select></Etiket>
+            )}
+            {f.konu === 'kredi' && !f.borc_ref && krediler && krediler.length > 0 && (
               <Etiket ad="Hangi kredi"><select style={alan} value={f.kredi_id || ''} onChange={(e) => {
                 const k = krediler.find((x) => x.id === e.target.value);
                 setBenzer(false);
@@ -316,7 +336,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
               </select></Etiket>
               <Etiket ad={f.konu === 'sgk' ? 'Hangi ayın SGK primi' : 'Hangi ayın vergisi'}><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
             </>)}
-            {f.konu === 'kredi' && (
+            {f.konu === 'kredi' && !f.borc_ref && (
               <Etiket ad="Hangi ayın taksiti" ipucu={krediler == null ? 'Krediler modülü kapalı — takvime işlenmez' : krediler.length === 0 ? 'Tanımlı kredi yok — önce Krediler › + Kredi ekle; krediye bağlı olmayan borç: Diğer › Patron şahsi' : "Kredi takviminde bu ay 'ödendi' olur"}><input type="month" style={alan} value={f.ait_ay} onChange={(e) => set('ait_ay', e.target.value)} /></Etiket>
             )}
             {f.konu === 'kart_borcu' && (
@@ -415,8 +435,8 @@ export default function OdemeModulu({ onToast, gorunum }) {
                   <td style={{ ...num, fontWeight: 700 }}>{fmt(x.toplam)}</td>
                   <td style={{ textAlign: 'left' }}>{['vergi', 'sgk'].includes(x.konu_tip) ? <Cip>{x.konu_tip === 'sgk' ? 'SGK' : 'vergi'} · {ayAdi(x.ait_ay)}</Cip> : x.gider ? <Cip tur="sari">gider · {ayAdi(x.ait_ay)}</Cip> : x.konu === 'Dükkân gideri' ? <Cip>dükkân gideri</Cip> : <span style={{ color: R.not }}>gider değil</span>}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
-                    {x.duzeltilebilir && x.gider !== undefined && (['kira', 'fatura', 'anlik', 'personel', 'diger', 'vergi', 'sgk'].includes(x.konu_tip) || (x.konu_tip === 'kredi' && krediler?.length > 0)) && (
-                      <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); setDuz({ id: x.id, konu_tip: x.konu_tip, kredi_id: x.kredi_id || '', kimin: x.kimin_kod || '', ait_ay: x.ait_ay || '', aciklama: x.aciklama || '', baslik: `${x.aciklama} · ${fmt(x.toplam)} ₺` }); }}>Düzelt</Dugme>)}{' '}
+                    {x.duzeltilebilir && x.gider !== undefined && (['kira', 'fatura', 'anlik', 'personel', 'diger', 'vergi', 'sgk'].includes(x.konu_tip) || (x.konu_tip === 'kredi' && (krediler?.length > 0 || x.borc_ref || (L.alinan_borclar || []).length > 0))) && (
+                      <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); setDuz({ id: x.id, tarih: x.tarih, konu_tip: x.konu_tip, kredi_id: x.kredi_id || '', borc_ref: x.borc_ref || '', borc_ad: x.borc_ad || '', bagli_borc: x.borc_ref || '', kimin: x.kimin_kod || '', ait_ay: x.ait_ay || '', aciklama: x.aciklama || '', baslik: `${x.aciklama} · ${fmt(x.toplam)} ₺` }); }}>Düzelt</Dugme>)}{' '}
                     {x.duzeltilebilir && <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); iptalEt(x); }}>İptal</Dugme>}
                     {x.duzeltmeler?.length > 0 && <span title="Düzeltildi" style={{ marginLeft: 4 }}>✏️</span>}
                   </td>
@@ -432,7 +452,16 @@ export default function OdemeModulu({ onToast, gorunum }) {
       {duz && (
         <Pencere baslik="Gider tarafını düzelt" onKapat={() => setDuz(null)} mesgul={mesgul} genislik={460} kapatDugmesi={false} aralik={12}>   {/* ortak Pencere (T4-06) — işlem sürerken kapanmaz */}
             <div style={{ fontSize: 13, color: R.not }}>{duz.baslik}<br />Para oynamaz — cepler ve tutar aynı kalır. Tutar / cep yanlışsa: iptal edip yeniden gir.</div>
-            {duz.konu_tip === 'kredi' ? (
+            {['kredi', 'diger'].includes(duz.konu_tip) && (duz.bagli_borc || (L.alinan_borclar || []).some((b) => !duz.tarih || b.tarih <= duz.tarih)) && (
+              <Etiket ad="Alınan borcun geri ödemesi mi?" ipucu={duz.bagli_borc ? 'Bağlı borç başka borçla değiştirilebilir; bağı tamamen çözmek için ödemeyi iptal edip yeniden gir' : "1 Kasım öncesi 'Diğer' ile girilmiş borç ödemesini bağla — para oynamaz, gider değil olur, iz kalır"}>
+                <select style={alan} value={duz.borc_ref || ''} onChange={(e) => setDuz((d) => ({ ...d, borc_ref: e.target.value }))}>
+                  {!duz.bagli_borc && <option value="">Hayır</option>}{/* Codex: bağlı ödemede "Hayır" bağı çözmüyordu — çözmek = iptal + yeniden gir (ipucu) */}
+                  {duz.bagli_borc && !(L.alinan_borclar || []).some((b) => b.id === duz.bagli_borc) && <option value={duz.bagli_borc}>{duz.borc_ad || 'bağlı borç'} (bağlı)</option>}
+                  {(L.alinan_borclar || []).filter((b) => !duz.tarih || b.tarih <= duz.tarih).map((b) => <option key={b.id} value={b.id}>{b.kimden || '?'} · {tKisa(b.tarih)} · kalan {fmt(b.kalan)} ₺</option>)}
+                </select>
+              </Etiket>
+            )}
+            {duz.borc_ref ? null : duz.konu_tip === 'kredi' ? (
               <Etiket ad="Hangi kredinin taksiti" ipucu="Seçince kredi takviminde o ay 'ödendi' olur"><select style={alan} value={duz.kredi_id} onChange={(e) => setDuz((d) => ({ ...d, kredi_id: e.target.value }))}>
                 <option value="">Seç…</option>{(krediler || []).map((k) => <option key={k.id} value={k.id}>{k.ad}</option>)}
               </select></Etiket>

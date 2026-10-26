@@ -2,7 +2,7 @@
 // kredi × 12 ay (kira takvimi gibi). Borç = taksit; ödeme Ödeme ekranından (kredi seçilerek) → takvimde "ödendi".
 import React, { useState } from 'react';
 import { api } from '../../utils/api';
-import { ALAN, Dugme, fmt, num, PI_CSS, R, sayiTR, tKisa, useSonIstek } from './KasaModulu';
+import { ALAN, Dugme, fmt, num, PI_CSS, R, sayfayaGit, sayiTR, tKisa, useSonIstek } from './KasaModulu';
 import { ayTR } from '../../utils/trTarih';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici, tutarYaz } from './AyTakvim';
 
@@ -58,7 +58,31 @@ export default function KrediModulu({ onToast, onSekme }) {
         <div style={{ fontSize: 12, color: R.not }}>Bir aya tıkla: taksiti öde ya da krediyi düzelt. {v.baslangic} öncesi aylar "·" (Evvel Yeni öncesi, kayıt yok).</div>
       </>}
       {/* B67: krediye bağlanmamış taksit ödemesi takvimde görünmez — kaybolmasın, tek yol Ödeme defteri › Düzelt */}
-      {v && v.bagsiz?.length > 0 && <div style={{ fontSize: 13, color: R.amber }}>⚠ Krediye bağlanmamış {v.bagsiz.length} taksit ödemesi var ({v.bagsiz.map((b) => `${tKisa(b.tarih)} · ${fmt(b.toplam)} ₺`).join(', ')}) — takvimde görünmez. Ödeme defteri › Düzelt ile krediyi seç.</div>}
+      {v && v.bagsiz?.length > 0 && <div style={{ fontSize: 13, color: R.amber }}>⚠ Krediye bağlanmamış {v.bagsiz.length} taksit ödemesi var ({v.bagsiz.map((b) => `${tKisa(b.tarih)} · ${fmt(b.toplam)} ₺`).join(', ')}) — takvimde görünmez. <a href={`/evvel-yeni/odeme_defteri?gun=${v.bagsiz[0].tarih}`} onClick={(e) => { e.preventDefault(); sayfayaGit('odeme_defteri', `?gun=${v.bagsiz[0].tarih}`); }} style={{ color: 'inherit', fontWeight: 700 }}>Ödeme defteri ›</a> Düzelt ile krediyi seç.</div>}
+      {/* F3.9 D-1 (sim 26 Eki · Opus + Fable + Codex A): Kasam › Dış giriş "Borç alındı / Kredi çekildi" — geri ödenecek para unutulmasın.
+          Kaynak Kasa'nın dış giriş kaydı (tek gerçek); geri ödeme Ödeme › Kredi / borç taksiti › "Ne ödeniyor" ile bu borca bağlanır. */}
+      {v && (v.alinan_borclar || []).length > 0 && (() => {
+        const acik = v.alinan_borclar.filter((b) => !b.kapandi);
+        const kapanan = v.alinan_borclar.length - acik.length;
+        return (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+            <b style={{ fontSize: 15 }}>Alınan borçlar (kişi) · kredi çekişleri</b>
+            <table className="pi-tablo" style={{ fontSize: 13 }}>
+              <thead><tr><th style={{ textAlign: 'left' }}>Gün</th><th style={{ textAlign: 'left' }}>Kimden</th><th style={{ textAlign: 'left' }}>Nereye girdi</th><th>Alınan</th><th>Geri ödenen</th><th>Kalan</th></tr></thead>
+              <tbody>{acik.map((b) => (
+                <tr key={b.id}>
+                  <td style={{ textAlign: 'left' }}>{tKisa(b.tarih)}</td>
+                  <td style={{ textAlign: 'left' }}>{b.alt === 'kredi' ? '🏦 Kredi çekildi' : '🤝'} {b.kimden || '—'}{b.not ? <span style={{ color: R.not }}> · {b.not}</span> : null}</td>
+                  <td style={{ textAlign: 'left' }}>{b.cep_ad || '—'}</td>
+                  <td style={num}>{fmt(b.tutar)}</td>
+                  <td style={num}>{b.alt === 'kredi' ? '—' : fmt(b.geri_odenen)}</td>
+                  <td style={{ ...num, fontWeight: 700, color: b.alt === 'kredi' ? R.not : R.kirmizi }}>{b.alt === 'kredi' ? 'taksit planı → + Kredi ekle' : `${fmt(b.kalan)} ₺`}</td>
+                </tr>))}</tbody>
+            </table>
+            <div style={{ fontSize: 12, color: R.not }}>Geri ödeme: Ödeme › Kredi / borç taksiti › "Ne ödeniyor" → bu borç. Kredi çekildiyse taksitleri yukarıdaki takvimde izlemek için + Kredi ekle.{kapanan ? ` · ${kapanan} borç tamamen ödendi` : ''}</div>
+          </div>
+        );
+      })()}
       {sec && (
         <Pencere baslik={`🏦 ${sec.k.ad} · ${AY_UZUN[sec.i]} ${v.yil}`} onKapat={() => setSec(null)}>
           <div>Taksit <b style={num}>{tutarYaz(sec.a.beklenen)}</b> ₺ · ödenen <b style={num}>{fmt(sec.a.odenen)}</b> ₺ · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺</div>

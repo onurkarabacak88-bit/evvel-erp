@@ -1814,6 +1814,9 @@ def iptal(hid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Header(defa
             raise HTTPException(404, "Kayıt bulunamadı ya da zaten iptal")
         if any(x["tur"] == "cozum" and x["veri"].get("fark_id") == hid for x in kayit):
             raise HTTPException(409, "Bu kaydın farkı kapatılmış; önce fark kapanışını iptal et")
+        if h["tur"] == "dis" and any(x["tur"] == "odeme" and ((x["veri"].get("konu") or {}).get("borc_ref")) == hid for x in kayit):
+            # D-1 (Fable): borç girişi iptal edilirse ona bağlı geri ödemeler yetim kalırdı (ne borç listesinde ne bağsızda)
+            raise HTTPException(409, "Bu borca bağlı geri ödeme var — önce o ödemeleri iptal et (Ödeme defteri)")
         ol_eski = _olaylar([h])
         _ol = _olaylar([x for x in kayit if x["id"] != hid]) if h["tur"] == "sayim" else _olaylar(kayit)
         kilit, anlar = _sayim_kilidi(_ol), _sayim_anlari(_ol)
@@ -3039,6 +3042,7 @@ def kapanis_sonradan_gordum(body: SonradanBody, x_evvel_oturum: Optional[str] = 
 # ── AÇIK KAPILAR (sök-tak): başka modüller iç '_' fonksiyonu değil BU adları kullanır — içerik aynı, kapı tek ──
 # kasa_hazirla zaten PUBLIC (yukarıda) — tekrar ad tanımlanmaz
 kasa_kayitlari = _yukle
+
 pos_oranlari = _oranlar
 kasa_baslangic = _baslangic
 
@@ -3051,6 +3055,30 @@ hareket_fisi = _hareket_dto      # ekranda tek hareket fişi
 def bakiyeler(kayit: list, C: dict) -> Dict[str, int]:
     """PUBLIC: {cep_id: kuruş} — kasa_kayitlari() çıktısından anlık cep bakiyeleri (Ödeme formunun kaynak seçimi)."""
     return _bakiye(_olaylar(kayit), C)["b"]
+
+
+def alinan_borclar(cur) -> List[dict]:
+    """PUBLIC (F3.9 D-1 · sim 26 Eki · Opus + Fable + Codex A): Dış giriş "Borç alındı" / "Kredi çekildi" — geri ödenecek para.
+    Kimlik = kasa hareket id (isim gruplaması YOK — "kimden" serbest metin). İptal edilen giriş düşer (_ham). geri_odenen = bu id'ye
+    bağlı (konu.borc_ref) iptal edilmemiş ödemeler. kalan YALNIZ kişisel borçta (kredi faizli — kalan Krediler tanımından)."""
+    _hazirla()
+    _, C, kayit, _ = _yukle(cur, tum_donemler=True)
+    odenen: Dict[str, int] = {}
+    for h in kayit:
+        ref = ((h["veri"].get("konu") or {}).get("borc_ref")) if h["tur"] == "odeme" else None
+        if ref:
+            odenen[ref] = odenen.get(ref, 0) + int(h["veri"].get("toplam", h["tutar"]) or 0)
+    out = []
+    for h in kayit:
+        v = h["veri"]
+        if h["tur"] != "dis" or v.get("alt") not in ("borc", "kredi"):
+            continue
+        t, o = int(h["tutar"]), odenen.get(h["id"], 0)
+        out.append({"id": h["id"], "tarih": h["is_gunu"], "alt": v["alt"], "kimden": v.get("kimden"), "not": v.get("not"),
+                    "cep": h.get("cep"), "cep_ad": (C.get(h.get("cep")) or {}).get("ad"), "tutar": _tl_sayi(t), "geri_odenen": _tl_sayi(o),
+                    "kalan": _tl_sayi(t - o) if v["alt"] == "borc" else None,
+                    "kapandi": v["alt"] == "borc" and t - o <= 0})
+    return out
 
 
 def hareket_kaydet(cur, *, tur: str, gun: str, tutar: int, veri: dict, kim: str, kaynak_ref: Optional[str],

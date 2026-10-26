@@ -140,7 +140,10 @@ def takvim(yil: Optional[int] = None):
         yeni = _yeni_odenen(cur)
         # B67: krediye bağlanmamış kredi taksiti ödemeleri — takvimde 'ödendi' görünmez; Ödeme defteri › Düzelt ile bağlanır (kayıp olmasın)
         import evvel_yeni_odeme_api as _od
-        bagsiz = [{"id": x["id"], "tarih": x["tarih"], "toplam": _tl_sayi(int(x["toplam"]))} for x in _od.konu_odemeleri(cur, "kredi") if not x.get("kredi_id")]
+        bagsiz = [{"id": x["id"], "tarih": x["tarih"], "toplam": _tl_sayi(int(x["toplam"]))} for x in _od.konu_odemeleri(cur, "kredi")
+                  if not x.get("kredi_id") and not (x.get("konu") or {}).get("borc_ref")]   # D-1: alınan borç geri ödemesi taksit değil
+        # F3.9 D-1 (sim 26 Eki · Opus + Fable + Codex A): dış girişte "Borç alındı / Kredi çekildi" — Kasa'nın PUBLIC kapısından (tek gerçek)
+        alinan = kasa.alinan_borclar(cur)
     aylar = [f"{yil}-{m:02d}" for m in range(1, 13)]
     out = []
     for k in kr:
@@ -166,7 +169,8 @@ def takvim(yil: Optional[int] = None):
                     "yil_odenen": _tl_sayi(sum(int(round(x["odenen"] * 100)) for x in satir))})
     ay_top = [{"ay": a, "beklenen": round(sum(k["aylar"][i]["beklenen"] for k in out), 2),
                "odenen": round(sum(k["aylar"][i]["odenen"] for k in out), 2)} for i, a in enumerate(aylar)]
-    return {"yil": yil, "bugun": bugun.isoformat(), "baslangic": bas, "krediler": out, "ay_toplam": ay_top, "bagsiz": bagsiz}
+    return {"yil": yil, "bugun": bugun.isoformat(), "baslangic": bas, "krediler": out, "ay_toplam": ay_top, "bagsiz": bagsiz,
+            "alinan_borclar": alinan}
 
 
 class KrediBody(BaseModel):

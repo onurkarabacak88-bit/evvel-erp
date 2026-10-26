@@ -112,6 +112,8 @@ const SEVIYE = {
 };
 
 const kart = { background: 'var(--pi-paper)', border: '1px solid var(--pi-line)', borderRadius: 12 };
+// tıklanır rakam / rozet için TEK sade düğme stili — all:'unset' KULLANILMAZ (odak halkasını da siler; Fable F3.13 sim 26 Eki)
+const dugmeSade = { border: 0, background: 'none', padding: 0, margin: 0, font: 'inherit', color: 'inherit', cursor: 'pointer', textAlign: 'left', display: 'inline-block' };
 const etiketStil = { fontSize: 11, letterSpacing: '.08em', textTransform: 'uppercase', color: R.not2, fontWeight: 600 };
 const num = { fontFamily: 'var(--pi-f-num)', fontVariantNumeric: 'tabular-nums' };
 
@@ -1826,4 +1828,4 @@ function IsSatir({ x, bugun, uyariSay = 0, onTeyit, onTeslim, onCoz, onKapanis, 
 }
 
 // Diğer Evvel Yeni bölümleri (Gelir, Gider…) aynı görsel dili kullanır
-export { sor, soruOnay, soruYaz, SorKatmani, ALAN, AySecici, Etiket, OzetKutusu, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
+export { sor, soruOnay, soruYaz, SorKatmani, dugmeSade, ALAN, AySecici, Etiket, OzetKutusu, sayfayaGit, useSonIstek, PATRONLAR, sayiTR, odemeFisi, PI_CSS, R, kart, etiketStil, num, Dugme, Cip, Cekmece, fmt, tl, tUzun, tKisa, gunAdi, alfa };
