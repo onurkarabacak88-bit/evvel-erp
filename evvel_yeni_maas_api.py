@@ -278,7 +278,7 @@ def _yemek_kalemi(k, pid: str, aylik: int, gun: int, uyari: list) -> dict:
         uyari.append("Bu ay yoklama kaydı yok — yemek tam sayıldı")
         return tam
     kurus = (Decimal(aylik) * gun * hak / (AY_GUN * payda)).quantize(Decimal(1), rounding=ROUND_HALF_UP)   # Codex: kesme değil yuvarlama
-    return {"kod": "yemek", "ad": f"Yemek: aylık × {gun}/30 × {hak}/{payda} gün (mola ≤ {k.get('limit_dk', 60)} dk)",
+    return {"kod": "yemek", "ad": f"Yemek: {gun} gün çalıştı · molası {k.get('limit_dk', 60)} dk'yı geçmeyen {hak}/{payda} gün",   # F4.3 M-4 (sim 27 Eki): formül sahip dilinde
             "tutar": _tl(int(kurus)), "dusen": h["dusen"]}
 
 
@@ -374,6 +374,8 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         if yari:
             saat = float(e["calisma_saat"]) if e.get("calisma_saat") is not None else o.get("calisma_saat", 0)
             sat = int(u.get("saatlik") or 0)
+            if not saat and e.get("calisma_saat") is None and gun > 0 and not (o.get("plan_yok") or oneri.get(PLAN_YOK))                     and not o.get("guvenilmez_gun"):   # Fable: çıkışı okutulmamış girişte "QR girişi yok" demesin (üstteki uyarı söylüyor)
+                uyari.append("Bu ay vardiya da QR girişi de yok — ödenecek 0 ₺; doğruysa geç, değilse Vardiya planına yaz ya da elle saat gir")   # F4.3 M-1
             if not sat:
                 uyari.append("Saatlik ücret tanımsız — Tanımlar → Personel")
             kalemler.append({"kod": "saat", "ad": f"Çalışma {saat:g} saat × {_tl(sat):g} ₺" + (" (elle)" if e.get("calisma_saat") is not None else " (plan / QR)"),

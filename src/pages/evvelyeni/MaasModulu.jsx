@@ -14,6 +14,9 @@ import { Pencere } from './AyTakvim';
 // B39: tablo sütunlarında tutarlar aynı biçimde (35.200,00 · 20.533,33) — karışık ondalık gözü yanıltmasın
 const fmt2 = (n) => (Number(n) || 0).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
+// F4.3 M-3 (sim 27 Eki): bu aya özel elle değer girilmiş mi — listede "✎ elle" (sahip hangi maaşa dokunulduğunu görsün)
+const elleVar = (e) => !!e && (e.calisma_saat != null || e.mesai_saat != null || ['eksik_gun', 'rapor_gun', 'bayram_saat', 'duzeltme'].some((k) => Number(e[k]) !== 0 && e[k] != null));
+
 export const MAAS_SAYFALAR = [
   { id: 'maaslar', ad: 'Maaşlar', alt: 'Hak ediş · avans · kalan' },
   { id: 'personel_yoklama', ad: 'Günlük yoklama', alt: 'Kim okuttu · kim okutmadı · geç kalan' },
@@ -100,6 +103,7 @@ export default function MaasModulu({ onToast, onSekme }) {
                 <td style={{ textAlign: 'left' }}>
                   {x.onay ? <Cip tur="yesil">onaylı</Cip> : x.kaynak === 'eski_sistem' ? <Cip tur="sari">eski hesap</Cip> : x.ay_acik ? <Cip>ay sürüyor</Cip> : <Cip>onay bekliyor</Cip>}
                   {(x.uyari || []).length > 0 && <Cip tur="kirmizi">⚠ {x.uyari.length}</Cip>}
+                  {elleVar(x.elle) && <span title={x.elle?.aciklama || ''}><Cip tur="sari">✎ elle</Cip></span>}
                   {x.avans_devir_sonraki > 0 && <Cip tur="sari">devir {fmt(x.avans_devir_sonraki)}</Cip>}
                 </td>
                 <td>{x.kalan > 0 && <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); ode(x); }}>Öde</Dugme>}</td>
