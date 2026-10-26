@@ -573,8 +573,9 @@ def _pos_durumu(ol: List[dict], C: dict, oranlar: Dict[str, tuple], ref: str) ->
                     t = _p if kanal == "pos" else _o
                     if t:
                         gunler.append((o["gun"], t))
-            yatan = sum(int(o["veri"].get("brut", o["tutar"])) for o in ol
-                        if o["olay"] == "pos_yatis" and o["veri"].get("sube_cep") == c["id"] and o["veri"].get("kanal", "pos") == kanal)
+            _yat = [o for o in ol if o["olay"] == "pos_yatis" and o["veri"].get("sube_cep") == c["id"] and o["veri"].get("kanal", "pos") == kanal]
+            yatan = sum(int(o["veri"].get("brut", o["tutar"])) for o in _yat)
+            tahmini = any(o["veri"].get("brut_tahmini") for o in _yat)   # P-1 (Codex): brüt netten komisyonla tahmin edildiyse uyarı kesin konuşmasın
             brut = sum(t for _, t in gunler)
             bekleyen = brut - yatan
             kalan, en_eski = yatan, None
@@ -590,7 +591,7 @@ def _pos_durumu(ol: List[dict], C: dict, oranlar: Dict[str, tuple], ref: str) ->
             out.append({"sube_cep": c["id"], "sube": c["kisa"], "banka_cep": "banka:" + str(sid), "kanal": kanal,
                         "brut_satis": _tl_sayi(brut), "yatan_brut": _tl_sayi(yatan), "bekleyen_brut": _tl_sayi(bekleyen),
                         "oran": float(oran or 0), "beklenen_net": _tl_sayi(bekleyen - komisyon(bekleyen, oran)),
-                        "en_eski_gun": en_eski, "gun_sayisi": _gun_fark(en_eski, ref) if en_eski else 0})
+                        "en_eski_gun": en_eski, "gun_sayisi": _gun_fark(en_eski, ref) if en_eski else 0, "brut_tahmini": tahmini})
     return out
 
 
@@ -1130,6 +1131,15 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
             if x["banka_cep"] == cd["id"] and x["bekleyen_brut"] > 0.004:
                 m = f"{'POS' if x['kanal'] == 'pos' else 'Online'} {_tl(_kurus(x['bekleyen_brut']))} bankaya gelecek" + (f" · {x['gun_sayisi']} gündür" if x["gun_sayisi"] else "")
                 (cd["kirmizi"] if x["gun_sayisi"] >= 5 else cd["sari"]).append(m)
+            elif x["banka_cep"] == cd["id"] and x["kanal"] != "pos" and x["bekleyen_brut"] <= -50:
+                # P-1 (sim 26 Eki): yatan > satış — gizleniyordu (Kasam kartı da artıyla eksiyi topluyordu: 800 − 600 = "200 gelecek")
+                if x.get("brut_tahmini"):   # Codex P2: brüt tahminse kesin "fazla yattı" deme — önce oranı kontrol ettir
+                    cd["sari"].append(f"Online yatışlar satıştan {_tl(_kurus(-x['bekleyen_brut']))} fazla görünüyor (satış {_tl(_kurus(x['brut_satis']))}, "
+                                      f"tahmini brüt yatan {_tl(_kurus(x['yatan_brut']))}) — yatışın brütü komisyon oranından tahmin edildi; "
+                                      f"önce oranı (Ayarlar) kontrol et, doğruysa kapanıştaki online satış eksik yazılmış olabilir")
+                else:
+                    cd["sari"].append(f"Online {_tl(_kurus(-x['bekleyen_brut']))} satıştan fazla yattı (satış {_tl(_kurus(x['brut_satis']))}, "
+                                      f"yatan {_tl(_kurus(x['yatan_brut']))}) — kapanıştaki online satış eksik yazılmış olabilir")
         cd["seviye"] = "kirmizi" if cd["kirmizi"] else "sari" if cd["sari"] else cd["seviye"]
     alimlar = [o for o in gunun_ol if o["olay"] == "teslim_alim" and o["gun"] != o["is_gunu"]] if not hepsi else []
     gunun_iptal = iptaller if hepsi else [i for i in iptaller if i["kayit_zamani"].date().isoformat() == g]
@@ -1146,7 +1156,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
                          "sari": sum(1 for c in cep_durumlari if c["seviye"] == "sari")},
         "kpi": kpi,
         "pos": pos_list,
-        "pos_bekleyen_brut": _tl_sayi(sum(_kurus(x["bekleyen_brut"]) for x in pos_list)),
+        "pos_bekleyen_brut": _tl_sayi(sum(max(0, _kurus(x["bekleyen_brut"])) for x in pos_list)),   # P-1: fazla yatan, bekleyeni yemesin
         "hareketler": [_hareket_dto(h, C, ol_tum) for h in gunun],
         "gec_alimlar": [{"id": o["id"], "teslim_gunu": o["is_gunu"], "ad": f"{C.get(o['kaynak'], {}).get('ad')} → {C.get(o['hedef'], {}).get('ad')}",
                          "alinan": _tl_sayi(int(o["veri"].get("alinan", o["tutar"])))} for o in alimlar],
