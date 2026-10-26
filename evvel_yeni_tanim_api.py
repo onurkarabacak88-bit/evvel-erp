@@ -667,15 +667,17 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
             if giris_ and cikis_ and cikis_ < giris_:
                 raise HTTPException(400, "Ayrılış tarihi işe girişten önce olamaz")   # E2E #16
             if yeni:
+                if not giris:   # F4.4 P-2 (sim 27 Eki): boş giriş → maaş ayın başından sayılıyordu (bugün eklenene 27 gün, 28.800 ₺)
+                    raise HTTPException(400, "İşe giriş tarihini yaz — maaş o günden sayılır")
                 if b.maas is None and b.calisma_turu != "yari":
                     raise HTTPException(400, "Maaşı yaz (0 olabilir)")
                 if b.calisma_turu == "yari" and b.saatlik is None:   # B35: yarı zamanlıda zorunlu olan SAATLİK ücret
                     raise HTTPException(400, "Yarı zamanlı için saatlik ücreti yaz")
                 tid = "ey-" + uuid.uuid4().hex[:12]
-                cur.execute("""INSERT INTO ey_personel (id, ad, sube_id, gorev, giris, cikis, calisma_turu, erken_acilis, degistiren)
-                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                cur.execute("""INSERT INTO ey_personel (id, ad, sube_id, gorev, giris, cikis, calisma_turu, erken_acilis, yetki_geri_alma, degistiren)
+                               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
                             (tid, ad, None if b.sube_id in (None, "", "ortak") else b.sube_id, (b.gorev or "").strip()[:40] or None, giris,
-                             cikis, b.calisma_turu or "tam", bool(b.erken_acilis), kim))
+                             cikis, b.calisma_turu or "tam", bool(b.erken_acilis), bool(b.yetki_geri_alma), kim))   # Fable: yeni kayıtta yetki yazılmıyordu
             else:
                 cur.execute("""UPDATE ey_personel SET ad=COALESCE(%s,ad),
                                  sube_id=CASE WHEN %s THEN NULL ELSE COALESCE(%s,sube_id) END, gorev=COALESCE(%s,gorev),

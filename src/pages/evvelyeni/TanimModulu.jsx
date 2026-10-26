@@ -39,16 +39,16 @@ const YAPI = {
     tur: 'personel', liste: 'personel', baslik: 'Personel', tekil: 'personel',
     not: 'Maaş ve yemek ücreti Ödeme formunda kendiliğinden kullanılır. Değişiklik "hangi aydan itibaren" geçerli olur — eski aylar bozulmaz.',
     alanlar: [{ k: 'ad', ad: 'Ad soyad', zorunlu: true }, { k: 'sube_id', ad: 'Şube', secim: 'sube' }, { k: 'gorev', ad: 'Görev' },
-      { k: 'calisma_turu', ad: 'Çalışma türü', secim: 'calisma' }, { k: 'giris', ad: 'İşe giriş', tip: 'date' }, { k: 'cikis', ad: 'Ayrılış (varsa)', tip: 'date' },
+      { k: 'calisma_turu', ad: 'Çalışma türü', secim: 'calisma' }, { k: 'giris', ad: 'İşe giriş', tip: 'date', zorunluYeni: true, yeniDeger: 'bugun' }, { k: 'cikis', ad: 'Ayrılış (varsa)', tip: 'date' },
       { k: 'maas', ad: 'Aylık maaş ₺ (tam zamanlı)', sayi: true, zorunluYeni: true }, { k: 'saatlik', ad: 'Saatlik ücret ₺ (yarı zamanlı)', sayi: true },
       { k: 'yemek', ad: 'Aylık yemek ₺', sayi: true }, { k: 'yol', ad: 'Aylık yol ₺', sayi: true },
       { k: 'ucret_ay', ad: 'Ücret hangi aydan itibaren', tip: 'month', duzeltmede: true },
       // B7: müdür AYRI işaret değil — görev "MÜDÜR" yazılınca maaş her durumda tam (Maaş + Yoklama aynı kuralı okur)
       { k: 'erken_acilis', ad: 'Erken açılış izni (07:00 öncesi)', secim: 'erken' },
       // Panel PIN'i: sık işlemlerde (ürün aç, fire, ara teslim…) ad + PIN. Boş bırakılırsa değişmez; PIN ekrana asla geri gelmez.
-      { k: 'pin', ad: 'Panel PIN (4 hane) — değiştirmek için yaz', tip: 'password' },
+      { k: 'pin', ad: 'Panel PIN (4 hane) — değiştirmek için yaz', adYeni: 'Panel PIN (4 hane)', tip: 'password' },
       { k: 'yetki_geri_alma', ad: 'Hatalı teslimi geri alabilir (yetki)', secim: 'evet_yetki' }],
-    kolon: (x) => [x.ad, `${x.sube_ad}${x.gorev ? ` · ${x.gorev}` : ''} · ${x.calisma_turu === 'yari' ? 'yarı zamanlı' : 'tam zamanlı'}${x.cikis ? ` · ayrıldı ${tarihNokta(x.cikis)}` : ''}${x.erken_acilis ? ' · erken açılış izni' : ''}${x.pin_var ? '' : ' · PIN yok'}${x.yetki_geri_alma ? ' · geri alma yetkisi' : ''}`,
+    kolon: (x) => [x.ad, <>{`${x.sube_ad}${x.gorev ? ` · ${x.gorev}` : ''} · ${x.calisma_turu === 'yari' ? 'yarı zamanlı' : 'tam zamanlı'}${x.cikis ? ` · ayrıldı ${tarihNokta(x.cikis)}` : ''}${x.erken_acilis ? ' · erken açılış izni' : ''}${x.pin_var ? '' : ' · PIN yok'}${x.yetki_geri_alma ? ' · geri alma yetkisi' : ''}`}</>,
       x.calisma_turu === 'yari' ? `saatlik ${fmt(x.saatlik)} · yemek ${fmt(x.yemek)}` : `maaş ${fmt(x.maas)} · yemek ${fmt(x.yemek)}${x.yol ? ` · yol ${fmt(x.yol)}` : ''}`, x.ucret_eski ? <Cip tur="sari">ücret eski sistemden — kontrol et</Cip> : null],
   },
   tanim_banka: {
@@ -133,7 +133,7 @@ export default function TanimModulu({ gorunum, onToast }) {
         <div><div className="pi-eyebrow">Evvel Yeni · Tanımlar</div><h1 style={{ fontSize: 30 }}>{y.baslik}</h1></div>
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8 }}>
           {pasifSay > 0 && <Dugme kucuk onClick={() => setPasifGoster((p) => !p)}>{pasifGoster ? 'Pasifleri gizle' : `Pasifler (${pasifSay})`}</Dugme>}
-          {!yeni && <Dugme onClick={() => setForm({})}>+ {y.tekil[0].toUpperCase() + y.tekil.slice(1)} ekle</Dugme>}
+          {!yeni && <Dugme onClick={() => setForm(Object.fromEntries(y.alanlar.filter((a) => a.yeniDeger === 'bugun').map((a) => [a.k, new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10)])))}>+ {y.tekil[0].toUpperCase() + y.tekil.slice(1)} ekle</Dugme>}
         </div>
       </div>
       <div style={{ fontSize: 13, color: R.not }}>{y.not}</div>
@@ -144,11 +144,11 @@ export default function TanimModulu({ gorunum, onToast }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
             {y.alanlar.filter((a) => !(a.yalnizYeni && !yeni) && !(a.duzeltmede && yeni)).map((a) => (
               <label key={a.k} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, fontWeight: 600, color: R.metin2 }}>
-                {a.ad}{(a.zorunlu || (a.zorunluYeni && yeni && !(a.k === 'maas' && form.calisma_turu === 'yari')) || (a.k === 'saatlik' && yeni && form.calisma_turu === 'yari')) && ' *'}
+                {(yeni && a.adYeni) || a.ad}{(a.zorunlu || (a.zorunluYeni && yeni && !(a.k === 'maas' && form.calisma_turu === 'yari')) || (a.k === 'saatlik' && yeni && form.calisma_turu === 'yari')) && ' *'}
                 {a.secim ? (
                   <select style={alan} value={form[a.k] ?? (a.secim === 'banka_tur' ? '' : '')} onChange={(e) => setForm((f) => ({ ...f, [a.k]: e.target.value }))}>
                     {a.secim === 'banka_tur' && <option value="">Seç…</option>}
-                    {secimler[a.secim].map((o) => <option key={o.id} value={o.id}>{o.ad}</option>)}
+                    {secimler[a.secim].map((o) => <option key={o.id} value={o.id}>{yeni && o.id === '' && ['erken', 'evet_yetki', 'evet_hayir'].includes(a.secim) ? (a.secim === 'evet_hayir' ? '— Hayır (varsayılan) —' : '— Yok (varsayılan) —') : o.ad}</option>)}
                   </select>
                 ) : (
                   <input style={alan} type={a.tip || 'text'} inputMode={a.sayi ? 'decimal' : undefined} value={form[a.k] ?? ''}
