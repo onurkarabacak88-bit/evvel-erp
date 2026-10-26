@@ -3,7 +3,7 @@
 // ne zaman koştu, ne yaptı, hata verdi mi TEK yerde + "Şimdi çalıştır". Kural: sök-tak sade, bakım içeride — tek Sistem durumu ekranı.
 import React, { useCallback, useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import { PI_CSS, R, kart, Dugme, Cip } from './KasaModulu';
+import { PI_CSS, R, kart, Dugme, Cip, soruOnay } from './KasaModulu';
 
 export const SISTEM_SAYFALAR = [{ id: 'sistem_durumu', ad: 'Sistem durumu', alt: 'Modüller · otomatik işler' }];
 
@@ -22,6 +22,50 @@ const durumYaz = (d, liste) => {
   if (d?.startsWith('hata:')) return `yüklenirken hata — ${d.slice(5)}`;
   return d;
 };
+
+// ✂️ 1 KASIM SON AKTARIM (KESIM_1KASIM_ENVANTERI ⚖️ · sunucu: evvel_yeni_moduller /kesim) — eski dönemin çıktısı Evvel Yeni arşivine
+// BİR KEZ dondurulur. Adım adım: önce "Kuru dene" (sayar, yazmaz), sonra "Çalıştır" (yalnız 1 Kasım 02:00 sonrası açılır). Kesim yayınında kalkar.
+const sonucYaz = (s) => Object.entries(s || {}).map(([k, v]) => `${k.replace(/_/g, ' ')}: ${typeof v === 'object' && v ? Object.entries(v).map(([a, b]) => `${a} ${b}`).join(', ') : v}`).join(' · ');
+
+function SonAktarim({ onToast }) {
+  const [v, setV] = useState(null);
+  const [mesgul, setMesgul] = useState('');
+  const [kuru, setKuru] = useState({});
+  const [hata, setHata] = useState('');
+  const yukle = useCallback(() => { api('/evvel-yeni/moduller/kesim').then(setV).catch((e) => setHata(e?.message || 'Okunamadı')); }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+  if (!v || !v.adimlar?.length) return hata ? <div style={{ color: R.kirmizi }}>{hata}</div> : null;
+  const calistir = async (x, k) => {
+    if (!k && !(await soruOnay(`"${x.baslik}" GERÇEKTEN yazılsın mı? (Önce kuru denemenin sonucuna bak.)`, 'Evet, yaz'))) return;
+    setMesgul(x.kod + (k ? ':kuru' : ''));
+    try {
+      const r = await api('/evvel-yeni/moduller/kesim/calistir', { method: 'POST', body: { kod: x.kod, kuru: k } });
+      if (k) setKuru((o) => ({ ...o, [x.kod]: r })); else { onToast?.(`${x.ad} arşive yazıldı`); yukle(); }
+    } catch (e) { setKuru((o) => ({ ...o, [x.kod]: { hata: e?.message || 'çalışmadı' } })); }   // hata kendi satırında (tek satırda bir sonrakini siliyordu)
+    setMesgul('');
+  };
+  return (
+    <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>✂️ 1 Kasım son aktarım — {v.ay}</b>
+        {v.gercek_acik ? <Cip tur="sari">çalıştırılabilir</Cip> : <Cip>yalnız kuru deneme · gerçek {v.baslangic} 02:00 sonrası</Cip>}
+      </div>
+      <div style={{ fontSize: 12.5, color: R.not }}>Eski sistemin {v.ay} kayıtları Evvel Yeni arşivine bir kez dondurulur; sonra ekranlar o ayı arşivden okur. Sırayla: önce kuru dene, sayıları kontrol et, sonra çalıştır. Personel adımı uzun sürebilir — bitene kadar sayfayı kapatma.</div>
+      {v.adimlar.map((x) => (
+        <div key={x.kod} style={{ borderTop: `1px solid ${R.cizgi}`, paddingTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', fontSize: 13 }}>
+          <span style={{ flex: '1 1 260px' }}><b>{x.ad}</b> — {x.baslik}
+            {x.son && <div style={{ color: R.yesil, fontSize: 12 }}>✓ yazıldı {saat(x.son.zaman)} · {x.son.yazan} · {sonucYaz(x.son.sonuc)}</div>}
+            {kuru[x.kod]?.hata && <div style={{ color: R.kirmizi, fontSize: 12, overflowWrap: 'anywhere' }}>✗ {kuru[x.kod].hata}</div>}
+            {kuru[x.kod]?.sonuc && <div style={{ color: R.metin2, fontSize: 12 }}>kuru ({kuru[x.kod].sure_sn} sn): {sonucYaz(kuru[x.kod].sonuc)}</div>}
+          </span>
+          <Dugme kucuk disabled={!!mesgul} onClick={() => calistir(x, true)}>{mesgul === `${x.kod}:kuru` ? 'Deneniyor…' : 'Kuru dene'}</Dugme>
+          <Dugme kucuk ana disabled={!!mesgul || !v.gercek_acik || !kuru[x.kod]?.sonuc} title={!kuru[x.kod]?.sonuc ? 'Önce kuru dene (hatasız)' : undefined}
+            onClick={() => calistir(x, false)}>{mesgul === x.kod ? 'Yazılıyor…' : x.son ? 'Yeniden yaz' : 'Çalıştır'}</Dugme>
+        </div>
+      ))}
+    </div>
+  );
+}
 
 export default function SistemDurumu({ onToast }) {
   const [g, setG] = useState(null);
@@ -56,6 +100,7 @@ export default function SistemDurumu({ onToast }) {
             <b>Otomatik işler</b>
             {g.zamanlayici ? <Cip tur="yesil">zamanlayıcı çalışıyor</Cip> : <Cip tur="kirmizi">zamanlayıcı çalışmıyor</Cip>}
           </div>
+          <div style={{ overflowX: 'auto' }}>{/* F6.3 sim: dar ekranda (539 px) tablo sayfayı 57 px yana taşırıyordu */}
           <table className="pi-tablo" style={{ fontSize: 13 }}>
             <thead><tr><th style={{ textAlign: 'left' }}>İş</th><th style={{ textAlign: 'left' }}>Son koşu</th><th style={{ textAlign: 'left' }}>Ne yaptı</th><th>24 saatte</th><th /></tr></thead>
             <tbody>{g.gorevler.map((x) => {
@@ -76,9 +121,11 @@ export default function SistemDurumu({ onToast }) {
               );
             })}</tbody>
           </table>
+          </div>
           {g.kayitsiz.length > 0 && <div style={{ color: R.kirmizi, fontSize: 12.5 }}>Kaydedilemeyen iş: {g.kayitsiz.map((x) => `${x.ad} (${x.hata})`).join(' · ')}</div>}
         </div>
       )}
+      <SonAktarim onToast={onToast} />
       {m && (
         <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <b>Modüller</b>

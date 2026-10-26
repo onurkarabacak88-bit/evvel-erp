@@ -209,7 +209,12 @@ def kasa_mutabakat(cur, gun: str, evren: Optional[str] = None) -> dict:
     from evvel_yeni_cekirdek import yeni_donem
     # Fable B2: evren bakılan GÜNE göre (1 Kasım sonrası eski bir güne bakınca eski panel verisi okunur) — tek kural (Fable D-1)
     yeni = (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur, _date.fromisoformat(gun[:10]))
-    out = _mut_veri_yeni(cur, gun) if yeni else _mut_veri_eski(cur, gun)
+    if yeni:
+        out = _mut_veri_yeni(cur, gun)
+    else:   # 1 Kasım kesimi: Ekim günü dondurulmuş çıktıdan (eski tablo okunmaz); arşiv yoksa geçişe kadar eski okuyucu
+        from evvel_yeni_cekirdek import arsiv_oku
+        out = arsiv_oku(cur, "satis", f"mutabakat:{gun[:10]}")
+        out = _mut_veri_eski(cur, gun) if out is None else out
     _cift_kayit_dus(cur, gun, out)   # Codex P2: eski ve yeni evrende AYNI düzeltme (Kasa 'kartla' çift kayıt)
     for x in out.values():
         mutabakat_hesapla(x)
@@ -490,8 +495,27 @@ def _urun_ad(cur, kod):
     return _URUN_AD[k]
 
 
-class _YeniGun(Exception):
-    pass
+def _fire_eski(cur, g_: str) -> dict:
+    """ESKİ panelin fire bildirimi (sube_fire_bildirim) — yalnız 1 Kasım öncesi gün; son aktarım bunu arşive dondurur, kesimde silinir."""
+    from evvel_yeni_bar_api import kod_anahtar as _kod_anahtar, anahtar_ad as _anahtar_ad
+    fire = {}
+    cur.execute("""SELECT sube_id::text AS sube_id, sebep_label, aciklama, kalemler, personel_ad, olusturma
+                     FROM sube_fire_bildirim WHERE tarih = %s ORDER BY olusturma""", (g_,))
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        kal = __import__("evvel_yeni_cekirdek").json_ac(r["kalemler"], [])
+        for k in kal:
+            kod = _kod_anahtar(k.get("kalem_kodu")) or _anahtar_ad(k.get("label"))
+            try:
+                adet = int(float(k.get("miktar") or 0))
+            except (TypeError, ValueError):
+                adet = 0
+            if adet <= 0:
+                continue
+            fire.setdefault(r["sube_id"], []).append({"kod": kod, "ad": k.get("label") or _urun_ad(cur, k.get("kalem_kodu")), "adet": adet,
+                                                      "sebep": r["sebep_label"], "aciklama": r.get("aciklama"),
+                                                      "kim": r.get("personel_ad"), "saat": r["olusturma"].strftime("%H:%M") if r.get("olusturma") else None})
+    return fire
 
 
 def _fire_yeni(cur, gun: str) -> dict:
@@ -527,7 +551,7 @@ def satis_gun(gun: Optional[str] = None):
     """GÜNLÜK DÖKÜM (sahip: "bugün 14 adet 8oz vs. görmek istiyorum; kasada açık var mı, satıştan gelen açık var mı;
     satıştan kaynaklı fireyi de görmeli"). Şube şube: kalem kalem sabah · giren · akşam · KULLANILAN · FİRE · SATILAN,
     fire listesi (sebep), ciro, bardaktan BEKLENEN ciro → SATIŞTAN AÇIK, kör kasa sayımı → KASA AÇIĞI."""
-    from evvel_yeni_bar_api import bar_ozet, kod_anahtar as _kod_anahtar, anahtar_ad as _anahtar_ad, KALEMLER
+    from evvel_yeni_bar_api import bar_ozet, KALEMLER
     from evvel_yeni_kasa_api import kapanis_kanallari as _kapanis_kanallari, kasa_hazirla as _hazirla, kasa_kayitlari as _yukle
     from evvel_yeni_cekirdek import bugun as _bugun
     g_ = (gun or (_bugun() - timedelta(days=1)).isoformat())[:10]
@@ -546,30 +570,16 @@ def satis_gun(gun: Optional[str] = None):
     if yeni_gun:   # T3-19: 1 Kasım'dan itibaren fire YENİ panelin olayından (eski sube_fire_bildirim / siparis_urun okunmaz)
         with db() as (conn, cur):
             fire = _fire_yeni(cur, g_)
-    with db() as (conn, cur):
-        try:
-            if yeni_gun:
-                raise _YeniGun()
-            cur.execute("""SELECT sube_id::text AS sube_id, sebep_label, aciklama, kalemler, personel_ad, olusturma
-                             FROM sube_fire_bildirim WHERE tarih = %s ORDER BY olusturma""", (g_,))
-            for r in cur.fetchall() or []:
-                r = dict(r)
-                kal = __import__("evvel_yeni_cekirdek").json_ac(r["kalemler"], [])
-                for k in kal:
-                    kod = _kod_anahtar(k.get("kalem_kodu")) or _anahtar_ad(k.get("label"))
-                    try:
-                        adet = int(float(k.get("miktar") or 0))
-                    except (TypeError, ValueError):
-                        adet = 0
-                    if adet <= 0:
-                        continue
-                    fire.setdefault(r["sube_id"], []).append({"kod": kod, "ad": k.get("label") or _urun_ad(cur, k.get("kalem_kodu")), "adet": adet,
-                                                              "sebep": r["sebep_label"], "aciklama": r.get("aciklama"),
-                                                              "kim": r.get("personel_ad"), "saat": r["olusturma"].strftime("%H:%M") if r.get("olusturma") else None})
-        except _YeniGun:
-            pass
-        except Exception as e:  # noqa: BLE001
-            log.warning("satış günlük: fire okunamadı: %s", str(e)[:150])
+    else:
+        with db() as (conn, cur):
+            try:
+                from evvel_yeni_cekirdek import arsiv_oku
+                fire = arsiv_oku(cur, "satis", f"fire:{g_}")   # 1 Kasım kesimi: Ekim günü dondurulmuş çıktıdan
+                if fire is None:
+                    fire = _fire_eski(cur, g_)   # yalnız geçişe kadar (son aktarımdan sonra eski gün hep arşivde)
+            except Exception as e:  # noqa: BLE001
+                log.warning("satış günlük: fire okunamadı: %s", str(e)[:150])
+                fire = {}
     try:
         with db() as (conn, cur):
             mut = kasa_mutabakat(cur, g_)
@@ -650,10 +660,16 @@ def satis_gun(gun: Optional[str] = None):
 
 def devir_defteri(ay: Optional[str] = None, hafif: bool = False):
     """🔁 KASA DEVİR DEFTERİ — 1 Kasım'dan (panel_baslangic, iş günü) itibaren YENİ panelin olay defterinden (açılış · vardiya devri ·
-    kapanış · ara teslim). Sahip (20 Eki): Ekim (eski) defteri 1 Kasım'da KALKAR — eski okuyucu yalnız geçişe kadar (T3-21)."""
-    from evvel_yeni_cekirdek import yeni_donem
+    kapanış · ara teslim). Sahip 27 Eki (20 Eki "kalkar" kararı değişti): Ekim (eski) defteri 1 Kasım gecesi DONDURULUR (EY arşivi, salt okunur) — eski okuyucu yalnız geçişe kadar."""
+    from evvel_yeni_cekirdek import yeni_donem, panel_baslangic, arsiv_oku
     with db() as (conn, cur):
         yeni = yeni_donem(cur)
+        _pb_ay = panel_baslangic(cur).strftime("%Y-%m")
+        ar = arsiv_oku(cur, "satis", f"devir_defteri:{ay[:7]}") if ay and ay[:7] < _pb_ay else None
+    if ar is not None:   # sahip 27 Eki: Ekim defteri DONDURULUR — salt okunur, iş / uyarı üretmez
+        return {"subeler": []} if hafif else {**ar, "dondu": True}
+    if yeni and ay and ay[:7] < _pb_ay:   # F6.3 (Fable): 1 Kas 02:00 → son aktarım arası Ekim boş görünmesin (geçiş, arşiv henüz yok)
+        return {"subeler": []} if hafif else _devir_defteri_eski(ay)
     if hafif and not yeni:   # eski defterde gün içi devir durumu (tutmadı) yok — Satış günlük dökümü için okunacak bir şey yok
         return {"subeler": []}
     return _devir_defteri_yeni(ay, hafif) if yeni else _devir_defteri_eski(ay)
@@ -1040,3 +1056,26 @@ def _sabah_isleri(cur, _baglam) -> list:
 
 from evvel_yeni_cekirdek import bekleyen_is_kaydet as _bekleyen_is_kaydet   # tak-çıkar: Satış kapalıysa satır da yok
 _bekleyen_is_kaydet("satis_sabah", _sabah_isleri)
+
+
+# ✂️ 1 KASIM SON AKTARIM (KESIM_1KASIM_ENVANTERI ⚖️ · manifest 'kesim') — çekirdek (evvel_yeni_moduller /kesim) çağırır, kendi
+# savepoint'inde; kuru denemede sonra geri alınır. Modül YALNIZ kendi arşiv anahtarını yazar. Kesim yayınında eski okuyucularla birlikte silinir.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    """Satış: Ekim'in her günü kasa mutabakatı (eski panel) + fire listesi + ayın kasa devir defteri (sahip 27 Eki: DONDURULUR)."""
+    from evvel_yeni_cekirdek import arsiv_yaz
+    bas = date.fromisoformat(ay + "-01")
+    son = (bas.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    gun, sube_gun, fire_adet = bas, 0, 0
+    while gun <= son:
+        g = gun.isoformat()
+        mut = _mut_veri_eski(cur, g)
+        arsiv_yaz(cur, "satis", f"mutabakat:{g}", mut, yazan)
+        fire = _fire_eski(cur, g)
+        arsiv_yaz(cur, "satis", f"fire:{g}", fire, yazan)
+        sube_gun += len(mut)
+        fire_adet += sum(len(x) for x in fire.values())
+        gun += timedelta(days=1)
+    dev = _devir_defteri_eski(ay)
+    arsiv_yaz(cur, "satis", f"devir_defteri:{ay}", dev, yazan)
+    return {"gun": (son - bas).days + 1, "mutabakat_sube_gun": sube_gun, "fire_satir": fire_adet,
+            "devir_sube": len(dev.get("subeler") or [])}

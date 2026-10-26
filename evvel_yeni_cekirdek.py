@@ -10,6 +10,7 @@ bir modülü çıkarmak başka modülleri kırıyordu. Kural:
     kaldırılınca kaydı da gider, toplayıcı bozulmaz.
 """
 
+import json
 import logging
 import math
 from datetime import date, datetime, time, timedelta
@@ -369,6 +370,41 @@ def bir_kez(cur, anahtar: str, is_fn, ad: str) -> bool:
         return False
 
 
+# ─────────────────────────── ARŞİV (1 Kasım kesimi) ───────────────────────────
+# KESIM_1KASIM_ENVANTERI ⚖️ (Opus + sahip 27 Eki): eski dönemin HAZIR çıktısı (Ekim raporları, eski bordro…) son aktarım gecesi BİR KEZ
+# buraya yazılır; ekran eski günü / ayı buradan okur, eski tablo okunmaz. Salt okunur: yazan yalnız son aktarım işi (evvel_yeni_kesim_api).
+_ARSIV_HAZIR = False
+
+
+def _arsiv_hazirla(cur) -> None:
+    global _ARSIV_HAZIR
+    if _ARSIV_HAZIR:
+        return
+    if tablo_var(cur, "ey_arsiv"):
+        if not ddl_bu_islemde(cur):
+            _ARSIV_HAZIR = True
+        return
+    ddl_kur(cur, "sp_ey_arsiv_ddl", lambda c: c.execute("""CREATE TABLE IF NOT EXISTS ey_arsiv (
+        modul TEXT NOT NULL, anahtar TEXT NOT NULL, veri JSONB NOT NULL, yazan TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        PRIMARY KEY (modul, anahtar))"""))
+
+
+def arsiv_oku(cur, modul: str, anahtar: str):
+    """PUBLIC — dondurulmuş eski çıktı (yoksa None). Modül kendi anahtarını bilir: 'bar' · 'ozet:2026-10' gibi."""
+    _arsiv_hazirla(cur)
+    cur.execute("SELECT veri FROM ey_arsiv WHERE modul=%s AND anahtar=%s", (modul, anahtar))
+    r = cur.fetchone()
+    return json_ac(dict(r)["veri"], None) if r else None
+
+
+def arsiv_yaz(cur, modul: str, anahtar: str, veri, yazan: str) -> None:
+    """PUBLIC — yalnız son aktarım işi çağırır. Aynı anahtar yeniden yazılırsa üzerine (son aktarım yeniden koşulabilir)."""
+    _arsiv_hazirla(cur)
+    cur.execute("""INSERT INTO ey_arsiv (modul, anahtar, veri, yazan) VALUES (%s, %s, %s::jsonb, %s)
+                   ON CONFLICT (modul, anahtar) DO UPDATE SET veri=EXCLUDED.veri, yazan=EXCLUDED.yazan, zaman=NOW()""",
+                (modul, anahtar, json.dumps(veri, ensure_ascii=False, default=str), yazan))
+
+
 def merkez_aktor(cur, jeton: Optional[str]) -> str:
     """PUBLIC — merkez ucu kapısı: geçerli oturumun adı, yoksa 401 (Dalga 4, F#2: aynı 3 satır 12 yerde)."""
     kim = aktor(cur, jeton)
@@ -554,7 +590,7 @@ def bekleyen_saglayicilar() -> List[str]:
 
 __all__ = ["TrTutar", "bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "kolon_var", "bir_kez", "ddl_kur", "ddl_bu_islemde", "lock_timeout_ayarla", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
-           "ayar_oku", "ayar_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik", "eski_panel_zinciri_acik_onbellekli", "eski_yazim_kapisi"]
+           "ayar_oku", "ayar_yaz", "arsiv_oku", "arsiv_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik", "eski_panel_zinciri_acik_onbellekli", "eski_yazim_kapisi"]
 
 
 def takvim_durumu(beklenen, odenen, vade, bugun, once: bool = False, tolerans=100) -> str:

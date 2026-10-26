@@ -281,6 +281,8 @@ export function DevirDefteri() {
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Defter hazırlanıyor…</div>}
       {v && <>
+        {v.dondu && <div style={{ background: 'var(--pi-bg)', border: '1px solid var(--pi-line)', borderRadius: 9, padding: '8px 11px', fontSize: 13 }}>
+          🔒 <b>{new Date(`${ay}-01T12:00:00`).toLocaleDateString('tr-TR', { month: 'long', year: 'numeric' })} — eski panel kaydı, dondurulmuş.</b> Değiştirilemez; kırmızılar yalnız bakmak içindir, iş / uyarı üretmez (sahip 27 Eki).</div>}
         <div style={{ fontSize: 12.5, color: R.not }}>{v.not} Kasiyer bu ekranı görmez.</div>
         <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
           {v.subeler.map((x) => (

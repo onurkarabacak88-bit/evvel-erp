@@ -349,6 +349,11 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None, evren: Opt
         # A2/B4 (köprü taraması 23 Eki): kaynak BAKILAN aya göre (bugüne değil) — 1 Kasım'dan sonra Ekim raporu eski köprüden dolu gelir
         if (evren == "yeni") if evren in ("yeni", "eski") else yeni_donem(cur, son):   # Evvel Yeni defterleri; eski okuma yalnız geçişte
             return {"ay": a_, **_bar_yeni(cur, subeler, ay_bas, bas, son)}
+        from evvel_yeni_cekirdek import arsiv_oku   # 1 Kasım kesimi: eski ay dondurulmuş çıktıdan (eski tablo okunmaz)
+        ar = None if evren == "eski" else arsiv_oku(cur, "bar", f"ozet:{a_}")
+        if ar is not None:
+            sset = {s["id"] for s in subeler}
+            return {**ar, "subeler": [s for s in ar.get("subeler") or [] if s.get("sube_id") in sset], "dondu": True}
         sids = [s["id"] for s in subeler]
         cur.execute("""SELECT sube_id::text AS sube_id, tarih, tip, cevap_ts, meta, personel_ad FROM sube_operasyon_event
                         WHERE tarih BETWEEN %s AND %s AND durum='tamamlandi' AND tip IN ('ACILIS','KAPANIS')
@@ -518,3 +523,16 @@ def bar_gunu(cur, gun: date, sube_id: Optional[str] = None) -> dict:
     subeler = [s for s in _ey_subeler(cur) if not sube_id or s["id"] == sube_id]
     r = _bar_yeni(cur, subeler, gun, gun - timedelta(days=1), gun)
     return {s["sube_id"]: s["gunler"][-1] for s in r["subeler"] if s["gunler"]}
+
+
+# ✂️ 1 KASIM SON AKTARIM (KESIM_1KASIM_ENVANTERI ⚖️ · manifest 'kesim') — çekirdek (evvel_yeni_moduller /kesim) çağırır, kendi
+# savepoint'inde; kuru denemede sonra geri alınır. Modül YALNIZ kendi arşiv anahtarını yazar. Kesim yayınında eski okuyucularla birlikte silinir.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    """Bar: Ekim + bir önceki ay (Satış'ın beklenen satışı iki önceki ayı okur — Opus karar 2)."""
+    from evvel_yeni_cekirdek import arsiv_yaz, ay_kaydir
+    out = {}
+    for a in (ay_kaydir(ay, -1), ay):
+        v = bar_ozet(a, evren="eski")
+        arsiv_yaz(cur, "bar", f"ozet:{a}", v, yazan)
+        out[a] = len(v.get("subeler") or [])
+    return {"ay_sube": out}
