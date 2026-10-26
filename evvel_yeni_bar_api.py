@@ -207,8 +207,11 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
     sids = {s_["id"] for s_ in subeler}
     ev, ac = {}, {}
     # B84 (Fable 22 Eki): dün kapalıysa SON kapanışla kıyas — 14 gün geriye okunur (Satış son_kapanislar ile aynı sınır)
+    _pb = __import__("evvel_yeni_cekirdek").panel_baslangic(cur)
     for o in __import__("evvel_yeni_olay").panel_olaylari(cur, bas=bas - timedelta(days=14), son=son + timedelta(days=1), turler={"acilis", "kapanis", "urun_ac"}):
         if str(o["sube_id"]) not in sids:   # F#12: iptal/panel süzgeci Olay'da
+            continue
+        if ay_bas >= _pb and o["is_gunu"] < _pb:   # F6.3: yeni dönem ayında 1 Kasım öncesi yeni panel kaydı (28–30 Eki prova) "dün kapanışı" sayılmaz
             continue
         sid = str(o["sube_id"])
         v = o["v"]   # panel_olaylari açtı
