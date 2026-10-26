@@ -100,7 +100,7 @@ export default function AnaSayfa({ d, yok, tabletVar, kapali, ac, setQrBuyuk, se
           {d.avans_elden.map((t) => (
             <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
               <span style={{ flex: 1 }}>{t.ad}</span><b>{Number(t.tutar).toLocaleString('tr-TR', { minimumFractionDigits: 2 })} ₺</b>
-              <button type="button" className="sp-btn sp-yesil" style={{ minHeight: 44 }} disabled={kapali} onClick={() => avansTeslim?.(t)}>Teslim ettim</button>
+              <button type="button" className="sp-btn sp-orta sp-yesil" disabled={kapali} onClick={() => avansTeslim?.(t)}>Teslim ettim</button>
             </div>
           ))}
         </div>

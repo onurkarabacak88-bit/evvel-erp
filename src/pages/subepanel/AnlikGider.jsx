@@ -60,7 +60,7 @@ export default function AnlikGider({ d, subeId, adaylar, kapali, kapat, bitti })
         {adim === 1 && (<>   {/* TEK pencere — özet + kişi + PIN + kaydet (sahip 23 Eki, G23) */}
           <div style={{ fontSize: 24, fontWeight: 900, color: C.sari }}>{tl(tutarNum(tut))}</div>
           <div>{acik.trim()}{kat.trim() ? ` · ${kat.trim()}` : ''} · fiş {fis ? 'VAR' : 'YOK'}</div>
-          <button type="button" className="sp-btn" style={{ minHeight: 40, justifySelf: 'start' }} disabled={mesgul} onClick={() => setAdim(0)}>« Düzelt</button>
+          <button type="button" className="sp-btn sp-orta" style={{ justifySelf: 'start' }} disabled={mesgul} onClick={() => setAdim(0)}>« Düzelt</button>
           <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim ödedi?"
             devam={kaydet} devamYazi="💸 Gideri kaydet" mesgul={mesgul} />
         </>)}

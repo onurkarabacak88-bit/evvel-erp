@@ -102,7 +102,7 @@ export default function KasaDevri({ devir, tabletVar, kapali, kapat, yukle, ipta
       {acik && !yeni && <div style={{ color: C.soluk }}>Eski devir formu ({devir.devreden || '—'} → {devir.devralan || '—'}) — {devir.durum === 'devreden_onayladi' ? 'merkez kapatsın' : 'iptal edip yeniden başlat'}.</div>}
       {hata && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
       {acik && ['dolduruluyor', 'hazir'].includes(devir.durum) && (   /* yalnız eski akış satırı; v2 devri panelden iptal edilmez (günde bir devir) */
-        <button className="sp-btn" style={{ minHeight: 52 }} disabled={mesgul || mesgulDis} onClick={iptal}>✕ Eski devri iptal et</button>
+        <button className="sp-btn sp-orta" disabled={mesgul || mesgulDis} onClick={iptal}>✕ Eski devri iptal et</button>
       )}
       {yeni && <div style={{ color: C.soluk, fontSize: 13, textAlign: 'center' }}>Günde bir devir olur — takılırsa merkeze haber ver.</div>}
     </Modal>

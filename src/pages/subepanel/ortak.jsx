@@ -13,7 +13,10 @@ export const C = { bg: '#0b0f1a', bg1: '#111827', bg2: '#1a2236', bg3: '#222d42'
 export const CSS = `
 .sp *{box-sizing:border-box} .sp{font-family:Inter,system-ui,sans-serif;background:${C.bg};color:${C.yazi};min-height:100vh;font-size:14px;padding-bottom:64px}
 .sp-btn{min-height:72px;border-radius:12px;border:1px solid ${C.cizgi};background:${C.bg2};color:${C.yazi};font-size:17px;font-weight:700;cursor:pointer;padding:10px 16px}
-.sp-btn:disabled{opacity:.45;cursor:default} .sp-ana{background:${C.mavi};border-color:${C.mavi}} .sp-yesil{background:${C.yesil};border-color:${C.yesil};color:#05210f}
+.sp-btn:disabled{opacity:.45;cursor:default}
+.sp-btn.sp-orta{min-height:64px;padding:8px 14px;font-size:16px}
+.sp-btn.sp-ikincil{min-height:48px;position:relative;background:transparent;color:${C.soluk};font-size:14px;padding:4px 14px}
+.sp-btn.sp-ikincil::before{content:'';position:absolute;inset:-9px -2px} .sp-ana{background:${C.mavi};border-color:${C.mavi}} .sp-yesil{background:${C.yesil};border-color:${C.yesil};color:#05210f}
 .sp-mor{background:linear-gradient(135deg,#4c1d95,#7c3aed);border-color:rgba(168,85,247,.4)}
 .sp-in{width:100%;min-height:56px;border-radius:10px;border:1px solid ${C.cizgi};background:${C.bg1};color:${C.yazi};font-size:22px;padding:8px 12px}
 .sp-ust{height:52px;display:flex;align-items:center;gap:12px;padding:0 14px;background:${C.bg1};border-bottom:1px solid ${C.cizgi}}
@@ -32,7 +35,7 @@ export const CSS = `
 .sp-alt{position:fixed;left:0;right:0;bottom:0;height:58px;display:grid;grid-template-columns:repeat(4,1fr);background:${C.bg1};border-top:1px solid ${C.cizgi};z-index:30}
 .sp-alt button{border:none;background:transparent;color:${C.soluk};font:inherit;font-weight:700;cursor:pointer;position:relative}
 .sp-alt button:disabled{opacity:.4;cursor:default}
-.sp-cip{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:999px;border:1px solid ${C.cizgi};background:${C.bg2};color:${C.soluk};font-weight:700;cursor:pointer;font:inherit}
+.sp-cip{min-height:64px;display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:999px;border:1px solid ${C.cizgi};background:${C.bg2};color:${C.soluk};font-weight:700;cursor:pointer;font:inherit}
 @media (max-width:980px){.sp-govde{grid-template-columns:1fr 280px} .sp-sol-kolon{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px} .sp-sol-kolon .sp-sol{width:auto;flex:0 0 auto} .sp-sol-kolon .sp-sol-baslik{width:100%}}
 @media (max-width:768px){.sp-govde{grid-template-columns:1fr} .sp-sag-kolon{display:none} .sp-alt{height:62px}}
 .sp-alt-qr{display:none}
@@ -82,7 +85,7 @@ export function Modal({ baslik, kapat, children, genis, genislik }) {
     <div ref={kokRef} onClick={kapat || undefined} className="sp-perde" style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,.6)', zIndex: 50, display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
       <div onClick={(e) => e.stopPropagation()} className="sp-kart" style={{ width: genislik ? `min(${genislik}px,100%)` : genis ? 'min(980px,100%)' : 'min(560px,100%)', maxHeight: '92vh', overflow: 'auto', display: 'grid', gap: 12 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><b style={{ fontSize: 20, flex: 1 }}>{baslik}</b>
-          {kapat && <button className="sp-btn" style={{ minHeight: 48, padding: '4px 14px' }} onClick={kapat}>✕</button>}</div>
+          {kapat && <button className="sp-btn sp-ikincil" onClick={kapat}>✕</button>}</div>
         {children}
       </div>
     </div>

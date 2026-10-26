@@ -338,7 +338,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
                 )}
                 {/* 📨 Telefonsuz: mühürsüz YOK (sahip) → merkez geç kapanış işler; önce içerideki başka biri kendi telefonuyla onaylayabilir */}
                 {!merkezAc ? (
-                  <button type="button" onClick={() => setMerkezAc(true)} style={{ background: 'none', border: 'none', color: C.soluk, textDecoration: 'underline', font: 'inherit', fontSize: 13, minHeight: 44, cursor: 'pointer' }}>
+                  <button type="button" onClick={() => setMerkezAc(true)} style={{ background: 'none', border: 'none', color: C.soluk, textDecoration: 'underline', font: 'inherit', fontSize: 14, minHeight: 64, cursor: 'pointer' }}>
                     📵 Kapanışçının telefonu yok / çalışmıyor mu?</button>
                 ) : (
                   <div className="sp-kart" style={{ alignSelf: 'stretch', textAlign: 'left', display: 'grid', gap: 8 }}>

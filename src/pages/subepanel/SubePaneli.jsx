@@ -264,14 +264,14 @@ export default function SubePaneli({ subeId }) {
       <style>{CSS}</style>
       <SorKatmani />
       {hata && <div role="alert" style={{ background: '#b3261e', color: '#fff', padding: '10px 14px', fontWeight: 600, fontSize: 15 }}>
-        ⚠ {hataAg ? 'Bağlantı yok' : 'Sistem şu an yanıt vermiyor'} — ekrandaki bilgi son alınan hâli. Kendiliğinden yeniden deneniyor… <button className="sp-btn" style={{ marginLeft: 8, minHeight: 36 }} onClick={yukle}>Tekrar dene</button></div>}
+        ⚠ {hataAg ? 'Bağlantı yok' : 'Sistem şu an yanıt vermiyor'} — ekrandaki bilgi son alınan hâli. Kendiliğinden yeniden deneniyor… <button className="sp-btn sp-orta" style={{ marginLeft: 8 }} onClick={yukle}>Tekrar dene</button></div>}
       {/* ÜST BAR (eski 52px): EVVEL · şube · tarih saat */}
       <div className="sp-ust">
         <span className="sp-logo">EVVEL</span>
         <b style={{ fontSize: 18, flex: 1, textAlign: 'center' }}>{d.sube.ad}</b>
         {d.kuru && <span style={{ background: 'rgba(245,158,11,.15)', color: C.sari, padding: '4px 10px', borderRadius: 8, fontWeight: 700, fontSize: 12 }}>DENEME — kaydedilmez · panel {new Date(d.panel_baslangic + 'T12:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' })} sabahı açılır</span>}
         <span style={{ color: C.soluk, fontVariantNumeric: 'tabular-nums' }}>{saat.toLocaleDateString('tr-TR')} · {saat.toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}</span>
-        <button type="button" className="sp-btn" style={{ minHeight: 40, padding: '4px 12px', fontSize: 14, marginLeft: 8 }}
+        <button type="button" className="sp-btn sp-ikincil" style={{ marginLeft: 8 }}
           title="Bu bilgisayarın türü — dokunmatik ekranda sayı tuş takımı açılır, laptopta klavyeden yazılır"
           onClick={() => { const y = cihaz === 'dokunmatik' ? 'klavye' : 'dokunmatik'; cihazTuruYaz(y); setCihaz(y); setMesaj({ tur: 'tamam', metin: y === 'dokunmatik' ? '👆 Dokunmatik ekran — sayılar için ekran tuş takımı açılır' : '⌨️ Klavye — sayıları klavyeden yaz, Tab ile sonraki kutuya geç' }); }}>
           {cihaz === 'dokunmatik' ? '👆 Dokunmatik' : '⌨️ Klavye'}</button>
@@ -279,7 +279,7 @@ export default function SubePaneli({ subeId }) {
       {urunBandi && (
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '10px 14px', background: 'rgba(59,130,246,.12)', borderBottom: `1px solid ${C.cizgi}` }}>
           <span style={{ flex: 1, fontWeight: 700 }}>🔓 Bugün henüz Ürün Aç kaydı yok. Saat {String(saat.getHours()).padStart(2, '0')}:00 oldu — açtığın ürünleri kaydet.</span>
-          <button className="sp-btn" style={{ minHeight: 40, padding: '4px 12px' }} onClick={() => { try { localStorage.setItem('sp_urunac_bant:' + subeId, String(Date.now() + 4 * 3600 * 1000)); } catch { /* yok */ } setSaat(new Date()); }}>Kapat</button>
+          <button className="sp-btn sp-orta" style={{ padding: '4px 12px' }} onClick={() => { try { localStorage.setItem('sp_urunac_bant:' + subeId, String(Date.now() + 4 * 3600 * 1000)); } catch { /* yok */ } setSaat(new Date()); }}>Kapat</button>
         </div>
       )}
       {mesaj && (
@@ -333,7 +333,7 @@ export default function SubePaneli({ subeId }) {
         {/* SAĞ: GÜN SONU kartları (eski: 💵 Kasa Devri · 🌙 Günü Kapat, durum çipleriyle) */}
         <div className="sp-sag-kolon" style={{ display: 'grid', gap: 10, alignContent: 'start' }}>
           {d.kuru && (d.acilis_var || denemeKapandi) && !d.kapanis_var && !d.ara_sayim && (   /* Fable D-A B1: denemede açılış kalıcı değil */   /* ⏱ yalnız DENEME: provada ara sayımı hemen iste (A4) */
-            <button className="sp-btn" style={{ minHeight: 56 }} onClick={async () => { try { await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/ara-sayim-deneme`, { method: 'POST', body: {} }); yukle(); } catch (e) { setAnladim(e?.message || 'Başlatılamadı'); } }}>⏱ Deneme: ara sayım iste</button>)}
+            <button className="sp-btn sp-orta" onClick={async () => { try { await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/ara-sayim-deneme`, { method: 'POST', body: {} }); yukle(); } catch (e) { setAnladim(e?.message || 'Başlatılamadı'); } }}>⏱ Deneme: ara sayım iste</button>)}
           <button className="sp-kart" disabled={kapali} onClick={() => ac('devir')} style={{ textAlign: 'left', cursor: kapali ? 'default' : 'pointer', minHeight: 78, opacity: kapali ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4 }}>
             <b style={{ fontSize: 16 }}>💵 Kasa Devri</b><span style={{ color: C.soluk, fontSize: 12 }}>Vardiya nakit teslim & devir</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: devirEtiket(devir, !!d?.kapanis_var).renk }}>{devirEtiket(devir, !!d?.kapanis_var).metin}</span>

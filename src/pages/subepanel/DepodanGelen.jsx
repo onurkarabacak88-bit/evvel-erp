@@ -85,7 +85,7 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
       {p && (
         <div className="sp-kart" style={{ display: 'grid', gap: 10 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-            <button type="button" className="sp-btn" style={{ minHeight: 40 }} onClick={() => setSecPid(null)}>« Paketler</button>
+            <button type="button" className="sp-btn sp-orta" onClick={() => setSecPid(null)}>« Paketler</button>
             <b style={{ fontSize: 17 }}>📦 {p.nereden} · {tarihNokta(p.gun)}</b>
           </div>
           <div style={{ height: 10, borderRadius: 999, background: C.bg3, overflow: 'hidden' }}>

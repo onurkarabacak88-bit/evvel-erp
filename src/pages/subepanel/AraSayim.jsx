@@ -65,7 +65,7 @@ export default function AraSayim({ subeId, a, tabletVar, yenile }) {
           <div style={{ color: C.soluk, fontSize: 13 }}>Onaylanınca ekran kendiliğinden açılır.</div>
           {a.durum === 'hata' && a.mesaj && <div style={{ color: C.kirmizi, fontWeight: 700 }}>Telefon onayı olmadı: {a.mesaj} — QR'ı yeniden okut</div>}
           {a.durum === 'isleniyor' && <div style={{ color: C.sari, fontWeight: 700 }}>Telefondan onaylanıyor…</div>}
-          <button className="sp-btn" style={{ minHeight: 56 }} disabled={kalan === 0 || mesgul || a.durum === 'isleniyor'} onClick={duzelt}>« Tutarı düzelt (yeniden say)</button>
+          <button className="sp-btn sp-orta" disabled={kalan === 0 || mesgul || a.durum === 'isleniyor'} onClick={duzelt}>« Tutarı düzelt (yeniden say)</button>
         </>)}
       </div>
     </div>

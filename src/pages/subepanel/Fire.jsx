@@ -144,10 +144,10 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
 
       {adim === 2 && (<>
         {/* G22 (sim 23 Eki): "Devam → onay" en alttaydı (uzun katalogda görünmüyordu) → üstte yapışkan, HEP yerinde (seçim yokken soluk, G41 gibi kayma yok) */}
-        <div className="sp-kart" style={{ position: 'sticky', top: 0, zIndex: 5, display: 'grid', gap: 8, borderColor: kalem ? C.kirmizi : undefined }}>
+        <div className="sp-kart" style={{ position: 'sticky', top: 0, zIndex: 5, display: 'grid', gap: 20, borderColor: kalem ? C.kirmizi : undefined }}>{/* düğme kararı (Opus + Fable B): ikincil « Sebebi değiştir » ile Devam arası 20 px görünür (dokunma uzantısı 8 px → dokunma alanları 12 px ayrı) */}
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <span style={{ fontSize: 22 }}>{sb?.ikon}</span><b style={{ flex: 1 }}>{sb?.ad}{hazirlikAd ? ` · ${hazirlikAd}` : ''}{iadeAd ? ` · ${iadeAd}` : ''}</b>
-            <button className="sp-btn" style={{ minHeight: 40, padding: '4px 12px', fontSize: 13, color: C.soluk }} onClick={() => setAdim(1)}>« Sebebi değiştir</button>   {/* G22: Devam'dan küçük/soluk — telaşta yanlışlıkla geri dönülmesin */}
+            <button className="sp-btn sp-ikincil" onClick={() => setAdim(1)}>« Sebebi değiştir</button>   {/* G22: Devam'dan küçük/soluk — telaşta yanlışlıkla geri dönülmesin */}
           </div>
           <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <b style={{ flex: 1, color: kalem ? undefined : C.soluk }}>{kalem ? `🔥 ${kalem} çeşit · toplam ${toplam} adet seçildi` : '🔥 Henüz ürün seçilmedi'}</b>
@@ -178,7 +178,7 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
         <div className="sp-kart" style={{ display: 'grid', gap: 6 }}>
           <b style={{ fontSize: 18 }}>{sb?.ikon} {sb?.ad}{hazirlikAd ? ` · ${hazirlikAd}` : ''}{iadeAd ? ` · ${iadeAd}` : ''}</b>
           {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{n}</b></div>)}
-          <div style={{ display: 'flex', gap: 8 }}><button className="sp-btn" style={{ minHeight: 56 }} onClick={() => setAdim(2)}>« Ürünleri değiştir</button></div>
+          <div style={{ display: 'flex', gap: 8 }}><button className="sp-btn sp-orta" onClick={() => setAdim(2)}>« Ürünleri değiştir</button></div>
         </div>
         {sebep === 'iade' && (
           <div className="sp-kart" style={{ display: 'grid', gap: 8 }}>

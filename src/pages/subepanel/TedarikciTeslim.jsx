@@ -5,7 +5,7 @@
 // Sök-tak: Toptancılar modülü kapalıysa ekran "kapalı" der. Sipariş modu / eksik bildirimi sipariş basamağıyla (ertelendi). Bip YOK (sahip).
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, qrBoyut, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
+import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, qrBoyut, sor, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
 
 
 export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, secimBildir, tabletVar }) {
@@ -165,9 +165,9 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
               {/* Z4 (sim 24 Eki): beklenen kart adedi doldurur; kurye kapıdayken gelen farklıysa BURADAN düzelt (kategoriye girmeden) */}
               {secili.map(([id, n]) => (
                 <div key={id} style={{ display: 'flex', gap: 8, fontSize: 14, alignItems: 'center' }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span>
-                  <button type="button" className="sp-btn" style={{ minHeight: 36, minWidth: 40, padding: 0 }} disabled={kapali || n <= 1} onClick={() => ayar.art(id, -1)} aria-label={`${urunMap[id].ad} azalt`}>−</button>
-                  <b style={{ minWidth: 34, textAlign: 'center' }}>{n}</b>
-                  <button type="button" className="sp-btn" style={{ minHeight: 36, minWidth: 40, padding: 0 }} disabled={kapali} onClick={() => ayar.art(id, 1)} aria-label={`${urunMap[id].ad} artır`}>+</button>
+                  <button type="button" className="sp-btn" style={{ minHeight: 64, minWidth: 64, padding: 0, fontSize: 24 }} disabled={kapali || n <= 1} onClick={() => ayar.art(id, -1)} aria-label={`${urunMap[id].ad} azalt`}>−</button>
+                  <b style={{ minWidth: 56, textAlign: 'center', fontSize: 22 }}>{n}</b>
+                  <button type="button" className="sp-btn" style={{ minHeight: 64, minWidth: 64, padding: 0, fontSize: 24 }} disabled={kapali} onClick={() => ayar.art(id, 1)} aria-label={`${urunMap[id].ad} artır`}>+</button>
                 </div>))}
             </>)}
           </div>
@@ -188,7 +188,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
             <input className="sp-in" style={{ fontSize: 16 }} value={not} onChange={(e) => setNot(e.target.value.slice(0, 300))} placeholder="Opsiyonel açıklama…" /></label>
           {hata && onay === 0 && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
           <button className="sp-btn sp-yesil" disabled={kapali || mesgul} onClick={onayAc}>📦 Teslim al ve kaydet</button>
-          {(kalem > 0 || toptanci) && <button type="button" className="sp-btn" style={{ minHeight: 40 }} onClick={temizle}>✕ Formu temizle</button>}
+          {(kalem > 0 || toptanci) && <button type="button" className="sp-btn sp-orta" onClick={async () => (await sor({ soru: 'Teslim formu temizlensin mi?', alt: 'Seçtiğin ürünler ve adetler silinir.', tamam: 'Evet, temizle', iptal: 'Vazgeç' })) && temizle()}>✕ Formu temizle</button>}
         </div>
       </div>
 
@@ -200,7 +200,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
               <span style={{ flex: 1, minWidth: 200 }}>{t.saat} · <b>{t.toptanci}</b> · {t.kalem} kalem / {t.adet} adet{t.teslim_alan ? ` · ${t.teslim_alan}` : ''}</span>
               {t.iptal ? <span style={{ color: C.soluk, fontWeight: 700 }}>{t.iptal_eden === 'merkez' ? '✕ merkez iptal etti' : '↩ geri alındı'}</span>
                 : t.merkez_isledi ? <span style={{ color: C.soluk, fontSize: 13 }}>merkez işledi — hata varsa merkeze haber ver</span>
-                : <button type="button" className="sp-btn" style={{ minHeight: 48 }} disabled={kapali}
+                : <button type="button" className="sp-btn sp-orta" disabled={kapali}
                     onClick={() => setGeri({ teslim: t, sebep: '', kisi: '', pin: '', istek: yeniIstek(), hata: '' })}>Hatalı? Geri al</button>}
             </div>
           ))}
@@ -267,10 +267,10 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
           <div style={{ display: 'grid', gap: 6 }}>
             <span style={{ color: C.soluk }}>{tAd} için bekleyen sipariş kartı işaretlenmedi:</span>
             {bagsizSor.map((y) => <b key={y.yon_id}>• {y.ad}</b>)}
-            <button type="button" className="sp-btn sp-yesil" style={{ minHeight: 56 }}
+            <button type="button" className="sp-btn sp-orta sp-yesil"
               onClick={() => { setSecYon((o) => [...new Set([...o, ...bagsizSor.map((y) => y.yon_id)])]); setBagsizSor(null); setOnay(1); }}>
               ✓ Bu siparişe bağla (gelen bu sipariş)</button>
-            <button type="button" className="sp-btn" style={{ minHeight: 56 }} onClick={() => { setDisi(true); setBagsizSor(null); setOnay(1); }}>
+            <button type="button" className="sp-btn sp-orta" onClick={() => { setDisi(true); setBagsizSor(null); setOnay(1); }}>
               Sipariş dışı teslim (ayrıca geldi)</button>
           </div>
         </Modal>

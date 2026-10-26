@@ -4,7 +4,7 @@
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek } from './ortak';
+import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek } from './ortak';
 
 
 export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir }) {
@@ -118,7 +118,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
       {mesaj === 'taslak' && kalem > 0 && (
         <div className="sp-kart" style={{ borderColor: C.sari, color: C.sari, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <span style={{ flex: 1 }}>🔄 Yarım kalan seçimin geri geldi ({kalem} çeşit). Üstteki «Onayla» ile bitir.</span>
-          <button className="sp-btn" style={{ minHeight: 40, padding: '4px 12px' }} onClick={temizle}>✕ Taslağı temizle</button>
+          <button className="sp-btn sp-orta" style={{ padding: '4px 12px' }} onClick={async () => (await sor({ soru: 'Yarım kalan Ürün Aç seçimi silinsin mi?', alt: 'Seçtiğin ürünler ve adetler silinir.', tamam: 'Evet, temizle', iptal: 'Vazgeç' })) && temizle()}>✕ Taslağı temizle</button>
         </div>
       )}
       {/* G21: ürün arama — kategori bilmeden bulunur */}
@@ -128,7 +128,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
         <div className="sp-kart" style={{ display: 'grid', gap: 6 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <b style={{ flex: 1, color: C.soluk, fontSize: 12 }}>ARAMA SONUCU · {aramaSonuc.length}</b>
-            <button className="sp-btn" style={{ minHeight: 40, padding: '4px 12px' }} onClick={() => setAra('')}>✕ Aramayı kapat</button>
+            <button className="sp-btn sp-orta" style={{ padding: '4px 12px' }} onClick={() => setAra('')}>✕ Aramayı kapat</button>
           </div>
           {aramaSonuc.length === 0 && <div style={{ color: C.soluk }}>“{ara.trim()}” bulunamadı{pasif ? '' : ' — pasif ürünse «Pasifleri göster»i işaretle'}.</div>}
           {aramaSonuc.map((u) => {

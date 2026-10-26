@@ -5,7 +5,7 @@
 // ya da "🚚 Yola çıkar" (kısmi → kalan merkeze döner). Sunucu: evvel_yeni_panel_api (/siparis, /siparisler, /gonderilecek) → Sipariş modülü.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
+import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
 import { tarihNokta } from '../../utils/trTarih';
 
 const DURUM = {
@@ -91,7 +91,7 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
               <b style={{ color: C.yesil }}>{secili.length + oneri.length} kalem</b>
               {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8, fontSize: 14 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{n}</b></div>)}
               {oneri.map((o, i) => <div key={`o${i}`} style={{ display: 'flex', gap: 8, fontSize: 14, color: C.sari }}><span style={{ flex: 1 }}>💡 {o.ad}</span><b>{o.adet}</b>
-                <button type="button" className="sp-btn" style={{ minHeight: 28, padding: '0 8px' }} onClick={() => setOneri((x) => x.filter((_, j) => j !== i))}>✕</button></div>)}
+                <button type="button" className="sp-btn sp-orta" aria-label="Öneriyi kaldır" onClick={() => setOneri((x) => x.filter((_, j) => j !== i))}>✕</button></div>)}
             </>)}
           </div>
           <div style={{ display: 'grid', gap: 6, padding: 8, borderRadius: 10, border: `1px dashed ${C.cizgi}` }}>
@@ -99,14 +99,14 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
             <div style={{ display: 'flex', gap: 6 }}>
               <input className="sp-in" style={{ flex: 1, minWidth: 0, fontSize: 15 }} placeholder="Ürün adı" value={onAd} onChange={(e) => setOnAd(e.target.value.slice(0, 80))} disabled={kapali} />
               <input className="sp-in" style={{ width: 70, textAlign: 'center' }} inputMode="numeric" placeholder="adet" value={onAdet} onChange={(e) => setOnAdet(e.target.value.replace(/\D/g, '').slice(0, 5))} disabled={kapali} />
-              <button type="button" className="sp-btn" style={{ minHeight: 40 }} onClick={oneriEkle} disabled={kapali}>+</button>
+              <button type="button" className="sp-btn sp-orta" onClick={oneriEkle} disabled={kapali}>+</button>
             </div>
           </div>
           <label style={{ display: 'grid', gap: 4 }}><span style={{ color: C.soluk, fontSize: 12, fontWeight: 700 }}>NOT (isteğe bağlı)</span>
             <input className="sp-in" style={{ fontSize: 16 }} value={not} onChange={(e) => setNot(e.target.value.slice(0, 300))} placeholder="ör. hafta sonu için" /></label>
           {hata && onay === 0 && <div style={{ color: C.kirmizi, fontWeight: 700 }}>{hata}</div>}
           <button className="sp-btn sp-yesil" disabled={kapali || mesgul} onClick={onayAc}>🛒 Siparişi gönder</button>
-          {(secili.length > 0 || oneri.length > 0) && <button type="button" className="sp-btn" style={{ minHeight: 40 }} onClick={temizle}>✕ Formu temizle</button>}
+          {(secili.length > 0 || oneri.length > 0) && <button type="button" className="sp-btn sp-orta" onClick={async () => (await sor({ soru: 'Sipariş formu temizlensin mi?', alt: 'Seçtiğin ürünler ve adetler silinir.', tamam: 'Evet, temizle', iptal: 'Vazgeç' })) && temizle()}>✕ Formu temizle</button>}
         </div>
       </div>
       {k0 && (
@@ -122,7 +122,7 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
                     yaz={(v) => degis(u.id, v)} />   {/* ortak − adet + (F#51) */}
                 </div>
                 {ki > 1 && <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
-                  {[1, 2, 3].map((x) => <button key={x} type="button" className="sp-btn" style={{ minHeight: 34, padding: '0 10px', fontSize: 13 }} onClick={() => degis(u.id, n + x * ki)}>+{x} koli ({x * ki})</button>)}
+                  {[1, 2, 3].map((x) => <button key={x} type="button" className="sp-btn sp-orta" style={{ padding: '0 10px', fontSize: 13 }} onClick={() => degis(u.id, n + x * ki)}>+{x} koli ({x * ki})</button>)}
                 </div>}
               </div>
             );
@@ -176,8 +176,8 @@ export function SiparisTakip({ d, subeId, adaylar, bitti }) {
       <div className="sp-kart" style={{ display: 'flex', gap: 12, alignItems: 'center', flexWrap: 'wrap' }}>
         <span style={{ fontSize: 28 }}>📊</span><b style={{ fontSize: 18, flex: 1 }}>Sipariş Takip <span style={{ color: C.soluk, fontSize: 13, fontWeight: 500 }}>· son 21 gün</span></b>
         {[['acik', 'Açık'], ['bitti', 'Tamamlanan'], ['hepsi', 'Hepsi']].map(([k, a]) => (
-          <button key={k} type="button" className={'sp-btn' + (filtre === k ? ' sp-ana' : '')} style={{ minHeight: 40 }} onClick={() => setFiltre(k)}>{a}</button>))}
-        <button type="button" className="sp-btn" style={{ minHeight: 40 }} onClick={yukle}>↻</button>
+          <button key={k} type="button" className={'sp-btn sp-orta' + (filtre === k ? ' sp-ana' : '')} onClick={() => setFiltre(k)}>{a}</button>))}
+        <button type="button" className="sp-btn sp-orta" onClick={yukle}>↻</button>
       </div>
       {hata && <div className="sp-kart" style={{ color: C.kirmizi }}>{hata}</div>}
       {!v ? <div style={{ color: C.soluk }}>Okunuyor…</div> : liste.length === 0 ? <div className="sp-kart" style={{ color: C.soluk, textAlign: 'center', padding: 24 }}>Sipariş yok</div> : liste.map((s) => {
@@ -190,7 +190,7 @@ export function SiparisTakip({ d, subeId, adaylar, bitti }) {
               <span style={{ flex: 1 }} />
               {s.durum === 'iptal' ? <b style={{ color: C.soluk }}>iptal · {s.iptal_sebep}</b> : s.durum === 'tamamlandi' ? <b style={{ color: C.yesil }}>✓ tamamlandı</b> : null}
               {s.durum === 'acik' && s.kalemler.every((k) => k.durum === 'yonlendirilmedi' || k.durum === 'oneri') &&
-                <button type="button" className="sp-btn" style={{ minHeight: 36 }} onClick={() => { setGeri(s); setHataG(''); }}>Geri çek</button>}
+                <button type="button" className="sp-btn sp-orta" onClick={() => { setGeri(s); setHataG(''); }}>Geri çek</button>}
             </div>
             {s.durum !== 'iptal' && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4,1fr)', gap: 4 }}>
               {['Talep', 'Yönlendirme', 'Sevk / toptancı', 'Geldi'].map((t, i) => (
@@ -264,7 +264,7 @@ export function Gonderilecek({ d, subeId, adaylar, bitti }) {
         <span style={{ fontSize: 28 }}>📤</span>
         <div style={{ flex: 1 }}><b style={{ fontSize: 18 }}>Gönderilecek Siparişler</b>
           <div style={{ color: C.soluk, fontSize: 13 }}>Merkezin depoya yönlendirdiği kalemler · VAR / KISMİ / YOK işaretle → Hazırlığı kaydet ya da 🚚 Yola çıkar</div></div>
-        <button type="button" className="sp-btn" style={{ minHeight: 40 }} onClick={yukle}>↻</button>
+        <button type="button" className="sp-btn sp-orta" onClick={yukle}>↻</button>
       </div>
       {hata && <div className="sp-kart" style={{ color: C.kirmizi }}>{hata}</div>}
       {!g && (!v ? <div style={{ color: C.soluk }}>Okunuyor…</div> : gruplar.length === 0 ? <div className="sp-kart" style={{ color: C.soluk, textAlign: 'center', padding: 24 }}>Gönderilecek sipariş yok ✓</div> :
@@ -279,7 +279,7 @@ export function Gonderilecek({ d, subeId, adaylar, bitti }) {
       {g && (
         <div className="sp-kart" style={{ display: 'grid', gap: 8 }}>
           <div style={{ display: 'flex', gap: 10, alignItems: 'center' }}>
-            <button type="button" className="sp-btn" style={{ minHeight: 40 }} onClick={() => setHedef(null)}>« Şubeler</button>
+            <button type="button" className="sp-btn sp-orta" onClick={() => setHedef(null)}>« Şubeler</button>
             <b style={{ fontSize: 17 }}>🏪 {g.hedef_ad} — {g.kalemler.length} kalem</b>
           </div>
           {g.kalemler.map((k) => {
@@ -289,11 +289,11 @@ export function Gonderilecek({ d, subeId, adaylar, bitti }) {
               // D2 (sim 24 Eki): KISMİ seçilince kutu araya giriyor, YOK alt satıra iniyordu → sabit ızgara, kutu yeri hep ayrılı (yanlış dokunma)
               <div key={k.yon_id} style={{ display: 'grid', gridTemplateColumns: 'minmax(0,1fr) auto auto 80px auto', gap: 8, alignItems: 'center', padding: 8, borderRadius: 10, background: s.tur ? 'rgba(34,197,94,.08)' : C.bg2 }}>
                 <span style={{ minWidth: 0, fontWeight: 700, fontSize: 16 }}>{k.ad} <span style={{ color: C.soluk }}>× {k.adet}</span></span>
-                <button type="button" className={'sp-btn' + (s.tur === 'var' ? ' sp-yesil' : '')} style={{ minHeight: 44 }} onClick={() => t('var', k.adet)}>VAR</button>
-                <button type="button" className={'sp-btn' + (s.tur === 'kismi' ? ' sp-ana' : '')} style={{ minHeight: 44 }} onClick={() => t('kismi', '')}>KISMİ</button>
+                <button type="button" className={'sp-btn sp-orta' + (s.tur === 'var' ? ' sp-yesil' : '')} onClick={() => t('var', k.adet)}>VAR</button>
+                <button type="button" className={'sp-btn sp-orta' + (s.tur === 'kismi' ? ' sp-ana' : '')} onClick={() => t('kismi', '')}>KISMİ</button>
                 <input className="sp-in" style={{ width: 80, textAlign: 'center', fontSize: 20, visibility: s.tur === 'kismi' ? 'visible' : 'hidden' }} inputMode="numeric" placeholder="kaç?" value={s.n ?? ''}
                   tabIndex={s.tur === 'kismi' ? 0 : -1} onChange={(e) => t('kismi', e.target.value.replace(/\D/g, '').slice(0, 5))} />
-                <button type="button" className={'sp-btn' + (s.tur === 'yok' ? ' sp-ana' : '')} style={{ minHeight: 44 }} onClick={() => t('yok', 0)}>YOK</button>
+                <button type="button" className={'sp-btn sp-orta' + (s.tur === 'yok' ? ' sp-ana' : '')} onClick={() => t('yok', 0)}>YOK</button>
               </div>
             );
           })}

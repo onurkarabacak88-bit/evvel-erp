@@ -45,7 +45,7 @@ export default function MerkezNotu({ d, subeId, adaylar, kapat, bitti }) {
       </>)}
       {adim === 1 && (<>   {/* G51 (sim 23 Eki): gönderilen not görünmüyordu → özet + düzelt + kişi + PIN (Gider ile aynı tek pencere) */}
         <div style={{ background: C.bg2, borderRadius: 10, padding: 10, whiteSpace: 'pre-wrap', maxHeight: '25vh', overflow: 'auto' }}>{metin.trim()}</div>
-        <button type="button" className="sp-btn" style={{ minHeight: 40, justifySelf: 'start' }} disabled={mesgul} onClick={() => setAdim(0)}>« Düzelt</button>
+        <button type="button" className="sp-btn sp-orta" style={{ justifySelf: 'start' }} disabled={mesgul} onClick={() => setAdim(0)}>« Düzelt</button>
         <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim yazıyor?"
           devam={kaydet} devamYazi={mesgul ? 'Gönderiliyor…' : '📝 Merkeze gönder'} />
       </>)}
