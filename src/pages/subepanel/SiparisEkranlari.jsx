@@ -241,7 +241,11 @@ export function Gonderilecek({ d, subeId, adaylar, bitti }) {
   }, [g?.hedef]);   // eslint-disable-line react-hooks/exhaustive-deps
   if (d.siparis_acik === false) return <Kapali />;
   const adetOf = (k) => { const s = sec[k.yon_id] || {}; return s.tur === 'var' ? k.adet : s.tur === 'yok' ? 0 : s.tur === 'kismi' ? Number(s.n || 0) : null; };
-  const eksikSecim = g ? g.kalemler.filter((k) => adetOf(k) == null || (sec[k.yon_id]?.tur === 'kismi' && !(adetOf(k) > 0 && adetOf(k) < k.adet))).length : 0;
+  // Sahip 26 Eki: seçimsiz → ENGEL (sayı belirsiz, depodan düşüm bozulur) · istenenden FAZLA → ENGEL + açık bildirim · kısmi (az) SERBEST
+  // (KISMİ 0 = YOK gibi, KISMİ = istenen = VAR gibi gider — eskiden "1 ile istenen arasında olmalı" diye kilitliyordu)
+  const kismiBosMu = (k) => sec[k.yon_id]?.tur === 'kismi' && (sec[k.yon_id]?.n ?? '') === '';
+  const fazlaMi = (k) => adetOf(k) != null && adetOf(k) > k.adet;
+  const eksikSecim = g ? g.kalemler.filter((k) => adetOf(k) == null || kismiBosMu(k) || fazlaMi(k)).length : 0;
   const gonder = async () => {
     if (mesgul) return;
     setMesgul(true); setHataG('');
@@ -300,16 +304,16 @@ export function Gonderilecek({ d, subeId, adaylar, bitti }) {
           {(() => {   // G28 (sim 23 Eki): hiçbir şeye basmadan turuncu uyarı çıkıyordu → seçilmemiş = sakin sayaç, sarı yalnız geçersiz KISMİ
             const secilmedi = g.kalemler.filter((k) => !sec[k.yon_id]?.tur).length;
             const kismiBos = g.kalemler.filter((k) => sec[k.yon_id]?.tur === 'kismi' && (sec[k.yon_id]?.n ?? '') === '').length;   // henüz yazılmadı → sakin ipucu
-            const gecersiz = eksikSecim - secilmedi - kismiBos;
+            const fazla = g.kalemler.find(fazlaMi);
             // D2: ipucu TEK satırda, yeri hep ayrılı — yazı değişse de alttaki düğmeler kaymaz
-            const ipucu = gecersiz > 0 ? [`KISMİ adedi 1 ile istenen arasında olmalı (${gecersiz} kalem)`, C.sari]
+            const ipucu = fazla ? [`${fazla.ad}: istenen ${fazla.adet}, ${adetOf(fazla)} yazdın — istenenden fazla gönderilemez`, C.kirmizi]
               : kismiBos > 0 ? ['KISMİ seçtiğin kaleme kaç tane gönderdiğini yaz', C.soluk]
                 : secilmedi > 0 ? [`Her kaleme VAR / KISMİ / YOK seç — ${g.kalemler.length - secilmedi}/${g.kalemler.length} seçildi`, C.soluk]
                   : [`Hepsi seçildi ✓ — ${g.kalemler.length}/${g.kalemler.length}`, C.yesil];
-            return <div style={{ color: ipucu[1], fontSize: 13, fontWeight: gecersiz > 0 ? 700 : 400, minHeight: 20 }}>{ipucu[0]}</div>;
+            return <div style={{ color: ipucu[1], fontSize: 13, fontWeight: fazla ? 700 : 400, minHeight: 20 }}>{ipucu[0]}</div>;
           })()}
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="sp-btn" style={{ flex: 1 }} onClick={() => { setHataG(''); setOnay('hazirlik'); }}>💾 Hazırlığı kaydet</button>
+            <button className="sp-btn" style={{ flex: 1 }} disabled={g.kalemler.some(fazlaMi)} onClick={() => { setHataG(''); setOnay('hazirlik'); }}>💾 Hazırlığı kaydet</button>
             <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={eksikSecim > 0} onClick={() => { setHataG(''); setOnay('yola'); }}>🚚 Yola çıkar</button>
           </div>
         </div>
@@ -318,7 +322,9 @@ export function Gonderilecek({ d, subeId, adaylar, bitti }) {
         <Modal baslik={onay === 'yola' ? `🚚 ${g.hedef_ad} — yola çıkar` : '💾 Hazırlığı kaydet'} kapat={() => { setOnay(null); setPin(''); }}>
           {onay === 'yola' && <div style={{ display: 'grid', gap: 3, maxHeight: '30vh', overflow: 'auto' }}>
             {g.kalemler.map((k) => <div key={k.yon_id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{k.ad}</span>
-              <b style={{ color: adetOf(k) === 0 ? C.kirmizi : adetOf(k) < k.adet ? C.sari : C.yesil }}>{adetOf(k) === 0 ? 'YOK' : `${adetOf(k)} / ${k.adet}`}</b></div>)}
+              <b style={{ color: adetOf(k) === 0 ? C.kirmizi : adetOf(k) < k.adet ? C.sari : C.yesil }}>{adetOf(k) === 0 ? 'YOK' : `${adetOf(k)} / ${k.adet}`}
+                {adetOf(k) > 0 && adetOf(k) < k.adet ? ` · ${k.adet - adetOf(k)} eksik` : ''}</b></div>)}
+            {g.kalemler.some((k) => adetOf(k) < k.adet) && <div style={{ fontSize: 12.5, color: C.sari }}>Eksik / YOK kalan merkeze döner — merkez başka yerden tamamlar.</div>}
           </div>}
           <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hataG} soru="Kim hazırladı?" devam={gonder}
             devamYazi={mesgul ? 'Gönderiliyor…' : onay === 'yola' ? '🚚 Yola çıkar' : '💾 Kaydet'} />

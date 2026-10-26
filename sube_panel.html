@@ -7536,9 +7536,10 @@ async function depWizSubmit(gonderildi) {
     var ist = Number(d.ist || 0);
     if (durum === 'var' && adet <= 0 && ist > 0) adet = ist;
     if (durum === 'yok') adet = 0;
-    if (ist > 0 && adet > ist) adet = ist;
+    var fazla = (ist > 0 && adet > ist) ? ((d.urun_ad || 'Kalem') + ': istenen ' + ist + ', ' + adet + ' yazdın — istenenden fazla gönderilemez') : null;
     durum = depDurumAdettenBelirle(durum, adet, ist, gonderildi);
     return {
+      _fazla: fazla,
       urun_id: d.urun_id || null,
       urun_ad: d.urun_ad || null,
       istenen_adet: ist,
@@ -7552,6 +7553,9 @@ async function depWizSubmit(gonderildi) {
     return (dv==='var'||dv==='kismi') && Number(x.gonderilen_adet||0) > 0;
   });
   try {
+    var _fz = kalemler.filter(function(x){ return x._fazla; });
+    if (_fz.length) throw new Error(_fz[0]._fazla);   /* sahip 26 Eki: fazlaya ENGEL + bildirim */
+    kalemler.forEach(function(x){ delete x._fazla; });
     if (gonderildi && !sevkVar) throw new Error('Gönderilecek adet yok — en az bir kaleme adet yaz ya da VAR seç.');
     if (!gonderildi && sevkVar) throw new Error('Gönderilen kalem var — «Yola Çıkar» kullanın.');
   } catch(e) { panelToast('⚠️ ' + e.message, 5000); return; }
@@ -7985,7 +7989,7 @@ function buildDepoHazirlikHTML__UNUSED(depoHazirlik) {
 
 /* Sahip 26 Eki (canlı vaka: 40 süt istendi, depo 30 göndermeye kalktı, engellendi): "sipariş gidişine ASLA engel olunmasın".
    Adet yazıldıysa durum ADETTEN belirlenir — VAR/KISMİ düğmesine basılmamış olsa da gider: istenen kadar → var, az → kısmi.
-   KISMİ seçilip adet yazılmadıysa hata değil, o kalem bekler. Fazlası (eski kural) istenene kırpılır. */
+   KISMİ seçilip adet yazılmadıysa hata değil, o kalem bekler. Fazlası ENGEL + açık bildirim (sahip 26 Eki — sessiz kırpma yok). */
 function depDurumAdettenBelirle(durum, adet, ist, yolaCik) {
   if (!yolaCik) return (durum === 'kismi' && adet <= 0) ? 'bekliyor' : (durum || 'bekliyor');   /* taslak: durum aynen, boş kısmi bekler */
   if (durum === 'yok') return 'yok';
@@ -8003,7 +8007,8 @@ function depoKartKalemleriOku(tid, kart, yolaCik) {
     var gon = isNaN(gonRaw) ? 0 : gonRaw;
     if (durum === 'var' && gon <= 0 && ist > 0) gon = ist;
     if (durum === 'yok') gon = 0;
-    if (ist > 0 && gon > ist) gon = ist;
+    if (ist > 0 && gon > ist)   /* sahip 26 Eki: fazlaya ENGEL + bildirim (sessiz kırpma yok) */
+      throw new Error((k.urun_ad || 'Kalem') + ': istenen ' + ist + ', ' + gon + ' yazdın — istenenden fazla gönderilemez');
     durum = depDurumAdettenBelirle(durum, gon, ist, yolaCik);
     return {
       urun_id: k.urun_id || null,
