@@ -106,11 +106,25 @@ function GunlukDokum() {
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Döküm hazırlanıyor…</div>}
       {v && <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>}
+      {/* F1.12 R7-2 (sim 26 Eki): 4 şube alt alta uzun sayfa — üstte şube çipleri, dokununca o şubenin kartına iner */}
+      {v && v.subeler.length > 1 && <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+        {v.subeler.map((s) => (
+          <Dugme key={s.sube_id} kucuk onClick={() => document.getElementById(`satis-sube-${s.sube_id}`)?.scrollIntoView({ block: 'start' })}>
+            {s.ad}{s.devir_tutmadi?.length ? ' ⚠' : ''}
+          </Dugme>))}
+      </div>}
       {v && <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(min(100%, 460px), 1fr))', gap: 12 }}>
         {v.subeler.map((s) => (
-          <div key={s.sube_id} style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 9 }}>
+          <div key={s.sube_id} id={`satis-sube-${s.sube_id}`} style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 9, scrollMarginTop: 12 }}>
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><b style={{ fontSize: 16 }}>{s.ad}</b>
               {s.durum === 'kapanis_yok' && <Cip>akşam sayımı yok</Cip>}{s.durum === 'acilis_yok' && <Cip>sabah sayımı yok</Cip>}</div>
+            {/* F1.12 R7-1 (sim 26 Eki): gün içi devir tutmadıysa kasa açığına bakan merkez bilsin — ayrıntı devir defterinde (tek yer) */}
+            {s.devir_tutmadi?.length > 0 && (
+              <a href={`/evvel-yeni/devir_defteri?ay=${gun.slice(0, 7)}&sube=${s.sube_id}`}
+                style={{ fontSize: 13, fontWeight: 700, color: R.amber, background: 'var(--pi-bg)', borderRadius: 9, padding: '7px 10px', textDecoration: 'none' }}>
+                ⚠ gün içi devir tutmadı ({s.devir_tutmadi.map((d) => `${d.saat} ${d.devreden} → ${d.devralan}`).join(' · ')}) → Devir defteri
+              </a>)}
+            {s.devir_tutmadi === null && <div style={{ fontSize: 12.5, color: R.not }}>gün içi devir kontrolü okunamadı — Devir defterine bak</div>}
             {/* B63 (22 Eki): akşam sayımı yokken de tablo — sabah + gece farkı görünsün (Bekleyen › 🌅 Sabah sayımı tutmadı buraya gelir); 'satılan' akşamla çıkar */}
             {s.durum !== 'acilis_yok' && (s.durum !== 'kapanis_yok' || s.kalemler.some((k) => k.sabah != null)) ? (
               <>
@@ -119,7 +133,7 @@ function GunlukDokum() {
                   <div style={{ fontSize: 11.5, fontWeight: 800, letterSpacing: '.06em', color: R.metin2, marginBottom: 6 }}>BUGÜN SATILAN</div>
                   <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
                     {s.kalemler.filter((k) => k.satilan > 0).map((k) => (
-                      <div key={k.kod} style={{ background: 'var(--pi-paper)', border: '1px solid var(--pi-line)', borderRadius: 10, padding: '6px 10px', textAlign: 'center', minWidth: 62 }}>
+                      <div key={k.urun || k.kod} style={{ background: 'var(--pi-paper)', border: '1px solid var(--pi-line)', borderRadius: 10, padding: '6px 10px', textAlign: 'center', minWidth: 62 }}>
                         <div style={{ ...num, fontSize: 24, fontWeight: 800, lineHeight: 1.1, color: 'var(--pi-accent)' }}>{k.satilan}</div>
                         <div style={{ fontSize: 12, fontWeight: 600 }}>{k.ad.replace(' bardak', '').replace(' (toplam)', '')}</div>
                       </div>
@@ -130,7 +144,7 @@ function GunlukDokum() {
                 <div style={{ overflowX: 'auto' }}><table className="pi-tablo pi-excel" style={{ fontSize: 12.5, minWidth: 420 }}>
                   <thead><tr><th style={{ textAlign: 'left' }}>Kalem</th><th>Sabah</th><th>Giren</th><th>Akşam</th><th>Kullanılan</th><th>Fire</th><th>Satılan</th></tr></thead>
                   <tbody>{s.kalemler.map((k) => (
-                    <tr key={k.kod}>
+                    <tr key={k.urun || k.kod}>
                       <td style={{ textAlign: 'left' }}>{k.ad}{k.devir_fark ? <span style={{ color: R.amber }} title="dün akşamdan bu sabaha fark"> · gece {k.devir_fark > 0 ? '+' : ''}{k.devir_fark}</span> : ''}</td>
                       <td style={num}>{k.sabah ?? '—'}</td><td style={num}>{k.giren || ''}</td><td style={num}>{k.aksam ?? '—'}</td>
                       <td style={{ ...num, color: k.kullanilan < 0 ? R.kirmizi : undefined }}>{k.kullanilan == null ? '—' : k.kullanilan < 0 ? `${k.kullanilan} (ürün aç eksik?)` : k.kullanilan}</td>
@@ -236,7 +250,10 @@ function BeklenenSatis() {
 
 // ── 🔁 KASA DEVİR DEFTERİ — sahip: "açılış ve kapanış sayımlarını, devrin kimden kime yapıldığını takip etmek" ──
 export function DevirDefteri() {
-  const [ay, setAy] = useState(ayTR);
+  const [ay, setAy] = useState(() => {   // F1.12: Satış kontrolündeki "devir tutmadı" bağı ay + şubeyle açar
+    const a = new URLSearchParams(window.location.search).get('ay') || '';
+    return /^\d{4}-(0[1-9]|1[0-2])$/.test(a) ? a : ayTR();
+  });
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   const [sube, setSube] = useState(null);
@@ -244,7 +261,7 @@ export function DevirDefteri() {
   useEffect(() => {
     const n = ++no.current;
     setV(null);
-    api(`/evvel-yeni/satis/devir-defteri?ay=${ay}`).then((r) => { if (n === no.current) { setV(r); setHata(null); setSube((x) => x || r.subeler.find((s) => s.ozet.tutan + s.ozet.kopuk + (s.ozet.celiskili || 0) > 0)?.sube_id || r.subeler[0]?.sube_id); } })
+    api(`/evvel-yeni/satis/devir-defteri?ay=${ay}`).then((r) => { if (n === no.current) { setV(r); setHata(null); setSube((x) => x || r.subeler.find((s) => String(s.sube_id) === new URLSearchParams(window.location.search).get('sube'))?.sube_id || r.subeler.find((s) => s.ozet.tutan + s.ozet.kopuk + (s.ozet.celiskili || 0) > 0)?.sube_id || r.subeler[0]?.sube_id); } })
       .catch((e) => { if (n === no.current) setHata(e?.message || 'okunamadı'); });
   }, [ay]);
   const s = v && v.subeler.find((x) => x.sube_id === sube);

@@ -231,6 +231,14 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
                     ac.setdefault(h["hedef"].split(":", 1)[1], []).append((h["olay_zaman"], h["is_gunu"], "pasta", int(h["adet"])))
         except Exception:  # noqa: BLE001
             log.warning("bar: pasta kabulü okunamadı", exc_info=True)
+    # F1.12 R7-3 (sim 26 Eki · Opus + Codex + Fable A): pasif ürün kalem olur YALNIZ okunan pencerede izi varsa (sayımda değer ya da Ürün Aç) —
+    # sayılmış ürün pasife alınınca kaybolmaz (eski karar), hiç izi olmayan pasif ürün boş satır üretmez. Süzme olaylardan SONRA.
+    aktif = {str(u["id"]): bool(u["aktif"]) for k in kat for u in k["urunler"]}
+    izli = {uid for gunler_ in ev.values() for turler in gunler_.values() for o in turler.values()
+            for uid, deger in o["say"].items() if deger is not None}
+    izli |= {x[2] for l in ac.values() for x in l if x[3]}
+    kalemler = [(k, ad) for k, ad in kalemler if k == "pasta" or aktif.get(k, True) or k in izli]
+    kodlar = [k for k, _ in kalemler]
 
     def bos():
         return {k: 0 for k in kodlar}
@@ -282,7 +290,7 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
                 dk = DK.get(k) if DK else None
                 net = (a + gun_ici[k] - kk) if (a is not None and kk is not None) else None
                 devir = (a - (dk + gece[k])) if (a is not None and dk is not None) else None
-                gun["kalemler"].append({"kod": k, "ad": ad, "anahtar": anahtar_of[k], "dun_kapanis": dk, "gece_ac": gece[k], "acilis": a,
+                gun["kalemler"].append({"kod": k, "ad": ad, "anahtar": anahtar_of[k], "pasif": not aktif.get(k, True), "dun_kapanis": dk, "gece_ac": gece[k], "acilis": a,
                                         "devir_fark": devir, "gun_ici_ac": gun_ici[k], "kapanis": kk, "net_eksilme": net,
                                         "ac_eksik": (-net if net is not None and net < 0 else 0)})
                 if devir:

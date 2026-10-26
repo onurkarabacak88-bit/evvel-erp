@@ -44,6 +44,21 @@ def _ay_onceki(ay: str) -> str:
     return __import__("evvel_yeni_cekirdek").ay_kaydir(ay, -1)   # ay aritmetiği TEK yerde (Codex T1-22)
 
 
+def _gun_kalemleri(kalemler: list) -> list:
+    """F1.12 R7-3 — bar günlük kalemleri: pasif ürün o gün sayılmadıysa düşer (aktif hiç düşmez)."""
+    return [k for k in kalemler
+            if not (k.get("pasif") and k.get("acilis") is None and k.get("kapanis") is None and not k.get("gun_ici_ac"))]
+
+
+def _esas_kalem(kalemler: list) -> dict:
+    """{anlam anahtarı: esas kalem} — aynı anlamlı iki ürün (pasif + aktif) varsa o gün SAYILMIŞ olan, eşitse AKTİF olan esas
+    (Fable F1.12 T1/T2: sıraya bağlı 'sonuncu kazanır' sahte 'bardak sayılmamış' üretiyordu)."""
+    out = {}
+    for x in sorted(kalemler, key=lambda x: (x.get("net_eksilme") is not None, x.get("acilis") is not None, not x.get("pasif"))):
+        out[x.get("anahtar") or x["kod"]] = x   # yeni dönem: kod=ürün kimliği, anahtar=anlam; sıralı → en iyisi en son yazar
+    return out
+
+
 def _gunluk(ay: str) -> dict:
     """{(sube_id, gun): {bardak, ciro, nakit, neden}} — bar sayımı + kasa kapanışı, iki ay."""
     from evvel_yeni_bar_api import bar_ozet
@@ -57,7 +72,7 @@ def _gunluk(ay: str) -> dict:
             continue
         for s in b["subeler"]:
             for g in s["gunler"]:
-                k = {(x.get("anahtar") or x["kod"]): x for x in g["kalemler"]}   # yeni dönem: kod=ürün kimliği, anahtar=anlam
+                k = _esas_kalem(_gun_kalemleri(g["kalemler"]))
                 bt = [c for c in BARDAKLAR if c in k]   # E2E #17: katalogda OLAN bardak türleriyle hesapla (üçü birden şart değil)
                 if not bt:   # Fable: yeni dönemde bardak kalemi katalogda yoksa 500 olmasın
                     out[(s["sube_id"], g["gun"])] = {"bardak": 0, "neden": "bardak kalemi katalogda yok (panelde sayılır işaretli değil)",
@@ -519,6 +534,11 @@ def satis_gun(gun: Optional[str] = None):
     ay = g_[:7]
     bar = {s["sube_id"]: s for s in bar_ozet(ay)["subeler"]}
     kontrol = {s["sube_id"]: s for s in satis_kontrol(ay)["subeler"]}
+    try:   # F1.12 R7-1 (sim 26 Eki): gün içi devir tutmadıysa şube kartında tek satır — bilgi devir defterinden (aynı okuyucu, ağır Faz 2'siz)
+        devir = {s["sube_id"]: s for s in devir_defteri(ay, hafif=True)["subeler"]}
+    except Exception as e:  # noqa: BLE001
+        log.warning("satış günlük: devir defteri okunamadı: %s", e)
+        devir = None   # ekranda "devir kontrolü okunamadı" (sessiz kalmaz)
     fire = {}
     with db() as (conn, cur):
         from evvel_yeni_cekirdek import yeni_donem
@@ -591,11 +611,14 @@ def satis_gun(gun: Optional[str] = None):
         gr = next((x for x in b["gunler"] if x["gun"] == g_), None)
         fr = fire.get(sid, [])
         kalemler = []
-        for k in (gr["kalemler"] if gr else [{"kod": c, "ad": a} for c, a in KALEMLER]):
+        gk = _gun_kalemleri(gr["kalemler"]) if gr else [{"kod": c, "ad": a} for c, a in KALEMLER]
+        esas = _esas_kalem(gk)
+        for k in gk:
             kk_ = k.get("anahtar") or k["kod"]   # yeni dönem: anlam anahtarıyla eşleşir (fire + bardak toplamı)
-            f_ = sum(x["adet"] for x in fr if x["kod"] == kk_)
+            # F1.12 R7-3: aynı anlamlı iki ürün varsa fire yalnız ESAS satıra yazılır (iki satırdan düşülmez)
+            f_ = sum(x["adet"] for x in fr if x["kod"] == kk_) if esas.get(kk_) is k else 0
             net = k.get("net_eksilme")
-            kalemler.append({"kod": kk_, "ad": k["ad"], "sabah": k.get("acilis"), "giren": (k.get("gun_ici_ac") or 0),
+            kalemler.append({"kod": kk_, "urun": k["kod"], "ad": k["ad"], "sabah": k.get("acilis"), "giren": (k.get("gun_ici_ac") or 0),
                              "aksam": k.get("kapanis"), "kullanilan": net, "fire": f_,
                              "satilan": (net - f_) if net is not None else None, "devir_fark": k.get("devir_fark")})
         kr = next((x for x in kontrol.get(sid, {}).get("gunler", []) if x["gun"] == g_), {})
@@ -613,6 +636,10 @@ def satis_gun(gun: Optional[str] = None):
             "kasa": say.get(sid),
             "kasa_mutabakat": _mut_aciklama(mut.get(sid), kap.get(sid)),
             "teslimler": tes.get(sid, []),
+            "devir_tutmadi": (None if devir is None else
+                              [{"saat": x["saat"], "devreden": x["devreden"], "devralan": x["devralan"]}
+                               for x in next((d.get("vardiyalar") or [] for d in devir.get(sid, {}).get("gunler", []) if d["gun"] == g_), [])
+                               if x["durum"] == "tutmadi"]),
         })
     return {"gun": g_, "subeler": out,
             "not": "Kullanılan = sabah + gün içi giren − akşam. Satılan = kullanılan − fire (ikram, dökülme, yanlış ürün…). "
@@ -620,17 +647,23 @@ def satis_gun(gun: Optional[str] = None):
                    "teslim − kasada bırakılan; sıfır olmalı. Bardaktan beklenen ciro 'Beklenen satış' sekmesinde."}
 
 
-@router.get("/devir-defteri")
-def devir_defteri(ay: Optional[str] = None):
+def devir_defteri(ay: Optional[str] = None, hafif: bool = False):
     """🔁 KASA DEVİR DEFTERİ — 1 Kasım'dan (panel_baslangic, iş günü) itibaren YENİ panelin olay defterinden (açılış · vardiya devri ·
     kapanış · ara teslim). Sahip (20 Eki): Ekim (eski) defteri 1 Kasım'da KALKAR — eski okuyucu yalnız geçişe kadar (T3-21)."""
     from evvel_yeni_cekirdek import yeni_donem
     with db() as (conn, cur):
         yeni = yeni_donem(cur)
-    return _devir_defteri_yeni(ay) if yeni else _devir_defteri_eski(ay)
+    if hafif and not yeni:   # eski defterde gün içi devir durumu (tutmadı) yok — Satış günlük dökümü için okunacak bir şey yok
+        return {"subeler": []}
+    return _devir_defteri_yeni(ay, hafif) if yeni else _devir_defteri_eski(ay)
 
 
-def _devir_defteri_yeni(ay: Optional[str] = None):
+@router.get("/devir-defteri")
+def devir_defteri_uc(ay: Optional[str] = None):
+    return devir_defteri(ay)
+
+
+def _devir_defteri_yeni(ay: Optional[str] = None, hafif: bool = False):
     from evvel_yeni_cekirdek import is_gunu as _ig, tr_saat
     from evvel_yeni_kasa_api import TESLIM_HEDEFLERI
     from evvel_yeni_tanim_api import subeler as _ey_subeler
@@ -644,7 +677,7 @@ def _devir_defteri_yeni(ay: Optional[str] = None):
         subeler = _ey_subeler(cur)
         for o in _panel_olaylari(cur, ay_bas - timedelta(days=ZINCIR_GERI_GUN), ay_son + timedelta(days=1), {"acilis", "kapanis", "vardiya", "teslim"}):
             ev.setdefault((str(o["sube_id"]), o["is_gunu"].isoformat(), o["tur"]), []).append(o)
-    elle_tes = _elle_teslimler()
+    elle_tes = {} if hafif else _elle_teslimler()   # hafif: Satış günlük dökümü yalnız devir durumunu okur (Fable/Codex F1.12)
     vk_bekleyen = []
     tl = _kr_tl
     son = lambda lst: lst[-1] if lst else None  # noqa: E731
@@ -717,7 +750,8 @@ def _devir_defteri_yeni(ay: Optional[str] = None):
                     "panel_yok": not any(x["sabah"] or x["aksam"] for x in gunler),
                     "ozet": {"tutan": sum(1 for x in gunler if x["zincir_tutuyor"]),
                              "kopuk": sum(1 for x in gunler if x["zincir_fark"] is not None and not x["zincir_tutuyor"])}})
-    _vardiya_kasa_doldur(vk_bekleyen)
+    if not hafif:
+        _vardiya_kasa_doldur(vk_bekleyen)
     return {"ay": a_, "subeler": out, "not": "Zincir: akşam bırakılan = ertesi sabah sayılan olmalı. Kopukluk kırmızı. (Yeni panel kayıtları)"}
 
 
