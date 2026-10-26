@@ -164,8 +164,13 @@ def _hazirla() -> None:
         # 🏦 BANKA (sahip 2026-10-15): "bankadan gelen ve bankalarda olan parayı görelim" ·
         # "her şubenin tek banka hesabı var, şube adıyla" · "Fatma kira hesabı olarak da gir".
         # Kendi küçük tablomuz — eski CHECK'i genişlet (sıcak tablo değil, modülün kendisi).
-        cur.execute("ALTER TABLE para_izi_cep DROP CONSTRAINT IF EXISTS para_izi_cep_tur_check")
-        cur.execute("ALTER TABLE para_izi_cep ADD CONSTRAINT para_izi_cep_tur_check CHECK (tur IN ('sube','ev','hesap','banka'))")
+        # Yalnız EKSİKSE kur (canlı 26 Eki: her süreç açılışında DROP + ADD → yayın anında eski süreçle kilit çakışması, 500)
+        cur.execute("""SELECT pg_get_constraintdef(oid) AS d FROM pg_constraint
+                        WHERE conrelid = 'para_izi_cep'::regclass AND conname = 'para_izi_cep_tur_check'""")
+        _ck = cur.fetchone()
+        if not _ck or "banka" not in (dict(_ck)["d"] or ""):
+            cur.execute("ALTER TABLE para_izi_cep DROP CONSTRAINT IF EXISTS para_izi_cep_tur_check")
+            cur.execute("ALTER TABLE para_izi_cep ADD CONSTRAINT para_izi_cep_tur_check CHECK (tur IN ('sube','ev','hesap','banka'))")
         cur.execute("""
             CREATE TABLE IF NOT EXISTS para_izi_ayar (
                 anahtar   TEXT PRIMARY KEY,

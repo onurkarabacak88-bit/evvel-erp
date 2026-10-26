@@ -9,7 +9,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { ALAN, Cip, Dugme, Etiket, fmt, kart, num, OzetKutusu, PI_CSS, R, soruOnay, tKisa, tUzun, useSonIstek } from './KasaModulu';
+import { ALAN, Cip, Dugme, dugmeSade, Etiket, fmt, kart, num, OzetKutusu, PI_CSS, R, sayfayaGit, soruOnay, tKisa, tUzun, useSonIstek } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, tutarYaz, YilSecici } from './AyTakvim';
 import { bugunTR } from '../../utils/trTarih';
 
@@ -72,7 +72,10 @@ Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10 }}>
         <Kutu ad="Toplam limit" deger={fmt(v.toplam.limit)} />
         <Kutu ad="Kullanılabilir" deger={fmt(v.toplam.kullanilabilir)} renk={R.yesil} />
-        <Kutu ad="7 gün içinde ödenecek" deger={fmt(v.toplam.son_odeme_kalan)} renk={v.toplam.son_odeme_kalan > 0 ? R.kirmizi : undefined} />
+        {/* F3.13 (sim 26 Eki): ölü sayıydı → hangi kartın hangi ay ödeneceği Kart takviminde */}
+        <button type="button" onClick={() => sayfayaGit('kart_takvimi')} title="Kart takvimi" style={{ ...dugmeSade, display: 'block' }}>
+          <Kutu ad="7 gün içinde ödenecek ›" deger={fmt(v.toplam.son_odeme_kalan)} renk={v.toplam.son_odeme_kalan > 0 ? R.kirmizi : undefined} />
+        </button>
       </div>
       {v.yaklasan.length > 0 && (
         <div style={{ ...kart, padding: 12, borderLeft: `5px solid ${R.kirmizi}`, display: 'flex', flexDirection: 'column', gap: 6 }}>
@@ -122,6 +125,8 @@ Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır
                   </span>
                 </div>
                 {k.son_odeme && <div style={{ fontSize: 13 }}>Son ödeme <b>{tUzun(k.son_odeme.tarih)}</b> ({k.son_odeme.gun_kaldi === 0 ? 'BUGÜN' : `${k.son_odeme.gun_kaldi} gün`})
+                  {/* F3.13 (sim 26 Eki): ekstredeki tarih tanımdaki günden farklıysa söylensin ("15'i" yazıp 12 Kasım göstermek kafa karıştırıyordu) */}
+                  {k.son_odeme_gunu && Number(String(k.son_odeme.tarih).slice(8, 10)) !== k.son_odeme_gunu && <span style={{ color: R.not }}> · ekstredeki tarih (tanımda ayın {k.son_odeme_gunu}. günü)</span>}
                   {k.son_odeme.eski ? <span style={{ color: R.not }}> · eski sistemden ekstre {fmt(k.son_odeme.ekstre)} — yeni ekstreyi girince takip başlar</span>
                     : k.son_odeme.kalan != null ? <> · ekstre {fmt(k.son_odeme.ekstre)} − ödenen {fmt(k.son_odeme.odenen)} = kalan <b style={{ ...num, color: k.son_odeme.kalan > 0 ? R.kirmizi : R.yesil }}>{fmt(k.son_odeme.kalan)}</b> ₺</> : <span style={{ color: k.son_odeme.teyit_gerekli ? R.amber : R.not }}> · {k.son_odeme.teyit_gerekli ? 'önceki ekstrenin son günü geçti — yeni ekstreyi gir (Bankadaki rakamı gir)' : 'ekstre tutarı girilmedi'}</span>}</div>}
                 {acik === k.id && (

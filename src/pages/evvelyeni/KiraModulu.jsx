@@ -7,7 +7,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useState } from 'react';
 import { api } from '../../utils/api';
-import { Dugme, fmt, num, PI_CSS, R, tKisa, useSonIstek } from './KasaModulu';
+import { Dugme, fmt, num, PI_CSS, R, sayfayaGit, tKisa, useSonIstek } from './KasaModulu';
 import { AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici } from './AyTakvim';   // ortak takvim (Dalga 5, T4-08 — kopya kalktı)
 
 const MOR = '#7B4FB8';   // kira artış ayı
@@ -21,7 +21,10 @@ export function KiraTakvim({ onSekme }) {
 
   const satirlar = (v?.subeler || []).map((s) => ({
     id: s.sube_id, kaynak: s, baslik: s.ad,
-    alt: `${s.kira_yok ? 'mülk bizim — kira yok' : s.kira != null ? `${fmt(s.kira)} ₺/ay` : 'kira tanımsız — Tanımlar › Şubeler › Düzelt'}${s.odeme_gunu ? ` · ${s.odeme_gunu}'i` : ''}${s.artis_ayi ? ` · artış ${AY_UZUN[s.artis_ayi - 1]}` : ''}`,
+    // F3.13 (sim 26 Eki): tanımsız kirada "Tanımlar › Şubeler › Düzelt" düz yazıydı → bağlantı (işin yapıldığı yer)
+    alt: s.kira_yok || s.kira != null
+      ? `${s.kira_yok ? 'mülk bizim — kira yok' : `${fmt(s.kira)} ₺/ay`}${s.odeme_gunu ? ` · ayın ${s.odeme_gunu}. günü` : ''}${s.artis_ayi ? ` · artış ${AY_UZUN[s.artis_ayi - 1]}` : ''}`
+      : <>kira tanımsız — <a href="/evvel-yeni/tanim_sube" onClick={(e) => { e.preventDefault(); e.stopPropagation(); sayfayaGit('tanim_sube'); }} style={{ color: 'inherit', fontWeight: 700 }}>Tanımlar › Şubeler ›</a> Düzelt</>,
     aylar: s.aylar.map((a) => ({
       ...a, ust: a.odenen > 0 ? fmt(a.odenen) : a.beklenen != null ? fmt(a.beklenen) : '—',
       alt: (a.durum === 'kismi' || (a.odenen > 0 && a.kalan > 0)) ? `kalan ${fmt(a.kalan)}` : null,
