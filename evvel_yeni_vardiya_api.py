@@ -283,6 +283,51 @@ def _kisi(cur, pid: str) -> dict:
     return p
 
 
+AY_ADI = ('Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık')
+
+
+def _kisi_kilitleri(cur, pids) -> None:
+    """Çok kişili işlemde (geri al · kopya · temizlik · yayın) kişi kilitleri BAŞTA ve SIRALI alınır (Codex 2. tur: aksi halde
+    iki toplu işlem birbirinin kişisini / maaş ayını bekleyip kilitlenebilir). Sıra her yerde: hafta → kişiler → maaş ayı."""
+    for pid in sorted({str(x) for x in pids}):
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_vardiya:" + pid,))
+
+
+def _maas_kilitli_mi(cur, pid: str, gun: date) -> bool:
+    from evvel_yeni_moduller import acik
+    if not acik("maas"):
+        return False
+    from evvel_yeni_maas_api import ay_kilitli
+    return ay_kilitli(cur, pid, gun.strftime("%Y-%m"))
+
+
+def _yayin_kilidi(cur, sids, pzt: date) -> None:
+    """Yayın kaydı EKLENİNCE ya da SİLİNİNCE şubenin o haftasındaki yayınlanmamış satırların geçerliliği değişir (_gecerli) →
+    etkilenen HER kişi-ay maaş kilidinden geçer (Codex P1: yayınla · eski plandan al · eski planı geri al)."""
+    sids = [str(s) for s in sids]
+    if not sids:
+        return
+    cur.execute("""SELECT DISTINCT personel_id, to_char(gun, 'YYYY-MM') AS ay FROM ey_vardiya_plan
+                    WHERE NOT iptal AND tur='calisma' AND sube_id = ANY(%s) AND gun BETWEEN %s AND %s
+                    ORDER BY personel_id, ay""", (sids, pzt, pzt + timedelta(days=6)))   # ay kilitleri sıralı (izin_kaldir da artan ay)
+    rows = [dict(r) for r in cur.fetchall() or []]
+    _kisi_kilitleri(cur, [r["personel_id"] for r in rows])
+    kilitli = [r for r in rows if _maas_kilitli_mi(cur, r["personel_id"], date.fromisoformat(r["ay"] + "-01"))]
+    if kilitli:
+        from evvel_yeni_tanim_api import adlar
+        ad = adlar(cur, "ey_personel", [k["personel_id"] for k in kilitli])
+        raise HTTPException(409, "Maaşı onaylı: " + ", ".join(f"{ad.get(str(k['personel_id'])) or '—'} ({AY_ADI[int(k['ay'][5:7]) - 1]})"
+                                                             for k in kilitli) + " — yayın durumu değişirse plan değişir; önce Maaş'ta onayı kaldır")
+
+
+def _maas_kilidi(cur, p: dict, pid: str, gun: date) -> None:
+    """IS 4k (Opus + Fable + Codex 26 Eki): kişinin o ayki maaşı kilitliyse (Maaş PUBLIC ay_kilitli — bugün: onaylı) o ayın gününe
+    yazılmaz / kaldırılmaz — maaş donmuş kalemle kapanır, plan değişirse iz maaşla tutmaz. Maaş kapalıysa kontrol yok (tak-çıkar).
+    Ekim ve öncesi eski sistemle kapanır (ey_maas_ay onayı yok) → bu kilit Kasım'dan itibaren çalışır."""
+    if _maas_kilitli_mi(cur, pid, gun):
+        raise HTTPException(409, f"{p['ad']} · {AY_ADI[gun.month - 1]} maaşı onaylı — plan değişirse maaşla iz tutmaz; önce Maaş'ta onayı kaldır")
+
+
 def _calisir_mi(p: dict, gun: date) -> None:
     if p.get("giris") and gun < p["giris"]:
         raise HTTPException(409, f"{p['ad']} {p['giris'].strftime('%d.%m')} tarihinde işe başladı — bu güne yazılamaz")
@@ -312,12 +357,15 @@ def _cakisma(cur, pid: str, gun: date, tur: str, bas: Optional[time], bit: Optio
 
 def _yaz(cur, *, pid: str, gun: date, tur: str, kim: str, sube_id: Optional[str] = None, bas: Optional[time] = None,
          bit: Optional[time] = None, kalip_id: Optional[str] = None, kaynak: str = "elle", onceki_id: Optional[str] = None,
-         sessiz: bool = False) -> Optional[str]:
-    """Plan satırı yazar (kişi kilidi altında). sessiz=True → çakışmada hata yerine None döner (kopyalama atlar)."""
+         sessiz: bool = False, damga: bool = True) -> Optional[str]:
+    """Plan satırı yazar (hafta + kişi kilidi altında). sessiz=True → çakışmada hata yerine None döner (kopyalama atlar).
+    damga=False → geri alma: satır ORİJİNAL kaynağıyla döner, geçmiş günde 'sonradan' basılmaz (Fable IS 4k)."""
+    _hafta_kilidi(cur, gun)
     cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_vardiya:" + str(pid),))
     try:
         p = _kisi(cur, pid)
         _calisir_mi(p, gun)
+        _maas_kilidi(cur, p, pid, gun)
         if tur == "calisma" and sure_saat(bas, bit) > 16:
             raise HTTPException(400, "Bir vardiya 16 saatten uzun olamaz — saatleri kontrol et")
         c = _cakisma(cur, pid, gun, tur, bas, bit, haric=onceki_id)
@@ -327,23 +375,231 @@ def _yaz(cur, *, pid: str, gun: date, tur: str, kim: str, sube_id: Optional[str]
         if sessiz:
             return None
         raise
-    if tur == "calisma" and kaynak in ("elle", "kopya") and gun < is_gunu():
+    if damga and tur == "calisma" and kaynak in ("elle", "kopya") and gun < is_gunu():
         kaynak = "sonradan"   # Y5: geçmiş güne yazılan damgalı (maaşta uyarı, geç ölçülmez)
     vid = "vp-" + uuid.uuid4().hex[:12]
-    cur.execute("""INSERT INTO ey_vardiya_plan (id, personel_id, gun, tur, sube_id, bas, bit, gece, kalip_id, kaynak, onceki_id, degistiren)
-                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+    cur.execute(f"""INSERT INTO ey_vardiya_plan (id, personel_id, gun, tur, sube_id, bas, bit, gece, kalip_id, kaynak, onceki_id, degistiren, zaman)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,{_an_sql()})""",
                 (vid, str(pid), gun, tur, sube_id if tur == "calisma" else None, bas, bit,
                  bool(tur == "calisma" and _dk(bit) <= _dk(bas)), kalip_id, kaynak, onceki_id, kim))
     return vid
 
 
 def _iptal(cur, vid: str, kim: str, neden: str) -> dict:
-    cur.execute("""UPDATE ey_vardiya_plan SET iptal=TRUE, iptal_neden=%s, iptal_kim=%s, iptal_zaman=NOW()
+    cur.execute("SELECT personel_id, gun FROM ey_vardiya_plan WHERE id=%s AND NOT iptal", (vid,))
+    o = cur.fetchone()
+    if o:
+        o = dict(o)
+        _hafta_kilidi(cur, o["gun"])
+        _kisi_kilitleri(cur, [o["personel_id"]])   # sıra: hafta → kişi → maaş ayı (_yaz ile aynı)
+        from evvel_yeni_tanim_api import tanim_oku
+        p = tanim_oku(cur, "ey_personel", o["personel_id"], ("ad",)) or {"ad": "Personel"}   # tanımı silinmiş kişinin satırı da kalkar
+        _maas_kilidi(cur, p, o["personel_id"], o["gun"])
+    cur.execute(f"""UPDATE ey_vardiya_plan SET iptal=TRUE, iptal_neden=%s, iptal_kim=%s, iptal_zaman={_an_sql()}
                     WHERE id=%s AND NOT iptal RETURNING *""", (neden[:200], kim, vid))
     r = cur.fetchone()
     if not r:
         raise HTTPException(409, "Satır bulunamadı ya da değişmiş — sayfayı yenile")
     return dict(r)
+
+
+# ─────────── 🕘 DEĞİŞİKLİK GEÇMİŞİ + GERİ AL (IS 4k · sahip 24 Eki vaka: Furkan 19.10 yanlışlıkla kaldırıldı) ───────────
+# Yeni tablo YOK — olaylar append-only plan satırlarından türetilir. İŞLEM = aynı kişi + aynı işlem zamanı (Postgres NOW() bir
+# işlem boyunca sabit: _yaz.zaman + _iptal.iptal_zaman = işlem damgası (_hafta_kilidi'nde kilitten SONRA bir kez üretilir);
+# toplu kopya / temizlik tek işlem). ⛔ Plan tablosuna yazan her yol _yaz / _iptal'den geçer — damgasız yazma gruplamayı bozar.
+# Kapsam (Opus + Fable + Codex): haftanın SON işlemi, kim yaptıysa; tek seviye (geri almanın kendisi geri alınmaz).
+
+def _hafta_kilidi(cur, gun: date) -> None:
+    """Haftanın TEK yazma kilidi (Fable IS 4k: 'son işlem' denetimi ile yazma arasına başka yazma girmesin). Aynı işlemde tekrar
+    alınması serbest (advisory xact kilidi yeniden girilebilir). Sıra: önce hafta, sonra kişi kilidi."""
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", ("ey_vardiya_hafta:" + _pazartesi(gun).isoformat(),))
+    # İŞLEM DAMGASI (Codex 3. tur): NOW() işlem BAŞLANGICIDIR, kilit sırasını göstermez → ilk hafta kilidinden SONRA bir kez
+    # clock_timestamp() üretilir (işlem-yerel ayar); _yaz.zaman · _iptal.iptal_zaman · yayın zamanı hep bu damga → gruplama aynı,
+    # sıra = kilit alma sırası (son işlem / yayın farkı doğru).
+    cur.execute("""SELECT set_config('evvel.vardiya_an', clock_timestamp()::text, true)
+                    WHERE COALESCE(current_setting('evvel.vardiya_an', true), '') = ''""")
+
+
+def _an_sql() -> str:
+    """Yazmalarda kullanılan işlem damgası (yoksa NOW())."""
+    return "COALESCE(NULLIF(current_setting('evvel.vardiya_an', true), '')::timestamptz, NOW())"
+
+
+def _yayin_farki(cur, pzt: date, paz: date) -> Dict[str, int]:
+    """Rozet = yayın ANINDAKİ plan ile ŞİMDİKİ planın farkı, değişen kişi-gün sayısı (şube başına). Kaldır + geri al = 0,
+    saati değiştirip eskiye döndürmek = 0 (Codex IS 4k: 'yayına göre KALAN fark')."""
+    cur.execute("""SELECT p.sube_id, p.personel_id, p.gun, p.bas, p.bit,
+                          (p.zaman <= y.zaman AND (NOT p.iptal OR p.iptal_zaman > y.zaman)) AS yayinda, NOT p.iptal AS simdi
+                     FROM ey_vardiya_plan p JOIN ey_vardiya_yayin y ON y.sube_id = p.sube_id AND y.pazartesi = %s
+                    WHERE p.tur = 'calisma' AND p.gun BETWEEN %s AND %s""", (pzt, pzt, paz))
+    once: Dict[tuple, list] = {}
+    simdi: Dict[tuple, list] = {}
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        k = (r["sube_id"], r["personel_id"], r["gun"])
+        if r["yayinda"]:
+            once.setdefault(k, []).append((r["bas"], r["bit"]))
+        if r["simdi"]:
+            simdi.setdefault(k, []).append((r["bas"], r["bit"]))
+    out: Dict[str, int] = {}
+    for k in set(once) | set(simdi):
+        if sorted(once.get(k, [])) != sorted(simdi.get(k, [])):
+            out[k[0]] = out.get(k[0], 0) + 1
+    return out
+
+
+def _islemler(cur, pzt: date, adli: bool = True) -> List[dict]:
+    """Haftanın işlemleri, en yeni üstte: [{anahtar, kim, zaman, tur, etiket, satirlar:[…], geri_al}]. adli=False → ad sorgusu yok
+    (Geri al düğmesi için yalnız son işlem gerekir)."""
+    paz = pzt + timedelta(days=6)
+    cur.execute("""SELECT *, zaman::text AS z_txt, iptal_zaman::text AS iz_txt FROM ey_vardiya_plan
+                    WHERE tur = 'calisma' AND gun BETWEEN %s AND %s""", (pzt, paz))
+    rows = [dict(r) for r in cur.fetchall() or []]
+    if not rows:
+        return []
+    by_id = {r["id"]: r for r in rows}
+    gr: Dict[tuple, dict] = {}
+    for r in rows:
+        gr.setdefault((r["degistiren"] or "—", r["z_txt"]), {"ekle": [], "kaldir": []})["ekle"].append(r)
+        if r["iptal"] and r.get("iz_txt"):
+            gr.setdefault((r["iptal_kim"] or "—", r["iz_txt"]), {"ekle": [], "kaldir": []})["kaldir"].append(r)
+    from evvel_yeni_tanim_api import adlar
+    pad = adlar(cur, "ey_personel", list({r["personel_id"] for r in rows})) if adli else {}
+    sad = adlar(cur, "ey_sube", list({r["sube_id"] for r in rows})) if adli else {}
+    out = []
+    for (kim, z), g in gr.items():
+        kalkan = {r["id"] for r in g["kaldir"]}
+        satirlar, geri = [], False
+        degisen_eski = set()
+        for r in g["ekle"]:
+            o = by_id.get(r.get("onceki_id"))
+            if o and o["id"] in kalkan:
+                degisen_eski.add(o["id"])
+                satirlar.append({"tur": "saat", "o": o, "r": r})
+            elif r.get("onceki_id"):
+                geri = True   # onceki_id hedefi BAŞKA işlemde kaldırılmış → geri getirildi (Fable IS 4k tanıma kuralı)
+                satirlar.append({"tur": "geri", "r": r})
+            else:
+                satirlar.append({"tur": "ekle", "r": r})
+        for r in g["kaldir"]:
+            if r["id"] in degisen_eski:
+                continue
+            if (r.get("iptal_neden") or "") == "geri alındı":
+                geri = True
+            satirlar.append({"tur": "kaldir", "r": r})
+
+        def yaz(s):
+            r = s["r"]
+            ss = f"{_hm(r['bas'])}–{_hm(r['bit'])}"
+            n = (f"saat {_hm(s['o']['bas'])}–{_hm(s['o']['bit'])} → {ss}" if s["tur"] == "saat"
+                 else f"eklemesi geri alındı ({ss})" if s["tur"] == "kaldir" and r.get("iptal_neden") == "geri alındı"
+                 else {"ekle": f"eklendi ({ss})", "kaldir": f"kaldırıldı ({ss})", "geri": f"geri getirildi ({ss})"}[s["tur"]])
+            if s["tur"] == "kaldir" and r.get("iptal_neden") not in (None, "", "plandan kaldırıldı", "geri alındı") \
+                    and not str(r.get("iptal_neden")).startswith("saat değişti"):
+                n += f" · {r['iptal_neden']}"
+            return {"personel_id": r["personel_id"], "ad": pad.get(str(r["personel_id"])) or "—", "gun": r["gun"].isoformat(),
+                    "sube": sad.get(str(r["sube_id"])) or "—", "metin": n, "id": r["id"], "canli": not r["iptal"]}
+        kay = {s["r"].get("kaynak") for s in satirlar if s["tur"] == "ekle"}
+        nd = {s["r"].get("iptal_neden") for s in satirlar if s["tur"] == "kaldir"}
+        if geri:
+            et = "Geri alındı"
+        elif "eski_kopya" in kay:
+            et = "Eski plandan alındı"
+        elif "kopya" in kay:
+            et = "Geçen hafta kopyalandı"
+        elif "taslak temizlendi" in nd:
+            et = "Taslak temizlendi"
+        elif len(satirlar) == 1:
+            s = satirlar[0]
+            et = {"ekle": "Eklendi", "kaldir": "Kaldırıldı", "saat": "Saat değişti", "geri": "Geri alındı"}[s["tur"]]
+        else:
+            et = f"{len(satirlar)} değişiklik"
+        if not satirlar:
+            continue
+        out.append({"anahtar": f"{kim}|{z}", "kim": kim, "zaman": z[:16], "etiket": et, "geri": geri, "adet": len(satirlar),
+                    "satirlar": [yaz(s) for s in sorted(satirlar, key=lambda s: (s["r"]["gun"], str(s["r"]["personel_id"])))],
+                    "_g": g})
+    # sıra = zaman METNİ (aynı oturum saat dilimi, +03 sabit; dilim değişirse metin kıyası bozulur — o gün timestamptz'e çevir)
+    out.sort(key=lambda x: x["anahtar"].split("|", 1)[1], reverse=True)
+    return out
+
+
+def _son_islem(cur, pzt: date) -> Optional[dict]:
+    """Ekrandaki 'Geri al' düğmesi: haftanın EN SON işlemi (geri almanın kendisi değilse)."""
+    ls = _islemler(cur, pzt, adli=False)
+    if not ls or ls[0]["geri"]:
+        return None
+    x = ls[0]
+    ozet = None
+    if x["adet"] == 1:   # Fable (5 göz · telaş): NEYİN geri alınacağı düğmede yazsın — tek satırlık işlemde kişi + gün
+        from evvel_yeni_tanim_api import adlar
+        s = x["satirlar"][0]
+        ozet = {"ad": adlar(cur, 'ey_personel', [s['personel_id']]).get(str(s['personel_id'])) or '—', "gun": s["gun"]}   # gün adı ekranda (gunKisa TEK kaynak)
+    return {"anahtar": x["anahtar"], "kim": x["kim"], "zaman": x["zaman"], "etiket": x["etiket"], "adet": x["adet"], "ozet": ozet}
+
+
+@router.get("/gecmis")
+def gecmis(pazartesi: str):
+    """Haftanın değişiklik listesi (taslak dahil — kopya hatası da geri alınabilsin), en yeni üstte."""
+    with db() as (conn, cur):
+        vardiya_hazirla(cur)
+        pzt = _pazartesi(_tarih(pazartesi))
+        return {"pazartesi": pzt.isoformat(), "islemler": [{k: v for k, v in x.items() if k != "_g"} for x in _islemler(cur, pzt)]}
+
+
+class GeriBody(BaseModel):
+    pazartesi: str
+    anahtar: str   # sunucunun verdiği ham metin (kim|zaman) — istemci ayrıştırmaz (Fable: JS Date mikrosaniyeyi yutar)
+
+
+@router.post("/geri-al")
+def geri_al(b: GeriBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """YALNIZ haftanın son işlemi geri alınır; araya başka işlem girdiyse 409. Eklenen satır iptal ('geri alındı'), kaldırılan satır
+    aynı saat / şube / kalıp ve ORİJİNAL kaynağıyla geri yazılır (onceki_id = kaldırılan). Hepsi ya da hiçbiri: bir kişi-gün
+    kilitli / çakışıyorsa tüm işlem 409 (Opus — yarım geri alma iz karmaşası)."""
+    with db() as (conn, cur):
+        vardiya_hazirla(cur)
+        kim = merkez_aktor(cur, x_evvel_oturum)
+        pzt = _pazartesi(_tarih(b.pazartesi))
+        _hafta_kilidi(cur, pzt)
+        ls = _islemler(cur, pzt)
+        if not ls or ls[0]["anahtar"] != b.anahtar:
+            raise HTTPException(409, "Bu arada başka bir değişiklik yapıldı — sayfayı yenile, yalnız son işlem geri alınır")
+        if ls[0]["geri"]:
+            raise HTTPException(409, "Son işlem zaten bir geri alma — tekrar geri alınmaz")
+        g = ls[0]["_g"]
+        ek_kisi = []
+        if any(r.get("kaynak") == "eski_kopya" for r in g["ekle"]):
+            cur.execute("""SELECT DISTINCT p.personel_id FROM ey_vardiya_plan p JOIN ey_vardiya_yayin y
+                             ON y.sube_id = p.sube_id AND y.pazartesi = %s AND y.yayinlayan LIKE '%%(eski plan)' AND y.zaman::text = %s
+                            WHERE NOT p.iptal AND p.tur='calisma' AND p.gun BETWEEN %s AND %s""",
+                        (pzt, b.anahtar.split("|", 1)[1], pzt, pzt + timedelta(days=6)))
+            ek_kisi = [dict(r)["personel_id"] for r in cur.fetchall() or []]
+        _kisi_kilitleri(cur, [r["personel_id"] for r in g["ekle"] + g["kaldir"]] + ek_kisi)
+        yayin = _yayin_haritasi(cur, pzt, pzt)
+        bugun = is_gunu()
+        cur.execute(f"SELECT {_an_sql()} AS an")
+        an = dict(cur.fetchone())["an"]   # geri yazılacak satırın damgası — geçerlilik onunla ölçülür (_gecerli ile aynı ölçüt)
+        for r in g["kaldir"]:
+            # Codex 2. tur: yayınlanmadan günü geçmiş ESKİ taslak (personel görmedi, maaşa girmedi) yeni zamanla geri yazılırsa geçerli olur
+            if not _gecerli(r, yayin, bugun) and _gecerli({**r, "zaman": an}, yayin, bugun):
+                from evvel_yeni_tanim_api import adlar
+                ad = adlar(cur, "ey_personel", [r["personel_id"]]).get(str(r["personel_id"])) or "—"
+                raise HTTPException(409, f"{ad} · {r['gun'].strftime('%d.%m')} satırı yayınlanmamış eski taslaktı (personel görmedi, maaşa "
+                                         "girmedi) — geri alınırsa maaşa girer; gerekiyorsa elle yaz")
+        for r in g["ekle"]:
+            if not r["iptal"]:
+                _iptal(cur, r["id"], kim, "geri alındı")
+        for r in g["kaldir"]:
+            _yaz(cur, pid=r["personel_id"], gun=r["gun"], tur="calisma", kim=kim, sube_id=r["sube_id"], bas=r["bas"], bit=r["bit"],
+                 kalip_id=r.get("kalip_id"), kaynak=r["kaynak"], onceki_id=r["id"], damga=False)
+        if any(r.get("kaynak") == "eski_kopya" for r in g["ekle"]):
+            # Fable P2: "Eski plandan al" haftayı yayında sayar (ON CONFLICT DO NOTHING → yalnız YENİ yayın kaydı, zamanı aynı NOW()).
+            # Geri alınınca o işlemin açtığı yayın kaydı da kalkar — yoksa boş hafta "yayında" görünür. Önceden var olan yayına dokunulmaz.
+            cur.execute("""DELETE FROM ey_vardiya_yayin WHERE pazartesi=%s AND yayinlayan LIKE '%%(eski plan)' AND zaman::text=%s
+                           RETURNING sube_id""", (pzt, b.anahtar.split("|", 1)[1]))
+            _yayin_kilidi(cur, [dict(r)["sube_id"] for r in cur.fetchall() or []], pzt)   # yayın kalkınca kalan taslak geçersizleşir
+        return {"ok": True, "mesaj": f"Geri alındı — {ls[0]['etiket'].lower()} ({ls[0]['adet']} satır)"}
 
 
 # ─────────────────────────── uçlar ───────────────────────────
@@ -381,21 +637,13 @@ def hafta(pazartesi: Optional[str] = None):
             uyarilar.insert(0, {"tur": "ayrildi", "personel_id": pid,
                                 "metin": f"{pad_.get(pid, '—')} {ayr[pid].strftime('%d.%m')} tarihinde ayrıldı — sonrasında {len(gl)} vardiyası var "
                                          f"({', '.join(gl)}): sayılmıyor, kaldır"})
-        # Fable D-V0: yayından sonra KALDIRILAN satır da değişikliktir (yoksa sayaç 0, personel eksik vardiyayı bilmez).
-        # Saat değişikliğinde iptal edilen eski satır sayılmaz (yeni satırı zaten sayılıyor).
-        cur.execute("""SELECT p.sube_id, COUNT(*) AS n FROM ey_vardiya_plan p
-                         JOIN ey_vardiya_yayin y ON y.sube_id = p.sube_id AND y.pazartesi = %s
-                        WHERE p.iptal AND p.gun BETWEEN %s AND %s AND p.iptal_zaman > y.zaman
-                          AND NOT EXISTS (SELECT 1 FROM ey_vardiya_plan x WHERE x.onceki_id = p.id)
-                        GROUP BY p.sube_id""", (pzt, pzt, paz))
-        kaldirilan = {dict(r)["sube_id"]: int(dict(r)["n"]) for r in cur.fetchall() or []}
+        degisen = _yayin_farki(cur, pzt, paz)
         return {
             "pazartesi": pzt.isoformat(), "bugun": bugun.isoformat(), "gunler": [(pzt + timedelta(days=i)).isoformat() for i in range(7)],
             "subeler": [{"id": s["id"], "ad": s["ad"],
                          "yayin": ({"kim": yayin[(s["id"], pzt)]["yayinlayan"], "zaman": str(yayin[(s["id"], pzt)]["zaman"])[:16]}
                                    if (s["id"], pzt) in yayin else None),
-                         "degisen": sum(1 for r in hafta_rows if r.get("sube_id") == s["id"] and (s["id"], pzt) in yayin
-                                        and r["zaman"] > yayin[(s["id"], pzt)]["zaman"]) + kaldirilan.get(s["id"], 0),
+                         "degisen": degisen.get(s["id"], 0),
                          "satir": sum(1 for r in hafta_rows if r.get("sube_id") == s["id"])} for s in sb],
             "kaliplar": [{"id": k["id"], "sube_id": k["sube_id"], "ad": k["ad"], "bas": _hm(k["bas"]), "bit": _hm(k["bit"]),
                           "kisi": k["kisi"], "gunler": list(k["gunler"] or []), "sira": k["sira"]} for k in kaliplar],
@@ -407,6 +655,7 @@ def hafta(pazartesi: Optional[str] = None):
                           "cikis": p["cikis"].isoformat() if p.get("cikis") else None} for p in kisiler],
             "uyarilar": uyarilar,
             "eski_kopya": pzt <= ESKI_KOPYA_SON and tablo_var(cur, "vardiya_atama"),
+            "son_islem": _son_islem(cur, pzt),
         }
 
 
@@ -569,13 +818,24 @@ def taslak_temizle(b: TemizleBody, x_evvel_oturum: Optional[str] = Header(defaul
         vardiya_hazirla(cur)
         kim = merkez_aktor(cur, x_evvel_oturum)
         pzt = _pazartesi(_tarih(b.pazartesi))
+        _hafta_kilidi(cur, pzt)   # Fable 2. tur: yayın denetimi + satır listesi kilit ALTINDA (araya yayın / iptal giremez)
         if hafta_yayinda(cur, b.sube_id, pzt):
             raise HTTPException(409, "Bu hafta yayınlanmış — personel gördü; satırları tek tek kaldır")
-        cur.execute("""UPDATE ey_vardiya_plan SET iptal=TRUE, iptal_neden='taslak temizlendi', iptal_kim=%s, iptal_zaman=NOW()
-                        WHERE NOT iptal AND tur='calisma' AND sube_id=%s AND gun BETWEEN %s AND %s AND gun > %s RETURNING id""",
-                    (kim, str(b.sube_id), pzt, pzt + timedelta(days=6), is_gunu()))
-        n = len(cur.fetchall() or [])
-        return {"ok": True, "mesaj": f"{n} taslak satır temizlendi" if n else "Temizlenecek ileri gün taslağı yok"}
+        cur.execute("""SELECT id, personel_id, gun FROM ey_vardiya_plan WHERE NOT iptal AND tur='calisma' AND sube_id=%s
+                          AND gun BETWEEN %s AND %s AND gun > %s ORDER BY gun""", (str(b.sube_id), pzt, pzt + timedelta(days=6), is_gunu()))
+        rows = [dict(r) for r in cur.fetchall() or []]
+        _kisi_kilitleri(cur, [r["personel_id"] for r in rows])
+        n, kilit = 0, 0
+        for r in rows:   # TEK yol _iptal; maaşı onaylı (ör. ayrılan kişinin ayı biten ay sayılır) satır ÖNDEN ayıklanır
+            if _maas_kilitli_mi(cur, r["personel_id"], r["gun"]):
+                kilit += 1
+                continue
+            _iptal(cur, r["id"], kim, "taslak temizlendi")
+            n += 1
+        ek = f"{kilit} satır temizlenmedi: maaşı onaylı" if kilit else ""
+        if not n:
+            return {"ok": True, "mesaj": ek or "Temizlenecek ileri gün taslağı yok"}
+        return {"ok": True, "mesaj": f"{n} taslak satır temizlendi" + (f" · {ek}" if ek else "")}
 
 
 class DegistirBody(BaseModel):
@@ -629,7 +889,10 @@ def hafta_kopyala(b: KopyaBody, x_evvel_oturum: Optional[str] = Header(default=N
         bugun = is_gunu()
         cur.execute("SELECT id FROM ey_vardiya_kalip WHERE aktif")
         aktif_kalip = {dict(r)["id"] for r in cur.fetchall() or []}
+        # not (Fable 3. tur): kaynak hafta kilitsiz okunur — iz bozulmaz, en kötü eşzamanlı değişiklik kopyaya girmez / girer
         kaynak = [r for r in _satirlar(cur, pzt - timedelta(days=7), pzt - timedelta(days=1), b.sube_id) if r["tur"] == "calisma"]
+        _hafta_kilidi(cur, pzt)
+        _kisi_kilitleri(cur, [r["personel_id"] for r in kaynak])
         n, atla = 0, 0
         for r in kaynak:
             g = r["gun"] + timedelta(days=7)
@@ -665,9 +928,13 @@ def yayinla(b: YayinBody, x_evvel_oturum: Optional[str] = Header(default=None)):
             sids = [dict(r)["sube_id"] for r in cur.fetchall() or []]
         if not sids:
             raise HTTPException(409, "Bu haftada yayınlanacak plan yok")
+        _hafta_kilidi(cur, pzt)   # Codex P2: yayın anı ile plan yazması aynı sırada (rozet küme farkı tutarlı)
+        # Codex P1: İLK yayın, önceden yazılıp yayınlanmamış satırları geçerli yapar (_gecerli) → maaşı onaylı kişi-ayda yayınlanmaz
+        yayinli = _yayin_haritasi(cur, pzt, pzt)
+        _yayin_kilidi(cur, [s for s in sids if (s, pzt) not in yayinli], pzt)
         for s in sids:
-            cur.execute("""INSERT INTO ey_vardiya_yayin (sube_id, pazartesi, yayinlayan) VALUES (%s,%s,%s)
-                           ON CONFLICT (sube_id, pazartesi) DO UPDATE SET yayinlayan=EXCLUDED.yayinlayan, zaman=NOW()""", (s, pzt, kim))
+            cur.execute(f"""INSERT INTO ey_vardiya_yayin (sube_id, pazartesi, yayinlayan, zaman) VALUES (%s,%s,%s,{_an_sql()})
+                           ON CONFLICT (sube_id, pazartesi) DO UPDATE SET yayinlayan=EXCLUDED.yayinlayan, zaman=EXCLUDED.zaman""", (s, pzt, kim))
         return {"ok": True, "mesaj": f"{len(sids)} şubenin haftası yayınlandı — personel görür"}
 
 
@@ -698,6 +965,8 @@ def eski_kopya(b: EskiBody, x_evvel_oturum: Optional[str] = Header(default=None)
             eski = [dict(r) for r in cur.fetchall() or []]
         from evvel_yeni_tanim_api import tanim_listesi
         ey_sube = {s["id"] for s in tanim_listesi(cur, "ey_sube", ("ad",))}
+        _hafta_kilidi(cur, pzt)
+        _kisi_kilitleri(cur, [r["pid"] for r in eski] + [r["personel_id"] for r in _satirlar(cur, pzt, pzt + timedelta(days=6))])
         n, atla = 0, 0
         subeler_ = set()
         for r in eski:
@@ -716,8 +985,10 @@ def eski_kopya(b: EskiBody, x_evvel_oturum: Optional[str] = Header(default=None)
                 subeler_.add(r["sube_id"])
             else:
                 atla += 1
+        _yayinli = _yayin_haritasi(cur, pzt, pzt)
+        _yayin_kilidi(cur, [s for s in subeler_ if (s, pzt) not in _yayinli], pzt)   # Codex P1: yeni yayın başkalarının taslağını da geçerli yapar
         for s in subeler_:
-            cur.execute("""INSERT INTO ey_vardiya_yayin (sube_id, pazartesi, yayinlayan) VALUES (%s,%s,%s)
+            cur.execute(f"""INSERT INTO ey_vardiya_yayin (sube_id, pazartesi, yayinlayan, zaman) VALUES (%s,%s,%s,{_an_sql()})
                            ON CONFLICT (sube_id, pazartesi) DO NOTHING""", (s, pzt, f"{kim} (eski plan)"))
         if not eski:
             raise HTTPException(409, "Eski ekranda bu hafta için plan yok")

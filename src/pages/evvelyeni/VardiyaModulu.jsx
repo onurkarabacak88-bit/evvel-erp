@@ -4,10 +4,11 @@
 //   · Akış: Geçen haftayı kopyala → 2-3 hücre düzelt → Yayınla. Yayınlanana kadar TASLAK (personel görmez — Y2).
 //   · Hücreye tıkla → kişi seç / saat düzelt / kaldır. Aynı kişi aynı saatte iki yerde olamaz (sunucu söyler).
 //   · Uyarılar bu sayfada (kalıp eksik · 7 gün üst üste · sonradan yazıldı) — personele gitmez, Bekleyen işler'e düşmez (K4).
+//   · 🕘 Değişiklikler (IS 4k): haftanın işlemleri kim / ne zaman / eski→yeni; YALNIZ son işlem geri alınır (sunucu karar verir).
 // Ekran kendi hesabını kurmaz: saat, uyarı, yayın durumu sunucudan gelir.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { gunKaydir, gunKisa, tarihNokta } from '../../utils/trTarih';
+import { ggaaSaat, gunKaydir, gunKisa, tarihNokta } from '../../utils/trTarih';
 import { ALAN, Cip, Dugme, kart, num, PI_CSS, R, soruOnay } from './KasaModulu';
 import { Pencere } from './AyTakvim';
 
@@ -19,13 +20,14 @@ const gunBaslik = (g) => `${gunKisa(g)} ${tarihNokta(g).slice(0, 5)}`;   // gün
 const arti = { border: 'none', background: 'none', cursor: 'pointer', font: 'inherit', fontSize: 15, minHeight: 40, minWidth: 44, padding: '6px 8px', width: '100%', textAlign: 'left' };
 const hucre = { borderTop: `1px solid ${R.cizgi}`, borderLeft: `1px solid ${R.cizgi}`, padding: 5, verticalAlign: 'top', minWidth: 96 };
 
-function Rozet({ p, ad, onClick, sube }) {
+function Rozet({ p, ad, onClick, sube, vurgu }) {
   const izin = p.tur === 'izin';
   return (
     <button type="button" onClick={onClick} title={p.kaynak === 'sonradan' ? 'sonradan yazıldı' : ''} style={{
       display: 'block', width: '100%', textAlign: 'left', margin: '0 0 4px', padding: '8px 8px', minHeight: 40, borderRadius: 8, cursor: 'pointer',
       font: 'inherit', fontSize: 13, border: `1px solid ${R.cizgi}`, color: izin ? R.not : R.krem,
       background: izin ? 'var(--pi-bg)' : 'var(--pi-accent-soft)', borderStyle: p.kaynak === 'sonradan' ? 'dashed' : 'solid',
+      ...(vurgu?.id === p.id ? { outline: '3px solid var(--pi-accent)', outlineOffset: 1 } : {}),
     }}>
       {izin ? (ad ? <><b>{ad}</b> · izinli</> : 'İzinli') : <>{ad && <b>{ad} </b>}<span style={num}>{saatYazi(p)}</span></>}{sube ? <div style={{ fontSize: 11, color: R.not }}>{sube}</div> : null}
     </button>
@@ -36,6 +38,8 @@ function Rozet({ p, ad, onClick, sube }) {
 const YAZDIR_CSS = `@media print { @page { size: A4 landscape; margin: 10mm }
   body * { visibility: hidden } .vd-alan, .vd-alan * { visibility: visible } .vd-alan { position: absolute; left: 0; top: 0; width: 100% }
   .vd-gizle, button.vd-arti { display: none !important } }`;   // yalnız plan basılır (sol menü / kabuk değil)
+// sol 'Boştakiler' geniş ekranda yapışkan; dar ekranda alt alta dizilince ızgaranın ÜSTÜNE binmesin (sim 26 Eki, 278 px)
+const SOL_CSS = '@media (min-width: 900px) { .vd-sol { position: sticky; top: 8px } }';
 
 // 👥 BOŞTA = o gün aktif, işe başlamış / ayrılmamış, izinli DEĞİL ve hiçbir şubeye yazılmamış kişi (sahip 20 Eki: "solda kalan
 // personel belli olsun; güne yazılınca soldan silinsin, seçimde de görünmesin"). Sol liste ve kişi seçme penceresi bu TEK kuralı okur.
@@ -53,6 +57,9 @@ export default function VardiyaModulu({ onToast }) {
   const [kalipAcik, setKalipAcik] = useState(false);
   const [gunSec, setGunSec] = useState(null);   // sol 'Boştakiler' listesinin günü
   const [secili, setSecili] = useState(null);   // soldan dokunulan kişi → '+' kutusuna dokununca doğrudan yazılır
+  const [gecmisAcik, setGecmisAcik] = useState(false);
+  const [vurgu, setVurgu] = useState(null);     // geçmiş listesinden dokunulan satır {id (canlıysa), pid, gun} — birkaç saniye çerçeveli
+  useEffect(() => { if (!vurgu) return undefined; const t = setTimeout(() => setVurgu(null), 6000); return () => clearTimeout(t); }, [vurgu]);
   const yukle = useCallback(() => api(`/evvel-yeni/vardiya/hafta${pzt ? `?pazartesi=${pzt}` : ''}`)
     .then((d) => { setV(d); setHata(''); }).catch((e) => setHata(e?.message || 'Plan okunamadı')), [pzt]);
   useEffect(() => { yukle(); }, [yukle]);
@@ -96,7 +103,7 @@ export default function VardiyaModulu({ onToast }) {
 
   return (
     <div className="pi vd-alan" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <style>{PI_CSS + YAZDIR_CSS}</style>
+      <style>{PI_CSS + YAZDIR_CSS + SOL_CSS}</style>
       <div><div className="pi-eyebrow">Evvel Yeni · Personel</div><h1 style={{ fontSize: 30 }}>Vardiya planı</h1></div>
       <div style={{ fontSize: 13, color: R.metin2 }}>
         Geçen haftayı kopyala, değişen hücreleri düzelt, şubenin haftasını <b>Yayınla</b>. Yayınlanana kadar taslaktır: personel görmez,
@@ -118,12 +125,18 @@ export default function VardiyaModulu({ onToast }) {
         {v.eski_kopya && <Dugme kucuk disabled={mesgul} onClick={async () => { if (await soruOnay('Eski vardiya ekranında bu hafta için yazılmış plan buraya alınsın mı? (Alınan hafta yayında sayılır.)')) yap('eski-kopya', { pazartesi: hafta }); }}>⤵ Eski plandan al</Dugme>}
         <Dugme kucuk onClick={() => setKalipAcik(true)}>⚙ Kalıplar</Dugme>
         <Dugme kucuk onClick={() => window.print()}>🖨 Yazdır</Dugme>
+        <Dugme kucuk onClick={() => setGecmisAcik(true)}>🕘 Değişiklikler</Dugme>
+        {v.son_islem && <Dugme kucuk disabled={mesgul} onClick={async () => {
+          const s = v.son_islem;
+          const ne = s.ozet ? `${s.ozet.ad} ${gunBaslik(s.ozet.gun)}` : `${s.adet} satır`;   // Fable: NEYİN geri alınacağı yazsın
+          if (await soruOnay(`Son işlem geri alınsın mı?\n${s.etiket} · ${ne}\n${s.kim} · ${ggaaSaat(s.zaman)}`)) yap('geri-al', { pazartesi: hafta, anahtar: s.anahtar });
+        }}>↶ Geri al: {v.son_islem.etiket.toLowerCase()} · {v.son_islem.ozet ? `${v.son_islem.ozet.ad} ${gunBaslik(v.son_islem.ozet.gun)}` : `${v.son_islem.adet} satır`} · {v.son_islem.zaman.slice(11, 16)}</Dugme>}
       </div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
 
       {gorunum === 'sube' ? (
         <div style={{ display: 'flex', gap: 14, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-          <div className="vd-gizle" style={{ ...kart, padding: '10px 12px', width: 190, flex: '0 0 190px', position: 'sticky', top: 8, display: 'grid', gap: 6 }}>
+          <div className="vd-gizle vd-sol" style={{ ...kart, padding: '10px 12px', width: 190, flex: '0 0 190px', display: 'grid', gap: 6 }}>
             <b style={{ fontSize: 14 }}>👥 Boştakiler</b>
             <div style={{ display: 'flex', gap: 3, flexWrap: 'wrap' }}>
               {v.gunler.map((g) => (
@@ -153,7 +166,7 @@ export default function VardiyaModulu({ onToast }) {
           <div key={s.id} style={{ ...kart, padding: '10px 14px', display: 'grid', gap: 8 }}>
             <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
               <b style={{ fontSize: 16 }}>{s.ad}</b>
-              {s.yayin ? <Cip tur="yesil">yayında · {tarihNokta(s.yayin.zaman).slice(0, 5)} {s.yayin.zaman.slice(11, 16)}</Cip> : <Cip tur="sari">taslak — personel görmüyor</Cip>}
+              {s.yayin ? <Cip tur="yesil">yayında · {ggaaSaat(s.yayin.zaman)}</Cip> : <Cip tur="sari">taslak — personel görmüyor</Cip>}
               {s.yayin && s.degisen > 0 && <Cip tur="bakir">yayından sonra {s.degisen} değişiklik (geçerli)</Cip>}
               <span style={{ flex: 1 }} />
               {(!s.yayin || s.degisen > 0) && s.satir > 0 && (
@@ -176,7 +189,7 @@ export default function VardiyaModulu({ onToast }) {
                         const eksik = aktifGun && !gecmis(g) && bu.length < k.kisi;
                         return (
                           <td key={g} style={{ ...hucre, background: !aktifGun ? 'var(--pi-bg)' : eksik ? 'var(--pi-warn-soft)' : undefined }}>
-                            {bu.map((p) => <Rozet key={p.id} p={p} ad={pad[p.personel_id] || '—'} onClick={() => duzenleAc(p)} />)}
+                            {bu.map((p) => <Rozet key={p.id} p={p} ad={pad[p.personel_id] || '—'} vurgu={vurgu} onClick={() => duzenleAc(p)} />)}
                             {aktifGun && <button type="button" className="vd-arti" disabled={mesgul} onClick={() => arti_({ sube_id: s.id, gun: g, kalip_id: k.id, bas: k.bas, bit: k.bit })}
                               style={{ ...arti, color: eksik ? R.amber : R.not, background: bostaMi(g) ? 'var(--pi-accent-soft)' : 'none' }}>
                               {bostaMi(g) ? `+ ${seciliP.ad}` : eksik ? `+ ${bu.length}/${k.kisi}` : '+'}</button>}
@@ -189,7 +202,7 @@ export default function VardiyaModulu({ onToast }) {
                     <td style={{ ...hucre, borderLeft: 'none' }}><b>Diğer saatler</b><div style={{ fontSize: 11.5, color: R.not }}>kalıp dışı</div></td>
                     {v.gunler.map((g) => (
                       <td key={g} style={hucre}>
-                        {diger.filter((p) => p.gun === g).map((p) => <Rozet key={p.id} p={p} ad={pad[p.personel_id] || '—'} onClick={() => duzenleAc(p)} />)}
+                        {diger.filter((p) => p.gun === g).map((p) => <Rozet key={p.id} p={p} ad={pad[p.personel_id] || '—'} vurgu={vurgu} onClick={() => duzenleAc(p)} />)}
                         <button type="button" className="vd-arti" disabled={mesgul} onClick={() => arti_({ sube_id: s.id, gun: g, kalip_id: null })}
                           style={{ ...arti, color: R.not, background: bostaMi(g) ? 'var(--pi-accent-soft)' : 'none' }}>{bostaMi(g) ? `+ ${seciliP.ad}` : '+'}</button>
                       </td>
@@ -221,8 +234,8 @@ export default function VardiyaModulu({ onToast }) {
                     {v.gunler.map((g) => {
                       const bu = v.plan.filter((x) => x.personel_id === p.id && x.gun === g);
                       return (
-                        <td key={g} style={hucre}>
-                          {bu.map((x) => <Rozet key={x.id} p={x} ad="" sube={x.tur === 'calisma' ? sad[x.sube_id] : null} onClick={() => duzenleAc(x)} />)}
+                        <td key={g} style={{ ...hucre, ...(vurgu && vurgu.pid === p.id && vurgu.gun === g ? { outline: '3px solid var(--pi-accent)', outlineOffset: -3 } : {}) }}>
+                          {bu.map((x) => <Rozet key={x.id} p={x} ad="" sube={x.tur === 'calisma' ? sad[x.sube_id] : null} vurgu={vurgu} onClick={() => duzenleAc(x)} />)}
                           {!bu.some((x) => x.tur === 'izin') && (
                             <button type="button" className="vd-arti" disabled={mesgul} onClick={() => ekleAc({ personel_id: p.id, gun: g, sube_id: p.sube_id || '', kalip_id: null, kisiSabit: true })}
                               style={{ ...arti, color: R.not }}>+</button>)}
@@ -249,14 +262,58 @@ export default function VardiyaModulu({ onToast }) {
         ))}
       </div>
 
-      {form && <PlanFormu form={form} setForm={setForm} v={v} mesgul={mesgul} yap={yap} />}
+      {form && <PlanFormu form={form} setForm={setForm} v={v} mesgul={mesgul} yap={yap} gecmis={gecmis} />}
+      {gecmisAcik && <Degisiklikler hafta={hafta} surum={v} onKapat={() => setGecmisAcik(false)}
+        onSec={(x) => { setGecmisAcik(false); setGunSec(x.gun); setVurgu({ id: x.canli ? x.id : null, pid: x.personel_id, gun: x.gun });
+          if (!x.canli) onToast?.(`${x.ad} · ${gunBaslik(x.gun)} · ${x.sube}: ${x.metin} — bu satır artık planda yok`); }} />}
       {kalipAcik && <Kaliplar v={v} mesgul={mesgul} yap={yap} onKapat={() => setKalipAcik(false)} />}
     </div>
   );
 }
 
+// ── 🕘 Değişiklikler (IS 4k): haftanın işlemleri, en yeni üstte; toplu işlem tek satır, açılınca satırları ──
+function Degisiklikler({ hafta, surum, onKapat, onSec }) {
+  const [d, setD] = useState(null);
+  const [acik, setAcik] = useState({});
+  const [hata, setHata] = useState('');
+  useEffect(() => {
+    api(`/evvel-yeni/vardiya/gecmis?pazartesi=${hafta}`).then(setD).catch((e) => setHata(e?.message || 'Okunamadı'));
+  }, [hafta, surum]);
+  return (
+    <Pencere baslik={`Değişiklikler · ${tarihNokta(hafta).slice(0, 5)} haftası`} onKapat={onKapat}>
+      <div style={{ fontSize: 12, color: R.not }}>Yalnız <b>son işlem</b> geri alınır (üstteki ↶ düğmesi). Satıra dokun → ızgarada o gün, satır birkaç saniye çerçeveli.</div>
+      {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
+      {!d && !hata && <div style={{ color: R.not }}>Hazırlanıyor…</div>}
+      {d && !d.islemler.length && <div style={{ color: R.not }}>Bu hafta değişiklik yok.</div>}
+      <div style={{ display: 'grid', gap: 2, maxHeight: '60vh', overflowY: 'auto' }}>
+        {d?.islemler.map((x, i) => {
+          const tek = x.satirlar.length === 1;
+          const ac = tek || acik[x.anahtar];
+          return (
+            <div key={x.anahtar} style={{ borderTop: `1px solid ${R.cizgi}`, padding: '6px 0' }}>
+              <button type="button" onClick={() => (tek ? onSec(x.satirlar[0]) : setAcik((a) => ({ ...a, [x.anahtar]: !a[x.anahtar] })))}
+                style={{ border: 0, background: 'none', padding: '4px 0', font: 'inherit', color: 'inherit', cursor: 'pointer', textAlign: 'left', width: '100%', minHeight: 36 }}>
+                <span style={{ ...num, color: R.not }}>{ggaaSaat(x.zaman)}</span> · <b>{x.etiket}</b>
+                {!tek && <> · {x.adet} satır {ac ? '▾' : '▸'}</>} · <span style={{ color: R.metin2 }}>{x.kim}</span>
+                {i === 0 && !x.geri && <Cip tur="bakir">son işlem</Cip>}
+                {tek && <div style={{ fontSize: 13 }}>{x.satirlar[0].ad} · {gunBaslik(x.satirlar[0].gun)} · {x.satirlar[0].sube} · {x.satirlar[0].metin}</div>}
+              </button>
+              {ac && !tek && x.satirlar.map((s) => (
+                <button key={s.id + s.metin} type="button" onClick={() => onSec(s)}
+                  style={{ display: 'block', border: 0, background: 'none', padding: '4px 0 4px 14px', font: 'inherit', fontSize: 13, color: 'inherit', cursor: 'pointer', textAlign: 'left', width: '100%', minHeight: 32 }}>
+                  {s.ad} · {gunBaslik(s.gun)} · {s.sube} · {s.metin}
+                </button>))}
+            </div>
+          );
+        })}
+      </div>
+    </Pencere>
+  );
+}
+
 // ── Ekle / düzenle penceresi ──
-function PlanFormu({ form, setForm, v, mesgul, yap }) {
+function PlanFormu({ form, setForm, v, mesgul, yap, gecmis }) {
+  const gecmisUyari = gecmis(form.gun) ? '\nGeçmiş gün — yoklama ve maaş bu plana bakar.' : '';
   const set = (k, x) => setForm((f) => ({ ...f, [k]: x }));
   const kapat = () => setForm(null);
   const kisi = v.personel.find((p) => p.id === form.personel_id);
@@ -277,12 +334,12 @@ function PlanFormu({ form, setForm, v, mesgul, yap }) {
             <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
               <input type="time" value={form.bas || ''} onChange={(e) => set('bas', e.target.value)} style={alan} />–
               <input type="time" value={form.bit || ''} onChange={(e) => set('bit', e.target.value)} style={alan} />
-              <Dugme kucuk ana disabled={mesgul} onClick={() => yap(`plan/${form.id}/degistir`, { bas: form.bas, bit: form.bit }, kapat)}>Saati kaydet</Dugme>
+              <Dugme kucuk ana disabled={mesgul} onClick={async () => { if (!gecmisUyari || await soruOnay(`Saat değişsin mi?${gecmisUyari}`)) yap(`plan/${form.id}/degistir`, { bas: form.bas, bit: form.bit }, kapat); }}>Saati kaydet</Dugme>
             </div>
           </>
         )}
         <div style={{ fontSize: 11.5, color: R.not }}>yazan: {form.degistiren || '—'}{form.zaman ? ` · ${form.zaman}` : ''}</div>
-        <div><Dugme kucuk disabled={mesgul} onClick={async () => { if (await soruOnay(form.tur === 'izin' ? 'İzin (bütün aralık) kaldırılsın mı?' : 'Bu vardiya plandan kaldırılsın mı?')) yap(form.tur === 'izin' ? `izin/${encodeURIComponent(form.id)}/kaldir` : `plan/${form.id}/iptal`, {}, kapat); }}>
+        <div><Dugme kucuk disabled={mesgul} onClick={async () => { if (await soruOnay(form.tur === 'izin' ? 'İzin (bütün aralık) kaldırılsın mı?' : `Bu vardiya plandan kaldırılsın mı?${gecmisUyari}`)) yap(form.tur === 'izin' ? `izin/${encodeURIComponent(form.id)}/kaldir` : `plan/${form.id}/iptal`, {}, kapat); }}>
           {form.tur === 'izin' ? 'İzni kaldır' : 'Plandan kaldır'}</Dugme></div>
       </Pencere>
     );

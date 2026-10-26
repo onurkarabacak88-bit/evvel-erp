@@ -506,10 +506,28 @@ class ElleBody(BaseModel):
     saat_oneriye_don: bool = False
 
 
+def _kisi_ay_dogrula(cur, pid: str, ay: str) -> None:
+    """Sim 26 Eki: POST /maas/takvim/karar yanlış yolu bu uca düşüp personel 'takvim' · ay 'karar' satırı YAZDI — kişi gerçek, ay YYYY-AA olmalı."""
+    import re as _re
+    gecerli = bool(_re.fullmatch(r"\d{4}-(0[1-9]|1[0-2])", str(ay)))
+    if not gecerli and len(str(ay)) == 10:
+        try:
+            date.fromisoformat(str(ay))
+            gecerli = True
+        except ValueError:
+            gecerli = False
+    if not gecerli:
+        raise HTTPException(400, "Ay biçimi YYYY-AA olmalı")
+    from evvel_yeni_tanim_api import tanim_oku
+    if not tanim_oku(cur, "ey_personel", pid, ("ad",)):
+        raise HTTPException(404, "Personel bulunamadı")
+
+
 @router.post("/{pid}/{ay}")
 def maas_elle(pid: str, ay: str, b: ElleBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     from evvel_yeni_cekirdek import aktor as _aktor
     with db() as (_c0, _k0):
+        _kisi_ay_dogrula(_k0, pid, ay)
         if ay[:7] < _yeni_hesap(_k0):
             raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
     if b.duzeltme and not (b.aciklama or "").strip():
@@ -517,6 +535,7 @@ def maas_elle(pid: str, ay: str, b: ElleBody, x_evvel_oturum: Optional[str] = He
     with db() as (conn, cur):
         _hazirla(cur)
         kim = _aktor(cur, x_evvel_oturum)
+        _ay_kilidi(cur, pid, ay)   # Codex 5. tur: onay ile elle yazım yarışmasın (onay okumasından ÖNCE)
         cur.execute("SELECT onay FROM ey_maas_ay WHERE personel_id=%s AND ay=%s", (pid, ay[:7]))
         r = cur.fetchone()
         if r and dict(r)["onay"]:
@@ -552,11 +571,13 @@ def maas_onay(pid: str, ay: str, kaldir: bool = False, x_evvel_oturum: Optional[
     """Onay: ayın kalemleri DONDURULUR (ücret/vardiya sonradan değişse de bu ay bozulmaz); gider 'kesin' olur."""
     from evvel_yeni_cekirdek import aktor as _aktor
     with db() as (_c0, _k0):
+        _kisi_ay_dogrula(_k0, pid, ay)
         if ay[:7] < _yeni_hesap(_k0):
             raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
     with db() as (conn, cur):
         _hazirla(cur)
         kim = _aktor(cur, x_evvel_oturum)
+        _ay_kilidi(cur, pid, ay)   # vardiya yazması bu kişi-ayda sürüyorsa bitmesini bekle (hesap güncel planla donar)
         if kaldir:
             cur.execute("UPDATE ey_maas_ay SET onay=FALSE, kalemler=NULL, onaylayan=%s, onay_zaman=NOW() WHERE personel_id=%s AND ay=%s",
                         (kim, pid, ay[:7]))
@@ -763,9 +784,17 @@ def takvim_karar(b: YoklamaKararBody, x_evvel_oturum: Optional[str] = Header(def
         _hazirla(cur)
         kim = _aktor(cur, x_evvel_oturum)
         t = (b.tarih or _bugun().isoformat())[:10]
-        cur.execute("""INSERT INTO ey_personel_yoklama_karar (id, personel_id, tarih, karar, izin_bitis, aciklama, degistiren)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s)""",
-                    (str(_uuid.uuid4()), b.personel_id, t, b.karar, (b.izin_bitis or None), (b.aciklama or None), kim))
+        if b.karar == "izin":   # TEK izin kapısı (çakışan izin 409 · maaşı onaylı ay 409 — Codex IS 4k 4. tur)
+            try:
+                ibas = date.fromisoformat(t)
+                ibit = date.fromisoformat(str(b.izin_bitis)[:10]) if b.izin_bitis else None
+            except ValueError:
+                raise HTTPException(400, "Tarih biçimi YYYY-AA-GG olmalı")
+            izin_yaz(cur, personel_id=b.personel_id, bas=ibas, bit=ibit, kim=kim, aciklama=b.aciklama or "yoklama sorusu")
+        else:
+            cur.execute("""INSERT INTO ey_personel_yoklama_karar (id, personel_id, tarih, karar, izin_bitis, aciklama, degistiren)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s)""",
+                        (str(_uuid.uuid4()), b.personel_id, t, b.karar, None, (b.aciklama or None), kim))
         mesaj = {"izin": "Yıllık izin olarak işaretlendi", "devam": "Devam ediyor — soru kapandı"}.get(b.karar)
         if b.karar == "ayrildi":
             son = None
@@ -807,6 +836,8 @@ def izin_yaz(cur, *, personel_id: str, bas: date, bit: Optional[date], kim: str,
     import uuid as _uuid
     if bit and bit < bas:
         raise HTTPException(400, "İzin bitişi başlangıçtan önce olamaz")
+    from evvel_yeni_cekirdek import is_gunu as _ig
+    _izin_kilidi(cur, personel_id, bas, bit or max(bas, _ig()))   # açık uçlu izin bugüne kadarki ayların hepsine değer (Fable 3. tur)
     if izin_araliklari(cur, bas, bit or date(2999, 12, 31), personel_id):
         raise HTTPException(409, "Bu tarihlerde zaten izin var — önce onu kaldır")
     kid = str(_uuid.uuid4())
@@ -815,9 +846,44 @@ def izin_yaz(cur, *, personel_id: str, bas: date, bit: Optional[date], kim: str,
     return kid
 
 
+def _ay_kilidi(cur, personel_id: str, ay: str) -> None:
+    """Kişi × ay işlem kilidi — maaş onayı / onay kaldırma ile vardiya yazması TEK sırada (Codex IS 4k P1). Önce KİŞİ kilidi
+    (Codex 4. tur: farklı sırayla iki ay kilidi alan işlemler kilitlenmesin — aynı kişiye giren işlemler kişi kilidinde sıralanır)."""
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_maas_kisi:{personel_id}",))
+    cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_maas_ay:{personel_id}:{str(ay)[:7]}",))
+
+
+def ay_kilitli(cur, personel_id: str, ay: str) -> bool:
+    """PUBLIC (IS 4k · Opus + Fable + Codex 26 Eki) — kişinin o ayki maaşı kilitli mi (bugün: onaylı). Vardiya planı kilitli ayın gününe
+    yazmaz (iz maaşla tutsun). Kararın sahibi Maaş: kural değişirse (ör. ödendi) yalnız burası değişir.
+    Codex P1: kişi × ay kilidi ALINIR (işlem sonuna kadar) — onay aynı kilidi bekler; 'kilitsiz' cevabından sonra onay araya girip
+    eski planı donduramaz."""
+    _hazirla(cur)
+    _ay_kilidi(cur, personel_id, ay)
+    cur.execute("SELECT onay FROM ey_maas_ay WHERE personel_id=%s AND ay=%s", (str(personel_id), str(ay)[:7]))
+    r = cur.fetchone()
+    return bool(r and dict(r)["onay"])
+
+
+def _izin_kilidi(cur, personel_id: str, bas: date, bit: date) -> None:
+    """İzin aralığının değdiği her ay için ay_kilitli (Fable IS 4k 2. tur): onaylı ayın iznini değiştirmek iz bozar."""
+    y, a = bas.year, bas.month
+    while (y, a) <= (bit.year, bit.month):
+        ay = f"{y:04d}-{a:02d}"
+        if ay_kilitli(cur, personel_id, ay):
+            raise HTTPException(409, f"Bu kişinin {ay} maaşı onaylı — izin değişirse maaşla iz tutmaz; önce Maaş'ta onayı kaldır")
+        y, a = (y + 1, 1) if a == 12 else (y, a + 1)
+
+
 def izin_kaldir(cur, izin_id: str, kim: str) -> None:
     """PUBLIC — izni kaldır (satır silinmez: iptal_zaman + iptal_kim)."""
     _hazirla(cur)
+    cur.execute("SELECT personel_id, tarih, izin_bitis FROM ey_personel_yoklama_karar WHERE id=%s AND karar='izin'", (izin_id,))
+    o = cur.fetchone()
+    if o:
+        o = dict(o)
+        from evvel_yeni_cekirdek import is_gunu as _ig
+        _izin_kilidi(cur, o["personel_id"], o["tarih"], o["izin_bitis"] or max(o["tarih"], _ig()))   # gün kaynağı TEK: is_gunu
     cur.execute("""UPDATE ey_personel_yoklama_karar SET iptal_zaman=NOW(), iptal_kim=%s
                     WHERE id=%s AND karar='izin' AND iptal_zaman IS NULL RETURNING id""", (kim, izin_id))
     if not cur.fetchone():
