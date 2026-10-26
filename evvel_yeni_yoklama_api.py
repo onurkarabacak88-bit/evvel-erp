@@ -827,6 +827,8 @@ async def ben(request: Request, sube: Optional[str] = None, qr: Optional[str] = 
         elif acik:   # telefon EV sayfası (/q, şubesiz): açık girişin şubesi (Fable B8)
             sube_ad = son.get("sube_ad")
         mola = _mola_durum(cur, p["id"], is_gunu())
+        if mola and p.get("mudur"):   # F1.7: müdürün yemek hakkı şartsız (Maaş ile aynı) — 61. dk kapanışında "kaybettin" denmez
+            mola = {**mola, "hak_dustu": False}
         burada = acik and son.get("sube_id") == sube
         yap = ["giris"] if not acik and sube else []
         from evvel_yeni_olay import gun_kapandi as _gk
@@ -1108,9 +1110,11 @@ async def mola_bitir(request: Request):
         ist = _istek(v)
         personel_kilidi(cur, p["id"])
         r = _istek_kaydi(cur, "ey_mola", "bitis_istek_id", ist, "personel_id, sure_dk, yemek_hakki, bitis_ts", {"personel_id": p["id"]})   # K2: tekrar bloğu tek
+        sartsiz = bool(p.get("mudur"))   # F1.7 (Fable + Codex): müdürün yemek hakkı şartsız (Maaş ile aynı kural) — "kazanılamadı" denmez
         if r:
-            return {"ok": True, "tekrar": True, "hak_dustu": not r["yemek_hakki"],
-                    "mesaj": f"Mola zaten bitti · {_saat(r['bitis_ts'])} · {r['sure_dk']} dk" + ("" if r["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
+            dustu = not r["yemek_hakki"] and not sartsiz
+            return {"ok": True, "tekrar": True, "hak_dustu": dustu,
+                    "mesaj": f"Mola zaten bitti · {_saat(r['bitis_ts'])} · {r['sure_dk']} dk" + (" — Bugün yemek hakkı kazanılamadı" if dustu else "")}
         cur.execute("SELECT sube_id, baslangic_ts, NOW() - baslangic_ts AS gecen FROM ey_mola WHERE personel_id=%s AND bitis_ts IS NULL", (p["id"],))
         a = cur.fetchone()
         if not a:
@@ -1127,11 +1131,12 @@ async def mola_bitir(request: Request):
         if not m:   # Codex: arada sistem (61. dk / gece) kapattıysa — 500 yerine o molanın kendi durumunu söyle (gün değişse de)
             cur.execute("SELECT sure_dk, yemek_hakki, hak_elle FROM ey_mola WHERE personel_id=%s ORDER BY baslangic_ts DESC LIMIT 1", (p["id"],))
             md = dict(cur.fetchone() or {})
-            dustu = not md.get("yemek_hakki") and not md.get("hak_elle")
+            dustu = not md.get("yemek_hakki") and not md.get("hak_elle") and not sartsiz
             return {"ok": True, "tekrar": True, "hak_dustu": dustu,
                     "mesaj": f"Mola zaten kapanmıştı · {md.get('sure_dk', '—')} dk" + (" — yemek hakkını kaybettin" if dustu else "")}
-        return {"ok": True, "hak_dustu": not m["yemek_hakki"],   # K7: tek bilgi satırı (bildirim değil)
-                "mesaj": f"Mola bitti · {_saat(datetime.now(timezone.utc))} · {m['sure_dk']} dk" + ("" if m["yemek_hakki"] else " — Bugün yemek hakkı kazanılamadı")}
+        dustu = not m["yemek_hakki"] and not sartsiz
+        return {"ok": True, "hak_dustu": dustu,   # K7: tek bilgi satırı (bildirim değil)
+                "mesaj": f"Mola bitti · {_saat(datetime.now(timezone.utc))} · {m['sure_dk']} dk" + (" — Bugün yemek hakkı kazanılamadı" if dustu else "")}
     return await _telefon(request, fn)
 
 

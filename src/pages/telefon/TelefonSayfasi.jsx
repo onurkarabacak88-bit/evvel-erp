@@ -212,12 +212,30 @@ function QrIslem({ sube, jeton }) {
   }, [bagli, sube, jeton]);
   useEffect(() => { yukle(); }, [yukle]);
 
-  if (!bagli) return <TanimliDegil />;
   const qrOk = ben?.qr_gecerli !== false;   // Fable #7: süresi dolan QR'da yanlış düğme ('GİRİŞ YAP') gösterilmez
   const yapabilir = qrOk ? (ben?.yapabilir || []) : [];
   // Büyük düğme: giriş → mola başlat / molayı bitir; ÇIKIŞ ikinci, sade düğme (§A2 "Girdi" satırı)
   const ana = yapabilir.includes('giris') ? 'giris' : yapabilir.includes('mola_bitir') ? 'mola-bitir' : yapabilir.includes('mola_baslat') ? 'mola-baslat' : null;
   const cikisVar = yapabilir.includes('cikis');
+  // M-1 (F1.7 · sim 25 Eki): 45 dk dolmadan "Molayı bitir" basılabilir görünüyordu (sunucu reddediyor) → soluk + "HH:MM'de açılır"
+  const [anMs, setAnMs] = useState(() => Date.now());
+  const benAn = useRef(Date.now());
+  useEffect(() => { benAn.current = Date.now(); setAnMs(Date.now()); }, [ben]);
+  useEffect(() => {
+    if (ana !== 'mola-bitir') return undefined;
+    const t = window.setInterval(() => setAnMs(Date.now()), 15000);
+    return () => window.clearInterval(t);
+  }, [ana]);
+  const molaAz = ben?.mola?.en_az_dk || ben?.mola_en_az_dk || 45;
+  const molaErken = ana === 'mola-bitir' && ben?.mola?.durum === 'suruyor' && (ben.mola.sure_dk + Math.floor((anMs - benAn.current) / 60000)) < molaAz;
+  const molaAcilis = (() => {
+    const [h, m] = String(ben?.mola?.bas || '').split(':').map(Number);
+    if (!Number.isFinite(h) || !Number.isFinite(m)) return '';
+    const t = h * 60 + m + molaAz;
+    return `${String(Math.floor(t / 60) % 24).padStart(2, '0')}:${String(t % 60).padStart(2, '0')}`;
+  })();
+
+  if (!bagli) return <TanimliDegil />;   // Fable: kancalar erken dönüşün ÜSTÜNDE (rules-of-hooks)
   // 💵 Kasa devri v2 (sahip 23 Eki): devir açıkken şube QR'ı → devir sayfasına davet (KÖR, rakam yok). Kasa sahibi "devret",
   // diğeri "kasayı devral" — devralanın vardiyası devirle başlar (ayrı giriş gerekmez; giriş ikinci, küçük düğme)
   const devir = ben?.devir || null;
@@ -252,7 +270,9 @@ function QrIslem({ sube, jeton }) {
           <div style={{ fontSize: 72, color: T.yesil, lineHeight: 1 }}>✓</div>
           <b style={{ fontSize: 26 }}>{baslik[sonuc.islem]} {sonuc.saat}</b>
           {(() => { const ham = sonuc.mesaj || ''; const m = ham.replace(/^[^·.]*(kaydedildi|başladı|bitti)[^·.]* · \d{2}:\d{2}\.?\s*/, '').replace(/^·\s*/, '') || (/zaten/.test(ham) ? 'Daha önce kaydedilmişti' : ''); return m ? <div className="tq-not">{m}</div> : null; })()}   {/* G37: başlığı tekrar eden baş kısım atılır ("İyi günler." kalır) */}
-          {sonuc.hak_dustu && <div className="tq-not">Bugün yemek hakkı kazanılamadı</div>}
+          {sonuc.hak_dustu && !ben?.yemek_tam && <div className="tq-not">Bugün yemek hakkı kazanılamadı</div>}
+          {sonuc.islem === 'mola-bitir' && (ben?.yemek_tam ? <div style={{ color: T.yesil, fontWeight: 700 }}>🍽 Yemek hakkın tam (mola şartı yok)</div>
+            : !sonuc.hak_dustu && <div style={{ color: T.yesil, fontWeight: 700 }}>🍽 Yemek hakkın kazanıldı ✓</div>)}{/* Fable: müdür şartsız (Maaş ile aynı kural) — 60 dk'yı aşsa da "kazanılamadı" denmez */}{/* M-2 (F1.7): kaybı söylüyordu, kazancı söylemiyordu */}
           {sonuc.islem === 'giris' && <div className="tq-not">🍽 Yemek molasına çıkarken paneldeki QR'ı <b>tekrar okut</b> → "Yemek molası başlat".</div>}
           <a className="tq-btn tq-kucuk" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }} href="/q">✓ Tamam</a>
         </div>
@@ -284,8 +304,8 @@ function QrIslem({ sube, jeton }) {
                 style={{ marginTop: 22, font: 'inherit', fontSize: 15, color: T.aksanKoyu, background: 'none', border: 'none', textDecoration: 'underline', minHeight: 48 }}>
                 Yalnız mesai başlat — kasayı almıyorum</button>
             ) : ana && (
-              <button className={'tq-btn ' + (devirVar ? 'tq-kucuk' : ana === 'giris' ? 'tq-yesil' : 'tq-ana')} disabled={mesgul || !konumHazir} onClick={() => yap(ana)}>
-                {dugmeYazi(ana)}
+              <button className={'tq-btn ' + (devirVar ? 'tq-kucuk' : ana === 'giris' ? 'tq-yesil' : 'tq-ana')} disabled={mesgul || !konumHazir || molaErken} onClick={() => yap(ana)}>
+                {molaErken ? `🍽 MOLAYI BİTİR · açılış ${molaAcilis}` : dugmeYazi(ana)}
               </button>
             )}
             {cikisVar && (

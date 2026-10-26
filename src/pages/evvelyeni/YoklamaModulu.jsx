@@ -273,8 +273,8 @@ export function YemekMolalari({ onToast }) {
 
       {v && (
         <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 6 }}>
-          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>Gün gün molalar · {ay.slice(5, 7)}.{ay.slice(0, 4)}</div>
-          <MolaTablo satirlar={v.satirlar} bos="Bu ay mola kaydı yok." {...ortak} />
+          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>Gün gün molalar · {ay.slice(5, 7)}.{ay.slice(0, 4)} · en yeni üstte</div>
+          <MolaTablo satirlar={(v.satirlar || []).slice().reverse()} bos="Bu ay mola kaydı yok." {...ortak} />
         </div>
       )}
 
