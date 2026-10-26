@@ -1770,6 +1770,23 @@ def startup():
     except Exception as _e:
         logger.warning(f"Kapanış hatırlatma scheduler başlatılamadı: {_e}")
 
+    # 🧩 Evvel Yeni arka plan görevleri (modül manifestindeki 'gorevler' — Kasa otomatik işleri, Depo aktarımı).
+    # IS 5c / F3.1 (sim 26 Eki · Opus + Codex + Fable): eskiden ekran okumasıyla tetikleniyordu; artık tek zamanlayıcı, ilk koşu 75 sn sonra.
+    try:
+        from evvel_yeni_moduller import gorevleri_baslat
+        gorevleri_baslat()
+    except Exception as _e:
+        logger.warning(f"Evvel Yeni görev zamanlayıcısı başlatılamadı: {_e}")
+
+
+@app.on_event("shutdown")
+def evvel_yeni_gorevleri_durdur():
+    try:
+        from evvel_yeni_moduller import gorevleri_durdur
+        gorevleri_durdur()
+    except Exception as _e:  # noqa: BLE001
+        logger.warning(f"Evvel Yeni görevleri durdurulamadı: {_e}")
+
 def guncelle_borc_envanteri_odeme_plani_sonrasi(cur, plan: dict, ana_para_kismi: float):
     """Kaynak borc_envanteri ise kalan_vade ve toplam_borc güncelle (panel /ode ve onay kuyruğu ortak)."""
     if plan.get('kaynak_tablo') != 'borc_envanteri' or not plan.get('kaynak_id'):

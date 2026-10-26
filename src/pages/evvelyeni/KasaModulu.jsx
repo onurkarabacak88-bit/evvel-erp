@@ -98,6 +98,9 @@ const tl = (n) => `${fmt(n)} ₺`;
 const tUzun = (s) => { if (!s) return ''; const p = s.split('-'); return `${+p[2]} ${AY[+p[1] - 1]}`; };
 const tKisa = (s) => tUzun(s).replace(/(\S+)$/, (m) => m.slice(0, 3));
 const gunAdi = (s) => GUNLER[new Date(`${s}T12:00:00`).getDay()];
+const saatKisa = (z) => (z ? new Date(z).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit', timeZone: 'Europe/Istanbul' }) : '—');   // ISO zaman → TR saat (IS 5c · Fable: tarayıcı dilimine bağlı kalmasın)
+// H-1 (F3.10): hareketin GİRİLDİĞİ saat — sunucu çekirdeğin tr_saat kuralıyla yazar ("HH:MM" ya da başka günse "GG.AA HH:MM")
+const girisSaati = (h) => (/^\d\d\.\d\d /.test(h.zaman) ? `${h.zaman} girildi` : h.zaman);
 const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const gunEkle = (s, n) => { const d = new Date(`${s}T12:00:00`); d.setDate(d.getDate() + n); return iso(d); };
 
@@ -124,14 +127,20 @@ function sor(o) {
 }
 // Y8 (sim 26 Eki): kalan window.confirm / window.prompt'lar için kısa yollar (aynı ortak pencere)
 const soruOnay = (soru, tamam = 'Evet') => sor({ soru, tamam });
-const soruYaz = (soru, bos = false) => sor({ soru, giris: true, bos });
+const soruYaz = (soru, bos = false, enAz = 0) => sor({ soru, giris: true, bos, enAz, ipucu: enAz > 1 ? `en az ${enAz} harf` : undefined });   // Fable (F3.6): kısa yanıt sessizce yutulmasın
 function SorKatmani() {
   const [s, setS] = useState(null);
   const [m, setM] = useState('');
-  useEffect(() => { sorDinle = (o) => { setM(''); setS((onceki) => { if (onceki) onceki.coz(onceki.giris ? null : false); return o; }); }; return () => { sorDinle = null; }; }, []);   // Fable 7-A: üst üste soruda öncekini 'vazgeç' ile çöz
+  useEffect(() => { sorDinle = (o) => { setM(''); setS((onceki) => { if (onceki) onceki.coz(onceki.giris ? null : false); return o; }); }; return () => { sorDinle = null; }; }, []);
+  useEffect(() => {   // Fable (F3.6): klavyede Esc = Vazgeç (PC ekranı)
+    if (!s) return undefined;
+    const k = (e) => { if (e.key === 'Escape') { e.stopPropagation(); setS(null); s.coz(s.giris ? null : false); } };
+    window.addEventListener('keydown', k, true);
+    return () => window.removeEventListener('keydown', k, true);
+  }, [s]);   // Fable 7-A: üst üste soruda öncekini 'vazgeç' ile çöz
   if (!s) return null;
   const bitir = (v) => { const c = s.coz; setS(null); c(v); };
-  const hazir = !s.giris || !!s.bos || m.trim().length > 0;   // bos: 'boş bırakabilirsin' soruları (Y8)
+  const hazir = !s.giris || !!s.bos || m.trim().length >= Math.max(1, s.enAz || 0);   // bos: 'boş bırakabilirsin' soruları (Y8) · enAz: en az N harf
   return (
     <div className="pi" role="dialog" aria-modal="true" aria-label={s.soru} onClick={() => bitir(s.giris ? null : false)}
       style={{ position: 'fixed', inset: 0, zIndex: 9999, background: 'rgba(30,20,12,.45)', display: 'grid', placeItems: 'center', padding: 16 }}>
@@ -286,7 +295,7 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit, onFis }) {
       <Cip tur={h.tur === 'odeme' ? 'kirmizi' : cipTur}>{TUR_AD[h.tur]}</Cip>
       <div style={{ minWidth: 0, cursor: h.tur === 'odeme' && onFis ? 'pointer' : 'default' }} onClick={h.tur === 'odeme' && onFis ? () => onFis(h) : undefined}
         title={h.tur === 'odeme' ? 'Ödeme fişini aç' : undefined}>
-        <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>{ust} {cip}{h.eski_sistem && <Cip>eski sistemden</Cip>}{h.kaydeden && <span style={{ fontSize: 11, color: R.not2, fontWeight: 400 }}>· {h.kaydeden}</span>}</div>
+        <div style={{ fontWeight: 700, fontSize: 13, display: 'flex', gap: 8, flexWrap: 'wrap', alignItems: 'center' }}>{ust} {cip}{h.eski_sistem && <Cip>eski sistemden</Cip>}{h.zaman && <span style={{ fontSize: 11, color: R.not2, fontWeight: 400 }} title="kaydın girildiği an">· {girisSaati(h)}</span>}{h.kaydeden && <span style={{ fontSize: 11, color: R.not2, fontWeight: 400 }}>· {h.kaydeden}</span>}</div>
         {alt && <div style={{ fontSize: 11.5, color: R.not }}>{alt}</div>}
       </div>
       <span style={{ ...num, fontSize: 15, fontWeight: 600, color: renk }}>{tutar}</span>
@@ -548,7 +557,9 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
               <div key={i} style={{ display: 'grid', gridTemplateColumns: '1fr 130px auto', gap: 8 }}>
                 <select value={p.cep} onChange={(e) => setD((x) => ({ ...x, parcalar: x.parcalar.map((q, j) => (j === i ? { ...q, cep: e.target.value } : q)) }))} style={alanStil}>
                   <option value="">Cep seç</option>
-                  {cepler.map((c) => <option key={c.id} value={c.id} disabled={c.id === d.hedef || (secili.includes(c.id) && p.cep !== c.id) || (c.tur === 'sube' && hc.tur === 'ev')}>{c.ad} · {fmt(bak[c.id])} ₺</option>)}
+                  {/* T-5 (F3.5 · sim 26 Eki): parası olmayan cepten taşıma olmaz (eksiye düşer) → yalnız bakiyesi artıda olanlar;
+                      gizli (pasif) cep de parası kaldıysa görünür ki dışarı taşınabilsin; seçili olan her zaman listede */}
+                  {cepler.filter((c) => c.id === p.cep || (bak[c.id] || 0) >= 0.005).map((c) => <option key={c.id} value={c.id} disabled={c.id === d.hedef || (secili.includes(c.id) && p.cep !== c.id) || (c.tur === 'sube' && hc.tur === 'ev')}>{c.ad} · şu an {fmt(bak[c.id])} ₺</option>)}
                 </select>
                 <input type="number" min="0" step="0.01" placeholder="Tutar" value={p.tutar} onChange={(e) => setD((x) => ({ ...x, parcalar: x.parcalar.map((q, j) => (j === i ? { ...q, tutar: e.target.value } : q)) }))} style={alanStil} />
                 <Dugme kucuk onClick={() => setD((x) => ({ ...x, parcalar: x.parcalar.filter((_, j) => j !== i) }))}>Sil</Dugme>
@@ -1379,7 +1390,8 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         {guneBagli && <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
           <Dugme kucuk disabled={hepsi || gun <= veri.baslangic} onClick={() => setGun(gunEkle(gun, -1))}>‹</Dugme>
           <input type="date" value={gun} min={veri.baslangic} max={veri.bugun} disabled={hepsi} onChange={(e) => e.target.value && setGun(e.target.value)}
-            style={{ ...alanStil, width: 'auto', padding: '5px 8px' }} aria-label="Gün" />
+            style={{ ...alanStil, width: 'auto', padding: '5px 8px', opacity: hepsi ? 0.45 : 1 }} aria-label="Gün"
+            title={hepsi ? 'Tüm günler seçili — tek gün için Bugün' : undefined} />
           <Dugme kucuk disabled={hepsi || gun >= veri.bugun} onClick={() => setGun(gunEkle(gun, 1))}>›</Dugme>
           <Dugme kucuk onClick={() => { setGun(veri.bugun); setHepsi(false); }}>Bugün</Dugme>
           <Dugme kucuk ana={hepsi} onClick={() => setHepsi(!hepsi)}>Tüm günler</Dugme>
@@ -1391,17 +1403,29 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
           <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme>
         </div>
       )}
-      {veri.senkron && (veri.senkron.tamam === false ? (
-        <div style={{ fontSize: 12, color: R.kirmizi }}>Otomatik işler çalışmadı: {veri.senkron.hata}</div>
-      ) : veri.senkron.zaman ? (
-        <div style={{ fontSize: 11.5, color: R.not2 }}>
+      {/* IS 5c / F3.1 B7 (sim 26 Eki): otomatik işler artık arka planda (çekirdeğin zamanlayıcısı) — satır son koşunun NE yaptığını
+          ve gecikip gecikmediğini söyler; ayrıntı + "Şimdi çalıştır" Tanımlar › Sistem durumu'nda */}
+      {veri.senkron && (veri.senkron.henuz_yok ? (
+        <div style={{ fontSize: 11.5, color: veri.senkron.gecikti ? R.amber : R.not2 }}>
+          Otomatik işler henüz çalışmadı{veri.senkron.gecikti ? ' — gecikti' : ' (açılıştan ~1 dk sonra başlar)'} · <a href="/evvel-yeni/sistem_durumu" onClick={(e) => { e.preventDefault(); sayfayaGit('sistem_durumu'); }} style={{ color: 'inherit' }}>Sistem durumu</a>
+        </div>
+      ) : veri.senkron.tamam === false ? (
+        <div style={{ fontSize: 12, color: R.kirmizi }}>
+          Otomatik işler çalışmadı ({saatKisa(veri.senkron.zaman)}): {veri.senkron.hata}
+          {veri.senkron.son_basarili ? ` · son başarılı ${saatKisa(veri.senkron.son_basarili)}` : ''} · <a href="/evvel-yeni/sistem_durumu" onClick={(e) => { e.preventDefault(); sayfayaGit('sistem_durumu'); }} style={{ color: 'inherit' }}>Sistem durumu</a>
+        </div>
+      ) : (
+        <div style={{ fontSize: 11.5, color: veri.senkron.gecikti ? R.amber : R.not2 }}>
           {/* B14: eski köprü ayrı — patlasa da yeni panel kayıtları işlenir */}
-          {veri.senkron.kopru === 'acik' ? 'Eski sistemle yan yana · köprü' : 'Otomatik işler'} {new Date(veri.senkron.zaman).toLocaleTimeString('tr-TR', { hour: '2-digit', minute: '2-digit' })}
+          {veri.senkron.kopru === 'acik' ? 'Eski sistemle yan yana · köprü' : 'Otomatik işler'} {saatKisa(veri.senkron.zaman)}
+          {veri.senkron.gecikti ? ' — gecikti' : ''}
+          {[[veri.senkron.otomatik_kabul, 'teslim otomatik kabul'], [veri.senkron.pos_otomatik, 'POS'], [veri.senkron.panel_sayim, 'sayım aktarıldı']]
+            .filter(([n]) => n > 0).map(([n, ad]) => ` · ${n} ${ad}`).join('')}
           {(veri.senkron.hatalar || []).length > 0 && <span style={{ color: R.amber }}> · ⚠ {veri.senkron.hatalar.join(' · ')} (yeni panel kayıtları yine işlendi)</span>}
           {veri.senkron.kopru !== 'acik' ? '' : (veri.senkron.kapanis || veri.senkron.teslim) ? ` · yeni: ${veri.senkron.kapanis} kapanış, ${veri.senkron.teslim} teslim` : ' · yeni kayıt yok'}
           {veri.senkron.eslesmeyen_teslim ? <span style={{ color: R.amber }}> · {veri.senkron.eslesmeyen_teslim} teslim alıcısı tanınmadı</span> : null}
         </div>
-      ) : null)}
+      ))}
       {acilisEksik.length > 0 && sekme === 'uyarilar' && (
         <div style={{ ...kart, padding: '10px 14px', borderColor: `${alfa(R.amber, 55)}`, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5 }}>
           <Cip tur="sari">Başlangıç</Cip>
@@ -1626,7 +1650,9 @@ function AcikSayfa({ onCoz, onCepAc, onKapanis, yenile }) {
           <table className="pi-tablo pi-excel">
             <thead><tr><th>Gün</th><th>Yeni fark</th><th title="Defteri değiştiren çözümler (bulundu / şubede)">Deftere geri</th><th title="Defter sayıma eşitlendi (fazla kabul / ekstre doğru)">Kabul</th><th>Açılış eşitleme</th><th>Kayba</th><th>Harcamaya</th><th>Gün sonu açık</th><th>Toplam kayıp</th><th>Toplam kayıtsız harcama</th></tr></thead>
             <tbody>
-              {v.gun_gun.length ? v.gun_gun.map((x) => (
+              {/* F3.7 (sim 26 Eki · Opus + Fable A): en yeni gün üstte — çekmecedeki defterle (iz) ve Devirler / Yemek molalarıyla aynı;
+                  birikimli sütunlar sunucuda kronolojik hesaplanır, yalnız GÖSTERİM ters */}
+              {v.gun_gun.length ? v.gun_gun.slice().reverse().map((x) => (
                 <tr key={x.gun}>
                   <td style={num}>{tUzun(x.gun)}</td><td style={num}>{x.yeni ? fmt(x.yeni) : '—'}</td><td style={{ ...num, color: R.yesil }}>{x.geri_donen ? fmt(x.geri_donen) : '—'}</td><td style={num}>{x.kabul_edilen ? fmt(Math.abs(x.kabul_edilen)) : '—'}</td><td style={num}>{x.baslangic_esitleme ? fmt(Math.abs(x.baslangic_esitleme)) : '—'}</td>
                   <td style={{ ...num, color: R.kirmizi }}>{x.kayba_yazilan ? fmt(x.kayba_yazilan) : '—'}</td><td style={{ ...num, color: R.amber }}>{x.harcamaya_yazilan ? fmt(x.harcamaya_yazilan) : '—'}</td>

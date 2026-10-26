@@ -118,8 +118,11 @@ export default function EvvelYeniApp() {
   }, [durum]);
   const GORUNUR = acikMod ? MODULLER.filter((b) => b.mod === 'kasa' || b.her_zaman || acikMod.has(b.mod)) : MODULLER;
   // 'bolum' taşıyan modülün sayfaları ana bölümün altına eklenir (her sayfa kendi modülünü bilir → kapanınca o da kalkar)
-  const BOLUMLER = GORUNUR.filter((b) => !b.bolum).map((b) => ({
-    ...b, sayfalar: [...b.sayfalar.filter((x) => !x.mod || !acikMod || [].concat(x.mod).some((m) => acikMod.has(m))), ...GORUNUR.filter((e) => e.bolum === b.mod).flatMap((e) => e.sayfalar)],
+  // Codex (IS 5c): ana bölümü görünmüyorsa (ör. Tanımlar kapalı) 'bolum' taşıyan modül KENDİ başlığıyla çıkar — Sistem durumu kaybolmasın
+  const anaVar = (e) => GORUNUR.some((b) => !b.bolum && b.mod === e.bolum);
+  const BOLUMLER = GORUNUR.filter((b) => !b.bolum || !anaVar(b)).map((b) => ({
+    ...b, sayfalar: [...b.sayfalar.filter((x) => !x.mod || !acikMod || [].concat(x.mod).some((m) => acikMod.has(m))),
+      ...(b.bolum ? [] : GORUNUR.filter((e) => e.bolum === b.mod).flatMap((e) => e.sayfalar))],
   }));
   // F3.2 (sim 25 Eki): rozet ŞİMDİYİ sayar — geçmiş gün seçiliyken (ör. kayıttan sonra o güne atlayınca) 18 → 4 oluyordu
   const veriGeldi = (v) => setRozet({

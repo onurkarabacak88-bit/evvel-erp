@@ -17,7 +17,6 @@ bırakmıyor, yetmeyen stok sıfıra kırpılıp "bulundu" yazılıyordu (90 gü
 import json
 import logging
 import re
-import time
 import uuid
 from datetime import date, timedelta
 from typing import List, Optional
@@ -33,10 +32,8 @@ router = APIRouter(prefix="/api/evvel-yeni/depo", tags=["evvel-yeni-depo"])
 log = logging.getLogger(__name__)
 
 BASLANGIC = date(2026, 10, 1)
-SENKRON_SN = 300
 GEC_KABUL_GUN = 2
 _HAZIR = False
-_SON_SENKRON = {"zaman": 0.0, "sonuc": None}
 DISARI = {"dışarı:toptanci": "Toptancı", "dışarı:tuketim": "Ürün aç (tüketim)", "dışarı:fire": "Fire",
           "dışarı:sayim": "Sayım farkı", "dışarı:bilinmeyen": "Kaynağı belirsiz", "dışarı:kayip": "Kayıp (yolda)",
           "dışarı:ikram": "İkram", "dışarı:personel": "Personel kullanımı", "dışarı:iade": "Müşteri iadesi"}
@@ -230,6 +227,7 @@ def senkron(cur) -> dict:
                                 WHERE kaynak_ref LIKE %s AND NOT iptal""", (f"urun_sevk:{did}:%",))
     except Exception as e:  # noqa: BLE001
         log.warning("depo senkron giriş: %s", str(e)[:200])
+        rapor.setdefault("hatalar", []).append("giriş: " + str(e)[:120])
 
     # 2) SEVK + KABUL — stok_yolda  (Codex + Fable denetimi sonrası)
     #    · sevk/kabul adedi sonradan değişebilir (merkez uzlaşması) → _yaz_guncel
@@ -275,6 +273,7 @@ def senkron(cur) -> dict:
             rapor["iptal_sevk"] = cur.rowcount
     except Exception as e:  # noqa: BLE001
         log.warning("depo senkron yolda: %s", str(e)[:200])
+        rapor.setdefault("hatalar", []).append("yolda: " + str(e)[:120])
 
     # 3) ÜRÜN AÇ — tüketim
     try:
@@ -292,6 +291,7 @@ def senkron(cur) -> dict:
             rapor["ac"] = _yaz(cur, rows)
     except Exception as e:  # noqa: BLE001
         log.warning("depo senkron ürün aç: %s", str(e)[:200])
+        rapor.setdefault("hatalar", []).append("ürün aç: " + str(e)[:120])
 
     # 4) FİRE
     try:
@@ -314,19 +314,15 @@ def senkron(cur) -> dict:
             rapor["fire"] = _yaz(cur, rows)
     except Exception as e:  # noqa: BLE001
         log.warning("depo senkron fire: %s", str(e)[:200])
+        rapor.setdefault("hatalar", []).append("fire: " + str(e)[:120])
     return rapor
 
 
-def _otomatik_senkron() -> None:
-    simdi = time.time()
-    if simdi - _SON_SENKRON["zaman"] < SENKRON_SN:
-        return
-    _SON_SENKRON["zaman"] = simdi
-    try:
-        with db() as (conn, cur):
-            _SON_SENKRON["sonuc"] = senkron(cur)
-    except Exception as e:  # noqa: BLE001
-        log.warning("depo otomatik senkron: %s", str(e)[:200])
+def otomatik_senkron_gorevi() -> dict:
+    """Depo'nun ARKA PLAN görevi (manifest 'depo_senkron', 5 dk) — çekirdeğin zamanlayıcısı koşturur, sonucu ey_gorev_kosu'ya yazar.
+    IS 5c (sim 26 Eki · Opus + Codex + Fable): eskiden Nerede / Yoldakiler ekranı açılınca çalışıyordu. Kesim kuralı senkron() içinde."""
+    with db() as (conn, cur):
+        return senkron(cur)
 
 
 def _bakiyeler(cur, yeni: Optional[bool] = None) -> dict:
@@ -542,7 +538,6 @@ PASIF_GRUP = "⏸ Pasif ürün (stok bitince listeden çıkar)"   # katalogda pa
 def depo_ozet(evren: Optional[str] = None):
     """📦 NEREDE? — ürün × konum (kategori sırasıyla). 1 Kasım'dan itibaren YENİ katalog (ey_urun) ve yalnız yeni evren;
     öncesinde eski aktarım (geçiş) — ?evren=yeni ile yeni katalog ön izlenir. Eski sistemin bakiyesi yalnız KARŞILAŞTIRMA için."""
-    _otomatik_senkron()
     with db() as (conn, cur):
         depo_hazirla(cur)
         varsayilan_yeni = evren_yeni(cur)
@@ -600,7 +595,7 @@ def depo_ozet(evren: Optional[str] = None):
     satirlar = [s for s in satirlar if any(s["bakiye"].values()) or s["kategori"] not in (ESLESMEYEN_GRUP, PASIF_GRUP)]
     return {"konumlar": [{**k, "son_sayim": (sayimlar.get(k["id"]) or {}).get("son").isoformat() if (sayimlar.get(k["id"]) or {}).get("son") else None,
                           "acilis_sayimi": bool((sayimlar.get(k["id"]) or {}).get("acilis"))} for k in konumlar],
-            "satirlar": satirlar, "eksi_sayi": eksi, "senkron": _SON_SENKRON["sonuc"], "evren": "yeni" if yeni else "eski",
+            "satirlar": satirlar, "eksi_sayi": eksi, "senkron": _senkron_son(), "evren": "yeni" if yeni else "eski",
             "varsayilan_evren": "yeni" if varsayilan_yeni else "eski",
             "baslangic": BASLANGIC.isoformat(),
             "not": "Stok = 1 Ekim'den bu yana panel kayıtlarının toplamı (Ürün Teslim Al + kabul − sevk − ürün aç − fire ± sayım). "
@@ -707,7 +702,6 @@ def yolda_listesi(cur, yeni_mi: bool):
 def depo_yolda(evren: Optional[str] = None):
     """Yoldakiler (sevk edildi, kabul edilmedi) + sevk ≠ kabul olanlar. GEC_KABUL_GUN'den eski olan kırmızı.
     ?evren=eski|yeni (Fable #3): 31 Ekim akşamı eski açık sevkler 1 Kasım sabahı da kapatılabilsin; deneme sevkleri önceden görülsün."""
-    _otomatik_senkron()
     with db() as (conn, cur):
         depo_hazirla(cur)
         yeni_mi = evren == "yeni" if evren in ("yeni", "eski") else evren_yeni(cur)
@@ -1238,11 +1232,19 @@ def sevkler(gun_sayisi: int = 14):
 
 @router.post("/senkron")
 def depo_senkron_simdi():
+    """Elle aktarım — çekirdeğin görev kapısından (zamanlayıcıyla aynı kilit, koşu kaydı düşer)."""
+    from evvel_yeni_moduller import gorev_calistir
+    r = gorev_calistir("depo_senkron", elle=True)
+    return {"ok": r.get("ok", False), "rapor": r.get("ozet"), "hata": r.get("hata") or r.get("mesaj")}
+
+
+def _senkron_son() -> Optional[dict]:
+    """Son aktarımın raporu (okur, KENDİ kısa bağlantısında — Codex P1: depo_ozet'in imleci bu noktada kapanmış) —
+    eskiden süreç içi sözlükteydi, yeniden başlatmada kayboluyordu."""
+    from evvel_yeni_moduller import gorev_durumu
     with db() as (conn, cur):
-        r = senkron(cur)
-    _SON_SENKRON["zaman"] = time.time()
-    _SON_SENKRON["sonuc"] = r
-    return {"ok": True, "rapor": r}
+        son = gorev_durumu(cur, "depo_senkron").get("son")
+    return {**(son.get("ozet") or {}), "zaman": son["bitir"], "hata": son.get("hata")} if son else None
 
 
 def depo_isleri(cur) -> list:

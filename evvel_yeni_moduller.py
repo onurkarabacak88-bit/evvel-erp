@@ -8,11 +8,17 @@ Bütün Evvel Yeni modülleri BU listede. main.py tek satırla `modulleri_yukle(
             "ozel"  = yalnız BU işletmenin düzenine özgü (kart/abonelik alışkanlığı gibi) — genel çekirdekle bağı yok.
   · yetki : yetkilendirmede kullanılacak anahtar (rol → modül; şimdilik yalnız etiket — giriş kapısı EN SONA, sahip kararı).
   · gerekir: çalışmak için açık olması gereken modüller; biri kapalıysa bu modül de yüklenmez (kırık yarım modül olmasın).
+  · gorevler: modülün ARKA PLAN işleri [{"ad", "fn", "aralik_sn", "baslik"}] — çekirdeğin tek zamanlayıcısı koşturur, her koşu
+              ey_gorev_kosu'ya yazılır (F3.1 B7/B11 · IS 5c, sim 26 Eki · Opus + Codex + Fable). Ekran OKUMASI artık yazmaz.
 Her modül ayrı try içinde yüklenir: biri bozulursa diğerleri ve eski Evvel çalışmaya devam eder.
 """
 
 import importlib
+import json
 import logging
+import threading
+import time
+from datetime import datetime, timezone
 from typing import Dict, List
 
 from fastapi import APIRouter
@@ -25,7 +31,9 @@ MODULLER: List[dict] = [
      "kurulum": "olay_tablosu_kur", "menu": False, "aciklama": "panel kayıtlarının Evvel Yeni kopyası"},
     {"kod": "urun", "ad": "Ürün kataloğu", "ikon": "📚", "sektor": "genel", "gerekir": [], "menu": False,
      "aciklama": "tek ürün kimliği + değişiklik izi; Depo / Toptancılar / Bar / Gider / Satış buradan okur (sayfası Tanımlar altında)"},
-    {"kod": "kasa", "ad": "Kasa", "ikon": "💰", "sektor": "genel", "gerekir": [], "aciklama": "para nerede — tek para defteri"},
+    {"kod": "kasa", "ad": "Kasa", "ikon": "💰", "sektor": "genel", "gerekir": [], "aciklama": "para nerede — tek para defteri",
+     "gorevler": [{"ad": "kasa_otomatik", "fn": "otomatik_isler", "aralik_sn": 600,
+                   "baslik": "Kasa otomatik işleri (eski köprü · otomatik kabul · POS · panel sayım aktarımı)"}]},
     {"kod": "tanim", "ad": "Tanımlar", "ikon": "⚙️", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "şube, personel, banka, kart, toptancı"},
     {"kod": "gelir", "ad": "Gelir", "ikon": "📥", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "şube şube, gün gün ciro"},
     {"kod": "kira", "ad": "Kiralar", "ikon": "🏠", "sektor": "genel", "gerekir": ["kasa"], "menu": False,
@@ -37,7 +45,9 @@ MODULLER: List[dict] = [
      "aciklama": "kredi tanımı + kredi takvimi (borç = taksit; ödeme Ödeme'den)"},
     {"kod": "kart", "ad": "Kartlar", "ikon": "💳", "sektor": "genel", "gerekir": ["kasa", "odeme"], "aciklama": "kullanılabilir limit, son ödeme"},
     {"kod": "toptanci", "ad": "Toptancılar", "ikon": "🚚", "sektor": "genel", "gerekir": ["kasa", "tanim", "urun"], "aciklama": "borç = açılış + alım − ödeme"},
-    {"kod": "depo", "ad": "Depo", "ikon": "📦", "sektor": "genel", "gerekir": ["tanim", "urun"], "aciklama": "ürün nerede — tek hareket defteri · sevk et ⇄ depodan gelen"},
+    {"kod": "depo", "ad": "Depo", "ikon": "📦", "sektor": "genel", "gerekir": ["tanim", "urun"], "aciklama": "ürün nerede — tek hareket defteri · sevk et ⇄ depodan gelen",
+     "gorevler": [{"ad": "depo_senkron", "fn": "otomatik_senkron_gorevi", "aralik_sn": 300,
+                   "baslik": "Depo: eski panel kayıtlarını stok defterine aktar (1 Kasım + 2 gün sonra kendiliğinden kapanır)"}]},
     {"kod": "siparis", "ad": "Sipariş", "ikon": "🛒", "sektor": "genel", "gerekir": ["tanim", "urun", "depo"],
      "aciklama": "şube talebi → merkez yönlendirme (depo / toptancı) → sevk / teslim — Depo ve Toptancılar'ın üzerinde katman"},
     {"kod": "panel", "ad": "Şube paneli", "ikon": "🧾", "sektor": "genel", "gerekir": ["olay", "kasa", "tanim", "urun", "depo"],
@@ -66,6 +76,8 @@ for _m in MODULLER:
     _m.setdefault("dosya", f"evvel_yeni_{_m['kod']}_api")
 
 DURUM: Dict[str, str] = {}   # kod → yuklendi | kapali | eksik:<kod> | hata:<mesaj>
+GOREVLER: Dict[str, dict] = {}   # görev adı → {kod, fn, aralik_sn, baslik} — yalnız yüklenen modüllerinki
+GOREV_HATA: Dict[str, str] = {}   # manifestte yazılı ama fonksiyonu bulunamayan görev
 
 
 def acik(kod: str) -> bool:
@@ -91,6 +103,13 @@ def modulleri_yukle(app) -> None:
                 getattr(mod, m["kurulum"])()
             app.include_router(mod.router)
             DURUM[kod] = "yuklendi"
+            for g in m.get("gorevler") or []:   # tak-çıkar: yalnız YÜKLENEN modülün görevi kaydolur
+                fn = getattr(mod, g["fn"], None)
+                if callable(fn):
+                    GOREVLER[g["ad"]] = {"kod": kod, "fn": fn, "aralik_sn": int(g["aralik_sn"]), "baslik": g.get("baslik") or g["ad"]}
+                else:
+                    GOREV_HATA[g["ad"]] = f"{kod}: görev fonksiyonu yok ({g['fn']})"
+                    log.warning("evvel_yeni %s görevi kaydedilmedi — fonksiyon yok: %s", kod, g["fn"])
         except Exception as e:  # noqa: BLE001 — izole: ana akış etkilenmez
             DURUM[kod] = "hata:" + str(e)[:200]
             log.warning("evvel_yeni %s modülü yüklenemedi (izole, ana akış etkilenmez): %s", kod, e)
@@ -161,3 +180,147 @@ def eski_kullanim(tazele: bool = False):
     v = {"tablolar": out, "not": "son30 = tarih kolonuna göre son 30 günde yazılan kayıt; tarih kolonu yoksa yalnız pg istatistiği"}
     _KULLANIM_ONBELLEK.update(t=time.time(), v=v)
     return v
+
+
+# ─────────────────────────── ARKA PLAN GÖREVLERİ (tek zamanlayıcı) ────────────────────────────
+# IS 5c / F3.1 B7+B11 (sim 26 Eki · Opus + Codex + Fable): Kasa ve Depo'nun otomatik işleri ekran okumasıyla (GET) tetikleniyordu —
+# kimse açmazsa işlenmiyordu. Artık manifestteki görevler süreç içi TEK thread'de koşar (main.py startup başlatır, ilk koşu 75 sn sonra).
+# Çift süreç koruması: görev başına işlem düzeyinde try-kilit; vade kilitten SONRA kalıcı kayıttan yeniden denetlenir (Codex).
+# Görev KENDİ bağlantılarında çalışır; kilit + sonuç satırı ayrı işlemde → görev patlasa da hata satırı yazılır.
+_GOREV_DUR = threading.Event()
+_GOREV_SON: Dict[str, float] = {}   # süreç içi ön süzgeç (DB'ye her tikte gitmesin); asıl karar kalıcı kayıtta
+_GOREV_ACILIS = {"t": time.time()}
+_GOREV_TEMIZLIK = {"t": 0.0}
+_GOREV_HAZIR = {"ok": False}
+GOREV_ILK_GECIKME_SN = 75
+GOREV_TIK_SN = 30
+GOREV_SAKLAMA_GUN = 7
+
+
+def _gorev_hazirla() -> None:
+    """ey_gorev_kosu — çekirdeğin tablosu; ayrı kısa işlemde, süreçlerarası kilit altında (_ayar_hazirla kalıbı)."""
+    if _GOREV_HAZIR["ok"]:
+        return
+    from database import db
+    with db() as (_c, k):
+        k.execute("SELECT pg_advisory_xact_lock(7012077)")
+        k.execute("SET LOCAL lock_timeout = '3s'")
+        k.execute("""CREATE TABLE IF NOT EXISTS ey_gorev_kosu (
+            id BIGSERIAL PRIMARY KEY, ad TEXT NOT NULL, basla TIMESTAMPTZ NOT NULL, bitir TIMESTAMPTZ NOT NULL,
+            tamam BOOLEAN NOT NULL, elle BOOLEAN NOT NULL DEFAULT FALSE, ozet JSONB, hata TEXT)""")
+        k.execute("CREATE INDEX IF NOT EXISTS ey_gorev_kosu_ad ON ey_gorev_kosu (ad, bitir DESC)")
+    _GOREV_HAZIR["ok"] = True
+
+
+def gorev_calistir(ad: str, elle: bool = False) -> dict:
+    """PUBLIC — görevi bir kez koşturur. Başka süreç/istek o an koşturuyorsa {zaten: True} (sessiz başarı DEĞİL).
+    elle=False iken vade dolmamışsa koşmaz ({erken: True})."""
+    g = GOREVLER.get(ad)
+    if not g:
+        return {"ok": False, "mesaj": GOREV_HATA.get(ad) or "böyle bir görev yok (modül kapalı olabilir)"}
+    _gorev_hazirla()
+    from database import db
+    from psycopg2.extras import Json
+    with db() as (conn, cur):
+        cur.execute("SELECT pg_try_advisory_xact_lock(hashtext(%s)) AS k", ("ey_gorev:" + ad,))
+        if not dict(cur.fetchone())["k"]:
+            return {"ok": False, "zaten": True, "mesaj": "bu iş şu an zaten çalışıyor"}
+        if not elle:
+            cur.execute("SELECT 1 FROM ey_gorev_kosu WHERE ad = %s AND basla > NOW() - make_interval(secs => %s) LIMIT 1",
+                        (ad, g["aralik_sn"]))
+            if cur.fetchone():
+                _GOREV_SON[ad] = time.time()
+                return {"ok": False, "erken": True}
+        basla = datetime.now(timezone.utc)
+        ozet, hata = None, None
+        try:
+            ozet = g["fn"]() or {}
+        except Exception as e:  # noqa: BLE001 — görevin hatası kayda düşer, zamanlayıcıyı durdurmaz
+            hata = str(e)[:300]
+            log.warning("evvel_yeni görev %s: %s", ad, hata)
+        if hata is None and isinstance(ozet, dict):
+            if ozet.get("hatalar"):   # Codex: kısmi hata başarı sayılmaz
+                hata = ("kısmi: " + "; ".join(str(x) for x in ozet["hatalar"]))[:300]
+            elif ozet.get("tamam") is False:
+                hata = str(ozet.get("hata") or "tamamlanamadı")[:300]
+        cur.execute("""INSERT INTO ey_gorev_kosu (ad, basla, bitir, tamam, elle, ozet, hata)
+                       VALUES (%s, %s, clock_timestamp(), %s, %s, %s, %s)""",   # Codex: NOW() işlem başı — bitiş değil
+                    (ad, basla, hata is None, elle, Json(ozet, dumps=lambda o: json.dumps(o, ensure_ascii=False, default=str)), hata))
+        if time.time() - _GOREV_TEMIZLIK["t"] > 86400:   # saklama günde bir, SÜREYE dayalı (Codex: adet sınırı 24 saati garanti etmez)
+            cur.execute("DELETE FROM ey_gorev_kosu WHERE bitir < NOW() - make_interval(days => %s)", (GOREV_SAKLAMA_GUN,))
+            _GOREV_TEMIZLIK["t"] = time.time()
+    _GOREV_SON[ad] = time.time()
+    return {"ok": hata is None, "ozet": ozet, "hata": hata}
+
+
+def _gorev_dongusu() -> None:
+    if _GOREV_DUR.wait(GOREV_ILK_GECIKME_SN):
+        return
+    while not _GOREV_DUR.is_set():
+        for ad, g in list(GOREVLER.items()):
+            if time.time() - _GOREV_SON.get(ad, 0.0) < g["aralik_sn"]:
+                continue
+            try:
+                gorev_calistir(ad)
+            except Exception as e:  # noqa: BLE001 — döngü hiçbir hatayla ölmez
+                _GOREV_SON[ad] = time.time()
+                log.warning("evvel_yeni görev döngüsü %s: %s", ad, str(e)[:200])
+        _GOREV_DUR.wait(GOREV_TIK_SN)
+
+
+def gorevleri_baslat() -> None:
+    """PUBLIC — main.py startup (init_db'den SONRA) bir kez çağırır."""
+    if not GOREVLER or any(t.name == "ey-gorev" for t in threading.enumerate()):
+        return
+    _GOREV_ACILIS["t"] = time.time()
+    threading.Thread(target=_gorev_dongusu, daemon=True, name="ey-gorev").start()
+    log.info("evvel_yeni görev zamanlayıcısı başladı: %s", ", ".join(GOREVLER))
+
+
+def gorevleri_durdur() -> None:
+    """PUBLIC — main.py shutdown."""
+    _GOREV_DUR.set()
+
+
+def gorev_durumu(cur, ad: str) -> dict:
+    """PUBLIC — bir görevin son koşusu + son başarılı koşusu + gecikti mi (ekranlar buradan OKUR, yazmaz)."""
+    g = GOREVLER.get(ad)
+    out = {"ad": ad, "kayitli": bool(g), "son": None, "son_basarili": None, "gecikti": False}
+    if not g:
+        return out
+    _gorev_hazirla()
+    cur.execute("SELECT bitir, tamam, elle, ozet, hata FROM ey_gorev_kosu WHERE ad = %s ORDER BY bitir DESC LIMIT 1", (ad,))
+    r = cur.fetchone()
+    son_bitir = dict(r)["bitir"] if r else None
+    out["son"] = {**dict(r), "bitir": son_bitir.isoformat()} if r else None
+    cur.execute("SELECT bitir, ozet FROM ey_gorev_kosu WHERE ad = %s AND tamam ORDER BY bitir DESC LIMIT 1", (ad,))
+    r = cur.fetchone()
+    out["son_basarili"] = {**dict(r), "bitir": dict(r)["bitir"].isoformat()} if r else None
+    # Fable/Opus: yeniden başlatma sonrası sahte alarm olmasın — süreç en az bir koşu yapacak kadar çalıştıysa.
+    # Gecikme SON KOŞUYA göre (Fable F3.1: kısmi hata veren ama düzenli koşan iş "gecikti" görünmesin — hatası ayrıca söylenir)
+    if time.time() - _GOREV_ACILIS["t"] > GOREV_ILK_GECIKME_SN + g["aralik_sn"]:
+        out["gecikti"] = son_bitir is None or (datetime.now(timezone.utc) - son_bitir).total_seconds() > 2 * g["aralik_sn"]
+    return out
+
+
+@router.get("/gorevler")
+def gorevler():
+    """⚙️ Sistem durumu — modüllerin arka plan işleri: son koşu, ne yaptı, son hata, son 24 saatte kaç kez."""
+    from database import db
+    out = []
+    with db() as (conn, cur):
+        for ad, g in GOREVLER.items():
+            d = gorev_durumu(cur, ad)
+            cur.execute("""SELECT COUNT(*) AS n, COUNT(*) FILTER (WHERE NOT tamam) AS hatali FROM ey_gorev_kosu
+                           WHERE ad = %s AND bitir > NOW() - INTERVAL '24 hours'""", (ad,))
+            say = dict(cur.fetchone())
+            out.append({**d, "baslik": g["baslik"], "modul": g["kod"], "aralik_sn": g["aralik_sn"],
+                        "kosu_24s": say["n"], "hatali_24s": say["hatali"]})
+    return {"gorevler": out, "kayitsiz": [{"ad": a, "hata": h} for a, h in GOREV_HATA.items()],
+            "zamanlayici": any(t.name == "ey-gorev" and t.is_alive() for t in threading.enumerate())}
+
+
+@router.post("/gorevler/{ad}/calistir")
+def gorev_simdi(ad: str):
+    """Sistem durumu › Şimdi çalıştır — zamanlayıcıyla aynı kilit; o an çalışıyorsa 'zaten çalışıyor' döner."""
+    return gorev_calistir(ad, elle=True)

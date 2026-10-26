@@ -65,7 +65,6 @@ BASLANGIC = date(2026, 10, 1)          # ilk dönem — sahip: "bu aydan itibare
 # sıfırlayıp kuruluşu ona göre devam ettireceğim." → DÖNEM: başlangıç günü ayardan
 # okunur. Yeni dönem başlayınca önceki kayıtlar SİLİNMEZ (arşiv), hesaplara girmez;
 # her cep yeni başlangıç sabahı sayılıp açılış bakiyesiyle başlar.
-SENKRON_ARALIK_SN = 600                  # eski sistemden otomatik köprü — en sık 10 dk
 # Sahip (2026-10-15): "Annem 65 yaşında, her gün nasıl onaylayacak?" → teslim 'aldım'
 # beklemez: dokunulmayan teslim ERTESİ GÜN kendiliğinden kabul edilir (itiraz yok).
 # Kontrol tek tek teslimde değil, evdeki para ara sıra SAYILARAK yapılır; 7 gün içinde
@@ -477,7 +476,7 @@ def _farklar(ol: List[dict], C: dict) -> List[dict]:
             f = int(o["veri"].get("beklenen", 0)) - int(o["veri"].get("sayilan", 0))
             if f:
                 out.append({"id": o["id"], "tarih": o["gun"], "tur": "sayim", "f": f, "cep": o["cep"], "sube_cep": None,
-                            "ad": f"{C.get(o['cep'], {}).get('ad', '?')} sayımı"})
+                            "ad": f"{C.get(o['cep'], {}).get('ad', '?')} {'ekstresi' if C.get(o['cep'], {}).get('tur') in ('banka', 'hesap') else 'sayımı'}"})   # F3.8: banka için ekstre
     sayimlar = {o["id"]: o for o in ol if o["olay"] == "sayim"}
     kapanisli = {(o.get("cep"), o["gun"]) for o in ol if o["olay"] == "kapanis"}
     for x in out:
@@ -788,11 +787,22 @@ def _eski_sistem_mi(h: dict) -> bool:
     return False
 
 
+def _tr_saat_giris(ts, gun) -> Optional[str]:
+    from evvel_yeni_cekirdek import tr_saat
+    try:
+        return tr_saat(ts, date.fromisoformat(str(gun)[:10])) if ts else None
+    except ValueError:
+        return None
+
+
 def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
     v = r["veri"]
     d = {"id": r["id"], "tur": r["tur"], "tarih": r["is_gunu"], "kaydeden": r.get("kaydeden"), "durum": r.get("durum"),
          "cep": r.get("cep"), "kaynak": r.get("kaynak"), "hedef": r.get("hedef"), "tutar": _tl_sayi(r["tutar"]),
-         "eski_sistem": _eski_sistem_mi(r)}
+         "eski_sistem": _eski_sistem_mi(r),
+         # H-1 (F3.10 · sim 26 Eki): kaydın GİRİLDİĞİ an, çekirdeğin TEK saat kuralıyla (TR dilimi; iş gününden başka gün girildiyse
+         # "GG.AA HH:MM" — ertesi gece 06:00'ya kadarki olağan kapanış "HH:MM" kalır · Fable: tarayıcıda ikinci kural yazılmaz)
+         "zaman": _tr_saat_giris(r.get("kayit_zamani"), r["is_gunu"])}
     if r["tur"] == "kapanis":
         kd = [z for z in (v.get("kanal_duzeltme") or []) if not z.get("iptal")]
         if kd:   # Fable (21 Eki): kapanış nakdi sessizce küçülmüş görünmesin
@@ -1073,8 +1083,8 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
     """Tek ekranın bütün verisi: seçilen gün AKŞAMI para nerede + o günün hareketleri
     + güne bağlı olmayan bekleyen işler. Ekranın bütün rakamları buradan gelir."""
     _hazirla()
-    senkron = _otomatik_senkron()
     with db() as (conn, cur):
+        senkron = _senkron_durumu(cur)   # IS 5c: okuma ekranı YAZMAZ — otomatik işler çekirdeğin zamanlayıcısında
         cep_list, C, kayit_tum, iptaller = _yukle(cur, tum_donemler=True)   # Fable: tek okuma — hem dönem hem ilk-kayıt (B18)
         _db = _baslangic(cur).isoformat()
         kayit = [h for h in kayit_tum if h["is_gunu"] >= _db]
@@ -1247,11 +1257,11 @@ def banka_mutabakat(ay: Optional[str] = None):
     sonraki = date(ay_bas.year + (ay_bas.month == 12), 1 if ay_bas.month == 12 else ay_bas.month + 1, 1)
     ay_son = date.fromordinal(sonraki.toordinal() - 1)
     kesit = min(ay_son, bugun).isoformat()       # ay bitmediyse bugüne kadar
-    with db() as (conn, cur):
-        _kilit(cur)
-        _pos_otomatik(cur)                     # vadesi gelen POS mutabakattan önce yazılır
+    with db() as (conn, cur):   # IS 5c / F3.8 (Fable): okuma ekranı YAZMAZ — vadesi gelen POS arka plan görevinde (10 dk) ve ekstre girilirken yazılır
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
         donem_bas = _baslangic(cur).isoformat()
+        from evvel_yeni_tanim_api import subeler as _sb_hepsi
+        pasif_sube = {str(x["id"]) for x in _sb_hepsi(cur, hepsi=True) if not x["aktif"]}   # T-5 (F3.8): Kasam'ın B13 kuralı
     ol = _olaylar(kayit)
     # Codex C4: yeni dönem açılışı (ör. 1 Kasım "Yeni başlangıç") önceki dönemin bakiyesini ZATEN taşır →
     # ay hangi dönemdeyse YALNIZ o dönemin olayları (yoksa Ekim hareketleri + Kasım açılışı üst üste biner)
@@ -1269,6 +1279,11 @@ def banka_mutabakat(ay: Optional[str] = None):
         if c["tur"] not in ("banka", "hesap"):
             continue
         cid = c["id"]
+        # T-5 (F3.8 · sim 26 Eki): PASİF şubenin bankası, ay başı ve ay sonu boşsa ve ayda hareketi yoksa mutabakatta çıkmaz
+        # (Kasam B13 ile aynı: parası ya da hareketi varsa görünür, kaybolmaz)
+        if str(c.get("sube_id") or "") in pasif_sube and abs(Bo.get(cid, 0)) < 1 and abs(Bs.get(cid, 0)) < 1 \
+                and not any(e["cep"] == cid for o in icinde for e in _etki(o, C)):   # Fable: bölünmüş ödeme parçası da hareket
+            continue
         satirlar, giris, cikis = [], {}, {}
         for o in [x for x in icinde if x["olay"] not in ("sayim", "cozum")]:
             for e in _etki(o, C):
@@ -1866,55 +1881,56 @@ def eski_sistemden_aktar(kuru: bool = True, x_evvel_oturum: Optional[str] = Head
         return _aktar(cur, kuru, kim)
 
 
-_SON_SENKRON = {"zaman": None, "sonuc": None}
-
-
-def _otomatik_senkron() -> dict:
-    """🌉 ESKİYLE YAN YANA (sahip): şube paneli hâlâ eski tablolara yazıyor. Durum her
-    okunduğunda — en sık 10 dakikada bir — yeni kapanış/teslimler kendiliğinden çekilir.
-    Kendi transaction'ı; patlarsa ekran ETKİLENMEZ, hata ekrana yazılır (sessiz değil)."""
-    import time as _t
-    simdi = _t.time()
-    z = _SON_SENKRON["zaman"]
-    if z is None or simdi - z >= SENKRON_ARALIK_SN:
-        _SON_SENKRON["zaman"] = simdi
+def otomatik_isler() -> dict:
+    """🌉 Kasa'nın ARKA PLAN görevi (manifest 'kasa_otomatik', 10 dk) — çekirdeğin zamanlayıcısı koşturur, sonucu ey_gorev_kosu'ya yazar.
+    IS 5c / F3.1 B7+B11 (sim 26 Eki · Opus + Codex + Fable): eskiden GET /durum her okunduğunda çalışıyordu — kimse açmazsa
+    işlenmiyordu. Eski köprü yalnız eski panel zinciri açıkken (1 Kasım kesimiyle kendiliğinden kapanır); otomatik kabul · POS ·
+    panel sayım aktarımı sürer. Her adım kendi savepoint'inde — biri patlarsa diğerleri yine koşar (hatalar özetle döner)."""
+    _hazirla()   # Opus: tetik artık GET değil — tablolar ilk koşuda hazır olmayabilir
+    with db() as (conn, cur):
+        _kilit(cur)
+        oz = {"kapanis": 0, "teslim": 0, "eslesmeyen_teslim": 0, "kilitli": 0}
+        hatalar, kopru = [], "kapali"
+        # B14 (Fable 22 Eki): ESKİ köprü yalnız eski panel zinciri açıkken ve tablolar varken, KENDİ savepoint'inde —
+        # patlarsa yeni panel işleri yine koşar (kesim günü bu blok + _aktar silinir; yeni adımlara dokunulmaz)
+        from evvel_yeni_cekirdek import eski_panel_zinciri_acik, tablo_var
+        if eski_panel_zinciri_acik() and tablo_var(cur, "ciro", "ciro_taslak", "kasa_teslim"):
+            kopru = "acik"
+            try:
+                with savepoint(cur, "sp_pi_kopru"):
+                    oz.update({k: v for k, v in (_aktar(cur, False, "otomatik köprü (eski sistem)").get("ozet") or {}).items() if k in oz})
+            except Exception as e:  # noqa: BLE001
+                log.warning("evvel-yeni eski köprü: %s", str(e)[:200])
+                hatalar.append("eski köprü: " + str(e)[:120])
+        for ad, fn in (("otomatik_kabul", _otomatik_kabul), ("pos_otomatik", _pos_otomatik)):
+            try:
+                with savepoint(cur, f"sp_pi_{ad}"):
+                    oz[ad] = fn(cur)
+            except Exception as e:  # noqa: BLE001
+                log.warning("evvel-yeni %s: %s", ad, str(e)[:200])
+                hatalar.append(f"{ad}: {str(e)[:120]}")
         try:
-            with db() as (conn, cur):
-                _kilit(cur)
-                oz = {"kapanis": 0, "teslim": 0, "eslesmeyen_teslim": 0, "kilitli": 0}
-                hatalar, kopru = [], "kapali"
-                # B14 (Fable 22 Eki): ESKİ köprü yalnız eski panel zinciri açıkken ve tablolar varken, KENDİ savepoint'inde —
-                # patlarsa yeni panel işleri yine koşar (kesim günü bu blok + _aktar silinir; yeni adımlara dokunulmaz)
-                from evvel_yeni_cekirdek import eski_panel_zinciri_acik, tablo_var
-                if eski_panel_zinciri_acik() and tablo_var(cur, "ciro", "ciro_taslak", "kasa_teslim"):
-                    kopru = "acik"
-                    try:
-                        with savepoint(cur, "sp_pi_kopru"):
-                            oz.update({k: v for k, v in (_aktar(cur, False, "otomatik köprü (eski sistem)").get("ozet") or {}).items() if k in oz})
-                    except Exception as e:  # noqa: BLE001
-                        log.warning("evvel-yeni eski köprü: %s", str(e)[:200])
-                        hatalar.append("eski köprü: " + str(e)[:120])
-                for ad, fn in (("otomatik_kabul", _otomatik_kabul), ("pos_otomatik", _pos_otomatik)):
-                    try:
-                        with savepoint(cur, f"sp_pi_{ad}"):
-                            oz[ad] = fn(cur)
-                    except Exception as e:  # noqa: BLE001
-                        log.warning("evvel-yeni %s: %s", ad, str(e)[:200])
-                        hatalar.append(f"{ad}: {str(e)[:120]}")
-                try:
-                    with savepoint(cur, "sp_pi_ps_oto"):
-                        oz["panel_sayim"] = (_panel_sayimlari(cur, False).get("ozet") or {}).get("sayim", 0)
-                except Exception as e:  # noqa: BLE001 — sayım aktarımı patlarsa senkronun gerisi yaşar
-                    log.warning("evvel-yeni panel sayım: %s", str(e)[:200])
-                    hatalar.append("panel sayım: " + str(e)[:120])
-            _SON_SENKRON["sonuc"] = {"tamam": True, "kopru": kopru, "hatalar": hatalar, **oz}
-        except Exception as e:  # noqa: BLE001
-            log.warning("evvel-yeni kasa otomatik senkron: %s", str(e)[:200])
-            _SON_SENKRON["sonuc"] = {"tamam": False, "hata": str(e)[:160]}
-    from datetime import datetime, timezone
-    zz = _SON_SENKRON["zaman"]
-    return {**(_SON_SENKRON["sonuc"] or {}),
-            "zaman": datetime.fromtimestamp(zz, timezone.utc).isoformat() if zz else None}
+            with savepoint(cur, "sp_pi_ps_oto"):
+                oz["panel_sayim"] = (_panel_sayimlari(cur, False).get("ozet") or {}).get("sayim", 0)
+        except Exception as e:  # noqa: BLE001 — sayım aktarımı patlarsa görevin gerisi yaşar
+            log.warning("evvel-yeni panel sayım: %s", str(e)[:200])
+            hatalar.append("panel sayım: " + str(e)[:120])
+    return {"tamam": True, "kopru": kopru, "hatalar": hatalar, **oz}
+
+
+def _senkron_durumu(cur) -> dict:
+    """GET /durum için — otomatik işlerin SON koşusu (okur, yazmaz). Alan adları ekranın okuduğuyla aynı (zaman · tamam · kopru ·
+    hatalar · kapanis · teslim · eslesmeyen_teslim …); ek: son_basarili (Codex: satır son BAŞARILI bitişi esas alır) · gecikti."""
+    from evvel_yeni_moduller import gorev_durumu
+    d = gorev_durumu(cur, "kasa_otomatik")
+    son, ok = d.get("son"), d.get("son_basarili")
+    if not son:
+        return {"zaman": None, "henuz_yok": True, "gecikti": d.get("gecikti", False)}
+    oz = son.get("ozet") or (ok or {}).get("ozet") or {}   # kısmi koşunun adetleri de geçerli
+    return {**oz, "zaman": son["bitir"], "tamam": bool(son["tamam"]) or bool((son.get("ozet") or {}).get("hatalar")),
+            "hata": son.get("hata"), "hatalar": (son.get("ozet") or {}).get("hatalar") or [],
+            "son_basarili": (ok or {}).get("bitir"), "gecikti": d.get("gecikti", False),
+            "kopru": (son.get("ozet") or {}).get("kopru") or oz.get("kopru")}
 
 
 def _kilitli_teslim(h: dict, kilit: Dict[str, str], anlar: Optional[Dict[str, tuple]] = None) -> bool:

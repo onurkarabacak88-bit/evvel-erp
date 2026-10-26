@@ -7,6 +7,7 @@
 // bolum: modülün sayfaları BAŞKA bir bölümün altında görünür (ör. Faturaları dağıt → Ödeme); modül kapanınca sayfa da kalkar.
 import React from 'react';
 import KasaModulu, { SAYFALAR, IS_GRUPLARI } from './KasaModulu';
+import SistemDurumu, { SISTEM_SAYFALAR } from './SistemDurumu';
 import GelirModulu, { GELIR_SAYFALAR } from './GelirModulu';
 import GiderModulu, { GIDER_SAYFALAR } from './GiderModulu';
 import OdemeModulu, { ODEME_SAYFALAR, PatronHarcama } from './OdemeModulu';
@@ -63,6 +64,8 @@ export const MODULLER = [
     g: (s, c) => (s === 'personel_yoklama' ? <GunlukYoklama /> : s === 'personel_takvim' ? <PersonelTakvim onToast={c.onToast} />
       : <MaasModulu onToast={c.onToast} onSekme={c.onSekme} />) },
   { mod: 'tanim', ad: 'Tanımlar', ikon: '⚙️', sektor: 'genel', sayfalar: TANIM_SAYFALAR, g: (s, c) => <TanimModulu gorunum={s} onToast={c.onToast} /> },
+  // ⚙️ IS 5c (sim 26 Eki): çekirdeğin Sistem durumu — modüller + arka plan işleri (sunucu: evvel_yeni_moduller.py); modül değil, hep görünür
+  { mod: 'cekirdek', her_zaman: true, bolum: 'tanim', ad: 'Sistem durumu', ikon: '⚙️', sektor: 'genel', sayfalar: SISTEM_SAYFALAR, g: (s, c) => <SistemDurumu onToast={c.onToast} /> },
 ];
 
 export const TUM_SAYFALAR = MODULLER.flatMap((b) => b.sayfalar.map((x) => ({ ...x, mod: b.mod })));
