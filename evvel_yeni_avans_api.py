@@ -38,6 +38,7 @@ log = logging.getLogger(__name__)
 def avans_hazirla(cur) -> None:
     """Çağıranın işleminde, savepoint + lock_timeout; yalnız eksikse (19 Eki dersi)."""
     if __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_avans_talep"):
+        _teslim_pid_kolonu(cur)
         return
     try:
         with savepoint(cur, "sp_ey_avans_hazirla"):
@@ -52,6 +53,36 @@ def avans_hazirla(cur) -> None:
     except Exception:  # noqa: BLE001
         log.warning("avans tablosu kurulamadı", exc_info=True)
         raise HTTPException(503, "Avans hazırlanıyor — birkaç saniye sonra tekrar dene")
+
+
+_TESLIM_PID = False
+
+
+def _teslim_pid_kolonu(cur) -> None:
+    """F4.2 (Fable): avansı ÇEKMECEDEN veren kişinin kimliği — 'kendine teslim' görünsün. Yalnız eksikse, savepoint + lock_timeout."""
+    global _TESLIM_PID
+    if _TESLIM_PID:
+        return
+    cur.execute("""SELECT 1 FROM information_schema.columns WHERE table_name='ey_avans_talep' AND column_name='teslim_pid'""")
+    if not cur.fetchone():
+        try:
+            with savepoint(cur, "sp_ey_avans_teslim_pid"):
+                _lt = __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, "3s")
+                cur.execute("ALTER TABLE ey_avans_talep ADD COLUMN IF NOT EXISTS teslim_pid TEXT")
+                __import__("evvel_yeni_cekirdek").lock_timeout_ayarla(cur, _lt)
+        except Exception:  # noqa: BLE001
+            log.warning("avans teslim_pid kolonu eklenemedi — sonraki istekte yeniden", exc_info=True)
+            return
+    _TESLIM_PID = True
+
+
+def _veren(r: dict, pad: dict) -> tuple:
+    """(veren adı, kendine mi) — teslim_pid varsa kimlikle; eski satırda teslim_kim metninin son parçası."""
+    pid = r.get("teslim_pid")
+    if pid:
+        return pad.get(str(pid)) or "—", str(pid) == str(r["personel_id"])
+    k = (r.get("teslim_kim") or "").split(" · ")[-1].strip()
+    return (k or None), bool(k) and k == pad.get(str(r["personel_id"]))   # eski satır (kimlik alanı öncesi): ad eşlemesi yedek
 
 
 AKTIF = ("talep", "onaylandi", "odendi")   # tavana sayılan
@@ -71,13 +102,16 @@ def avans_durumu(cur, personel_id: str, ay: Optional[str] = None) -> dict:
     cur.execute("SELECT COALESCE(SUM(tutar),0) AS k FROM ey_avans_talep WHERE personel_id=%s AND donem=%s AND durum = ANY(%s)",
                 (str(personel_id), t["ay"], list(AKTIF)))
     kul = int(dict(cur.fetchone())["k"] or 0)
-    cur.execute("""SELECT id, tutar, durum, yontem, talep_ts FROM ey_avans_talep WHERE personel_id=%s AND durum IN ('talep','onaylandi')
+    cur.execute("""SELECT id, tutar, durum, yontem, talep_ts, sube_id FROM ey_avans_talep WHERE personel_id=%s AND durum IN ('talep','onaylandi')
                     ORDER BY talep_ts DESC LIMIT 1""", (str(personel_id),))
     ac = cur.fetchone()
+    from evvel_yeni_tanim_api import adlar as _adlar
+    sad = _adlar(cur, "ey_sube")   # şube adı Tanımlar kapısından (F4.2 sahip: "nereden alacağım" telefonda)
     # B47: son 7 günde SONUÇLANAN talep — personel telefonda görsün (sessizce kaybolmasın); açık talep varken gerekmez
     son = None
     if not ac:
-        cur.execute("""SELECT tutar, durum, yontem, karar_not, COALESCE(teslim_ts, karar_ts) AS ts FROM ey_avans_talep
+        cur.execute("""SELECT personel_id, tutar, durum, yontem, karar_not, sube_id, teslim_kim, teslim_pid,
+                                  COALESCE(teslim_ts, karar_ts) AS ts FROM ey_avans_talep
                         WHERE personel_id=%s AND durum IN ('odendi','reddedildi','kapatildi')
                           AND COALESCE(teslim_ts, karar_ts) >= NOW() - INTERVAL '7 days' ORDER BY COALESCE(teslim_ts, karar_ts) DESC LIMIT 1""",
                     (str(personel_id),))
@@ -85,9 +119,19 @@ def avans_durumu(cur, personel_id: str, ay: Optional[str] = None) -> dict:
         if r:
             r = dict(r)
             son = {"tutar": r["tutar"], "durum": r["durum"], "yontem": r.get("yontem"), "ts": str(r["ts"])[:10],
-                   "neden": (r.get("karar_not") or "")[:120] if r["durum"] == "reddedildi" else None}   # B46: ret sebebi personele
+                   "saat": __import__("evvel_yeni_cekirdek").tr_saat(r["ts"]) if r.get("ts") else None,
+                   "sube": sad.get(str(r.get("sube_id"))) if r.get("yontem") == "elden" else None,
+                   "kendine": r["durum"] == "odendi" and _veren(r, _adlar(cur, "ey_personel", [x for x in (personel_id, r.get("teslim_pid")) if x]))[1],
+                   "neden": (r.get("karar_not") or "")[:120] if r["durum"] in ("reddedildi", "kapatildi") else None}   # B46 + F4.2 kapatma notu
+    # F4.2 (sahip: "alınca personel cepte de görünmeli"): bu AYIN alınan avansları kalıcı (7 gün değil) — maaştan düşülecekle aynı
+    cur.execute("""SELECT tutar, yontem, sube_id, COALESCE(teslim_ts, karar_ts) AS ts FROM ey_avans_talep
+                    WHERE personel_id=%s AND donem=%s AND durum='odendi' ORDER BY COALESCE(teslim_ts, karar_ts)""", (str(personel_id), t["ay"]))
+    bu_ay = [{"tutar": int(x["tutar"]), "yontem": x.get("yontem"), "sube": sad.get(str(x.get("sube_id"))) if x.get("yontem") == "elden" else None,
+              "ts": str(x["ts"])[:10]} for x in (dict(y) for y in cur.fetchall() or [])]
     return {"ay": t["ay"], "tavan": t["tavan"], "kullanilan": kul, "kullanilabilir": max(0, t["tavan"] - kul),
-            "acik": ({**dict(ac), "talep_ts": str(dict(ac)["talep_ts"])[:16]} if ac else None), "son": son}
+            "acik": ({**dict(ac), "talep_ts": str(dict(ac)["talep_ts"])[:16],
+                      "sube": sad.get(str(dict(ac).get("sube_id"))) if dict(ac).get("yontem") == "elden" else None} if ac else None),
+            "son": son, "bu_ay": bu_ay}
 
 
 def _onay_denetle(cur, t: dict) -> None:
@@ -131,23 +175,55 @@ def talep_yaz(cur, *, personel_id: str, tutar: int, not_: Optional[str], istek_i
     return {"id": tid, "tekrar": False}
 
 
-def _yeni_talepler(cur, acik: bool = True) -> list:
+def _yeni_talepler(cur, acik: bool = True, ayrinti: bool = False) -> list:
     if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_avans_talep"):
         return []
     from evvel_yeni_tanim_api import adlar   # personel / şube adı Tanımlar'ın kapısından (C-T2-11)
     cur.execute(f"""SELECT a.* FROM ey_avans_talep a
-                     WHERE {"a.durum IN ('talep','onaylandi')" if acik else "a.durum IN ('reddedildi','kapatildi') AND a.talep_ts >= NOW() - INTERVAL '60 days'"}
-                     ORDER BY a.talep_ts""")
+                     WHERE {"a.durum IN ('talep','onaylandi')" if acik else "a.durum IN ('reddedildi','kapatildi','odendi') AND a.talep_ts >= NOW() - INTERVAL '60 days'"}
+                     ORDER BY a.talep_ts {"" if acik else "DESC"}""")
     rows = [dict(x) for x in cur.fetchall() or []]
     sad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
-    pad = adlar(cur, "ey_personel", {r["personel_id"] for r in rows})
+    pad = adlar(cur, "ey_personel", {r["personel_id"] for r in rows} | {r.get("teslim_pid") for r in rows if r.get("teslim_pid")})
     cik = {p["id"]: p["cikis"] for p in __import__("evvel_yeni_tanim_api").tanim_listesi(cur, "ey_personel", ("cikis",),
                                                                                        idler={str(r["personel_id"]) for r in rows}) if p.get("cikis")}
     return [{"id": r["id"], "personel_id": r["personel_id"], "ad": pad.get(str(r["personel_id"])) or "—", "tutar": int(r["tutar"]) / 100, "durum": r["durum"],
              "ayrilis": cik[str(r["personel_id"])].strftime("%d.%m") if str(r["personel_id"]) in cik else None,   # S-B8: ekranda 'ayrıldı' işareti
              "yontem": r.get("yontem"), "sube": sad.get(r.get("sube_id")), "sube_id": r.get("sube_id"), "donem": r["donem"],
-             "talep": str(r["talep_ts"])[:16], "onay": str(r.get("karar_ts") or "")[:16], "not": r.get("not_") or r.get("karar_not"),
-             "yeni": True} for r in rows]
+             "talep": str(r["talep_ts"])[:16], "onay": str(r.get("karar_ts") or "")[:16],
+             "not": " · ".join(x for x in (r.get("not_"), r.get("karar_not")) if x) or None,   # Fable: talep notu varken şube izi de görünsün
+             "yeni": True, **_ek(cur, r, pad, acik, ayrinti)} for r in rows]
+
+
+def _ek(cur, r: dict, pad: dict, acik: bool, ayrinti: bool = False) -> dict:
+    """F4.2 (sim 26 Eki · Fable): merkez satırı kendini anlatsın — talepte öntanımlı şube + bu ay tavan / kullanılan; onaylı-elden
+    bekleme günü; kapananda veren + kendine teslim."""
+    if not acik:
+        if r["durum"] != "odendi":
+            return {}
+        v, kendi = _veren(r, pad)
+        return {"veren": v, "kendine": kendi, "teslim": str(r.get("teslim_ts") or r.get("karar_ts") or "")[:16]}
+    if r["durum"] == "onaylandi":
+        from evvel_yeni_cekirdek import tr_gun, is_gunu
+        return {"bekliyor_gun": (is_gunu() - tr_gun(r["karar_ts"])).days if r.get("karar_ts") else None}
+    if not ayrinti:   # Fable P2: şube paneli (elden_bekleyen) 5–15 sn'de bir çağırır — maaş hesabı yalnız merkez listesinde
+        return {}
+    d = avans_durumu(cur, r["personel_id"], r["donem"])
+    return {"tavan": d["tavan"] / 100, "kullanilan": d["kullanilan"] / 100, "kisi_sube_id": _kisi_subesi(cur, r["personel_id"])}
+
+
+def _kisi_subesi(cur, personel_id: str) -> Optional[str]:
+    """'Elden ver' öntanımı (Fable sırası): bugün QR'la girdiği şube (Yoklama PUBLIC) → kadro şubesi → aktif değilse boş."""
+    from evvel_yeni_moduller import acik as _acik
+    from evvel_yeni_tanim_api import subeler as _subeler, tanim_oku
+    aktif = {str(s["id"]) for s in _subeler(cur)}
+    s = None
+    if _acik("yoklama"):
+        s = __import__("evvel_yeni_yoklama_api").kisinin_bugunku_subesi(cur, personel_id)
+    if not s:
+        p = tanim_oku(cur, "ey_personel", personel_id, ("sube_id",))
+        s = str(p["sube_id"]) if p and p.get("sube_id") else None
+    return s if s in aktif else None
 
 
 def elden_bekleyen(cur, sube_id: str) -> list:
@@ -156,7 +232,7 @@ def elden_bekleyen(cur, sube_id: str) -> list:
     return [t for t in _yeni_talepler(cur) if t["durum"] == "onaylandi" and t["yontem"] == "elden" and t["sube_id"] == str(sube_id)]
 
 
-def elden_teslim_yaz(cur, *, talep_id: str, sube_id: str, kim: str, gun: date) -> dict:
+def elden_teslim_yaz(cur, *, talep_id: str, sube_id: str, kim: str, gun: date, veren_pid: Optional[str] = None) -> dict:
     """PUBLIC (panel 'teslim ettim'): Kasa sube_avansi_yaz (çekmeceden düşer) + talep 'odendi'. Aynı talep ikinci kez → tekrar."""
     avans_hazirla(cur)
     from evvel_yeni_kasa_api import sube_avansi_yaz
@@ -174,7 +250,8 @@ def elden_teslim_yaz(cur, *, talep_id: str, sube_id: str, kim: str, gun: date) -
     ref = f"avans:{talep_id}"
     sube_avansi_yaz(cur, sube_id=str(sube_id), gun=gun.isoformat(), tutar=int(t["tutar"]), personel_id=t["personel_id"], personel_ad=pad,
                     ait_ay=t["donem"], kim=kim, kaynak_ref=ref)
-    cur.execute("UPDATE ey_avans_talep SET durum='odendi', odeme_ref=%s, teslim_ts=NOW(), teslim_kim=%s WHERE id=%s", (ref, kim, talep_id))
+    cur.execute("UPDATE ey_avans_talep SET durum='odendi', odeme_ref=%s, teslim_ts=NOW(), teslim_kim=%s, teslim_pid=%s WHERE id=%s",
+                (ref, kim, veren_pid, talep_id))
     return {"tekrar": False, "tutar": int(t["tutar"]), "personel": pad}
 
 
@@ -239,16 +316,16 @@ def _eski_kopya_gerekirse(cur) -> bool:
     return True
 
 
-def _tum_acik(cur) -> list:
+def _tum_acik(cur, ayrinti: bool = False) -> list:
     """Yeni defter + (1 Kasım'a kadar) eski personel_avans açıkları; 1 Kasım'dan sonra eski açıklar BİR KEZ yeni deftere taşınır."""
     if _eski_kopya_gerekirse(cur):
         if __import__("evvel_yeni_cekirdek").ayar_oku(cur, "avans_eski_acik_kopya") is not None:
-            return _yeni_talepler(cur)
+            return _yeni_talepler(cur, ayrinti=ayrinti)
         try:   # Fable son denetim S-3: kopya olmadıysa eski açıklar okunmaya devam eder (sessizce kaybolmaz)
-            return _acik_talepler(cur) + _yeni_talepler(cur)
+            return _acik_talepler(cur) + _yeni_talepler(cur, ayrinti=ayrinti)
         except HTTPException:   # eski tablo artık yok (eski sistem kalktı) → yalnız yeni defter; log _acik_talepler'de
-            return _yeni_talepler(cur)
-    return _acik_talepler(cur) + _yeni_talepler(cur)
+            return _yeni_talepler(cur, ayrinti=ayrinti)
+    return _acik_talepler(cur) + _yeni_talepler(cur, ayrinti=ayrinti)
 
 
 bekleyen_is_kaydet("avans_talep", _bekleyen)
@@ -272,7 +349,7 @@ def _kapananlar(cur) -> list:
 def talepler():
     with db() as (conn, cur):
         kapanan = _yeni_talepler(cur, acik=False) + ([] if yeni_donem(cur) else _kapananlar(cur))
-        return {"talepler": _tum_acik(cur), "kapananlar": kapanan, "bugun": _bugun().isoformat()}
+        return {"talepler": _tum_acik(cur, ayrinti=True), "kapananlar": kapanan, "bugun": _bugun().isoformat()}
 
 
 class KapatBody(BaseModel):
@@ -316,10 +393,10 @@ class OnayBody(BaseModel):
 
 @router.post("/{aid}/onayla")
 def onayla(aid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(default=None)):
-    """Codex denetimi (2026-10-17): iki sisteme ayrı ayrı yazmak çift mahsup / ayrışma / yarış üretiyordu → ŞİMDİLİK onay YALNIZ eski
-    avans akışıyla (eski Cep ekranının yaptığı birebir): havale = eski kasa + eski maaş mahsubu; elden = şube panelinden teslim
-    edilince Kasa köprüsüyle Evvel Yeni dükkân nakdinden düşer. Avansın Evvel Yeni'ye tam taşınması (havalenin EY bankasından
-    düşmesi) envanter madde 35'te, 1 Kasım öncesi — KESIM_LISTESI."""
+    """Yeni defter (av-…): HAVALE = Ödeme formunun kendi yazma çekirdeği (seçilen bankadan düşer · Maaş 'Avans' mahsup) + talep
+    'odendi' TEK işlemde (onay = gönderildi; ayrı "havale gelecek" adımı yok — Fable F4.2). ELDEN = talep 'onaylandi' + şube; şube
+    panelinde "Teslim ettim" (PIN) → Kasa sube_avansi_yaz (dükkân nakdinden düşer) + Maaş mahsup. Eski personel_avans kayıtları
+    (1 Kasım öncesi) eski avans_service yoluyla."""
     if body.yontem not in ("havale", "elden"):
         raise HTTPException(400, "Yöntem: havale ya da elden")
     if body.yontem == "elden" and not body.sube_id:
@@ -368,6 +445,29 @@ def onayla(aid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(defa
     eski.avans_onayla(aid, eski.AvansOnayModel(yontem=body.yontem, sube_id=body.sube_id if body.yontem == "elden" else None, onaylayan=kim))
     return {"ok": True, "mesaj": "Avans havaleyle ödendi olarak işaretlendi (maaştan düşer)" if body.yontem == "havale"
             else "Avans onaylandı — şube panelinden teslim edilince dükkân kasasından düşer"}
+
+
+class SubeBody(BaseModel):
+    sube_id: str
+
+
+@router.post("/{aid}/sube")
+def sube_degistir(aid: str, body: SubeBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """F4.2 (Opus risk 3): onaylı-elden avansı kişi o şubeye gitmiyorsa başka şubeden ver — para hareketi yok, yalnız şube."""
+    with db() as (conn, cur):
+        avans_hazirla(cur)
+        kim = merkez_aktor(cur, x_evvel_oturum)
+        from evvel_yeni_tanim_api import subeler as _subeler
+        if str(body.sube_id) not in {str(s["id"]) for s in _subeler(cur)}:
+            raise HTTPException(400, "Şube bulunamadı ya da pasif")
+        ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube", [str(body.sube_id)]).get(str(body.sube_id)) or str(body.sube_id)
+        cur.execute("""UPDATE ey_avans_talep SET sube_id=%s,
+                              karar_not=LEFT(CONCAT_WS(' · ', NULLIF(karar_not, ''), %s), 200)
+                        WHERE id=%s AND durum='onaylandi' AND yontem='elden' RETURNING id""",
+                    (str(body.sube_id), f"şube → {ad} ({kim})", aid))   # Fable: onaylayan (karar_kim) silinmez, iz notta
+        if not cur.fetchone():
+            raise HTTPException(409, "Talep teslim edilmiş ya da değişmiş — sayfayı yenile")
+    return {"ok": True, "mesaj": "Şube değişti — o şubenin panelinde görünür"}
 
 
 class RedBody(BaseModel):

@@ -1038,7 +1038,7 @@ def avans_teslim(sube_id: str, b: AvansTeslimBody):
                     personel_id=p["id"], personel_ad=p["ad"], veri={"talep_id": b.talep_id})   # kök talep başına — aynı talep iki kez teslim edilemez
         if oid is None:
             return {"tekrar": True, "mesaj": "Bu avans zaten teslim edilmişti ✓"}
-        r = elden_teslim_yaz(cur, talep_id=b.talep_id, sube_id=str(sube_id), kim=f"{KIM} · {p['ad']}", gun=c["gun"])
+        r = elden_teslim_yaz(cur, talep_id=b.talep_id, sube_id=str(sube_id), kim=f"{KIM} · {p['ad']}", gun=c["gun"], veren_pid=p["id"])
         return {"olay": oid, "tekrar": r["tekrar"],
                 "mesaj": "Bu avans zaten teslim edilmişti ✓" if r["tekrar"] else f"🤝 {r['personel']} — {_tl_tr(r['tutar'])} avans teslim edildi"}
     return _calistir(sube_id, b.istek_id, is_, tur="avans", govde=b.model_dump(mode="json"))

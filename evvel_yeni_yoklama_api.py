@@ -333,6 +333,17 @@ def bugun_girenler(cur, sube_id: str, gun: Optional[date] = None) -> list:
     return out
 
 
+def kisinin_bugunku_subesi(cur, personel_id: str) -> Optional[str]:
+    """PUBLIC (Avans 'Elden ver' öntanımı · F4.2): kişinin BUGÜN QR'la girdiği şube — içerideyse o, iki şubede girip çıktıysa en son
+    girdiği; bugün hiç girmediyse None (çağıran kadro şubesine düşer)."""
+    if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_yoklama"):
+        return None
+    cur.execute("""SELECT sube_id FROM ey_yoklama WHERE personel_id=%s AND is_gunu=%s
+                    ORDER BY (cikis_ts IS NULL) DESC, giris_ts DESC LIMIT 1""", (str(personel_id), is_gunu()))
+    r = cur.fetchone()
+    return str(dict(r)["sube_id"]) if r else None
+
+
 def son_yoklama_gunu(cur, personel_id: str) -> Optional[date]:
     """PUBLIC (Maaş › işten çıkış): kişinin QR'la girdiği SON iş günü (yoksa None)."""
     if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_yoklama"):
@@ -913,8 +924,9 @@ async def avans_durum_tel(request: Request):
         d = A.avans_durumu(cur, p["id"])
         return {"tavan": d["tavan"] / 100, "kullanilan": d["kullanilan"] / 100, "kullanilabilir": d["kullanilabilir"] / 100,
                 "acik": ({"tutar": int(d["acik"]["tutar"]) / 100, "durum": d["acik"]["durum"], "yontem": d["acik"].get("yontem"),
-                          "talep": d["acik"]["talep_ts"]} if d["acik"] else None), "ay": d["ay"],
-                "son": ({**d["son"], "tutar": int(d["son"]["tutar"]) / 100} if d.get("son") else None)}
+                          "sube": d["acik"].get("sube"), "talep": d["acik"]["talep_ts"]} if d["acik"] else None), "ay": d["ay"],
+                "son": ({**d["son"], "tutar": int(d["son"]["tutar"]) / 100} if d.get("son") else None),
+                "bu_ay": [{**x, "tutar": x["tutar"] / 100} for x in d.get("bu_ay") or []]}   # F4.2 sahip: alınan avans telefonda kalıcı (ay boyu)
     return await _telefon(request, fn)
 
 

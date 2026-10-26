@@ -339,7 +339,7 @@ function AvansKart({ kartli }) {
     document.addEventListener('visibilitychange', tazele);
     return () => { window.clearInterval(t); document.removeEventListener('visibilitychange', tazele); };
   }, []);
-  if (!d) return null;
+  if (!d) return kartli ? <div className="tq-kart"><b>🤝 Avans</b><div className="tq-silik">Yükleniyor…</div></div> : null;
   if (d.kapali) return kartli ? <div className="tq-kart"><b>🤝 Avans</b><div className="tq-silik">Avans talebi 1 Kasım'dan itibaren buradan.</div></div> : null;   // Fable T1 #4: boş kart yok
   const para = (x) => tlYaz(x, 0);   // ₺ biçimi TEK kaynak (F#58)
   const gonder = async () => {
@@ -358,12 +358,20 @@ function AvansKart({ kartli }) {
   return (
     <div className={kartli ? 'tq-kart' : undefined} style={{ display: 'grid', gap: 8 }}>
       <b>🤝 Avans</b>
-      {d.acik ? <div className="tq-not">Açık talebin: <b>{para(d.acik.tutar)}</b> — {d.acik.durum === 'talep' ? 'merkez bakıyor' : d.acik.yontem === 'elden' ? 'onaylandı, şubeden elden verilecek' : 'onaylandı'}</div>
+      {d.acik ? <div className="tq-not" style={d.acik.durum === 'onaylandi' ? { color: T.yesil, fontWeight: 700 } : undefined}>
+          {d.acik.durum === 'talep' ? <>Açık talebin: <b>{para(d.acik.tutar)}</b> — merkez bakıyor</>
+            : d.acik.yontem === 'elden' ? <>✅ Onaylandı — <b>{para(d.acik.tutar)}</b> {d.acik.sube ? `${d.acik.sube}'dan` : 'şubeden'} elden alabilirsin</>
+              : <>✅ Onaylandı — <b>{para(d.acik.tutar)}</b></>}</div>
         : d.kullanilabilir > 0 ? <div className="tq-silik">Bu ay en çok {para(d.kullanilabilir)} isteyebilirsin</div>
         : <div className="tq-silik">Bu ay avans hakkın yok (hak ediş oluşmadı ya da doldu)</div>}
       {!d.acik && d.son && (   // B47: son talebin sonucu (7 gün)
         <div className="tq-not" style={{ color: d.son.durum === 'odendi' ? T.yesil : T.kirmizi }}>
-          Son talebin ({para(d.son.tutar)}, {d.son.ts.slice(8, 10)}.{d.son.ts.slice(5, 7)}): {d.son.durum === 'odendi' ? (d.son.yontem === 'elden' ? 'elden verildi ✓' : 'hesabına gönderildi ✓') : (d.son.neden && d.son.neden !== 'Merkez reddetti' ? `kabul edilmedi — ${d.son.neden}` : 'kabul edilmedi — merkeze sorabilirsin')}
+          Son talebin ({para(d.son.tutar)}, {d.son.ts.slice(8, 10)}.{d.son.ts.slice(5, 7)}): {d.son.durum === 'odendi' ? (d.son.yontem === 'elden' ? `${d.son.sube ? d.son.sube + ' · ' : ''}${d.son.saat || ''} elden verildi ✓${d.son.kendine ? ' (kendin aldın)' : ''}` : 'hesabına havale edildi ✓ — hesabını kontrol et') : d.son.durum === 'kapatildi' ? `merkez kapattı${d.son.neden ? ' — ' + d.son.neden : ''}` : (d.son.neden && d.son.neden !== 'Merkez reddetti' ? `kabul edilmedi — ${d.son.neden}` : 'kabul edilmedi — merkeze sorabilirsin')}
+        </div>)}
+      {(d.bu_ay || []).length > 0 && (
+        <div className="tq-silik" style={{ display: 'grid', gap: 2 }}>
+          <span>Bu ay talebinle aldığın avans: <b>{para(d.bu_ay.reduce((a, x) => a + x.tutar, 0))}</b></span>
+          {d.bu_ay.map((x, i) => <span key={i}>· {x.ts.slice(8, 10)}.{x.ts.slice(5, 7)} · {para(x.tutar)} · {x.yontem === 'elden' ? `elden${x.sube ? ' · ' + x.sube : ''}` : 'havale'}</span>)}
         </div>)}
       {msj && <div style={{ color: msj.ok ? T.yesil : T.kirmizi, fontWeight: 700 }}>{msj.metin}</div>}
       {!d.acik && d.kullanilabilir > 0 && !ac && <button className="tq-btn tq-kucuk" onClick={() => setAc(true)}>Avans iste</button>}

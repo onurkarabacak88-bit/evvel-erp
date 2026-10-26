@@ -43,18 +43,19 @@ export default function AvansModulu({ onToast }) {
             const set = (k, x) => setSec((o) => ({ ...o, [t.id]: { ...s, [k]: x } }));
             return (
               <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${R.cizgi}`, padding: '8px 0', fontSize: 13.5 }}>
-                <span style={{ flex: '1 1 180px' }}><b>{t.ad}</b>{t.ayrilis && <Cip tur="kirmizi">ayrılış {t.ayrilis}</Cip>}<div style={{ fontSize: 12, color: R.not }}>talep {trTalep(t.talep)}</div>{t.not && <div style={{ fontSize: 12.5 }}>📝 {t.not}</div>}</span>
+                <span style={{ flex: '1 1 180px' }}><b>{t.ad}</b>{t.ayrilis && <Cip tur="kirmizi">ayrılış {t.ayrilis}</Cip>}<div style={{ fontSize: 12, color: R.not }}>talep {trTalep(t.talep)}</div>
+                  {t.tavan != null && <div style={{ fontSize: 12, color: t.kullanilan > t.tavan ? R.kirmizi : R.metin2 }}>bu ay tavan {fmt(t.tavan)} ₺ · bu talep dahil {fmt(t.kullanilan)} ₺</div>}{t.not && <div style={{ fontSize: 12.5 }}>📝 {t.not}</div>}</span>
                 <b style={{ ...num, width: 90, textAlign: 'right' }}>{fmt(t.tutar)} ₺</b>
                 <span style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
-                  {t.yeni && <select value={s.cep || ''} onChange={(e) => set('cep', e.target.value)} style={alan}>
-                    <option value="">Banka…</option>{(L?.banka_cepler || []).map((b) => <option key={b.id} value={b.id}>{b.ad}</option>)}
+                  {!t.ayrilis && t.yeni && <select value={s.cep || ''} onChange={(e) => set('cep', e.target.value)} style={alan}>
+                    <option value="">Banka…</option>{(L?.banka_cepler || []).filter((b) => Number(b.bakiye) > 0).map((b) => <option key={b.id} value={b.id}>{b.ad} · şu an {fmt(b.bakiye)} ₺</option>)}
                   </select>}
-                  <Dugme kucuk ana disabled={mesgul[t.id] || (t.yeni && !s.cep)} onClick={async () => { const b = (L?.banka_cepler || []).find((x) => x.id === s.cep); if (await soruOnay(`${t.ad} · ${fmt(t.tutar)} ₺ ${b ? b.ad + "'ndan " : ''}havale edilsin mi?
-Bankadan düşer, maaştan mahsup edilir.`)) yap(t, 'onayla', { yontem: 'havale', cep: s.cep }); }}>Havaleyle öde</Dugme>
-                  <select value={s.sube_id || ''} onChange={(e) => set('sube_id', e.target.value)} style={alan}>
+                  {!t.ayrilis && <Dugme kucuk ana disabled={mesgul[t.id] || (t.yeni && !(L?.banka_cepler || []).some((x) => x.id === s.cep && Number(x.bakiye) > 0))} onClick={async () => { const b = (L?.banka_cepler || []).find((x) => x.id === s.cep); if (await soruOnay(`${t.ad} · ${fmt(t.tutar)} ₺ ${b ? b.ad + "'ndan " : ''}havale ettin mi?
+Önce bankadan gönder, sonra onayla — bankadan düşer, maaştan mahsup edilir, personel "hesabına havale edildi" görür.`)) yap(t, 'onayla', { yontem: 'havale', cep: s.cep }); }}>Havaleyi gönderdim</Dugme>}
+                  {!t.ayrilis && <select value={s.sube_id ?? t.kisi_sube_id ?? ''} onChange={(e) => set('sube_id', e.target.value)} style={alan}>
                     <option value="">Şube…</option>{(L?.subeler || []).map((b) => <option key={b.id} value={b.id}>{b.ad}</option>)}
-                  </select>
-                  <Dugme kucuk disabled={!s.sube_id || mesgul[t.id]} onClick={() => yap(t, 'onayla', { yontem: 'elden', sube_id: s.sube_id })}>Elden ver</Dugme>
+                  </select>}
+                  {!t.ayrilis && <Dugme kucuk disabled={!(s.sube_id ?? t.kisi_sube_id) || mesgul[t.id]} onClick={() => yap(t, 'onayla', { yontem: 'elden', sube_id: s.sube_id ?? t.kisi_sube_id })}>Elden ver</Dugme>}
                   <Dugme kucuk disabled={mesgul[t.id]} onClick={() => yap(t, 'kapat', { not_: 'daha önce verildi' })}>Kapat (verildi)</Dugme>
                   <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { const n = await soruYaz(`${t.ad} · ${fmt(t.tutar)} ₺ avans talebi neden reddediliyor? (personel görür)`, false, 2); if (n && n.trim().length >= 2) yap(t, 'reddet', { neden: n.trim() }); }}>Reddet</Dugme>
                 </span>
@@ -65,11 +66,14 @@ Bankadan düşer, maaştan mahsup edilir.`)) yap(t, 'onayla', { yontem: 'havale'
       )}
       {(v?.kapananlar || []).length > 0 && (
         <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 2, opacity: 0.6 }}>
-          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700 }}>Kapatılanlar (son 60 gün)</div>
+          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700 }}>Sonuçlananlar (son 60 gün)</div>
           {v.kapananlar.map((t) => (
-            <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', borderTop: `1px solid ${R.cizgi}`, padding: '6px 0', fontSize: 13, color: R.not }}>
-              <span style={{ flex: 1 }}>{t.ad} · talep {trTalep(t.talep)}{t.not ? ` · ${t.not}` : ''}</span><span style={num}>{fmt(t.tutar)} ₺</span>
-              <Cip>{t.durum === 'reddedildi' ? 'reddedildi' : 'kapatıldı'}</Cip>
+            <div key={t.id} style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', borderTop: `1px solid ${R.cizgi}`, padding: '6px 0', fontSize: 13, color: R.not }}>
+              <span style={{ flex: '1 1 220px' }}>{t.ad} · talep {trTalep(t.talep)}{t.not ? ` · ${t.not}` : ''}
+                {t.durum === 'odendi' && <> · {t.yontem === 'elden' ? `elden · ${t.sube || '—'}${t.veren ? ` · veren ${t.veren}` : ''}` : 'havale'} · {trTalep(t.teslim)}</>}</span>
+              <span style={num}>{fmt(t.tutar)} ₺</span>
+              {t.kendine && <Cip tur="sari">kendine teslim</Cip>}
+              <Cip tur={t.durum === 'odendi' ? 'yesil' : undefined}>{{ reddedildi: 'reddedildi', kapatildi: 'kapatıldı', odendi: 'ödendi' }[t.durum] || t.durum}</Cip>
             </div>
           ))}
         </div>
@@ -78,9 +82,15 @@ Bankadan düşer, maaştan mahsup edilir.`)) yap(t, 'onayla', { yontem: 'havale'
         <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 2 }}>
           <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700 }}>Onaylandı · şubeden teslim bekleniyor</div>
           {elden.map((t) => (
-            <div key={t.id} style={{ display: 'flex', gap: 10, alignItems: 'center', borderTop: `1px solid ${R.cizgi}`, padding: '6px 0', fontSize: 13.5 }}>
-              <span style={{ flex: 1 }}><b>{t.ad}</b>{t.ayrilis && <Cip tur="kirmizi">ayrılış {t.ayrilis}</Cip>} · {t.sube || '—'}</span><b style={num}>{fmt(t.tutar)} ₺</b><Cip tur="sari">{t.durum === 'teslim_edildi' ? 'personel onayı bekliyor' : 'elden verilecek — şube panelinde "teslim ettim"'}</Cip>
+            <div key={t.id} style={{ display: 'flex', flexWrap: 'wrap', gap: 10, alignItems: 'center', borderTop: `1px solid ${R.cizgi}`, padding: '6px 0', fontSize: 13.5 }}>
+              <span style={{ flex: '1 1 220px' }}><b>{t.ad}</b>{t.ayrilis && <Cip tur="kirmizi">ayrılış {t.ayrilis}</Cip>} · {t.sube || '—'}</span><b style={num}>{fmt(t.tutar)} ₺</b>{t.bekliyor_gun > 0 && <Cip tur="kirmizi">{t.bekliyor_gun} gündür bekliyor</Cip>}<Cip tur="sari">{t.durum === 'teslim_edildi' ? 'personel onayı bekliyor' : 'elden verilecek — şube panelinde "teslim ettim"'}</Cip>
               {/* Fable O-2: şube teslim etmediyse (kişi ayrıldı, yanlış şube) talep merkezden kapatılır — yoksa kişi yeni talep açamaz */}
+              {String(t.id).startsWith('av-') && t.durum === 'onaylandi' && t.yontem === 'elden' && (
+                <select value={t.sube_id || ''} disabled={mesgul[t.id]} title="Kişi bu şubeye gelmiyorsa başka şubeden ver (para hareketi yok)"
+                  onChange={(e) => e.target.value && yap(t, 'sube', { sube_id: e.target.value })} style={alan}>
+                  {(L?.subeler || []).map((b) => <option key={b.id} value={b.id}>{b.ad}</option>)}
+                </select>
+              )}
               {String(t.id).startsWith('av-') && t.durum === 'onaylandi' && (
                 <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { if (await soruOnay(`${t.ad} · ${fmt(t.tutar)} ₺ — şube teslim etmedi, talep kapatılsın mı? (para hareketi yok)`)) yap(t, 'kapat', { not_: 'şube teslim etmedi — merkez kapattı' }); }}>Kapat</Dugme>
               )}
