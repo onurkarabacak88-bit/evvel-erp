@@ -256,7 +256,7 @@ function SevkEt({ onToast }) {
     try { const l = await api('/evvel-yeni/depo/sevkler'); setListe(l.partiler); setDeneme(!!l.deneme); } catch { setListe([]); }
   }, []);
   useEffect(() => { yukle(); }, [yukle]);
-  const urunler = useMemo(() => (v?.satirlar || []).filter((u) => u.takip !== 'gununde' && u.kategori !== '❔ Katalogda eşleşmeyen'), [v]);
+  const urunler = useMemo(() => (v?.satirlar || []).filter((u) => u.takip !== 'gununde' && !u.katalog_disi), [v]);   // eşleşmeyen ve pasif ürün sevk edilmez (F2 R4-9)
   if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>{hata}</div></div>;
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Ürünler okunuyor…</div></div>;
   const merkez = v.konumlar.find((k) => k.merkez);

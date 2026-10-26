@@ -534,6 +534,10 @@ def _konumlar(cur) -> list:
     return out
 
 
+ESLESMEYEN_GRUP = "❔ Katalogda eşleşmeyen"   # hareketi olan ama katalogda hiç olmayan (eski kod)
+PASIF_GRUP = "⏸ Pasif ürün (stok bitince listeden çıkar)"   # katalogda pasif, stoğu duran
+
+
 @router.get("/ozet")
 def depo_ozet(evren: Optional[str] = None):
     """📦 NEREDE? — ürün × konum (kategori sırasıyla). 1 Kasım'dan itibaren YENİ katalog (ey_urun) ve yalnız yeni evren;
@@ -550,7 +554,11 @@ def depo_ozet(evren: Optional[str] = None):
             katalog = [{"kid": str(k["id"]), "kat": k["ad"], "emoji": k.get("emoji"), "id": str(u["id"]), "ad": u["ad"],
                         "takip": u.get("takip"), "koli_ici": u.get("koli_ici"), "birim": u.get("birim")}   # Sevk et: pasta süzgeci + koli
                        for k in _ey_katalog(cur) for u in k["urunler"]]
+            # F2 R4-9 (sim 26 Eki): pasif ürün (Süt 1L) stokta "Katalogda eşleşmeyen" görünüyordu — katalogda VAR, yalnız pasif
+            pasif = {str(u["id"]): u["ad"] for k in _ey_katalog(cur, hepsi=True) for u in k["urunler"]
+                     if not u["aktif"] or not k["aktif"]}   # Fable: pasif KATEGORİDEKİ aktif ürün de aktif katalogda yok
         else:
+            pasif = {}
             cur.execute("""SELECT k.id::text AS kid, k.ad AS kat, k.emoji, k.sira AS ks, u.id::text AS id, u.ad, u.sira
                              FROM siparis_urun u JOIN siparis_kategori k ON k.id = u.kategori_id
                             WHERE u.aktif AND k.aktif ORDER BY k.sira, k.ad, u.sira, u.ad""")
@@ -579,16 +587,17 @@ def depo_ozet(evren: Optional[str] = None):
         kat_ad[u["kid"]] = f"{u['emoji'] or ''} {u['kat']}".strip()
         satirlar.append({"urun_id": u["id"], "ad": u["ad"], "kategori": kat_ad[u["kid"]], "takip": u.get("takip"), "koli_ici": u.get("koli_ici"),
                          "birim": u.get("birim")})
-    for uid, uad in hareketli.items():   # katalogda olmayan ama hareketi olan (eski kod) — kaybolmasın
-        if uid not in goruldu:
-            satirlar.append({"urun_id": uid, "ad": uad or uid, "kategori": "❔ Katalogda eşleşmeyen"})
+    ek = [{"urun_id": uid, "ad": pasif.get(uid) or uad or uid, "kategori": PASIF_GRUP if uid in pasif else ESLESMEYEN_GRUP,
+           "katalog_disi": "pasif" if uid in pasif else "eslesmeyen"}   # Codex: ekran süzgeci kategori METNİNE değil bu alana bakar
+          for uid, uad in hareketli.items() if uid not in goruldu]   # katalogda olmayan ama hareketi olan (eski kod) — kaybolmasın
+    satirlar.extend(sorted(ek, key=lambda s: (s["kategori"], str(s["ad"]))))   # Fable: grup başlığı bir kez (Nerede tablosu)
     eksi = 0
     for s in satirlar:
         s["bakiye"] = {k["id"]: B.get((s["urun_id"], k["id"]), 0) for k in konumlar}
         s["eski"] = {k["id"]: eski.get((s["urun_id"], k["id"])) for k in konumlar}
         s["eksi"] = [k for k, v in s["bakiye"].items() if v < 0]
         eksi += len(s["eksi"])
-    satirlar = [s for s in satirlar if any(s["bakiye"].values()) or s["kategori"] != "❔ Katalogda eşleşmeyen"]
+    satirlar = [s for s in satirlar if any(s["bakiye"].values()) or s["kategori"] not in (ESLESMEYEN_GRUP, PASIF_GRUP)]
     return {"konumlar": [{**k, "son_sayim": (sayimlar.get(k["id"]) or {}).get("son").isoformat() if (sayimlar.get(k["id"]) or {}).get("son") else None,
                           "acilis_sayimi": bool((sayimlar.get(k["id"]) or {}).get("acilis"))} for k in konumlar],
             "satirlar": satirlar, "eksi_sayi": eksi, "senkron": _SON_SENKRON["sonuc"], "evren": "yeni" if yeni else "eski",
