@@ -122,24 +122,9 @@ def _tanim_ddl(cur) -> None:
         personel_id TEXT PRIMARY KEY, yanlis INT NOT NULL DEFAULT 0, kilit_bitis TIMESTAMPTZ, son TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
 
 
-def tanim_hazirla(cur) -> None:
-    """Tabloları kurar + eski sistemden EKSİK olanları kopyalar (var olana dokunmaz). Kasa'nın _hazirla'sı da çağırır."""
-    global _HAZIR
-    if _HAZIR:
-        return
-    # Dalga 2 (F#13 + 19 Eki dersi): var olan nesneye ALTER/kilit İSTEME — önce bak; eksikse çağıranın işleminde savepoint +
-    # kısa lock_timeout (sonra DEFAULT'a döner: önceden SET LOCAL çağıranın işlemine SIZIYORDU); bayrak ancak nesneler görülünce.
-    tam = _tanim_tam(cur)
-    if not tam:
-        try:
-            from evvel_yeni_cekirdek import ddl_kur
-            ddl_kur(cur, "sp_ey_tanim_ddl", _tanim_ddl)   # TEK DDL modeli — çağıranın lock_timeout'u geri yüklenir (Codex P2)
-        except Exception:  # noqa: BLE001
-            log.warning("tanım tabloları hazırlanamadı", exc_info=True)
-            raise HTTPException(503, "Tanımlar hazırlanıyor — birkaç saniye sonra tekrar dene")
-    # Maaş için personel kartı (2026-10-16, Codex): çıkış, çalışma türü, kişi kimliği; ücrette saatlik + yol
-    # ── Eski sistemden kopya (yalnız EKSİK kimlikler) ──
-    kopyalar = [
+def _eski_kopyalar() -> list:
+    """Eski sistemden kopya (yalnız EKSİK kimlikler; doldurmalar yalnız BOŞ alanlara — burada düzeltilen ezilmez). [(savepoint, sql)]"""
+    return [
         ("sp_ey_k_sube", """INSERT INTO ey_sube (id, ad, pos_oran, online_oran, aktif, kaynak, degistiren)
              SELECT id::text, ad, COALESCE(pos_oran,0), COALESCE(online_oran,0), COALESCE(aktif,TRUE), 'eski_sistem', 'eski sistem kopyası'
                FROM subeler ON CONFLICT (id) DO NOTHING"""),
@@ -156,8 +141,7 @@ def tanim_hazirla(cur) -> None:
         ("sp_ey_k_top", """INSERT INTO ey_toptanci (id, ad, kategori, telefon, aktif, kaynak, degistiren)
              SELECT id::text, ad, kategori, telefon, COALESCE(aktif,TRUE), 'eski_sistem', 'eski sistem kopyası'
                FROM tedarikciler ON CONFLICT (id) DO NOTHING"""),
-    ]
-    kopyalar += [
+    ] + [
         # Yalnız BOŞ alanları doldur — burada düzeltilen ezilmez
         ("sp_ey_k_per2", """UPDATE ey_personel e SET giris = COALESCE(e.giris, p.baslangic_tarihi::date),
                                    cikis = COALESCE(e.cikis, p.cikis_tarihi::date),
@@ -177,9 +161,27 @@ def tanim_hazirla(cur) -> None:
                                 FROM personel p WHERE p.id::text = u.personel_id AND u.degistiren = 'eski sistem kopyası'
                                  AND u.saatlik = 0 AND u.yol = 0"""),
     ]
+
+
+def tanim_hazirla(cur) -> None:
+    """Tabloları kurar + eski sistemden EKSİK olanları kopyalar (var olana dokunmaz). Kasa'nın _hazirla'sı da çağırır."""
+    global _HAZIR
+    if _HAZIR:
+        return
+    # Dalga 2 (F#13 + 19 Eki dersi): var olan nesneye ALTER/kilit İSTEME — önce bak; eksikse çağıranın işleminde savepoint +
+    # kısa lock_timeout (sonra DEFAULT'a döner: önceden SET LOCAL çağıranın işlemine SIZIYORDU); bayrak ancak nesneler görülünce.
+    tam = _tanim_tam(cur)
+    if not tam:
+        try:
+            from evvel_yeni_cekirdek import ddl_kur
+            ddl_kur(cur, "sp_ey_tanim_ddl", _tanim_ddl)   # TEK DDL modeli — çağıranın lock_timeout'u geri yüklenir (Codex P2)
+        except Exception:  # noqa: BLE001
+            log.warning("tanım tabloları hazırlanamadı", exc_info=True)
+            raise HTTPException(503, "Tanımlar hazırlanıyor — birkaç saniye sonra tekrar dene")
+    # Maaş için personel kartı (2026-10-16, Codex): çıkış, çalışma türü, kişi kimliği; ücrette saatlik + yol
     from evvel_yeni_cekirdek import yeni_donem
-    if yeni_donem(cur):   # F#45: 1 Kasım'dan sonra eski tablolardan kopya yok (eski sistem kalkıyor; her yeniden başlatmada 9 boş sorgu)
-        kopyalar = []
+    # F#45: 1 Kasım'dan sonra eski tablolardan kopya yok (eski sistem kalkıyor); son kopyayı 1 Kasım son aktarımı alır (kesim_dondur)
+    kopyalar = [] if yeni_donem(cur) else _eski_kopyalar()
     for sp, sql in kopyalar:
         try:
             with savepoint(cur, sp):
@@ -742,3 +744,13 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
             toptanci_hazirla(cur)
             cur.execute("UPDATE ey_toptanci SET vade_gun=%s WHERE id=%s", (int(b.vade_gun), tid))
         return {"ok": True, "id": tid, "mesaj": f"Toptancı {'eklendi' if yeni else 'güncellendi'}"}
+
+
+# ✂️ 1 KASIM SON AKTARIM (manifest 'kesim') — eski şube / personel / ücret / kart / toptancı tanımlarının SON kopyası (süreç başında bir kez
+# çalışan kopya 31 Eki gecesinden önceki son yeniden başlatmada kalmış olabilir). Yalnız eksik kimlik + boş alan; hata YUTULMAZ.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    out = {}
+    for sp, sql in _eski_kopyalar():
+        cur.execute(sql)
+        out[sp.replace("sp_ey_k_", "") + "_eslesen"] = cur.rowcount   # UPDATE: eşleşen satır (değişmese de sayılır) · INSERT: eklenen
+    return out

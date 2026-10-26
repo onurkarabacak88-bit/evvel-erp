@@ -1016,8 +1016,13 @@ class FiyatBody(BaseModel):
 
 
 def tahminleri_tazele(cur) -> int:
-    """Kesinleşmemiş (ve iptal olmayan) teslimlerin tahminini güncel fiyatlarla yeniden hesapla (Codex: fiyat girilince eski tahmin kalıyordu)."""
-    cur.execute("SELECT id, toptanci_id, tarih, kalemler FROM ey_toptanci_teslim WHERE kesin_tutar IS NULL AND NOT iptal")
+    """Kesinleşmemiş (ve iptal olmayan) teslimlerin tahminini güncel fiyatlarla yeniden hesapla (Codex: fiyat girilince eski tahmin kalıyordu).
+    F6.3 T1 (1 Kasım kesimi): yeni dönemde ESKİ dönem teslimleri yeniden hesaplanmaz — eski kimlikli kalemin fiyatı artık sorulmaz,
+    tahmin 'fiyat yok'a dönerdi; Ekim tahmini son hâliyle DONAR (kesin tutar girilince zaten kapanır)."""
+    from evvel_yeni_cekirdek import panel_baslangic, yeni_donem
+    sinir = panel_baslangic(cur) if yeni_donem(cur) else date(2000, 1, 1)
+    cur.execute("SELECT id, toptanci_id, tarih, kalemler FROM ey_toptanci_teslim WHERE kesin_tutar IS NULL AND NOT iptal AND tarih >= %s",
+                (sinir,))
     n = 0
     for x in [dict(r) for r in cur.fetchall() or []]:
         kal = __import__("evvel_yeni_cekirdek").json_ac(x["kalemler"], [])

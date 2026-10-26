@@ -179,14 +179,14 @@ def _json_parca(acik: str, on: str) -> dict:
         return {"_okunamadi": True}   # Codex: eski defter 2000 karakterde kesiyor → sessiz kayıp olmasın, raporda say
 
 
-SENKRON_KESIM_GUN = 2   # eski panel 1 Kasım'da kapanır; geç düşen son kayıtlar için 2 gün sonra köprü TAMAMEN durur
+SENKRON_KESIM_GUN = 0   # Opus karar 4 (27 Eki): köprü 1 Kasım'da DURUR — geç düşen son kayıtları 1 Kasım son aktarımı bir kez alır
 
 
-def senkron(cur) -> dict:
+def senkron(cur, son_aktarim: bool = False) -> dict:
     """Panel kayıtlarını deftere aktar (idempotent). Her kaynak kendi savepoint'inde — biri bozulursa diğerleri yazılır.
     KÖPRÜ (eski sistem → eski evren). panel_baslangic + 2 günden sonra ÇALIŞMAZ (Fable: geçiş günü çift sayım olmasın)."""
     depo_hazirla(cur)
-    if evren_yeni(cur):
+    if evren_yeni(cur) and not son_aktarim:
         from evvel_yeni_cekirdek import panel_baslangic
         if (_is_gunu() - panel_baslangic(cur)).days >= SENKRON_KESIM_GUN:
             return {"kesildi": True, "not": "Eski sistem köprüsü kapalı (1 Kasım kesimi)"}
@@ -928,6 +928,9 @@ def _hedef_sube(cur, bag: str) -> Optional[str]:
         cur.execute("SELECT hedef FROM ey_sevk_parti WHERE id=%s", (pid,))
         r = cur.fetchone()
         return dict(r)["hedef"] if r else None
+    ar = __import__("evvel_yeni_cekirdek").arsiv_oku(cur, "depo", "eski_hedef")   # D5: 1 Kasım son aktarımından sonra arşivden
+    if ar is not None:
+        return ar.get(bag)
     try:   # eski aktarım (kesimde silinir)
         with savepoint(cur, "sp_dp_hedef_eski"):
             cur.execute("SELECT sube_id::text AS hedef FROM stok_yolda WHERE id=%s", (bag,))
@@ -1314,3 +1317,21 @@ def depo_isleri(cur) -> list:
 
 # 🧩 Bekleyen işler kayıt defterine (Kasa bu modülü tanımaz; modül kapanınca satırları da kalkar)
 bekleyen_is_kaydet("depo", lambda cur, b: depo_isleri(cur))
+
+
+# ✂️ 1 KASIM SON AKTARIM (Opus karar 4 · manifest 'kesim') — eski panel kayıtlarının SON senkronu (kesim sınırını bir kez aşar) + eski
+# sevklerin hedef şubesi (stok_yolda) arşive (D5). Sonra köprü durur (SENKRON_KESIM_GUN = 0), eski tablo okunmaz.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    from evvel_yeni_cekirdek import arsiv_yaz, tablo_var
+    if not tablo_var(cur, "operasyon_defter", "stok_yolda"):
+        raise RuntimeError("eski depo tabloları okunamıyor — son senkron yapılmadı")
+    rapor = senkron(cur, son_aktarim=True)
+    if rapor.get("hatalar"):   # Fable 3. parti 🔴: bölüm hatası listede kalıp adım "yazıldı" işaretlenmesin
+        raise RuntimeError("son senkron tamamlanmadı — " + " · ".join(rapor["hatalar"]))
+    cur.execute("SELECT DISTINCT bag FROM ey_stok_hareket WHERE bag IS NOT NULL AND bag NOT LIKE 'sevk:%%'")
+    baglar = [dict(r)["bag"] for r in cur.fetchall() or []]
+    cur.execute("SELECT id::text AS id, sube_id::text AS hedef FROM stok_yolda WHERE id::text = ANY(%s)", (baglar,))
+    hedef = {dict(r)["id"]: dict(r)["hedef"] for r in cur.fetchall() or []}
+    arsiv_yaz(cur, "depo", "eski_hedef", hedef, yazan)
+    yazilan = {k: v for k, v in rapor.items() if isinstance(v, int)}
+    return {**yazilan, "eski_sevk_hedef": len(hedef)}
