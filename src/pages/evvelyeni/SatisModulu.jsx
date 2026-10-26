@@ -78,7 +78,7 @@ function KasaAcigi({ m, ciro, teslimler = [] }) {
 // ── GÜNLÜK DÖKÜM — sahip: "bugün 14 adet 8oz vs. görmek istiyorum; kasada açık var mı, satıştan açık var mı; fire" ──
 function GunlukDokum() {
   // dün (TR) — Dalga 5 · adreste ?gun= varsa o gün (Bekleyen işler › 🌅 Sabah sayımı tutmadı düğmesi bugünü açar)
-  const [gun, setGun] = useState(() => (/^\d{4}-\d{2}-\d{2}$/.test(new URLSearchParams(window.location.search).get('gun') || '') ? new URLSearchParams(window.location.search).get('gun') : tarihKaydir(-1)));
+  const [gun, setGun] = useState(() => (/^\d{4}-\d{2}-\d{2}$/.test(new URLSearchParams(window.location.search).get('gun') || '') ? [new URLSearchParams(window.location.search).get('gun'), tarihKaydir(0)].sort()[0] : tarihKaydir(-1)));   // ileri gün adresi bugüne kırpılır
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
   useEffect(() => {   // G35 (sim 23 Eki): her açılışta DÜN seçiliydi — bugün kapanmış şube varsa bugün açılır (akşam kontrolü gözden kaçmasın)
@@ -91,16 +91,17 @@ function GunlukDokum() {
     return () => { canli = false; };
   }, []);
   useSonIstek(`/evvel-yeni/satis/gun?gun=${gun}`, setV, setHata, true);   // ortak 'son istek kazanır' (T4-09)
-  const kaydir = (k) => setGun(gunKaydir(gun, k));
+  const bugunGun = tarihKaydir(0);   // F1.10 (sim 25 Eki): › ile gelecek güne gidiliyordu — bugünden ileri gün yok
+  const kaydir = (k) => setGun((g) => { const y = gunKaydir(g, k); return y > bugunGun ? bugunGun : y; });   // Fable: adresten ileri gün gelirse ‹ / › bugüne kırpar, takılmaz
   const acikYaz = (x) => (x == null ? '—' : Math.abs(x) < 1 ? 'yok' : x > 0 ? `${fmt(Math.round(x))} ₺ AÇIK` : `${fmt(Math.round(-x))} ₺ fazla`);
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
         <b style={{ fontSize: 18 }}>Günlük döküm</b>
         <Dugme kucuk onClick={() => kaydir(-1)}>‹</Dugme>
-        <input type="date" value={gun} onChange={(e) => e.target.value && setGun(e.target.value)}
+        <input type="date" value={gun} max={bugunGun} onChange={(e) => e.target.value && e.target.value <= bugunGun && setGun(e.target.value)}
           style={{ font: 'inherit', padding: '5px 8px', borderRadius: 9, border: '1px solid var(--pi-line)', background: 'var(--pi-paper)', color: 'var(--pi-ink)' }} />
-        <Dugme kucuk onClick={() => kaydir(1)}>›</Dugme>
+        <Dugme kucuk disabled={gun >= bugunGun} onClick={() => kaydir(1)}>›</Dugme>
       </div>
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Döküm hazırlanıyor…</div>}

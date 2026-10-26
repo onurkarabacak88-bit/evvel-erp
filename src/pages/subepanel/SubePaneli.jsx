@@ -17,8 +17,8 @@ import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
 import Fire from './Fire';
 import AraSayim from './AraSayim';
-import { C, CSS, cihazTuruOku, cihazTuruYaz, KisiPin, Modal, panelHata, qrBoyut, SayiTusTakimi, TabletQR, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek } from './ortak';
-import { gunKaydir } from '../../utils/trTarih';
+import { C, CSS, cihazTuruOku, cihazTuruYaz, KisiPin, Modal, panelHata, qrBoyut, SayiTusTakimi, sor, SorKatmani, TabletQR, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek } from './ortak';
+import { gunKaydir, tarihNokta } from '../../utils/trTarih';
 
 export default function SubePaneli({ subeId }) {
   const [d, setD] = useState(null);
@@ -28,9 +28,10 @@ export default function SubePaneli({ subeId }) {
   const [sekme, setSekme] = useState('ana');
   const [acSecim, setAcSecim] = useState(0);   // Ürün Aç: onaylanmamış seçim sayısı (sol menü rozeti, eski solUrunAcBadge)
   useEffect(() => { setAcSecim(0); }, [d?.gun]);   // Fable: gün değişince rozet donmasın
-  const sekmeyeGec = (x) => {   // eski panel: Ürün Aç'ta onaylanmamış seçim varken başka sekmeye geçmeden sor
+  const sekmeyeGec = async (x) => {   // eski panel: Ürün Aç'ta onaylanmamış seçim varken başka sekmeye geçmeden sor (K-1: panel penceresi)
     if (sekme === 'ac' && x !== 'ac' && acSecim > 0
-      && !window.confirm(`Ürün Aç sekmesinde ${acSecim} kalem seçili. Onaylamadan çıkarsan seçimler kalır ama işlem gönderilmez. Devam etmek istiyor musun?`)) return false;
+      && !(await sor({ soru: `Ürün Aç'ta ${acSecim} kalem seçili ama onaylanmadı`, alt: 'Çıkarsan seçimler durur ama ürünler AÇILMAZ (gönderilmez).',
+        tamam: 'Onaylamadan çık', iptal: 'Ürün Aç\'ta kal' }))) return false;
     setSekme(x);
     return true;
   };
@@ -137,7 +138,7 @@ export default function SubePaneli({ subeId }) {
   const kokRef = useRef(null);
 
   const temizle = () => { setAdet({}); setSebep(''); setSayim({}); setF({}); setPin(''); setIstek(yeniIstek()); };
-  const ac = (m) => {
+  const ac = async (m) => {
     if (m === 'acilis') { setDenemeKapandi(false); setSihirbazElle(true); return; }
     if (m === 'ac') { setSekme('ac'); return; }   // Basamak 5: Ürün Aç eski panel gibi orta alanda SEKME
     if (m === 'fire') { sekmeyeGec('fire'); return; }   // Basamak 6: Fire 3 adımlı sihirbaz (orta alanda SEKME; eski tek pencere kalktı)
@@ -150,8 +151,10 @@ export default function SubePaneli({ subeId }) {
       const dun = gunKaydir(d.gun, -1);   // Dalga 5 (F#56)
       let var_ = false;
       try { var_ = !!localStorage.getItem(`sp_taslak:${subeId}:${dun}:kapanis_sihirbaz`); } catch { var_ = false; }
-      const g = var_ && (d.kapanis_var || window.confirm(`${dun} gününün GÖNDERİLMEMİŞ kapanış formu duruyor. Onu açıp merkeze gönderelim mi?
-(İptal = bugünün kapanışı)`)) ? dun : d.gun;
+      // K-1 (L4b üç görüş): iki anlamlı soru Tamam/İptal'e yüklenmez — iki adlandırılmış seçim, Vazgeç hiçbir form açmaz
+      const g = !var_ ? d.gun : d.kapanis_var ? dun : await sor({ soru: `${tarihNokta(dun)} gününün kapanış formu GÖNDERİLMEDİ`,
+        secenekler: [{ deger: dun, yazi: `📨 ${tarihNokta(dun)} kapanışını bitir ve gönder`, ana: true }, { deger: d.gun, yazi: `🌙 Bugünün (${tarihNokta(d.gun)}) kapanışına geç` }] });
+      if (!g) return;
       setFormGun(g); setModal('kapanis'); return;
     }
     temizle();
@@ -259,6 +262,7 @@ export default function SubePaneli({ subeId }) {
   return (
     <div className="sp" ref={kokRef} style={tabletVar && yok.var && !kapiAcik ? { paddingBottom: 150 } : undefined}>{/* B89: sabit QR kutusu son satırların üstüne binmesin — kaydırınca açığa çıkar */}
       <style>{CSS}</style>
+      <SorKatmani />
       {hata && <div role="alert" style={{ background: '#b3261e', color: '#fff', padding: '10px 14px', fontWeight: 600, fontSize: 15 }}>
         ⚠ {hataAg ? 'Bağlantı yok' : 'Sistem şu an yanıt vermiyor'} — ekrandaki bilgi son alınan hâli. Kendiliğinden yeniden deneniyor… <button className="sp-btn" style={{ marginLeft: 8, minHeight: 36 }} onClick={yukle}>Tekrar dene</button></div>}
       {/* ÜST BAR (eski 52px): EVVEL · şube · tarih saat */}
@@ -292,7 +296,7 @@ export default function SubePaneli({ subeId }) {
         <div className="sp-sol-kolon">
           <button className={'sp-sol' + (sekme === 'ana' ? ' akt' : '')} onClick={() => sekmeyeGec('ana')}><span style={{ fontSize: 18, width: 24 }}>🏠</span>Ana Sayfa</button>
           {SOL.map((m, i) => (m.b ? <div key={i} className="sp-sol-baslik">{m.b}</div> : (
-            <button key={m.k} className={'sp-sol' + (m.k === sekme ? ' akt' : '')} disabled={m.kapanisKarti ? (kapali && !dunTaslak) : kapali && !m.acikKapali && ['ac', 'teslim', 'fire', 'araTeslim', 'devir'].includes(m.k)} title={m.yakinda ? 'Kendi basamağında açılacak' : ''}
+            <button key={m.k} className={'sp-sol' + (m.k === sekme ? ' akt' : '')} disabled={m.kapanisKarti ? (kapali && !dunTaslak) : kapali && !m.acikKapali && ['ac', 'teslim', 'fire', 'araTeslim', 'devir', 'siparis'].includes(m.k)} title={m.yakinda ? 'Kendi basamağında açılacak' : ''}
               onClick={() => (m.yakinda ? yakinda(`${m.ad} — kendi basamağında açılacak`) : ac(m.k))}>
               <span style={{ fontSize: 18, width: 24 }}>{m.i}</span><span style={{ flex: 1 }}>{m.ad}</span>{m.yakinda && <small style={{ opacity: 0.7 }}>yakında</small>}
               {m.rozet > 0 && <span className="sp-rozet" style={{ background: C.yesil }} title={m.k === 'gonderilecek' ? `${m.rozet} kalem hazırlanıp gönderilecek` : `${m.rozet} paket kabul bekliyor`}>{m.rozet}</span>}
@@ -334,7 +338,7 @@ export default function SubePaneli({ subeId }) {
             <b style={{ fontSize: 16 }}>💵 Kasa Devri</b><span style={{ color: C.soluk, fontSize: 12 }}>Vardiya nakit teslim & devir</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: devirEtiket(devir, !!d?.kapanis_var).renk }}>{devirEtiket(devir, !!d?.kapanis_var).metin}</span>
           </button>
-          <button className="sp-kart" disabled={d.kapanis_var && !dunTaslak} onClick={() => { if (d.kapanis_merkezde && !window.confirm(`Bu günün kapanışı ${d.kapanis_merkezde}'de merkeze gönderildi; merkez işleyecek. Yine de yeniden doldurmak istiyor musun?`)) return; ac('kapanis'); }} style={{ textAlign: 'left', cursor: d.kapanis_var && !dunTaslak ? 'default' : 'pointer', minHeight: 78, opacity: d.kapanis_var && !dunTaslak ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4,
+          <button className="sp-kart" disabled={d.kapanis_var && !dunTaslak} onClick={async () => { if (d.kapanis_merkezde && !(await sor({ soru: `Bu günün kapanışı ${d.kapanis_merkezde}'de merkeze gönderildi — merkez işleyecek`, alt: 'Yeniden doldurursan merkez yeni formu görür.', tamam: 'Yeniden doldur', iptal: 'Gerek yok' }))) return; ac('kapanis'); }} style={{ textAlign: 'left', cursor: d.kapanis_var && !dunTaslak ? 'default' : 'pointer', minHeight: 78, opacity: d.kapanis_var && !dunTaslak ? 0.6 : 1, color: C.yazi, font: 'inherit', display: 'grid', gap: 4,
             background: 'linear-gradient(135deg,rgba(76,29,149,.5),rgba(124,58,237,.35))' }}>
             <b style={{ fontSize: 16 }}>🌙 Günü Kapat</b><span style={{ color: C.soluk, fontSize: 12 }}>Ciro, stok & kapanış protokolü</span>
             <span style={{ fontSize: 12, fontWeight: 700, color: d.kapanis_var ? C.yesil : d.kapanis_merkezde ? C.mavi : C.soluk }}>
@@ -349,6 +353,8 @@ export default function SubePaneli({ subeId }) {
         <button onClick={() => setGiderAcik(true)}><span style={{ fontSize: 20, display: 'block' }}>💸</span><span style={{ fontSize: 11 }}>Gider</span></button>
         <button onClick={() => ac('not')}><span style={{ fontSize: 20, display: 'block' }}>📝</span><span style={{ fontSize: 11 }}>Not</span></button>
         <button onClick={() => yakinda('Mesajlar kendi basamağında açılacak')}><span style={{ fontSize: 20, display: 'block' }}>📩</span><span style={{ fontSize: 11 }}>Mesaj</span></button>
+        {/* Ü-2: < 1024'te yüzen QR yerine (CSS .sp-alt-qr) — aynı büyük QR penceresi */}
+        <button className="sp-alt-qr" disabled={!tabletVar || !yok.var} onClick={() => setQrBuyuk(true)}><span style={{ fontSize: 20, display: 'block' }}>📱</span><span style={{ fontSize: 11 }}>{kapali ? 'QR · yalnız çıkış' : 'QR'}</span></button>
       </div>
 
       {avansT && (
@@ -399,7 +405,7 @@ export default function SubePaneli({ subeId }) {
       )}
 
       {tabletVar && yok.var && !qrBuyuk && !kapiAcik && sekme !== 'ana' && (   /* G4: ana sayfada tek QR (kartta) */
-        <div style={{ position: 'fixed', right: 12, bottom: 70, zIndex: 40, padding: 6, borderRadius: 14, background: C.bg1, border: `1px solid ${C.cizgi}` }}>
+        <div className="sp-qr-yuzen" style={{ position: 'fixed', right: 12, bottom: 70, zIndex: 40, padding: 6, borderRadius: 14, background: C.bg1, border: `1px solid ${C.cizgi}` }}>
           <TabletQR boyut={110} onClick={() => setQrBuyuk(true)} />
         </div>
       )}

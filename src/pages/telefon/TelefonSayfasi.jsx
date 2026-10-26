@@ -19,6 +19,44 @@ const CSS = `
 .tq-not{color:${T.metin2};font-size:14px} .tq-silik{color:${T.silikOkunur};font-size:13px}
 `;
 
+// 🗨️ SOR — telefonda sayfa içi soru (K-1 · 26 Eki · L4b Opus A + Fable A / Codex B → A): window.confirm telefonda/simde görünmüyordu.
+// Merkez (KasaModulu) ve panel (subepanel/ortak) sor() ile AYNI sözleşme: sor({ soru, alt, tamam, iptal }) → true|false.
+let sorDinle = null;
+function sor(o) {
+  return new Promise((coz) => {
+    if (!sorDinle) { coz(window.confirm(o.soru)); return; }   // eslint-disable-line no-alert
+    sorDinle({ ...o, coz });
+  });
+}
+function SorKatmani() {
+  const [s, setS] = useState(null);
+  useEffect(() => {
+    sorDinle = (o) => setS((onceki) => { if (onceki) onceki.coz(false); return { ...o, cozuldu: false }; });
+    return () => { sorDinle = null; };
+  }, []);
+  const bitir = (v) => { if (!s || s.cozuldu) return; s.cozuldu = true; setS(null); s.coz(v); };
+  useEffect(() => {   // panel penceresiyle aynı koruma (Codex denetimi): Esc = Vazgeç · Enter onaylamaz
+    if (!s) return undefined;
+    const tus = (e) => {
+      if (e.key === 'Escape') { e.preventDefault(); bitir(false); }
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); }
+    };
+    window.addEventListener('keydown', tus, true);
+    return () => window.removeEventListener('keydown', tus, true);
+  });
+  if (!s) return null;
+  return (
+    <div role="dialog" aria-modal="true" aria-label={s.soru} style={{ position: 'fixed', inset: 0, zIndex: 50, background: 'rgba(42,36,30,.5)', display: 'flex', alignItems: 'flex-end', justifyContent: 'center', padding: 12 }}>
+      <div className="tq-kart" style={{ width: 'min(480px,100%)' }}>
+        <b style={{ fontSize: 19, lineHeight: 1.35 }}>{s.soru}</b>
+        {s.alt && <div className="tq-not">{s.alt}</div>}
+        <button type="button" className="tq-btn tq-ana" onClick={() => bitir(true)}>{s.tamam || 'Evet'}</button>
+        <button type="button" className="tq-btn tq-kucuk" onClick={() => bitir(false)}>{s.iptal || 'Vazgeç'}</button>
+      </div>
+    </div>
+  );
+}
+
 function Marka({ alt }) {
   return (
     <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -85,6 +123,7 @@ export default function TelefonSayfasi({ mod, davet, sube, jeton }) {
   return (
     <div className="tq">
       <style>{CSS}</style>
+      <SorKatmani />
       {mod === 'bagla' && <Bagla davet={davet} />}
       {mod === 'qr' && (onayKimligi() ? <OnayIslem sube={sube} jeton={jeton} onay={onayKimligi()} />
         : devirKimligi() ? <DevirIslem sube={sube} jeton={jeton} did={devirKimligi()} />
@@ -390,7 +429,7 @@ function OnayIslem({ sube, jeton, onay }) {
             )}
             {!girisGerek && ozet.tur === 'kapanis' && (ben?.yapabilir || []).includes('cikis') && (<>
               <div className="tq-not">Kapanışı sen yapmıyorsan onaylama — yalnız çıkışını yap:</div>
-              <button className="tq-btn tq-kucuk" disabled={mesgul || !konumHazir} onClick={() => { if (window.confirm('Kapanışı SEN yapmıyorsun — yalnız çıkışın yazılsın mı?')) yap('cikis'); }}>{yazi('cikis', '🚪 Sadece çıkış yap')}</button>
+              <button className="tq-btn tq-kucuk" disabled={mesgul || !konumHazir} onClick={async () => { if (await sor({ soru: 'Kapanışı SEN yapmıyorsun — yalnız çıkışın yazılsın mı?', alt: 'Kapanışçı olarak kaydedilmezsin.', tamam: '🚪 Evet, yalnız çıkış', iptal: 'Vazgeç' })) yap('cikis'); }}>{yazi('cikis', '🚪 Sadece çıkış yap')}</button>
             </>)}
           </>)}
         </div>

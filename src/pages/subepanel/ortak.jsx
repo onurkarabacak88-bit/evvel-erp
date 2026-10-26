@@ -35,7 +35,9 @@ export const CSS = `
 .sp-cip{display:inline-flex;align-items:center;gap:6px;padding:8px 12px;border-radius:999px;border:1px solid ${C.cizgi};background:${C.bg2};color:${C.soluk};font-weight:700;cursor:pointer;font:inherit}
 @media (max-width:980px){.sp-govde{grid-template-columns:1fr 280px} .sp-sol-kolon{grid-column:1/-1;display:flex;flex-wrap:wrap;gap:6px} .sp-sol-kolon .sp-sol{width:auto;flex:0 0 auto} .sp-sol-kolon .sp-sol-baslik{width:100%}}
 @media (max-width:768px){.sp-govde{grid-template-columns:1fr} .sp-sag-kolon{display:none} .sp-alt{height:62px}}
-`;
+.sp-alt-qr{display:none}
+@media (max-width:1023px){.sp-qr-yuzen{display:none} .sp-alt{grid-template-columns:repeat(5,1fr)} .sp-alt .sp-alt-qr{display:block;color:${C.turuncu}}}
+`;   // Ü-2 (26 Eki · L4b Opus + Fable + Codex: B): dar ekranda yüzen QR "Onayla"yı / sağ kartları örtüyordu → < 1024'te alt çubukta "📱 QR"
 
 // 💾 TASLAK (tablette) — TEK kaynak (Dalga 5, F#53: 7 ekran ayrı try/JSON yazıyordu; Ürün aç / Tedarikçi / Sipariş / Depodan gelen
 // taslakları hiç temizlenmiyordu, Depodan gelen anahtarı günsüzdü). Anahtar: sp_taslak:{şube}:{iş günü | depo_kabul}:{form}.
@@ -82,6 +84,56 @@ export function Modal({ baslik, kapat, children, genis, genislik }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><b style={{ fontSize: 20, flex: 1 }}>{baslik}</b>
           {kapat && <button className="sp-btn" style={{ minHeight: 48, padding: '4px 14px' }} onClick={kapat}>✕</button>}</div>
         {children}
+      </div>
+    </div>
+  );
+}
+
+// 🗨️ SOR — panel sayfa içi soru penceresi (K-1 · 26 Eki · L4b Opus A + Fable A / Codex B → A): window.confirm dokunmatikte ve simde
+// görünmüyordu. Merkez KasaModulu sor() ile AYNI sözleşme: sor({ soru, vurgu, alt, tamam, iptal }) → true|false;
+// secenekler: [{ deger, yazi, ana }] verilirse seçilen deger | null (Vazgeç hiçbir şey açmaz).
+// <SorKatmani /> panel kabuğunda (SubePaneli) bir kez; takılı değilse tarayıcı penceresine düşer (merkezle aynı yedek).
+// Perdeye dokunmak kapatmaz (telaşta yanlış dokunuş) · Esc = Vazgeç · Enter onaylamaz · her soru bir kez çözülür.
+let sorDinle = null;
+export function sor(o) {
+  return new Promise((coz) => {
+    if (!sorDinle) { coz(o.secenekler ? null : window.confirm(o.soru)); return; }   // eslint-disable-line no-alert
+    sorDinle({ ...o, coz });
+  });
+}
+export function SorKatmani() {
+  const [s, setS] = useState(null);
+  const kutu = useRef(null);
+  useEffect(() => {
+    sorDinle = (o) => setS((onceki) => { if (onceki) onceki.coz(onceki.secenekler ? null : false); return { ...o, cozuldu: false }; });
+    return () => { sorDinle = null; };
+  }, []);
+  const bitir = (v) => { if (!s || s.cozuldu) return; s.cozuldu = true; setS(null); s.coz(v); };
+  useEffect(() => {
+    if (!s) return undefined;
+    kutu.current?.focus();
+    const tus = (e) => {   // sayfanın tamamında (perdeye dokunulunca odak pencereden çıksa da) — yakalama evresinde, sihirbaz Enter'ı görmez
+      if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); bitir(s.secenekler ? null : false); }
+      if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); }   // Enter HİÇ onaylamaz (Codex denetimi): çift Enter soruyu okumadan geçmesin — seçim dokunarak / fareyle
+    };
+    window.addEventListener('keydown', tus, true);
+    return () => window.removeEventListener('keydown', tus, true);
+  });
+  if (!s) return null;
+  const vazgec = s.secenekler ? null : false;
+  return (
+    <div role="dialog" aria-modal="true" aria-label={s.soru} style={{ position: 'fixed', inset: 0, zIndex: 200, background: 'rgba(0,0,0,.72)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 12 }}>
+      <div ref={kutu} tabIndex={-1} className="sp-kart" style={{ width: 'min(560px,100%)', display: 'grid', gap: 14, outline: 'none' }}>
+        <b style={{ fontSize: 20, lineHeight: 1.35, whiteSpace: 'pre-line' }}>{s.soru}</b>
+        {s.vurgu && <div style={{ fontSize: 32, fontWeight: 800, color: C.kirmizi }}>{s.vurgu}</div>}
+        {s.alt && <div style={{ color: C.soluk, fontSize: 15, whiteSpace: 'pre-line' }}>{s.alt}</div>}
+        {(s.secenekler || []).map((x) => (
+          <button key={x.deger} type="button" className={'sp-btn' + (x.ana ? ' sp-ana' : '')} style={{ textAlign: 'left' }} onClick={() => bitir(x.deger)}>{x.yazi}</button>
+        ))}
+        <div style={{ display: 'grid', gridTemplateColumns: s.secenekler ? '1fr' : '1fr 1fr', gap: 10 }}>
+          <button type="button" className="sp-btn" onClick={() => bitir(vazgec)}>{s.iptal || 'Vazgeç'}</button>
+          {!s.secenekler && <button type="button" className="sp-btn sp-ana" onClick={() => bitir(true)}>{s.tamam || 'Evet'}</button>}
+        </div>
       </div>
     </div>
   );

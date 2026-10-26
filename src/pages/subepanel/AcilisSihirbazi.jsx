@@ -3,7 +3,7 @@
 // sunucu açılışı ONAYLAYANIN adına yazar (S17: girişli herhangi bir personel). Tak-çıkar: yalnız props; sunucu uçları panel modülünde.
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, qrBoyut, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, useSihirbazKlavye, yeniIstek } from './ortak';
+import { C, qrBoyut, sayi, sor, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, useSihirbazKlavye, yeniIstek } from './ortak';
 import { paraGecerli } from '../../utils/trSayi';
 
 const ICO = ['', '💰', '🥤', '📦', '🍰', '📱'];
@@ -115,12 +115,13 @@ export default function AcilisSihirbazi({ d, subeId, tabletVar, kapatilabilir, k
   // başka yoldan (ikinci sekme / telefon) açılış yazıldıysa
   useEffect(() => { if (d.acilis_var && !basari) basariGoster(); }, [d.acilis_var]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ileri = () => {
+  const ileri = async () => {
     setHata('');
     if (adim === 1) {
       if (kasa === '') { setHata('Kasa sayımı girin'); return; }
       if (!paraGecerli(kasa)) { setHata('Kasa sayımı için geçerli değer girin'); return; }
-      if (tutarNum(kasa) >= 100000 && !window.confirm(`Kasa ${tl(tutarNum(kasa))} — 100.000 ₺ üstü. Sayıyı yeniden kontrol et; doğru mu?`)) return;   // B11: sabit sınır (önceki tutarla ilgisi yok — kör sayım bozulmaz)
+      if (tutarNum(kasa) >= 100000 && !(await sor({ soru: 'Kasa 100.000 ₺ üstü — sayıyı yeniden kontrol et', vurgu: tl(tutarNum(kasa)),
+        tamam: `${tl(tutarNum(kasa))} doğru, devam`, iptal: 'Yeniden sayacağım' }))) return;   // B11: sabit sınır (önceki tutarla ilgisi yok — kör sayım bozulmaz) · K-1 panel penceresi
       git(2); return;
     }
     if (adim === 2) { if (zorunlu(bardaklar)) git(3); return; }

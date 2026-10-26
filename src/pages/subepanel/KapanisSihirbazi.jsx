@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { CSS_AW, saatOncesi, trSaat } from './AcilisSihirbazi';
-import { C, qrBoyut, sayi, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, useSihirbazKlavye, yeniIstek } from './ortak';
+import { C, qrBoyut, sayi, sor, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, useSihirbazKlavye, yeniIstek } from './ortak';
 import { gunKaydir } from '../../utils/trTarih';
 import { paraGecerli } from '../../utils/trSayi';
 
@@ -100,7 +100,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
       .catch(() => { /* Codex: sorgu hatası başarıyı kilitlemez — onay sorgusu sürer, uyarı gelince gösterilir */ });
   }, [d.kapanis_var]);   // eslint-disable-line react-hooks/exhaustive-deps
 
-  const ileri = () => {
+  const ileri = async () => {
     setHata('');
     if (adim === 1) {   // eski kapNext1 doğrulamaları AYNEN
       for (const [k, ad] of [['nakit', 'Nakit'], ['pos', 'POS'], ['online', 'Online']]) {
@@ -109,7 +109,8 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
       if (v.kor === '' || !paraGecerli(v.kor)) { setHata('Çekmecedeki TÜM parayı sayıp girin (teslim etmeden önce, kör sayım)'); return; }
       if (v.birakilan === '' || !paraGecerli(v.birakilan)) { setHata('Kasada bırakılan (devir) tutarı zorunlu'); return; }
       const buyuk = ['kor', 'birakilan', 'nakit'].filter((x) => tutarNum(v[x]) >= 100000);   // B11: sabit sınır, kör sayımı delmez
-      if (buyuk.length && !window.confirm('100.000 ₺ üstü tutar var (' + buyuk.map((x) => tl(tutarNum(v[x]))).join(', ') + ') — sayıyı yeniden kontrol et; doğru mu?')) return;
+      if (buyuk.length && !(await sor({ soru: '100.000 ₺ üstü tutar var — sayıyı yeniden kontrol et', vurgu: buyuk.map((x) => tl(tutarNum(v[x]))).join(' · '),
+        tamam: 'Doğru, devam', iptal: 'Yeniden sayacağım' }))) return;   // K-1 panel penceresi (window.confirm dokunmatikte görünmüyordu)
       const n = tutarNum(v.nakit), p = tutarNum(v.pos), o = tutarNum(v.online);
       if (o > 0 && n > 0 && p > 0 && Math.abs(o - (n + p)) < 0.5) { setHata('Online alanı nakit+POS toplamına eşit olamaz. Online satış yoksa 0 bırakın.'); return; }
       if (n + p + o <= 0) { setHata('En az bir ciro tutarı girin'); return; }
@@ -283,6 +284,10 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
                   <div>🥤 {bardaklar.map((u) => `${u.ad} ${sayim[u.id]}`).join(' · ') || '—'}</div>
                   <div>📦 {digerleri.map((u) => `${u.ad} ${sayim[u.id]}`).join(' · ') || '—'}</div>
                   <div>🍰 Pasta <b>{v.pasta}</b></div>
+                  {/* F1.10 (sim 25 Eki): değirmen sayacı girildiyse özette de görünsün (yazılan ama gösterilmeyen alan kalmasın) */}
+                  {Object.values(v.deg || {}).some((x) => x !== '') && (
+                    <div>◈ Değirmen {[['gunluk', 'bugün'], ['doz1', 'Doz I'], ['doz2', 'Doz II'], ['doz3', 'Doz III']].filter(([k]) => (v.deg?.[k] ?? '') !== '').map(([k, ad]) => `${ad} ${v.deg[k]}`).join(' · ')}</div>
+                  )}
                 </div>
                 {/* sahip ekran denemesi 23 Eki: "X rapor yazan yerin rengi daha belirgin olsun" — işaretsizken sarı uyarı kutusu, işaretliyken yeşil */}
                 <label style={{ display: 'flex', alignItems: 'center', gap: 12, alignSelf: 'stretch', fontWeight: 800, fontSize: 17, minHeight: 60,

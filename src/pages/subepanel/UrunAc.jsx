@@ -104,6 +104,9 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
 
   return (
     <div style={{ display: 'grid', gap: 12, alignContent: 'start', ...(flas ? { boxShadow: `0 0 0 4px ${C.yesil}`, borderRadius: 14, transition: 'box-shadow .3s' } : {}) }}>
+      {/* hero — Ü-1 (sim 25 Eki): yapışkan şeridin ÜSTÜNDE (altında kalınca kaydırırken başlığın üst yarısı şeridin altına giriyordu; Fire ile aynı sıra) */}
+      <Hero ikon="🔓" baslik="Ürün Aç — Aktif Kullanıma Al" alt="Depodan bara/sahaya çıkan ürünleri sayın · Personel + PIN onayda istenir"
+        zemin="linear-gradient(135deg,rgba(6,78,59,.75),rgba(16,185,129,.3))" cerceve="rgba(34,197,94,.35)" renk="#86efac" />
       {/* yapışkan onay çubuğu — G41 (sim 23 Eki): HEP yerinde (seçim yokken soluk); ilk + dokunuşunda belirip sayfayı itiyordu → ikinci dokunuş kayıyordu */}
       <div className="sp-kart" style={{ position: 'sticky', top: 0, zIndex: 5, display: 'grid', gap: 6, borderColor: kalem ? C.yesil : undefined }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -111,9 +114,6 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
           <button className="sp-btn sp-yesil" disabled={!kalem || kapali || mesgul} style={kalem ? undefined : { opacity: 0.35 }} onClick={onayAc}>Onayla →</button>   {/* G12: kısa yazı; kişi + PIN açılan pencerede */}
         </div>
       </div>
-      {/* hero */}
-      <Hero ikon="🔓" baslik="Ürün Aç — Aktif Kullanıma Al" alt="Depodan bara/sahaya çıkan ürünleri sayın · Personel + PIN onayda istenir"
-        zemin="linear-gradient(135deg,rgba(6,78,59,.75),rgba(16,185,129,.3))" cerceve="rgba(34,197,94,.35)" renk="#86efac" />
       {kapali && <div className="sp-kart" style={{ color: C.soluk, fontWeight: 700 }}>🔒 Gün kapandı — Ürün Aç yapılamaz</div>}
       {mesaj === 'taslak' && kalem > 0 && (
         <div className="sp-kart" style={{ borderColor: C.sari, color: C.sari, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
