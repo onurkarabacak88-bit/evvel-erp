@@ -145,9 +145,11 @@ function GunlukDokum() {
                   <thead><tr><th style={{ textAlign: 'left' }}>Kalem</th><th>Sabah</th><th>Giren</th><th>Akşam</th><th>Kullanılan</th><th>Fire</th><th>Satılan</th></tr></thead>
                   <tbody>{s.kalemler.map((k) => (
                     <tr key={k.urun || k.kod}>
-                      <td style={{ textAlign: 'left' }}>{k.ad}{k.devir_fark ? <span style={{ color: R.amber }} title="dün akşamdan bu sabaha fark"> · gece {k.devir_fark > 0 ? '+' : ''}{k.devir_fark}</span> : ''}</td>
+                      <td style={{ textAlign: 'left' }}>{k.ad}{k.devir_fark ? (k.kayitsiz_giris
+                        ? <span style={{ color: R.amber }} title="sabah vitrinde var, o gün kabul / teslim kaydı yok"> · kaydı girilmemiş +{k.devir_fark}</span>
+                        : <span style={{ color: R.amber }} title="dün akşamdan bu sabaha fark"> · gece {k.devir_fark > 0 ? '+' : ''}{k.devir_fark}</span>) : ''}</td>
                       <td style={num}>{k.sabah ?? '—'}</td><td style={num}>{k.giren || ''}</td><td style={num}>{k.aksam ?? '—'}</td>
-                      <td style={{ ...num, color: k.kullanilan < 0 ? R.kirmizi : undefined }}>{k.kullanilan == null ? '—' : k.kullanilan < 0 ? `${k.kullanilan} (ürün aç eksik?)` : k.kullanilan}</td>
+                      <td style={{ ...num, color: k.kullanilan < 0 ? R.kirmizi : undefined }}>{k.kullanilan == null ? '—' : k.kullanilan < 0 ? `${k.kullanilan} (${k.kayitsiz_giris ? 'kabul kaydı yok?' : 'ürün aç eksik?'})` : k.kullanilan}</td>
                       <td style={{ ...num, color: k.fire ? R.amber : undefined }}>{k.fire || ''}</td>
                       <td style={{ ...num, fontWeight: 700 }}>{k.satilan ?? '—'}</td>
                     </tr>))}</tbody>

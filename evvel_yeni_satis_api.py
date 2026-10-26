@@ -620,7 +620,8 @@ def satis_gun(gun: Optional[str] = None):
             net = k.get("net_eksilme")
             kalemler.append({"kod": kk_, "urun": k["kod"], "ad": k["ad"], "sabah": k.get("acilis"), "giren": (k.get("gun_ici_ac") or 0),
                              "aksam": k.get("kapanis"), "kullanilan": net, "fire": f_,
-                             "satilan": (net - f_) if net is not None else None, "devir_fark": k.get("devir_fark")})
+                             "satilan": (net - f_) if net is not None else None, "devir_fark": k.get("devir_fark"),
+                             "kayitsiz_giris": bool(k.get("acilis_bilgi"))})   # F5.1: pasta +N = kaydı girilmemiş pasta, gece farkı değil
         kr = next((x for x in kontrol.get(sid, {}).get("gunler", []) if x["gun"] == g_), {})
         c = kap.get(sid)
         ciro = round(c["nakit"] + c["pos"] + c["online"], 2) if c else None

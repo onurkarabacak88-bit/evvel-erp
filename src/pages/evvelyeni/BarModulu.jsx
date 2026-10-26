@@ -45,10 +45,12 @@ export default function BarModulu() {
       ad: 'Kalem kalem',
       kolonlar: [{ ad: 'Kalem' }, { ad: 'Dün akşam', sag: true }, { ad: 'Gece açılan', sag: true }, { ad: 'Bu sabah', sag: true }, { ad: 'Devir farkı', sag: true },
         { ad: 'Gün içi açılan', sag: true }, { ad: 'Akşam', sag: true }, { ad: 'Net eksilme', sag: true }],
-      satirlar: g.kalemler.map((k) => [k.ad, k.dun_kapanis ?? '—', k.gece_ac || '', k.acilis ?? 'sayılmadı',
+      // R8-2 (F5.1 · sim 26 Eki): pasif ürün o gün sayılmadıysa satır yok (Satış kontrolüyle aynı kural) · R8-1: pasta sabah sayımı yalnız bilgi
+      satirlar: g.kalemler.filter((k) => !(k.pasif && k.acilis == null && k.kapanis == null && !k.gun_ici_ac)).map((k) => [k.ad, k.dun_kapanis ?? '—', k.gece_ac || '',
+        k.acilis_bilgi ? (k.acilis == null ? '—' : `${k.acilis} (vitrin, bilgi)`) : (k.acilis ?? 'sayılmadı'),
         k.devir_fark ? { t: isaret(k.devir_fark), renk: k.devir_fark < 0 ? R.kirmizi : R.amber, kalin: true } : (k.devir_fark === 0 ? '0' : '—'),
         k.gun_ici_ac || '', k.kapanis ?? 'sayılmadı',
-        k.net_eksilme == null ? '—' : k.net_eksilme < 0 ? { t: `${fmt(k.net_eksilme)} · ürün aç eksik?`, renk: R.kirmizi, kalin: true } : fmt(k.net_eksilme)]),
+        k.net_eksilme == null ? '—' : k.net_eksilme < 0 ? { t: `${fmt(k.net_eksilme)} · ${k.acilis_bilgi ? 'kabul başka güne girilmiş?' : 'ürün aç eksik?'}`, renk: R.kirmizi, kalin: true } : fmt(k.net_eksilme)]),
     },
   });
 

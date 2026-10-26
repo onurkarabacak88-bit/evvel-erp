@@ -284,10 +284,29 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
             else:
                 gun_ici = bos()
             gece = ac_topla(sid, dkap["ts"], acil["ts"]) if (dkap and acil) else bos()
+            # F5.1 R8-1 (sim 26 Eki · Opus + Fable C): pasta sabah açılıştan ÖNCE gelir ama kabul kaydı çoğu kez açılıştan SONRA girilir →
+            # açılış anı kesimi pastada sahte devir farkı + çift eksilme veriyordu. Pasta: dün kapanış + O İŞ GÜNÜ gelen − bugün kapanış;
+            # devir farkı yok (açılış pasta sayımı yalnız bilgi). Dün kapanışı yoksa hesaplanmaz (açılışa geri düşülmez — çift sayım döner).
+            pasta_gelen = sum(x[3] for x in ac.get(sid, []) if x[2] == "pasta" and str(x[1])[:10] == g.isoformat())
             for k, ad in kalemler:
                 a = A.get(k) if A else None
                 kk = K.get(k) if K else None
                 dk = DK.get(k) if DK else None
+                if k == "pasta":
+                    # Fable: dün kapalıysa (B84, dkap_gun) eski kapanıştan bugüne arada atılan pasta neti şişirir → hesaplanmaz
+                    net = (dk + pasta_gelen - kk) if (dk is not None and kk is not None and not dkap_gun) else None
+                    # kaydı hiç girilmemiş pasta sinyali korunur: sabah vitrinde, dün kapanış + O GÜN GELEN'den FAZLA pasta varsa (+N);
+                    # gün içinde sonra gelen ikinci teslimat eksi fark üretmesin diye yalnız ARTI fark gösterilir
+                    pdev = (a - dk - pasta_gelen) if (a is not None and dk is not None) else None
+                    pdev = pdev if (pdev or 0) > 0 else None
+                    if pdev:
+                        gun["devir_fark"] += 1
+                    gun["kalemler"].append({"kod": k, "ad": ad, "anahtar": anahtar_of[k], "pasif": False, "dun_kapanis": dk, "gece_ac": None,
+                                            "acilis": a, "acilis_bilgi": True, "devir_fark": pdev, "gun_ici_ac": pasta_gelen, "kapanis": kk,
+                                            "net_eksilme": net, "ac_eksik": (-net if net is not None and net < 0 else 0)})
+                    if net is not None and net < 0:
+                        gun["ac_eksik"] += 1
+                    continue
                 net = (a + gun_ici[k] - kk) if (a is not None and kk is not None) else None
                 devir = (a - (dk + gece[k])) if (a is not None and dk is not None) else None
                 gun["kalemler"].append({"kod": k, "ad": ad, "anahtar": anahtar_of[k], "pasif": not aktif.get(k, True), "dun_kapanis": dk, "gece_ac": gece[k], "acilis": a,
@@ -311,7 +330,9 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
             "uyari": None if pasta_id else "Katalogda 'gününde tüketilir' işaretli ürün yok — pasta girişi sayılamıyor (Ürün kataloğu)",
             "not": "YENİ PANEL — tezgah sayımı (açılış/kapanış) + Ürün Aç'ta bara açılan + pasta kabulü. Devir farkı = bugün açılış − "
                    "(dün kapanış + gece giren). Net eksilme = açılış + gün içi giren − kapanış (satış + fire + ikram; kayıp değildir). "
-                   "Eksiye düşerse Ürün Aç girilmemiş olabilir. Sayım gideri ve kasayı değiştirmez."}
+                   "Eksiye düşerse Ürün Aç girilmemiş olabilir. PASTA: dün kapanış + o iş günü gelen (kabul / teslim) − kapanış; "
+                   "devir farkı yalnız ARTI = sabah vitrinde, kaydı o gün hiç girilmemiş pasta (kabul açılıştan sonra girilse de sahte fark çıkmaz). Pasta eksiye düşerse "
+                   "kabul kaydı başka güne girilmiş olabilir. Sayım gideri ve kasayı değiştirmez."}
 
 
 @router.get("/ozet")
