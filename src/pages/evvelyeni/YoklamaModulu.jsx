@@ -346,23 +346,25 @@ function DevirSatir({ s, duz, setDuz, mesgul, yap }) {
           </span>
         )}
         {(['tutmadi', 'tutmuyor'].includes(s.durum) || (s.durum === 'tamam' && s.vekil)) && !s.gorulen && <Dugme kucuk ana disabled={mesgul[s.id]} onClick={() => yap(s.id, `/evvel-yeni/yoklama/devir/${s.id}/gorundu`, {})}>Gördüm</Dugme>}
-        {(['tutmadi', 'tutmuyor'].includes(s.durum) || (s.durum === 'tamam' && s.vekil)) && s.gorulen && <span style={{ fontSize: 12, color: R.not }}>görüldü: {s.gorulen}</span>}
+        {(['tutmadi', 'tutmuyor'].includes(s.durum) || (s.durum === 'tamam' && s.vekil)) && s.gorulen && <span style={{ fontSize: 12, color: R.not, whiteSpace: 'nowrap' }} title={`görüldü: ${s.gorulen}`}>görüldü ✓</span>}
       </td>
-      <td style={num}>{s.sayilan == null ? '—' : tlYazi(s.sayilan)}
-        {s.devralan_sayilan != null && <div style={{ fontSize: 12, color: s.fark ? R.kirmizi : R.not }}>devralan: {tlYazi(s.devralan_sayilan)}{s.fark ? ` · fark ${s.fark > 0 ? '+' : ''}${tlYazi(s.fark)}` : ''}</div>}
-        {s.fark_kalem?.length ? <div style={{ fontSize: 12, color: R.kirmizi }}>tutmayan: {s.fark_kalem.join(', ')}</div> : null}
-        {s.tur1 ? <div style={{ fontSize: 12, color: R.amber }} title="1. sayım tutmadı → birlikte yeniden sayıldı">1. sayım: devreden {tlYazi((s.tur1.devreden?.kasa ?? 0) / 100)} · devralan {tlYazi((s.tur1.devralan?.kasa ?? 0) / 100)}{s.tur1.fark_kalem?.length ? ` · tutmayan: ${s.tur1.fark_kalem.join(', ')}` : ''}</div> : null}</td>
+      {/* R5-2/3 yeniden (sim 26 Eki, 1280 ölçüm): hücre 4 satırdı (satır 145 px, tablo 1.254 / 944 px taşıyordu) → tek satır tutar + tutmayan; 1. sayım üzerine gelince */}
+      <td style={{ ...num, whiteSpace: 'nowrap' }} title={s.tur1 ? `1. sayım tutmadı → birlikte yeniden sayıldı
+1. sayım: devreden ${tlYazi((s.tur1.devreden?.kasa ?? 0) / 100)} · devralan ${tlYazi((s.tur1.devralan?.kasa ?? 0) / 100)}${s.tur1.fark_kalem?.length ? ` · tutmayan: ${s.tur1.fark_kalem.join(', ')}` : ''}` : undefined}>
+        {s.sayilan == null ? '—' : tlYazi(s.sayilan)}{s.devralan_sayilan != null && <> → {tlYazi(s.devralan_sayilan)}{s.fark ? <b style={{ color: R.kirmizi }}> · fark {s.fark > 0 ? '+' : ''}{tlYazi(s.fark)}</b> : null}</>}
+        {(s.fark_kalem?.length || s.tur1) ? <div style={{ fontSize: 12, color: s.fark_kalem?.length ? R.kirmizi : R.amber, whiteSpace: 'normal', maxWidth: 260 }}>{s.fark_kalem?.length ? `tutmayan: ${s.fark_kalem.join(', ')}` : ''}{s.tur1 ? `${s.fark_kalem?.length ? ' · ' : ''}2 sayım ⓘ` : ''}</div> : null}
+      </td>
       <td style={{ color: R.metin2, minWidth: 150, maxWidth: 220, fontSize: 12.5 }}
-        title={[s.urunler?.length ? s.urunler.map((u) => `${u.ad} ${u.sayilan}`).join(' · ') : '', s.pasta != null ? `pasta ${s.pasta}` : ''].filter(Boolean).join('\n')}>
-        {s.bardak?.length ? bardakOzet(s.bardak) : '—'}
+        title={[s.bardak?.length ? bardakOzet(s.bardak) : '', s.urunler?.length ? s.urunler.map((u) => `${u.ad} ${u.sayilan}`).join(' · ') : '', s.pasta != null ? `pasta ${s.pasta}` : ''].filter(Boolean).join('\n')}>{/* Codex: tek satıra kesilen bardak listesi de ipucunda */}
+        <div style={{ maxWidth: 170, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.bardak?.length ? bardakOzet(s.bardak) : '—'}</div>
         {(s.urunler?.length || s.pasta != null) ? <div style={{ fontSize: 11.5, color: R.not }}>+ ürün/pasta (üzerine gel)</div> : null}</td>{/* R5-2/3 (sim 25 Eki): uzun ürün listesi satırı uzatıp tabloyu taşırıyordu */}
-      <td style={{ ...num, color: R.not }} title="form · devretti · kabul">{s.panel || '—'} · {s.devreden_saat || '—'} · {s.devralan_saat || '—'}</td>
-      <td style={{ color: s.durum === 'tutmuyor' ? R.kirmizi : R.metin2, maxWidth: 220 }}>{s.not || '—'}</td>
+      <td style={{ ...num, color: R.not, whiteSpace: 'nowrap' }} title="form · devretti · kabul">{s.panel || '—'} · {s.devreden_saat || '—'} · {s.devralan_saat || '—'}</td>
+      <td style={{ color: s.durum === 'tutmuyor' ? R.kirmizi : R.metin2 }} title={s.not || undefined}><div style={{ maxWidth: 160, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{s.not || '—'}</div></td>
     </tr>
   );
 }
 
-const DEVIR_TH = ['Tarih', 'Şube', 'Devreden → Devralan', 'Durum', '', 'Sayılan (devreden · devralan)', 'Bardak', 'Başladı · devreden · devralan', 'Not'];   // G69: durum + düğme öne (1366'da ekranda kalsın)
+const DEVIR_TH = ['Tarih', 'Şube', 'Devreden → Devralan', 'Durum', '', 'Sayılan (devreden · devralan)', 'Bardak', 'Saatler', 'Not'];   // R5-3 yeniden: uzun başlık sütunu şişiriyordu — açılımı hücrenin ipucunda (form · devretti · kabul)   // G69: durum + düğme öne (1366'da ekranda kalsın)
 
 function DevirTablo({ satirlar, bos, ...p }) {
   return (
