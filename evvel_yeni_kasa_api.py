@@ -2210,7 +2210,7 @@ def yeni_donem(body: DonemBody, x_evvel_oturum: Optional[str] = Header(default=N
             "bekleyen_is": bekleyen}
 
 
-def _aktar(cur, kuru: bool, kim: str) -> dict:
+def _aktar(cur, kuru: bool, kim: str, son_aktarim: bool = False) -> dict:
     """1 Ekim'den bu yana şube kapanışlarını ve kasa teslimlerini Para İzi'ne aktarır.
     ESKİ TABLOLARA DOKUNMAZ (yalnız SELECT). kaynak_ref benzersiz → kaç kez çalışırsa
     çalışsın çift kayıt doğmaz. Varsayılan KURU: yazmadan ne olacağını söyler.
@@ -2328,7 +2328,7 @@ def _aktar(cur, kuru: bool, kim: str) -> dict:
                     cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(v2, ensure_ascii=False), h["id"]))
 
         from evvel_yeni_cekirdek import yeni_donem
-        if not yeni_donem(cur):   # 1 Kasım'dan sonra anlık gider yeni panelden (dukkan_gideri_yaz) — eski köprü çalışmaz
+        if son_aktarim or not yeni_donem(cur):   # 1 Kasım'dan sonra anlık gider yeni panelden; son aktarım Ekim'in son giderlerini bir kez alır
             rapor["dukkan_gideri"] = _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim)
 
         try:
@@ -3119,3 +3119,19 @@ def kaynak_refleri(cur, onek: str) -> list:
     cur.execute("""SELECT kaynak_ref, id IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal' AND veri ? 'hedef_id') AS iptal
                      FROM para_izi_hareket WHERE kaynak_ref LIKE %s""", (onek.replace("%", r"\%").replace("_", r"\_") + "%",))
     return [dict(r) for r in cur.fetchall() or []]
+
+
+# ✂️ 1 KASIM SON AKTARIM (Opus karar 3 · manifest 'kesim', ilk adım) — genel 'eski_gece_zinciri' anahtarı AÇILMAZ; 1 Kas 02:00 sonrası
+# eski panelin Ekim kapanış / teslim / dükkân giderleri + sayımları BİR KEZ (kaynak_ref benzersiz → çift kayıt yok). 31 Eki akşam kapanışı
+# böylece dükkân nakdine girer = 1 Kasım açılışının karşılığı. Sayılmış güne düşen / eşleşmeyen teslim YAZILMAZ, sayısı döner (elle).
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    _kilit(cur)
+    from evvel_yeni_cekirdek import panel_baslangic
+    if _baslangic(cur) >= panel_baslangic(cur):   # Fable 🔴 (2. parti): dönem geçişi önce yapılırsa Ekim hiç seçilmez, 0 kayıtla "yazıldı" olurdu
+        raise RuntimeError("Kasa yeni döneme geçmiş — son aktarım dönem geçişinden ÖNCE yapılmalı (Ekim kayıtları seçilemez)")
+    r = _aktar(cur, False, f"son aktarım (eski sistem) · {yazan}", son_aktarim=True)
+    ps = (_panel_sayimlari(cur, False, f"son aktarım (eski panel sayımı) · {yazan}").get("ozet") or {})
+    # Fable 3. parti 🟡 K7/K9: eski panelin mühürsüz / uyarılı kapanış işleri kesim yayınında kalkar — kaç tane "gördüm" bekliyor, sayı döner
+    uyari = len(_kapanis_deneme_isleri(cur, _yukle(cur)[1]))
+    return {**(r.get("ozet") or {}), "panel_sayim": ps.get("sayim", 0), "panel_sayim_farkli": ps.get("farkli", 0),
+            "eski_kapanis_uyarisi_bekleyen": uyari, "uyari": "Bekleyen işlerde eski kapanış uyarılarına 'gördüm' de" if uyari else None}

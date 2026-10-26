@@ -654,7 +654,7 @@ def hafta(pazartesi: Optional[str] = None):
                           "giris": p["giris"].isoformat() if p.get("giris") else None,
                           "cikis": p["cikis"].isoformat() if p.get("cikis") else None} for p in kisiler],
             "uyarilar": uyarilar,
-            "eski_kopya": pzt <= ESKI_KOPYA_SON and tablo_var(cur, "vardiya_atama"),
+            "eski_kopya": pzt <= ESKI_KOPYA_SON and tablo_var(cur, "vardiya_atama") and not ayar_oku(cur, "kesim_son:vardiya"),
             "son_islem": _son_islem(cur, pzt),
         }
 
@@ -942,6 +942,50 @@ class EskiBody(BaseModel):
     pazartesi: str
 
 
+def _eski_hafta_al(cur, kim: str, pzt: date) -> tuple:
+    """Eski ekrandaki BİR haftayı yeni plana al (dolu kişi-gün atlanır, alınan şubenin haftası yayın sayılır). Dönüş: (eski satırlar,
+    alınan, atlanan, şubeler). Düğme ve 1 Kasım son aktarımı aynı yolu kullanır."""
+    if not tablo_var(cur, "vardiya_atama"):
+        raise HTTPException(409, "Eski plan tablosu yok")
+    cur.execute("SELECT id FROM ey_vardiya_kalip")
+    kaliplar = {dict(r)["id"] for r in cur.fetchall() or []}
+    with savepoint(cur, "sp_ey_vardiya_eski"):
+        cur.execute("""SELECT a.personel_id::text AS pid, a.tarih, a.baslangic_saat AS bas, a.bitis_saat AS bit,
+                              a.slot_id::text AS slot_id, s.sube_id::text AS sube_id
+                         FROM vardiya_atama a JOIN vardiya_slot s ON s.id = a.slot_id
+                        WHERE a.tarih BETWEEN %s AND %s AND COALESCE(a.durum,'') <> 'iptal'
+                        ORDER BY a.tarih, a.baslangic_saat""", (pzt, pzt + timedelta(days=6)))
+        eski = [dict(r) for r in cur.fetchall() or []]
+    from evvel_yeni_tanim_api import tanim_listesi
+    ey_sube = {s["id"] for s in tanim_listesi(cur, "ey_sube", ("ad",))}
+    _hafta_kilidi(cur, pzt)
+    _kisi_kilitleri(cur, [r["pid"] for r in eski] + [r["personel_id"] for r in _satirlar(cur, pzt, pzt + timedelta(days=6))])
+    n, atla = 0, 0
+    subeler_ = set()
+    for r in eski:
+        if r["sube_id"] not in ey_sube:
+            atla += 1
+            continue
+        try:
+            with savepoint(cur, "sp_ey_vardiya_eski_satir"):
+                vid = _yaz(cur, pid=r["pid"], gun=r["tarih"], tur="calisma", kim=kim, sube_id=r["sube_id"], bas=r["bas"], bit=r["bit"],
+                           kalip_id=("vk-" + r["slot_id"]) if ("vk-" + str(r["slot_id"])) in kaliplar else None,
+                           kaynak="eski_kopya", sessiz=True)
+        except HTTPException:
+            vid = None   # personel Evvel Yeni'de yok
+        if vid:
+            n += 1
+            subeler_.add(r["sube_id"])
+        else:
+            atla += 1
+    _yayinli = _yayin_haritasi(cur, pzt, pzt)
+    _yayin_kilidi(cur, [s for s in subeler_ if (s, pzt) not in _yayinli], pzt)   # Codex P1: yeni yayın başkalarının taslağını da geçerli yapar
+    for s in subeler_:
+        cur.execute(f"""INSERT INTO ey_vardiya_yayin (sube_id, pazartesi, yayinlayan, zaman) VALUES (%s,%s,%s,{_an_sql()})
+                       ON CONFLICT (sube_id, pazartesi) DO NOTHING""", (s, pzt, f"{kim} (eski plan)"))
+    return eski, n, atla, subeler_
+
+
 @router.post("/eski-kopya")
 def eski_kopya(b: EskiBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Y4/R6: eski ekranda yazılmış haftayı BİR KEZ al (en geç 9 Kasım haftası). Yeni planda o kişi-gün dolu ise atlar; alınan
@@ -952,44 +996,9 @@ def eski_kopya(b: EskiBody, x_evvel_oturum: Optional[str] = Header(default=None)
         pzt = _pazartesi(_tarih(b.pazartesi))
         if pzt > ESKI_KOPYA_SON:
             raise HTTPException(409, "Eski plandan en geç 9 Kasım haftası alınır — sonrası yalnız burada yazılır")
-        if not tablo_var(cur, "vardiya_atama"):
-            raise HTTPException(409, "Eski plan tablosu yok")
-        cur.execute("SELECT id FROM ey_vardiya_kalip")
-        kaliplar = {dict(r)["id"] for r in cur.fetchall() or []}
-        with savepoint(cur, "sp_ey_vardiya_eski"):
-            cur.execute("""SELECT a.personel_id::text AS pid, a.tarih, a.baslangic_saat AS bas, a.bitis_saat AS bit,
-                                  a.slot_id::text AS slot_id, s.sube_id::text AS sube_id
-                             FROM vardiya_atama a JOIN vardiya_slot s ON s.id = a.slot_id
-                            WHERE a.tarih BETWEEN %s AND %s AND COALESCE(a.durum,'') <> 'iptal'
-                            ORDER BY a.tarih, a.baslangic_saat""", (pzt, pzt + timedelta(days=6)))
-            eski = [dict(r) for r in cur.fetchall() or []]
-        from evvel_yeni_tanim_api import tanim_listesi
-        ey_sube = {s["id"] for s in tanim_listesi(cur, "ey_sube", ("ad",))}
-        _hafta_kilidi(cur, pzt)
-        _kisi_kilitleri(cur, [r["pid"] for r in eski] + [r["personel_id"] for r in _satirlar(cur, pzt, pzt + timedelta(days=6))])
-        n, atla = 0, 0
-        subeler_ = set()
-        for r in eski:
-            if r["sube_id"] not in ey_sube:
-                atla += 1
-                continue
-            try:
-                with savepoint(cur, "sp_ey_vardiya_eski_satir"):
-                    vid = _yaz(cur, pid=r["pid"], gun=r["tarih"], tur="calisma", kim=kim, sube_id=r["sube_id"], bas=r["bas"], bit=r["bit"],
-                               kalip_id=("vk-" + r["slot_id"]) if ("vk-" + str(r["slot_id"])) in kaliplar else None,
-                               kaynak="eski_kopya", sessiz=True)
-            except HTTPException:
-                vid = None   # personel Evvel Yeni'de yok
-            if vid:
-                n += 1
-                subeler_.add(r["sube_id"])
-            else:
-                atla += 1
-        _yayinli = _yayin_haritasi(cur, pzt, pzt)
-        _yayin_kilidi(cur, [s for s in subeler_ if (s, pzt) not in _yayinli], pzt)   # Codex P1: yeni yayın başkalarının taslağını da geçerli yapar
-        for s in subeler_:
-            cur.execute(f"""INSERT INTO ey_vardiya_yayin (sube_id, pazartesi, yayinlayan, zaman) VALUES (%s,%s,%s,{_an_sql()})
-                           ON CONFLICT (sube_id, pazartesi) DO NOTHING""", (s, pzt, f"{kim} (eski plan)"))
+        if ayar_oku(cur, "kesim_son:vardiya"):
+            raise HTTPException(409, "Eski plan 1 Kasım son aktarımında alındı — düğme kapandı")
+        eski, n, atla, subeler_ = _eski_hafta_al(cur, kim, pzt)
         if not eski:
             raise HTTPException(409, "Eski ekranda bu hafta için plan yok")
         if not n:
@@ -1123,3 +1132,19 @@ def _bekleyen(cur, baglam: dict) -> list:
 
 
 bekleyen_is_kaydet("vardiya", _bekleyen)
+
+
+# ✂️ 1 KASIM SON AKTARIM (Opus karar 6 · manifest 'kesim') — eski ekrandaki 26 Eki–9 Kas haftaları BİR KEZ alınır, sonra düğme kapanır.
+# Çekirdek /kesim kendi savepoint'inde çağırır (kuruda geri alınır). Kesim yayınında eski okuyucu + düğme silinir.
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    vardiya_hazirla(cur)
+    if not tablo_var(cur, "vardiya_atama"):
+        return {"hafta": 0, "not": "eski plan tablosu yok"}
+    from evvel_yeni_cekirdek import panel_baslangic
+    pzt = _pazartesi(panel_baslangic(cur) - timedelta(days=6))   # 1 Kasım'ı içeren hafta (26 Eki)
+    out = {}
+    while pzt <= ESKI_KOPYA_SON:
+        eski, n, atla, sb = _eski_hafta_al(cur, f"{yazan} (son aktarım)", pzt)
+        out[pzt.strftime("%d.%m")] = f"{n} alındı / {atla} atlandı / {len(eski)} eski"
+        pzt += timedelta(days=7)
+    return {"haftalar": out}
