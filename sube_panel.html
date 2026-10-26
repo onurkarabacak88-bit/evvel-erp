@@ -7537,6 +7537,7 @@ async function depWizSubmit(gonderildi) {
     if (durum === 'var' && adet <= 0 && ist > 0) adet = ist;
     if (durum === 'yok') adet = 0;
     if (ist > 0 && adet > ist) adet = ist;
+    durum = depDurumAdettenBelirle(durum, adet, ist, gonderildi);
     return {
       urun_id: d.urun_id || null,
       urun_ad: d.urun_ad || null,
@@ -7551,18 +7552,15 @@ async function depWizSubmit(gonderildi) {
     return (dv==='var'||dv==='kismi') && Number(x.gonderilen_adet||0) > 0;
   });
   try {
-    if (gonderildi && !sevkVar) throw new Error('En az bir kalemde VAR veya KISMİ seçili olmalı.');
+    if (gonderildi && !sevkVar) throw new Error('Gönderilecek adet yok — en az bir kaleme adet yaz ya da VAR seç.');
     if (!gonderildi && sevkVar) throw new Error('Gönderilen kalem var — «Yola Çıkar» kullanın.');
-    if (kalemler.some(function(x){ return x.durum==='kismi' && Number(x.gonderilen_adet||0)<=0; })) {
-      throw new Error('KISMİ seçilen kalemlere adet girmelisiniz.');
-    }
   } catch(e) { panelToast('⚠️ ' + e.message, 5000); return; }
 
   var ozetHtml = kalemler.filter(function(x){
     return (x.durum==='var'||x.durum==='kismi') && Number(x.gonderilen_adet||0)>0;
   }).map(function(x){
     return '<div style="display:flex;justify-content:space-between;gap:12px;font-size:13px;padding:4px 0">' +
-      '<span>' + escHtml(x.urun_ad||'') + '</span><strong>×' + x.gonderilen_adet + '</strong></div>';
+      '<span>' + escHtml(x.urun_ad||'') + '</span><strong>×' + x.gonderilen_adet + (Number(x.istenen_adet||0) > Number(x.gonderilen_adet||0) ? ' <span style="color:#f59e0b">/ ' + x.istenen_adet + ' · ' + (Number(x.istenen_adet) - Number(x.gonderilen_adet||0)) + ' eksik</span>' : '') + '</strong></div>';
   }).join('');
 
   var modalRes = await pinOnayModalAc({
@@ -7985,7 +7983,17 @@ function buildDepoHazirlikHTML__UNUSED(depoHazirlik) {
   return h;
 }
 
-function depoKartKalemleriOku(tid, kart) {
+/* Sahip 26 Eki (canlı vaka: 40 süt istendi, depo 30 göndermeye kalktı, engellendi): "sipariş gidişine ASLA engel olunmasın".
+   Adet yazıldıysa durum ADETTEN belirlenir — VAR/KISMİ düğmesine basılmamış olsa da gider: istenen kadar → var, az → kısmi.
+   KISMİ seçilip adet yazılmadıysa hata değil, o kalem bekler. Fazlası (eski kural) istenene kırpılır. */
+function depDurumAdettenBelirle(durum, adet, ist, yolaCik) {
+  if (!yolaCik) return (durum === 'kismi' && adet <= 0) ? 'bekliyor' : (durum || 'bekliyor');   /* taslak: durum aynen, boş kısmi bekler */
+  if (durum === 'yok') return 'yok';
+  if (adet > 0) return (ist > 0 && adet < ist) ? 'kismi' : 'var';
+  if (durum === 'kismi') return 'bekliyor';
+  return durum || 'bekliyor';
+}
+function depoKartKalemleriOku(tid, kart, yolaCik) {
   var rows = Array.isArray(kart && kart.kalem_duzenle) ? kart.kalem_duzenle : [];
   return rows.map(function (k, i) {
     var rid = tid + '_' + i;
@@ -7995,9 +8003,8 @@ function depoKartKalemleriOku(tid, kart) {
     var gon = isNaN(gonRaw) ? 0 : gonRaw;
     if (durum === 'var' && gon <= 0 && ist > 0) gon = ist;
     if (durum === 'yok') gon = 0;
-    if (durum === 'kismi' && gon <= 0)
-      throw new Error((k.urun_ad || 'Kalem') + ' için kısmi adedi girin');
     if (ist > 0 && gon > ist) gon = ist;
+    durum = depDurumAdettenBelirle(durum, gon, ist, yolaCik);
     return {
       urun_id: k.urun_id || null,
       urun_ad: k.urun_ad || null,
@@ -8032,12 +8039,12 @@ function wireDepSevkiyatHandlers(depoHazirlik) {
     try {
       var kart = kartBul(tid);
       if (!kart) throw new Error('Talep kartı bulunamadı');
-      var kalemler = depoKartKalemleriOku(tid, kart);
+      var kalemler = depoKartKalemleriOku(tid, kart, gonderildi);
       if (!kalemler.length) throw new Error('En az bir kalem olmalı');
       var sevkVar = depoSevkSatirlariVarMi(kalemler);
       if (gonderildi) {
         if (!sevkVar) {
-          throw new Error('Yola çıkarmak için en az bir kalemde var/kısmi ve gönderilen adet girin.');
+          throw new Error('Gönderilecek adet yok — en az bir kaleme adet yaz ya da VAR seç.');
         }
       } else if (sevkVar) {
         throw new Error(
@@ -8056,7 +8063,7 @@ function wireDepSevkiyatHandlers(depoHazirlik) {
               '<div style="display:flex;justify-content:space-between;gap:12px;font-size:12px"><span>' +
               escHtml(x.urun_ad || '') +
               '</span><strong>×' +
-              (x.gonderilen_adet || 0) +
+              (x.gonderilen_adet || 0) + (Number(x.istenen_adet||0) > Number(x.gonderilen_adet||0) ? ' <span style="color:#f59e0b">/ ' + x.istenen_adet + ' · ' + (Number(x.istenen_adet) - Number(x.gonderilen_adet||0)) + ' eksik</span>' : '') +
               '</strong></div>'
             );
           })
