@@ -1464,7 +1464,7 @@ def _devir_olay(cur, d: dict, veri_ek: dict) -> Optional[str]:
     v2: 'sayilan' = RESMİ rakam (tuttuysa ortak, tutmadıysa devralanın sayımı); iki taraf ayrıca veri_ek'te."""
     from evvel_yeni_olay import olay_yaz
     from evvel_yeni_cekirdek import deneme_mi
-    if deneme_mi(cur, date.fromisoformat(str(d["is_gunu"])[:10])):   # tek kural (F#1) — deneme dönemi: telefon onayları denenir, vardiya olayı yazılmaz
+    if deneme_mi(cur, date.fromisoformat(str(d["is_gunu"])[:10]), str(d["sube_id"])):   # tek kural (F#1) · 🧪 pilot şube gerçek — deneme dönemi: telefon onayları denenir, vardiya olayı yazılmaz
         return None
     ad = adlar(cur, "ey_personel", [d.get("devreden_id"), d.get("devralan_id")])
     a = {"id": d.get("devreden_id"), "ad": ad.get(d.get("devreden_id"))}
@@ -1496,7 +1496,7 @@ def _devir_al(cur, did: str, ek_kisi: Optional[str] = None, ek_kisi2: Optional[s
 def _canli_konum_sart(cur, sube_id: str) -> None:
     """Para devri: canlıda (1 Kasım sonrası) şube koordinatı tanımsızsa devir yapılmaz (Fable — QR fotoğrafı uzaktan okutulmasın)."""
     from evvel_yeni_cekirdek import deneme_mi
-    if deneme_mi(cur):   # tek kural (F#1)
+    if deneme_mi(cur, sube_id=sube_id):   # tek kural (F#1) · 🧪 pilot şubede konum şartı gerçek
         return
     s = tanim_oku(cur, "ey_sube", sube_id, ("lat", "lng")) or {}
     if s.get("lat") is None or s.get("lng") is None:

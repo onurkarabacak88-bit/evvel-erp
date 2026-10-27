@@ -6218,17 +6218,42 @@ const SUBE_ID = subeIdFromPath();
 // 🔀 1 Kasım kesimi (KESIM_GUNU_PLANI B1): kesimden sonra bu eski panel kayıt almaz (sunucu 410) → yeni şube paneline yönlen.
 // TEK kural sunucuda (/api/evvel-yeni/moduller/gecis = çekirdek anahtarı); sunucuya ulaşılamazsa sayfa açık kalır, kayıtları sunucu yine reddeder.
 (function(){
+  // 📢 GEÇİŞ UYARISI (sahip 27 Eki · Fable): "bu panel {gün}'de kullanımdan kalkacak" — kapatınca 1 saat susar (aynı tarayıcının
+  // sekmeleri paylaşır). Açık pencere / yazılan alan varken ÇIKMAZ. Gün sunucudan (şube bazlı: 🧪 pilot şube kendi gününde geçer).
+  var SUS_ANAHTAR = 'sp_gecis_modal:' + (SUBE_ID || '') + ':eski';
+  function yeniAdres(d) { return String(getApiBase() || '').replace(/\/+$/, '') + (d.adres || ('/panel/' + encodeURIComponent(SUBE_ID))); }
+  function gunYazi(g) { try { return new Date(g + 'T12:00:00').toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' }); } catch(e) { return '1 Kasım'; } }
+  function modalGoster(d) {
+    if (document.getElementById('gecisModali') || document.querySelector('.modal-acik')) return;   // başka pencerenin üstüne binmez
+    var a = document.activeElement;
+    if (a && /^(INPUT|TEXTAREA|SELECT)$/.test(a.tagName)) return;   // yazılan bir alan varken bekler (yazı kaybolmasın)
+    var sus = 0; try { sus = Number(localStorage.getItem(SUS_ANAHTAR) || 0); } catch(e) {}
+    if (Date.now() - sus < 3600000) return;
+    var g = gunYazi(d.gun);
+    var m = document.createElement('div');
+    m.id = 'gecisModali'; m.className = 'modal-acik';
+    m.innerHTML = '<div class="modal-box" style="max-width:560px;border:2px solid var(--orange)">' +
+      '<div style="font-size:22px;font-weight:800;margin-bottom:12px">📢 Bu panel ' + g + '\'da kullanımdan kalkacak</div>' +
+      '<div style="font-size:17px;line-height:1.5;margin-bottom:18px">' + g + '\'a kadar işler <b>buradan</b> yapılır — bugün bir şey değişmiyor. ' +
+      g + '\'dan itibaren <b>yeni panel</b> kullanılır: <b>' + yeniAdres(d) + '</b></div>' +
+      '<button class="btn btn-primary" style="width:100%;min-height:72px;font-size:20px" id="gecisTamam">Tamam</button></div>';
+    document.body.appendChild(m);
+    document.getElementById('gecisTamam').onclick = function(){ try { localStorage.setItem(SUS_ANAHTAR, String(Date.now())); } catch(e) {} m.remove(); };
+  }
   function gecisBak() {
     try {
-      var u = apiUrl('/evvel-yeni/moduller/gecis'); if (!u) return;   // sunucu adresi yoksa (file://) sorma
+      if (!SUBE_ID) return;
+      var u = apiUrl('/evvel-yeni/moduller/gecis/' + encodeURIComponent(SUBE_ID)); if (!u) return;   // sunucu adresi yoksa (file://) sorma
       fetch(u, { cache: 'no-store' }).then(function(r){ return r.ok ? r.json() : null; }).then(function(d){
+        if (!d) return;
         // Codex 22 Eki: sayfanın kayıtlı sunucu adresi (file:// / farklı kök) — yeni panel aynı sunucuda
-        if (d && d.yeni && SUBE_ID) window.location.replace(String(getApiBase() || '').replace(/\/+$/, '') + '/panel/' + encodeURIComponent(SUBE_ID));
+        if (d.gecti) { window.location.replace(yeniAdres(d)); return; }
+        modalGoster(d);
       }).catch(function(){});
     } catch(e) {}
   }
   gecisBak();
-  setInterval(gecisBak, 60000);   // Fable 22 Eki: 31 Ekim akşamı açık kalan ekran 1 Kasım 02:00'den sonra kendiliğinden geçsin
+  setInterval(gecisBak, 60000);   // Fable 22 Eki: açık kalan ekran geçiş gecesi 02:00'den sonra kendiliğinden geçsin · uyarı saatlik
 })();
 
 // ─── STATE ──────────────────────────────────────────────────

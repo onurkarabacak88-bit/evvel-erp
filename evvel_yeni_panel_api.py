@@ -46,9 +46,10 @@ KIM = "şube paneli"
 from evvel_yeni_cekirdek import KuruGeriAl as _Kuru   # deneme modunda geri al (sonuç taşır) — Depo ile ortak (F#21)
 
 
-def _baslangic(cur) -> date:
-    from evvel_yeni_cekirdek import panel_baslangic
-    return panel_baslangic(cur)   # tek yerde ayrıştırılır (çekirdek; geçersiz ayarda kendisi 1 Kasım'a düşer)
+def _baslangic(cur, sube_id: Optional[str] = None) -> date:
+    """Şubenin gerçek kayda geçtiği iş günü (🧪 pilot şubede pilot günü) — sube_id verilmezse en erken başlayan şube (merkez işleri)."""
+    from evvel_yeni_cekirdek import en_erken_baslangic, sube_baslangic
+    return sube_baslangic(cur, sube_id) if sube_id else en_erken_baslangic(cur)
 
 
 def _sube(cur, sube_id: str) -> dict:
@@ -68,10 +69,10 @@ def _yoklama():
     return y
 
 
-def _qr_gerekli(cur) -> bool:
-    """QR kapısı: yoklama yüklü + deneme dönemi bitti (panel_baslangic). Denemede kapı uyarı olarak görünür, engel olmaz."""
+def _qr_gerekli(cur, sube_id: Optional[str] = None) -> bool:
+    """QR kapısı: yoklama yüklü + şubenin deneme dönemi bitti (panel_baslangic / 🧪 pilot). Denemede kapı uyarı olarak görünür, engel olmaz."""
     from evvel_yeni_cekirdek import yeni_donem
-    return _yoklama() is not None and yeni_donem(cur)
+    return _yoklama() is not None and yeni_donem(cur, sube_id=sube_id)
 
 
 def _personel(cur, sube_id: str, pid: Optional[str], kapi: bool = True, gun=None) -> dict:
@@ -91,7 +92,7 @@ def _personel(cur, sube_id: str, pid: Optional[str], kapi: bool = True, gun=None
         else y.girdi_mi(cur, sube_id, str(p["id"]), gun or _bugun()))   # K11: QR'la bu şubeye girmiş (kapanış: o gün girmiş)
     if str(p.get("sube_id") or "") != str(sube_id) and not burada:   # Codex: QR'sız başka şubenin personeli bu şubeye yazamasın
         raise HTTPException(400, "Önce bu şubeye telefonundan QR ile giriş yap")
-    if kapi and y is not None and _qr_gerekli(cur) and not y.acik_mi(cur, sube_id, str(p["id"])):   # K: panel ad listesi = bugün girenler
+    if kapi and y is not None and _qr_gerekli(cur, sube_id) and not y.acik_mi(cur, sube_id, str(p["id"])):   # K: panel ad listesi = bugün girenler
         raise HTTPException(400, "Önce telefonundan QR ile giriş yap")
     return {"id": str(p["id"]), "ad": p["ad"], "erken_acilis": bool(p.get("erken_acilis"))}
 
@@ -337,7 +338,7 @@ def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez:
         with db() as (conn, cur):
             g = gun or _bugun()
             cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_gun:{sube_id}:{g.isoformat()}",))
-            ctx = {"gun": g, "sube": _sube(cur, sube_id), "kuru": deneme_mi(cur, g), "merkez": merkez}
+            ctx = {"gun": g, "sube": _sube(cur, sube_id), "kuru": deneme_mi(cur, g, sube_id), "merkez": merkez}
             sonuc = is_fn(cur, ctx)
             if isle_deneme and not ctx["kuru"]:   # Codex: geç kapanış ile 'işlendi' işareti AYNI işlemde (yarıda kalmaz)
                 cur.execute("UPDATE ey_panel_deneme SET islendi=TRUE, isleyen=%s WHERE id=%s", (merkez, isle_deneme))
@@ -369,7 +370,7 @@ def panel_durum(sube_id: str):
         bugunku = [{"id": o["id"], "tur": o["tur"], "zaman": str(o["olay_zamani"])[11:16], "kim": o.get("personel_ad"),
                     "iptal": o.get("iptal", False)}
                    for o in olaylar(cur, sube_id=sube_id, bas=gun, son=gun) if (o.get("kaynak_tablo") or "") == "panel"]
-        bas = _baslangic(cur)
+        bas = _baslangic(cur, sube_id)
         ara = _ara_durum(cur, sube_id, gun)   # bağlantı AÇIKKEN (yanıt sözlüğü işlem kapandıktan sonra kuruluyor)
         y = _yoklama()
         yok = {"var": y is not None, "qr_gerekli": False, "girenler": [], "son_okutanlar": [], "tablet_kayitli": False}
@@ -569,7 +570,7 @@ def _acilis_tam(cur, b: "AcilisBody") -> None:
 def _onay_sart(sube_id: str, ad: str, tur: str, govde: dict) -> None:
     """Canlıda (QR kapısı açık) açılış / kapanış panelden DOĞRUDAN yazılamaz — telefon onayı (R1) zorunlu. Deneme döneminde serbest."""
     with db() as (_c, cur):
-        if _bugun() < _baslangic(cur):
+        if _bugun() < _baslangic(cur, sube_id):
             return   # deneme dönemi
         if _yoklama() is None:   # Codex: yoklama yüklenemedi diye onay şartı kalkmasın
             kod, msg = 503, f"{ad} şu an kaydedilemiyor — QR sistemi çalışmıyor, merkeze haber ver"
@@ -788,7 +789,7 @@ def _kapanis_yaz(sube_id: str, b: "KapanisBody", gun=None, merkez: Optional[str]
             merkez_uyarilari = ek["kasa_uyarilari"] + uyarilar   # merkez HEPSİNİ görür; panel kasa uyarısını GÖRMEZ
             __import__("evvel_yeni_olay").olay_veri_ekle(cur, oid, {"uyarilar": uyarilar, **ek})
         if kisi_kilidi:
-            if _qr_gerekli(cur) and not y.acik_mi(cur, sube_id, p["id"]):
+            if _qr_gerekli(cur, sube_id) and not y.acik_mi(cur, sube_id, p["id"]):
                 raise HTTPException(400, "Önce telefonundan QR ile giriş yap")   # yeni kapanış; işlem geri alınır
             y.cikis_yaz(cur, p["id"], "kapanis", kim=kim, sube_id=str(sube_id))   # tasarım: kapanış = kapanışçının çıkışı
         # K-5: telefonsuz kapanış merkezde işlenince gönderenin çıkışı GÖNDERİM saatiyle — aynı işlemde (yarıda kalmaz), deneme dönemi ve
@@ -852,7 +853,7 @@ def _kapanis_merkeze(sube_id: str, b: KapanisBody) -> dict:
     did = _deneme_ac(sube_id, "kapanis", gun, govde)
     _deneme_kapat(did, "ret", f"Telefonsuz — {p['ad']} merkeze gönderdi (geç kapanış olarak işleyin)")
     with db() as (_c, cur):
-        kuru = deneme_mi(cur, gun)
+        kuru = deneme_mi(cur, gun, sube_id)
     return {"ok": True, "merkeze": True, "kuru": kuru,
             "mesaj": ("DENEME — gerçekte merkeze iletilirdi" if kuru else "Kapanış merkeze iletildi — merkez işleyince gün kapanır. Rakamlar kaydedildi.")}
 
@@ -1206,6 +1207,8 @@ def panel_gonderilecek(sube_id: str, b: GonderBody):
             return {"mesaj": f"Hazırlık kaydedildi ({n} kalem)"}
         if any(x.gonderilen is None for x in b.satirlar):
             raise HTTPException(400, "Her kalem için VAR / KISMİ / YOK seç")
+        if c["kuru"] and not __import__("evvel_yeni_cekirdek").deneme_mi(cur, c["gun"], b.hedef):
+            c["kalici"] = True   # 🧪 pilot şubeye gönderim: depo şubesi denemede olsa da sevk GERÇEK (geri alınmaz)
         r = S.yola_cikar(cur, depo_sube=str(sube_id), hedef_sube=b.hedef, kim=kim, istek_id=b.istek_id[:58],
                          satirlar=[{"yon_id": x.yon_id, "siparis_id": x.siparis_id, "surum": x.surum, "gonderilen": x.gonderilen} for x in b.satirlar])
         _olay(cur, sube_id=sube_id, tur="sevk_cikis", is_gunu=c["gun"], kok=panel_kok("sevk", sube_id, b.istek_id), kaynak_tablo="panel",
@@ -1525,7 +1528,8 @@ def _not_isleri(cur, baglam: dict) -> list:
     return [{"genel": True, "grup": "not", "tur": "sube_not", "id": f"not:{n['id']}", "tarih": n["is_gunu"], "etiket": "📝 Şube notu",
              "ad": f"{sad.get(n['sube_id'], n['sube_id'])} · {n['personel']}", "alt": n["metin"] + f" · {n['saat']}",   # Codex P2: notun TAMAMI (Gördüm'den önce okunsun)
              "gordum": {"yol": "/evvel-yeni/panel/not-gordum", "govde": {"id": n["id"]}}}
-            for n in sube_notlari(cur, bas=bas, gorulmemis=True)]
+            for n in sube_notlari(cur, bas=bas, gorulmemis=True)
+            if str(n["is_gunu"])[:10] >= _baslangic(cur, str(n["sube_id"])).isoformat()]   # 🧪 pilot dışı şubenin deneme notu iş değil
 
 
 bekleyen_is_kaydet("sube_not", _not_isleri)
@@ -2020,7 +2024,7 @@ def ara_sayim_deneme(sube_id: str):
     with db() as (conn, cur):
         _sube(cur, sube_id)
         gun = _bugun()
-        if not deneme_mi(cur, gun):
+        if not deneme_mi(cur, gun, sube_id):
             raise HTTPException(409, "Deneme düğmesi yalnız deneme döneminde")
         cur.execute("""UPDATE ey_panel_onay SET durum='iptal', mesaj='yerine deneme istendi'
                         WHERE sube_id=%s AND tur='ara_sayim' AND govde->>'gun'=%s AND durum IN ('planli','bekliyor')""", (str(sube_id), gun.isoformat()))
@@ -2078,12 +2082,11 @@ def _ara_sayim_isleri(cur) -> list:
     satir = [dict(x) for x in cur.fetchall() or []]
     if not satir:
         return []
-    bas = _baslangic(cur).isoformat()
     adlar = {str(s["id"]): s["ad"] for s in subeler(cur)}
     out = []
     for r in satir:
         g = json_ac(r["govde"], {})
-        if (g.get("gun") or "") < bas or g.get("deneme"):
+        if (g.get("gun") or "") < _baslangic(cur, str(r.get("sube_id") or "") or None).isoformat() or g.get("deneme"):
             continue   # deneme dönemi merkeze iş üretmez
         out.append({"genel": True, "grup": "kasa", "tur": "ara_sayim_yapilmadi", "id": f"ara:{r['id']}", "tarih": g.get("gun"),
                     "etiket": "⏱ Ara sayım yapılmadı", "ad": adlar.get(str(r["sube_id"]), r["sube_id"]),
@@ -2139,6 +2142,8 @@ def _kapanis_isleri(cur) -> list:
     adlar = {str(s["id"]): s["ad"] for s in subeler(cur)}
     out = []
     for r in satirlar:
+        if r["is_gunu"] < _baslangic(cur, str(r["sube_id"])):   # 🧪 pilot dışı şubenin deneme günü iş üretmez
+            continue
         kapali = __import__("evvel_yeni_olay").gun_kapandi(cur, r["sube_id"], r["is_gunu"])   # F#11
         if kapali:
             continue
@@ -2151,6 +2156,8 @@ def _kapanis_isleri(cur) -> list:
                     WHERE tur='kapanis' AND sonuc='ok_uyarili' AND goruldu IS NULL AND zaman >= NOW() - INTERVAL '7 days'
                       AND is_gunu >= %s ORDER BY zaman DESC""", (_baslangic(cur),))
     for r in [dict(x) for x in cur.fetchall() or []]:
+        if r["is_gunu"] < _baslangic(cur, str(r["sube_id"])):
+            continue
         out.append({"tur": "kapanis_uyarili", "grup": "kasa", "id": r["id"], "tarih": r["is_gunu"].isoformat(), "sube_id": str(r["sube_id"]),
                     "ad": adlar.get(str(r["sube_id"]), r["sube_id"]), "uyarilar": r.get("uyarilar") or [],
                     "saat": __import__("evvel_yeni_cekirdek").tr_tarih_saat(r["zaman"]),   # B97: GG.AA SS:DD (ay.gün değil)

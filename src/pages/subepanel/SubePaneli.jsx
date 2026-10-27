@@ -244,6 +244,16 @@ export default function SubePaneli({ subeId }) {
   let bandSus = 0;
   try { bandSus = Number(localStorage.getItem('sp_urunac_bant:' + subeId) || 0); } catch { bandSus = 0; }
   const urunBandi = d.acilis_var && !kapali && bandSaat && !urunAcVar && Date.now() > bandSus;
+  // 📢 GEÇİŞ UYARISI (sahip 27 Eki · Fable): deneme dönemindeki şubede "bu panel {gün}'de aktif olacak" — kapatınca 1 saat susar
+  // (aynı tarayıcının sekmeleri paylaşır). Başka bir pencere açıkken ÇIKMAZ; QR kapısı / açılış sihirbazı üstüne biner (altındaki form
+  // silinmez — denemedeki şubede bu ekranlar hep açık, yoksa uyarı hiç görünmezdi). 🧪 pilot şubede hiç çıkmaz.
+  const gecisAnahtar = 'sp_gecis_modal:' + subeId + ':yeni';
+  let gecisSus = 0;
+  try { gecisSus = Number(localStorage.getItem(gecisAnahtar) || 0); } catch { gecisSus = 0; }
+  const gecisGun = d.panel_baslangic ? new Date(`${d.panel_baslangic}T12:00:00`).toLocaleDateString('tr-TR', { day: 'numeric', month: 'long' }) : '1 Kasım';
+  const gecisModali = d.kuru && !modal && !giderAcik && !notAcik && !avansT && !anladim && !mesgul && !qrBuyuk
+    && saat.getTime() - gecisSus > 3600000;
+  const gecisKapat = () => { try { localStorage.setItem(gecisAnahtar, String(Date.now())); } catch { /* gizli pencere — her yüklemede çıkar */ } setSaat(new Date()); };
   const SOL = [
     { b: 'STOK İŞLEMLERİ' },
     { k: 'teslim', i: '📦', ad: 'Tedarikçiden Gelen — Teslim Al' },
@@ -263,6 +273,19 @@ export default function SubePaneli({ subeId }) {
     <div className="sp" ref={kokRef} style={tabletVar && yok.var && !kapiAcik ? { paddingBottom: 150 } : undefined}>{/* B89: sabit QR kutusu son satırların üstüne binmesin — kaydırınca açığa çıkar */}
       <style>{CSS}</style>
       <SorKatmani />
+      {gecisModali && (   // QR kapısı (z 70–80) ve sihirbazın da ÜSTÜNDE — ortak Modal (z 50) altında kalırdı
+        <div role="dialog" aria-modal="true" onClick={gecisKapat} style={{ position: 'fixed', inset: 0, zIndex: 150, background: 'rgba(0,0,0,.72)',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+          <div onClick={(e) => e.stopPropagation()} className="sp-kart" style={{ width: 'min(560px,100%)', padding: 22, border: `2px solid ${C.sari}` }}>
+            <b style={{ fontSize: 22 }}>📢 Bu panel {gecisGun}'da aktif olacak</b>
+            <div style={{ fontSize: 18, lineHeight: 1.5, margin: '12px 0 18px' }}>
+              Şu an <b>deneme</b>: burada yaptıkların <b>kaydedilmez</b>. Gerçek işler {gecisGun}'a kadar <b>eski panelden</b> yapılır.
+              {' '}{gecisGun}'dan itibaren tüm işler bu panelde.
+            </div>
+            <button className="sp-btn" style={{ width: '100%', minHeight: 72, fontSize: 20 }} onClick={gecisKapat}>Anladım</button>
+          </div>
+        </div>
+      )}
       {hata && <div role="alert" style={{ background: '#b3261e', color: '#fff', padding: '10px 14px', fontWeight: 600, fontSize: 15 }}>
         ⚠ {hataAg ? 'Bağlantı yok' : 'Sistem şu an yanıt vermiyor'} — ekrandaki bilgi son alınan hâli. Kendiliğinden yeniden deneniyor… <button className="sp-btn sp-orta" style={{ marginLeft: 8 }} onClick={yukle}>Tekrar dene</button></div>}
       {/* ÜST BAR (eski 52px): EVVEL · şube · tarih saat */}
