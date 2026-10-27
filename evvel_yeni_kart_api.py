@@ -402,12 +402,19 @@ def kart_teyit(kid: str, body: TeyitBody, x_evvel_oturum: Optional[str] = Header
         raise HTTPException(400, "Tarih YYYY-AA-GG olmalı")
     if tarih > bugun:
         raise HTTPException(400, "Gelecek tarihli teyit olmaz")
+    if _kurus(body.kullanilabilir) < 0:   # matris KA-2 (Fable L4b A): bankada eksi kullanılabilir görünmez — kesin giriş hatası
+        raise HTTPException(400, "Kullanılabilir limit eksi olamaz")
+    if body.ekstre_borc is not None and _kurus(body.ekstre_borc) < 0:
+        raise HTTPException(400, "Ekstre borcu eksi olamaz")
     _hazirla()
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
-        d = next((k for k in kart_durumu(cur) if k["id"] == kid), None)
+        hepsi = kart_durumu(cur)
+        d = next((k for k in hepsi if k["id"] == kid), None)
         if not d:
             raise HTTPException(404, "Kart bulunamadı")
+        lim = (max((k.get("_limit") or 0) for k in hepsi if (k.get("grup") or {}).get("ad") == d["grup"]["ad"]) if d.get("grup")
+               else d.get("_limit")) or None   # ortak limitli grupta grubun limiti
         beklenen = None
         if d.get("grup"):
             if tarih == bugun and d["grup"]["kullanilabilir"] is not None:
@@ -427,6 +434,8 @@ def kart_teyit(kid: str, body: TeyitBody, x_evvel_oturum: Optional[str] = Header
     else:
         msg = (f"Teyit kaydedildi — bankada {_tl_tr(abs(fark))} {'daha AZ' if fark < 0 else 'daha FAZLA'} kullanılabilir: "
                + ("forma girilmemiş kart harcaması olabilir" if fark < 0 else "girilmemiş kart borcu ödemesi / iade olabilir"))
+    if lim and _kurus(body.kullanilabilir) > lim:   # matris KA-1 (Fable L4b A): fazla ödemede banka limitin üstünü gösterir — engel değil, soru
+        msg += f" · limitin {_tl_tr(_kurus(body.kullanilabilir) - lim)} üstünde — kartta alacak (fazla ödeme) var mı?"
     return {"ok": True, "mesaj": msg, "fark": _tl_sayi(fark) if fark is not None else None}
 
 
