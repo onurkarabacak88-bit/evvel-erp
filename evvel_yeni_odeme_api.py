@@ -611,7 +611,7 @@ def konu_odemeleri(cur, konu_tip: str, kayit: Optional[list] = None, C: Optional
                           for p in (v.get("kart_parcalar") or [])])
         out.append({"id": h["id"], "tarih": h["is_gunu"], "ait_ay": v.get("ait_ay"), "ay": (v.get("ait_ay") or h["is_gunu"])[:7],
                     "donem": k.get("donem"), "toplam": int(v.get("toplam", h["tutar"])), "konu": k, "kalem": k.get("kalem"),
-                    "kaynak": v.get("kaynak"), "aciklama": v.get("aciklama"), "kim": h.get("kaydeden"), "kartla": bool(v.get("kart_parcalar")),
+                    "kaynak": v.get("kaynak"), "ref": h.get("kaynak_ref"), "aciklama": v.get("aciklama"), "kim": h.get("kaydeden"), "kartla": bool(v.get("kart_parcalar")),
                     "nereden": nereden, "kredi_id": k.get("kredi_id"), "kart_id": k.get("kart_id"), "sube_id": k.get("sube_id"),
                     "personel_id": k.get("personel_id"), "toptanci_id": k.get("toptanci_id"),
                     "zaman": h.get("kayit_zamani")})   # B54: aynı gün teyit/ödeme sırası (kart takvimi)

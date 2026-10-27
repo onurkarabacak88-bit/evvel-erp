@@ -243,8 +243,11 @@ def _odemeler(cur) -> dict:
             continue
         anah = (str(x["personel_id"]), x["ay"])
         kal = x["kalem"] or "Maaş"
-        if kal == "Avans" and x["kaynak"] == "sube_avansi":
-            kal = "Avans (şube)"   # eski sistem Ekim netinde ZATEN düşülü → Ekim'de ayrıca düşülmez
+        if kal == "Avans" and x["kaynak"] == "sube_avansi" and str(x.get("ref") or "").startswith("anlik_gider:"):
+            # YALNIZ eski köprü (eski panelin avansı, Kasa _aktar 'anlik_gider:') — eski sistem Ekim netinde ZATEN düşülü → Ekim'de
+            # ayrıca düşülmez. Evvel Yeni elden avansı ('avans:av-…') eski sistemde yok → düz 'Avans', Ekim'de de düşülür
+            # (matris AV-2 · Fable L4b: pilot şube 28–31 Eki + 1 Kasım sonrası Ekim dönemli elden teslim çift ödenirdi)
+            kal = "Avans (şube)"
         out.setdefault(anah, {})
         out[anah][kal] = out[anah].get(kal, 0) + x["toplam"]
     return out
