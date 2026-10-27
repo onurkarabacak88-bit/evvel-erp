@@ -74,6 +74,7 @@ export default function AvansModulu({ onToast }) {
               <span style={num}>{fmt(t.tutar)} ₺</span>
               {t.kendine && <Cip tur="sari">kendine teslim</Cip>}
               <Cip tur={t.durum === 'odendi' ? 'yesil' : undefined}>{{ reddedildi: 'reddedildi', kapatildi: 'kapatıldı', odendi: 'ödendi' }[t.durum] || t.durum}</Cip>
+              {t.geri_alinir && t.durum === 'odendi' && <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { const n = await soruYaz(`${t.ad} · ${fmt(t.tutar)} ₺ avans geri alınsın mı? Para ${t.yontem === 'elden' ? 'çekmeceye' : 'bankaya'} geri döner, maaş mahsubu kalkar, talep yeniden bekler. Neden?`, false, 2); if (n && n.trim().length >= 2) yap(t, 'geri-al', { sebep: n.trim() }); }}>Geri al</Dugme>}   {/* matris AV-1: Kasa'dan değil buradan */}
             </div>
           ))}
         </div>

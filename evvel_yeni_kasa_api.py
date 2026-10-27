@@ -1814,62 +1814,77 @@ def iptal(hid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Header(defa
         raise HTTPException(400, "İptal sebebi zorunlu")
     _hazirla()
     with db() as (conn, cur):
-        _kilit(cur)
-        kim = _aktor(cur, x_evvel_oturum)
-        cep_list, C, kayit, _ = _yukle(cur)
-        h = next((x for x in kayit if x["id"] == hid), None)
-        if not h:
-            raise HTTPException(404, "Kayıt bulunamadı ya da zaten iptal")
-        grup = (h["veri"] or {}).get("grup") if h["tur"] == "tasima" else None
-        hs = [x for x in kayit if x["tur"] == "tasima" and (x["veri"] or {}).get("grup") == grup] if grup else [h]   # K-1 (Fable L4b A)
-        ids = {x["id"] for x in hs}
-        if any(x["tur"] == "cozum" and x["veri"].get("fark_id") == hid for x in kayit):
-            raise HTTPException(409, "Bu kaydın farkı kapatılmış; önce fark kapanışını iptal et")
-        if h["tur"] == "dis" and any(x["tur"] == "odeme" and ((x["veri"].get("konu") or {}).get("borc_ref")) == hid for x in kayit):
-            # D-1 (Fable): borç girişi iptal edilirse ona bağlı geri ödemeler yetim kalırdı (ne borç listesinde ne bağsızda)
-            raise HTTPException(409, "Bu borca bağlı geri ödeme var — önce o ödemeleri iptal et (Ödeme defteri)")
-        ol_eski = _olaylar(hs)
-        _ol = _olaylar([x for x in kayit if x["id"] != hid]) if h["tur"] == "sayim" else _olaylar(kayit)
-        kilit, anlar = _sayim_kilidi(_ol), _sayim_anlari(_ol)
-        kartla = h["tur"] == "cozum" and (h["veri"] or {}).get("sebep") == "kartla"
-        if h["tur"] != "sayim" and not kartla:   # kartla: kapanış −t + çözüm +t aynı gün, net 0 — geri alınınca da net 0 (Fable)
-            # sahip 24 Eki + Codex: etkinin KENDİ anı (teslim çıkışı kayıt anı, alımı onay anı) sayımdan sonraysa o etki sayıma girmedi → serbest
-            _kilit_denetle([(e["cep"], o["gun"]) for o in ol_eski for e in _etki(o, C)
-                            if not _sayimdan_sonra(e["cep"], o["gun"], o.get("s"), anlar)], kilit, C)
-        else:
-            # Codex (24 Eki): aynı gün iki sayımda ikisi de iptal edilemiyordu — yalnız KESİN sonraki sayım engel (sondan geri alınır)
-            sonraki = [x for x in kayit if x["tur"] == "sayim" and x["cep"] == h["cep"] and x["id"] != hid
-                       and (x["is_gunu"], x.get("_sira") or "") > (h["is_gunu"], h.get("_sira") or "")]
-            if sonraki:
-                raise HTTPException(409, "Bu cebin daha sonra (ya da aynı gün) başka sayımı var; önce onu iptal et")
-        azalan = {e["cep"] for o in ol_eski for e in _etki(o, C) if e["d"] > 0 and e["cep"] in C}
-        kalan_kayit = [x for x in kayit if x["id"] not in ids]
-        if kartla:   # Fable R: kapanış nakdinin +t geri konuşu da denetime girsin (yoksa meşru iptal yanlış 'eksi'ye düşer)
-            kalan_kayit = [{**x, "tutar": int(x["tutar"]) + sum(int(z.get("tutar", 0)) for z in ((x["veri"] or {}).get("kanal_duzeltme") or [])
-                                                                 if z.get("cozum_id") == hid and not z.get("iptal"))}
-                           if x["tur"] == "kapanis" else x for x in kalan_kayit]
-        try:
-            _eksi_denetle(_olaylar(kalan_kayit), azalan, h["is_gunu"], C)
-        except HTTPException as e:
-            if h["tur"] in ("kapanis", "dis", "teslim", "tasima"):   # B60: hangi sırayla iptal edileceğini söyle
-                raise HTTPException(e.status_code, f"{e.detail} Bu kayıttan beslenen çıkışlar var (ör. o günün ara teslimi / teslimi) — "
-                                                   f"önce onları iptal et, sonra bunu.")
-            raise
-        for x in hs:   # grup'lu toplu taşımada her satıra ayrı 'iptal' kaydı (hedef_id tek kalır), tek işlemde
-            _yaz(cur, "iptal", _bugun().isoformat(), kim, veri={"hedef_id": x["id"], "sebep": body.sebep.strip()[:200], **({"grup": grup} if grup else {})})
-        if kartla:   # kapanış nakdi geri konur (iz: kanal_duzeltme satırı 'iptal')
-            for kp in kayit:
-                kd = (kp["veri"] or {}).get("kanal_duzeltme") or []
-                if kp["tur"] == "kapanis" and any(z.get("cozum_id") == hid and not z.get("iptal") for z in kd):
-                    t_ = sum(int(z.get("tutar", 0)) for z in kd if z.get("cozum_id") == hid and not z.get("iptal"))
-                    v2 = dict(kp["veri"])
-                    v2["kanal_duzeltme"] = [{**z, "iptal": kim} if z.get("cozum_id") == hid else z for z in kd]
-                    if v2.get("panel_sonradan"):   # beyan da geri (net esas)
-                        sn = dict(v2["panel_sonradan"][-1])
-                        sn["nakit"] = int(sn.get("nakit", 0)) + t_
-                        v2["panel_sonradan"] = v2["panel_sonradan"][:-1] + [sn]
-                    cur.execute("UPDATE para_izi_hareket SET tutar = tutar + %s, veri=%s::jsonb WHERE id=%s",
-                                (t_, json.dumps(v2, ensure_ascii=False), kp["id"]))
+        return hareket_iptal_yaz(cur, hid, body.sebep, _aktor(cur, x_evvel_oturum))
+
+
+AVANS_REF_ONEKLERI = ("odeme_formu:avans-", "avans:", "avans-eski:")   # Avans'ın yazdığı ödemeler (havale · elden · 1 Kasım devri)
+
+
+def hareket_iptal_yaz(cur, hid: str, sebep: str, kim: str, avans_izni: bool = False) -> dict:
+    """PUBLIC — bir Kasa hareketini iptal eder (kayıt silinmez, 'iptal' kaydı). Kasa ekranının × düğmesi ve sahibi başka modül olan
+    bağlı kayıtlar (Avans 'geri al') AYNI kapıdan geçer. Avansa bağlı ödeme yalnız Avans modülünden (avans_izni) iptal edilir —
+    yoksa talep 'ödendi' kalır, para / mahsup geri döner (matris AV-1 · Fable L4b A)."""
+    if not (sebep or "").strip():
+        raise HTTPException(400, "İptal sebebi zorunlu")
+    _kilit(cur)
+    cep_list, C, kayit, _ = _yukle(cur)
+    h = next((x for x in kayit if x["id"] == hid), None)
+    if not h:
+        raise HTTPException(404, "Kayıt bulunamadı ya da zaten iptal")
+    if not avans_izni and h["tur"] == "odeme" and str(h.get("kaynak_ref") or "").startswith(AVANS_REF_ONEKLERI):
+        if str(h.get("kaynak_ref")).startswith("avans-eski:"):
+            raise HTTPException(409, "Eski sistemden devredilen avans kaydı — iptal edilmez (para Ekim'de eski sistemde ödendi)")
+        raise HTTPException(409, "Bu bir avans ödemesi — Personel › Avans talepleri ekranından 'Geri al' ile geri alınır (talep de geri döner)")
+    grup = (h["veri"] or {}).get("grup") if h["tur"] == "tasima" else None
+    hs = [x for x in kayit if x["tur"] == "tasima" and (x["veri"] or {}).get("grup") == grup] if grup else [h]   # K-1 (Fable L4b A)
+    ids = {x["id"] for x in hs}
+    if any(x["tur"] == "cozum" and x["veri"].get("fark_id") == hid for x in kayit):
+        raise HTTPException(409, "Bu kaydın farkı kapatılmış; önce fark kapanışını iptal et")
+    if h["tur"] == "dis" and any(x["tur"] == "odeme" and ((x["veri"].get("konu") or {}).get("borc_ref")) == hid for x in kayit):
+        # D-1 (Fable): borç girişi iptal edilirse ona bağlı geri ödemeler yetim kalırdı (ne borç listesinde ne bağsızda)
+        raise HTTPException(409, "Bu borca bağlı geri ödeme var — önce o ödemeleri iptal et (Ödeme defteri)")
+    ol_eski = _olaylar(hs)
+    _ol = _olaylar([x for x in kayit if x["id"] != hid]) if h["tur"] == "sayim" else _olaylar(kayit)
+    kilit, anlar = _sayim_kilidi(_ol), _sayim_anlari(_ol)
+    kartla = h["tur"] == "cozum" and (h["veri"] or {}).get("sebep") == "kartla"
+    if h["tur"] != "sayim" and not kartla:   # kartla: kapanış −t + çözüm +t aynı gün, net 0 — geri alınınca da net 0 (Fable)
+        # sahip 24 Eki + Codex: etkinin KENDİ anı (teslim çıkışı kayıt anı, alımı onay anı) sayımdan sonraysa o etki sayıma girmedi → serbest
+        _kilit_denetle([(e["cep"], o["gun"]) for o in ol_eski for e in _etki(o, C)
+                        if not _sayimdan_sonra(e["cep"], o["gun"], o.get("s"), anlar)], kilit, C)
+    else:
+        # Codex (24 Eki): aynı gün iki sayımda ikisi de iptal edilemiyordu — yalnız KESİN sonraki sayım engel (sondan geri alınır)
+        sonraki = [x for x in kayit if x["tur"] == "sayim" and x["cep"] == h["cep"] and x["id"] != hid
+                   and (x["is_gunu"], x.get("_sira") or "") > (h["is_gunu"], h.get("_sira") or "")]
+        if sonraki:
+            raise HTTPException(409, "Bu cebin daha sonra (ya da aynı gün) başka sayımı var; önce onu iptal et")
+    azalan = {e["cep"] for o in ol_eski for e in _etki(o, C) if e["d"] > 0 and e["cep"] in C}
+    kalan_kayit = [x for x in kayit if x["id"] not in ids]
+    if kartla:   # Fable R: kapanış nakdinin +t geri konuşu da denetime girsin (yoksa meşru iptal yanlış 'eksi'ye düşer)
+        kalan_kayit = [{**x, "tutar": int(x["tutar"]) + sum(int(z.get("tutar", 0)) for z in ((x["veri"] or {}).get("kanal_duzeltme") or [])
+                                                             if z.get("cozum_id") == hid and not z.get("iptal"))}
+                       if x["tur"] == "kapanis" else x for x in kalan_kayit]
+    try:
+        _eksi_denetle(_olaylar(kalan_kayit), azalan, h["is_gunu"], C)
+    except HTTPException as e:
+        if h["tur"] in ("kapanis", "dis", "teslim", "tasima"):   # B60: hangi sırayla iptal edileceğini söyle
+            raise HTTPException(e.status_code, f"{e.detail} Bu kayıttan beslenen çıkışlar var (ör. o günün ara teslimi / teslimi) — "
+                                               f"önce onları iptal et, sonra bunu.")
+        raise
+    for x in hs:   # grup'lu toplu taşımada her satıra ayrı 'iptal' kaydı (hedef_id tek kalır), tek işlemde
+        _yaz(cur, "iptal", _bugun().isoformat(), kim, veri={"hedef_id": x["id"], "sebep": sebep.strip()[:200], **({"grup": grup} if grup else {})})
+    if kartla:   # kapanış nakdi geri konur (iz: kanal_duzeltme satırı 'iptal')
+        for kp in kayit:
+            kd = (kp["veri"] or {}).get("kanal_duzeltme") or []
+            if kp["tur"] == "kapanis" and any(z.get("cozum_id") == hid and not z.get("iptal") for z in kd):
+                t_ = sum(int(z.get("tutar", 0)) for z in kd if z.get("cozum_id") == hid and not z.get("iptal"))
+                v2 = dict(kp["veri"])
+                v2["kanal_duzeltme"] = [{**z, "iptal": kim} if z.get("cozum_id") == hid else z for z in kd]
+                if v2.get("panel_sonradan"):   # beyan da geri (net esas)
+                    sn = dict(v2["panel_sonradan"][-1])
+                    sn["nakit"] = int(sn.get("nakit", 0)) + t_
+                    v2["panel_sonradan"] = v2["panel_sonradan"][:-1] + [sn]
+                cur.execute("UPDATE para_izi_hareket SET tutar = tutar + %s, veri=%s::jsonb WHERE id=%s",
+                            (t_, json.dumps(v2, ensure_ascii=False), kp["id"]))
     return {"ok": True, "iptal_sayi": len(hs)}
 
 
@@ -3136,7 +3151,7 @@ def hareket_veri_ekle(cur, hid: str, ek: dict, tur: Optional[str] = None) -> boo
 def kaynak_refleri(cur, onek: str) -> list:
     """PUBLIC — 'onek' ile başlayan kaynak_ref'li hareketler: [{kaynak_ref, iptal}] (iptal = bir 'iptal' hareketi onu hedefliyor).
     Fatura (kart ekstresi) 'bu satır yazıldı mı / iptal mi' sorusunu tabloya SQL atmadan buradan sorar (C-T2-08)."""
-    cur.execute("""SELECT kaynak_ref, id IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal' AND veri ? 'hedef_id') AS iptal
+    cur.execute("""SELECT id, kaynak_ref, id IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal' AND veri ? 'hedef_id') AS iptal
                      FROM para_izi_hareket WHERE kaynak_ref LIKE %s""", (onek.replace("%", r"\%").replace("_", r"\_") + "%",))
     return [dict(r) for r in cur.fetchall() or []]
 

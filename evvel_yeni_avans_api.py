@@ -194,7 +194,8 @@ def _yeni_talepler(cur, acik: bool = True, ayrinti: bool = False) -> list:
              "yontem": r.get("yontem"), "sube": sad.get(r.get("sube_id")), "sube_id": r.get("sube_id"), "donem": r["donem"],
              "talep": str(r["talep_ts"])[:16], "onay": str(r.get("karar_ts") or "")[:16],
              "not": " · ".join(x for x in (r.get("not_"), r.get("karar_not")) if x) or None,   # Fable: talep notu varken şube izi de görünsün
-             "yeni": True, **_ek(cur, r, pad, acik, ayrinti)} for r in rows]
+             "yeni": True, "geri_alinir": not str(r["id"]).startswith("av-e-"),   # AV-3: 1 Kasım devri (Ekim'de eski bankadan ödendi) geri alınmaz
+             **_ek(cur, r, pad, acik, ayrinti)} for r in rows]
 
 
 def _ek(cur, r: dict, pad: dict, acik: bool, ayrinti: bool = False) -> dict:
@@ -251,7 +252,7 @@ def elden_teslim_yaz(cur, *, talep_id: str, sube_id: str, kim: str, gun: date, v
     if not p or not p["aktif"] or ayrildi_mi(p.get("cikis"), gun):
         raise HTTPException(409, "Bu personel ayrıldı — avans verilemez; merkez talebi kapatsın")
     pad = adlar(cur, "ey_personel", [t["personel_id"]]).get(str(t["personel_id"]))
-    ref = f"avans:{talep_id}"
+    ref = _yeni_ref(cur, f"avans:{talep_id}")   # geri alınmış bir teslimden sonra yeniden teslim → yeni ref (Fable AV-1 tuzağı)
     sube_avansi_yaz(cur, sube_id=str(sube_id), gun=gun.isoformat(), tutar=int(t["tutar"]), personel_id=t["personel_id"], personel_ad=pad,
                     ait_ay=t["donem"], kim=kim, kaynak_ref=ref)
     cur.execute("UPDATE ey_avans_talep SET durum='odendi', odeme_ref=%s, teslim_ts=NOW(), teslim_kim=%s, teslim_pid=%s WHERE id=%s",
@@ -442,11 +443,14 @@ def onayla(aid: str, body: OnayBody, x_evvel_oturum: Optional[str] = Header(defa
                 raise HTTPException(409, "Talep bulunamadı ya da karar verilmiş — sayfayı yenile")
             t = dict(t)
             _onay_denetle(cur, t)   # Codex P1: pasif personele / tavanı aşan avans havale edilmez
-            o.odeme_yaz(cur, o.OdemeBody(konu="personel", personel_id=t["personel_id"], personel_kalemi="Avans", ait_ay=t["donem"],
-                                         aciklama=f"Avans (havale) · talep {aid}", istek_id=f"avans-{aid}", tekrar_onay=True,
-                                         parcalar=[o.Parca(yontem="havale", cep=body.cep, tutar=Decimal(int(t["tutar"])) / 100)]), kim)
+            istek = _yeni_ref(cur, f"odeme_formu:avans-{aid}")[len("odeme_formu:"):]   # geri alınmış havaleden sonra yeni ref
+            r_ = o.odeme_yaz(cur, o.OdemeBody(konu="personel", personel_id=t["personel_id"], personel_kalemi="Avans", ait_ay=t["donem"],
+                                              aciklama=f"Avans (havale) · talep {aid}", istek_id=istek, tekrar_onay=True,
+                                              parcalar=[o.Parca(yontem="havale", cep=body.cep, tutar=Decimal(int(t["tutar"])) / 100)]), kim)
+            if r_.get("tekrar"):   # para yazılmadıysa talep 'ödendi' olmaz (Fable AV-1 tuzağı)
+                raise HTTPException(409, "Bu avansın ödemesi zaten kayıtlı — sayfayı yenile")
             cur.execute("""UPDATE ey_avans_talep SET durum='odendi', karar_ts=NOW(), karar_kim=%s, yontem='havale', odeme_ref=%s
-                            WHERE id=%s""", (kim, f"odeme_formu:avans-{aid}", aid))
+                            WHERE id=%s""", (kim, f"odeme_formu:{istek}", aid))
         return {"ok": True, "mesaj": "Avans havaleyle ödendi (bankadan düştü, maaştan mahsup edilir)"}
     import avans_service as eski
     with db() as (conn, cur):
@@ -481,6 +485,61 @@ def sube_degistir(aid: str, body: SubeBody, x_evvel_oturum: Optional[str] = Head
 
 class RedBody(BaseModel):
     neden: Optional[str] = None
+
+
+def _yeni_ref(cur, taban: str) -> str:
+    """Bu talebin daha önce GERİ ALINMIŞ (iptal) ödemeleri varsa yeni ref '<taban>-<n>' — Kasa kaynak_ref benzersiz (aynı ref ikinci kez
+    yazılmaz). Kasa'nın PUBLIC kaynak_refleri kapısından okunur (tabloya SQL yok)."""
+    from evvel_yeni_kasa_api import kaynak_refleri
+    n = sum(1 for r in kaynak_refleri(cur, taban) if r["iptal"] and (r["kaynak_ref"] == taban or r["kaynak_ref"].startswith(taban + "-")))
+    return taban if n == 0 else f"{taban}-{n}"
+
+
+class GeriAlBody(BaseModel):
+    sebep: str
+
+
+@router.post("/{aid}/geri-al")
+def geri_al(aid: str, body: GeriAlBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Ödenmiş avansı geri al (matris AV-1 · Fable L4b A): bağlı Kasa ödemesi Kasa'nın PUBLIC iptal kapısıyla iptal edilir (para
+    bankaya / çekmeceye, maaş mahsubu geri) + talep yeniden 'talep' olur (merkez yeniden karar verir). Tek işlem; kilit sırası
+    onaylamayla aynı: talep → Kasa."""
+    if not (body.sebep or "").strip() or len(body.sebep.strip()) < 2:
+        raise HTTPException(400, "Geri alma sebebini yaz")
+    if not aid.startswith("av-") or aid.startswith("av-e-"):   # AV-3 (Fable L6): devir avansı Ekim'de eski bankadan ZATEN ödendi
+        raise HTTPException(409, "Eski sistemden devredilen avans geri alınmaz (para Ekim'de eski sistemde ödendi)")
+    from evvel_yeni_kasa_api import hareket_iptal_yaz, kaynak_refleri, kasa_hazirla
+    kasa_hazirla()
+    with db() as (conn, cur):
+        avans_hazirla(cur)
+        kim = merkez_aktor(cur, x_evvel_oturum)
+        cur.execute("SELECT * FROM ey_avans_talep WHERE id=%s FOR UPDATE", (aid,))
+        t = cur.fetchone()
+        if not t or dict(t)["durum"] != "odendi":
+            raise HTTPException(409, "Yalnız ödenmiş avans geri alınır — sayfayı yenile")
+        t = dict(t)
+        ref = t.get("odeme_ref") or ""
+        from evvel_yeni_kasa_api import AVANS_REF_ONEKLERI
+        if not ref.startswith(AVANS_REF_ONEKLERI[:2]):   # yalnız Evvel Yeni'nin yazdığı havale / elden ödemesi (devir değil)
+            raise HTTPException(409, "Bu avansın Evvel Yeni'de ödemesi yok (eski sistemden devir) — geri alınamaz")
+        h = next((r for r in kaynak_refleri(cur, ref) if r["kaynak_ref"] == ref and not r["iptal"]), None) if ref else None
+        if not h:
+            raise HTTPException(409, "Bu avansın Kasa'da para hareketi yok (eski sistemden devir olabilir) — geri alınamaz")
+        hareket_iptal_yaz(cur, str(h["id"]), f"Avans geri alındı · {body.sebep.strip()}"[:200], kim, avans_izni=True)
+        iz = f"geri alındı ({kim}): {body.sebep.strip()}"[:200]
+        cur.execute("""UPDATE ey_avans_talep SET durum='talep', yontem=NULL, sube_id=NULL, odeme_ref=NULL, karar_ts=NULL, karar_kim=NULL,
+                               teslim_ts=NULL, teslim_kim=NULL, teslim_pid=NULL, karar_not=%s WHERE id=%s""", (iz, aid))
+        ek = ""
+        try:   # Fable L6 karar: onaylı ayda ENGEL değil UYARI — maaş onayı hak edişi dondurur, avans / ödenen canlı (kalan artar)
+            from evvel_yeni_maas_api import hesapla as _maas
+            with savepoint(cur, "sp_ey_avans_geri_al_uyari"):   # Fable L6: okuma hatası işlemi zehirlemesin (iptal + talep yazımı düşerdi)
+                ms = next(iter(_maas(cur, t["donem"], sadece=str(t["personel_id"]))), None)
+            if ms and ms.get("onay"):
+                tl_ = f"{int(t['tutar']) / 100:,.0f}".replace(",", ".")
+                ek = f" · {t['donem']} maaşı onaylı — kalanı {tl_} ₺ arttı, ödemede dikkat"
+        except Exception:  # noqa: BLE001 — uyarı okunamazsa geri alma yine geçerli
+            log.warning("avans geri al: maaş onay durumu okunamadı", exc_info=True)
+    return {"ok": True, "mesaj": "Avans geri alındı — para geri döndü, talep yeniden bekliyor (onayla / reddet)" + ek}
 
 
 @router.post("/{aid}/reddet")
