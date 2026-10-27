@@ -268,7 +268,10 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit, onFis }) {
       : (h.fark ? <Cip tur="kirmizi">sayılan {fmt(h.alinan)} · {h.fark > 0 ? 'eksik' : 'fazla'} {fmt(Math.abs(h.fark))}</Cip> : <Cip tur="yesil">alındı</Cip>);
     if (h.durum === 'onaylandi' && h.onay_gunu && h.onay_gunu !== h.tarih) alt = `${tUzun(h.onay_gunu)} günü alındı — o güne kadar "yolda"${h.kilit_sonrasi ? ' · ev sayımından sonra alındı' : ''}`;
   }
-  if (h.tur === 'tasima') { ust = `${cepAd(h.kaynak)} → ${cepAd(h.hedef)}`; }
+  if (h.tur === 'tasima') {
+    ust = `${cepAd(h.kaynak)} → ${cepAd(h.hedef)}`;
+    if (h.toplu) cip = <Cip tur="bakir">{h.grup_n ? `toplu taşıma · ${h.grup_n} kaynak` : 'toplu taşıma'}</Cip>;   // K-1: grup'lu satırlar birlikte iptal olur
+  }
   if (h.tur === 'sayim') {
     ust = cepAd(h.cep); alt = `Defterde ${fmt(h.beklenen)} · sayılan ${fmt(h.sayilan)}`;
     cip = !h.fark ? <Cip tur="yesil">tuttu</Cip> : <Cip tur="kirmizi">{fmt(Math.abs(h.fark))} {h.fark > 0 ? 'eksik' : 'fazla'}</Cip>;
@@ -427,8 +430,8 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         const r = await api('/evvel-yeni/kasa/aktar?kuru=false', { method: 'POST' });
         onToast?.(`Aktarıldı: ${r.ozet.kapanis} kapanış · ${r.ozet.teslim} teslim`);
       } else if (tip === 'iptal') {
-        await api(`/evvel-yeni/kasa/hareket/${form.id}/iptal`, { method: 'POST', body: { sebep: d.sebep } });
-        onToast?.('Kayıt iptal edildi (iz duruyor)');
+        const r = await api(`/evvel-yeni/kasa/hareket/${form.id}/iptal`, { method: 'POST', body: { sebep: d.sebep } });
+        onToast?.(r?.iptal_sayi > 1 ? `Taşımanın ${r.iptal_sayi} satırı birlikte iptal edildi (iz duruyor)` : 'Kayıt iptal edildi (iz duruyor)');
       } else {
         const body = { tur: tip === 'coz' ? 'cozum' : tip, is_gunu: d.is_gunu };
         if (['acilis', 'kapanis', 'dis', 'sayim', 'pos'].includes(tip)) body.cep = d.cep;
@@ -650,6 +653,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
 
         {tip === 'iptal' && (<>
           <div style={{ fontSize: 12.5, color: R.metin2 }}>Kayıt silinmez; "iptal" kaydı yazılır ve iz kalır. Bakiyeler kaydı yokmuş gibi yeniden hesaplanır.</div>
+          {form.grup_n > 1 && <div style={{ fontWeight: 700, color: R.amber }}>Bu taşımanın {form.grup_n} kaynağı birlikte iptal edilir.</div>}
           <Alan etiket="İptal sebebi"><input value={d.sebep || ''} onChange={set('sebep')} style={alanStil} placeholder="ör. yanlış şube seçilmiş" /></Alan>
         </>)}
 
@@ -1581,7 +1585,7 @@ ${x.ozet}` : ''}
             : (hepsi ? veri.hareketler.slice().reverse() : veri.hareketler).map((h, i, arr) => (
               <React.Fragment key={h.id}>
                 {hepsi && (i === 0 || arr[i - 1].tarih !== h.tarih) && <div style={{ ...etiketStil, paddingTop: 6 }}>{tUzun(h.tarih)} · {gunAdi(h.tarih)}</div>}
-                <HareketSatir h={h} cepAd={cepAd} onTeyit={teyit} onIptal={(x) => formAc('iptal', { id: x.id })} onFis={(x) => setCk(odemeFisi(x, cepAd))} />
+                <HareketSatir h={h} cepAd={cepAd} onTeyit={teyit} onIptal={(x) => formAc('iptal', { id: x.id, grup_n: x.toplu ? x.grup_n : null })} onFis={(x) => setCk(odemeFisi(x, cepAd))} />
               </React.Fragment>
             ))}
       </>)}

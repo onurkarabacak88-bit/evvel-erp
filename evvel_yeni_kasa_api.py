@@ -808,6 +808,8 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
          # H-1 (F3.10 · sim 26 Eki): kaydın GİRİLDİĞİ an, çekirdeğin TEK saat kuralıyla (TR dilimi; iş gününden başka gün girildiyse
          # "GG.AA HH:MM" — ertesi gece 06:00'ya kadarki olağan kapanış "HH:MM" kalır · Fable: tarayıcıda ikinci kural yazılmaz)
          "zaman": _tr_saat_giris(r.get("kayit_zamani"), r["is_gunu"])}
+    if r["tur"] == "tasima" and v.get("toplu"):   # K-1: "toplu taşıma · N kaynak" (grup'lu satırlar birlikte iptal olur)
+        d.update(toplu=True, grup_n=v.get("grup_n"))
     if r["tur"] == "kapanis":
         kd = [z for z in (v.get("kanal_duzeltme") or []) if not z.get("iptal")]
         if kd:   # Fable (21 Eki): kapanış nakdi sessizce küçülmüş görünmesin
@@ -1583,6 +1585,7 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
         if len({k["cep"] for k in kaynaklar}) != len(kaynaklar):
             raise HTTPException(400, "Aynı cep iki kez seçilemez")
         yeniler = []
+        grup = uuid.uuid4().hex if len(kaynaklar) > 1 else None   # K-1 (Fable L4b A): toplu taşıma tek iş — iptal de birlikte
         for k in kaynaklar:
             cep_var(k["cep"])
             if k["cep"] == body.hedef:
@@ -1592,7 +1595,7 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
             if k["tutar"] <= 0:
                 raise HTTPException(400, "Tutar gir")
             yeniler.append(_sahte(t, gun, kaynak=k["cep"], hedef=body.hedef, tutar=k["tutar"],
-                                  veri={"toplu": len(kaynaklar) > 1}))
+                                  veri={"toplu": len(kaynaklar) > 1, **({"grup": grup, "grup_n": len(kaynaklar)} if grup else {})}))
         yeni = yeniler[0]
     elif t == "odeme":
         ac = (body.aciklama or "").strip()
@@ -1817,12 +1820,15 @@ def iptal(hid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Header(defa
         h = next((x for x in kayit if x["id"] == hid), None)
         if not h:
             raise HTTPException(404, "Kayıt bulunamadı ya da zaten iptal")
+        grup = (h["veri"] or {}).get("grup") if h["tur"] == "tasima" else None
+        hs = [x for x in kayit if x["tur"] == "tasima" and (x["veri"] or {}).get("grup") == grup] if grup else [h]   # K-1 (Fable L4b A)
+        ids = {x["id"] for x in hs}
         if any(x["tur"] == "cozum" and x["veri"].get("fark_id") == hid for x in kayit):
             raise HTTPException(409, "Bu kaydın farkı kapatılmış; önce fark kapanışını iptal et")
         if h["tur"] == "dis" and any(x["tur"] == "odeme" and ((x["veri"].get("konu") or {}).get("borc_ref")) == hid for x in kayit):
             # D-1 (Fable): borç girişi iptal edilirse ona bağlı geri ödemeler yetim kalırdı (ne borç listesinde ne bağsızda)
             raise HTTPException(409, "Bu borca bağlı geri ödeme var — önce o ödemeleri iptal et (Ödeme defteri)")
-        ol_eski = _olaylar([h])
+        ol_eski = _olaylar(hs)
         _ol = _olaylar([x for x in kayit if x["id"] != hid]) if h["tur"] == "sayim" else _olaylar(kayit)
         kilit, anlar = _sayim_kilidi(_ol), _sayim_anlari(_ol)
         kartla = h["tur"] == "cozum" and (h["veri"] or {}).get("sebep") == "kartla"
@@ -1837,7 +1843,7 @@ def iptal(hid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Header(defa
             if sonraki:
                 raise HTTPException(409, "Bu cebin daha sonra (ya da aynı gün) başka sayımı var; önce onu iptal et")
         azalan = {e["cep"] for o in ol_eski for e in _etki(o, C) if e["d"] > 0 and e["cep"] in C}
-        kalan_kayit = [x for x in kayit if x["id"] != hid]
+        kalan_kayit = [x for x in kayit if x["id"] not in ids]
         if kartla:   # Fable R: kapanış nakdinin +t geri konuşu da denetime girsin (yoksa meşru iptal yanlış 'eksi'ye düşer)
             kalan_kayit = [{**x, "tutar": int(x["tutar"]) + sum(int(z.get("tutar", 0)) for z in ((x["veri"] or {}).get("kanal_duzeltme") or [])
                                                                  if z.get("cozum_id") == hid and not z.get("iptal"))}
@@ -1849,7 +1855,8 @@ def iptal(hid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Header(defa
                 raise HTTPException(e.status_code, f"{e.detail} Bu kayıttan beslenen çıkışlar var (ör. o günün ara teslimi / teslimi) — "
                                                    f"önce onları iptal et, sonra bunu.")
             raise
-        _yaz(cur, "iptal", _bugun().isoformat(), kim, veri={"hedef_id": hid, "sebep": body.sebep.strip()[:200]})
+        for x in hs:   # grup'lu toplu taşımada her satıra ayrı 'iptal' kaydı (hedef_id tek kalır), tek işlemde
+            _yaz(cur, "iptal", _bugun().isoformat(), kim, veri={"hedef_id": x["id"], "sebep": body.sebep.strip()[:200], **({"grup": grup} if grup else {})})
         if kartla:   # kapanış nakdi geri konur (iz: kanal_duzeltme satırı 'iptal')
             for kp in kayit:
                 kd = (kp["veri"] or {}).get("kanal_duzeltme") or []
@@ -1863,7 +1870,7 @@ def iptal(hid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Header(defa
                         v2["panel_sonradan"] = v2["panel_sonradan"][:-1] + [sn]
                     cur.execute("UPDATE para_izi_hareket SET tutar = tutar + %s, veri=%s::jsonb WHERE id=%s",
                                 (t_, json.dumps(v2, ensure_ascii=False), kp["id"]))
-    return {"ok": True}
+    return {"ok": True, "iptal_sayi": len(hs)}
 
 
 # ─────────────────────────── ESKİ SİSTEMDEN TEK YÖNLÜ AKTARIM ───────────────────────────
