@@ -525,7 +525,13 @@ def geri_al(aid: str, body: GeriAlBody, x_evvel_oturum: Optional[str] = Header(d
         h = next((r for r in kaynak_refleri(cur, ref) if r["kaynak_ref"] == ref and not r["iptal"]), None) if ref else None
         if not h:
             raise HTTPException(409, "Bu avansın Kasa'da para hareketi yok (eski sistemden devir olabilir) — geri alınamaz")
-        hareket_iptal_yaz(cur, str(h["id"]), f"Avans geri alındı · {body.sebep.strip()}"[:200], kim, avans_izni=True)
+        try:
+            hareket_iptal_yaz(cur, str(h["id"]), f"Avans geri alındı · {body.sebep.strip()}"[:200], kim, avans_izni=True)
+        except HTTPException as e:
+            if e.status_code == 404:   # Codex P2: Kasa önceki dönemi yüklemez — Kasa dönem geçişinden önceki avans buradan geri alınmaz
+                raise HTTPException(409, "Bu avans önceki Kasa döneminde ödendi — geri alınamaz. Para geri geldiyse Kasa › + Dış giriş "
+                                         "(Diğer) ile gir, maaştaki mahsup için Maaşlar'da düzeltme yap.")
+            raise
         iz = f"geri alındı ({kim}): {body.sebep.strip()}"[:200]
         cur.execute("""UPDATE ey_avans_talep SET durum='talep', yontem=NULL, sube_id=NULL, odeme_ref=NULL, karar_ts=NULL, karar_kim=NULL,
                                teslim_ts=NULL, teslim_kim=NULL, teslim_pid=NULL, karar_not=%s WHERE id=%s""", (iz, aid))

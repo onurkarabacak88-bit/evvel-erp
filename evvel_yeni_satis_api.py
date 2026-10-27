@@ -601,6 +601,11 @@ def satis_gun(gun: Optional[str] = None):
                 fire = arsiv_oku(cur, "satis", f"fire:{g_}")   # 1 Kasım kesimi: Ekim günü dondurulmuş çıktıdan
                 if fire is None:
                     fire = _fire_eski(cur, g_)   # yalnız geçişe kadar (son aktarımdan sonra eski gün hep arşivde)
+                from evvel_yeni_cekirdek import pilot_subeler
+                pilot = pilot_subeler(cur, date.fromisoformat(g_))
+                if pilot:   # 🧪 Codex P2: pilot şubenin Ekim fireleri yeni panelde — mutabakatla aynı kural (o şube yeni evrenden)
+                    fy = _fire_yeni(cur, g_)
+                    fire = {**{k: v for k, v in fire.items() if k not in pilot}, **{k: v for k, v in fy.items() if k in pilot}}
             except Exception as e:  # noqa: BLE001
                 log.warning("satış günlük: fire okunamadı: %s", str(e)[:150])
                 fire = {}
@@ -1098,7 +1103,7 @@ def kesim_dondur(cur, yazan: str, ay: str) -> dict:
         g = gun.isoformat()
         mut = {sid: x for sid, x in _mut_veri_eski(cur, g).items() if not (sid in pilot and gun >= pilot[sid])}
         for sid, x in mut.items():   # B2/S5: şubenin SON eski kapanışı (gün + bırakılan) — 1 Kasım sabah sağlamasının karşılığı
-            if x.get("devir") is not None and not (sid in pilot and pilot[sid] <= son):   # pilot şubenin sabah sağlaması yeni panelin son kapanışından · Fable 🟡: kör sayımı boş kapanış da bırakılan beyan eder (devir / beyan) — atlanmasın
+            if x.get("devir") is not None:   # Codex P2: pilot şubenin pilot ÖNCESİ son eski kapanışı da yedek kalır (pilot günleri mut'ta yok; yeni kapanış varsa son_kapanislar onu seçer) · Fable 🟡: kör sayımı boş kapanış da bırakılan beyan eder (devir / beyan) — atlanmasın
                 baslangic[sid] = [g, x["devir"]]
         arsiv_yaz(cur, "satis", f"mutabakat:{g}", mut, yazan)
         fire = {sid: x for sid, x in _fire_eski(cur, g).items() if not (sid in pilot and gun >= pilot[sid])}
