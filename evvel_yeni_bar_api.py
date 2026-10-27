@@ -207,14 +207,14 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
     sids = {s_["id"] for s_ in subeler}
     ev, ac = {}, {}
     # B84 (Fable 22 Eki): dün kapalıysa SON kapanışla kıyas — 14 gün geriye okunur (Satış son_kapanislar ile aynı sınır)
-    _pb = __import__("evvel_yeni_cekirdek").panel_baslangic(cur)
-    _sb = {}   # şube → başlangıç (olay başına sorgu olmasın)
+    _sb = {}   # şube → gerçek kayıt başlangıcı (olay başına sorgu olmasın)
     for o in __import__("evvel_yeni_olay").panel_olaylari(cur, bas=bas - timedelta(days=14), son=son + timedelta(days=1), turler={"acilis", "kapanis", "urun_ac"}):
         if str(o["sube_id"]) not in sids:   # F#12: iptal/panel süzgeci Olay'da
             continue
         sid = str(o["sube_id"])
         # F6.3: yeni dönem ayında 1 Kasım öncesi yeni panel kaydı (28–30 Eki prova) "dün kapanışı" sayılmaz — 🧪 pilot şubede kendi başlangıcı (Fable C+)
-        if ay_bas >= _pb and o["is_gunu"] < (_sb.get(sid) or _sb.setdefault(sid, __import__("evvel_yeni_cekirdek").sube_baslangic(cur, sid))):
+        _s0 = _sb.get(sid) or _sb.setdefault(sid, __import__("evvel_yeni_cekirdek").sube_baslangic(cur, sid))
+        if o["is_gunu"] < _s0 <= son:   # şubenin gerçek kayıt başlangıcından önceki yeni panel kaydı PROVA (pilot Ekim'de de — ilk sabah prova kapanışıyla kıyaslanmaz)
             continue
         v = o["v"]   # panel_olaylari açtı
         if o["tur"] == "urun_ac":
@@ -340,6 +340,35 @@ def _bar_yeni(cur, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
                    "kabul kaydı başka güne girilmiş olabilir. Sayım gideri ve kasayı değiştirmez."}
 
 
+def _pilot_ekle(sonuc: dict, subeler: list, ay_bas: date, bas: date, son: date) -> dict:
+    """🧪 Pilot şube (sahip 28 Eki "hiçbir eksik kalmasın" · Fable Faz B notu): eski / arşiv Ekim özetinde pilot şubenin pilot gününden
+    itibaren günleri YENİ panelden (aynı formül _bar_yeni), öncesi eski kaynaktan — satır içinde gün gün birleşir, özet yeniden sayılır."""
+    from evvel_yeni_cekirdek import pilot_baslangiclari
+    try:
+        with db() as (conn, cur):
+            pilot = {s: g for s, g in pilot_baslangiclari(cur).items() if ay_bas <= g <= son}
+            if not pilot:
+                return sonuc
+            yeni = {r["sube_id"]: r for r in _bar_yeni(cur, [s for s in subeler if s["id"] in pilot], ay_bas, bas, son)["subeler"]}
+    except Exception:  # noqa: BLE001 — birleştirme okunamazsa eski özet yine döner
+        log.warning("bar: pilot günleri birleştirilemedi", exc_info=True)
+        return sonuc
+    satirlar = []
+    for r in sonuc.get("subeler") or []:
+        sid = r.get("sube_id")
+        if sid in pilot and sid in yeni:
+            pg = pilot[sid].isoformat()
+            gunler = [g for g in r.get("gunler") or [] if g["gun"] < pg] + [g for g in yeni[sid]["gunler"] if g["gun"] >= pg]
+            r = {**r, "gunler": gunler, "pilot_gun": pg,
+                 "panel_yok": not any(x["acilis_var"] or x["kapanis_var"] for x in gunler),
+                 "ozet": {"devir_sorunlu_gun": sum(1 for x in gunler if x["devir_fark"]),
+                          "ac_eksik_gun": sum(1 for x in gunler if x["ac_eksik"]),
+                          "kapanis_yok": sum(1 for x in gunler if x["durum"] == "kapanis_yok"),
+                          "tamam": sum(1 for x in gunler if x["durum"] == "tamam")}}
+        satirlar.append(r)
+    return {**sonuc, "subeler": satirlar}
+
+
 @router.get("/ozet")
 def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None, evren: Optional[str] = None):
     from evvel_yeni_tanim_api import subeler as _ey_subeler
@@ -358,7 +387,8 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None, evren: Opt
         ar = None if evren == "eski" else arsiv_oku(cur, "bar", f"ozet:{a_}")
         if ar is not None:
             sset = {s["id"] for s in subeler}
-            return {**ar, "subeler": [s for s in ar.get("subeler") or [] if s.get("sube_id") in sset], "dondu": True}
+            return _pilot_ekle({**ar, "subeler": [s for s in ar.get("subeler") or [] if s.get("sube_id") in sset], "dondu": True},
+                               subeler, ay_bas, bas, son)
         sids = [s["id"] for s in subeler]
         cur.execute("""SELECT sube_id::text AS sube_id, tarih, tip, cevap_ts, meta, personel_ad FROM sube_operasyon_event
                         WHERE tarih BETWEEN %s AND %s AND durum='tamamlandi' AND tip IN ('ACILIS','KAPANIS')
@@ -507,10 +537,10 @@ def bar_ozet(ay: Optional[str] = None, sube_id: Optional[str] = None, evren: Opt
                                "ac_eksik_gun": sum(1 for x in gunler if x["ac_eksik"]),
                                "kapanis_yok": sum(1 for x in gunler if x["durum"] == "kapanis_yok"),
                                "tamam": sum(1 for x in gunler if x["durum"] == "tamam")}})
-    return {"ay": a_, "kalemler": [{"kod": k, "ad": a} for k, a in KALEMLER], "subeler": sonuc, "evren": "eski",
+    return _pilot_ekle({"ay": a_, "kalemler": [{"kod": k, "ad": a} for k, a in KALEMLER], "subeler": sonuc, "evren": "eski",
             "not": "Bara giriş = ürün aç + panelden stok ekle + pasta sevk kabulü. Devir farkı = bugün açılış − (dün kapanış + gece giren). Net eksilme = açılış + gün içi açılan − kapanış "
                    "(satış + fire + ikram birlikte; kayıp değildir). Net eksilme eksiye düşerse ürün aç girilmemiş olabilir. "
-                   "Sayım gideri ve kasayı değiştirmez."}
+                   "Sayım gideri ve kasayı değiştirmez."}, subeler, ay_bas, bas, son)
 
 
 

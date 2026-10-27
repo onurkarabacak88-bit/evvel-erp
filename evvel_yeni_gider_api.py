@@ -338,6 +338,20 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
                 mal = _tuketim_satirlari(cur, ay_bas, min(ay_son, bugun))
                 sevk = _mal_satirlari(cur, ay_bas, min(ay_son, bugun), depo)
             depo_kapali = False
+            # 🧪 pilot şube (sahip 28 Eki "hiçbir eksik kalmasın" · Fable Faz B notu): pilot gününden itibaren mal / sevk YENİ defterden
+            from evvel_yeni_cekirdek import pilot_baslangiclari
+            pilot = {s: g for s, g in pilot_baslangiclari(cur).items() if ay_bas <= g <= min(ay_son, bugun)}
+            if pilot:
+                from evvel_yeni_tanim_api import depo_sube_id
+                _pl = lambda r: str(r["sube_id"]) in pilot and r["gun"] >= pilot[str(r["sube_id"])]   # noqa: E731
+                try:   # Fable L6: yeni defter okunamazsa ekran yine açılsın (eski satırlar kalır), bar _pilot_ekle ile aynı
+                    with savepoint(cur, "sp_ey_pilot"):
+                        y_mal = [r for r in _tuketim_satirlari_yeni(cur, ay_bas, min(ay_son, bugun)) if _pl(r)]
+                        y_sevk = [r for r in _mal_satirlari_yeni(cur, ay_bas, min(ay_son, bugun), depo_sube_id(cur) or "sube-tema") if _pl(r)]
+                    mal = [r for r in mal if not _pl(r)] + y_mal
+                    sevk = [r for r in sevk if not _pl(r)] + y_sevk
+                except Exception:  # noqa: BLE001
+                    log.warning("gider: pilot günleri birleştirilemedi", exc_info=True)
         cur.execute("SELECT kaynak_ref, tur, kimin FROM ey_gider_sinif")
         sinif = {dict(r)["kaynak_ref"]: dict(r) for r in cur.fetchall() or []}
     subeler = {c["sube_id"]: c for c in cep_list if c["tur"] == "sube"}
