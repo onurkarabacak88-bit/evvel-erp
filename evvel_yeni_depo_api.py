@@ -1193,7 +1193,7 @@ def sevk_et(body: SevkBody, x_evvel_oturum: Optional[str] = Header(default=None)
         _sevk_hazirla(cur)
         kim = merkez_aktor(cur, x_evvel_oturum)   # çekirdek kapısı (F#2)
         kaynak = body.kaynak or _depo_sube(cur)
-        kuru = deneme_mi(cur)   # panelle AYNI tek kural (çekirdek)
+        kuru = deneme_mi(cur, sube_id=body.hedef)   # panelle AYNI tek kural (çekirdek) · 🧪 pilot şubeye sevk 1 Kasım'dan önce de gerçek
         sonuc = {}
         try:
             with savepoint(cur, "sp_sevk_et"):

@@ -2230,6 +2230,12 @@ def _aktar(cur, kuru: bool, kim: str, son_aktarim: bool = False) -> dict:
         sube_cep = {c["sube_id"]: c["id"] for c in cep_list if c["tur"] == "sube"}
         var = {h.get("kaynak_ref") for h in kayit if h.get("kaynak_ref")}
         rapor = {"kapanis": [], "teslim": [], "eslesmeyen_teslim": [], "kilitli": [], "dis_kaynak": [], "atlanan": 0}
+        # 🧪 pilot şube (Fable L4b A): pilot gününden itibaren o şubenin eski tablo satırı ALINMAZ (yeni panel yazar — çift sayım yok)
+        _pilot = __import__("evvel_yeni_cekirdek").pilot_baslangiclari(cur)
+
+        def _pilot_mu(sid, tarih) -> bool:
+            p_ = _pilot.get(str(sid))
+            return bool(p_) and tarih is not None and (tarih if isinstance(tarih, date) else date.fromisoformat(str(tarih)[:10])) >= p_
 
         gunluk = {}
         cur.execute("""SELECT sube_id, tarih, SUM(nakit) AS nakit, SUM(pos) AS pos, SUM(online) AS online
@@ -2237,11 +2243,15 @@ def _aktar(cur, kuru: bool, kim: str, son_aktarim: bool = False) -> dict:
                         GROUP BY sube_id, tarih""", (bas,))
         for r in cur.fetchall() or []:
             r = dict(r)
+            if _pilot_mu(r["sube_id"], r["tarih"]):
+                continue
             gunluk[(str(r["sube_id"]), r["tarih"])] = (r["nakit"] or 0, (r["pos"] or 0, r["online"] or 0), "onaylandi", "ciro")
         cur.execute("""SELECT DISTINCT ON (sube_id, tarih) sube_id, tarih, nakit, pos, online, gonderen_ad FROM ciro_taslak
                         WHERE tarih >= %s AND durum = 'bekliyor' ORDER BY sube_id, tarih, olusturma DESC""", (bas,))
         for r in cur.fetchall() or []:
             r = dict(r)
+            if _pilot_mu(r["sube_id"], r["tarih"]):
+                continue
             # Sahip (2026-10-16): Evo'nun ürettiği taslak = şube KAPANIŞ YAPMAMIŞ; ayrı işaretlenir
             evo = "evo" in str(r.get("gonderen_ad") or "").lower()
             if evo and (str(r["sube_id"]), r["tarih"]) not in gunluk:
@@ -2290,6 +2300,7 @@ def _aktar(cur, kuru: bool, kim: str, son_aktarim: bool = False) -> dict:
             cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim
                             WHERE tarih >= %s ORDER BY tarih, olusturma""", (bas,))
             teslimler = [dict(r) for r in cur.fetchall() or []]
+        teslimler = [x for x in teslimler if not _pilot_mu(x["sube_id"], x["tarih"])]
         yetim = _yetim_teslimler(cur, {"kasa_teslim:" + str(x["id"]) for x in teslimler}, bas)   # C-T1-05: panel yoluyla AYNI koruma
         for r in teslimler:
             ref = "kasa_teslim:" + str(r["id"])
@@ -2535,6 +2546,8 @@ def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) 
                 prm.append(sube_id)
             cur.execute(q, prm)
             kaynak = [dict(r) for r in cur.fetchall() or []]
+            _pilot = __import__("evvel_yeni_cekirdek").pilot_baslangiclari(cur)   # 🧪 pilot şubenin pilot günleri yeni panelden
+            kaynak = [r for r in kaynak if not (_pilot.get(str(r.get("sube"))) and r.get("tarih") is not None and r["tarih"] >= _pilot[str(r["sube"])])]
     except Exception as e:  # noqa: BLE001
         sonuc["hata"] = str(e)[:120]
         return sonuc

@@ -496,7 +496,7 @@ def yola_cikar(cur, *, depo_sube: str, hedef_sube: str, satirlar: List[dict], ki
         if int(dict(cur.fetchone())["n"]) == len({str(x.get("yon_id")) for x in satirlar}):
             return {"parti_id": once["parti_id"], "kalem": once["kalem"], "eksi": [], "yok": 0, "kismi": 0, "tekrar": True}
     from evvel_yeni_cekirdek import yeni_donem
-    gercek = yeni_donem(cur)
+    gercek = yeni_donem(cur, sube_id=hedef_sube)   # 🧪 pilot şubeye giden sevk 1 Kasım'dan önce de GERÇEK (Fable L4b A)
     ys = {}
     for x in satirlar:
         cur.execute("""SELECT y.*, s.sube_id AS hedef, s.surum, s.iptal AS s_iptal, s.kalemler, s.is_gunu AS s_gun FROM ey_siparis_yon y
