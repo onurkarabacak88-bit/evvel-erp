@@ -453,6 +453,9 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
                 kalemler.append({"kod": "bayram", "ad": f"Bayram {float(e['bayram_saat']):g} saat × 2",
                                  "tutar": _tl(int(Decimal(str(e["bayram_saat"])) * maas / (AY_GUN * GUNLUK_SAAT) * BAYRAM_KAT))})
             kes_gun = Decimal(str(e.get("eksik_gun") or 0)) + (Decimal(str(e.get("rapor_gun") or 0)) if e.get("rapor_kesinti") else 0)
+            if kes_gun > gun:   # matris MA-2 (Fable L4b A): çalışılan günden fazla kesinti hak edişi eksiye düşürürdü — kırp + uyar
+                uyari.append(f"Eksik gün {kes_gun.normalize():f} çalışılan {gun} günden fazla — {gun} gün sayıldı")
+                kes_gun = Decimal(gun)
             if kes_gun:
                 kalemler.append({"kod": "eksik", "ad": f"Eksik gün {kes_gun:g} × maaş/30", "tutar": -_tl(int(kes_gun * maas / AY_GUN))})
         yemek_dusen = []
@@ -592,6 +595,10 @@ def maas_elle(pid: str, ay: str, b: ElleBody, x_evvel_oturum: Optional[str] = He
             raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
     if b.duzeltme and not (b.aciklama or "").strip():
         raise HTTPException(400, "Düzeltmenin gerekçesini yaz")
+    for k, ad in (("eksik_gun", "Eksik gün"), ("rapor_gun", "Rapor günü"), ("bayram_saat", "Bayram saati"), ("mesai_saat", "Mesai saati"),
+                  ("calisma_saat", "Çalışma saati")):   # matris MA-1 (Fable L4b A): eksi gün / saat gizli ek ya da kesinti olurdu — o iş Düzeltme'nin
+        if getattr(b, k) is not None and getattr(b, k) < 0:
+            raise HTTPException(400, f"{ad} eksi olamaz — ek ödeme / kesinti için Düzeltme'yi gerekçesiyle kullan")
     with db() as (conn, cur):
         _hazirla(cur)
         kim = _aktor(cur, x_evvel_oturum)
