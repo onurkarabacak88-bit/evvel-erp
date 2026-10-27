@@ -88,6 +88,36 @@ def ozet() -> Dict[str, Any]:
     }
 
 
+# ── 🔒 EVVEL YENİ KAPISI (Faz 2 · 28 Eki · Fable L4b): /api/evvel-yeni/* merkez oturumu ister ──────────────────────────────────
+# Kanıt: frontend taraması — şube paneli (cihaz imzalı) yalnız /panel/, personel telefonu (cihaz imzalı) yalnız /yoklama/ ve
+# /toptanci/teslim/{id}/belge-telefon, eski sube_panel.html yalnız /moduller/gecis/{şube}; merkez React her istekte X-Evvel-Oturum.
+# Sayaç bellekte (deploy'da sıfırlanır) olduğu için gözlem verisi beklenmedi. Geri dönüş: ortam değişkeni EY_KAPI=gozlem.
+EY_ONEK = "/api/evvel-yeni/"
+_EY_IZIN_ONEK = ("/api/evvel-yeni/panel/", "/api/evvel-yeni/yoklama/", "/api/evvel-yeni/moduller/gecis")
+_EY_BELGE_TEL = re.compile(r"^/api/evvel-yeni/toptanci/teslim/[^/]+/belge-telefon/?$")
+
+
+def ey_kapi_izinli(yontem: str, yol: str) -> bool:
+    """Oturumsuz geçebilen Evvel Yeni yolu mu (kendi cihaz imzası / tek kullanımlık bilgisi olanlar + dağıtım doğrulama listesi)."""
+    if yontem == "OPTIONS":   # CORS ön sorgusu (CORSMiddleware içeride) — yutulmaz
+        return True
+    if yol.startswith(_EY_IZIN_ONEK) or _EY_BELGE_TEL.match(yol):
+        return True
+    return yontem in ("GET", "HEAD") and yol.rstrip("/") == "/api/evvel-yeni/moduller"   # yalnız modül listesi (pilot / kesim değil)
+
+
+def engellendi(yontem: str, yol: str) -> None:
+    """Kapının geri çevirdiği isteği say (gözlem modunda da: 'geçerdi ama kapı kapalı olsa 401')."""
+    kaydet(yontem, yol, False)   # Fable L6: kapı DIŞ katman — 401 alan istek gözlem sayacına hiç uğramıyordu; önce say
+    try:
+        with _KILIT:
+            d = _SAYAC.get((yontem or "?", yol_kalibi(yol)))
+            if d is not None:
+                d["engellendi"] = d.get("engellendi", 0) + 1
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def sifirla() -> int:
     with _KILIT:
         n = len(_SAYAC)

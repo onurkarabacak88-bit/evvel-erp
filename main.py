@@ -517,6 +517,25 @@ async def kilit_gozlemi(request: Request, call_next):
     return await call_next(request)
 
 
+# 🔒 EVVEL YENİ KAPISI — FAZ 2 (28 Eki, Fable L4b): /api/evvel-yeni/* geçerli merkez oturumu ister; izin listesi kilit_gozlem.
+# ey_kapi_izinli'de (panel · yoklama · telefon belge · eski panel geçiş · modül listesi · OPTIONS). Geri dönüş deploy'suz: Railway
+# ortam değişkeni EY_KAPI=gozlem → 401 yerine yalnız sayar. Modüllere tek tek dokunulmaz (tak-çıkar: yeni modül kendiliğinden kapalı).
+@app.middleware("http")
+async def evvel_yeni_kapisi(request: Request, call_next):
+    yol = request.url.path
+    if yol.startswith("/api/evvel-yeni/"):
+        import kilit_gozlem as _kg
+        if not _kg.ey_kapi_izinli(request.method, yol):
+            _jeton = request.headers.get("X-Evvel-Oturum") or ""
+            _gecerli = _admin_jeton_gecerli(_jeton)[0] if _jeton else False
+            if not _gecerli:
+                _kg.engellendi(request.method, yol)
+                if os.environ.get("EY_KAPI", "").strip().lower() != "gozlem":
+                    return JSONResponse(status_code=401, content={"detail": "Merkez oturumu gerekli"},
+                                        headers={"Access-Control-Allow-Origin": "*"})   # CORS katmanı içeride — tarayıcı 401'i görsün
+    return await call_next(request)
+
+
 @app.get("/api/kilit-gozlem")
 def kilit_gozlem_oku():
     """Kilit takılınca hangi uçlar kırılırdı? SALT OKUR, hiçbir şey engellenmedi."""
