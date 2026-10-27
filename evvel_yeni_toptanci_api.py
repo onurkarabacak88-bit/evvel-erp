@@ -452,7 +452,7 @@ def _hesap(cur, bugun: date):
                     bilinmeyen.append(x)
                 if borc:
                     borclar.append({"tarih": x["tarih"], "vade": vade, "tutar": borc})
-            har.append({"id": x["id"], "tur": "teslim", "tarih": x["tarih"].isoformat(), "sube": sube_ad.get(x.get("sube_id"), x.get("sube_id") or "—"),
+            har.append({"id": x["id"], "tur": "teslim", "tarih": x["tarih"].isoformat(), "sube": sube_ad.get(x.get("sube_id"), x.get("sube_id") or "Şubesiz (merkez girdi)"),   # F2.2 T-1: "—" ne olduğunu söylemiyordu
                         "kalemler": kal, "tahmini": _tl_sayi(int(x["tahmini"])) if x.get("tahmini") is not None else None,
                         "fiyat_eksik": x.get("fiyat_eksik") or 0, "kesin": _tl_sayi(int(x["kesin_tutar"])) if x.get("kesin_tutar") is not None else None,
                         "fatura_geldi": x.get("fatura_geldi"), "fatura_no": x.get("fatura_no"), "kesin_kaynak": x.get("kesin_kaynak"),
