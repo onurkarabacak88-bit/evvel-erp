@@ -215,6 +215,13 @@ def kasa_mutabakat(cur, gun: str, evren: Optional[str] = None) -> dict:
         from evvel_yeni_cekirdek import arsiv_oku
         out = arsiv_oku(cur, "satis", f"mutabakat:{gun[:10]}")
         out = _mut_veri_eski(cur, gun) if out is None else out
+        if evren is None:   # 🧪 pilot şube (Fable C+ 27 Eki): Ekim gününde gerçek kaydı yeni panelde — o şubenin satırı yeni evrenden
+            from evvel_yeni_cekirdek import pilot_subeler
+            pilot = pilot_subeler(cur, _date.fromisoformat(gun[:10]))
+            if pilot:
+                yeni_s = _mut_veri_yeni(cur, gun[:10])
+                for sid in pilot:
+                    out[sid] = yeni_s.get(sid) or mut_bos()
     _cift_kayit_dus(cur, gun, out)   # Codex P2: eski ve yeni evrende AYNI düzeltme (Kasa 'kartla' çift kayıt)
     for x in out.values():
         mutabakat_hesapla(x)
@@ -255,20 +262,25 @@ def son_kapanislar(cur, gun, subeler=None) -> dict:
     from datetime import date as _date
     g = gun if isinstance(gun, _date) else _date.fromisoformat(str(gun)[:10])
     out, acilis = {}, {}
+    from evvel_yeni_cekirdek import sube_baslangic as _sbas
+    _sb = {}
     for o in _panel_olaylari(cur, g - timedelta(days=ZINCIR_GERI_GUN), g - timedelta(days=1), {"kapanis", "acilis"}):
         sid = str(o["sube_id"])
         if subeler is not None and sid not in subeler:
+            continue
+        if o["is_gunu"] < (_sb[sid] if sid in _sb else _sb.setdefault(sid, _sbas(cur, sid))) <= g:   # Fable 🟡4: şubenin gerçek kayıt başlangıcından önceki yeni panel kaydı PROVA
             continue
         if o["tur"] == "acilis":
             acilis[sid] = max(acilis.get(sid, o["is_gunu"]), o["is_gunu"])
         elif sid not in out or o["is_gunu"] >= out[sid][0]:   # aynı gün birden çok sürüm: SON kazanır (olay sırası)
             out[sid] = (o["is_gunu"], _kr_tl(o["v"].get("birakilan")))
-    from evvel_yeni_cekirdek import arsiv_oku, panel_baslangic
+    from evvel_yeni_cekirdek import arsiv_oku, panel_baslangic, sube_baslangic
     pb = panel_baslangic(cur)
     if pb <= g <= pb + timedelta(days=ZINCIR_GERI_GUN):   # F6.3 B2/S5: 1 Kasım sabahı "dün bırakılan" eski panelin 31 Eki kapanışı (arşiv)
         for sid, (kg, bir) in (arsiv_oku(cur, "satis", "baslangic") or {}).items():
             # 1 Kasım öncesi YENİ panel kaydı (28–30 Eki prova / deneme) esas alınmaz — gerçek, eski panelin son kapanışı
-            if (sid not in out or out[sid][0] < pb) and (subeler is None or sid in subeler):
+            # 🧪 pilot şube (Fable C+): kendi başlangıcından sonraki yeni panel kapanışı (31 Eki) GERÇEK — arşive düşülmez
+            if (sid not in out or out[sid][0] < sube_baslangic(cur, sid)) and (subeler is None or sid in subeler):
                 out[sid] = (_date.fromisoformat(kg), bir)
     # Fable: kapalı gün ≠ KAPANIŞSIZ gün — son kapanıştan sonra açılıp kapanmamış gün varsa zincir kopuk (sahte fark üretme)
     return {sid: v for sid, v in out.items() if not (sid in acilis and acilis[sid] > v[0])}
@@ -319,11 +331,16 @@ def _mut_veri_yeni(cur, gun: str) -> dict:
     dun = g - timedelta(days=1)
     out = {}
     tl = _kr_tl
+    from evvel_yeni_cekirdek import sube_baslangic
+    _sb = {}   # şube → gerçek kayda geçtiği gün (🧪 pilot dahil)
     for o in _panel_olaylari(cur, dun, g, {"acilis", "kapanis", "teslim", "ara_sayim"}):
         v = o["v"]
         x = out.setdefault(str(o["sube_id"]), mut_bos())
         x["kor_ara_dahil"] = False   # yeni kapanış: kör sayım ara teslim GİTTİKTEN sonra çekmecede kalan → ara düşülmez
         if o["is_gunu"] == dun:
+            sb_ = (_sb[str(o["sube_id"])] if str(o["sube_id"]) in _sb else _sb.setdefault(str(o["sube_id"]), sube_baslangic(cur, str(o["sube_id"]))))
+            if dun < sb_ <= g:   # Fable 🟡4: gerçek kaydın ilk sabahı — dünkü yeni panel kapanışı PROVA, devir sayılmaz (sahte sabah farkı)
+                continue
             if o["tur"] == "kapanis":
                 x["dun_devir"] = tl(v.get("birakilan"))
             continue
@@ -1020,7 +1037,8 @@ def _sabah_isleri(cur, _baglam) -> list:
     from evvel_yeni_cekirdek import deneme_mi, is_gunu, kurus
     from evvel_yeni_tanim_api import subeler
     gun = is_gunu()
-    if deneme_mi(cur, gun):
+    from evvel_yeni_cekirdek import pilot_subeler
+    if deneme_mi(cur, gun) and not pilot_subeler(cur, gun):   # Fable 🟡1: 🧪 pilot şube 1 Kasım'dan önce de sabah işi üretir
         return []
     mut = kasa_mutabakat(cur, gun.isoformat(), evren="yeni")
     try:
@@ -1036,6 +1054,8 @@ def _sabah_isleri(cur, _baglam) -> list:
     out = []
     for s in subeler(cur):
         sid = str(s["id"])
+        if deneme_mi(cur, gun, sid):   # deneme şubesi merkeze iş üretmez
+            continue
         parca = []
         m = mut.get(sid) or {}
         f = m.get("sabah_fark")
@@ -1069,18 +1089,19 @@ _bekleyen_is_kaydet("satis_sabah", _sabah_isleri)
 # savepoint'inde; kuru denemede sonra geri alınır. Modül YALNIZ kendi arşiv anahtarını yazar. Kesim yayınında eski okuyucularla birlikte silinir.
 def kesim_dondur(cur, yazan: str, ay: str) -> dict:
     """Satış: Ekim'in her günü kasa mutabakatı (eski panel) + fire listesi + ayın kasa devir defteri (sahip 27 Eki: DONDURULUR)."""
-    from evvel_yeni_cekirdek import arsiv_yaz
+    from evvel_yeni_cekirdek import arsiv_yaz, pilot_baslangiclari
+    pilot = pilot_baslangiclari(cur)   # 🧪 pilot şubenin pilot günleri eski evrende boş — arşive yazılmaz (Fable C+); gerçek kayıt yeni panelde
     bas = date.fromisoformat(ay + "-01")
     son = (bas.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
     gun, sube_gun, fire_adet, baslangic = bas, 0, 0, {}
     while gun <= son:
         g = gun.isoformat()
-        mut = _mut_veri_eski(cur, g)
+        mut = {sid: x for sid, x in _mut_veri_eski(cur, g).items() if not (sid in pilot and gun >= pilot[sid])}
         for sid, x in mut.items():   # B2/S5: şubenin SON eski kapanışı (gün + bırakılan) — 1 Kasım sabah sağlamasının karşılığı
-            if x.get("devir") is not None:   # Fable 🟡: kör sayımı boş kapanış da bırakılan beyan eder (devir / beyan) — atlanmasın
+            if x.get("devir") is not None and not (sid in pilot and pilot[sid] <= son):   # pilot şubenin sabah sağlaması yeni panelin son kapanışından · Fable 🟡: kör sayımı boş kapanış da bırakılan beyan eder (devir / beyan) — atlanmasın
                 baslangic[sid] = [g, x["devir"]]
         arsiv_yaz(cur, "satis", f"mutabakat:{g}", mut, yazan)
-        fire = _fire_eski(cur, g)
+        fire = {sid: x for sid, x in _fire_eski(cur, g).items() if not (sid in pilot and gun >= pilot[sid])}
         arsiv_yaz(cur, "satis", f"fire:{g}", fire, yazan)
         sube_gun += len(mut)
         fire_adet += sum(len(x) for x in fire.values())

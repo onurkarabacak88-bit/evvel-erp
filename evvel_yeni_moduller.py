@@ -170,7 +170,7 @@ def pilot_yaz(body: _PilotBody, x_evvel_oturum: Optional[str] = Header(default=N
     from datetime import date as _date
     from database import db
     from fastapi import HTTPException
-    from evvel_yeni_cekirdek import ayar_yaz, merkez_aktor, panel_baslangic
+    from evvel_yeni_cekirdek import ayar_yaz, merkez_aktor, panel_baslangic, yeni_donem
     from evvel_yeni_tanim_api import subeler
     with db() as (conn, cur):
         kim = merkez_aktor(cur, x_evvel_oturum)
@@ -187,6 +187,8 @@ def pilot_yaz(body: _PilotBody, x_evvel_oturum: Optional[str] = Header(default=N
                 raise HTTPException(400, "Pilot günü bugünden (iş günü) önce olamaz")
             ayar_yaz(cur, f"pilot_baslangic:{body.sube_id}", g.isoformat(), kim)
             return {"ok": True, "mesaj": f"Pilot başladı — {g.isoformat()} iş gününden itibaren bu şube yeni panelde GERÇEK kayıt tutar, eski panel kapanır"}
+        if yeni_donem(cur):   # Fable 🟡3: 1 Kasım'dan (son aktarımdan) sonra kaldırılırsa pilot günleri ne arşivde ne yeni evrende olur
+            raise HTTPException(409, "1 Kasım geçildi — pilot kaydı artık kaldırılamaz (pilot günleri yeni panelden okunuyor)")
         ayar_yaz(cur, f"pilot_baslangic:{body.sube_id}", "", kim)   # boş = pilot yok (çekirdeğin PUBLIC kapısı; tablo çekirdeğin)
         return {"ok": True, "mesaj": "Pilot kaldırıldı — şube denemeye döndü, eski panel yeniden açık"}
 
