@@ -17,7 +17,7 @@ import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
 import Fire from './Fire';
 import AraSayim from './AraSayim';
-import { C, CSS, cihazTuruOku, cihazTuruYaz, KisiPin, Modal, panelHata, qrBoyut, SayiTusTakimi, sor, SorKatmani, TabletQR, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek } from './ortak';
+import { C, CSS, cihazTuruOku, cihazTuruYaz, KisiPin, Modal, panelHata, qrBoyut, SayiTusTakimi, sor, SorKatmani, TabletQR, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek, panelYaz } from './ortak';
 import { gunKaydir, tarihNokta } from '../../utils/trTarih';
 
 export default function SubePaneli({ subeId }) {
@@ -209,7 +209,7 @@ export default function SubePaneli({ subeId }) {
     if (mesgul) return;
     setMesgul(true);
     try {
-      const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/devir-iptal`, { method: 'POST', body: {} });
+      const r = await panelYaz(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/devir-iptal`, 'POST', {});
       setMesaj({ tur: 'tamam', metin: r.mesaj || 'Devir iptal edildi' }); yukle();
     } catch (e) {
       setMesaj({ tur: 'hata', metin: e instanceof TypeError ? 'İnternet yok — tekrar dene' : (e?.message || 'İptal edilemedi') });

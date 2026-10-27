@@ -4,7 +4,7 @@
 // Bu dosya yalnız React'e bağımlıdır (döngü yok): ekranlar ortak'ı alır, SubePaneli ekranları alır.
 import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { imzaliFetch } from '../../utils/cihazImza';
+import { cihazId, imzaliFetch, imzaliJson } from '../../utils/cihazImza';
 import { sayiTR } from '../../utils/trSayi';
 
 export const C = { bg: '#0b0f1a', bg1: '#111827', bg2: '#1a2236', bg3: '#222d42', cizgi: 'rgba(99,120,160,0.18)', yazi: '#f0f4ff', soluk: '#7a8ba8',
@@ -44,6 +44,11 @@ export const CSS = `
 
 // 💾 TASLAK (tablette) — TEK kaynak (Dalga 5, F#53: 7 ekran ayrı try/JSON yazıyordu; Ürün aç / Tedarikçi / Sipariş / Depodan gelen
 // taslakları hiç temizlenmiyordu, Depodan gelen anahtarı günsüzdü). Anahtar: sp_taslak:{şube}:{iş günü | depo_kabul}:{form}.
+// 🔒 Kimliksiz yazan panel uçları (devir iptal · ürün aç taslağı · onay iste · ara sayım): bu PC bağlıysa CİHAZ İMZASIYLA gider
+// (sunucu gerçek kayıttaki şubede imza ister — Codex P1, 28 Eki); bağlanmamış PC (deneme) eski yoldan.
+export const panelYaz = (yol, method = 'POST', body) => (cihazId('tablet')
+  ? imzaliJson('tablet', method, `/api${yol}`, body)
+  : api(yol, { method, ...(body === undefined ? {} : { body }) }));
 export const taslakOku = (k) => { try { return k ? JSON.parse(localStorage.getItem(k) || 'null') : null; } catch { return null; } };
 export const taslakYaz = (k, v) => { try { if (k) localStorage.setItem(k, JSON.stringify(v)); } catch { /* yer yok / gizli pencere */ } };
 export const taslakKaldir = (k) => { try { if (k) localStorage.removeItem(k); } catch { /* yok say */ } };
@@ -221,7 +226,7 @@ export function useQrOnay({ subeId, tur, govde, mesgul, setMesgul, setHata, onay
     if (mesgul) return;
     setMesgul(true); setHata('');
     try {
-      const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/onay-iste`, { method: 'POST', body: { tur, govde: { ...govde(), personel_id: '-' } } });
+      const r = await panelYaz(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/onay-iste`, 'POST', { tur, govde: { ...govde(), personel_id: '-' } });
       setOnay({ id: r.onay_id, durum: 'bekliyor', mesaj: '' });
     } catch (e) {
       setHata(e instanceof TypeError ? 'İnternet yok — bağlantı gelince yeniden dene' : (e?.message || 'Onay istenemedi'));

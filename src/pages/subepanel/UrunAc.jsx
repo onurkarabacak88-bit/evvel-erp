@@ -4,7 +4,7 @@
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek } from './ortak';
+import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek, panelYaz } from './ortak';
 
 
 export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir }) {
@@ -40,8 +40,8 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
     if (!sunucuHazir.current) return undefined;
     const t = window.setTimeout(() => {
       const bos = !Object.values(adet).some((n) => n > 0);
-      (bos ? api(`${taslakYol}?gun=${encodeURIComponent(d.gun)}`, { method: 'DELETE' })
-        : api(taslakYol, { method: 'POST', body: { gun: d.gun, veri: { adet, not, istek } } })).catch(() => { /* sessiz */ });
+      (bos ? panelYaz(`${taslakYol}?gun=${encodeURIComponent(d.gun)}`, 'DELETE')
+        : panelYaz(taslakYol, 'POST', { gun: d.gun, veri: { adet, not, istek } })).catch(() => { /* sessiz */ });
     }, 800);
     return () => window.clearTimeout(t);
   }, [adet, not, istek]);   // eslint-disable-line react-hooks/exhaustive-deps
@@ -73,7 +73,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   const temizle = () => {
     setAdet({}); setNot(''); setIstek(yeniIstek()); setMesaj('');
     taslakKaldir(anahtar);
-    api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/taslak/urun_ac?gun=${encodeURIComponent(d.gun)}`, { method: 'DELETE' }).catch(() => { /* sessiz */ });
+    panelYaz(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/taslak/urun_ac?gun=${encodeURIComponent(d.gun)}`, 'DELETE').catch(() => { /* sessiz */ });
   };
 
   const kaydet = async () => {

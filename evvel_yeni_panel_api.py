@@ -26,7 +26,7 @@ from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı 
 from evvel_yeni_cekirdek import tl as _tl_tr   # Türkçe para biçimi TEK yer (f-string içinde iç içe tırnak YOK — canlı Python 3.11)
 from typing import List, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 from starlette.concurrency import run_in_threadpool
 
@@ -870,7 +870,27 @@ class DevirIptalBody(BaseModel):
     istek_id: Optional[str] = None
 
 
-@router.post("/{sube_id}/devir-iptal")
+async def _tablet_imzasi(request: Request, sube_id: str) -> None:
+    """🔒 Kimliksiz YAZAN panel uçları (Codex P1 · Fable L4b C + dar B, 28 Eki): şube GERÇEK kayıttaysa (🧪 pilot / 1 Kasım sonrası)
+    istek o şubeye bağlı panel PC'sinin cihaz imzasını taşımalı — şube kimliğini bilen dış istemci devri iptal edemez, taslak silemez,
+    sahte onay isteyemez, ara sayımı değiştiremez. Deneme şubesinde serbest (bağlanmamış PC "QR'sız geç" kırılmasın). İmza
+    doğrulayıcı Yoklama'nın PUBLIC cihaz_coz'u (QR / devir başlat ile AYNI kapı); gövde Starlette'te önbellekli, uç yine okur."""
+    ham = await request.body()
+    with db() as (conn, cur):
+        if deneme_mi(cur, sube_id=sube_id):
+            return
+        y = _yoklama()
+        if y is None:
+            raise HTTPException(503, "Cihaz doğrulaması çalışmıyor — merkeze haber ver")
+        c = y.cihaz_coz(cur, request.headers, request.method, request.url.path, ham, tur="tablet")
+        if str(c.get("sube_id") or "") != str(sube_id):
+            raise HTTPException(403, "Bu işlem bu şubenin panel bilgisayarından yapılır")
+
+
+_IMZALI = [Depends(_tablet_imzasi)]
+
+
+@router.post("/{sube_id}/devir-iptal", dependencies=_IMZALI)
 def kasa_devri_iptal(sube_id: str, b: DevirIptalBody):
     """Panel: devreden henüz onaylamadıysa açık devri iptal eder (onaylandıysa merkez kapatır)."""
     y = _yoklama()
@@ -1758,7 +1778,7 @@ def taslak_oku(sube_id: str, tur: str, gun: str):
     return {"veri": dict(r)["veri"] if r else None}
 
 
-@router.post("/{sube_id}/taslak/{tur}")
+@router.post("/{sube_id}/taslak/{tur}", dependencies=_IMZALI)
 def taslak_yaz(sube_id: str, tur: str, b: TaslakBody):
     if tur not in TASLAK_TURLERI:
         raise HTTPException(404, "Taslak yok")
@@ -1775,7 +1795,7 @@ def taslak_yaz(sube_id: str, tur: str, b: TaslakBody):
     return {"ok": True}
 
 
-@router.delete("/{sube_id}/taslak/{tur}")
+@router.delete("/{sube_id}/taslak/{tur}", dependencies=_IMZALI)
 def taslak_sil(sube_id: str, tur: str, gun: str):
     if tur not in TASLAK_TURLERI:
         raise HTTPException(404, "Taslak yok")
@@ -1823,7 +1843,7 @@ class OnayIsteBody(BaseModel):
     govde: dict
 
 
-@router.post("/{sube_id}/onay-iste")
+@router.post("/{sube_id}/onay-iste", dependencies=_IMZALI)
 def onay_iste(sube_id: str, b: OnayIsteBody):
     """Panel: form hazır → onay isteği. Biçim burada denetlenir (telefon geçersiz form görmesin); kayıt telefon onaylayınca yazılır."""
     if _yoklama() is None:
@@ -1984,7 +2004,7 @@ class AraSayimGonderBody(BaseModel):
     sayilan: TrTutar
 
 
-@router.post("/{sube_id}/ara-sayim")
+@router.post("/{sube_id}/ara-sayim", dependencies=_IMZALI)
 def ara_sayim_gonder(sube_id: str, b: AraSayimGonderBody):
     """Panel: kör sayılan tutar → görev satırına (henüz KAYIT değil); ekranda QR, kimlik telefondan. Süre içinde yeniden gönderilebilir."""
     _onay_hazirla()
@@ -2003,7 +2023,7 @@ def ara_sayim_gonder(sube_id: str, b: AraSayimGonderBody):
     return {"ok": True, "onay_id": r["id"], "mesaj": "Telefonunla QR'ı okut ve onayla"}
 
 
-@router.post("/{sube_id}/ara-sayim-duzelt")
+@router.post("/{sube_id}/ara-sayim-duzelt", dependencies=_IMZALI)
 def ara_sayim_duzelt(sube_id: str):
     """'Tutarı düzelt': sunucudaki tutar SİLİNİR — eski QR / telefonda açık ekran eski tutarı ONAYLAYAMAZ (Fable D-A)."""
     _onay_hazirla()

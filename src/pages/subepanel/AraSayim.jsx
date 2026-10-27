@@ -4,7 +4,7 @@
 // durdurur (409). Görev, onay ve kayıt sunucuda: evvel_yeni_panel_api ara_sayim_* (yeni tablo yok).
 import React, { useEffect, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, panelHata, qrBoyut, TabletQR, tutar, tutarNum, tl } from './ortak';
+import { C, panelHata, panelYaz, qrBoyut, TabletQR, tutar, tutarNum, tl } from './ortak';
 
 export default function AraSayim({ subeId, a, tabletVar, yenile }) {
   const [kalan, setKalan] = useState(a.kalan_sn);
@@ -26,7 +26,7 @@ export default function AraSayim({ subeId, a, tabletVar, yenile }) {
     if (deger === '' || Number.isNaN(tutarNum(deger))) { setHata('Çekmecedeki TÜM parayı say ve yaz (boşsa 0)'); return; }
     setMesgul(true); setHata('');
     try {
-      const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/ara-sayim`, { method: 'POST', body: { sayilan: tutarNum(deger) } });
+      const r = await panelYaz(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/ara-sayim`, 'POST', { sayilan: tutarNum(deger) });
       setOnayId(r.onay_id);
     } catch (e) {
       panelHata(e, { setHata: (m) => setHata(m || 'Gönderilemedi — tekrar dene') });
@@ -39,7 +39,7 @@ export default function AraSayim({ subeId, a, tabletVar, yenile }) {
     if (mesgul) return;
     setMesgul(true); setHata('');
     try {
-      await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/ara-sayim-duzelt`, { method: 'POST', body: {} });
+      await panelYaz(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/ara-sayim-duzelt`, 'POST', {});
       setOnayId(null); setDeger('');
     } catch (e) { panelHata(e, { setHata: (m) => setHata(m || 'Düzeltilemedi — tekrar dene') }); }
     setMesgul(false);
