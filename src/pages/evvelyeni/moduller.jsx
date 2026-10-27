@@ -67,7 +67,7 @@ export const MODULLER = [
   { mod: 'tanim', ad: 'Tanımlar', ikon: '⚙️', sektor: 'genel', sayfalar: TANIM_SAYFALAR, g: (s, c) => <TanimModulu gorunum={s} onToast={c.onToast} /> },
   // ⚙️ IS 5c (sim 26 Eki): çekirdeğin Sistem durumu — modüller + arka plan işleri (sunucu: evvel_yeni_moduller.py); modül değil, hep görünür
   // 📱 F7 /cep (sim 27 Eki · Fable): telefon girişi — 5 kart var olan ekranlara gider; 1 Kasım'da /cep buraya yönlenir
-  { mod: 'cep', her_zaman: true, ad: 'Telefon ana sayfası', ikon: '📱', sektor: 'genel', sayfalar: CEP_SAYFALAR, g: (s, c) => <CepAna onSekme={c.onSekme} /> },
+  { mod: 'cep', her_zaman: true, menude: false, ad: 'Telefon ana sayfası',   /* sahip 28 Eki: menüde görünmez — yalnız /cep adresiyle (telefon) açılır */ ikon: '📱', sektor: 'genel', sayfalar: CEP_SAYFALAR, g: (s, c) => <CepAna onSekme={c.onSekme} /> },
   { mod: 'cekirdek', her_zaman: true, bolum: 'tanim', ad: 'Sistem durumu', ikon: '⚙️', sektor: 'genel', sayfalar: SISTEM_SAYFALAR, g: (s, c) => <SistemDurumu onToast={c.onToast} /> },
 ];
 

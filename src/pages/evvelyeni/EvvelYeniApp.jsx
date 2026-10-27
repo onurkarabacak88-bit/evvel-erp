@@ -121,7 +121,7 @@ export default function EvvelYeniApp() {
   // 'bolum' taşıyan modülün sayfaları ana bölümün altına eklenir (her sayfa kendi modülünü bilir → kapanınca o da kalkar)
   // Codex (IS 5c): ana bölümü görünmüyorsa (ör. Tanımlar kapalı) 'bolum' taşıyan modül KENDİ başlığıyla çıkar — Sistem durumu kaybolmasın
   const anaVar = (e) => GORUNUR.some((b) => !b.bolum && b.mod === e.bolum);
-  const BOLUMLER = GORUNUR.filter((b) => !b.bolum || !anaVar(b)).map((b) => ({
+  const BOLUMLER = GORUNUR.filter((b) => b.menude !== false && (!b.bolum || !anaVar(b))).map((b) => ({
     ...b, sayfalar: [...b.sayfalar.filter((x) => !x.mod || !acikMod || [].concat(x.mod).some((m) => acikMod.has(m))),
       ...(b.bolum ? [] : GORUNUR.filter((e) => e.bolum === b.mod).flatMap((e) => e.sayfalar))],
   }));
