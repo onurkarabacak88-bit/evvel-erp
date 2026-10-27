@@ -3,10 +3,12 @@
 import React from 'react';
 import { R, kart, dugmeSade } from './KasaModulu';
 
-export const CEP_SAYFALAR = [{ id: 'cep_ana', ad: 'Telefon ana sayfası', alt: 'Kasam · işler · avans · ödeme · sipariş' }];
+export const CEP_SAYFALAR = [{ id: 'cep_ana', ad: 'Telefon ana sayfası', alt: 'Kasam · beklenen satış · işler · avans · ödeme · sipariş' }];
 
 const KARTLAR = [
   { id: 'kasam', ikon: '💰', ad: 'Kasam', alt: 'Toplam kasa · şube nakitleri' },
+  // sahip 28 Eki "beklenen satışı şube şube telefondan takip edeyim" (Fable A): bakış kartı Kasam'ın altında, ekran telefonda kart kart
+  { id: 'satis_beklenen', ikon: '📈', ad: 'Beklenen satış', alt: 'Şube şube bardak → beklenen ↔ girilen ciro' },
   { id: 'isler_kasa', ikon: '📋', ad: 'Bekleyen işler', alt: 'Kararını bekleyenler' },
   { id: 'avans_talepleri', ikon: '🤝', ad: 'Avans talepleri', alt: 'Öde · elden · reddet' },
   { id: 'odemeler', ikon: '🧾', ad: 'Ödemeler', alt: 'Ödeme / gider gir' },

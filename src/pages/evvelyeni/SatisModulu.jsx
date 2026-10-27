@@ -44,8 +44,8 @@ function KasaAcigi({ m, ciro, teslimler = [] }) {
       </div>
       {satir('Sabah kasada sayılan', m.acilis, '')}
       {satir('Girilen nakit satış', m.z_nakit, '+', ciro ? `toplam ciro ${fmt(ciro.toplam)} (POS ${fmt(ciro.pos)})` : null)}
-      {satir('Nakit giderler', m.gider_toplam, '−', m.giderler.length ? m.giderler.map((g) => `${g.ad} ${fmt(g.tutar)}${g.bekliyor ? ' (onay bekliyor)' : ''}`).join(', ') : null)}
-      {m.ara_toplam > 0 && satir('Ara teslim', m.ara_toplam, '−', m.ara_teslimler.map((t) => `${t.alan_ad || t.alan || '?'} ${fmt(t.tutar)}${t.not ? ` (${t.not})` : ''}`).join(', '))}
+      {satir('Nakit giderler', m.gider_toplam, '−', (m.giderler || []).length ? m.giderler.map((g) => `${g.ad} ${fmt(g.tutar)}${g.bekliyor ? ' (onay bekliyor)' : ''}`).join(', ') : null)}
+      {m.ara_toplam > 0 && satir('Ara teslim', m.ara_toplam, '−', (m.ara_teslimler || []).map((t) => `${t.alan_ad || t.alan || '?'} ${fmt(t.tutar)}${t.not ? ` (${t.not})` : ''}`).join(', '))}
       {satir('Gün sonu teslim', m.teslim, '−')}
       {satir('Kasada bırakılan (devir)', m.devir, '−')}
       <div style={{ borderTop: '1px solid var(--pi-line)', marginTop: 4, paddingTop: 4, color: R.metin2, fontSize: 12 }}>
@@ -69,7 +69,7 @@ function KasaAcigi({ m, ciro, teslimler = [] }) {
               <span style={{ color: R.kirmizi }}> · kasiyerin yazdığı {fmt((m.teslim || 0) + (m.ara_toplam || 0))} ≠ Kasa'daki {fmt(teslimler.reduce((a, t) => a + t.tutar, 0))}</span>}
           </div>
         )}
-        {m.vardiya.length > 0 && <div>Vardiya devri: {m.vardiya.map((v) => `${v.saat || ''} ${v.sayilan == null ? '' : `${fmt(v.sayilan)} ₺ sayıldı`}`).join(' · ')}</div>}
+        {(m.vardiya || []).length > 0 && <div>Vardiya devri: {m.vardiya.map((v) => `${v.saat || ''} ${v.sayilan == null ? '' : `${fmt(v.sayilan)} ₺ sayıldı`}`).join(' · ')}</div>}
       </div>
     </div>
   );
@@ -191,6 +191,15 @@ function BeklenenSatis() {
   const [hata, setHata] = useState(null);
   const [hepsi, setHepsi] = useState(false);
   const yukle = useSonIstek(`/evvel-yeni/satis/kontrol?ay=${ay}`, setV, setHata);   // ortak 'son istek kazanır' (T4-09)
+  // 📱 sahip 28 Eki (Fable A): telefonda (≤640 px) 8 sütunlu tablo yana kayıp okunmuyordu → gün başına kart, son gün üstte
+  const [dar, setDar] = useState(() => typeof window !== 'undefined' && window.matchMedia && window.matchMedia('(max-width: 640px)').matches);
+  useEffect(() => {
+    if (!window.matchMedia) return undefined;
+    const mq = window.matchMedia('(max-width: 640px)');
+    const f = (e) => setDar(e.matches);
+    mq.addEventListener ? mq.addEventListener('change', f) : mq.addListener(f);
+    return () => (mq.removeEventListener ? mq.removeEventListener('change', f) : mq.removeListener(f));
+  }, []);
 
   if (hata && !v) return <div className="pi"><style>{PI_CSS}</style><div style={{ ...kart, padding: 16, color: R.kirmizi }}>Satış kontrolü okunamadı: {hata} <Dugme kucuk onClick={yukle}>Tekrar dene</Dugme></div></div>;
   if (!v) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Hesaplanıyor… (bar sayımı + kapanışlar)</div></div>;
@@ -199,8 +208,8 @@ function BeklenenSatis() {
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
       <div style={{ display: 'flex', alignItems: 'flex-end', gap: 12, flexWrap: 'wrap' }}>
-        <div><div className="pi-eyebrow">Evvel Yeni · Tahmin</div><h1 style={{ fontSize: 30 }}>Beklenen satış</h1></div>
-        <label style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', fontSize: 13 }}>
+        <div><div className="pi-eyebrow">Evvel Yeni · Tahmin</div><h1 style={{ fontSize: dar ? 24 : 30 }}>Beklenen satış</h1></div>
+        <label style={{ marginLeft: 'auto', display: 'flex', gap: 6, alignItems: 'center', fontSize: 13, minHeight: 40 }}>
           <input type="checkbox" checked={hepsi} onChange={(e) => setHepsi(e.target.checked)} />veri eksik günleri de göster
         </label>
         <AySecici ay={ay} setAy={setAy}
@@ -222,6 +231,23 @@ function BeklenenSatis() {
               <Cip>{s.ozet.hesaplanmadi} gün veri eksik</Cip>
               <span style={{ marginLeft: 'auto', fontSize: 12.5, color: R.not }}>temiz gün: {s.temiz_gun} / {v.kural.gecici_gun} gerekli (tam güven {v.kural.tam_gun})</span>
             </div>
+            {dar ? (
+              <div style={{ display: 'grid' }}>
+                {[...gun].reverse().map((g) => (
+                  <div key={g.gun} style={{ padding: '9px 14px', borderTop: '1px solid var(--pi-line)', fontSize: 13.5 }}>
+                    <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+                      <b style={{ ...num, whiteSpace: 'nowrap' }}>{tKisa(g.gun)}</b>
+                      <span style={{ color: R.not }}>{g.bardak ? `${g.bardak} bardak` : '—'}</span>
+                      <span style={{ ...num, marginLeft: 'auto' }}>{g.beklenen ? `≈${fmt(Math.round(g.beklenen))}` : '—'} ↔ {g.ciro != null ? fmt(g.ciro) : '—'} ₺</span>
+                      <b style={{ ...num, color: g.sapma == null ? R.not : g.sapma < 0 ? (g.durum === 'bak' ? R.kirmizi : R.amber) : R.yesil }}>{g.sapma == null ? '' : `${g.sapma > 0 ? '+' : ''}${fmt(g.sapma)}%`}</b>
+                    </div>
+                    <div style={{ marginTop: 3, fontSize: 12.5 }}><Cip tur={DURUM[g.durum].tur}>{DURUM[g.durum].ad}</Cip>{g.neden && <span style={{ color: R.not }}> {g.neden}</span>}
+                      {g.kasa_fark != null && <span style={{ color: R.not }}> · kör kasa {g.kasa_baslangic ? 'başlangıç' : g.kasa_fark === 0 ? 'tuttu' : `${g.kasa_fark > 0 ? 'eksik ' : 'fazla '}${fmt(Math.abs(g.kasa_fark))}`}</span>}</div>
+                  </div>
+                ))}
+                {!gun.length && <div style={{ padding: 12, textAlign: 'center', color: R.not, fontSize: 13 }}>Hesaplanabilen gün yok — "veri eksik günleri de göster" ile sebeplerini gör.</div>}
+              </div>
+            ) : (
             <div style={{ overflowX: 'auto' }}>
               <table className="pi-tablo pi-excel">
                 <thead><tr><th>Gün</th><th>Bardak</th><th>₺/bardak</th><th>Beklenen</th><th>Girilen ciro</th><th>Sapma</th><th>Kör kasa</th><th style={{ textAlign: 'left' }}>Durum</th></tr></thead>
@@ -243,6 +269,7 @@ function BeklenenSatis() {
                 </tbody>
               </table>
             </div>
+            )}
           </div>
         );
       })}
