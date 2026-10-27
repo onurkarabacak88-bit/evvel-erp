@@ -21,7 +21,7 @@ Eski tablolardan YALNIZ OKUR. Kendi küçük tablosu: ey_gider_sinif (elle sın�
 """
 
 import logging
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 from typing import Optional
 
@@ -308,11 +308,9 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
     _hazirla()
     a_, ay_bas, ay_son, bugun = _ay_sinirlari(ay)
     bas_i, son_i = ay_bas.isoformat(), ay_son.isoformat()
-    with db() as (conn, cur):   # 1 Kasım kesimi: eski ay dondurulmuş çıktıdan (eski tablo okunmaz); evren='eski' = son aktarımın kendisi
-        from evvel_yeni_cekirdek import arsiv_oku, yeni_donem as _yd
-        ar = None if evren is not None or _yd(cur, min(ay_son, bugun)) else arsiv_oku(cur, "gider", f"ozet:{a_}")
-    if ar is not None:
-        return {**ar, "dondu": True}
+    # 1 Kasım kesimi (Fable L4b A, 27 Eki): yalnız ESKİ tablolardan gelen mal / sevk ham satırları dondurulur (eski_mal:<ay>);
+    # ödeme formu · kira tahakkuku · personel · dükkân giderleri · sınıflandırma HER ZAMAN canlı — Ekim'e ait sonradan girilen gider kaybolmaz
+    ar = None
     with db() as (conn, cur):
         _sinif_tablosu(cur)
         cep_list, C, kayit, _ = _yukle(cur, tum_donemler=True)
@@ -329,9 +327,16 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
             sevk = _mal_satirlari_yeni(cur, ay_bas, min(ay_son, bugun), depo)
             depo_kapali = not _modul_acik("depo")
         else:
-            depo = _depo_id(cur)
-            mal = _tuketim_satirlari(cur, ay_bas, min(ay_son, bugun))
-            sevk = _mal_satirlari(cur, ay_bas, min(ay_son, bugun), depo)
+            from evvel_yeni_cekirdek import arsiv_oku
+            ar = None if evren == "eski" else arsiv_oku(cur, "gider", f"eski_mal:{a_}")
+            if ar is not None:   # Ekim mal / sevk dondurulmuş ham satırlardan (eski tablo okunmaz)
+                depo = ar.get("depo")
+                mal = [{**r, "gun": date.fromisoformat(str(r["gun"])[:10])} for r in ar.get("mal") or []]
+                sevk = [{**r, "gun": date.fromisoformat(str(r["gun"])[:10])} for r in ar.get("sevk") or []]
+            else:
+                depo = _depo_id(cur)
+                mal = _tuketim_satirlari(cur, ay_bas, min(ay_son, bugun))
+                sevk = _mal_satirlari(cur, ay_bas, min(ay_son, bugun), depo)
             depo_kapali = False
         cur.execute("SELECT kaynak_ref, tur, kimin FROM ey_gider_sinif")
         sinif = {dict(r)["kaynak_ref"]: dict(r) for r in cur.fetchall() or []}
@@ -543,6 +548,11 @@ def kesim_dondur(cur, yazan: str, ay: str) -> dict:
                          "sube_operasyon_event") if not tablo_var(cur, t)]
     if eksik:
         raise RuntimeError("eski tablo okunamıyor: " + ", ".join(eksik) + " — arşiv yazılmadı")
-    v = gider_ozet(ay, evren="eski")
-    arsiv_yaz(cur, "gider", f"ozet:{ay}", v, yazan)
-    return {"sube": len(v.get("subeler") or [])}
+    # Fable L4b A: yalnız eski kaynağın HAM satırları (maaş / kira / kredi örüntüsü) — hesap canlı kalır
+    bas = date.fromisoformat(ay + "-01")
+    son = (bas.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+    depo = _depo_id(cur)
+    mal = _tuketim_satirlari(cur, bas, son)
+    sevk = _mal_satirlari(cur, bas, son, depo)
+    arsiv_yaz(cur, "gider", f"eski_mal:{ay}", {"depo": depo, "mal": mal, "sevk": sevk}, yazan)
+    return {"mal_satir": len(mal), "sevk_satir": len(sevk), "depo": depo}

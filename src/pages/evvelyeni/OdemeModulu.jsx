@@ -193,7 +193,8 @@ export default function OdemeModulu({ onToast, gorunum }) {
           <div style={{ ...etiketStil, marginBottom: 8 }}>1 · Ne için ödendi?</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {L.konular.map((k) => (
-              <button key={k.kod} type="button" onClick={() => { setBenzer(false); setF((x) => ({ konu: k.kod, tarih: x.tarih, ait_ay: x.ait_ay, parcalar: x.parcalar, istek_id: x.istek_id })); }} style={{
+              <button key={k.kod} type="button" onClick={() => { setBenzer(false); setF((x) => ({ konu: k.kod, tarih: x.tarih, ait_ay: x.ait_ay, istek_id: x.istek_id,
+                parcalar: ['kart_borcu', 'personel'].includes(k.kod) ? x.parcalar.map((q) => (q.yontem === 'kart' ? { ...q, yontem: 'nakit', kart_id: '' } : q)) : x.parcalar })); }} style={{
                 padding: '10px 16px', borderRadius: 12, font: 'inherit', fontSize: 15, fontWeight: 600, cursor: 'pointer',
                 border: `1px solid ${f.konu === k.kod ? 'var(--pi-accent)' : 'var(--pi-line)'}`,
                 background: f.konu === k.kod ? 'var(--pi-accent)' : 'var(--pi-paper)', color: f.konu === k.kod ? 'var(--pi-on-accent)' : R.krem,
@@ -354,7 +355,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
             {f.parcalar.map((p, i) => (
               <div key={i} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', marginBottom: 10, paddingBottom: 10, borderBottom: '1px dashed var(--pi-line)' }}>
                 <div style={{ display: 'flex', gap: 4 }}>
-                  {[['nakit', 'Nakit'], ['havale', 'Havale'], ['kart', 'Kart']].map(([k, a]) => (
+                  {[['nakit', 'Nakit'], ['havale', 'Havale'], ['kart', 'Kart']].filter(([k]) => k !== 'kart' || !['kart_borcu', 'personel'].includes(f.konu)).map(([k, a]) => (   /* sunucu da reddeder (P-1) */
                     <button key={k} type="button" onClick={() => setF((x) => ({ ...x, parcalar: x.parcalar.map((q, j) => (j === i ? { ...q, yontem: k, cep: '', kart_id: '' } : q)) }))} style={{
                       padding: '9px 12px', borderRadius: 10, font: 'inherit', fontWeight: 600, cursor: 'pointer',
                       border: `1px solid ${p.yontem === k ? 'var(--pi-accent)' : 'var(--pi-line)'}`,

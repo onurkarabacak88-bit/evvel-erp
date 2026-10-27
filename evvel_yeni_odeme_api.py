@@ -290,6 +290,8 @@ def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
         raise HTTPException(400, "Tutar gir")
     if body.konu == "kart_borcu" and kart_parca:
         raise HTTPException(400, "Kart borcu kartla ödenemez — nakit ya da havale seç")
+    if body.konu == "personel" and kart_parca:   # matris P-1 (Fable L4b A): kartla maaş → sahte kart borcu + sahte "maaş ödendi"
+        raise HTTPException(400, "Personel ödemesi kartla yapılmaz — nakit ya da havale seç")
     if len({x["cep"] for x in nakit_parca}) != len(nakit_parca):
         raise HTTPException(400, "Aynı cep iki kez seçilemez")
     toplam = sum(x["tutar"] for x in nakit_parca) + sum(x["tutar"] for x in kart_parca)
