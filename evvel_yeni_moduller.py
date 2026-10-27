@@ -146,6 +146,67 @@ def moduller():
                             "kesim": m["kod"] in KESIM} for m in MODULLER]}   # F6.3: son aktarım adımı yüklü mü (yayın doğrulaması da bundan)
 
 
+# 🧪 PİLOT ŞUBE (sahip 27 Eki · Fable L4b A) — bir şube 1 Kasım'dan önce yeni panelde GERÇEK kayda geçer; kural çekirdekte
+# (sube_baslangic / yeni_donem(sube_id) / eski_yazim_kapisi(sube_id)). Ayar: ey_ayar 'pilot_baslangic:<şube>'. Kaldırınca denemeye döner.
+@router.get("/pilot")
+def pilot_listesi(x_evvel_oturum: Optional[str] = Header(default=None)):
+    from database import db
+    from evvel_yeni_cekirdek import merkez_aktor, panel_baslangic, pilot_baslangiclari
+    from evvel_yeni_tanim_api import subeler
+    with db() as (conn, cur):
+        merkez_aktor(cur, x_evvel_oturum)
+        pl = pilot_baslangiclari(cur)
+        return {"panel_baslangic": panel_baslangic(cur).isoformat(),
+                "subeler": [{"id": s["id"], "ad": s["ad"], "pilot": pl[s["id"]].isoformat() if s["id"] in pl else None} for s in subeler(cur)]}
+
+
+class _PilotBody(__import__("pydantic").BaseModel):
+    sube_id: str
+    gun: Optional[str] = None   # None → pilot kaldırılır (şube denemeye döner)
+
+
+@router.post("/pilot")
+def pilot_yaz(body: _PilotBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    from datetime import date as _date
+    from database import db
+    from fastapi import HTTPException
+    from evvel_yeni_cekirdek import ayar_yaz, merkez_aktor, panel_baslangic
+    from evvel_yeni_tanim_api import subeler
+    with db() as (conn, cur):
+        kim = merkez_aktor(cur, x_evvel_oturum)
+        if body.sube_id not in {s["id"] for s in subeler(cur)}:
+            raise HTTPException(400, "Şube bulunamadı ya da pasif")
+        if body.gun:
+            try:
+                g = _date.fromisoformat(body.gun[:10])
+            except ValueError:
+                raise HTTPException(400, "Gün YYYY-AA-GG olmalı")
+            if g >= panel_baslangic(cur):
+                raise HTTPException(400, f"Pilot günü genel başlangıçtan ({panel_baslangic(cur).isoformat()}) önce olmalı")
+            if g < __import__("evvel_yeni_cekirdek").is_gunu():   # Fable B7: geçmiş gün → Kasa köprüsü o günden beri eski satırları atlardı
+                raise HTTPException(400, "Pilot günü bugünden (iş günü) önce olamaz")
+            ayar_yaz(cur, f"pilot_baslangic:{body.sube_id}", g.isoformat(), kim)
+            return {"ok": True, "mesaj": f"Pilot başladı — {g.isoformat()} iş gününden itibaren bu şube yeni panelde GERÇEK kayıt tutar, eski panel kapanır"}
+        ayar_yaz(cur, f"pilot_baslangic:{body.sube_id}", "", kim)   # boş = pilot yok (çekirdeğin PUBLIC kapısı; tablo çekirdeğin)
+        return {"ok": True, "mesaj": "Pilot kaldırıldı — şube denemeye döndü, eski panel yeniden açık"}
+
+
+@router.get("/gecis/{sube_id}")
+def gecis_sube(sube_id: str):
+    """📢 Eski şube panelinin geçiş uyarısı (sahip 27 Eki · Fable): şubenin yeni panele geçiş günü (🧪 pilot dahil), geçti mi, yeni adres.
+    Oturumsuz (eski panel jeton taşımaz); kişisel / para verisi yok. Okunamazsa sabit 1 Kasım (eski kapıyla aynı yedek)."""
+    from datetime import date as _date
+    from database import db
+    from evvel_yeni_cekirdek import is_gunu, pilot_baslangiclari, sube_baslangic
+    try:
+        with db() as (conn, cur):
+            gun = sube_baslangic(cur, sube_id)
+            pilot = sube_id in pilot_baslangiclari(cur)
+    except Exception:  # noqa: BLE001
+        gun, pilot = _date(2026, 11, 1), False
+    return {"gun": gun.isoformat(), "pilot": pilot, "gecti": is_gunu() >= gun, "adres": f"/panel/{sube_id}"}
+
+
 @router.get("/gecis")
 def gecis():
     """Eski QR adresi (/gorev-giris, /gorev-pin) yeni telefon evine (/q) yönlensin mi? TEK kural çekirdeğin anahtarı (30 sn önbellekli).

@@ -32,14 +32,14 @@ from tr_saat import (
 
 router = APIRouter(prefix="/api/sube-panel", tags=["sube-operasyon"])
 
-def _eski_kapi() -> None:
+def _eski_kapi(sube_id: Optional[str] = None) -> None:
     """🔌 1 Kasım kesimi — eski panel KAYIT uçları kesimden sonra 410 (kural çekirdekte: evvel_yeni_cekirdek.eski_yazim_kapisi).
-    Kapı okunamazsa yazım izni VERİLMEZ (Codex 22 Eki P2)."""
+    Kapı okunamazsa yazım izni VERİLMEZ (Codex 22 Eki P2). sube_id (adresteki): 🧪 pilot şubede eski panel kendi gününden kapanır."""
     try:
         from evvel_yeni_cekirdek import eski_yazim_kapisi
     except Exception:  # noqa: BLE001
         raise HTTPException(503, "Sistem şu an kontrol edilemiyor — biraz sonra yeniden dene")
-    eski_yazim_kapisi()
+    eski_yazim_kapisi(sube_id)
 
 
 ACILIS_TOLERANS_DK = 10

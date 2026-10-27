@@ -476,6 +476,45 @@ def panel_baslangic(cur) -> date:
         return date(2026, 11, 1)
 
 
+# 🧪 PİLOT ŞUBE (sahip 27 Eki · Fable L4b karar A): bir şube 1 Kasım'ı beklemeden yeni panelde GERÇEK kayda geçer —
+# ey_ayar 'pilot_baslangic:<şube>' = iş günü. TEK kural aynı (yeni_donem / deneme_mi), yalnız şube parametresi alır; ayar
+# silinince şube denemeye döner (geri dönüş tek satır). Kesim yayınında (1 Kasım herkes yeni) ayarlar anlamsızlaşır.
+def pilot_baslangiclari(cur) -> Dict[str, date]:
+    """PUBLIC — {şube: pilot başlangıç iş günü} (yalnız panel_baslangic'tan ÖNCE olanlar anlamlı)."""
+    _ayar_hazirla(cur)
+    cur.execute("SELECT anahtar, deger FROM ey_ayar WHERE anahtar LIKE 'pilot_baslangic:%%'")
+    out = {}
+    for r in cur.fetchall() or []:
+        r = dict(r)
+        try:
+            out[r["anahtar"].split(":", 1)[1]] = date.fromisoformat(str(r["deger"])[:10])
+        except (ValueError, TypeError):
+            continue
+    return out
+
+
+def sube_baslangic(cur, sube_id: Optional[str]) -> date:
+    """PUBLIC — şubenin yeni panelde gerçek kayda geçtiği iş günü: pilot şubede pilot günü, diğerlerinde panel_baslangic."""
+    pb = panel_baslangic(cur)
+    if not sube_id:
+        return pb
+    pl = pilot_baslangiclari(cur).get(str(sube_id))
+    return min(pb, pl) if pl else pb
+
+
+def en_erken_baslangic(cur) -> date:
+    """PUBLIC — herhangi bir şubenin gerçek kayda geçtiği en erken gün (merkez işleri / toplu okuyucular önce bununla süzer)."""
+    return min([panel_baslangic(cur)] + list(pilot_baslangiclari(cur).values()))
+
+
+def pilot_subeler(cur, gun: Optional[date] = None) -> set:
+    """PUBLIC — o gün (verilmezse bugünkü iş günü) pilotta GERÇEK kayıt tutan ama genel başlangıca gelmemiş şubeler."""
+    g = gun or is_gunu()
+    if g >= panel_baslangic(cur):
+        return set()
+    return {s for s, d in pilot_baslangiclari(cur).items() if g >= d}
+
+
 def eski_panel_zinciri_acik() -> bool:
     """PUBLIC 🔌 TEK ANAHTAR: eski panel tablolarına bakan gece/gündüz işleri (main.py halkaları, beyin gece WhatsApp'ı) çalışsın mı?
     İş günü < panel_baslangic → açık. ey_ayar 'eski_gece_zinciri'='acik' → zorla açık (geri dönüş, silinmez).
@@ -495,16 +534,17 @@ def _zincir_oku() -> bool:
         return is_gunu() < panel_baslangic(cur)
 
 
-def yeni_donem(cur, gun: Optional[date] = None) -> bool:
+def yeni_donem(cur, gun: Optional[date] = None, sube_id: Optional[str] = None) -> bool:
     """PUBLIC — TEK KURAL "1 Kasım geldi mi" (tekrar denetimi F#1/F#23/C-T1-17: 12 yerde ayrı yazılmış, bir kısmı TAKVİM bir kısmı İŞ
     gününe bakıyordu → 1 Kasım 00:00–02:00 arası okuyucular yeni evrene geçip yazıcılar hâlâ denemedeydi). Artık HEPSİ İŞ GÜNÜ
-    (gece 02:00'ye kadar önceki gün). gun verilirse o güne göre (ör. mutabakatta bakılan gün)."""
-    return (gun or is_gunu()) >= panel_baslangic(cur)
+    (gece 02:00'ye kadar önceki gün). gun verilirse o güne göre (ör. mutabakatta bakılan gün). sube_id verilirse o şubenin
+    başlangıcı (pilot şube 1 Kasım'dan önce yeni dönemdedir)."""
+    return (gun or is_gunu()) >= (sube_baslangic(cur, sube_id) if sube_id else panel_baslangic(cur))
 
 
-def deneme_mi(cur, gun: Optional[date] = None) -> bool:
-    """PUBLIC — deneme (kuru) dönemi mi: yeni_donem'in tersi. Panel / Depo / Sipariş kuru kapıları bunu kullanır."""
-    return not yeni_donem(cur, gun)
+def deneme_mi(cur, gun: Optional[date] = None, sube_id: Optional[str] = None) -> bool:
+    """PUBLIC — deneme (kuru) dönemi mi: yeni_donem'in tersi. Panel / Depo / Sipariş kuru kapıları bunu kullanır (şube verilirse pilot dahil)."""
+    return not yeni_donem(cur, gun, sube_id)
 
 
 _ZINCIR_ONB: Dict[str, Any] = {}
@@ -543,7 +583,7 @@ def eski_panel_zinciri_acik_onbellekli(sure_sn: int = 30, kati: bool = False) ->
         _ZINCIR_KILIT.release()
 
 
-def eski_yazim_kapisi() -> None:
+def eski_yazim_kapisi(sube_id: Optional[str] = None) -> None:
     """PUBLIC — 1 Kasım kesimi SUNUCU kapısı (FastAPI Depends): eski şube paneli / eski telefon / eski kasa teslim KAYIT uçları
     kesimden sonra 410 (sahip 21 Eki "A", Fable: eski panelde yapılan kapanış/teslim Kasa'ya, tedarikçi teslimi toptancı borcuna ÇİFT yazılmasın).
     TEK kural: eski_panel_zinciri_acik (30 sn önbellekli); ey_ayar 'eski_gece_zinciri'='acik' → geri açılır. Merkez düzeltme uçları kapıya bağlanmaz."""
@@ -553,6 +593,13 @@ def eski_yazim_kapisi() -> None:
     except Exception as e:  # noqa: BLE001 — Codex 22 Eki: kural okunamazsa yazım izni YOK (sabit tarihe düşmez)
         log.warning("🔌 eski yazım kapısı okunamadı → 503: %s", str(e)[:150])
         raise _H(503, "Sistem şu an kontrol edilemiyor — biraz sonra yeniden dene")
+    if acik and sube_id:   # 🧪 pilot şube: eski panel o şube için kapanır (teslim / gider / toptancı ÇİFT kaydının tek freni)
+        try:
+            with db() as (_c, cur):
+                acik = str(sube_id) not in pilot_subeler(cur)
+        except Exception as e:  # noqa: BLE001 — okunamazsa yazım izni YOK (genel kapıyla aynı kural)
+            log.warning("🔌 pilot şube kapısı okunamadı → 503: %s", str(e)[:150])
+            raise _H(503, "Sistem şu an kontrol edilemiyor — biraz sonra yeniden dene")
     if not acik:
         raise _H(410, "Yeni sisteme geçildi — bu ekran artık kayıt almıyor. Yeni şube panelini / telefondaki yeni sayfayı kullan.")
 
@@ -601,7 +648,7 @@ def bekleyen_saglayicilar() -> List[str]:
 
 __all__ = ["TrTutar", "bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "kolon_var", "bir_kez", "ddl_kur", "ddl_bu_islemde", "lock_timeout_ayarla", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
-           "ayar_oku", "ayar_yaz", "arsiv_oku", "arsiv_yaz", "arsiv_cift_oku", "arsiv_cift_yaz", "is_gunu", "panel_baslangic", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik", "eski_panel_zinciri_acik_onbellekli", "eski_yazim_kapisi"]
+           "ayar_oku", "ayar_yaz", "arsiv_oku", "arsiv_yaz", "arsiv_cift_oku", "arsiv_cift_yaz", "is_gunu", "panel_baslangic", "sube_baslangic", "en_erken_baslangic", "pilot_subeler", "pilot_baslangiclari", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik", "eski_panel_zinciri_acik_onbellekli", "eski_yazim_kapisi"]
 
 
 def takvim_durumu(beklenen, odenen, vade, bugun, once: bool = False, tolerans=100) -> str:

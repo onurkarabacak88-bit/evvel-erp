@@ -67,6 +67,40 @@ function SonAktarim({ onToast }) {
   );
 }
 
+// 🧪 PİLOT ŞUBE (sahip 27 Eki · Fable L4b A): bir şube 1 Kasım'dan önce yeni panelde GERÇEK kayda geçer; eski panel o şube için kapanır.
+// Kaldırınca şube denemeye döner (yazılmış kayıtlar kalır). Sunucu: evvel_yeni_moduller /pilot.
+function PilotSube({ onToast }) {
+  const [v, setV] = useState(null);
+  const [gun, setGun] = useState({});
+  const [mesgul, setMesgul] = useState('');
+  const yukle = useCallback(() => { api('/evvel-yeni/moduller/pilot').then(setV).catch(() => setV(null)); }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+  if (!v) return null;
+  const yaz = async (s, g) => {
+    if (!(await soruOnay(g ? `${s.ad} ${g} iş gününden itibaren yeni panelde GERÇEK kayda geçsin mi? Eski panel bu şube için kapanır.`
+      : `${s.ad} pilottan çıksın mı? Yeni panel bu şube için yeniden denemeye döner, eski panel açılır.`, g ? 'Evet, başlat' : 'Evet, kaldır'))) return;
+    setMesgul(s.id);
+    try { const r = await api('/evvel-yeni/moduller/pilot', { method: 'POST', body: { sube_id: s.id, gun: g || null } }); onToast?.(r.mesaj); yukle(); }
+    catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+    setMesgul('');
+  };
+  return (
+    <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
+      <b>🧪 Pilot şube — {v.panel_baslangic} öncesi yeni panele geçiş</b>
+      <div style={{ fontSize: 12.5, color: R.not }}>Pilottaki şube seçilen iş gününden itibaren yeni panelde gerçek kayıt tutar (açılış, kapanış, gider, teslim, sipariş, QR); eski panel o şube için kayıt almaz. İş günü gece 02:00'de değişir.</div>
+      {v.subeler.map((s) => (
+        <div key={s.id} style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', borderTop: `1px solid ${R.cizgi}`, paddingTop: 8, fontSize: 13 }}>
+          <span style={{ flex: '1 1 160px' }}><b>{s.ad}</b>{s.pilot && <Cip tur="sari">pilot · {s.pilot}'den beri</Cip>}</span>
+          {s.pilot ? <Dugme kucuk disabled={!!mesgul} onClick={() => yaz(s, null)}>Pilottan çıkar</Dugme> : (<>
+            <input type="date" value={gun[s.id] || ''} min={new Date().toISOString().slice(0, 10)} max={v.panel_baslangic} onChange={(e) => setGun((o) => ({ ...o, [s.id]: e.target.value }))}
+              style={{ font: 'inherit', padding: '5px 8px', borderRadius: 8, border: `1px solid ${R.cizgi}`, background: 'var(--pi-bg)', color: 'var(--pi-ink)' }} />
+            <Dugme kucuk ana disabled={!!mesgul || !gun[s.id]} onClick={() => yaz(s, gun[s.id])}>Pilot başlat</Dugme></>)}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 export default function SistemDurumu({ onToast }) {
   const [g, setG] = useState(null);
   const [m, setM] = useState(null);
@@ -126,6 +160,7 @@ export default function SistemDurumu({ onToast }) {
         </div>
       )}
       <SonAktarim onToast={onToast} />
+      <PilotSube onToast={onToast} />
       {m && (
         <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
           <b>Modüller</b>
