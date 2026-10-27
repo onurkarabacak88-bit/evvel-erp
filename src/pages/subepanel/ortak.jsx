@@ -237,7 +237,7 @@ export function useQrOnay({ subeId, tur, govde, mesgul, setMesgul, setHata, onay
     const o = onay;
     if (!o || !['bekliyor', 'hata', 'isleniyor'].includes(o.durum)) { setOnay(null); return true; }
     try {
-      await api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}/iptal`, { method: 'POST', body: {} });
+      await panelYaz(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}/iptal`, 'POST', {});   // Codex P1: gerçek kayıtta imzalı
       setOnay(null); return true;
     } catch (e) {
       if (e instanceof TypeError) { setHata('İnternet yok — onay iptal edilemedi, bağlantı gelince tekrar dene'); return false; }

@@ -876,13 +876,19 @@ async def _tablet_imzasi(request: Request, sube_id: str) -> None:
     sahte onay isteyemez, ara sayımı değiştiremez. Deneme şubesinde serbest (bağlanmamış PC "QR'sız geç" kırılmasın). İmza
     doğrulayıcı Yoklama'nın PUBLIC cihaz_coz'u (QR / devir başlat ile AYNI kapı); gövde Starlette'te önbellekli, uç yine okur."""
     ham = await request.body()
+    # Codex P2 (86–90): psycopg2 senkron — doğrulama iş parçacığında (olay döngüsü kilitli satır beklerken QR / diğer istekleri durdurmasın)
+    await run_in_threadpool(_tablet_dogrula, request.headers, request.method, request.url.path, ham, sube_id)
+
+
+def _tablet_dogrula(basliklar, method: str, yol: str, ham: bytes, sube_id: str) -> None:
+    """Senkron çekirdek: deneme şubesinde serbest; gerçek kayıttaki şubede o şubeye bağlı tablet imzası."""
     with db() as (conn, cur):
         if deneme_mi(cur, sube_id=sube_id):
             return
         y = _yoklama()
         if y is None:
             raise HTTPException(503, "Cihaz doğrulaması çalışmıyor — merkeze haber ver")
-        c = y.cihaz_coz(cur, request.headers, request.method, request.url.path, ham, tur="tablet")
+        c = y.cihaz_coz(cur, basliklar, method, yol, ham, tur="tablet")
         if str(c.get("sube_id") or "") != str(sube_id):
             raise HTTPException(403, "Bu işlem bu şubenin panel bilgisayarından yapılır")
 
@@ -1901,13 +1907,28 @@ def onay_durum(oid: str):
 
 
 @router.post("/onay/{oid}/iptal")
-def onay_iptal(oid: str):
-    _onay_hazirla()
-    with db() as (conn, cur):
-        cur.execute("UPDATE ey_panel_onay SET durum='iptal' WHERE id=%s AND durum IN ('bekliyor','hata') RETURNING id", (oid,))
-        if not cur.fetchone():
+async def onay_iptal(oid: str, request: Request):
+    """Codex P1 (86–90): şube onayın KAYDINDAN çözülür, gerçek kayıttaki şubede o şubenin tablet imzası istenir; ara sayım bu
+    genel uçtan iptal edilmez (kendi 'Tutarı düzelt' yolu var) — durum ekranındaki onay_id ile dışarıdan sayım iptal edilemez."""
+    ham = await request.body()
+
+    def _is():
+        _onay_hazirla()
+        with db() as (conn, cur):
+            cur.execute("SELECT sube_id, tur FROM ey_panel_onay WHERE id=%s", (oid,))
+            r = cur.fetchone()
+        if not r:
             raise HTTPException(409, "Bu onay artık iptal edilemez")
-    return {"ok": True, "mesaj": "Onay iptal edildi — form duruyor"}
+        r = dict(r)
+        if r["tur"] == "ara_sayim":
+            raise HTTPException(409, "Ara sayım buradan iptal edilmez — panelde 'Tutarı düzelt'")
+        _tablet_dogrula(request.headers, request.method, request.url.path, ham, str(r["sube_id"]))
+        with db() as (conn, cur):
+            cur.execute("UPDATE ey_panel_onay SET durum='iptal' WHERE id=%s AND durum IN ('bekliyor','hata') RETURNING id", (oid,))
+            if not cur.fetchone():
+                raise HTTPException(409, "Bu onay artık iptal edilemez")
+        return {"ok": True, "mesaj": "Onay iptal edildi — form duruyor"}
+    return await run_in_threadpool(_is)
 
 
 @router.get("/onay/{oid}/ozet")
