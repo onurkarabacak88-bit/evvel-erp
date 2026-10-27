@@ -187,7 +187,7 @@ function Bagla({ davet }) {
           {varTel && <div className="tq-silik">Bu tarayıcıda zaten bağlı bir telefon kaydı var; yeniden bağlarsan eski bağ bu telefonda biter.</div>}
           {hata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{hata}</div>}
           <button className="tq-btn tq-ana" disabled={mesgul} onClick={bagla}>{mesgul ? 'Bağlanıyor…' : '📱 BU CİHAZI BAĞLA'}</button>
-          <div className="tq-silik">iPhone'da Safari: sayfayı "Ana ekrana ekle" ile açıp oradan bağlarsan bağ o kapta kalır.</div>
+          <div className="tq-silik">iPhone: bu linki Safari'de aç ve burada bağla. Ana ekrana eklerken <b>"Web Uygulaması olarak aç" seçeneğini KAPAT</b> — açık kalırsa simge ayrı bir kap olur, bağı görmez ("tanımlı değil" der).</div>
         </div>
       )}
     </>
@@ -1028,7 +1028,10 @@ function EskiQrNotu({ bagli }) {
     </div>
   );
 }
+// iPhone "Web Uygulaması olarak aç" kabı Safari'nin bağını görmez (canlı 27 Eki, Fable P-3) — yeni link İSTETME, bağ Safari'de
+const simgeKabi = () => { try { return window.navigator.standalone === true || window.matchMedia('(display-mode: standalone)').matches; } catch { return false; } };
 function TanimliDegil() {
+  const kap = simgeKabi();
   return (
     <>
       <Marka alt="Yoklama" />
@@ -1036,7 +1039,9 @@ function TanimliDegil() {
       <div className="tq-kart" style={{ textAlign: 'center' }}>
         <div style={{ fontSize: 44 }}>📵</div>
         <b style={{ fontSize: 20 }}>Bu telefon tanımlı değil</b>
-        <div className="tq-not">Merkezden bağlantı linki iste; link bu telefonda açılınca bağlanır.</div>
+        {kap
+          ? <div className="tq-not">Bu simge ayrı bir kap, telefon bağını görmüyor. Simgeyi sil; giriş / çıkış için paneldeki QR'ı kamerayla okut (Safari'de açılır, bağ orada). Ana ekrana yeniden eklersen <b>"Web Uygulaması olarak aç" seçeneğini KAPAT</b>.</div>
+          : <div className="tq-not">Merkezden bağlantı linki iste; link bu telefonda açılınca bağlanır.</div>}
       </div>
     </>
   );
