@@ -4,7 +4,7 @@
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek, panelYaz } from './ortak';
+import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek, panelYaz, panelOku } from './ortak';
 
 
 export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir }) {
@@ -29,7 +29,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   useEffect(() => {   // sahip: fonksiyon kaybı yok — eski panel taslağı sunucuda tutuyordu (başka PC / silinen tarayıcı)
     let canli = true;
     if (ilk && Object.keys(ilk.adet || {}).length) { sunucuHazir.current = true; return undefined; }
-    api(`${taslakYol}?gun=${encodeURIComponent(d.gun)}`).then((r) => {
+    panelOku(`${taslakYol}?gun=${encodeURIComponent(d.gun)}`).then((r) => {
       if (!canli) return;
       const v = r?.veri;
       if (v && Object.keys(v.adet || {}).length) { setAdet(v.adet); setNot(v.not || ''); if (v.istek) setIstek(v.istek); setMesaj('taslak'); }

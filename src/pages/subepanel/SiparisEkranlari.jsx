@@ -5,7 +5,7 @@
 // ya da "🚚 Yola çıkar" (kısmi → kalan merkeze döner). Sunucu: evvel_yeni_panel_api (/siparis, /siparisler, /gonderilecek) → Sipariş modülü.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
+import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, yeniIstek, panelOku } from './ortak';
 import { tarihNokta } from '../../utils/trTarih';
 
 const DURUM = {
@@ -18,7 +18,7 @@ export function useSiparisler(subeId) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState('');
   const yukle = useCallback(async () => {
-    try { setV(await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/siparisler`)); setHata(''); }
+    try { setV(await panelOku(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/siparisler`)); setHata(''); }
     catch (e) { setHata(e?.message || 'Siparişler okunamadı'); }
   }, [subeId]);
   useEffect(() => { yukle(); }, [yukle]);

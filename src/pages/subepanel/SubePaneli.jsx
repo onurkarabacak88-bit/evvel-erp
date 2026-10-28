@@ -17,12 +17,13 @@ import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
 import Fire from './Fire';
 import AraSayim from './AraSayim';
-import { C, CSS, cihazTuruOku, cihazTuruYaz, KisiPin, Modal, panelHata, qrBoyut, SayiTusTakimi, sor, SorKatmani, TabletQR, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek, panelYaz } from './ortak';
+import { C, CSS, cihazTuruOku, cihazTuruYaz, KisiPin, Modal, panelHata, qrBoyut, SayiTusTakimi, sor, SorKatmani, TabletQR, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek, panelYaz, panelOku } from './ortak';
 import { gunKaydir, tarihNokta } from '../../utils/trTarih';
 
 export default function SubePaneli({ subeId }) {
   const [d, setD] = useState(null);
   const [hata, setHata] = useState('');
+  const [hataYetki, setHataYetki] = useState(false);   // Fable K6 (okuma imzası): 403 = bu PC bu şubeye bağlı değil — 'ulaşılamıyor' yazıp arıza sandırmasın
   const [hataAg, setHataAg] = useState(false);   // Fable (S-B6 denetimi): bant metni — bağlantı mı yok, sunucu mu reddetti
   const [kisi, setKisi] = useState('');
   const [sekme, setSekme] = useState('ana');
@@ -108,9 +109,9 @@ export default function SubePaneli({ subeId }) {
     return () => { window.clearInterval(t); window.removeEventListener('online', kuyruguGonder); };
   }, [kuyruguGonder]);
 
-  const yukle = useCallback(() => api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/durum`)
+  const yukle = useCallback(() => panelOku(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/durum`)
     .then((x) => { setD(x); setHata(''); taslakTemizle(subeId, x.gun, x.depo_acik ? (x.depo_yolda || []).map((p) => p.parti_id) : null); })   // F#53: eski taslak birikmesin
-    .catch((e) => { setHataAg(e instanceof TypeError); setHata(e?.message || 'Panel açılamadı'); }), [subeId]);
+    .catch((e) => { setHataAg(e instanceof TypeError); setHataYetki(e?.status === 403); setHata(e?.message || 'Panel açılamadı'); }), [subeId]);
   const [kapiGecildi, setKapiGecildi] = useState(false);   // yalnız DENEME'de "QR'sız geç" (saklanmaz — her yüklemede kapı yine görünür)
   const [sihirbazElle, setSihirbazElle] = useState(false);
   const [denemeKapandi, setDenemeKapandi] = useState(false);
@@ -218,7 +219,7 @@ export default function SubePaneli({ subeId }) {
   };
 
   // S-B6: kısa kesintide ekranın tamamı gitmesin — elde veri varsa ekran kalır, üstte bant (aşağıda); tam sayfa yalnız ilk açılışta
-  if (hata && !d) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style><h2>Panel açılamadı</h2><p>{hataAg ? 'İnternet bağlantısı yok.' : 'Sisteme şu an ulaşılamıyor.'} Birkaç saniye içinde kendiliğinden yeniden denenecek.</p><button className="sp-btn" onClick={yukle}>Tekrar dene</button></div>;
+  if (hata && !d) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style><h2>Panel açılamadı</h2><p>{hataYetki ? `🔒 ${hata}` : `${hataAg ? 'İnternet bağlantısı yok.' : 'Sisteme şu an ulaşılamıyor.'} Birkaç saniye içinde kendiliğinden yeniden denenecek.`}</p><button className="sp-btn" onClick={yukle}>Tekrar dene</button></div>;
   if (!d) return <div className="sp" style={{ padding: 24 }}><style>{CSS}</style>Yükleniyor…</div>;
   // sahip: PIN/kişi seçilen her yerde YALNIZ QR ile girmiş (şu an içeride) personel — tüm personel listesi yedeği YOK
   const kisiAdaylari = (yok.girenler || []).filter((g) => g.acik).map((g) => ({ id: g.personel_id, ad: g.ad }));

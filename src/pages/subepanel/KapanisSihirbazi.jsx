@@ -7,7 +7,7 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { CSS_AW, saatOncesi, trSaat } from './AcilisSihirbazi';
-import { C, qrBoyut, sayi, sor, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, useSihirbazKlavye, yeniIstek } from './ortak';
+import { C, qrBoyut, sayi, sor, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, useQrOnay, useSihirbazKlavye, yeniIstek, panelOku } from './ortak';
 import { gunKaydir } from '../../utils/trTarih';
 import { paraGecerli } from '../../utils/trSayi';
 
@@ -95,7 +95,7 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
     if (!d.kapanis_var || sonuc || d.gun !== gun) return;
     const o = onayRef.current;
     if (!o?.id) { sonucGoster({ tur: 'tamam', uyarilar: [] }); return; }
-    api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}`)
+    panelOku(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}`)
       .then((r) => { if (r.durum === 'onaylandi') bittiSonuc(r, r.kisi); else if (r.durum !== 'isleniyor') sonucGoster({ tur: 'tamam', uyarilar: [] }); })   // isleniyor: sorgu sürer, uyarı gelince gösterilir
       .catch(() => { /* Codex: sorgu hatası başarıyı kilitlemez — onay sorgusu sürer, uyarı gelince gösterilir */ });
   }, [d.kapanis_var]);   // eslint-disable-line react-hooks/exhaustive-deps

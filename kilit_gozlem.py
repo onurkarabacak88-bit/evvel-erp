@@ -85,6 +85,7 @@ def ozet() -> Dict[str, Any]:
                 "kilit takılınca KIRILACAK olanlardır; izin listesi buradan "
                 "kurulur. Sunucu yeniden başlarsa sayaç sıfırlanır."),
         "satirlar": satirlar,
+        "imzasiz_okuma": sorted(({"yol": y, "sube_id": s, **v} for (y, s), v in list(_IMZASIZ.items())), key=lambda r: -r["adet"]),
     }
 
 
@@ -118,8 +119,29 @@ def engellendi(yontem: str, yol: str) -> None:
         pass
 
 
+# ── 🔒 PANEL OKUMA İMZASI GÖZLEMİ (IS 5bc · Fable L4b B, 28 Eki): gerçek kayıttaki şubede imzasız gelen panel OKUMASI şube bazlı
+# sayılır (aşama 1). Sayaç sıfır kalınca ya da 1 Kasım sabahı Railway EY_PANEL_OKUMA=zorla → aynı istek 403 (deploy'suz).
+_IMZASIZ: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+
+def imzasiz_okuma(yol: str, sube_id: str) -> None:
+    """ASLA HATA FIRLATMAZ — gözlem isteği bozamaz."""
+    try:
+        anahtar = (yol_kalibi(yol), str(sube_id or ""))
+        simdi = int(time.time())
+        with _KILIT:
+            if anahtar not in _IMZASIZ and len(_IMZASIZ) >= _TAVAN:
+                return
+            d = _IMZASIZ.setdefault(anahtar, {"adet": 0, "ilk": simdi, "son": simdi})
+            d["adet"] += 1
+            d["son"] = simdi
+    except Exception:  # noqa: BLE001
+        pass
+
+
 def sifirla() -> int:
     with _KILIT:
         n = len(_SAYAC)
         _SAYAC.clear()
+        _IMZASIZ.clear()
     return n

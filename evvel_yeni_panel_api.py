@@ -15,6 +15,7 @@ Faz 1: açılış · kapanış · kasa devri · ara teslim · ürün aç · fire
 
 import json
 import logging
+import os
 import re
 import uuid
 
@@ -351,7 +352,33 @@ def _calistir_ic(sube_id: str, istek_id: Optional[str], is_fn, gun=None, merkez:
 
 
 # ─────────────────────────── OKUMA ───────────────────────────
-@router.get("/{sube_id}/durum")
+def _okuma_dogrula(basliklar, method: str, yol: str, sube_id: str) -> None:
+    """🔒 Panel OKUMA uçları (IS 5bc · Fable L4b B, 28 Eki — personel adları, giriş saatleri, elden avans şube kimliğiyle okunuyordu).
+    Deneme şubesi serbest · geçerli merkez oturumu geçer · cihaz imzası VARSA doğrulanır (başka şubenin PC'si 403) · imza YOKSA:
+    Railway EY_PANEL_OKUMA=zorla → 403, değilse geçer ama şube bazlı sayılır (/api/kilit-gozlem imzasiz_okuma) — saatlerce açık
+    kalmış eski sekme vardiya ortasında boşalmasın (aşama 1). Zorlamaya geçip bir gün sorunsuz gidince gözlem kolu kaldırılır."""
+    with db() as (conn, cur):
+        if deneme_mi(cur, sube_id=sube_id):
+            return
+    jeton = (basliklar.get("x-evvel-oturum") or "").strip()
+    if jeton and __import__("admin_oturum").jeton_gecerli(jeton)[0]:
+        return
+    if (basliklar.get("x-evvel-cihaz") or "").strip():
+        _tablet_dogrula(basliklar, method, yol, b"", sube_id)
+        return
+    if (os.environ.get("EY_PANEL_OKUMA") or "").strip().lower() == "zorla":
+        raise HTTPException(403, "Bu panel bilgisayarı bu şubeye bağlı değil — merkezden bağlantı iste")
+    __import__("kilit_gozlem").imzasiz_okuma(yol, sube_id)
+
+
+async def _okuma_imzasi(request: Request, sube_id: str) -> None:
+    await run_in_threadpool(_okuma_dogrula, request.headers, request.method, request.url.path, sube_id)
+
+
+_OKUMA = [Depends(_okuma_imzasi)]
+
+
+@router.get("/{sube_id}/durum", dependencies=_OKUMA)
 def panel_durum(sube_id: str):
     """Panelin açılışta ihtiyacı olan her şey: şube, personel, sayılacak / açılacak ürünler, bugün yapılanlar."""
     from evvel_yeni_olay import olay_tablosu_kur, olaylar
@@ -1156,7 +1183,7 @@ def siparis_ver(sube_id: str, b: SiparisBody):
     return _calistir(sube_id, b.istek_id, is_, tur="siparis", govde=b.model_dump(mode="json"))
 
 
-@router.get("/{sube_id}/siparisler")
+@router.get("/{sube_id}/siparisler", dependencies=_OKUMA)
 def panel_siparisler(sube_id: str):
     """Sipariş takip (A7, KÖR — sevk/kabul adedi yok) + Sipariş ver rozetleri (A2/A12, adetsiz) + Gönderilecek (yalnız merkez depo şubesi)
     + Tedarikçi 'beklenen' kartları (A10)."""
@@ -1773,7 +1800,7 @@ def _taslak_gun(gun: str):
         raise HTTPException(400, "Gün geçersiz")
 
 
-@router.get("/{sube_id}/taslak/{tur}")
+@router.get("/{sube_id}/taslak/{tur}", dependencies=_OKUMA)
 def taslak_oku(sube_id: str, tur: str, gun: str):
     if tur not in TASLAK_TURLERI:
         raise HTTPException(404, "Taslak yok")
@@ -1895,11 +1922,13 @@ def _onay_oku(cur, oid: str) -> dict:
 
 
 @router.get("/onay/{oid}")
-def onay_durum(oid: str):
-    """Panel 2 sn'de bir sorar: bekliyor / onaylandi / hata / iptal / sure_doldu."""
+def onay_durum(oid: str, request: Request):
+    """Panel 2 sn'de bir sorar: bekliyor / onaylandi / hata / iptal / sure_doldu. Şube onay KAYDINDAN çözülür (iptal ucu gibi) —
+    gerçek kayıttaki şubede okuma imzası kuralı (_okuma_dogrula; olmayan onay önce 404)."""
     _onay_hazirla()
     with db() as (conn, cur):
         o = _onay_oku(cur, oid)
+    _okuma_dogrula(request.headers, request.method, request.url.path, str(o["sube_id"]))
     durum = "sure_doldu" if o["durum"] in ("bekliyor", "hata") and o["gecti"] else o["durum"]
     sonuc = o.get("sonuc") if isinstance(o.get("sonuc"), dict) else {}
     return {"durum": durum, "mesaj": o["mesaj"], "kisi": o["personel_ad"], "ozet": o["ozet"], "tur": o["tur"],

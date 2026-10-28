@@ -5,7 +5,7 @@
 // Sök-tak: Toptancılar modülü kapalıysa ekran "kapalı" der. Sipariş modu / eksik bildirimi sipariş basamağıyla (ertelendi). Bip YOK (sahip).
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, qrBoyut, sor, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek } from './ortak';
+import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, qrBoyut, sor, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek, panelOku } from './ortak';
 
 
 export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, secimBildir, tabletVar }) {
@@ -37,7 +37,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
   // Fable S9: teslim kaydı / geri alma sonrası beklenen kartlar yeniden okunur (geri alınan teslimin kartı yeniden 'bekleniyor' olur)
   const teslimIzi = (d.teslimler_bugun || []).map((t) => t.id + (t.iptal ? ':x' : '')).join(',');
   useEffect(() => {
-    api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/siparisler`).then((r) => setBekl(r?.toptanci_beklenen || [])).catch(() => setBekl([]));
+    panelOku(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/siparisler`).then((r) => setBekl(r?.toptanci_beklenen || [])).catch(() => setBekl([]));
   }, [subeId, teslimIzi]);
   useEffect(() => {
     taslakYaz(anahtar, { adet, koli, toptanci, fatura, ftTutar, ftNo, not, istek, secYon });

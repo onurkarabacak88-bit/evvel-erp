@@ -49,6 +49,11 @@ export const CSS = `
 export const panelYaz = (yol, method = 'POST', body) => (cihazId('tablet')
   ? imzaliJson('tablet', method, `/api${yol}`, body)
   : api(yol, { method, ...(body === undefined ? {} : { body }) }));
+// 🔒 Panel OKUMASI tek kapı (IS 5bc · Fable L4b B, 28 Eki): bu PC bağlıysa imzalı GET; bağlı değilse (deneme) ya da bu tarayıcıda anahtar
+// kaybolmuşsa düz istek — sunucu gerçek kayıttaki şubede imzasızı önce sayar, sonra (EY_PANEL_OKUMA=zorla) reddeder.
+export const panelOku = (yol) => (cihazId('tablet')
+  ? imzaliJson('tablet', 'GET', `/api${yol}`).catch((e) => { if (e?.cihaz_yok) return api(yol); throw e; })
+  : api(yol));
 export const taslakOku = (k) => { try { return k ? JSON.parse(localStorage.getItem(k) || 'null') : null; } catch { return null; } };
 export const taslakYaz = (k, v) => { try { if (k) localStorage.setItem(k, JSON.stringify(v)); } catch { /* yer yok / gizli pencere */ } };
 export const taslakKaldir = (k) => { try { if (k) localStorage.removeItem(k); } catch { /* yok say */ } };
@@ -242,7 +247,7 @@ export function useQrOnay({ subeId, tur, govde, mesgul, setMesgul, setHata, onay
     } catch (e) {
       if (e instanceof TypeError) { setHata('İnternet yok — onay iptal edilemedi, bağlantı gelince tekrar dene'); return false; }
       try {   // o an telefonda onaylanmış / işleniyor olabilir → gerçek durumu sor
-        const r = await api(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}`);
+        const r = await panelOku(`/evvel-yeni/panel/onay/${encodeURIComponent(o.id)}`);
         if (r.durum === 'onaylandi') { sonRef.current(r); return false; }
         if (r.durum === 'iptal' || r.durum === 'sure_doldu') { setOnay(null); return true; }   // yalnız doğrulanmış geçersizlikte
         setOnay({ id: o.id, durum: r.durum, mesaj: r.mesaj || '' });
@@ -256,7 +261,7 @@ export function useQrOnay({ subeId, tur, govde, mesgul, setMesgul, setHata, onay
     let canli = true;
     const sor = async () => {
       try {
-        const r = await api(`/evvel-yeni/panel/onay/${encodeURIComponent(onay.id)}`);
+        const r = await panelOku(`/evvel-yeni/panel/onay/${encodeURIComponent(onay.id)}`);
         if (!canli || onayRef.current?.id !== onay.id) return;
         setAgHata(0);
         if (r.durum === 'onaylandi') sonRef.current(r);
