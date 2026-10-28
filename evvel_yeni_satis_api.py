@@ -842,7 +842,7 @@ def _devir_defteri_yeni(ay: Optional[str] = None, hafif: bool = False):
             gunler.append({"gun": gi, "sabah": sabah, "vardiya": vardiya, "vardiyalar": vardiyalar, "aksam": aksam, "ertesi_sabah": ertesi,
                            "vardiya_kasa": None,
                            "elle_teslim": ", ".join(elle_tes.get((sid, gi), [])) or None,
-                           "zincir_fark": kopuk, "zincir_tutuyor": (kopuk is not None and abs(kopuk) < 1)})
+                           "zincir_fark": kopuk, "zincir_tutuyor": (kopuk is not None and kopuk == 0)})   # IS 4j: sahip kuralı devirde 0 ₺ tolerans (eski defterle aynı; abs < 1 gevşekliği kalktı)
             if a and vd and k and len(ev.get((sid, gi, "vardiya"), [])) > 1:   # Opus E1: iki vardiyaya bölme tek devir içindir
                 gunler[-1]["vardiya_kasa"] = {"neden": "günde birden çok devir — vardiyalara bölünmedi"}
             elif a and vd and k:   # Faz 2 — ay sonunda TEK bağlantıda doldurulur (Opus Y7)
