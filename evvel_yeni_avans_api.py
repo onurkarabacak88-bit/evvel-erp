@@ -358,7 +358,9 @@ def _kapananlar(cur, arsivden: bool = True) -> list:
 @router.get("/talepler")
 def talepler():
     with db() as (conn, cur):
-        kapanan = _yeni_talepler(cur, acik=False) + ([] if yeni_donem(cur) else _kapananlar(cur))
+        # 🟢 E2E E11: son aktarımın dondurduğu eski iptal / red listesi 1 Kasım'dan sonra da görünsün — yeni dönemde YALNIZ arşiv (eski tablo okunmaz)
+        kapanan = _yeni_talepler(cur, acik=False) + ((__import__("evvel_yeni_cekirdek").arsiv_oku(cur, "avans", "eski_kapananlar") or [])
+                                                     if yeni_donem(cur) else _kapananlar(cur))
         return {"talepler": _tum_acik(cur, ayrinti=True), "kapananlar": kapanan, "bugun": _bugun().isoformat()}
 
 
@@ -592,7 +594,7 @@ def kesim_dondur(cur, yazan: str, ay: str) -> dict:
                        ON CONFLICT (id) DO NOTHING""",
                     ("av-e-" + r["id"][:36], r["pid"], kurus, ait, "eski-" + r["id"][:60], f"avans-eski:{r['id']}", r.get("odeme_ts")))   # Fable 🟢: telefonda ödeme günü
         devir += 1 if hid else 0
-        toplam += kurus
+        toplam += kurus if hid else 0   # 🟢 E2E E14: ikinci koşuda toplam yalnız YENİ yazılan devri sayar (rapor yanıltmasın)
     kap = _kapananlar(cur, arsivden=False)   # Fable 🟢: eski iptal / red gri listesi de (60 gün)
     __import__("evvel_yeni_cekirdek").arsiv_yaz(cur, "avans", "eski_kapananlar", kap, yazan)
     return {"eski_kapanan": len(kap), "acik_tasinan": acik, "kasim_havale": len(rows) - len(kadrosuz), "devir_yeni": devir, "devir_toplam_tl": toplam / 100,

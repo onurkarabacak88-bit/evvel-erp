@@ -469,7 +469,8 @@ def _mut_veri_eski(cur, gun: str) -> dict:
                                  "sayilan": f(r["kasa_sayim"]), "kim": r.get("personel_saat")})
     cur.execute("""SELECT sube::text AS sid, tutar, kategori, aciklama, durum FROM anlik_giderler
                     WHERE tarih = %s AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'
-                      AND durum IN ('aktif', 'onay_bekliyor')""", (gun,))
+                      AND durum IN ('aktif', 'onay_bekliyor')
+                      AND NULLIF(TRIM(sube::text), '') IS NOT NULL""", (gun,))   # 🟢 E2E E10: şubesiz merkez gideri 'None' şubesi olmasın (Kasa ile aynı kural)
     for r in cur.fetchall() or []:
         r = dict(r)
         sube(r["sid"])["giderler"].append({"tutar": float(r["tutar"] or 0), "ad": " · ".join(x for x in [r.get("kategori"), r.get("aciklama")] if x) or "Gider",
