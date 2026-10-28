@@ -69,6 +69,11 @@ export default function MaasModulu({ onToast, onSekme }) {
       onToast?.(res.mesaj); yukle();
     } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); } finally { setMesgul(false); }
   };
+  // ⏰ Geç kalma kararı (sahip 28 Eki: "uyarıya göre kes ya da tam alsın diyebilelim" · Fable L4b A) — gün başına; kararsız gün varken onay yok
+  const gecKarar = async (karar, gun, hepsi) => {
+    try { const res = await api(`/evvel-yeni/maas/${encodeURIComponent(sec)}/${v.ay}/gec-karar`, { method: 'POST', body: { karar, gun: gun || null, hepsi: !!hepsi } }); onToast?.(res.mesaj); yukle(); }
+    catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+  };
   const onayla = async (kaldir) => {
     try { const res = await api(`/evvel-yeni/maas/${encodeURIComponent(sec)}/${v.ay}/onay${kaldir ? '?kaldir=true' : ''}`, { method: 'POST' }); onToast?.(res.mesaj); yukle(); }
     catch (e) { onToast?.(e?.message || 'Olmadı'); }
@@ -130,6 +135,24 @@ export default function MaasModulu({ onToast, onSekme }) {
               <span style={{ marginLeft: 'auto' }}><Dugme kucuk onClick={() => setSec(null)}>Kapat</Dugme></span>
             </div>
             {(r.uyari || []).map((u) => <div key={u} style={{ color: R.kirmizi, fontWeight: 600 }}>⚠ {u}</div>)}
+            {(r.gec_gunler || []).length > 0 && (
+              <div style={{ border: '1px solid var(--pi-line)', borderRadius: 10, padding: '8px 12px', display: 'grid', gap: 6, fontSize: 13.5 }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <b>⏰ Geç kalmalar</b><span style={{ color: R.not, fontSize: 12 }}>kes = geç dakika × dakika ücreti · tam = kesilmez</span>
+                  {!r.onay && r.gec_kararsiz > 0 && <span style={{ marginLeft: 'auto' }}><Dugme kucuk onClick={() => gecKarar('tam', null, true)}>Hepsine tam</Dugme></span>}
+                </div>
+                {r.gec_gunler.map((g) => (
+                  <div key={g.gun} style={{ display: 'flex', alignItems: 'center', gap: 8, borderTop: '1px solid var(--pi-line)', paddingTop: 6 }}>
+                    <span style={{ flex: 1 }}>{g.gun.slice(8, 10)}.{g.gun.slice(5, 7)} · {g.dk} dk geç · kes → <b style={num}>{fmt(g.tutar)} ₺</b></span>
+                    {g.karar && <Cip tur={g.karar === 'kes' ? 'kirmizi' : 'yesil'}>{g.karar === 'kes' ? 'kesilecek' : 'tam alınacak'}</Cip>}
+                    {!r.onay && <>
+                      <Dugme kucuk ana={!g.karar} disabled={g.karar === 'kes'} onClick={() => gecKarar('kes', g.gun)}>Kes</Dugme>
+                      <Dugme kucuk disabled={g.karar === 'tam'} onClick={() => gecKarar('tam', g.gun)}>Tam al</Dugme>
+                    </>}
+                  </div>
+                ))}
+              </div>
+            )}
             <div>
               {r.kalemler.map((k) => (
                 <div key={k.kod + k.ad} style={{ padding: '6px 0', borderBottom: '1px solid var(--pi-line)', fontSize: 14 }}>
@@ -294,6 +317,7 @@ const YOK_DURUM = {
   okutmadi: { ad: 'QR okutmadı', ikon: '❌', renk: R.kirmizi },
   plansiz: { ad: 'planda yok, geldi', ikon: '➕', renk: 'var(--pi-accent)' },
   bekleniyor: { ad: 'saati gelmedi', ikon: '⌛', renk: R.not },
+  sonradan: { ad: 'plan sonradan yazıldı — geç ölçülmez', ikon: '📝', renk: R.not },   // IS 4l · R4
 };
 const gunStr = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 export function GunlukYoklama() {

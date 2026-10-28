@@ -165,7 +165,8 @@ def _plan_satirlari(cur, bas: date, son: date) -> tuple:
             for r in gun_plani(cur, bas, son):   # yeni plan TÜM aralıkta; eski yalnız yeni planın boş olduğu (kişi, gün) için
                 out.append({"tarih": date.fromisoformat(r["gun"]), "pid": str(r["personel_id"]), "sid": str(r.get("sube_id") or ""),
                             "baslangic_saat": _time.fromisoformat(r["bas"]), "bitis_saat": _time.fromisoformat(r["bit"]),
-                            "slot": r.get("etiket") or "", "saat": float(r.get("saat") or 0)})
+                            "slot": r.get("etiket") or "", "saat": float(r.get("saat") or 0),
+                            "sonradan": r.get("kaynak") == "sonradan"})   # IS 4l (Codex): gün geçtikten sonra yazılan plan — geç ölçülmez (R4)
         ar_plan = _eski_iz(cur, "plan", bas, min(son, pb - timedelta(days=1))) if bas < pb else None
         if bas < pb and (ar_plan is not None or __import__("evvel_yeni_cekirdek").tablo_var(cur, "vardiya_atama", "vardiya_slot")):
             try:
@@ -379,6 +380,19 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
     ucret = _ucretler(cur, ay)
     oneri = _yeni_oneri(cur, ay) if not eski_mod else {}   # C-T3-13: yeni dönem plan > QR (eski vardiya_takip değil)
     yemek_k = _yemek_kaynagi(cur, ay, ay_bas, ay_son) if not eski_mod else None
+    # ⏰ Geç kalma (sahip 28 Eki · Fable L4b A): uyarı + gün başına kes / tam kararı (ey_personel_yoklama_karar gec_kes | gec_tam)
+    gec_map, gec_uyari, gec_karar = {}, None, {}
+    if not eski_mod and min(ay_son, bugun) >= ay_bas:
+        try:
+            with savepoint(cur, "sp_ey_maas_gec"):
+                gec_map, gec_uyari = _gec_gunler(cur, ay_bas, min(ay_son, bugun))
+                cur.execute("""SELECT DISTINCT ON (personel_id, tarih) personel_id, tarih, karar FROM ey_personel_yoklama_karar
+                                WHERE karar IN ('gec_kes', 'gec_tam') AND iptal_zaman IS NULL AND tarih BETWEEN %s AND %s
+                                ORDER BY personel_id, tarih, zaman DESC""", (ay_bas, ay_son))
+                gec_karar = {(str(r["personel_id"]), r["tarih"].isoformat()): r["karar"] for r in [dict(x) for x in cur.fetchall() or []]}
+        except Exception:  # noqa: BLE001 — geç kalma okunamazsa maaş yine hesaplanır, satırda uyarı
+            log.warning("maaş: geç kalma okunamadı", exc_info=True)
+            gec_map, gec_uyari = {}, "Geç kalma okunamadı"
     # önceki aydan avans devri (yeni hesap başlangıcından itibaren zincir)
     devir_in = {}
     if not eski_mod and ay >= yh:   # 🔴 E1: ilk yeni ay (Kasım) devri eski Ekim satırından (avans_devir_sonraki = eski mahsup_devir + aşan form avansı)
@@ -490,6 +504,27 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
             kalemler.append(yk)
         if u.get("yol"):
             kalemler.append({"kod": "yol", "ad": f"Yol: aylık × {gun}/30", "tutar": _tl(int(u["yol"]) * gun // AY_GUN)})
+        # ⏰ geç kalma: kes → dakika × dakika ücreti (tam: maaş/30/9,5/60 — mesai ile AYNI birim · yarı: saatlik/60), ₺ tam sayı
+        dk_ucret = (Decimal(int(u.get("saatlik") or 0)) / 60) if yari else (Decimal(maas) / (AY_GUN * GUNLUK_SAAT * 60))   # kuruş / dk
+        gec_gunler, gec_kararsiz, kes_top, kes_dk, kes_n = [], 0, 0, 0, 0
+        for (gp, gg), gdk in sorted(gec_map.items(), key=lambda z: z[0][1]):
+            if gp != pid:
+                continue
+            gt = int((Decimal(gdk) * dk_ucret / 100).quantize(Decimal(1), rounding=ROUND_HALF_UP)) * 100
+            gk = {"gec_kes": "kes", "gec_tam": "tam"}.get(gec_karar.get((pid, gg)))
+            gec_gunler.append({"gun": gg, "dk": gdk, "tutar": _tl(gt), "karar": gk})
+            if gk == "kes":
+                kes_top, kes_dk, kes_n = kes_top + gt, kes_dk + gdk, kes_n + 1
+            elif gk is None:
+                gec_kararsiz += 1
+                if not e.get("onay"):
+                    uyari.append(f"{gg[8:10]}.{gg[5:7]} · {gdk} dk geç — kes → {_tl_tr(gt)} ya da tam al (karar ver)")
+        if gec_gunler and not dk_ucret:
+            uyari.append("Ücret tanımsız — geç kalma tutarı hesaplanamadı")
+        if gec_uyari and not e.get("onay"):
+            uyari.append(f"Geç kalma ölçülemedi — {gec_uyari.replace('⚠', '').strip()}")
+        if kes_top:
+            kalemler.append({"kod": "gec", "ad": f"Geç kalma {kes_n} gün · {kes_dk} dk (kes dendi)", "tutar": -_tl(kes_top)})
         if e.get("duzeltme"):
             kalemler.append({"kod": "duzeltme", "ad": "Düzeltme" + (f" — {e.get('aciklama')}" if e.get("aciklama") else ""), "tutar": _tl(e["duzeltme"])})
         # Onaylı ay: kalemler dondurulur (sonradan değişen ücret/vardiya geçmişi bozmaz)
@@ -500,7 +535,8 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         mahsup = min(avans + din, max(hak, 0))
         ek = {"gun": gun, "ay_acik": acik, "uyari": uyari, "avans_devir_onceki": _tl(din),
               "hesap_saat": saat if yari else None,   # avans tavanı bunu okur (Fable O-3: _yeni_oneri ikinci kez çalışmasın)
-              "yemek_hak": next((k["tutar"] for k in kalemler if k["kod"] == "yemek"), 0), "yemek_dusen": yemek_dusen}
+              "yemek_hak": next((k["tutar"] for k in kalemler if k["kod"] == "yemek"), 0), "yemek_dusen": yemek_dusen,
+              "gec_gunler": gec_gunler, "gec_kararsiz": gec_kararsiz}
         satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, din, odenen, od, e, u, "evvel_yeni", ek, yari))
     satir.sort(key=lambda x: (not x["aktif"], x["ad"]))
     return satir
@@ -579,6 +615,44 @@ def maas_liste(ay: Optional[str] = None):
             "not": ("Evvel Yeni (1 Ekim) öncesi ay: maaşlar ödenmiş ve kapanmış sayılır. " if a_ <= KAPALI_SON_AY else "")
             + ("Ekim ve öncesi eski sistemin hesabıyla (avans düşülmüş net + mahsup). " if a_ < yh else "")
             + "Kalan = hak ediş − avans mahsubu − ödenen (maaş, yemek, prim). SGK/vergi kişinin bakiyesini kapatmaz."}
+
+
+class GecKararBody(BaseModel):
+    karar: str                       # kes | tam
+    gun: Optional[str] = None        # tek gün (YYYY-AA-GG); hepsi=True ise kararsız bütün geç günler
+    hepsi: bool = False
+
+
+@router.post("/{pid}/{ay}/gec-karar")
+def gec_karar(pid: str, ay: str, b: GecKararBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """⏰ Geç kalma kararı (sahip 28 Eki · Fable L4b A): gün başına kes | tam — ey_personel_yoklama_karar (izin ile aynı örüntü:
+    yeni karar eskisini iptal_zaman ile kapatır, silme yok). Yalnız o gün HÂLÂ 'geç' ise geçerli; onaylı ayda değişmez (409)."""
+    import uuid as _uuid
+    from evvel_yeni_cekirdek import aktor as _aktor
+    if b.karar not in ("kes", "tam"):
+        raise HTTPException(400, "Karar 'kes' ya da 'tam' olmalı")
+    with db() as (conn, cur):
+        _hazirla(cur)
+        _kisi_ay_dogrula(cur, pid, ay)
+        if ay[:7] < _yeni_hesap(cur):
+            raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
+        kim = _aktor(cur, x_evvel_oturum)
+        _ay_kilidi(cur, pid, ay)
+        cur.execute("SELECT onay FROM ey_maas_ay WHERE personel_id=%s AND ay=%s", (pid, ay[:7]))
+        r = cur.fetchone()
+        if r and dict(r)["onay"]:
+            raise HTTPException(409, "Bu ay onaylanmış — önce onayı kaldır")
+        s = next(iter(hesapla(cur, ay[:7], sadece=pid)), None) or {}
+        gunler = [g["gun"] for g in s.get("gec_gunler") or []
+                  if (b.hepsi and not g["karar"]) or (not b.hepsi and g["gun"] == (b.gun or "")[:10])]
+        if not gunler:
+            raise HTTPException(409, "Bu gün geç kalma listesinde yok — sayfayı yenile")
+        for g in gunler:
+            cur.execute("""UPDATE ey_personel_yoklama_karar SET iptal_zaman=NOW(), iptal_kim=%s
+                            WHERE personel_id=%s AND tarih=%s AND karar IN ('gec_kes', 'gec_tam') AND iptal_zaman IS NULL""", (kim, pid, g))
+            cur.execute("""INSERT INTO ey_personel_yoklama_karar (id, personel_id, tarih, karar, izin_bitis, aciklama, degistiren)
+                           VALUES (%s,%s,%s,%s,NULL,%s,%s)""", (str(_uuid.uuid4()), pid, g, "gec_" + b.karar, "maaş · geç kalma kararı", kim))
+    return {"ok": True, "mesaj": f"{len(gunler)} geç gün: " + ("maaştan kesilecek" if b.karar == "kes" else "tam alınacak (kesilmez)")}
 
 
 class ElleBody(BaseModel):
@@ -687,6 +761,8 @@ def maas_onay(pid: str, ay: str, kaldir: bool = False, x_evvel_oturum: Optional[
             raise HTTPException(404, "Bu ay için personel satırı yok")
         if r.get("ay_acik"):
             raise HTTPException(400, "Ay bitmeden onaylanamaz")
+        if r.get("gec_kararsiz"):   # Fable L4b K5: karar verilmeden 'tam' sessizce kalıplaşmasın
+            raise HTTPException(409, f"{r['gec_kararsiz']} geç gün kararsız — kişi penceresinde 'Kes' ya da 'Tam al' de (ya da 'Hepsine tam')")
         cur.execute("INSERT INTO ey_maas_ay (personel_id, ay, degistiren) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (pid, ay[:7], kim))
         cur.execute("""UPDATE ey_maas_ay SET onay=TRUE, kalemler=%s::jsonb, onaylayan=%s, onay_zaman=NOW()
                         WHERE personel_id=%s AND ay=%s""", (json.dumps(r["kalemler"], ensure_ascii=False), kim, pid, ay[:7]))
@@ -1001,46 +1077,53 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
     okutan geç mi kalmış — bunu görmek dert." Panelin VARDİYA PLANI (vardiya_atama) × QR girişi (gorev_yoklama).
     Durum: zamaninda · gec (dk) · okutmadi (planlı, QR yok) · plansiz (planda yok, QR var). 1 Kasım'dan itibaren QR = yeni yoklama (Y3)."""
     from evvel_yeni_cekirdek import bugun as _bugun
-    from evvel_yeni_tanim_api import subeler as _ey_subeler
-    from zoneinfo import ZoneInfo
-    TR = ZoneInfo("Europe/Istanbul")
     son = date.fromisoformat(gun[:10]) if gun else _bugun()
     gun_sayisi = max(1, min(int(gun_sayisi or 1), 31))
     bas = son - timedelta(days=gun_sayisi - 1)
     with db() as (conn, cur):
-        _hazirla(cur)
-        sube_ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
-        aktif_sube = {s["id"] for s in _ey_subeler(cur)}
-        from evvel_yeni_tanim_api import tanim_listesi
-        pad = {r["id"]: r for r in tanim_listesi(cur, "ey_personel", ("ad", "gorev"))}
-        plan, qr = [], []
-        plan, plan_durum = _plan_satirlari(cur, bas, son)   # B44: yeni Vardiya planı (Vardiya PUBLIC) — eski tablo yalnız 26 Eki öncesi
-        pb, yeni_qr = _yeni_yoklama(cur, bas, son)   # 1 Kasım'dan itibaren YENİ QR (Y3)
-        yoklama_kapali = yeni_qr is None
-        yeni_qr = yeni_qr or []
-        qr = []
-        # B42 (Fable 22 Eki): ESKİ QR yalnız yeni dönemden önceki günler için ve tablo varsa — yoksa sessiz boş (kesimde bu blok silinir)
-        ar_qr = _eski_iz(cur, "qr", bas, min(son, pb - timedelta(days=1))) if bas < pb else None
-        if ar_qr is not None:
-            qr = [{k: r.get(k) for k in ("tarih", "pid", "sid", "giris_ts", "cikis_ts", "vardiya_tip")} for r in ar_qr]
-        elif bas < pb and __import__("evvel_yeni_cekirdek").tablo_var(cur, "gorev_yoklama"):
+        return _yoklama_hesap(cur, bas, son)
+
+
+def _yoklama_hesap(cur, bas: date, son: date) -> dict:
+    """Günlük yoklamanın TEK hesabı (plan × QR → zamanında / geç / okutmadı / plansız / bekleniyor / sonradan). Maaş geç kalma
+    uyarısı da buradan okur (Fable L4b K7 — ikinci hesap yok). Çağıranın işleminde çalışır."""
+    from evvel_yeni_cekirdek import bugun as _bugun
+    from evvel_yeni_tanim_api import subeler as _ey_subeler
+    from zoneinfo import ZoneInfo
+    TR = ZoneInfo("Europe/Istanbul")
+    _hazirla(cur)
+    sube_ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube")
+    aktif_sube = {s["id"] for s in _ey_subeler(cur)}
+    from evvel_yeni_tanim_api import tanim_listesi
+    pad = {r["id"]: r for r in tanim_listesi(cur, "ey_personel", ("ad", "gorev"))}
+    plan, qr = [], []
+    plan, plan_durum = _plan_satirlari(cur, bas, son)   # B44: yeni Vardiya planı (Vardiya PUBLIC) — eski tablo yalnız 26 Eki öncesi
+    pb, yeni_qr = _yeni_yoklama(cur, bas, son)   # 1 Kasım'dan itibaren YENİ QR (Y3)
+    yoklama_kapali = yeni_qr is None
+    yeni_qr = yeni_qr or []
+    qr = []
+    # B42 (Fable 22 Eki): ESKİ QR yalnız yeni dönemden önceki günler için ve tablo varsa — yoksa sessiz boş (kesimde bu blok silinir)
+    ar_qr = _eski_iz(cur, "qr", bas, min(son, pb - timedelta(days=1))) if bas < pb else None
+    if ar_qr is not None:
+        qr = [{k: r.get(k) for k in ("tarih", "pid", "sid", "giris_ts", "cikis_ts", "vardiya_tip")} for r in ar_qr]
+    elif bas < pb and __import__("evvel_yeni_cekirdek").tablo_var(cur, "gorev_yoklama"):
+        try:
+            with savepoint(cur, "sp_ey_yok_qr"):
+                cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, cikis_ts, vardiya_tip
+                                 FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (bas, son, pb))
+                qr = [dict(r) for r in cur.fetchall() or []]
+        except Exception:  # noqa: BLE001
             try:
-                with savepoint(cur, "sp_ey_yok_qr"):
-                    cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, cikis_ts, vardiya_tip
+                with savepoint(cur, "sp_ey_yok_qr2"):
+                    cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, NULL AS cikis_ts, vardiya_tip
                                      FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (bas, son, pb))
                     qr = [dict(r) for r in cur.fetchall() or []]
-            except Exception:  # noqa: BLE001
-                try:
-                    with savepoint(cur, "sp_ey_yok_qr2"):
-                        cur.execute("""SELECT tarih, personel_id::text AS pid, sube_id::text AS sid, giris_ts, NULL AS cikis_ts, vardiya_tip
-                                         FROM gorev_yoklama WHERE tarih BETWEEN %s AND %s AND tarih < %s ORDER BY giris_ts""", (bas, son, pb))
-                        qr = [dict(r) for r in cur.fetchall() or []]
-                except Exception as e:  # noqa: BLE001
-                    log.warning("yoklama: eski QR okunamadı: %s", str(e)[:150])
-        qr += [{"tarih": r["tarih"], "pid": r["pid"], "sid": r["sid"], "giris_ts": r["giris_ts"],
-                "cikis_ts": None if r.get("cikis_tur") == "gece_otomatik" else r["cikis_ts"],   # Fable: sistem kapattı → giriş saati çıkış SANILMASIN
-                "sistem_kapatti": r.get("cikis_tur") == "gece_otomatik", "vardiya_tip": "QR"} for r in yeni_qr]
-        qr.sort(key=lambda x: str(x["giris_ts"] or ""))
+            except Exception as e:  # noqa: BLE001
+                log.warning("yoklama: eski QR okunamadı: %s", str(e)[:150])
+    qr += [{"tarih": r["tarih"], "pid": r["pid"], "sid": r["sid"], "giris_ts": r["giris_ts"],
+            "cikis_ts": None if r.get("cikis_tur") == "gece_otomatik" else r["cikis_ts"],   # Fable: sistem kapattı → giriş saati çıkış SANILMASIN
+            "sistem_kapatti": r.get("cikis_tur") == "gece_otomatik", "vardiya_tip": "QR"} for r in yeni_qr]
+    qr.sort(key=lambda x: str(x["giris_ts"] or ""))
 
     def tr(ts):
         if not ts:
@@ -1068,7 +1151,9 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
                 x = qr_g[q]
                 t = tr(x["giris_ts"])
                 s.update(qr=t.strftime("%H:%M") if t else None, qr_sube=sube_ad.get(x["sid"], x["sid"]), cikis=(tr(x.get("cikis_ts")) or None) and tr(x["cikis_ts"]).strftime("%H:%M"))
-                if t and p.get("baslangic_saat"):
+                if p.get("sonradan"):   # IS 4l · R4: plan güne SONRADAN yazıldı → bilinmeyen saate göre geç sayılmaz
+                    s["durum"] = "sonradan"
+                elif t and p.get("baslangic_saat"):
                     from datetime import datetime as _dt
                     dk = (t - _dt.combine(gi, p["baslangic_saat"])).total_seconds() / 60
                     s["gec_dk"] = int(round(dk)) if dk > GEC_TOLERANS_DK else 0
@@ -1094,7 +1179,7 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
             if sid not in aktif_sube and not ss:
                 continue   # Fable: pasif şube (MERKEZ) boşken listelenmesin
             subeler_out.append({"sube_id": sid, "ad": ad_, "kisiler": ss,
-                                "ozet": {k: sum(1 for x in ss if x["durum"] == k) for k in ("zamaninda", "gec", "okutmadi", "plansiz", "bekleniyor")}})
+                                "ozet": {k: sum(1 for x in ss if x["durum"] == k) for k in ("zamaninda", "gec", "okutmadi", "plansiz", "bekleniyor", "sonradan")}})
         gunler.append({"gun": gi.isoformat(), "subeler": subeler_out, "plan_var": any(p["tarih"] == gi for p in plan)})
         g -= timedelta(days=1)
     return {"son": son.isoformat(), "gunler": gunler, "tolerans_dk": GEC_TOLERANS_DK,
@@ -1104,6 +1189,20 @@ def gunluk_yoklama(gun: Optional[str] = None, gun_sayisi: int = 1):
                 ("⚠ Vardiya planı okunamadı — yalnız QR görünüyor" if plan_durum == "hata" else None)) if x) or None,
             "not": f"Plan: Vardiya planı (Personel › Vardiya; yayınlanmış ya da günü gelmiş satırlar) · QR: panelde okutulan giriş (1 Kasım'dan itibaren telefon QR'ı). Çıkış yapılmayan gün gece sistem kapatır (çıkış '—'). Başlangıçtan {GEC_TOLERANS_DK} dk sonrasına kadar zamanında sayılır."}
 
+
+
+def _gec_gunler(cur, bas: date, son: date) -> tuple:
+    """Maaş geç kalma uyarısı (sahip 28 Eki "maaş hesabında uyarıcı olarak dursun, kes ya da tam diyebilelim" · Fable L4b A):
+    {(personel_id, gün ISO): geç dakika} — YALNIZ yoklamanın 'gec' saydığı günler (okutmadı / plansız / sonradan / bekleniyor girmez;
+    tolerans içi gün 'zamaninda'). İkinci değer: yoklama ya da vardiya kapalı / okunamadı uyarısı (o zaman geç ölçülemez)."""
+    r = _yoklama_hesap(cur, bas, son)
+    gec = {}
+    for g in r["gunler"]:
+        for s in g["subeler"]:
+            for k in s["kisiler"]:
+                if k["durum"] == "gec" and k.get("gec_dk"):
+                    gec[(str(k["personel_id"]), g["gun"])] = max(gec.get((str(k["personel_id"]), g["gun"]), 0), int(k["gec_dk"]))
+    return gec, r.get("uyari")
 
 
 def _yeni_yoklama(cur, bas: date, son: date):
