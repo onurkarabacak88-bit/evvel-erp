@@ -563,10 +563,11 @@ def bar_gunu(cur, gun: date, sube_id: Optional[str] = None) -> dict:
 # ✂️ 1 KASIM SON AKTARIM (KESIM_1KASIM_ENVANTERI ⚖️ · manifest 'kesim') — çekirdek (evvel_yeni_moduller /kesim) çağırır, kendi
 # savepoint'inde; kuru denemede sonra geri alınır. Modül YALNIZ kendi arşiv anahtarını yazar. Kesim yayınında eski okuyucularla birlikte silinir.
 def kesim_dondur(cur, yazan: str, ay: str) -> dict:
-    """Bar: Ekim + bir önceki ay (Satış'ın beklenen satışı iki önceki ayı okur — Opus karar 2)."""
+    """Bar: Ekim + iki önceki ay (Satış kontrolü bakılan ay + iki önceki ayı okur — Opus karar 2; 🟡 E2E E4: Ağustos
+    dondurulmadığı için eski tablo kalkınca Ekim satış kontrolü 'bar okunamadı 2026-08' veriyordu)."""
     from evvel_yeni_cekirdek import arsiv_yaz, ay_kaydir
     out = {}
-    for a in (ay_kaydir(ay, -1), ay):
+    for a in (ay_kaydir(ay, -2), ay_kaydir(ay, -1), ay):
         v = bar_ozet(a, evren="eski")
         arsiv_yaz(cur, "bar", f"ozet:{a}", v, yazan)
         out[a] = len(v.get("subeler") or [])

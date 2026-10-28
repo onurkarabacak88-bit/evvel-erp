@@ -1092,6 +1092,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
     _hazirla()
     with db() as (conn, cur):
         senkron = _senkron_durumu(cur)   # IS 5c: okuma ekranı YAZMAZ — otomatik işler çekirdeğin zamanlayıcısında
+        kesim_elle = _kesim_elle_guvenli(cur)   # 🟡 E7: aynı işlemde (Fable L6: ikinci bağlantı yok)
         cep_list, C, kayit_tum, iptaller = _yukle(cur, tum_donemler=True)   # Fable: tek okuma — hem dönem hem ilk-kayıt (B18)
         _db = _baslangic(cur).isoformat()
         kayit = [h for h in kayit_tum if h["is_gunu"] >= _db]
@@ -1162,6 +1163,7 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
     gunun_iptal = iptaller if hepsi else [i for i in iptaller if i["kayit_zamani"].date().isoformat() == g]
     return {
         "gun": g, "hepsi": hepsi, "baslangic": bas.isoformat(), "bugun": bugun, "senkron": senkron,
+        "kesim_elle": kesim_elle,
         "ozet": _ozet(D, fl),
         "onceki_toplam": None if onceki is None else _tl_sayi(onceki["toplam"]),
         # B6 (sim 25 Eki + Codex B): manşet TOPLAM KASA kira dahil → değişimi de kira dahil; işletme değişimi AYRI adla (sessiz anlam değişimi yok)
@@ -1448,6 +1450,7 @@ class HareketBody(BaseModel):
     sayilan: Optional[TrTutar] = None
     fark_id: Optional[str] = None
     sebep: Optional[str] = None
+    kesim_ref: Optional[str] = None   # 🟡 E7: son aktarımdan elle işlenen eski teslimin ref'i (kasa_teslim:<id>) — aynı kayıt iki kez yazılmaz
     sorumlu: Optional[str] = None
     teslim_eden: Optional[str] = None
     online: Optional[TrTutar] = None
@@ -1750,7 +1753,35 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
     """Tek yazma kapısı. Tek transaction + modül kilidi: ya tamamı yazılır ya hiçbiri."""
     _hazirla()
     with db() as (conn, cur):
-        return kasa_yaz(cur, body, _aktor(cur, x_evvel_oturum))
+        ref = None
+        if body.kesim_ref:   # yalnız son aktarım listesindeki teslim ref'i kabul edilir (keyfi ref ile kayıt gizlenemez)
+            if body.tur != "teslim" or body.kesim_ref not in {x.get("ref") for x in kesim_elle_listesi(cur, hepsi=True) if x.get("tur") == "teslim"}:
+                raise HTTPException(400, "Bu kayıt son aktarım listesinde yok — sayfayı yenile")
+            ref = body.kesim_ref
+        return kasa_yaz(cur, body, _aktor(cur, x_evvel_oturum), kaynak_ref=ref)
+
+
+def _kesim_elle_guvenli(cur) -> list:
+    try:
+        with savepoint(cur, "sp_kasa_kesim_elle"):
+            return kesim_elle_listesi(cur)
+    except Exception:  # noqa: BLE001 — liste okunamazsa Kasa yine açılır
+        log.warning("kasa: son aktarım elle listesi okunamadı", exc_info=True)
+        return []
+
+
+def kesim_elle_listesi(cur, hepsi: bool = False) -> list:
+    """🟡 E7: son aktarımın elle işlenecek listesi (Ekim arşivi) — yazılmış olanlar (aynı ref para izinde) düşer; hepsi=True süzmez."""
+    from evvel_yeni_cekirdek import arsiv_oku, panel_baslangic
+    ay = (panel_baslangic(cur) - timedelta(days=1)).strftime("%Y-%m")
+    xs = arsiv_oku(cur, "kasa", f"kesim_elle:{ay}") or []
+    if hepsi or not xs:
+        return xs
+    refs = [x["ref"] for x in xs if x.get("ref")]
+    # iptal Kasa'da AYRI satırdır (tur='iptal'); elle yazılan bir kez sayılır, iptali sahibin bilinçli izi (Fable L6-98b)
+    cur.execute("SELECT kaynak_ref FROM para_izi_hareket WHERE kaynak_ref = ANY(%s)", (refs,))
+    yazilan = {dict(r)["kaynak_ref"] for r in cur.fetchall() or []}
+    return [x for x in xs if x.get("ref") not in yazilan]
 
 
 class OnayBody(BaseModel):
@@ -2256,8 +2287,7 @@ def _aktar(cur, kuru: bool, kim: str, son_aktarim: bool = False) -> dict:
         _pilot = __import__("evvel_yeni_cekirdek").pilot_baslangiclari(cur)
 
         def _pilot_mu(sid, tarih) -> bool:
-            p_ = _pilot.get(str(sid))
-            return bool(p_) and tarih is not None and (tarih if isinstance(tarih, date) else date.fromisoformat(str(tarih)[:10])) >= p_
+            return pilot_gunu_mu(_pilot, sid, tarih)
 
         gunluk = {}
         _ust = __import__("evvel_yeni_cekirdek").panel_baslangic(cur)   # 🟡 E2: eski kayıt yalnız yeni panel başlangıcından önce
@@ -2305,7 +2335,7 @@ def _aktar(cur, kuru: bool, kim: str, son_aktarim: bool = False) -> dict:
                 continue
             nakit, pos_, onl_ = _kurus(n), _kurus(k[0]), _kurus(k[1])
             kart = pos_ + onl_
-            satir = {"gun": g, "sube": C[cid]["kisa"], "nakit": _tl_sayi(nakit), "kart": _tl_sayi(kart), "durum": durum_, "kaynak": kaynak_}
+            satir = {"gun": g, "sube": C[cid]["kisa"], "nakit": _tl_sayi(nakit), "kart": _tl_sayi(kart), "durum": durum_, "kaynak": kaynak_, "ref": ref}
             if cid in kilit and g <= kilit[cid]:
                 rapor["kilitli"].append(satir)
                 continue
@@ -2337,8 +2367,8 @@ def _aktar(cur, kuru: bool, kim: str, son_aktarim: bool = False) -> dict:
                 rapor["atlanan"] += 1   # geri alınıp iptal edilemeyen teslimin yeniden kapanış kopyası — çift çıkış olmaz
                 continue
             g = r["tarih"].isoformat()
-            satir = {"gun": g, "sube": C[kaynak]["kisa"] if kaynak else r["sube_id"],
-                     "alan": r.get("teslim_alan_ad"), "tutar": _tl_sayi(_kurus(r["tutar"]))}
+            satir = {"gun": g, "sube": C[kaynak]["kisa"] if kaynak else r["sube_id"], "sube_cep": kaynak,
+                     "alan": r.get("teslim_alan_ad"), "tutar": _tl_sayi(_kurus(r["tutar"])), "ref": ref}
             if not kaynak or not hedef:
                 rapor["eslesmeyen_teslim"].append(satir)
                 continue
@@ -2668,6 +2698,13 @@ def _panel_sayim_baslangic(cur) -> date:
     return PANEL_SAYIM_BASLANGIC
 
 
+def pilot_gunu_mu(pilot: dict, sid, tarih) -> bool:
+    """🧪 Pilot şubenin pilot gününden itibaren mi (pilot = çekirdek pilot_baslangiclari) — eski tablo satırı ALINMAZ, yeni panel tek kaynak.
+    TEK yardımcı: _aktar ve _panel_sayimlari aynı kuralı kullanır (Fable L4b E9)."""
+    p_ = pilot.get(str(sid))
+    return bool(p_) and tarih is not None and (tarih if isinstance(tarih, date) else date.fromisoformat(str(tarih)[:10])) >= p_
+
+
 def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dict:
     bas = max(_baslangic(cur), _panel_sayim_baslangic(cur))
     rapor = {"baslangic": bas.isoformat(), "sayim": [], "atlanan": []}
@@ -2686,6 +2723,18 @@ def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dic
             olaylar = [dict(r) for r in cur.fetchall() or []]
     except Exception as e:  # noqa: BLE001
         rapor["eski_hata"] = str(e)[:200]
+    # 🟡 E2E E9 (Fable L4b A): pilot şubenin pilot gününden itibaren ESKİ panel sayımı Kasa'ya girmez (yeni panel tek kaynak) — sessiz değil, atlanana yazılır
+    _pilot = __import__("evvel_yeni_cekirdek").pilot_baslangiclari(cur)
+    if _pilot:
+        _kalan = []
+        for e in olaylar:
+            if pilot_gunu_mu(_pilot, e["sube_id"], e["tarih"]):
+                rapor["atlanan"].append({"sube": (C.get(f"sube:{e['sube_id']}") or {}).get("kisa", e["sube_id"]), "sube_id": e["sube_id"],
+                                         "tarih": str(e["tarih"])[:10], "tip": e["tip"],
+                                         "neden": "pilot günü — eski panel sayımı sayılmadı (yeni panel tek kaynak)"})
+            else:
+                _kalan.append(e)
+        olaylar = _kalan
     # 🧾 YENİ ŞUBE PANELİ açılışları (ey_sube_olay, kaynak_tablo='panel') — eski olayla aynı biçime çevrilir; aynı şube+gün
     # ikisinde de varsa ref ('sayim_acilis:{şube}:{gün}') aynı olduğundan bir kez yazılır (Codex: açılış nakdi Kasa'ya ulaşsın)
     try:
@@ -2730,7 +2779,7 @@ def _panel_sayimlari(cur, kuru: bool, kim: str = "şube paneli (sayım)") -> dic
             continue
         sayilan = max(0, _kurus(e["kasa_sayim"]))
         if cep in elle_kilit and gun < elle_kilit[cep]:
-            rapor["atlanan"].append({"sube": C[cep]["kisa"], "neden": f"{gun} {ad}: sonrasında elle sayım var"})
+            rapor["atlanan"].append({"sube": C[cep]["kisa"], "tarih": str(gun)[:10], "neden": f"{gun} {ad}: sonrasında elle sayım var"})
             continue
         ilk = cep not in baslamis
         beklenen = _bakiye([o for o in _olaylar(sim) if o["gun"] <= gun], C)["b"].get(cep, 0)
@@ -3166,8 +3215,16 @@ def kesim_dondur(cur, yazan: str, ay: str) -> dict:
     if _baslangic(cur) >= panel_baslangic(cur):   # Fable 🔴 (2. parti): dönem geçişi önce yapılırsa Ekim hiç seçilmez, 0 kayıtla "yazıldı" olurdu
         raise RuntimeError("Kasa yeni döneme geçmiş — son aktarım dönem geçişinden ÖNCE yapılmalı (Ekim kayıtları seçilemez)")
     r = _aktar(cur, False, f"son aktarım (eski sistem) · {yazan}", son_aktarim=True)
+    # 🟡 E2E E7 (Fable L4b A): yazılmayan eski satırlar HAM listeyle dondurulur → Kasa › Uyarılar "Son aktarımdan elle işlenecek";
+    # aynı ref'le elle yazılınca listeden kendiliğinden düşer (ayrı işaret tablosu yok). Faz B'de eski okuyucu silinse de liste kalır.
+    elle = ([{**x, "tur": "teslim", "neden": "alıcı ya da şube tanınmadı — teslimi elle yaz"} for x in r.get("eslesmeyen_teslim") or []]
+            + [{**x, "tur": "teslim" if "alan" in x else "kapanis", "neden": "sonrasında sayım var — bu güne yazılmadı, gerekiyorsa elle düzelt"}
+               for x in r.get("kilitli") or []])
+    __import__("evvel_yeni_cekirdek").arsiv_yaz(cur, "kasa", f"kesim_elle:{ay}", elle, yazan)
     ps = (_panel_sayimlari(cur, False, f"son aktarım (eski panel sayımı) · {yazan}").get("ozet") or {})
     # Fable 3. parti 🟡 K7/K9: eski panelin mühürsüz / uyarılı kapanış işleri kesim yayınında kalkar — kaç tane "gördüm" bekliyor, sayı döner
     uyari = len(_kapanis_deneme_isleri(cur, _yukle(cur)[1]))
-    return {**(r.get("ozet") or {}), "panel_sayim": ps.get("sayim", 0), "panel_sayim_farkli": ps.get("farkli", 0),
+    return {**(r.get("ozet") or {}), "elle_islenecek": f"{len(elle)} → Kasa › Uyarılar" if elle else 0,
+            "panel_sayim": ps.get("sayim", 0), "panel_sayim_farkli": ps.get("farkli", 0),
+            "panel_sayim_atlanan": ps.get("atlanan", 0),   # Fable L6-98: pilot süzgeci sessiz kalmasın
             "eski_kapanis_uyarisi_bekleyen": uyari, "uyari": "Bekleyen işlerde eski kapanış uyarılarına 'gördüm' de" if uyari else None}

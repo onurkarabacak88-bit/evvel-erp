@@ -381,7 +381,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
   const ilk = (turler) => (cepler.find((c) => (!turler || turler.includes(c.tur)) && !c.gizli) || {}).id || '';
   const [d, setD] = useState(() => ({
     is_gunu: form.gun || gun, cep: form.cep || (tip === 'pos' ? ((cepler.find((c) => c.tur === 'banka' && !c.kira) || {}).id || '') : ilk(tip === 'kapanis' ? ['sube'] : null)),
-    kaynak: ilk(tip === 'teslim' ? ['sube'] : null), hedef: ilk(tip === 'teslim' ? ['ev'] : ['ev', 'hesap']),
+    kaynak: form.kaynak || ilk(tip === 'teslim' ? ['sube'] : null), hedef: ilk(tip === 'teslim' ? ['ev'] : ['ev', 'hesap']), tutar: form.tutar != null ? String(form.tutar) : '',
     alt: 'borc', kimin: 'Ortak', parcalar: [{ cep: '', tutar: '' }], sorumlu: '', sebep: '',
   }));
   const [hata, setHata] = useState('');
@@ -436,7 +436,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         const body = { tur: tip === 'coz' ? 'cozum' : tip, is_gunu: d.is_gunu };
         if (['acilis', 'kapanis', 'dis', 'sayim', 'pos'].includes(tip)) body.cep = d.cep;
         if (tip === 'pos') { body.tur = 'pos_yatis'; body.alt = 'online'; body.kart = d.kart ? Number(d.kart) : null; }
-        if (tip === 'teslim') { body.kaynak = d.kaynak; body.hedef = d.hedef; body.teslim_eden = d.teslim_eden; }
+        if (tip === 'teslim') { body.kaynak = d.kaynak; body.hedef = d.hedef; body.teslim_eden = d.teslim_eden; if (form.kesim_ref) body.kesim_ref = form.kesim_ref; }   // E7: son aktarım listesinden
         if (tip === 'tasima') {
           body.hedef = d.hedef;
           body.parcalar = d.parcalar.filter((p) => p.cep && Number(p.tutar) > 0).map((p) => ({ cep: p.cep, tutar: Number(p.tutar) }));
@@ -1432,6 +1432,17 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
           {veri.senkron.eslesmeyen_teslim ? <span style={{ color: R.amber }}> · {veri.senkron.eslesmeyen_teslim} teslim alıcısı tanınmadı</span> : null}
         </div>
       ))}
+      {(veri.kesim_elle || []).length > 0 && sekme === 'uyarilar' && (   // 🟡 E7: son aktarımın yazamadığı eski satırlar — yazılınca kendiliğinden düşer
+        <div style={{ ...kart, padding: '10px 14px', borderColor: `${alfa(R.amber, 55)}`, display: 'flex', flexDirection: 'column', gap: 6, fontSize: 12.5 }}>
+          <div><Cip tur="sari">Son aktarım</Cip> <b>{veri.kesim_elle.length} eski kayıt elle işlenecek</b> <span style={{ color: R.not }}>(Ekim, eski panel)</span></div>
+          {veri.kesim_elle.map((x) => (
+            <div key={x.ref || `${x.gun}${x.sube}`} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', borderTop: `1px solid ${R.cizgi}`, paddingTop: 6 }}>
+              <span style={{ flex: '1 1 260px' }}>{tKisa(x.gun)} · {x.sube}{x.alan ? ` → ${x.alan}` : ''} · <b style={num}>{fmt(x.tutar ?? x.nakit)} ₺</b> <span style={{ color: R.not }}>— {x.neden}</span></span>
+              {x.tur === 'teslim' && x.ref && <Dugme kucuk onClick={() => formAc('teslim', { gun: x.gun, tutar: x.tutar, kaynak: x.sube_cep || undefined, kesim_ref: x.ref })}>Teslim yaz</Dugme>}
+            </div>
+          ))}
+        </div>
+      )}
       {acilisEksik.length > 0 && sekme === 'uyarilar' && (
         <div style={{ ...kart, padding: '10px 14px', borderColor: `${alfa(R.amber, 55)}`, display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', fontSize: 12.5 }}>
           <Cip tur="sari">Başlangıç</Cip>
