@@ -132,23 +132,13 @@ def liste():
                              for k in _krediler(cur)]}
 
 
-@router.get("/takvim")
-def takvim(yil: Optional[int] = None):
-    _hazirla()
-    bugun = _bugun()
-    yil = yil or bugun.year
+def kredi_aylari(cur, yil: int, bugun: date) -> tuple:
+    """Kredi takviminin TEK hesabı (takvim ekranı + Bekleyen işler okur — kira_aylari ile aynı yapı). Dönüş (krediler, dönem başı)."""
     import evvel_yeni_kasa_api as kasa
-    with db() as (conn, cur):
-        kr = _krediler(cur)
-        eski = _eski_odenen(cur)
-        bas = kasa.donem_baslangici(cur).isoformat()[:7]
-        yeni = _yeni_odenen(cur)
-        # B67: krediye bağlanmamış kredi taksiti ödemeleri — takvimde 'ödendi' görünmez; Ödeme defteri › Düzelt ile bağlanır (kayıp olmasın)
-        import evvel_yeni_odeme_api as _od
-        bagsiz = [{"id": x["id"], "tarih": x["tarih"], "toplam": _tl_sayi(int(x["toplam"]))} for x in _od.konu_odemeleri(cur, "kredi")
-                  if not x.get("kredi_id") and not (x.get("konu") or {}).get("borc_ref")]   # D-1: alınan borç geri ödemesi taksit değil
-        # F3.9 D-1 (sim 26 Eki · Opus + Fable + Codex A): dış girişte "Borç alındı / Kredi çekildi" — Kasa'nın PUBLIC kapısından (tek gerçek)
-        alinan = kasa.alinan_borclar(cur)
+    kr = _krediler(cur)
+    eski = _eski_odenen(cur)
+    bas = kasa.donem_baslangici(cur).isoformat()[:7]
+    yeni = _yeni_odenen(cur)
     aylar = [f"{yil}-{m:02d}" for m in range(1, 13)]
     out = []
     for k in kr:
@@ -172,10 +162,74 @@ def takvim(yil: Optional[int] = None):
                     "ilk_ay": k["ilk_ay"], "son_ay": son_ay, "aylar": satir,
                     "yil_beklenen": _tl_sayi(sum(int(round(x["beklenen"] * 100)) for x in satir)),
                     "yil_odenen": _tl_sayi(sum(int(round(x["odenen"] * 100)) for x in satir))})
+    return out, bas
+
+
+@router.get("/takvim")
+def takvim(yil: Optional[int] = None):
+    _hazirla()
+    bugun = _bugun()
+    yil = yil or bugun.year
+    import evvel_yeni_kasa_api as kasa
+    with db() as (conn, cur):
+        out, bas = kredi_aylari(cur, yil, bugun)
+        # B67: krediye bağlanmamış kredi taksiti ödemeleri — takvimde 'ödendi' görünmez; Ödeme defteri › Düzelt ile bağlanır (kayıp olmasın)
+        import evvel_yeni_odeme_api as _od
+        bagsiz = [{"id": x["id"], "tarih": x["tarih"], "toplam": _tl_sayi(int(x["toplam"]))} for x in _od.konu_odemeleri(cur, "kredi")
+                  if not x.get("kredi_id") and not (x.get("konu") or {}).get("borc_ref")]   # D-1: alınan borç geri ödemesi taksit değil
+        # F3.9 D-1 (sim 26 Eki · Opus + Fable + Codex A): dış girişte "Borç alındı / Kredi çekildi" — Kasa'nın PUBLIC kapısından (tek gerçek)
+        alinan = kasa.alinan_borclar(cur)
+    aylar = [f"{yil}-{m:02d}" for m in range(1, 13)]
     ay_top = [{"ay": a, "beklenen": round(sum(k["aylar"][i]["beklenen"] for k in out), 2),
                "odenen": round(sum(k["aylar"][i]["odenen"] for k in out), 2)} for i, a in enumerate(aylar)]
     return {"yil": yil, "bugun": bugun.isoformat(), "baslangic": bas, "krediler": out, "ay_toplam": ay_top, "bagsiz": bagsiz,
             "alinan_borclar": alinan}
+
+
+_AY_AD = ("Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık")
+
+
+def _bekleyen(cur, baglam: dict) -> list:
+    """Bekleyen işler › Ödemeler (sahip 29 Eki "kredi taksiti olsun" · L4b Fable e): kredi başına TEK satır — son 3 ayın GECİKEN
+    taksiti (kırmızı) ya da 7 gün içinde gelen taksit (amber). Eşik çekirdek takvim_durumu (kart / kira ile aynı); ödeme girilince
+    (Ödeme PUBLIC konu_odemeleri 'kredi') kendiliğinden düşer — Gördüm / kalıcı kayıt yok. İki sistemde birden ödenmiş ay ve
+    krediye bağsız ödemeler düşmez (takvim ekranında görünür)."""
+    bugun = _bugun()
+    bu_ay = bugun.strftime("%Y-%m")
+    pencere = {ay_kaydir(bu_ay, i) for i in (-2, -1, 0, 1)}   # son 3 ay + gelecek ayın ilk günleri (ay sonu yaklaşması)
+    kred = {}
+    with savepoint(cur, "sp_ey_kredi_bekleyen"):   # okuma hatası ortak işlemi bozmasın
+        for yil in sorted({int(a[:4]) for a in pencere}):
+            krs, _bas = kredi_aylari(cur, yil, bugun)
+            for k in krs:
+                d = kred.setdefault(k["id"], {"ad": k["ad"], "gec": [], "yak": []})
+                for a in k["aylar"]:
+                    if a["ay"] not in pencere or a["iki_yerde"] or a["kalan"] <= 0:
+                        continue
+                    if a["durum"] == "gecikti" and a["ay"] <= bu_ay:
+                        d["gec"].append(a)
+                    elif a["durum"] in ("yaklasiyor", "kismi") and 0 <= (date.fromisoformat(a["vade"]) - bugun).days <= 7:
+                        d["yak"].append(a)
+    out = []
+    tl = lambda x: f"{x:,.0f}".replace(",", ".")  # noqa: E731
+    for kid, d in kred.items():
+        gec = bool(d["gec"])
+        g = sorted(d["gec"] or d["yak"], key=lambda a: a["ay"])
+        if not g:
+            continue
+        aylar = ", ".join(_AY_AD[int(a["ay"][5:7]) - 1] for a in g)
+        v = g[0]["vade"]
+        gun = abs((date.fromisoformat(v) - bugun).days)
+        sure = (f"{gun} gün geçti" if gun else "bugün") if gec else ("bugün" if gun == 0 else f"{gun} gün kaldı")
+        out.append({"tur": "kredi_taksit", "genel": True, "grup": "odeme", "id": f"kredi:{kid}", "tarih": v, "kirmizi": gec, "yas_yok": True,   # süre alt metinde (Fable L6-112: çift süre)
+                    "etiket": "🏦 Taksit gecikti" if gec else "🏦 Kredi taksiti", "ad": d["ad"],
+                    "alt": f"{aylar} taksiti · {tl(sum(a['kalan'] for a in g))} ₺ kalan · son gün {v[8:10]}.{v[5:7]} ({sure})",
+                    "sayfa": "kredi_takvimi", "dugme": "Kredi takvimi"})
+    return out
+
+
+from evvel_yeni_cekirdek import bekleyen_is_kaydet  # noqa: E402
+bekleyen_is_kaydet("kredi", _bekleyen)
 
 
 class KrediBody(BaseModel):

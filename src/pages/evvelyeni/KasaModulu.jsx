@@ -1813,9 +1813,9 @@ function IsSatir({ x, bugun, uyariSay = 0, onTeyit, onTeslim, onCoz, onKapanis, 
   if (x.genel) {   // 🧩 tak-çıkar: modülün kendi tarif ettiği satır (etiket · ad · alt · sayfa) — Kasa modülü tanımaz
     const git = () => { sayfayaGit(x.sayfa, x.sorgu || ''); };   // Y1 (sim 24 Eki): satır ilgili kaydı da taşır (?odak=…)
     return (
-      <div style={{ ...satir, border: `1px solid ${alfa(R.amber, 55)}` }}>
-        <Cip tur="sari">{x.etiket}</Cip>
-        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.alt} · {yas}</div></div>
+      <div style={{ ...satir, border: `1px solid ${alfa(x.kirmizi ? R.kirmizi : R.amber, 55)}` }}>   {/* x.kirmizi: modül 'gecikti' der (kredi 29 Eki) */}
+        <Cip tur={x.kirmizi ? 'kirmizi' : 'sari'}>{x.etiket}</Cip>
+        <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.alt}{x.yas_yok ? '' : ` · ${yas}`}</div></div>
         {x.gordum ? <Dugme kucuk onClick={() => onGenelGordum?.(x)}>Gördüm</Dugme>
           : x.sayfa ? <Dugme kucuk onClick={git}>{x.dugme || 'Aç'}</Dugme> : <span />}
       </div>
