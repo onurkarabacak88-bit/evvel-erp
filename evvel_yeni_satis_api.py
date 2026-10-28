@@ -408,7 +408,7 @@ def mutabakat_hesapla(x: dict) -> dict:
     x["kor_fark"] = round(x["kor_kalan"] - x["devir"], 2) if (x["kor_kalan"] is not None and x.get("devir") is not None) else None
     # Sayılan, bırakılan tutara eşit ve teslim varsa: sayım teslimden SONRA yapılmış — sağlama yapılamaz (sahte açık gösterme)
     x["kor_belirsiz"] = bool(x.get("kor_sayim") is not None and tes > 0 and (
-        (x.get("devir") is not None and abs(x["kor_sayim"] - x["devir"]) < 1) or x["kor_sayim"] < tes))
+        (x.get("devir") is not None and round(x["kor_sayim"] - x["devir"], 2) == 0) or x["kor_sayim"] < tes))   # IS 5bp: 0 ₺ (yoksa kuruş farkı "sağlama yapılamadı"ya saklanırdı)
     # ⏱ ARA SAYIM — iki sınır (gün ortasında 'beklenen' hesaplanamaz; Fable + Codex 21 Eki, sahip A1):
     #   1) sayılan ≥ taban (sabah sayımı − o ana kadar çekmece çıkışı − ara teslim) — altındaysa kasadan para çıkmış
     #   2) kapanışta ara SONRASI nakit satış = nakit satış − (sayılan − taban) ≥ 0 — eksiyse ara sayım şişik ya da nakit eksik beyan
@@ -1120,7 +1120,7 @@ def _sabah_isleri(cur, _baglam) -> list:
         parca = []
         m = mut.get(sid) or {}
         f = m.get("sabah_fark")
-        if f is not None and abs(f) >= 1:
+        if f is not None and round(f, 2) != 0:   # IS 5bp (Opus): sabah devri de 0 ₺ (yeni defter zinciriyle aynı kural)
             yon = "eksik" if f < 0 else "fazla"
             _dg = m.get("dun_devir_gunu")
             _ne = f"{_dg[8:10]}.{_dg[5:7]} akşamı" if _dg else "dün"   # B84: kapalı gün sonrası son kapanış

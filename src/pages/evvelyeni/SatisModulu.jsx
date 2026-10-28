@@ -49,9 +49,9 @@ function KasaAcigi({ m, ciro, teslimler = [] }) {
       {satir('Gün sonu teslim', m.teslim, '−')}
       {satir('Kasada bırakılan (devir)', m.devir, '−')}
       <div style={{ borderTop: '1px solid var(--pi-line)', marginTop: 4, paddingTop: 4, color: R.metin2, fontSize: 12 }}>
-        <div>Sağlama · sabah: {m.sabah_fark == null ? 'dünkü devir yok' : Math.abs(m.sabah_fark) < 1 ? `${dunAd(m.dun_devir_gunu)} bırakılan ${fmt(m.dun_devir)} = bu sabah sayılan ✓` : <span style={{ color: R.kirmizi }}>{dunAd(m.dun_devir_gunu)} bırakılan {fmt(m.dun_devir)} · bu sabah {fmt(m.acilis)} → {m.sabah_fark > 0 ? '+' : ''}{fmt(m.sabah_fark)}</span>}</div>
+        <div>Sağlama · sabah: {m.sabah_fark == null ? 'dünkü devir yok' : Math.round(m.sabah_fark * 100) === 0 ? `${dunAd(m.dun_devir_gunu)} bırakılan ${fmt(m.dun_devir)} = bu sabah sayılan ✓` : <span style={{ color: R.kirmizi }}>{dunAd(m.dun_devir_gunu)} bırakılan {fmt(m.dun_devir)} · bu sabah {fmt(m.acilis)} → {m.sabah_fark > 0 ? '+' : ''}{fmt(m.sabah_fark)}</span>}</div>
         <div>Sağlama · akşam: {m.kor_belirsiz ? <span style={{ color: R.amber }}>sayım teslimden SONRA yapılmış ({fmt(m.kor_sayim)} = bırakılan) — sağlama yapılamadı</span>
-          : m.kor_fark == null ? '—' : Math.abs(m.kor_fark) < 1 ? `sayılan ${fmt(m.kor_sayim)} − teslim = bırakılan ${fmt(m.devir)} ✓`
+          : m.kor_fark == null ? '—' : Math.round(m.kor_fark * 100) === 0 ? `sayılan ${fmt(m.kor_sayim)} − teslim = bırakılan ${fmt(m.devir)} ✓`
           : <span style={{ color: R.kirmizi }}>sayılan {fmt(m.kor_sayim)} − teslim {fmt((m.teslim || 0) + (m.ara_toplam || 0))} = {fmt(m.kor_kalan)} · bırakılan {fmt(m.devir)} → {m.kor_fark > 0 ? '+' : ''}{fmt(m.kor_fark)}</span>}</div>
         {/* Sahip: "teslim ihtimali varsa para teslimi yapılmış mı ona da baksın" */}
         {((m.teslim || 0) + (m.ara_toplam || 0) > 0 || teslimler.length > 0) && (

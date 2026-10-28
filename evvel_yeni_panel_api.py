@@ -712,7 +712,7 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
             m = kasa_mutabakat(cur, gun.isoformat(), evren="yeni").get(str(sube_id)) or {}
             if m.get("kor_belirsiz"):
                 ku.append("Kör sayım teslimden SONRA yapılmış görünüyor — sağlama yapılamadı")
-            elif m.get("kor_fark") is not None and abs(m["kor_fark"]) >= 1:
+            elif m.get("kor_fark") is not None and round(m["kor_fark"], 2) != 0:   # IS 5bp (Opus A): devirle aynı para — 0 ₺ tolerans
                 _t = lambda x: _tl_tr(int(round((x or 0) * 100)))   # noqa: E731 — TL → Türkçe biçim
                 ku.append(f"Kör sayım tutmuyor: sayılan {_t(m['kor_sayim'])} − teslim {_t(m['teslim'])} = {_t(m['kor_kalan'])}, "
                          f"bırakılan {_t(m['devir'])} (fark {'+' if (m['kor_fark'] or 0) > 0 else ''}{_t(m['kor_fark'])})")
