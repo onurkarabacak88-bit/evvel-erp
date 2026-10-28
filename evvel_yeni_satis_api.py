@@ -697,12 +697,62 @@ def devir_defteri(ay: Optional[str] = None, hafif: bool = False):
         _pb_ay = panel_baslangic(cur).strftime("%Y-%m")
         ar = arsiv_oku(cur, "satis", f"devir_defteri:{ay[:7]}") if ay and ay[:7] < _pb_ay else None
     if ar is not None:   # sahip 27 Eki: Ekim defteri DONDURULUR — salt okunur, iş / uyarı üretmez
-        return {"subeler": []} if hafif else {**ar, "dondu": True}
+        return _devir_pilot_hafif(ay) if hafif else _devir_pilot_ekle({**ar, "dondu": True}, ay)
     if yeni and ay and ay[:7] < _pb_ay:   # F6.3 (Fable): 1 Kas 02:00 → son aktarım arası Ekim boş görünmesin (geçiş, arşiv henüz yok)
-        return {"subeler": []} if hafif else _devir_defteri_eski(ay)
-    if hafif and not yeni:   # eski defterde gün içi devir durumu (tutmadı) yok — Satış günlük dökümü için okunacak bir şey yok
+        return _devir_pilot_hafif(ay) if hafif else _devir_pilot_ekle(_devir_defteri_eski(ay), ay)
+    if hafif and not yeni:   # eski defterde gün içi devir durumu (tutmadı) yok — yalnız pilot şube yeni panelden (Fable L6-102)
+        return _devir_pilot_hafif(ay)
+    return _devir_defteri_yeni(ay, hafif) if yeni else _devir_pilot_ekle(_devir_defteri_eski(ay), ay)
+
+
+def _devir_pilot_hafif(ay: Optional[str]) -> dict:
+    """Satış günlük dökümü (hafif): geçiş ayında yalnız pilot şubenin yeni panel devir durumu (öncesi prova süzgeciyle boş). Okunamazsa boş."""
+    from evvel_yeni_cekirdek import is_gunu as _ig, pilot_baslangiclari
+    try:
+        a_ = (ay or _ig().strftime("%Y-%m"))[:7]
+        ay_bas = date.fromisoformat(a_ + "-01")
+        ay_son = (ay_bas.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        with db() as (conn, cur):
+            pilot = {s for s, g in pilot_baslangiclari(cur).items() if g <= ay_son}
+        if not pilot:
+            return {"subeler": []}
+        return {"subeler": [r for r in _devir_defteri_yeni(a_, hafif=True)["subeler"] if r["sube_id"] in pilot]}
+    except Exception:  # noqa: BLE001
+        log.warning("devir defteri: pilot günlük devir okunamadı", exc_info=True)
         return {"subeler": []}
-    return _devir_defteri_yeni(ay, hafif) if yeni else _devir_defteri_eski(ay)
+
+
+def _devir_pilot_ekle(sonuc: dict, ay: Optional[str]) -> dict:
+    """🧪 Pilot şube (Opus retro 28 Eki · sahip "bir tane bile eksik bırakma" — K2 kabulünün kalanı, Bar / Gider adım 92 ile AYNI yol):
+    eski / arşiv Ekim defterinde pilot şubenin pilot gününden itibaren günleri YENİ panel defterinden, öncesi eski kaynaktan — satır içinde
+    gün gün birleşir, özet yeniden sayılır. Okunamazsa eski defter aynen döner."""
+    from evvel_yeni_cekirdek import is_gunu as _ig, pilot_baslangiclari
+    try:
+        a_ = (ay or _ig().strftime("%Y-%m"))[:7]
+        ay_bas = date.fromisoformat(a_ + "-01")
+        ay_son = (ay_bas.replace(day=28) + timedelta(days=4)).replace(day=1) - timedelta(days=1)
+        with db() as (conn, cur):
+            pilot = {s: g for s, g in pilot_baslangiclari(cur).items() if ay_bas <= g <= ay_son}
+        if not pilot:
+            return sonuc
+        yeni = {r["sube_id"]: r for r in _devir_defteri_yeni(a_)["subeler"] if r["sube_id"] in pilot}
+    except Exception:  # noqa: BLE001 — birleştirme okunamazsa eski defter yine döner
+        log.warning("devir defteri: pilot günleri birleştirilemedi", exc_info=True)
+        return sonuc
+    satirlar = []
+    for r in sonuc.get("subeler") or []:
+        sid = r.get("sube_id")
+        if sid in pilot and sid in yeni:
+            pg = pilot[sid].isoformat()
+            gunler = [g for g in r.get("gunler") or [] if g["gun"] < pg] + [g for g in yeni[sid]["gunler"] if g["gun"] >= pg]
+            r = {**r, "gunler": gunler, "pilot_gun": pg,
+                 "panel_yok": not any(x.get("sabah") or x.get("aksam") for x in gunler),
+                 "ozet": {**(r.get("ozet") or {}), "tutan": sum(1 for x in gunler if x.get("zincir_tutuyor")),
+                          "kopuk": sum(1 for x in gunler if x.get("zincir_fark") is not None and not x.get("zincir_tutuyor")
+                                       and x.get("zincir_durum") != "celiskili"),
+                          **({"celiskili": sum(1 for x in gunler if x.get("zincir_durum") == "celiskili")} if "celiskili" in (r.get("ozet") or {}) else {})}}
+        satirlar.append(r)
+    return {**sonuc, "subeler": satirlar}
 
 
 @router.get("/devir-defteri")
@@ -722,8 +772,13 @@ def _devir_defteri_yeni(ay: Optional[str] = None, hafif: bool = False):
     ev = {}
     with db() as (conn, cur):
         subeler = _ey_subeler(cur)
+        _sb = {}
         for o in _panel_olaylari(cur, ay_bas - timedelta(days=ZINCIR_GERI_GUN), ay_son + timedelta(days=1), {"acilis", "kapanis", "vardiya", "teslim"}):
-            ev.setdefault((str(o["sube_id"]), o["is_gunu"].isoformat(), o["tur"]), []).append(o)
+            sid_ = str(o["sube_id"])
+            _s0 = _sb.get(sid_) or _sb.setdefault(sid_, __import__("evvel_yeni_cekirdek").sube_baslangic(cur, sid_))
+            if o["is_gunu"] < _s0 <= ay_son:   # Fable L6-102: şubenin gerçek kayıt başlangıcından önceki yeni panel kaydı PROVA — 1 Kas (pilotta ilk gün)
+                continue                        # sabahı prova kapanışın "bırakılan"ıyla kıyaslanmasın (Bar adım 92 ile AYNI kural)
+            ev.setdefault((sid_, o["is_gunu"].isoformat(), o["tur"]), []).append(o)
     elle_tes = {} if hafif else _elle_teslimler()   # hafif: Satış günlük dökümü yalnız devir durumunu okur (Fable/Codex F1.12)
     vk_bekleyen = []
     tl = _kr_tl
