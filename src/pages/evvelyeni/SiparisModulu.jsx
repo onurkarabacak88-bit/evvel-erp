@@ -5,7 +5,7 @@
 // Ortak parçalar KasaModulu'ndan (PI_CSS, R, kart, Dugme, Cip) — yeni stil yazılmaz. Listeler: /odeme/listeler (toptancılar) + /urun/katalog.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { ALAN, Cip, Dugme, kart, num, PI_CSS, R, sor, tKisa } from './KasaModulu';
+import { ALAN, Cip, Dugme, kart, num, PI_CSS, R, sayfayaGit, sor, tKisa } from './KasaModulu';
 
 export const SIPARIS_SAYFALAR = [{ id: 'siparis_yon', ad: 'Sipariş yönlendirme', alt: 'Şube talepleri → depo / toptancı' }];
 const alan = { ...ALAN, padding: '5px 8px', borderRadius: 8, fontSize: 13 };   // temel stil KasaModulu ALAN (T4-15)
@@ -183,9 +183,35 @@ export default function SiparisModulu({ onToast }) {
                 </div>
               );
             })}
+            {(s.toptancilar || []).length > 0 && <ToptanciIletim s={s} acik={acik} mesgul={mesgul[s.id]} is_={is_} />}
           </div>
         );
       })}
+    </div>
+  );
+}
+
+// 📲 TOPTANCIYA WHATSAPP (sahip 28 Eki: "toptancıya yönlendirdik, PC WhatsApp açıktı ama bağlantı olmadı" · L4b Fable): sistem hattı YOK —
+// wa.me ile PC'deki WhatsApp açılır, mesaj hazır (metin sunucudan: şube · tarih · kalem · adet · birim; fiyat / not yok), Gönder'e sahip basar.
+// Düğmeye basınca "aktarıldı" izi (kanıt değil). Aktarılmamış toptancı amber. Telefon yoksa Tanımlar'a yönlendirir.
+function ToptanciIletim({ s, acik, mesgul, is_ }) {
+  return (
+    <div style={{ borderTop: `1px solid ${R.cizgi}`, paddingTop: 8, display: 'grid', gap: 6 }}>
+      {s.toptancilar.map((t) => (
+        <div key={t.toptanci_id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', fontSize: 13,
+          ...(t.aktarildi ? {} : { background: 'transparent', border: `1px solid ${R.amber}`, borderRadius: 9, padding: '6px 10px' }) }}>
+          <span style={{ flex: '1 1 200px' }}>🚚 <b>{t.ad}</b> · {t.kalem_sayi} kalem</span>
+          {t.aktarildi
+            ? <Cip tur="yesil">WhatsApp'a aktarıldı {t.aktarildi}{t.aktaran ? ` · ${t.aktaran}` : ''}</Cip>
+            : <Cip tur="sari">toptancıya henüz gönderilmedi</Cip>}
+          {acik && (t.wa_no
+            ? <Dugme kucuk ana={!t.aktarildi} disabled={mesgul} onClick={() => {   /* Fable L6-109: tek öğe (a > button değil) */
+                window.open(`https://wa.me/${t.wa_no}?text=${encodeURIComponent(t.wa_metin)}`, '_blank', 'noopener');
+                is_(s.id, 'ilet', { toptanci_id: t.toptanci_id }, `${t.ad}: WhatsApp açıldı — mesajı orada Gönder'e bas`);
+              }}>{t.aktarildi ? 'Yeniden gönder' : '📲 WhatsApp ile gönder'}</Dugme>
+            : <span style={{ color: R.amber }}>Toptancının telefonu yok — <Dugme kucuk onClick={() => sayfayaGit('tanim_toptanci')}>Tanımlar › Toptancılar</Dugme></span>)}
+        </div>
+      ))}
     </div>
   );
 }

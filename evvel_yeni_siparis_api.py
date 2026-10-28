@@ -55,6 +55,58 @@ def siparis_hazirla(cur) -> None:
         raise HTTPException(503, "Sipariş hazırlanıyor — birkaç saniye sonra tekrar dene")
 
 
+_ILETIM_HAZIR = False
+
+
+def _iletim_hazirla(cur) -> bool:
+    """Sahip 28 Eki ("toptancıya yönlendirdik, PC WhatsApp açıktı ama bağlantı olmadı") · L4b Fable: yön satırında "WhatsApp'a aktarıldı"
+    izi (kim / zaman — KANIT DEĞİL, sahip Gönder'e basmamış olabilir). Yalnız eksikse, çağıranın işleminde (ddl_kur). Kurulamazsa False."""
+    global _ILETIM_HAZIR
+    from evvel_yeni_cekirdek import ddl_kur, kolon_var
+    if _ILETIM_HAZIR:
+        return True
+    if kolon_var(cur, "ey_siparis_yon", "iletim_zaman"):
+        _ILETIM_HAZIR = True   # Fable L6-109: her listede information_schema sorgusu olmasın
+        return True
+    try:
+        ddl_kur(cur, "sp_ey_siparis_iletim", lambda c: (
+            c.execute("ALTER TABLE ey_siparis_yon ADD COLUMN IF NOT EXISTS iletim_zaman TIMESTAMPTZ"),
+            c.execute("ALTER TABLE ey_siparis_yon ADD COLUMN IF NOT EXISTS iletim_kim TEXT")))
+        return True
+    except Exception:  # noqa: BLE001
+        log.warning("sipariş: iletim kolonları kurulamadı", exc_info=True)
+        return False
+
+
+def _toptanci_iletimleri(cur, siparisler: List[dict], bil: dict) -> None:
+    """Her açık siparişe toptancı başına iletim grubu: bekleyen (teslim alınmamış) toptancı payı → WhatsApp metni (SUNUCU üretir — tek
+    gerçek) + numara + aktarıldı izi. Fiyat / adres / iç not YOK (L4b Fable). Telefon Tanımlar'ın kapısından okunur."""
+    from evvel_yeni_cekirdek import telefon_wa, tr_tarih_saat
+    from evvel_yeni_tanim_api import tanim_listesi
+    tel = {str(t["id"]): t for t in tanim_listesi(cur, "ey_toptanci", ("ad", "telefon"))}
+    for s in siparisler:
+        grup = {}
+        for k in s["kalemler"]:
+            for y in k.get("yonler") or []:
+                t, _, tid = str(y.get("kaynak") or "").partition(":")
+                if t != "toptanci" or y.get("durum") != "bekleniyor":
+                    continue
+                g = grup.setdefault(tid, {"toptanci_id": tid, "ad": y.get("kaynak_ad") or tid, "kalemler": [], "iletim": []})
+                birim = (bil.get(str(k.get("urun_id") or ""), {}) or {}).get("birim") or "adet"
+                g["kalemler"].append(f"• {k['ad']} — {int(y.get('adet') or 0)} {birim}")
+                g["iletim"].append((y.get("iletim_zaman"), y.get("iletim_kim")))
+        out = []
+        for tid, g in sorted(grup.items(), key=lambda kv: kv[1]["ad"]):
+            hepsi = all(z for z, _k in g["iletim"])   # yeniden yönlendirilen satır yeni açılır → izi yoktur → yeniden gönderilmeli görünür
+            son = max(g["iletim"], key=lambda x: x[0]) if hepsi else None   # Fable L6-109: kim = en son aktaranın
+            gun = s["gun"][8:10] + "." + s["gun"][5:7] + "." + s["gun"][:4]
+            out.append({"toptanci_id": tid, "ad": g["ad"], "kalem_sayi": len(g["kalemler"]),
+                        "wa_no": telefon_wa((tel.get(tid) or {}).get("telefon")),
+                        "wa_metin": f"TULİPİ {s['sube']} · sipariş {gun}\n" + "\n".join(g["kalemler"]) + "\n— TULİPİ merkez",
+                        "aktarildi": tr_tarih_saat(son[0]) if son else None, "aktaran": son[1] if son else None})   # TR saat sunucuda (tek yer)
+        s["toptancilar"] = out
+
+
 def _var(cur) -> bool:
     return __import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_siparis", "ey_siparis_yon")   # çekirdek (F#14)
 
@@ -281,7 +333,8 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
                     # Codex I-2 (24 Eki): yeniden yönlendirmede KİLİTLİ sayılan adet — gelmesi süren (yolda / farkı açık) tam adet,
                     # farkı çözülmüş ya da teslim alınmışsa GELEN adet (10 gitti 8 geldi, fark çözüldü → kalan 2 yeniden yönlendirilebilir)
                     kilit = int(y["adet"]) if (d != "karsilandi" or acik_y or gelen is None) else min(int(y["adet"]), int(gelen))
-                    yy.update({"adet": int(y["adet"]), "hazir": y.get("hazir"), "gelen": gelen, "kilit": kilit, "fark_acik": acik_y})
+                    yy.update({"adet": int(y["adet"]), "hazir": y.get("hazir"), "gelen": gelen, "kilit": kilit, "fark_acik": acik_y,
+                               "iletim_zaman": y.get("iletim_zaman"), "iletim_kim": y.get("iletim_kim")})
                 ys.append(yy)
             yonsuz = max(0, int(k["adet"]) - dagitilan)
             # B27 (Fable 22 Eki): kısmi gönderimden kalan — yola çıkmış/teslim bağlı yön varsa merkez "eksiği kapat" diyebilir;
@@ -603,6 +656,7 @@ def liste(gorunum: str = "acik", gun_sayisi: int = 30, x_evvel_oturum: Optional[
     with db() as (conn, cur):
         siparis_hazirla(cur)
         _merkez(cur, x_evvel_oturum)
+        _iletim_hazirla(cur)
         depo, depo_stok = _merkez_depo(cur), {}
         if depo and gorunum != "gecmis":   # Y3 (sim 24 Eki): merkez depoda kaç var — Depo'nun PUBLIC bakiyesi.
             # SIRA ÖNEMLİ: stok tablosu bu işlemde okunmadan ÖNCE (bakiye → depo_hazirla ayrı bağlantıda DDL dener; önce okursak
@@ -617,6 +671,16 @@ def liste(gorunum: str = "acik", gun_sayisi: int = 30, x_evvel_oturum: Optional[
         bil = urun_bilgi(cur, uids)
         son_top = _son_toptancilar(cur, uids)
         aktif_top = set(_toptanci_adlari(cur))
+        try:   # sahip 28 Eki: toptancıya WhatsApp — okunamazsa liste bozulmaz, yalnız iletim bloğu çıkmaz
+            with savepoint(cur, "sp_sip_iletim"):
+                _toptanci_iletimleri(cur, hepsi, bil)
+        except Exception:  # noqa: BLE001
+            log.warning("sipariş: toptancı iletimleri okunamadı", exc_info=True)
+    for s in hepsi:
+        for k in s["kalemler"]:
+            for y in k.get("yonler") or []:
+                y.pop("iletim_zaman", None)
+                y.pop("iletim_kim", None)
     for s in hepsi:
         for k in s["kalemler"]:
             b = bil.get(str(k.get("urun_id") or ""), {})
@@ -649,6 +713,28 @@ def _son_toptancilar(cur, uids: List[str]) -> dict:
     except Exception:  # noqa: BLE001
         log.warning("sipariş: son toptancılar okunamadı", exc_info=True)
         return {}
+
+
+class IletBody(BaseModel):
+    toptanci_id: str
+
+
+@router.post("/{sid}/ilet")
+def ilet(sid: str, body: IletBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez "📲 WhatsApp ile gönder"e bastı → o siparişin bu toptancıya giden, teslim alınmamış yön satırlarına "aktarıldı" izi
+    (kim / zaman). KANIT DEĞİL (Gönder'e WhatsApp'ta sahip basar); tekrar basılırsa üstüne yazar. Bekleyen işlere düşmez."""
+    with db() as (conn, cur):
+        siparis_hazirla(cur)
+        kim = _merkez(cur, x_evvel_oturum)
+        if not _iletim_hazirla(cur):
+            raise HTTPException(503, "Sipariş hazırlanıyor — birkaç saniye sonra tekrar dene")
+        _kilit(cur, sid)
+        cur.execute("""UPDATE ey_siparis_yon SET iletim_zaman=NOW(), iletim_kim=%s
+                        WHERE siparis_id=%s AND kaynak=%s AND NOT iptal AND teslim_id IS NULL""",
+                    (kim, sid, "toptanci:" + str(body.toptanci_id or "")))
+        if not cur.rowcount:
+            raise HTTPException(409, "Bu siparişte bu toptancıya bekleyen kalem yok — sayfayı yenile")
+    return {"ok": True, "mesaj": "WhatsApp'a aktarıldı olarak işaretlendi — mesajı WhatsApp'ta Gönder'e basmayı unutma"}
 
 
 class YonBody(BaseModel):

@@ -314,6 +314,19 @@ def tablo_var(cur, *adlar: str) -> bool:
     return bool(dict(cur.fetchone() or {}).get("v"))
 
 
+def telefon_wa(ham) -> str:
+    """PUBLIC — WhatsApp (wa.me) numarası: TR cep '0 5xx…' / '5xx…' / '+90 5xx…' → '905xxxxxxxxx'; uymazsa ''. Ham numara tanımda
+    sahibin yazdığı gibi kalır, okurken türetilir (sahip 28 Eki toptancı siparişi · L4b Fable). Tek yer."""
+    s = "".join(ch for ch in str(ham or "") if ch.isdigit())
+    if s.startswith("0090"):
+        s = s[2:]
+    if s.startswith("0") and len(s) == 11:
+        s = "9" + s
+    elif len(s) == 10 and s.startswith("5"):
+        s = "90" + s
+    return s if (len(s) == 12 and s.startswith("905")) else ""
+
+
 def kolon_var(cur, tablo: str, kolon: str) -> bool:
     """PUBLIC — tablo.kolon var mı (salt okur). Toptancı'nın yerel kopyası buraya taşındı (tekrar kuralı)."""
     cur.execute("SELECT 1 FROM information_schema.columns WHERE table_schema='public' AND table_name=%s AND column_name=%s", (tablo, kolon))
