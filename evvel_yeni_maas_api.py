@@ -260,17 +260,21 @@ def _eski_ekim(cur, ay: str, arsivden: bool = True) -> dict:
         from evvel_yeni_cekirdek import arsiv_oku
         ar = arsiv_oku(cur, "maas", f"eski_ay:{ay}")
         if ar is not None:
+            if ar and not any("devir" in (v or {}) for v in ar.values()):   # Fable L6 (E1): eski kodla dondurulmuş arşiv → devir sessizce 0 olmasın
+                log.warning("maaş: %s arşivinde avans devri yok (eski kodla dondurulmuş) — son aktarım Maaş adımını yeniden çalıştır", ay)
             return ar
     out = {}
     try:
         with savepoint(cur, "sp_ey_maas_eski"):
-            cur.execute("""SELECT personel_id::text AS pid, hesaplanan_net, avans_mahsup, durum FROM personel_aylik
+            # 1 Kasım E2E (🔴 E1, 28 Eki): eski bordronun karşılanamayan avansı (mahsup_devir) da dondurulur — yoksa Kasım'a devretmez, kaybolur
+            cur.execute("""SELECT personel_id::text AS pid, hesaplanan_net, avans_mahsup, mahsup_devir, durum FROM personel_aylik
                             WHERE yil=%s AND ay=%s""", (int(ay[:4]), int(ay[5:7])))
             for r in cur.fetchall() or []:
                 r = dict(r)
                 net = _kurus(r.get("hesaplanan_net") or 0)
                 mah = _kurus(r.get("avans_mahsup") or 0)
-                out[r["pid"]] = {"net": net, "mahsup": mah, "hak": net + mah, "durum": r.get("durum")}
+                out[r["pid"]] = {"net": net, "mahsup": mah, "hak": net + mah, "devir": max(0, _kurus(r.get("mahsup_devir") or 0)),
+                                 "durum": r.get("durum")}
     except Exception as e:  # noqa: BLE001
         if not arsivden:   # son aktarım: hata YUTULMAZ (boş arşiv yazılmasın)
             raise
@@ -375,7 +379,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
     yemek_k = _yemek_kaynagi(cur, ay, ay_bas, ay_son) if not eski_mod else None
     # önceki aydan avans devri (yeni hesap başlangıcından itibaren zincir)
     devir_in = {}
-    if not eski_mod and ay > yh:
+    if not eski_mod and ay >= yh:   # 🔴 E1: ilk yeni ay (Kasım) devri eski Ekim satırından (avans_devir_sonraki = eski mahsup_devir + aşan form avansı)
         onceki = _ay_kaydir(ay, -1)
         for r in hesapla(cur, onceki, sadece, odemeler):
             devir_in[r["personel_id"]] = _kurus(r["avans_devir_sonraki"])
@@ -399,7 +403,11 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
             hak = x["hak"] if x else 0
             # Eski net avansı zaten düşmüş; Evvel Yeni formundan girilen Ekim avansı eskide YOK → ayrıca düş
             kalemler = [{"kod": "eski", "ad": "Eski sistem hak edişi (Ekim kapanışı)", "tutar": _tl(hak)}]
-            mahsup = (x["mahsup"] if x else 0) + avans
+            # Eski net avansı zaten düşmüş; formdan girilen Ekim avansı kalan hakka kadar düşülür, aşanı eski devirle birlikte sonraki aya (🔴 E1)
+            eski_mah = x["mahsup"] if x else 0
+            ey_mah = min(avans, max(0, hak - eski_mah))
+            mahsup = eski_mah + ey_mah
+            devir_eski = ((x.get("devir", 0) if x else 0) + (avans - ey_mah)) if ay > KAPALI_SON_AY else 0   # Eylül: Ekim eski bordrosu zaten taşıdı
             eo = eski_od.get(pid, 0)
             if ay <= KAPALI_SON_AY:
                 # Evvel Yeni öncesi: maaş ödenmiş kabul — kalan sıfırlanır (iz: "ödendi sayıldı")
@@ -415,7 +423,8 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
                 if iki_yerde:
                     od = {**od, "⚠ iki sistemde de ödeme (toplanmadı, büyüğü)": 0}
             satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, 0, odenen, od, e, ucret.get(pid), "eski_sistem",
-                                {"eski_durum": (x or {}).get("durum"), "eski_avans_mahsup": _tl((x or {}).get("mahsup", 0))}, False))
+                                {"eski_durum": (x or {}).get("durum"), "eski_avans_mahsup": _tl((x or {}).get("mahsup", 0))}, False,
+                                devir_eski=devir_eski))
             continue
         u = ucret.get(pid) or {"maas": 0, "yemek": 0, "saatlik": 0, "yol": 0}
         gun, acik = _gecen_gun(p.get("giris"), p.get("cikis"), ay_bas, ay_son, bugun)
@@ -481,9 +490,9 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
     return satir
 
 
-def _satir(p, ay, hak, kalemler, mahsup, avans, din, odenen, od, e, u, kaynak, ek, yari):
+def _satir(p, ay, hak, kalemler, mahsup, avans, din, odenen, od, e, u, kaynak, ek, yari, devir_eski=0):
     kalan = hak - mahsup - odenen
-    devir = max(0, avans + din - mahsup) if kaynak == "evvel_yeni" else 0
+    devir = max(0, avans + din - mahsup) if kaynak == "evvel_yeni" else max(0, devir_eski)
     yemek_hak = _kurus(ek.get("yemek_hak") or 0)
     yemek_kalan = max(0, yemek_hak - od.get("Yemek ücreti", 0))
     return {
