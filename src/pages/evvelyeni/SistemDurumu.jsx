@@ -44,6 +44,15 @@ function SonAktarim({ onToast }) {
     } catch (e) { setKuru((o) => ({ ...o, [x.kod]: { hata: e?.message || 'çalışmadı' } })); }   // hata kendi satırında (tek satırda bir sonrakini siliyordu)
     setMesgul('');
   };
+  // 🟡 E6 (Fable L4b A): hepsi SIRAYLA tek işlemde kuru — her adım öncekinin yazacağını görür (fiş kasayı), sonda tek geri sarma
+  const zincir = async () => {
+    setMesgul('*');
+    try {
+      const r = await api('/evvel-yeni/moduller/kesim/calistir', { method: 'POST', body: { kod: '*', kuru: true } });
+      setKuru(Object.fromEntries((r.adimlar || []).map((a) => [a.kod, a.hata ? { hata: a.hata } : { sonuc: a.sonuc, sure_sn: a.sure_sn, zincir: true }])));
+    } catch (e) { onToast?.(e?.message || 'Kuru deneme çalışmadı'); }
+    setMesgul('');
+  };
   return (
     <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
       <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
@@ -51,15 +60,22 @@ function SonAktarim({ onToast }) {
         {v.gercek_acik ? <Cip tur="sari">çalıştırılabilir</Cip> : <Cip>yalnız kuru deneme · gerçek {v.baslangic} 02:00 sonrası</Cip>}
       </div>
       <div style={{ fontSize: 12.5, color: R.not }}>Eski sistemin {v.ay} kayıtları Evvel Yeni arşivine bir kez dondurulur; sonra ekranlar o ayı arşivden okur. Sırayla: önce kuru dene, sayıları kontrol et, sonra çalıştır. Personel adımı uzun sürebilir — bitene kadar sayfayı kapatma.</div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Dugme ana disabled={!!mesgul} onClick={zincir}>{mesgul === '*' ? 'Hepsi deneniyor…' : 'Hepsini sırayla kuru dene'}</Dugme>
+        <span style={{ fontSize: 12, color: R.not }}>Her adım bir öncekinin yazacağını görür (doğru sayılar); sonunda hiçbir şey yazılmaz. Bağlantı kesilirse sayfayı yenile — yazılmışsa ✓ görünür.</span>
+      </div>
+      {!v.gercek_acik && <div style={{ fontSize: 12, color: R.amber }}>Şimdiki sayılar bugüne kadar olanı sayar; 31 Ekim akşamının kapanışları 1 Kasım 02:00'den sonra görünür — gerçek yazımdan önce hepsini bir kez daha kuru dene (sistem de bunu ister).</div>}
       {v.adimlar.map((x) => (
         <div key={x.kod} style={{ borderTop: `1px solid ${R.cizgi}`, paddingTop: 8, display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center', fontSize: 13 }}>
           <span style={{ flex: '1 1 260px' }}><b>{x.ad}</b> — {x.baslik}
             {x.son && <div style={{ color: R.yesil, fontSize: 12 }}>✓ yazıldı {saat(x.son.zaman)} · {x.son.yazan} · {sonucYaz(x.son.sonuc)}</div>}
             {kuru[x.kod]?.hata && <div style={{ color: R.kirmizi, fontSize: 12, overflowWrap: 'anywhere' }}>✗ {kuru[x.kod].hata}</div>}
-            {kuru[x.kod]?.sonuc && <div style={{ color: R.metin2, fontSize: 12 }}>kuru ({kuru[x.kod].sure_sn} sn): {sonucYaz(kuru[x.kod].sonuc)}</div>}
+            {kuru[x.kod]?.sonuc && <div style={{ color: R.metin2, fontSize: 12 }}>{kuru[x.kod].zincir ? 'sıralı kuru' : 'kuru'} ({kuru[x.kod].sure_sn} sn): {sonucYaz(kuru[x.kod].sonuc)}</div>}
+            {kuru[x.kod]?.sonuc && !kuru[x.kod].zincir && (x.bagli || []).length > 0 && <div style={{ color: R.not, fontSize: 11.5 }}>tek başına denendi — {x.bagli.join(', ')} adımının yazacağı kayıtlar sayılmadı (doğru sayı için "Hepsini sırayla kuru dene")</div>}
+            {(x.bagli_eksik || []).length > 0 && !x.son && <div style={{ color: R.amber, fontSize: 12 }}>⚠ Önce {x.bagli_eksik.join(', ')} adımı yazılmalı — bu adım onun kayıtlarını okur</div>}
           </span>
           <Dugme kucuk disabled={!!mesgul} onClick={() => calistir(x, true)}>{mesgul === `${x.kod}:kuru` ? 'Deneniyor…' : 'Kuru dene'}</Dugme>
-          <Dugme kucuk ana disabled={!!mesgul || !v.gercek_acik || !kuru[x.kod]?.sonuc} title={!kuru[x.kod]?.sonuc ? 'Önce kuru dene (hatasız)' : undefined}
+          <Dugme kucuk ana disabled={!!mesgul || !v.gercek_acik || !kuru[x.kod]?.sonuc || (x.bagli_eksik || []).length > 0} title={!kuru[x.kod]?.sonuc ? 'Önce kuru dene (hatasız)' : (x.bagli_eksik || []).length ? `Önce ${x.bagli_eksik.join(', ')}` : undefined}
             onClick={() => calistir(x, false)}>{mesgul === x.kod ? 'Yazılıyor…' : x.son ? 'Yeniden yaz' : 'Çalıştır'}</Dugme>
         </div>
       ))}

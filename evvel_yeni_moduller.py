@@ -42,23 +42,23 @@ MODULLER: List[dict] = [
     {"kod": "gelir", "ad": "Gelir", "ikon": "📥", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "şube şube, gün gün ciro"},
     {"kod": "kira", "ad": "Kiralar", "ikon": "🏠", "sektor": "genel", "gerekir": ["kasa"], "menu": False,
      "aciklama": "kira tanımı + takvim (sayfaları Ödeme altında)",
-     "kesim": {"fn": "kesim_dondur", "sira": 54, "baslik": "Eski 'Öde' ekranında ödenmiş kiralar dondurulur (kira takvimi)"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 54, "bagli": ["tanim"], "baslik": "Eski 'Öde' ekranında ödenmiş kiralar dondurulur (kira takvimi)"}},
     {"kod": "maas", "ad": "Personel", "ikon": "👥", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "hak ediş, takvim, yoklama",
-     "kesim": {"fn": "kesim_dondur", "sira": 30, "baslik": "Ekim bordrosu son kez hesaplanır + eski maaş kayıtları dondurulur"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 30, "bagli": ["tanim", "avans"], "baslik": "Ekim bordrosu son kez hesaplanır + eski maaş kayıtları dondurulur"}},
     {"kod": "gider", "ad": "Gider", "ikon": "💸", "sektor": "genel", "gerekir": ["kasa", "gelir"], "aciklama": "şubenin kendi işletme yükü",
-     "kesim": {"fn": "kesim_dondur", "sira": 42, "baslik": "Ekim şube gideri dondurulur"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 42, "bagli": ["kasa"], "baslik": "Ekim şube gideri dondurulur"}},
     {"kod": "odeme", "ad": "Ödeme", "ikon": "🧾", "sektor": "genel", "gerekir": ["kasa"], "aciklama": "ödeme / gider girişi, patron harcamaları"},
     {"kod": "kredi", "ad": "Krediler", "ikon": "🏦", "sektor": "genel", "gerekir": ["kasa", "odeme"],
      "aciklama": "kredi tanımı + kredi takvimi (borç = taksit; ödeme Ödeme'den)",
-     "kesim": {"fn": "kesim_dondur", "sira": 52, "baslik": "Eski 'Öde' ekranında ödenmiş kredi taksitleri dondurulur (kredi takvimi)"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 52, "bagli": ["tanim"], "baslik": "Eski 'Öde' ekranında ödenmiş kredi taksitleri dondurulur (kredi takvimi)"}},
     {"kod": "kart", "ad": "Kartlar", "ikon": "💳", "sektor": "genel", "gerekir": ["kasa", "odeme"], "aciklama": "kullanılabilir limit, son ödeme",
-     "kesim": {"fn": "kesim_dondur", "sira": 50, "baslik": "Eski 'Öde' ekranında ödenmiş kart borçları dondurulur (kart takvimi)"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 50, "bagli": ["tanim"], "baslik": "Eski 'Öde' ekranında ödenmiş kart borçları dondurulur (kart takvimi)"}},
     {"kod": "toptanci", "ad": "Toptancılar", "ikon": "🚚", "sektor": "genel", "gerekir": ["kasa", "tanim", "urun"], "aciklama": "borç = açılış + alım − ödeme",
-     "kesim": {"fn": "kesim_dondur", "sira": 6, "baslik": "Toptancı açılış bakiyesi — kontrol (yazmaz): eski cari bakiye ↔ girilen açılış (açılış = eski 31 Ekim borcu, Ekim teslimleri dahil); borç Tanımlar › Toptancılar'da elle"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 6, "bagli": ["tanim"], "baslik": "Toptancı açılış bakiyesi — kontrol (yazmaz): eski cari bakiye ↔ girilen açılış (açılış = eski 31 Ekim borcu, Ekim teslimleri dahil); borç Tanımlar › Toptancılar'da elle"}},
     {"kod": "depo", "ad": "Depo", "ikon": "📦", "sektor": "genel", "gerekir": ["tanim", "urun"], "aciklama": "ürün nerede — tek hareket defteri · sevk et ⇄ depodan gelen",
      "gorevler": [{"ad": "depo_senkron", "fn": "otomatik_senkron_gorevi", "aralik_sn": 300,
                    "baslik": "Depo: eski panel kayıtlarını stok defterine aktar (1 Kasım'da kendiliğinden kapanır; sonu son aktarımda)"}],
-     "kesim": {"fn": "kesim_dondur", "sira": 20, "baslik": "Eski panelin son depo kayıtları (giriş · sevk · ürün aç · fire) + eski sevklerin hedef şubesi"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 20, "bagli": ["tanim"], "baslik": "Eski panelin son depo kayıtları (giriş · sevk · ürün aç · fire) + eski sevklerin hedef şubesi"}},
     {"kod": "siparis", "ad": "Sipariş", "ikon": "🛒", "sektor": "genel", "gerekir": ["tanim", "urun", "depo"],
      "aciklama": "şube talebi → merkez yönlendirme (depo / toptancı) → sevk / teslim — Depo ve Toptancılar'ın üzerinde katman"},
     {"kod": "panel", "ad": "Şube paneli", "ikon": "🧾", "sektor": "genel", "gerekir": ["olay", "kasa", "tanim", "urun", "depo"],
@@ -68,22 +68,22 @@ MODULLER: List[dict] = [
     {"kod": "kazanc", "ad": "Şube kazancı", "ikon": "📈", "sektor": "genel", "gerekir": ["gelir", "gider"], "aciklama": "gelir − şubenin gideri"},
     {"kod": "avans", "ad": "Avans talepleri", "ikon": "🤝", "sektor": "genel", "gerekir": ["maas"], "menu": False,
      "aciklama": "personelin QR sayfasından avans talepleri → havale / elden / ret (sayfası Personel altında)",
-     "kesim": {"fn": "kesim_dondur", "sira": 28, "baslik": "Eski açık avans talepleri + Kasım'a ait Ekim havaleleri taşınır (para hareketsiz) — şubeler açılmadan"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 28, "bagli": ["tanim"], "baslik": "Eski açık avans talepleri + Kasım'a ait Ekim havaleleri taşınır (para hareketsiz) — şubeler açılmadan"}},
     {"kod": "vardiya", "ad": "Vardiya planı", "ikon": "🗓️", "sektor": "genel", "gerekir": ["tanim"], "menu": False,
      "kurulum": "vardiya_hazirla", "aciklama": "kalıp + kişi/gün planı, taslak → yayın; Günlük yoklama, Maaş, Panel/Telefon 'Bugün' buradan okur (sayfası Personel altında)",
      "kesim": {"fn": "kesim_dondur", "sira": 60, "baslik": "Eski ekrandaki 26 Eki–9 Kas vardiya planı alınır, düğme kapanır"}},
     {"kod": "fis", "ad": "Anlık gider fiş kontrol", "ikon": "🧾", "sektor": "genel", "gerekir": ["kasa"], "menu": False,
      "aciklama": "panelden girilen giderlerin fişi geldi mi; gelmeyen girişi yapan personelle (sayfası Gider altında)",
-     "kesim": {"fn": "kesim_dondur", "sira": 46, "baslik": "Eski panel giderlerinin personel adı + fiş işareti ve kartla girilen giderler (fiş kontrolü)"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 46, "bagli": ["kasa"], "baslik": "Eski panel giderlerinin personel adı + fiş işareti ve kartla girilen giderler (fiş kontrolü)"}},
     {"kod": "mulk", "ad": "Kira hesabı", "ikon": "🏠", "sektor": "ozel", "gerekir": ["kasa"],
      "aciklama": "ev kiraları takvimi + işletmelerin Fatma'nın kira hesabına borcu (Kasım'dan)"},
     {"kod": "fatura", "ad": "Faturaları dağıt", "ikon": "🧾", "sektor": "ozel", "gerekir": ["odeme", "kart"], "menu": False,
      "aciklama": "kart ekstresindeki otomatik fatura ödemeleri → şube gideri (sayfası Ödeme altında)"},
     {"kod": "bar", "ad": "Bar", "ikon": "🥤", "sektor": "kahve", "gerekir": ["kasa"], "aciklama": "bardak + bar ürün sayımı",
-     "kesim": {"fn": "kesim_dondur", "sira": 40, "baslik": "Eylül + Ekim bar özeti dondurulur"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 40, "baslik": "Ağustos + Eylül + Ekim bar özeti dondurulur"}},
     {"kod": "satis", "ad": "Satış kontrolü", "ikon": "🔍", "sektor": "kahve", "gerekir": ["kasa", "bar"],
      "aciklama": "bardak × bardak başına ciro ↔ gerçek ciro",
-     "kesim": {"fn": "kesim_dondur", "sira": 44, "baslik": "Ekim kasa mutabakatı + fire + kasa devir defteri dondurulur"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 44, "bagli": ["kasa", "bar"], "baslik": "Ekim kasa mutabakatı + fire + kasa devir defteri dondurulur"}},
 ]
 for _m in MODULLER:
     _m.setdefault("acik", True)
@@ -129,7 +129,7 @@ def modulleri_yukle(app) -> None:
                     log.warning("evvel_yeni %s görevi kaydedilmedi — fonksiyon yok: %s", kod, g["fn"])
             k = m.get("kesim")
             if k and callable(getattr(mod, k["fn"], None)):   # tak-çıkar: yalnız YÜKLENEN modülün kesim adımı
-                KESIM[kod] = {"fn": getattr(mod, k["fn"]), "sira": int(k["sira"]), "baslik": k["baslik"]}
+                KESIM[kod] = {"fn": getattr(mod, k["fn"]), "sira": int(k["sira"]), "baslik": k["baslik"], "bagli": list(k.get("bagli") or [])}
         except Exception as e:  # noqa: BLE001 — izole: ana akış etkilenmez
             DURUM[kod] = "hata:" + str(e)[:200]
             log.warning("evvel_yeni %s modülü yüklenemedi (izole, ana akış etkilenmez): %s", kod, e)
@@ -424,6 +424,23 @@ def _son(cur, kod: str):
     return json_ac(v, None) if v else None   # yazılmamış adım "✓ yazıldı" görünüyordu (json_ac boşa {} döner)
 
 
+def _bagli_eksik(cur, kod: str) -> list:
+    """🟡 E5 (Fable L4b A): adımın okuduğu (manifest 'bagli') ve YÜKLÜ olan adımlardan henüz gerçek yazılmamış olanlar. Kapalı modülün bağı aranmaz."""
+    return [b for b in KESIM.get(kod, {}).get("bagli") or [] if b in KESIM and not _son(cur, b)]
+
+
+def _ad(kod: str) -> str:
+    return next((m["ad"] for m in MODULLER if m["kod"] == kod), kod)
+
+
+def _donem_ani(cur):
+    """Yeni dönemin başladığı an (panel başlangıcı 02:00, İstanbul) — gerçek yazım bu andan SONRA yapılmış kuruya dayanır (🟡 E6)."""
+    from datetime import datetime as _dt, time as _t
+    from tr_saat import TR_TZ
+    from evvel_yeni_cekirdek import panel_baslangic
+    return _dt.combine(panel_baslangic(cur), _t(2, 0), tzinfo=TR_TZ)
+
+
 @router.get("/kesim")
 def kesim_durum(x_evvel_oturum: Optional[str] = Header(default=None)):
     """Sistem durumu › 1 Kasım son aktarım: adımlar (sıralı), son gerçek çalıştırma, açılabilir mi."""
@@ -432,8 +449,9 @@ def kesim_durum(x_evvel_oturum: Optional[str] = Header(default=None)):
     with db() as (conn, cur):
         merkez_aktor(cur, x_evvel_oturum)   # Fable 🟡4: maaş toplamı taşır — merkez oturumu
         acik = yeni_donem(cur)
-        out = [{"kod": k, "ad": next((m["ad"] for m in MODULLER if m["kod"] == k), k), "sira": v["sira"], "baslik": v["baslik"],
-                "son": _son(cur, k)} for k, v in sorted(KESIM.items(), key=lambda x: x[1]["sira"])]
+        out = [{"kod": k, "ad": _ad(k), "sira": v["sira"], "baslik": v["baslik"], "son": _son(cur, k),
+                "bagli": [_ad(b) for b in v.get("bagli") or [] if b in KESIM], "bagli_eksik": [_ad(b) for b in _bagli_eksik(cur, k)]}
+               for k, v in sorted(KESIM.items(), key=lambda x: x[1]["sira"])]
         return {"ay": _kesim_ay(cur), "gercek_acik": acik, "baslangic": panel_baslangic(cur).isoformat(), "adimlar": out}
 
 
@@ -445,21 +463,62 @@ class _KesimBody(__import__("pydantic").BaseModel):
 @router.post("/kesim/calistir")
 def kesim_calistir(body: _KesimBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Bir adımı çalıştır. Kuru: sonuç sayılır, hiçbir şey yazılmaz. Gerçek: yalnız yeni dönem başladıktan sonra (31 Eki gecesi
-    02:00'den önce Ekim bitmemiştir — 409). Aynı anda iki çalıştırma yok (kilit)."""
+    02:00'den önce Ekim bitmemiştir — 409). Aynı anda iki çalıştırma yok (kilit).
+    🟡 E5 (Fable L4b A): gerçekte, adımın okuduğu (manifest 'bagli') adım henüz yazılmadıysa 409. 🟡 E6: kod '*' + kuru = bütün adımlar
+    SIRAYLA tek işlemde (her biri öncekinin yazdığını görür), sonda tek geri sarma; gerçek yazım, yeni dönem başladıktan SONRA
+    yapılmış bir kuruya dayanır (31 Eki akşamı kurusu o geceki kapanışları görmez)."""
     from database import db
     from fastapi import HTTPException
-    from evvel_yeni_cekirdek import ayar_yaz, merkez_aktor, yeni_donem
-    adim = KESIM.get(body.kod)
-    if not adim:
+    from evvel_yeni_cekirdek import ayar_oku, ayar_yaz, merkez_aktor, yeni_donem
+    zincir = body.kod == "*"
+    if zincir and not body.kuru:
+        raise HTTPException(400, "Hepsi birden yalnız kuru denenir — gerçek yazım adım adım")
+    adim = None if zincir else KESIM.get(body.kod)
+    if not zincir and not adim:
         raise HTTPException(404, "Bu modülün son aktarım adımı yok ya da modül kapalı")
     with db() as (conn, cur):
         kim = merkez_aktor(cur, x_evvel_oturum)
         if not body.kuru and not yeni_donem(cur):
             raise HTTPException(409, "Son aktarım yeni dönem başladıktan sonra çalışır (1 Kasım 02:00) — şimdi yalnız kuru dene")
+        if not body.kuru:
+            eksik = _bagli_eksik(cur, body.kod)
+            if eksik:
+                raise HTTPException(409, f"Önce {', '.join(_ad(x) for x in eksik)} adımı çalıştırılmalı — bu adım onun yazdıklarını okur")
+            kz = ayar_oku(cur, f"kesim_kuru:{body.kod}")
+            try:
+                kuru_ani = datetime.fromisoformat(kz) if kz else None
+            except ValueError:
+                kuru_ani = None
+            if kuru_ani is None or kuru_ani < _donem_ani(cur):
+                raise HTTPException(409, "Yeni dönem başladıktan sonra bu adımı (ya da hepsini) yeniden kuru dene — eski kuru o geceki kayıtları görmüyordu")
         cur.execute("SELECT pg_try_advisory_xact_lock(7012099) AS k")
         if not dict(cur.fetchone())["k"]:
             raise HTTPException(409, "Son aktarım şu an başka bir yerde çalışıyor")
         ay = _kesim_ay(cur)
+        simdi = datetime.now(timezone.utc).isoformat()
+        if zincir:
+            cur.execute("SAVEPOINT sp_kesim")
+            adimlar, durdu = [], None
+            for kod, a in sorted(KESIM.items(), key=lambda x: x[1]["sira"]):
+                if durdu:
+                    adimlar.append({"kod": kod, "hata": f"çalıştırılmadı — önceki adım ({_ad(durdu)}) hatalı"})
+                    continue
+                t0 = time.time()
+                cur.execute("SAVEPOINT sp_zincir")
+                try:
+                    adimlar.append({"kod": kod, "sure_sn": round(time.time() - t0, 1), "sonuc": a["fn"](cur, kim, ay)})
+                    adimlar[-1]["sure_sn"] = round(time.time() - t0, 1)
+                    cur.execute("RELEASE SAVEPOINT sp_zincir")
+                except Exception as e:  # noqa: BLE001
+                    cur.execute("ROLLBACK TO SAVEPOINT sp_zincir")
+                    log.warning("son aktarım zincir kuru %s: %s", kod, e, exc_info=True)
+                    adimlar.append({"kod": kod, "hata": f"{kod}: {str(e)[:200]}"})
+                    durdu = kod
+            cur.execute("ROLLBACK TO SAVEPOINT sp_kesim")   # tek geri sarma — hiçbir şey yazılmadı
+            for x in adimlar:   # iz geri sarmadan SONRA: "kuru denendi" (yalnız hatasız adımlar)
+                if "sonuc" in x:
+                    ayar_yaz(cur, f"kesim_kuru:{x['kod']}", simdi, kim)
+            return {"kod": "*", "kuru": True, "ay": ay, "adimlar": adimlar}
         t0 = time.time()
         cur.execute("SAVEPOINT sp_kesim")
         try:
@@ -471,8 +530,10 @@ def kesim_calistir(body: _KesimBody, x_evvel_oturum: Optional[str] = Header(defa
         sure = round(time.time() - t0, 1)
         if body.kuru:
             cur.execute("ROLLBACK TO SAVEPOINT sp_kesim")
+            ayar_yaz(cur, f"kesim_kuru:{body.kod}", simdi, kim)
         else:
             cur.execute("RELEASE SAVEPOINT sp_kesim")
-            ayar_yaz(cur, f"kesim_son:{body.kod}", json.dumps({"zaman": datetime.now(timezone.utc).isoformat(), "yazan": kim, "ay": ay,
+            ayar_yaz(cur, f"kesim_son:{body.kod}", json.dumps({"zaman": simdi, "yazan": kim, "ay": ay,
                                                                "sonuc": sonuc}, ensure_ascii=False, default=str), kim)
-        return {"kod": body.kod, "kuru": body.kuru, "ay": ay, "sure_sn": sure, "sonuc": sonuc}
+        return {"kod": body.kod, "kuru": body.kuru, "ay": ay, "sure_sn": sure, "sonuc": sonuc,
+                "eksik_bagli": [_ad(x) for x in _bagli_eksik(cur, body.kod)] if body.kuru else []}
