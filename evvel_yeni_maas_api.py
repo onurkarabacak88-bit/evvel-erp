@@ -367,12 +367,14 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
     ay_bas, ay_son = _ay_sinir(ay)
     odemeler = odemeler if odemeler is not None else _odemeler(cur)
     from evvel_yeni_tanim_api import tanim_listesi   # personel tablosu Tanımlar'ın (C-T2-10)
-    kisiler = tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "gorev", "giris", "cikis", "calisma_turu", "aktif"))
+    kisiler = tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "gorev", "giris", "cikis", "calisma_turu", "aktif", "kaynak"))
     cur.execute("SELECT * FROM ey_maas_ay WHERE ay=%s", (ay,))
     elle = {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
     yh = _yeni_hesap(cur)
     eski_mod = ay < yh
     eski = _eski_ekim(cur, ay) if eski_mod else {}
+    from evvel_yeni_cekirdek import ad_anahtari as _ad_anahtari
+    eski_adlar = {_ad_anahtari(k["ad"]) for k in kisiler if k["id"] in eski} if eski_mod else set()
     eski_od = _eski_odenen(cur, ay) if eski_mod else {}
     ucret = _ucretler(cur, ay)
     oneri = _yeni_oneri(cur, ay) if not eski_mod else {}   # C-T3-13: yeni dönem plan > QR (eski vardiya_takip değil)
@@ -398,11 +400,20 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         e = elle.get(pid) or {}
         if eski_mod:
             x = eski.get(pid)
-            if not x and not od:
+            # 🟡 E2E E8 (Fable L4b A): eski bordroda OLMAYAN ama o ay çalışmış Evvel Yeni personeli — Ekim'in tek kaynağı eski bordro, bu kişinin
+            # hak edişi ELLE girilir (Maaşlar › elle › Düzeltme alanı); girilmeden satır uyarı taşır (eksi bakiye "hak girilmedi" demektir)
+            ey_only = (not x and p.get("kaynak") == "evvel_yeni" and ay > KAPALI_SON_AY   # kapalı aylarda (Eylül-) sorulmaz
+                       and (p.get("aktif", True) or p.get("cikis")))   # pasif + çıkışsız (deneme / test kaydı) gürültü yapmasın
+            cift_ad = ey_only and _ad_anahtari(p["ad"]) in eski_adlar   # hafıza "aynı ad iki kayıt": eski kimlikle bordroda — çift ödeme olmasın
+            if not x and not od and not ey_only:
                 continue
-            hak = x["hak"] if x else 0
-            # Eski net avansı zaten düşmüş; Evvel Yeni formundan girilen Ekim avansı eskide YOK → ayrıca düş
-            kalemler = [{"kod": "eski", "ad": "Eski sistem hak edişi (Ekim kapanışı)", "tutar": _tl(hak)}]
+            if x:
+                hak = x["hak"]
+                # Eski net avansı zaten düşmüş; Evvel Yeni formundan girilen Ekim avansı eskide YOK → ayrıca düş
+                kalemler = [{"kod": "eski", "ad": "Eski sistem hak edişi (Ekim kapanışı)", "tutar": _tl(hak)}]
+            else:
+                hak = max(0, int(e.get("duzeltme") or 0)) if ey_only else 0
+                kalemler = [{"kod": "elle_hak", "ad": "Elle girilen hak edişi (eski bordroda yok)", "tutar": _tl(hak)}]
             # Eski net avansı zaten düşmüş; formdan girilen Ekim avansı kalan hakka kadar düşülür, aşanı eski devirle birlikte sonraki aya (🔴 E1)
             eski_mah = x["mahsup"] if x else 0
             ey_mah = min(avans, max(0, hak - eski_mah))
@@ -423,7 +434,12 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
                 if iki_yerde:
                     od = {**od, "⚠ iki sistemde de ödeme (toplanmadı, büyüğü)": 0}
             satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, 0, odenen, od, e, ucret.get(pid), "eski_sistem",
-                                {"eski_durum": (x or {}).get("durum"), "eski_avans_mahsup": _tl((x or {}).get("mahsup", 0))}, False,
+                                {"eski_durum": (x or {}).get("durum"), "eski_avans_mahsup": _tl((x or {}).get("mahsup", 0)),
+                                 "elle_hak_acik": bool(ey_only and not cift_ad),   # ekran: yalnız bu satırda "Ekim hak edişi" formu
+                                 **({"uyari": ["Aynı adlı eski kayıt bu ay bordroda — çift kayıt olabilir: hak edişi GİRME, önce Tanımlar'da kimliği birleştir"]}
+                                    if cift_ad else
+                                    {"uyari": ["Bu ayın hak edişi eski bordroda yok — aşağıya Ekim hak edişini gir"]}
+                                    if ey_only and not hak else {})}, False,
                                 devir_eski=devir_eski))
             continue
         u = ucret.get(pid) or {"maas": 0, "yemek": 0, "saatlik": 0, "yol": 0}
@@ -598,10 +614,18 @@ def _kisi_ay_dogrula(cur, pid: str, ay: str) -> None:
 @router.post("/{pid}/{ay}")
 def maas_elle(pid: str, ay: str, b: ElleBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     from evvel_yeni_cekirdek import aktor as _aktor
+    eski_hak = False
     with db() as (_c0, _k0):
         _kisi_ay_dogrula(_k0, pid, ay)
         if ay[:7] < _yeni_hesap(_k0):
-            raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
+            # 🟡 E8: eski bordroda OLMAYAN Evvel Yeni personelinin hak edişi elle girilir — yalnız o satır, yalnız hak (duzeltme) + gerekçe
+            satir_ = next((x for x in hesapla(_k0, ay[:7], sadece=pid) if x["personel_id"] == pid), None)
+            diger = any(getattr(b, k) not in (None, 0, False) for k in ("eksik_gun", "rapor_gun", "rapor_kesinti", "bayram_saat", "mesai_saat", "calisma_saat"))
+            if not (satir_ and satir_.get("elle_hak_acik")) or diger or b.mesai_oneriye_don or b.saat_oneriye_don:
+                raise HTTPException(400, "Ekim ve öncesi eski sistemin hesabıyla kapanır")
+            if b.duzeltme is not None and _kurus(b.duzeltme) < 0:
+                raise HTTPException(400, "Hak ediş eksi olamaz")
+            eski_hak = True
     if b.duzeltme and not (b.aciklama or "").strip():
         raise HTTPException(400, "Düzeltmenin gerekçesini yaz")
     for k, ad in (("eksik_gun", "Eksik gün"), ("rapor_gun", "Rapor günü"), ("bayram_saat", "Bayram saati"), ("mesai_saat", "Mesai saati"),
@@ -618,7 +642,7 @@ def maas_elle(pid: str, ay: str, b: ElleBody, x_evvel_oturum: Optional[str] = He
             raise HTTPException(409, "Bu ay onaylanmış — önce onayı kaldır")
         cur.execute("INSERT INTO ey_maas_ay (personel_id, ay, degistiren) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (pid, ay[:7], kim))
         set_, prm = [], []
-        for k in ("eksik_gun", "rapor_gun", "rapor_kesinti", "bayram_saat", "aciklama"):
+        for k in (("aciklama",) if eski_hak else ("eksik_gun", "rapor_gun", "rapor_kesinti", "bayram_saat", "aciklama")):
             v = getattr(b, k)
             if v is not None:
                 set_.append(f"{k}=%s")
@@ -1147,10 +1171,12 @@ def kesim_dondur(cur, yazan: str, ay: str) -> dict:
         senkron += 0 if (r or {}).get("atlandi") else 1
     cur.execute("SELECT DISTINCT yil, ay FROM personel_aylik ORDER BY 1, 2")
     aylar = [f"{dict(r)['yil']:04d}-{dict(r)['ay']:02d}" for r in cur.fetchall() or []]
-    kisi_ay, net_top = 0, 0
+    kisi_ay, net_top, ekim_v = 0, 0, {}
     for x in aylar:
         v = _eski_ekim(cur, x, arsivden=False)
         arsiv_yaz(cur, "maas", f"eski_ay:{x}", v, yazan)
+        if x == ay:
+            ekim_v = v
         kisi_ay += len(v)
         net_top += sum(k["net"] for k in v.values())
     cur.execute("""SELECT DISTINCT to_char(referans_ay, 'YYYY-MM') AS r FROM odeme_plani
@@ -1183,6 +1209,20 @@ def kesim_dondur(cur, yazan: str, ay: str) -> dict:
     adlar_ = {dict(r)["id"]: dict(r)["ad_soyad"] for r in cur.fetchall() or []}
     for k, v in (("qr", qr), ("panel", panel), ("plan", plan), ("ad", adlar_)):
         _ay(cur, "maas", f"iz:{k}", v, yazan)
+    # 🟡 E2E E8 (Fable L4b A): o ay çalışmış ama eski bordroda olmayan Evvel Yeni personeli — hak edişi elle girilir
+    from evvel_yeni_tanim_api import tanim_listesi
+    ay_bas_, ay_son_ = date.fromisoformat(ay + "-01"), pb - timedelta(days=1)
+    from evvel_yeni_cekirdek import ad_anahtari as _n
+    _per = [k for k in tanim_listesi(cur, "ey_personel", ("ad", "giris", "cikis", "kaynak", "aktif")) if k.get("aktif", True) or k.get("cikis")]
+    _eski_ad = {_n(k["ad"]) for k in _per if str(k["id"]) in ekim_v} | {_n(a) for i, a in adlar_.items() if i in ekim_v}
+    _ey = [k["ad"] for k in _per if k.get("kaynak") == "evvel_yeni" and str(k["id"]) not in ekim_v
+           and (not k.get("giris") or k["giris"] <= ay_son_) and (not k.get("cikis") or k["cikis"] >= ay_bas_)]
+    ey_only = sorted(a for a in _ey if _n(a) not in _eski_ad)
+    cift = sorted(a for a in _ey if _n(a) in _eski_ad)
     return {"iz_qr": len(qr), "iz_panel": len(panel), "iz_plan": len(plan),
+            "eski_bordroda_olmayan": len(ey_only), "ayni_ad_cift_kayit": len(cift),
+            "uyari": " · ".join(u for u in [
+                f"{len(ey_only)} kişi eski bordroda yok: {', '.join(ey_only[:8])}{' …' if len(ey_only) > 8 else ''} — Personel › Maaşlar › {ay} › kişi › 'Ekim hak edişi' kutusuna gir" if ey_only else "",
+                f"{len(cift)} kişinin aynı adlı eski kaydı bordroda: {', '.join(cift[:8])} — çift kayıt olabilir, hak edişi girme, Tanımlar'da birleştir" if cift else ""] if u) or None,
             "ekim_senkron_kisi": senkron, "ay": len(aylar), "kisi_ay": kisi_ay, "net_toplam_tl": net_top / 100,
             "odenen_ay": len(od_aylar), "odenen_toplam_tl": od_top / 100}

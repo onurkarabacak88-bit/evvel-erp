@@ -47,6 +47,15 @@ export default function MaasModulu({ onToast, onSekme }) {
     setD({ eksik_gun: e.eksik_gun ?? '', rapor_gun: e.rapor_gun ?? '', rapor_kesinti: !!e.rapor_kesinti, bayram_saat: e.bayram_saat ?? '',
       mesai_saat: e.mesai_saat ?? '', calisma_saat: e.calisma_saat ?? '', duzeltme: e.duzeltme || '', aciklama: e.aciklama || '' });
   };
+  // 🟡 E8: eski bordroda olmayan Evvel Yeni personeli — Ekim hak edişi (yalnız hak + gerekçe; sunucu başka alanı reddeder)
+  const kaydetHak = async () => {
+    setMesgul(true);
+    try {
+      const n = sayi(d.duzeltme); if (Number.isNaN(n) || n == null) throw new Error('Hak edişi tutarını yaz');
+      const res = await api(`/evvel-yeni/maas/${encodeURIComponent(sec)}/${v.ay}`, { method: 'POST', body: { duzeltme: n, aciklama: d.aciklama || null } });
+      onToast?.(res.mesaj); yukle();
+    } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); } finally { setMesgul(false); }
+  };
   const kaydet = async () => {
     setMesgul(true);
     try {
@@ -160,6 +169,16 @@ export default function MaasModulu({ onToast, onSekme }) {
                 <div style={{ fontSize: 12, color: R.not }}>"vardiyadan" yazan kutular boş bırakılırsa Vardiya planı (Personel › Vardiya) kullanılır.</div>
                 <div style={{ display: 'flex', gap: 8 }}><Dugme onClick={kaydet} disabled={mesgul}>Kaydet</Dugme>
                   {!r.ay_acik && <Dugme ana onClick={() => onayla(false)}>Ayı onayla (dondur)</Dugme>}</div>
+              </div>
+            )}
+            {r.elle_hak_acik && !r.onay && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--pi-line)', paddingTop: 10 }}>
+                <b style={{ fontSize: 14 }}>Ekim hak edişi (eski bordroda yok)</b>
+                <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', fontSize: 13 }}>
+                  <label>Ekim hak edişi ₺<br /><input style={alan} value={d.duzeltme} onChange={(e) => setD((x) => ({ ...x, duzeltme: e.target.value }))} /></label>
+                  <label style={{ flex: 1, minWidth: 180 }}>Gerekçe<br /><input style={{ ...alan, width: '100%' }} placeholder="ör. 10 Ekim'de başladı, 21 gün" value={d.aciklama} onChange={(e) => setD((x) => ({ ...x, aciklama: e.target.value }))} /></label>
+                </div>
+                <div><Dugme onClick={kaydetHak} disabled={mesgul}>Kaydet</Dugme></div>
               </div>
             )}
             {r.onay && <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Cip tur="yesil">Onaylı — kalemler donduruldu</Cip><Dugme kucuk onClick={() => onayla(true)}>Onayı kaldır</Dugme></div>}
