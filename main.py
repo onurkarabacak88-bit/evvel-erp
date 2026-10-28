@@ -808,7 +808,9 @@ def _gece_yarisi_scheduler():
             # dürüst cevabı RAKAMDIR ve tek ölçüm değil EĞİLİM gerektirir.
             # İZOLE: kendi append-only tablosuna yazar, hata YUTULUR — gece
             # akışının geri kalanını asla bozmaz.
-            if bugun.weekday() == 0:
+            # KG B2 (kesim günü planı) + 28 Eki kaçak taraması: eski toptanci_siparis'i okur — 1 Kasım'dan sonra 2 Kasım Pazartesi
+            # eski açık siparişlerle SAHTE WhatsApp atardı → tek anahtara bağlı (yeni panelde sipariş Evvel Yeni Sipariş'te)
+            if bugun.weekday() == 0 and _eski_panel_zinciri_acik():
                 try:
                     from tedarik_mutabakat_api import haftalik_olcum_al
                     _to = haftalik_olcum_al(yaz=True)
