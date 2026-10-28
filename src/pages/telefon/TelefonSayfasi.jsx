@@ -172,7 +172,7 @@ function Bagla({ davet }) {
           <div style={{ fontSize: 56 }}>{sonuc.durum === 'aktif' ? '✓' : '⏳'}</div>
           <b style={{ fontSize: 20 }}>{sonuc.mesaj}</b>
           {sonuc.guc === 'jeton' && <div className="tq-silik">Bu tarayıcı güçlü anahtar üretemedi; bağ zayıf (merkez görür).</div>}
-          {sonuc.tur === 'telefon' && <div className="tq-not">Artık giriş / çıkış için şubedeki panel bilgisayarının ekranındaki QR'ı okutman yeterli.</div>}
+          {sonuc.tur === 'telefon' && <div className="tq-not">Artık giriş / çıkış için şubedeki panel bilgisayarının ekranındaki QR'ı okutman yeterli. Bu telefonu <b>bu tarayıcıda</b> bağladın — QR'ı hep buradan okut.</div>}
           {sonuc.tur === 'tablet' && <div className="tq-not">Merkez onaylayınca şube paneli köşede QR göstermeye başlar. Paneli hep BU tarayıcıda (normal pencerede) aç.</div>}
           {sonuc.tur === 'tablet' && sonuc.sube_id && (
             <a className="tq-btn" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', textDecoration: 'none' }}
@@ -291,6 +291,7 @@ function QrIslem({ sube, jeton }) {
             {!qrOk && <div style={{ color: T.kirmizi, fontWeight: 700 }}>QR süresi doldu — paneldeki QR'ı yeniden okut</div>}
             {ben.acik && ben.acik_sube && ben.acik_sube !== sube && <div style={{ color: T.kirmizi, fontWeight: 700 }}>Önce {ben.acik_sube_ad || 'diğer şube'}'den çıkış yap</div>}
             {isHata && !(konumKarti && konumRet(isHata.metin)) && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
+            {(!qrOk || /süresi doldu/i.test(isHata?.metin || '')) && <QrOkut yazi="QR'ı yeniden okut" />}   {/* sahip 28 Eki: "yeniden okut" denince elde düğme olsun */}
             {devirVar && (<>   {/* v2: devir sayfasına davet — KÖR (rakam yok) */}
               <div style={{ background: '#FFF6EC', border: `1px solid ${T.aksan}`, borderRadius: 12, padding: '10px 12px', fontWeight: 700 }}>
                 💵 Kasa devri sürüyor — {devir.rol === 'devreden' ? 'kasa sende, sayıp devredeceksin' : `kasayı sen alacaksan kendi say${devir.devreden ? ` (veren: ${devir.devreden})` : ''}`}
@@ -621,13 +622,104 @@ function Halka({ oran, yazi }) {
     </div>
   );
 }
-// İşlemler paneldeki QR ile (K6: sayfa içi okuyucu yok — telefonun kamerasıyla okutulur); bu kutu yalnız yol gösterir
-function QrIpucu({ yazi, ana }) {
+// 📷 QR OKUT — sayfa içi okuyucu (sahip 28 Eki: "qr okut alanları basmıyor, kahverengi alan" · L4b Fable: K6 faz 2 → şimdi).
+// Düğme gibi görünen şey düğme: dokununca kamera BU tarayıcıda açılır (bağ burada — iPhone kamerası linki Safari'de açıp
+// "tanımlı değil" dedirtmez). Tek çözücü jsQR (BarcodeDetector yok, tek yol). Yalnız aynı adres + /q/ yolu açılır; jeton sunucuda doğrulanır.
+// Görüntü telefondan çıkmaz. Telefonun kendi kamerası yedek yol olarak kalır.
+const jsqrYukle = () => import('jsqr').then((m) => m.default);
+const qrHedef = (metin) => {
+  try {
+    const u = new URL(String(metin || '').trim(), window.location.origin);
+    return u.origin === window.location.origin && /^\/q\/(?!bagla\/)[^/]+\/[^/]+$/.test(u.pathname) ? u.pathname + u.search : null;   // yalnız /q/{şube}/{jeton}
+  } catch { return null; }
+};
+const KAMERA_YAZI = {
+  aciliyor: 'Kamera açılıyor…',
+  tara: "Paneldeki QR'ı çerçeveye tut",
+  yabanci: "Bu Evvel QR'ı değil — paneldeki QR'ı tut",
+  okundu: 'Okundu ✓',
+};
+function KameraKatmani({ kapat }) {
+  const video = useRef(null);
+  const [durum, setDurum] = useState('aciliyor');   // aciliyor | tara | yabanci | okundu | izin | yok
+  useEffect(() => {
+    let akis = null, bitti = false, zaman = null;
+    const tuval = document.createElement('canvas');
+    const cx = tuval.getContext('2d', { willReadFrequently: true });
+    const dur = () => { bitti = true; if (zaman) clearTimeout(zaman); if (akis) akis.getTracks().forEach((t) => t.stop()); };
+    (async () => {
+      try {
+        if (!navigator.mediaDevices?.getUserMedia) { setDurum('yok'); return; }
+        const coz = await jsqrYukle();   // Fable L6: önce çözücü — yüklenemezse kamera hiç açılmaz (akış sızmaz)
+        akis = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: false });
+        if (bitti || document.hidden) { dur(); if (!bitti) kapat(); return; }
+        const s = akis;
+        const v = video.current;
+        v.srcObject = s;
+        await v.play().catch(() => {});
+        setDurum('tara');
+        const tur = () => {
+          if (bitti) return;
+          if (v.videoWidth) {
+            const o = Math.min(1, 480 / Math.max(v.videoWidth, v.videoHeight));
+            const w = Math.round(v.videoWidth * o), h = Math.round(v.videoHeight * o);
+            tuval.width = w; tuval.height = h;
+            cx.drawImage(v, 0, 0, w, h);
+            const sonuc = coz(cx.getImageData(0, 0, w, h).data, w, h, { inversionAttempts: 'dontInvert' });
+            if (sonuc && sonuc.data) {
+              const hedef = qrHedef(sonuc.data);
+              if (hedef) {   // ilk başarılı okumada dur — çift yönlendirme olmasın
+                dur(); setDurum('okundu');
+                try { navigator.vibrate?.(60); } catch { /* titreşim yok */ }
+                window.location.assign(hedef);
+                return;
+              }
+              setDurum('yabanci');
+            }
+          }
+          zaman = setTimeout(tur, 150);
+        };
+        tur();
+      } catch (e) {
+        if (!bitti) setDurum(e && (e.name === 'NotAllowedError' || e.name === 'SecurityError') ? 'izin' : 'yok');
+      }
+    })();
+    const gizlen = () => { if (document.hidden && akis) { dur(); kapat(); } };   // Fable L6: Android sistem izin penceresi sayfayı gizler — akış gelmeden kapatma
+    document.addEventListener('visibilitychange', gizlen);
+    return () => { document.removeEventListener('visibilitychange', gizlen); dur(); };
+  }, [kapat]);
+  const sorun = durum === 'izin' || durum === 'yok';
   return (
-    <div style={{ minHeight: 60, borderRadius: 14, display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, textAlign: 'center', padding: '10px 14px',
-      fontWeight: 800, fontSize: ana ? 18 : 16, background: ana ? T.aksanKoyu : T.yuzey, color: ana ? '#fff' : T.metin, border: `1px solid ${ana ? T.aksanKoyu : T.kenar}` }}>
-      📷 {yazi}
+    <div role="dialog" aria-modal="true" aria-label="QR okut" style={{ position: 'fixed', inset: 0, zIndex: 60, background: '#000', display: 'flex', flexDirection: 'column' }}>
+      <div style={{ position: 'relative', flex: 1, overflow: 'hidden' }}>
+        <video ref={video} playsInline muted autoPlay style={{ width: '100%', height: '100%', objectFit: 'cover', display: sorun ? 'none' : 'block' }} />
+        {!sorun && <div style={{ position: 'absolute', left: '50%', top: '45%', width: 'min(68vw,300px)', aspectRatio: '1', transform: 'translate(-50%,-50%)', border: '4px solid #fff', borderRadius: 18, boxShadow: '0 0 0 9999px rgba(0,0,0,.35)' }} />}
+        {sorun && (
+          <div style={{ position: 'absolute', inset: 0, display: 'grid', placeItems: 'center', padding: 16 }}>
+            <div className="tq-kart" style={{ width: 'min(480px,100%)', textAlign: 'center' }}>
+              <b style={{ fontSize: 19 }}>📷 {durum === 'izin' ? 'Kamera izni yok' : 'Kamera açılamadı'}</b>
+              <div className="tq-not">{durum === 'izin' ? 'Tarayıcının site ayarlarından bu sayfaya kamera izni ver ya da t' : 'T'}elefonun kendi kamerasıyla paneldeki QR'ı okut; açılan bağlantıya dokun.</div>
+            </div>
+          </div>
+        )}
+      </div>
+      <div style={{ background: T.zemin, padding: 16, display: 'grid', gap: 10 }}>
+        {!sorun && <div style={{ textAlign: 'center', fontWeight: 800, fontSize: 18, color: durum === 'yabanci' ? T.kirmizi : durum === 'okundu' ? T.yesil : T.metin }}>{KAMERA_YAZI[durum]}</div>}
+        <button type="button" className="tq-btn tq-kucuk" onClick={kapat}>Vazgeç</button>
+      </div>
     </div>
+  );
+}
+function QrOkut({ yazi }) {
+  const [acik, setAcik] = useState(false);
+  const kapat = useCallback(() => setAcik(false), []);
+  useEffect(() => { jsqrYukle().catch(() => {}); }, []);   // önceden yükle: ilk dokunuşta bekleme olmasın (telaş anı)
+  return (
+    <>
+      <button type="button" className="tq-btn tq-ana" onClick={() => setAcik(true)}>📷 {yazi}</button>
+      <div className="tq-silik" style={{ textAlign: 'center' }}>ya da telefonun kamerasıyla okut</div>
+      {acik && <KameraKatmani kapat={kapat} />}
+    </>
   );
 }
 function YemekBilgi({ ben }) {
@@ -667,7 +759,8 @@ function SimdiKart({ ben, simdi }) {
         <div className="tq-not">{m.bas}{saatEki(m.bas)} beri · afiyet olsun</div>
         <MolaCubuk dk={m.sure_dk} az={az} lim={lim} />
         <div className="tq-not">{ben.yemek_tam ? 'Yemek hakkın tam (mola şartı yok) — afiyet olsun.' : m.hak_dustu || m.sure_dk > lim ? `${lim} dk geçti · bugün yemek hakkı oluşmadı` : `Yemek hakkı ${lim} dk'ya kadar senin. ${lim + 1}. dakikada sistem molayı kapatır; o gün yemek hakkı oluşmaz.`}</div>
-        <QrIpucu yazi={m.sure_dk < az ? `Molayı en erken ${az}. dakikada bitirebilirsin` : 'Molayı bitirmek için QR okut'} ana={m.sure_dk >= az} />
+        {m.sure_dk < az && <div className="tq-not">Molayı en erken {az}. dakikada bitirebilirsin — çıkış ya da kasa devri için yine okutabilirsin.</div>}
+        <QrOkut yazi={m.sure_dk < az ? 'QR okut' : 'Molayı bitirmek için QR okut'} />   {/* Fable L6: erken çıkış / devir yolu kapanmasın; 45 dk kuralı sunucuda */}
       </div>
     );
   }
@@ -687,8 +780,7 @@ function SimdiKart({ ben, simdi }) {
             💵 {ben.devir.rol === 'devralan' ? `${ben.devir.devreden || 'Arkadaşın'} kasayı sana devrediyor` : 'Kasa devrin sürüyor'} — paneldeki devir QR'ını okut
           </div>
         )}
-        <QrIpucu yazi={m ? 'Çıkış için paneldeki QR\'ı okut' : 'Mola için paneldeki QR\'ı okut'} ana />
-        {!m && <QrIpucu yazi="Çıkış: aynı QR" />}
+        <QrOkut yazi={m ? 'Çıkış için QR okut' : 'Mola / çıkış için QR okut'} />
         <YemekBilgi ben={ben} />
       </div>
     );
@@ -711,7 +803,7 @@ function SimdiKart({ ben, simdi }) {
     <div className="tq-kart">
       <b style={{ fontSize: 26, fontFamily: "'Fraunces', serif" }}>Merhaba {ilkAd(ben.kisi)} ☀️</b>
       <div className="tq-not">Bugün henüz giriş yapmadın.</div>
-      <QrIpucu yazi="Giriş için paneldeki QR'ı okut" ana />
+      <QrOkut yazi="Giriş için QR okut" />
       <YemekBilgi ben={ben} />
     </div>
   );
@@ -1045,7 +1137,7 @@ function TanimliDegil() {
         <b style={{ fontSize: 20 }}>Bu telefon tanımlı değil</b>
         {kap
           ? <div className="tq-not">Bu simge ayrı bir kap, telefon bağını görmüyor. Simgeyi sil; giriş / çıkış için paneldeki QR'ı kamerayla okut (Safari'de açılır, bağ orada). Ana ekrana yeniden eklersen <b>"Web Uygulaması olarak aç" seçeneğini KAPAT</b>.</div>
-          : <div className="tq-not">Merkezden bağlantı linki iste; link bu telefonda açılınca bağlanır.</div>}
+          : <div className="tq-not">Belki telefonu başka bir tarayıcıda bağladın — o tarayıcıyı açıp QR'ı oradan okut. Bağlamadıysan merkezden bağlantı linki iste; link bu telefonda açılınca bağlanır.</div>}
       </div>
     </>
   );
