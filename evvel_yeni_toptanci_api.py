@@ -1077,3 +1077,36 @@ def urun_fiyat_gir(body: FiyatBody, x_evvel_oturum: Optional[str] = Header(defau
 
 # 🧩 Bekleyen işler kayıt defterine (Kasa bu modülü tanımaz; modül kapanınca satırları da kalkar)
 bekleyen_is_kaydet("toptanci", lambda cur, b: toptanci_isleri(cur))
+
+
+def kesim_dondur(cur, yazan: str, ay: str) -> dict:
+    """✂️ 1 KASIM SON AKTARIM — Toptancı açılış bakiyesi KONTROLÜ (Fable R1 + L4b A, 28 Eki). Sahip kararı: eski açık kayıtlar
+    TAŞINMAZ, açılış bakiyesi Tanımlar › Toptancılar'da ELLE girilir. Bu adım hiçbir şey YAZMAZ, EŞLEMEZ, ÖNERMEZ: eski sistemin
+    açık vadeli alımları (tedarikçi METNİ başına, eski kasa_service hesabıyla ödenen düşülmüş) ile aktif toptancıların girilmiş
+    açılış bakiyesi yan yana döner; sahip bakar, kendi girer. Gerçek koşu = "kontrol edildi" izi (kesim_son:toptanci, o anki
+    açılışların anlık görüntüsü). Eski okuma yalnız burada, savepoint içinde; kesim yayınında silinir."""
+    eski = {}
+    if _var(cur, "vadeli_alimlar"):
+        try:
+            with savepoint(cur, "sp_ey_top_kesim"):
+                from kasa_service import vadeli_kasadan_odenen_toplam   # eski sistemin KENDİ hesabı (önce var mı)
+                cur.execute("""SELECT id, COALESCE(NULLIF(TRIM(tedarikci), ''), '(tedarikçisiz)') AS ted, tutar
+                                 FROM vadeli_alimlar WHERE durum = 'bekliyor'""")
+                for r in [dict(x) for x in cur.fetchall() or []]:
+                    k = _kurus(r["tutar"] or 0) - _kurus(vadeli_kasadan_odenen_toplam(cur, r["id"]))
+                    if k > 0:
+                        eski[r["ted"]] = eski.get(r["ted"], 0) + k
+        except Exception:  # noqa: BLE001 — eski tablo okunamazsa adım yine çalışır (yalnız yeni liste)
+            log.warning("toptancı son aktarım: eski açık okunamadı", exc_info=True)
+            eski = None   # Fable L6: "0 ₺" yazıp "eski borç yok" sandırmasın
+    from evvel_yeni_tanim_api import tanim_listesi   # Tanımlar'ın kapısı (F#32)
+    tlar = sorted((t for t in tanim_listesi(cur, "ey_toptanci", ("ad", "acilis_bakiye", "aktif")) if t.get("aktif")), key=lambda t: __import__("evvel_yeni_cekirdek").tr_sira(t["ad"]))   # Fable L6: Türkçe alfabe
+    sifir = [t["ad"] for t in tlar if not int(t.get("acilis_bakiye") or 0)]
+    return {"eski_açık_(kontrol_için)": ("okunamadı — eski ekrandan kontrol et" if eski is None
+                                         else {a: _tl_tr(k) for a, k in sorted(eski.items(), key=lambda x: -x[1])} or None),
+            "eski_toplam": _tl_tr(sum(eski.values())) if eski else None,
+            "açılış_bakiyesi": {t["ad"]: _tl_tr(int(t.get("acilis_bakiye") or 0)) + (" ⚠ girilmemiş" if not int(t.get("acilis_bakiye") or 0) else "")
+                                for t in tlar} or None,
+            "açılışı_girilmemiş": len(sifir),
+            "uyari": (f"{len(sifir)} toptancının açılış bakiyesi 0 — gerçekten borç yoksa geç; varsa Tanımlar › Toptancılar'dan gir"
+                      if sifir else None)}
