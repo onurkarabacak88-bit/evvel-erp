@@ -886,7 +886,7 @@ async def ben(request: Request, sube: Optional[str] = None, qr: Optional[str] = 
     return await _telefon(request, fn)
 
 
-def _qr_islem(cur, c, p, v, islem: str) -> tuple:
+def _qr_islem(cur, c, p, v, islem: str, konumsuz_serbest: bool = False) -> tuple:
     sube = str(v.get("sube") or "")
     s_ = tanim_oku(cur, "ey_sube", sube, ("aktif",)) if sube else None
     if not s_ or not s_["aktif"]:
@@ -894,7 +894,12 @@ def _qr_islem(cur, c, p, v, islem: str) -> tuple:
     d = qr_dogrula(cur, sube, str(v.get("qr") or ""))
     if d is None:
         raise HTTPException(409, "QR süresi doldu — tekrar okut")
-    k = konum_kontrol(cur, sube, p, v.get("lat"), v.get("lng"))
+    if konumsuz_serbest and (v.get("lat") is None or v.get("lng") is None) and konum_gerekli(cur, sube, p):
+        # IS 5q · SAHİP KARARI 28 Eki ("olur" — Opus + Fable önerisi): konum ALINAMADIĞINDA çıkış serbest, 'qr_konumsuz' işaretli
+        # (merkez Yoklama'da görür). Konum ölçülüp UZAK çıkarsa ret aynen (konum_kontrol). Yalnız çıkış — giriş / mola / devir konum ister.
+        k = {"mesafe_m": None, "muaf": False, "konumsuz": True}
+    else:
+        k = konum_kontrol(cur, sube, p, v.get("lat"), v.get("lng"))
     cur.execute("""INSERT INTO ey_qr_kullanim (sube_id, dilim, personel_id, islem) VALUES (%s,%s,%s,%s)
                    ON CONFLICT DO NOTHING RETURNING sube_id""", (sube, d, p["id"], islem))
     if not cur.fetchone():
@@ -1018,17 +1023,18 @@ async def cikis(request: Request):
             if (p["id"] == dr.get("devreden_id") and dr.get("devreden_ts")) or (p["id"] == dr.get("devralan_id") and dr.get("devralan_ts")):
                 raise HTTPException(409, "Sayımın gönderildi — karşı taraf sayınca devir biter, çıkışın kendiliğinden yazılır")
             raise HTTPException(409, "Kasa devri sürüyor — önce sayımını gönder; devir bitince çıkışın kendiliğinden yazılır")
-        sube, k = _qr_islem(cur, c, p, v, "cikis")
+        sube, k = _qr_islem(cur, c, p, v, "cikis", konumsuz_serbest=True)
         if dict(a)["sube_id"] != sube:
             raise HTTPException(409, "Girişin başka şubede — o şubenin QR'ını okut")
-        cikis_yaz(cur, p["id"], "qr", mesafe=k["mesafe_m"], cihaz_id=c["cihaz_id"], istek_id=ist)
-        return {"ok": True, "mesaj": f"Çıkış kaydedildi · {_saat(datetime.now(timezone.utc))}. İyi günler."}
+        cikis_yaz(cur, p["id"], "qr_konumsuz" if k.get("konumsuz") else "qr", mesafe=k["mesafe_m"], cihaz_id=c["cihaz_id"], istek_id=ist)
+        return {"ok": True, "mesaj": f"Çıkış kaydedildi · {_saat(datetime.now(timezone.utc))}. "
+                + ("Konum alınamadı — merkeze 'konumsuz çıkış' diye bildirildi. " if k.get("konumsuz") else "") + "İyi günler."}
     return await _telefon(request, fn)
 
 
 # ─────────────────────────── MERKEZ: okuma + düzeltme ───────────────────────────
 @router.get("/gunler")
-def gunler(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = False,
+def gunler(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = False, konumsuz: bool = False,
            x_evvel_oturum: Optional[str] = Header(default=None)):
     """acik=1: iş günü geçmiş, çıkışı yazılmamış TÜM kayıtlar (Bekleyen işler ile aynı ölçüt)."""
     yoklama_hazirla()
@@ -1041,6 +1047,9 @@ def gunler(bas: Optional[str] = None, son: Optional[str] = None, acik: bool = Fa
             cur.execute("""SELECT y.* FROM ey_yoklama y WHERE y.is_gunu < %s
                              AND (y.cikis_ts IS NULL OR (y.cikis_tur = 'gece_otomatik' AND y.is_gunu >= %s))
                             ORDER BY y.is_gunu, y.giris_ts""", (is_gunu(), is_gunu() - timedelta(days=14)))
+        elif konumsuz:   # IS 5q: son 14 günün konumsuz çıkışları — bilgi (karar gerektirmez, Bekleyen işlere düşmez)
+            cur.execute("""SELECT y.* FROM ey_yoklama y WHERE y.cikis_tur = 'qr_konumsuz' AND y.is_gunu >= %s
+                            ORDER BY y.is_gunu DESC, y.cikis_ts DESC""", (is_gunu() - timedelta(days=14),))
         elif bas and son:
             cur.execute("SELECT y.* FROM ey_yoklama y WHERE y.is_gunu BETWEEN %s AND %s ORDER BY y.is_gunu, y.giris_ts", (bas, son))
         else:

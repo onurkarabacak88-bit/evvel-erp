@@ -242,7 +242,8 @@ function QrIslem({ sube, jeton }) {
   const devirVar = !!devir?.dv && qrOk;
   const islemVar = !!ana || cikisVar || devirVar;
   const konumHazir = konumHazirMi(ben, konum);
-  const konumKarti = konumKartiVar(ben, konum, isHata?.metin);
+  // Fable L6-103: yalnız ÇIKIŞ kaldıysa büyük 'konum gerekiyor' kartı açık çıkış düğmesiyle çelişir → küçük satır (IS 5q konumsuz çıkış)
+  const konumKarti = konumKartiVar(ben, konum, isHata?.metin) && !(cikisVar && !ana && !devirVar);
   // islem: giris | cikis | mola-baslat | mola-bitir (devir v2 kendi sayfasında — ?dv=)
   const yap = async (islem) => {
     if (!islem || mesgul) return;
@@ -309,9 +310,12 @@ function QrIslem({ sube, jeton }) {
               </button>
             )}
             {cikisVar && (
-              <button className={'tq-btn ' + (ana || devirVar ? 'tq-kucuk' : 'tq-ana')} disabled={mesgul || !konumHazir} onClick={() => yap('cikis')}>
+              <button className={'tq-btn ' + (ana || devirVar ? 'tq-kucuk' : 'tq-ana')} disabled={mesgul || !(konumHazir || konum.durum === 'hata')} onClick={() => yap('cikis')}>
                 {dugmeYazi('cikis')}
               </button>
+            )}
+            {cikisVar && !konumHazir && konum.durum === 'hata' && (   /* IS 5q sahip kararı: konum alınamazsa çıkış yine yapılır, merkeze işaretli düşer */
+              <div className="tq-silik">Konum alınamazsa çıkış yine kaydedilir — merkeze "konumsuz çıkış" diye bildirilir.</div>
             )}
             {!islemVar && !ben.acik && qrOk && <div className="tq-silik">{ben.gun_kapali ? "Bu şubenin günü kapandı — yeni iş günü 02:00'de başlar." : 'Bu QR ile yapılacak işlem yok.'}</div>}{/* Q-1 */}
           </>)}

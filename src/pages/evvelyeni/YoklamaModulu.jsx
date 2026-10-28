@@ -33,6 +33,7 @@ function cihazDurum(c) {
 export default function YoklamaModulu({ onToast }) {
   const [v, setV] = useState(null);
   const [acik, setAcik] = useState(null);        // çıkışsız kayıtlar (son 14 gün)
+  const [konumsuz, setKonumsuz] = useState([]);   // IS 5q: konumsuz çıkışlar (son 14 gün) — bilgi
   const [hata, setHata] = useState('');
   const [link, setLink] = useState(null);         // { ad, url, mesaj } — BİR KEZ gösterilir
   const [mesgul, setMesgul] = useState({});
@@ -43,6 +44,7 @@ export default function YoklamaModulu({ onToast }) {
     api('/evvel-yeni/yoklama/gunler?acik=1')   // Codex: sınırsız + sunucunun iş günü ölçütü (Bekleyen işler ile aynı)
       .then((d) => setAcik(d?.satirlar || []))
       .catch(() => setAcik([]));
+    api('/evvel-yeni/yoklama/gunler?konumsuz=1').then((d) => setKonumsuz(d?.satirlar || [])).catch(() => setKonumsuz([]));
   }, [bugun]);
   useEffect(() => {   // sahip: cihaz bağlanınca merkez sayfası yenilemeden görsün — 10 sn'de bir (sekme açıkken), öne gelince hemen
     yukle();
@@ -155,6 +157,17 @@ export default function YoklamaModulu({ onToast }) {
           );
         })}
       </div>
+      {konumsuz.length > 0 && (   /* IS 5q · sahip 28 Eki: konum alınamadığında çıkış serbest — işaretli, merkez görür (karar gerektirmez) */
+        <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 2 }}>
+          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>📍 Konumsuz çıkışlar (son 14 gün) — telefon konum veremedi, çıkış yine kaydedildi</div>
+          {konumsuz.map((s) => (
+            <div key={s.id} style={satir}>
+              <span style={{ width: 90, color: R.not }}>{s.gun.slice(8, 10)}.{s.gun.slice(5, 7)}</span>
+              <span style={{ flex: '1 1 160px' }}><b>{s.ad}</b> · {s.sube || '—'} · giriş {s.giris || '—'} · çıkış {s.cikis || '—'}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
