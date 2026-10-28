@@ -78,6 +78,11 @@ def yoklama_hazirla() -> None:
             id TEXT PRIMARY KEY, tur TEXT NOT NULL, personel_id TEXT, sube_id TEXT, acik_anahtar JSONB, jeton_hash TEXT,
             guc TEXT, etiket TEXT, durum TEXT NOT NULL DEFAULT 'davet', davet_hash TEXT UNIQUE, davet_son TIMESTAMPTZ,
             olusturma TIMESTAMPTZ NOT NULL DEFAULT NOW(), son_kullanim TIMESTAMPTZ, olusturan TEXT, iptal_zaman TIMESTAMPTZ)""")
+        cur.execute("ALTER TABLE ey_cihaz ADD COLUMN IF NOT EXISTS onceki_cihaz_id TEXT")   # IS 5bs: aynı kişi aynı telefonu yeniledi
+        # IS 5bs (sahip 28 Eki · L4b Fable): başka kişiye / türe bağlı tarayıcıda açılan link reddedilir — red izi (merkez bilgi listesi)
+        cur.execute("""CREATE TABLE IF NOT EXISTS ey_cihaz_red (
+            id BIGSERIAL PRIMARY KEY, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), davet_cihaz_id TEXT, davet_tur TEXT,
+            davet_personel_id TEXT, davet_sube_id TEXT, bagli_cihaz_id TEXT, bagli_tur TEXT, bagli_personel_id TEXT, bagli_sube_id TEXT)""")
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_cihaz_nonce (
             cihaz_id TEXT NOT NULL, nonce TEXT NOT NULL, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (cihaz_id, nonce))""")
         cur.execute("""CREATE TABLE IF NOT EXISTS ey_qr_kullanim (
@@ -646,11 +651,36 @@ class BaglaBody(BaseModel):
     etiket: Optional[str] = None
 
 
+def _bagli_cihaz(cur, basliklar, yol: str, govde: bytes) -> Optional[dict]:
+    """IS 5bs: bu tarayıcının mevcut bağı (imzalı / jetonlu başlıkla). Başlık yok, imza geçersiz, cihaz iptal → None (engel yok:
+    eski kayıt zaten ölü). Çözüm kendi savepoint'inde — hata bağlamayı bozmaz."""
+    if not (basliklar.get("x-evvel-cihaz") or "").strip():
+        return None
+    try:
+        with savepoint(cur, "sp_ey_bagli_cihaz"):
+            return cihaz_coz(cur, basliklar, "POST", yol, govde)
+    except HTTPException:
+        return None
+
+
 @router.post("/cihaz-bagla")
-def cihaz_bagla(b: BaglaBody):
-    """Telefon / tablet linki açınca: davet tek kullanım. Telefon hemen aktif (K9 uzaktan olur); tablet merkez onayı bekler."""
+async def cihaz_bagla(request: Request):
+    """Telefon / tablet linki açınca: davet tek kullanım. Telefon hemen aktif (K9 uzaktan olur); tablet merkez onayı bekler.
+    IS 5bs (sahip 28 Eki "cihaz bağlıysa iptal edilene kadar başka linke bağlanması engelli mi?" · L4b Fable): tarayıcı AKTİF bir bağ
+    taşıyorsa (istemci mevcut anahtarıyla imzalar) ve bağ başka kişiye / şubeye ya da başka türe aitse davet 409 — davet harcanmaz, red
+    merkezde görünür. Aynı kişinin (aynı şubenin) yenilemesi serbest; eski kayıt iptal, yenisi onceki_cihaz_id taşır. Temiz tarayıcı serbest."""
     yoklama_hazirla()
+    govde = await request.body()
+    try:
+        b = BaglaBody(**(json.loads(govde) if govde else {}))
+    except (ValueError, TypeError):
+        raise HTTPException(400, "İstek okunamadı")
+    return await run_in_threadpool(_cihaz_bagla, b, request.headers, request.url.path, govde)
+
+
+def _cihaz_bagla(b: BaglaBody, basliklar, yol: str, govde: bytes):
     h = hashlib.sha256((b.davet or "").encode()).hexdigest()
+    red = None
     with db() as (conn, cur):
         cur.execute("SELECT personel_id, sube_id, tur FROM ey_cihaz WHERE davet_hash=%s", (h,))
         _h = cur.fetchone()
@@ -667,7 +697,30 @@ def cihaz_bagla(b: BaglaBody):
             raise HTTPException(409, "Bu bağlantı zaten kullanıldı — merkezden yeni link iste")
         if c["davet_son"] and c["davet_son"] < datetime.now(c["davet_son"].tzinfo):
             raise HTTPException(410, "Bağlantının süresi doldu — merkezden yeni link iste")
-        if b.acik_anahtar:
+        bagli = _bagli_cihaz(cur, basliklar, yol, govde)
+        ayni = bool(bagli) and bagli["tur"] == c["tur"] and (
+            bagli["personel_id"] == c["personel_id"] if c["tur"] == "telefon" else bagli["sube_id"] == c["sube_id"])
+        if bagli and not ayni:
+            cur.execute("""INSERT INTO ey_cihaz_red (davet_cihaz_id, davet_tur, davet_personel_id, davet_sube_id,
+                                                     bagli_cihaz_id, bagli_tur, bagli_personel_id, bagli_sube_id)
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (c["id"], c["tur"], c["personel_id"], c["sube_id"], bagli["cihaz_id"], bagli["tur"], bagli["personel_id"], bagli["sube_id"]))
+            if secrets.randbelow(20) == 0:   # Fable L6-108: red izi sınırsız büyümesin (ekran 14 gün okur)
+                cur.execute("DELETE FROM ey_cihaz_red WHERE zaman < NOW() - INTERVAL '90 days'")
+            bad = ((tanim_oku(cur, "ey_personel", bagli["personel_id"], ("ad",)) if bagli["personel_id"]
+                    else tanim_oku(cur, "ey_sube", bagli["sube_id"], ("ad",))) or {})
+            bad = dict(bad).get("ad") or "başka biri"
+            if bagli["tur"] == "telefon" and c["tur"] == "telefon":
+                red = f"Bu telefon {bad} adına bağlı — önce merkez Personel › Telefonlar'dan bu bağı iptal etsin"
+            elif bagli["tur"] == "telefon":
+                red = f"Bu tarayıcı {bad} adına telefon olarak bağlı — şube bilgisayarı ayrı bir tarayıcıda (ya da profilde) bağlanır"
+            elif c["tur"] == "telefon":
+                red = f"Bu tarayıcı {bad} şube paneli — kişisel telefon buradan bağlanmaz"
+            else:
+                red = f"Bu bilgisayar {bad} paneli olarak bağlı — önce merkez bu bağı iptal etsin"
+        if red:
+            pass   # red izi yazıldı; davet harcanmaz — işlem kapanınca 409
+        elif b.acik_anahtar:
             j = b.acik_anahtar
             if j.get("kty") != "EC" or j.get("crv") != "P-256" or not j.get("x") or not j.get("y") or j.get("d"):
                 raise HTTPException(400, "Anahtar geçersiz")
@@ -676,10 +729,18 @@ def cihaz_bagla(b: BaglaBody):
             guc, anahtar, jh = "jeton", None, hashlib.sha256(b.jeton.encode()).hexdigest()
         else:
             raise HTTPException(400, "Cihaz anahtarı gerekli")
+    if red:
+        raise HTTPException(409, red)
+    with db() as (conn, cur):
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))",
+                    ("ey_cihaz_hedef:" + (f"p:{c['personel_id']}" if c["tur"] == "telefon" else f"s:{c['sube_id']}"),))
+        cur.execute("SELECT durum FROM ey_cihaz WHERE id=%s FOR UPDATE", (c["id"],))
+        if (dict(cur.fetchone() or {}).get("durum")) != "davet":
+            raise HTTPException(409, "Bu bağlantı zaten kullanıldı — merkezden yeni link iste")
         durum = "aktif" if c["tur"] == "telefon" else "onay"
         cur.execute("""UPDATE ey_cihaz SET acik_anahtar=%s::jsonb, jeton_hash=%s, guc=%s, durum=%s, davet_hash=NULL,
-                              etiket=COALESCE(etiket, %s) WHERE id=%s""",
-                    (anahtar, jh, guc, durum, (b.etiket or "")[:60] or None, c["id"]))
+                              etiket=COALESCE(etiket, %s), onceki_cihaz_id=%s WHERE id=%s""",
+                    (anahtar, jh, guc, durum, (b.etiket or "")[:60] or None, bagli["cihaz_id"] if bagli else None, c["id"]))
         if c["tur"] == "telefon" and c["personel_id"]:   # sahip: yeni telefon devreye girince eskisi iptal
             cur.execute("""UPDATE ey_cihaz SET durum='iptal', iptal_zaman=NOW(), davet_hash=NULL
                            WHERE tur='telefon' AND personel_id=%s AND id<>%s AND durum IN ('aktif','onay','davet')""", (c["personel_id"], c["id"]))
@@ -735,19 +796,29 @@ def cihazlar(x_evvel_oturum: Optional[str] = Header(default=None)):
                for p in tanim_listesi(cur, "ey_personel", ("ad", "sube_id", "konum_muaf", "gorev", "cikis"), aktif=True)]
         from evvel_yeni_cekirdek import tr_sira
         per.sort(key=lambda p: (bool(p["ayrildi"]), p["sube_ad"] is None, tr_sira(p["sube_ad"]), tr_sira(p["ad"])))   # Türkçe sıra (Fable B6) · ayrılanlar en altta
-        cur.execute("""SELECT id, tur, personel_id, sube_id, guc, etiket, durum, davet_son, olusturma, son_kullanim
+        cur.execute("""SELECT id, tur, personel_id, sube_id, guc, etiket, durum, davet_son, olusturma, son_kullanim, onceki_cihaz_id
                          FROM ey_cihaz WHERE durum<>'iptal' ORDER BY olusturma DESC""")
         cz = [dict(r) for r in cur.fetchall() or []]
         subeler = [{"id": s["id"], "ad": s["ad"], "konum": s["lat"] is not None}
                    for s in tanim_listesi(cur, "ey_sube", ("ad", "lat"), aktif=True)]
+        # IS 5bs: reddedilen bağlanma denemeleri (son 14 gün) — bilgi (karar gerektirmez, Bekleyen işlere düşmez)
+        cur.execute("SELECT * FROM ey_cihaz_red WHERE zaman >= NOW() - INTERVAL '14 days' ORDER BY zaman DESC LIMIT 50")
+        _rr = [dict(r) for r in cur.fetchall() or []]
+        _pad = adlar(cur, "ey_personel", {x[k] for x in _rr for k in ("davet_personel_id", "bagli_personel_id") if x[k]})
+        def _kim(pid, sid, tur):
+            return (_pad.get(str(pid)) or "?") + " · telefon" if tur == "telefon" else (sad.get(str(sid)) or "?") + " · şube paneli"
+        red = [{"id": x["id"], "zaman": str(x["zaman"])[:16], "link": _kim(x["davet_personel_id"], x["davet_sube_id"], x["davet_tur"]),
+                "bagli": _kim(x["bagli_personel_id"], x["bagli_sube_id"], x["bagli_tur"])} for x in _rr]
     def _c(x):
         return {"id": x["id"], "guc": x["guc"], "etiket": x["etiket"], "durum": x["durum"],
+                "yenilendi": bool(x.get("onceki_cihaz_id")) and x["olusturma"] > datetime.now(x["olusturma"].tzinfo) - timedelta(days=14),   # Fable L6-108: çip kalıcı olmasın
                 "son_kullanim": str(x["son_kullanim"])[:16] if x["son_kullanim"] else None,
                 "davet_son": str(x["davet_son"])[:16] if x["davet_son"] else None,
                 # B-1 (F1.1): süre dolumu SUNUCUDA (davet_son saat dilimsiz metin gidiyor; telefonun "süresi doldu" kontrolüyle aynı kural)
                 "davet_doldu": bool(x["durum"] == "davet" and x["davet_son"] and x["davet_son"] < datetime.now(x["davet_son"].tzinfo))}
     return {"personel": [{**p, "cihazlar": [_c(x) for x in cz if x["personel_id"] == p["id"]]} for p in per],
-            "subeler": [{**s, "tabletler": [_c(x) for x in cz if x["sube_id"] == s["id"]]} for s in subeler]}
+            "subeler": [{**s, "tabletler": [_c(x) for x in cz if x["sube_id"] == s["id"]]} for s in subeler],
+            "redler": red}
 
 
 class IsaretBody(BaseModel):

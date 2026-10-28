@@ -2,7 +2,8 @@
 // PIN yok. Cihaz bir kez bağlanır: WebCrypto ECDSA P-256 anahtar ÇIKARILAMAZ (extractable:false), IndexedDB'de CryptoKey olarak
 // durur — localStorage'a özel anahtar YAZILMAZ (kopyalama saldırısı kapanır). Her istek: zaman + tek kullanımlık nonce + imza.
 // Geri düşüş (crypto.subtle / IndexedDB yoksa): ≥32 karakter rastgele jeton → `X-Evvel-Cihaz-Jeton` (merkez "zayıf bağ" görür).
-// Telefon ve tablet AYNI tarayıcıda olabilir → her tür kendi anahtarı / kimliği (tur = 'telefon' | 'tablet').
+// Her tür kendi anahtarı / kimliği (tur = 'telefon' | 'tablet'). IS 5bs (sahip 28 Eki · L4b Fable): bir tarayıcı = tek kimlik —
+// aktif bağ taşıyan tarayıcı başka kişinin / şubenin ya da başka türün linkiyle bağlanamaz (sunucu 409; bağlama isteği mevcut bağla imzalanır).
 const BASE = import.meta.env.VITE_API_URL || '';
 const DB_AD = 'evvel_cihaz';
 const DEPO = 'anahtar';
@@ -85,7 +86,12 @@ export async function cihazBagla(davet, etiket) {
   let jeton = '';
   if (anahtar && kayitli) govde.acik_anahtar = anahtar.acik;
   else { jeton = rastgele(24); govde.jeton = jeton; }   // zayıf bağ (48 karakter)
-  const r = await fetch(`${BASE}/api/evvel-yeni/yoklama/cihaz-bagla`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(govde) });
+  const varTur = cihazId('telefon') ? 'telefon' : cihazId('tablet') ? 'tablet' : '';   // IS 5bs: mevcut bağ varsa onunla imzala
+  let r = null;
+  if (varTur) {
+    try { r = await imzaliFetch(varTur, 'POST', '/api/evvel-yeni/yoklama/cihaz-bagla', govde); } catch (e) { if (!e.cihaz_yok) throw e; }
+  }
+  if (!r) r = await fetch(`${BASE}/api/evvel-yeni/yoklama/cihaz-bagla`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(govde) });
   const d = await r.json().catch(() => ({}));
   if (!r.ok) { const e = new Error(_mesaj(d.detail) || 'Bağlanamadı'); e.status = r.status; throw e; }
   const tur = d.tur || 'telefon';

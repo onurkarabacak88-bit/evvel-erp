@@ -24,7 +24,7 @@ const davetDoldu = (x) => x?.davet_doldu === true;   // sunucu hesaplar (saat di
 function cihazDurum(c) {
   if (!c.length) return <Cip tur="kirmizi">yok</Cip>;
   const aktif = c.find((x) => x.durum === 'aktif');
-  if (aktif) return <><Cip tur="yesil">bağlı</Cip>{aktif.guc === 'jeton' && <Cip tur="sari">⚠️ zayıf bağ</Cip>}</>;
+  if (aktif) return <><Cip tur="yesil">bağlı</Cip>{aktif.guc === 'jeton' && <Cip tur="sari">⚠️ zayıf bağ</Cip>}{aktif.yenilendi && <Cip tur="gri">aynı telefon yenilendi</Cip>}</>;
   if (c.some((x) => x.durum === 'onay')) return <Cip tur="sari">onay bekliyor</Cip>;
   if (davetDoldu(c[0])) return <Cip tur="kirmizi">link süresi doldu — yeni link üret</Cip>;
   return <Cip tur="sari">link bekliyor{c[0].davet_son ? ` · son ${ggaaSaat(c[0].davet_son)}` : ''}</Cip>;
@@ -157,6 +157,17 @@ export default function YoklamaModulu({ onToast }) {
           );
         })}
       </div>
+      {(v?.redler || []).length > 0 && (   /* IS 5bs · sahip 28 Eki: bağlı tarayıcı başka linkle bağlanamaz — red bilgisi (karar gerektirmez) */
+        <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 2 }}>
+          <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>🔒 Reddedilen bağlanma denemeleri (son 14 gün) — link, başka birine bağlı tarayıcıda açıldı</div>
+          {v.redler.map((s) => (
+            <div key={s.id} style={satir}>
+              <span style={{ width: 120, color: R.not }}>{ggaaSaat(s.zaman)}</span>
+              <span style={{ flex: '1 1 200px' }}><b>{s.link}</b> linki · <b>{s.bagli}</b> olarak bağlı tarayıcıda açıldı → reddedildi</span>
+            </div>
+          ))}
+        </div>
+      )}
       {konumsuz.length > 0 && (   /* IS 5q · sahip 28 Eki: konum alınamadığında çıkış serbest — işaretli, merkez görür (karar gerektirmez) */
         <div style={{ ...kart, padding: '8px 14px', display: 'grid', gap: 2 }}>
           <div style={{ fontSize: 12, color: R.metin2, fontWeight: 700, padding: '4px 0' }}>📍 Konumsuz çıkışlar (son 14 gün) — telefon konum veremedi, çıkış yine kaydedildi</div>

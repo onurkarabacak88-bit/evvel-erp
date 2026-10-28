@@ -184,7 +184,7 @@ function Bagla({ davet }) {
         <div className="tq-kart">
           <b style={{ fontSize: 19 }}>Bu cihaz bağlanacak</b>
           <div className="tq-not">Merkezin gönderdiği bağlantı tek kullanımlık. Kişisel telefon bağlantısıysa bu telefon senin adına giriş / çıkış yapar; şube bilgisayarı bağlantısıysa şube paneli QR gösterir — şifre, PIN yok.</div>
-          {varTel && <div className="tq-silik">Bu tarayıcıda zaten bağlı bir telefon kaydı var; yeniden bağlarsan eski bağ bu telefonda biter.</div>}
+          {varTel && <div className="tq-silik">Bu tarayıcıda bağlı bir telefon kaydı var. Link aynı kişininse yenilenir; başka birinin linkiyse bağlanmaz — önce merkez eski bağı iptal etmeli.</div>}
           {hata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{hata}</div>}
           <button className="tq-btn tq-ana" disabled={mesgul} onClick={bagla}>{mesgul ? 'Bağlanıyor…' : '📱 BU CİHAZI BAĞLA'}</button>
           <div className="tq-silik">iPhone: bu linki Safari'de aç ve burada bağla. Ana ekrana eklerken <b>"Web Uygulaması olarak aç" seçeneğini KAPAT</b> — açık kalırsa simge ayrı bir kap olur, bağı görmez ("tanımlı değil" der).</div>
