@@ -197,8 +197,9 @@ def senkron(cur, son_aktarim: bool = False) -> dict:
     # 1) GİRİŞ — Ürün Teslim Al (toptancıdan)
     try:
         with savepoint(cur, "sp_dp_giris"):
+            _ust = __import__("evvel_yeni_cekirdek").panel_baslangic(cur)   # 🟡 E2: eski kayıt yalnız yeni panel başlangıcından önce
             cur.execute("""SELECT id, sube_id::text AS sid, tarih, olay_ts, aciklama, ref_event_id, etiket FROM operasyon_defter
-                            WHERE etiket IN ('URUN_SEVK','URUN_SEVK_IPTAL') AND tarih >= %s ORDER BY olay_ts""", (BASLANGIC,))
+                            WHERE etiket IN ('URUN_SEVK','URUN_SEVK_IPTAL') AND tarih >= %s AND tarih < %s ORDER BY olay_ts""", (BASLANGIC, _ust))
             rs = [dict(x) for x in cur.fetchall() or []]
             rows, iptaller, okunamayan = [], [], 0
             for r in rs:
@@ -239,7 +240,9 @@ def senkron(cur, son_aktarim: bool = False) -> dict:
         with savepoint(cur, "sp_dp_yolda"):
             cur.execute("""SELECT y.id, y.sube_id::text AS hedef, y.kalem_kodu, y.kalem_adi, y.sevk_adet, y.sevk_ts, y.kabul_ts, y.kabul_adet, y.durum,
                                   COALESCE(y.sevk_kaynak_depo_sube_id, %s) AS kaynak
-                             FROM stok_yolda y WHERE y.sevk_ts >= %s ORDER BY y.sevk_ts""", (depo, BASLANGIC))
+                             FROM stok_yolda y WHERE y.sevk_ts >= %s
+                              AND (y.sevk_ts AT TIME ZONE 'Europe/Istanbul') < (%s::date + TIME '02:00')
+                            ORDER BY y.sevk_ts""", (depo, BASLANGIC, __import__("evvel_yeni_cekirdek").panel_baslangic(cur)))   # 🟡 E2: iş günü 02:00'de döner
             yrs = [dict(x) for x in cur.fetchall() or []]
             n = 0
             for r in yrs:
@@ -280,8 +283,8 @@ def senkron(cur, son_aktarim: bool = False) -> dict:
         with savepoint(cur, "sp_dp_ac"):
             from evvel_yeni_kopru import urun_ac_parcala as _urun_ac_parcala   # Fable: depo artık Gider'e bağlı değil
             cur.execute("""SELECT id, sube_id::text AS sid, tarih, olay_ts, aciklama, etiket FROM operasyon_defter
-                            WHERE etiket IN ('URUN_AC','URUN_KULLANIMA_AL') AND tarih >= %s
-                              AND NOT (etiket='URUN_AC' AND aciklama LIKE '%%[BİTTİ]%%')""", (BASLANGIC,))
+                            WHERE etiket IN ('URUN_AC','URUN_KULLANIMA_AL') AND tarih >= %s AND tarih < %s
+                              AND NOT (etiket='URUN_AC' AND aciklama LIKE '%%[BİTTİ]%%')""", (BASLANGIC, __import__("evvel_yeni_cekirdek").panel_baslangic(cur)))
             rows = []
             for r in [dict(x) for x in cur.fetchall() or []]:
                 for i, (u, ad, adet) in enumerate(_urun_ac_parcala(r["aciklama"])):
@@ -297,7 +300,7 @@ def senkron(cur, son_aktarim: bool = False) -> dict:
     try:
         with savepoint(cur, "sp_dp_fire"):
             cur.execute("""SELECT id, sube_id::text AS sid, tarih, olusturma, kalemler, sebep_label, personel_ad FROM sube_fire_bildirim
-                            WHERE tarih >= %s""", (BASLANGIC,))
+                            WHERE tarih >= %s AND tarih < %s""", (BASLANGIC, __import__("evvel_yeni_cekirdek").panel_baslangic(cur)))
             rows = []
             for r in [dict(x) for x in cur.fetchall() or []]:
                 kal = __import__("evvel_yeni_cekirdek").json_ac(r["kalemler"], [])

@@ -32,29 +32,42 @@ def kira_hazirla(cur) -> None:
     global _HAZIR
     if _HAZIR:
         return
-    from evvel_yeni_tanim_api import tanim_guncelle, tanim_hazirla
+    from evvel_yeni_tanim_api import tanim_hazirla
     tanim_hazirla(cur)
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_sube_kira (
         sube_id TEXT NOT NULL, gecerli_ay TEXT NOT NULL, tutar BIGINT NOT NULL,
         degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW(), PRIMARY KEY (sube_id, gecerli_ay))""")
     # kira kolonları (kira_artis_ayi / kira_odeme_gunu / kira_yok) Tanımlar'da tanımlı — tek şema sahibi (Dalga 3)
     try:
-        with savepoint(cur, "sp_ey_kira_es"):
-            cur.execute("""SELECT sube_id::text AS sid, tutar, odeme_gunu, baslangic_tarihi FROM sabit_giderler
-                            WHERE aktif AND sube_id IS NOT NULL AND (kategori ILIKE '%%kira%%' OR gider_adi ILIKE '%%kira%%')""")
-            for r in cur.fetchall() or []:
-                r = dict(r)
-                cur.execute("SELECT 1 FROM ey_sube_kira WHERE sube_id=%s", (r["sid"],))
-                if cur.fetchone():
-                    continue
-                ay = (r["baslangic_tarihi"] or date(2026, 1, 1)).strftime("%Y-%m")
-                cur.execute("INSERT INTO ey_sube_kira (sube_id, gecerli_ay, tutar, degistiren) VALUES (%s,%s,%s,'eski sistem kopyası') ON CONFLICT DO NOTHING",
-                            (r["sid"], ay, _kurus(r["tutar"])))
-                if r["odeme_gunu"] is not None:   # Tanımlar'ın kapısı (F#31 — ham UPDATE değil)
-                    tanim_guncelle(cur, "ey_sube", r["sid"], bos_ise={"kira_odeme_gunu": r["odeme_gunu"]})
+        _eski_kira_kopyala(cur)
     except Exception:  # noqa: BLE001
         pass
     _HAZIR = True
+
+
+def _eski_kira_kopyala(cur) -> int:
+    """Eski sabit_giderler kira satırını kirası TANIMSIZ şubeye bir kez kopyalar (var olana dokunmaz). Hata yükseltir (çağıran yutar / raporlar).
+    🟡 E2E E3 (28 Eki): yalnız ilk okumada çalışıyordu — son aktarım da açıkça çağırır, eski tablo kalkmadan önce."""
+    from evvel_yeni_tanim_api import tanim_guncelle, tanim_listesi
+    kira_yok = {str(s["id"]) for s in tanim_listesi(cur, "ey_sube", ("kira_yok",)) if s.get("kira_yok")}
+    n = 0
+    with savepoint(cur, "sp_ey_kira_es"):
+        cur.execute("""SELECT sube_id::text AS sid, tutar, odeme_gunu, baslangic_tarihi FROM sabit_giderler
+                        WHERE aktif AND sube_id IS NOT NULL AND (kategori ILIKE '%%kira%%' OR gider_adi ILIKE '%%kira%%')""")
+        for r in cur.fetchall() or []:
+            r = dict(r)
+            if r["sid"] in kira_yok:   # Fable L6: sahip "kira yok" dediyse eski satır kopyalanmaz
+                continue
+            cur.execute("SELECT 1 FROM ey_sube_kira WHERE sube_id=%s", (r["sid"],))
+            if cur.fetchone():
+                continue
+            ay = (r["baslangic_tarihi"] or date(2026, 1, 1)).strftime("%Y-%m")
+            cur.execute("INSERT INTO ey_sube_kira (sube_id, gecerli_ay, tutar, degistiren) VALUES (%s,%s,%s,'eski sistem kopyası') ON CONFLICT DO NOTHING",
+                        (r["sid"], ay, _kurus(r["tutar"])))
+            n += 1
+            if r["odeme_gunu"] is not None:   # Tanımlar'ın kapısı (F#31 — ham UPDATE değil)
+                tanim_guncelle(cur, "ey_sube", r["sid"], bos_ise={"kira_odeme_gunu": r["odeme_gunu"]})
+    return n
 
 
 def kira_tutari(cur, sube_id: str, ay: str) -> Optional[int]:
@@ -283,4 +296,11 @@ def kesim_dondur(cur, yazan: str, ay: str) -> dict:
     if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "odeme_plani"):   # eski okuyucu hatayı yutup {} döner — boş arşiv yazılmasın
         raise RuntimeError("eski odeme_plani okunamıyor — arşiv yazılmadı")
     n = __import__("evvel_yeni_cekirdek").arsiv_cift_yaz(cur, "kira", "eski_odenen", _eski_odenenler(cur, arsivden=False), yazan)
-    return {"sube_ay": n, "uyari": None if n else "0 satır — eski ödenen bulunamadı, kontrol et"}   # Fable: HTTP 200 ≠ yazıldı
+    kira_hazirla(cur)
+    kopya = _eski_kira_kopyala(cur) if __import__("evvel_yeni_cekirdek").tablo_var(cur, "sabit_giderler") else 0   # 🟡 E3: eski tablo kalkmadan
+    aktif = {s["id"]: s["ad"] for s in __import__("evvel_yeni_tanim_api").subeler(cur)}   # yalnız aktif şube (pasif gürültü yapmasın)
+    tanimsiz = [aktif[sid] for sid, x in kira_tanimlari(cur).items() if sid in aktif and x.get("kira") is None and not x.get("kira_yok")]
+    uyari = [] if n else ["0 satır — eski ödenen bulunamadı, kontrol et"]   # Fable: HTTP 200 ≠ yazıldı
+    if tanimsiz:
+        uyari.append(f"kirası tanımsız şube: {', '.join(tanimsiz)} — Tanımlar › Şubeler'den kira gir ya da 'kira yok' işaretle")
+    return {"sube_ay": n, "kira_tanimi_kopyalanan": kopya, "uyari": " · ".join(uyari) or None}

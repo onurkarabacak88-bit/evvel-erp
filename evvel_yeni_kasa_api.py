@@ -2260,16 +2260,17 @@ def _aktar(cur, kuru: bool, kim: str, son_aktarim: bool = False) -> dict:
             return bool(p_) and tarih is not None and (tarih if isinstance(tarih, date) else date.fromisoformat(str(tarih)[:10])) >= p_
 
         gunluk = {}
+        _ust = __import__("evvel_yeni_cekirdek").panel_baslangic(cur)   # 🟡 E2: eski kayıt yalnız yeni panel başlangıcından önce
         cur.execute("""SELECT sube_id, tarih, SUM(nakit) AS nakit, SUM(pos) AS pos, SUM(online) AS online
-                         FROM ciro WHERE tarih >= %s AND COALESCE(durum,'aktif')='aktif'
-                        GROUP BY sube_id, tarih""", (bas,))
+                         FROM ciro WHERE tarih >= %s AND tarih < %s AND COALESCE(durum,'aktif')='aktif'
+                        GROUP BY sube_id, tarih""", (bas, _ust))
         for r in cur.fetchall() or []:
             r = dict(r)
             if _pilot_mu(r["sube_id"], r["tarih"]):
                 continue
             gunluk[(str(r["sube_id"]), r["tarih"])] = (r["nakit"] or 0, (r["pos"] or 0, r["online"] or 0), "onaylandi", "ciro")
         cur.execute("""SELECT DISTINCT ON (sube_id, tarih) sube_id, tarih, nakit, pos, online, gonderen_ad FROM ciro_taslak
-                        WHERE tarih >= %s AND durum = 'bekliyor' ORDER BY sube_id, tarih, olusturma DESC""", (bas,))
+                        WHERE tarih >= %s AND tarih < %s AND durum = 'bekliyor' ORDER BY sube_id, tarih, olusturma DESC""", (bas, _ust))
         for r in cur.fetchall() or []:
             r = dict(r)
             if _pilot_mu(r["sube_id"], r["tarih"]):
@@ -2316,11 +2317,11 @@ def _aktar(cur, kuru: bool, kim: str, son_aktarim: bool = False) -> dict:
         try:
             with savepoint(cur, "sp_pi_teslim"):
                 cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim
-                                WHERE tarih >= %s AND COALESCE(durum,'aktif')='aktif' ORDER BY tarih, olusturma""", (bas,))
+                                WHERE tarih >= %s AND tarih < %s AND COALESCE(durum,'aktif')='aktif' ORDER BY tarih, olusturma""", (bas, _ust))
                 teslimler = [dict(r) for r in cur.fetchall() or []]
         except Exception:  # noqa: BLE001 — durum kolonu olmayan kurulum
             cur.execute("""SELECT id, sube_id, tarih, tutar, teslim_alan_ad, teslim_eden_ad FROM kasa_teslim
-                            WHERE tarih >= %s ORDER BY tarih, olusturma""", (bas,))
+                            WHERE tarih >= %s AND tarih < %s ORDER BY tarih, olusturma""", (bas, _ust))
             teslimler = [dict(r) for r in cur.fetchall() or []]
         teslimler = [x for x in teslimler if not _pilot_mu(x["sube_id"], x["tarih"])]
         yetim = _yetim_teslimler(cur, {"kasa_teslim:" + str(x["id"]) for x in teslimler}, bas)   # C-T1-05: panel yoluyla AYNI koruma
@@ -2560,9 +2561,9 @@ def _dukkan_giderleri_aktar(cur, C, kayit, kilit, bas, kuru, kim, sube_id=None) 
     try:
         with savepoint(cur, "sp_pi_dukkan_gider"):
             q = """SELECT id, tarih, tutar, sube, kategori, aciklama, durum, kaynak_tablo, kaynak_id, personel_id FROM anlik_giderler
-                    WHERE tarih >= %s AND sube IS NOT NULL
+                    WHERE tarih >= %s AND tarih < %s AND sube IS NOT NULL
                       AND LOWER(COALESCE(NULLIF(TRIM(odeme_yontemi), ''), 'nakit')) = 'nakit'"""
-            prm = [bas]
+            prm = [bas, __import__("evvel_yeni_cekirdek").panel_baslangic(cur)]   # 🟡 E2
             if sube_id:
                 q += " AND sube = %s"
                 prm.append(sube_id)
