@@ -54,7 +54,7 @@ MODULLER: List[dict] = [
     {"kod": "kart", "ad": "Kartlar", "ikon": "💳", "sektor": "genel", "gerekir": ["kasa", "odeme"], "aciklama": "kullanılabilir limit, son ödeme",
      "kesim": {"fn": "kesim_dondur", "sira": 50, "baslik": "Eski 'Öde' ekranında ödenmiş kart borçları dondurulur (kart takvimi)"}},
     {"kod": "toptanci", "ad": "Toptancılar", "ikon": "🚚", "sektor": "genel", "gerekir": ["kasa", "tanim", "urun"], "aciklama": "borç = açılış + alım − ödeme",
-     "kesim": {"fn": "kesim_dondur", "sira": 6, "baslik": "Toptancı açılış bakiyesi — kontrol (yazmaz): eski açık vadeli alımlar tedarikçi başına ↔ girilen açılış bakiyeleri; borç Tanımlar › Toptancılar'da elle"}},
+     "kesim": {"fn": "kesim_dondur", "sira": 6, "baslik": "Toptancı açılış bakiyesi — kontrol (yazmaz): eski cari bakiye ↔ girilen açılış (açılış = eski 31 Ekim borcu, Ekim teslimleri dahil); borç Tanımlar › Toptancılar'da elle"}},
     {"kod": "depo", "ad": "Depo", "ikon": "📦", "sektor": "genel", "gerekir": ["tanim", "urun"], "aciklama": "ürün nerede — tek hareket defteri · sevk et ⇄ depodan gelen",
      "gorevler": [{"ad": "depo_senkron", "fn": "otomatik_senkron_gorevi", "aralik_sn": 300,
                    "baslik": "Depo: eski panel kayıtlarını stok defterine aktar (1 Kasım'da kendiliğinden kapanır; sonu son aktarımda)"}],

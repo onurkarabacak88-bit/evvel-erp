@@ -409,6 +409,12 @@ def _hesap(cur, bugun: date):
         belge_say = {dict(r)["teslim_id"]: int(dict(r)["n"]) for r in cur.fetchall() or []}
     cur.execute("SELECT * FROM ey_toptanci_teslim ORDER BY tarih, zaman")
     teslimler = [dict(r) for r in cur.fetchall() or []]
+    # 📁 1 KASIM KESİMİ (Opus retro ❌ + Fable L4b D, 28 Eki): eski şube panelinin 1 Kasım ÖNCESİ teslimi (urun_sevk:) ESKİ defterin
+    # borcudur — ödemesi de eski "Öde"de; açılış bakiyesi = eski cari bakiye (Ekim teslimleri dahil). Burada sayılırsa çift sayım.
+    # Bakiyeye / vadeye / şube dağılımına / bilinmeyene girmez, hareketlerde gri kalır. Yeni panel (pilot) ve merkez teslimi sayılır.
+    _pb = __import__("evvel_yeni_cekirdek").panel_baslangic(cur)
+    for x in teslimler:
+        x["eski_defter"] = (x.get("kaynak_ref") or "").startswith("urun_sevk:") and x["tarih"] < _pb
     bilinen = {t["id"] for t in tlar}
     for x in teslimler:
         if x["toptanci_id"] not in bilinen:
@@ -443,7 +449,7 @@ def _hesap(cur, bugun: date):
             if x.get("kesin_tutar") and x.get("tahmini"):
                 sapma = (int(x["kesin_tutar"]) - int(x["tahmini"])) / int(x["tahmini"])
             vade = (x["tarih"] + timedelta(days=vg)) if vg is not None else None
-            if not x["iptal"]:
+            if not x["iptal"] and not x["eski_defter"]:
                 if x.get("kesin_tutar") is not None:
                     kesin += int(x["kesin_tutar"])
                 elif borc is not None:
@@ -456,7 +462,8 @@ def _hesap(cur, bugun: date):
                         "kalemler": kal, "tahmini": _tl_sayi(int(x["tahmini"])) if x.get("tahmini") is not None else None,
                         "fiyat_eksik": x.get("fiyat_eksik") or 0, "kesin": _tl_sayi(int(x["kesin_tutar"])) if x.get("kesin_tutar") is not None else None,
                         "fatura_geldi": x.get("fatura_geldi"), "fatura_no": x.get("fatura_no"), "kesin_kaynak": x.get("kesin_kaynak"),
-                        "borc": _tl_sayi(borc) if borc is not None else None, "durum": ("kesin" if x.get("kesin_tutar") is not None else "tahmini" if borc is not None else "bilinmiyor"),
+                        "borc": _tl_sayi(borc) if borc is not None else None, "eski_defter": x["eski_defter"],
+                        "durum": ("eski" if x["eski_defter"] else "kesin" if x.get("kesin_tutar") is not None else "tahmini" if borc is not None else "bilinmiyor"),
                         "sapma": round(sapma * 100) if sapma is not None else None, "sapma_uyari": bool(sapma is not None and abs(sapma) > SAPMA_ORAN),
                         "vade": vade.isoformat() if vade else None, "teslim_alan": x.get("teslim_alan"), "aciklama": x.get("aciklama"),
                         "iptal": x["iptal"], "iptal_sebep": x.get("iptal_sebep"), "iz": x.get("iz") or [],
@@ -484,7 +491,7 @@ def _hesap(cur, bugun: date):
         bakiye = acilis + kesin + tahmini - od_top
         sube_dag, odeme_dag = {}, {}
         for x in har:
-            if x["tur"] == "teslim" and not x["iptal"] and x.get("borc") is not None:
+            if x["tur"] == "teslim" and not x["iptal"] and not x.get("eski_defter") and x.get("borc") is not None:
                 d = sube_dag.setdefault(x["sube"], {"tutar": 0.0, "sayi": 0})
                 d["tutar"] = round(d["tutar"] + x["borc"], 2)
                 d["sayi"] += 1
@@ -492,7 +499,7 @@ def _hesap(cur, bugun: date):
                 for n in x.get("nereden") or []:
                     k_ = ("💳 " if n["tur"] == "kart" else "💵 ") + n["ad"]
                     odeme_dag[k_] = round(odeme_dag.get(k_, 0) + n["tutar"], 2)
-        eksik_tahmin = [x for x in ts if not x["iptal"] and x.get("kesin_tutar") is None and x.get("tahmini") is not None and (x.get("fiyat_eksik") or 0) > 0]
+        eksik_tahmin = [x for x in ts if not x["iptal"] and not x["eski_defter"] and x.get("kesin_tutar") is None and x.get("tahmini") is not None and (x.get("fiyat_eksik") or 0) > 0]
         out.append({"id": t["id"], "ad": t["ad"], "kategori": t.get("kategori"), "aktif": t["aktif"], "vade_gun": vg,
                     "eksik_tahmin_sayi": len(eksik_tahmin),
                     "acilis": _tl_sayi(acilis), "kesin": _tl_sayi(kesin), "tahmini": _tl_sayi(tahmini), "odenen": _tl_sayi(od_top),
@@ -1080,33 +1087,68 @@ bekleyen_is_kaydet("toptanci", lambda cur, b: toptanci_isleri(cur))
 
 
 def kesim_dondur(cur, yazan: str, ay: str) -> dict:
-    """✂️ 1 KASIM SON AKTARIM — Toptancı açılış bakiyesi KONTROLÜ (Fable R1 + L4b A, 28 Eki). Sahip kararı: eski açık kayıtlar
-    TAŞINMAZ, açılış bakiyesi Tanımlar › Toptancılar'da ELLE girilir. Bu adım hiçbir şey YAZMAZ, EŞLEMEZ, ÖNERMEZ: eski sistemin
-    açık vadeli alımları (tedarikçi METNİ başına, eski kasa_service hesabıyla ödenen düşülmüş) ile aktif toptancıların girilmiş
-    açılış bakiyesi yan yana döner; sahip bakar, kendi girer. Gerçek koşu = "kontrol edildi" izi (kesim_son:toptanci, o anki
-    açılışların anlık görüntüsü). Eski okuma yalnız burada, savepoint içinde; kesim yayınında silinir."""
-    eski = {}
-    if _var(cur, "vadeli_alimlar"):
+    """✂️ 1 KASIM SON AKTARIM — Toptancı açılış bakiyesi KONTROLÜ (Fable R1 → L4b A → Opus retro ❌ → L4b D, 28 Eki).
+    TANIM: açılış = eski sistemin 31 Ekim cari bakiyesi (eski Cari ekranı · fatura_api.cari_ozet), toptancı başına ELLE girilir.
+    Eski panelin Ekim teslimleri Evvel Yeni borcuna GİRMEZ (_hesap 'eski defter') → fark hesabı yok, çift sayım yok.
+    Bu adım YAZMAZ, EŞLEMEZ, ÖNERMEZ: eski cari bakiye ↔ girilen açılış yan yana, eşit değilse '≠' (tanımın kontrolü). Ad yalnız yan
+    yana koymak için ad anahtarıyla eşlenir; eşleşmeyen eski ad ayrı satır. Ekim'de Evvel Yeni'den yapılan toptancı ödemesi ayrı satır
+    (EY bakiyesinden düşer — eski cariye de işlendiyse çift düşer). Gerçek koşu = "kontrol edildi" izi (o anki üç sütun).
+    Eski okuma yalnız burada (cari_ozet kendi bağlantısında, salt okur); kesim yayınında silinir."""
+    from evvel_yeni_cekirdek import panel_baslangic, tr_sira
+    pb = panel_baslangic(cur)
+    eski, eski_not = None, None
+    if _var(cur, "tedarikci_fatura"):
         try:
-            with savepoint(cur, "sp_ey_top_kesim"):
-                from kasa_service import vadeli_kasadan_odenen_toplam   # eski sistemin KENDİ hesabı (önce var mı)
-                cur.execute("""SELECT id, COALESCE(NULLIF(TRIM(tedarikci), ''), '(tedarikçisiz)') AS ted, tutar
-                                 FROM vadeli_alimlar WHERE durum = 'bekliyor'""")
-                for r in [dict(x) for x in cur.fetchall() or []]:
-                    k = _kurus(r["tutar"] or 0) - _kurus(vadeli_kasadan_odenen_toplam(cur, r["id"]))
-                    if k > 0:
-                        eski[r["ted"]] = eski.get(r["ted"], 0) + k
-        except Exception:  # noqa: BLE001 — eski tablo okunamazsa adım yine çalışır (yalnız yeni liste)
-            log.warning("toptancı son aktarım: eski açık okunamadı", exc_info=True)
-            eski = None   # Fable L6: "0 ₺" yazıp "eski borç yok" sandırmasın
+            from fatura_api import cari_ozet   # eski sistemin KENDİ cari hesabı (önce var mı) — kendi SQL'imiz yok
+            co = cari_ozet()
+            eski = {}
+            for x in co.get("tedarikciler") or []:
+                k = _n(x.get("tedarikci") or "")
+                ad, top, fz = eski.get(k, (x.get("tedarikci") or "(adsız)", 0, 0))
+                # Fable L6: eski Cari ekranı açık bakiye ile faturasız teslimi AYRI gösterir → kıyas için ayrı yazılır, toplam = gercek_borc
+                eski[k] = (ad, top + _kurus(round(float(x.get("gercek_borc") or 0), 2)), fz + _kurus(round(float(x.get("faturasiz_teslimat_tl") or 0), 2)))
+            n_ilk, n_top = len(co.get("tedarikciler") or []), int(co.get("toplam_tedarikci") or 0)
+            if n_top > n_ilk:
+                eski_not = f"eski cari listesi ilk {n_ilk} / {n_top} tedarikçi — gerisini eski Cari ekranından kontrol et"
+        except Exception:  # noqa: BLE001 — eski cari okunamazsa adım yine çalışır; '0 ₺' yazıp "borç yok" sandırmaz
+            log.warning("toptancı son aktarım: eski cari okunamadı", exc_info=True)
+            eski = None
+    hesap = {str(t["id"]): t for t in _hesap(cur, _bugun())}
     from evvel_yeni_tanim_api import tanim_listesi   # Tanımlar'ın kapısı (F#32)
-    tlar = sorted((t for t in tanim_listesi(cur, "ey_toptanci", ("ad", "acilis_bakiye", "aktif")) if t.get("aktif")), key=lambda t: __import__("evvel_yeni_cekirdek").tr_sira(t["ad"]))   # Fable L6: Türkçe alfabe
-    sifir = [t["ad"] for t in tlar if not int(t.get("acilis_bakiye") or 0)]
-    return {"eski_açık_(kontrol_için)": ("okunamadı — eski ekrandan kontrol et" if eski is None
-                                         else {a: _tl_tr(k) for a, k in sorted(eski.items(), key=lambda x: -x[1])} or None),
-            "eski_toplam": _tl_tr(sum(eski.values())) if eski else None,
-            "açılış_bakiyesi": {t["ad"]: _tl_tr(int(t.get("acilis_bakiye") or 0)) + (" ⚠ girilmemiş" if not int(t.get("acilis_bakiye") or 0) else "")
-                                for t in tlar} or None,
-            "açılışı_girilmemiş": len(sifir),
-            "uyari": (f"{len(sifir)} toptancının açılış bakiyesi 0 — gerçekten borç yoksa geç; varsa Tanımlar › Toptancılar'dan gir"
-                      if sifir else None)}
+    tlar = sorted((t for t in tanim_listesi(cur, "ey_toptanci", ("ad", "acilis_bakiye", "aktif")) if t.get("aktif")), key=lambda t: tr_sira(t["ad"]))
+    satir, ekim_od, kullanilan = {}, {}, set()
+    esit_degil = girilmemis = 0
+    for t in tlar:
+        ac = int(t.get("acilis_bakiye") or 0)
+        k = _n(t["ad"])
+        if eski is None:
+            satir[t["ad"]] = f"açılış {_tl_tr(ac)} · eski cari okunamadı"
+        else:
+            e = eski.get(k)
+            ek = e[1] if e else 0
+            fz = e[2] if e else 0
+            if e:
+                kullanilan.add(k)
+            if ac == ek:
+                isaret = "✓"
+            elif ac == 0:
+                isaret = "⚠ açılış girilmemiş"
+                girilmemis += 1
+            else:
+                isaret = "≠"
+                esit_degil += 1
+            parca = f" (açık {_tl_tr(ek - fz)} + faturasız teslim {_tl_tr(fz)})" if fz else ""
+            satir[t["ad"]] = f"eski cari {_tl_tr(ek)}{parca} · açılış {_tl_tr(ac)} {isaret}"
+        od = sum(_kurus(h["tutar"]) for h in (hesap.get(str(t["id"])) or {}).get("hareketler") or []
+                 if h.get("tur") == "odeme" and str(h.get("tarih") or "")[:10] < pb.isoformat())
+        if od:
+            ekim_od[t["ad"]] = f"{_tl_tr(od)} — eski cariye de işlendiyse açılıştan düş"
+    pasif = {_n(t["ad"]) for t in tanim_listesi(cur, "ey_toptanci", ("ad", "aktif")) if not t.get("aktif")}
+    eslesmeyen = {(f"{a} (pasif toptancı — açılış girilmemiş)" if kk in pasif else a): _tl_tr(v)
+                  for kk, (a, v, _f) in sorted((eski or {}).items(), key=lambda z: tr_sira(z[1][0])) if kk not in kullanilan and v}
+    return {"not": "Önce eski 'Öde' ekranında Ekim ödemelerini bitir. Açılış = eski cari bakiye (Ekim teslimleri dahil — Evvel Yeni eski panelin Ekim teslimlerini borca saymaz)",
+            "toptancılar": satir or None,
+            "eski_carisi_eşleşmeyen": eslesmeyen or None,
+            "ekimde_evvel_yeniden_ödenen": ekim_od or None,
+            "açılış_≠_eski": esit_degil, "açılışı_girilmemiş": girilmemis,
+            "uyari": eski_not}
