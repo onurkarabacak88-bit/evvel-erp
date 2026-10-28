@@ -206,8 +206,13 @@ function ToptanciIletim({ s, acik, mesgul, is_ }) {
             : <Cip tur="sari">toptancıya henüz gönderilmedi</Cip>}
           {acik && (t.wa_no
             ? <Dugme kucuk ana={!t.aktarildi} disabled={mesgul} onClick={() => {   /* Fable L6-109: tek öğe (a > button değil) */
-                window.open(`https://wa.me/${t.wa_no}?text=${encodeURIComponent(t.wa_metin)}`, '_blank', 'noopener');
-                is_(s.id, 'ilet', { toptanci_id: t.toptanci_id }, `${t.ad}: WhatsApp açıldı — mesajı orada Gönder'e bas`);
+                // Fable L6-111: uzun siparişte (≈15+ kalem) wa.me bağlantısı sınırı aşabilir → metin panoya, WhatsApp yalnız numarayla açılır
+                const url = `https://wa.me/${t.wa_no}?text=${encodeURIComponent(t.wa_metin)}`;
+                const uzun = url.length > 1800;
+                if (uzun) { try { navigator.clipboard?.writeText(t.wa_metin); } catch { /* pano yok */ } }
+                window.open(uzun ? `https://wa.me/${t.wa_no}` : url, '_blank', 'noopener');
+                is_(s.id, 'ilet', { toptanci_id: t.toptanci_id }, uzun ? `${t.ad}: sipariş uzun — mesaj kopyalandı, WhatsApp'ta yapıştırıp Gönder'e bas`
+                  : `${t.ad}: WhatsApp açıldı — mesajı orada Gönder'e bas`);
               }}>{t.aktarildi ? 'Yeniden gönder' : '📲 WhatsApp ile gönder'}</Dugme>
             : <span style={{ color: R.amber }}>Toptancının telefonu yok — <Dugme kucuk onClick={() => sayfayaGit('tanim_toptanci')}>Tanımlar › Toptancılar</Dugme></span>)}
         </div>

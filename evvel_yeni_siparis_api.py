@@ -102,7 +102,10 @@ def _toptanci_iletimleri(cur, siparisler: List[dict], bil: dict) -> None:
             gun = s["gun"][8:10] + "." + s["gun"][5:7] + "." + s["gun"][:4]
             out.append({"toptanci_id": tid, "ad": g["ad"], "kalem_sayi": len(g["kalemler"]),
                         "wa_no": telefon_wa((tel.get(tid) or {}).get("telefon")),
-                        "wa_metin": f"TULİPİ {s['sube']} · sipariş {gun}\n" + "\n".join(g["kalemler"]) + "\n— TULİPİ merkez",
+                        # sahip 29 Eki: "daha kibar kuralım, teşekkürler vs gibi"
+                        "wa_metin": (f"Merhaba, iyi günler 🌷\n\nTULİPİ {s['sube']} şubemiz için {gun} tarihli siparişimiz:\n\n"
+                                     + "\n".join(g["kalemler"])
+                                     + "\n\nTeslimat zamanını bize bildirirseniz çok seviniriz.\nŞimdiden teşekkür ederiz, iyi çalışmalar dileriz.\n\nTULİPİ Coffee"),
                         "aktarildi": tr_tarih_saat(son[0]) if son else None, "aktaran": son[1] if son else None})   # TR saat sunucuda (tek yer)
         s["toptancilar"] = out
 
