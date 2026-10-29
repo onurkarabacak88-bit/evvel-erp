@@ -287,6 +287,27 @@ def _teslim_durumlari(cur, yonler: List[dict], urunler: dict) -> dict:
     return out
 
 
+def _alanlar(cur, yonler: List[dict]) -> dict:
+    """{yon_id: 'Ali · 21.10 14:05'} — toptancı teslimi Toptancılar'ın, depo sevki Depo'nun PUBLIC kapısından (başka modüle SQL yok).
+    Okunamazsa boş (kart yine açılır)."""
+    out = {}
+    try:
+        with savepoint(cur, "sp_sip_alanlar"):
+            f = _toptanci("teslim_alanlari")
+            T = f(cur, [y["teslim_id"] for y in yonler if y.get("teslim_id")]) if f else {}
+            from evvel_yeni_depo_api import sevk_kabul_alanlari
+            bag = {y["id"]: f"sevk:{y['parti_id']}:{y['parti_i']}" for y in yonler if y.get("parti_id") and y.get("parti_i") is not None}
+            D = sevk_kabul_alanlari(cur, list(bag.values()))
+    except Exception:  # noqa: BLE001
+        log.warning("sipariş: teslim alanları okunamadı", exc_info=True)
+        return {}
+    for y in yonler:
+        x = T.get(str(y.get("teslim_id"))) if y.get("teslim_id") else D.get(bag.get(y["id"]))
+        if x and (x.get("kim") or x.get("zaman")):
+            out[y["id"]] = " · ".join(v for v in (x.get("kim"), x.get("zaman")) if v)
+    return out
+
+
 def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
     """Siparişleri kalem + yön durumlarıyla. kor=True (şube paneli): sevk / kabul ADEDİ DÖNMEZ (kör sayım — Fable R3)."""
     Y = _yonler(cur, [r["id"] for r in rows])
@@ -294,6 +315,7 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
     urunler = {(r["id"], k["i"]): k.get("urun_id") for r in rows for k in (r["kalemler"] or [])}
     sv = _sevk_durumlari(cur, hepsi)
     tv = _teslim_durumlari(cur, hepsi, urunler)
+    alan = {} if kor else _alanlar(cur, hepsi)   # E26: karşılanan yönde kim / ne zaman aldı (yalnız merkez)
     sube_ad, top_ad = _sube_adlari(cur), _toptanci_adlari(cur)
     depo_yok = {}   # B91: depo 'YOK' dediği kalem yönlendirilmemişe döner — kim dediği kartta görünsün (merkez yine depoya yollamasın)
     if rows and not kor:
@@ -336,6 +358,8 @@ def _derle(cur, rows: List[dict], kor: bool = False) -> List[dict]:
                     # Codex I-2 (24 Eki): yeniden yönlendirmede KİLİTLİ sayılan adet — gelmesi süren (yolda / farkı açık) tam adet,
                     # farkı çözülmüş ya da teslim alınmışsa GELEN adet (10 gitti 8 geldi, fark çözüldü → kalan 2 yeniden yönlendirilebilir)
                     kilit = int(y["adet"]) if (d != "karsilandi" or acik_y or gelen is None) else min(int(y["adet"]), int(gelen))
+                    if d == "karsilandi" and alan.get(y["id"]):
+                        yy["alan"] = alan[y["id"]]
                     yy.update({"adet": int(y["adet"]), "hazir": y.get("hazir"), "gelen": gelen, "kilit": kilit, "fark_acik": acik_y,
                                "iletim_zaman": y.get("iletim_zaman"), "iletim_kim": y.get("iletim_kim")})
                 ys.append(yy)

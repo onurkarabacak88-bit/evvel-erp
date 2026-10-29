@@ -335,6 +335,18 @@ def teslim_kalemleri(cur, teslim_idler: List[str]) -> dict:
     return out
 
 
+def teslim_alanlari(cur, teslim_idler: List[str]) -> dict:
+    """PUBLIC (Sipariş kartı · 29 Eki fikir taraması E26 · Codex "kim, neyi, ne zaman aldı"): {teslim_id: {kim, zaman 'GG.AA'}} —
+    iptal edilmiş teslim dönmez. Fable L6-116: zaman = TESLİM GÜNÜ (kayıt saati değil — merkez geçmiş tarihli girebilir); merkezden
+    girilen teslimde kim = 'merkez girdi' (teslim_alan orada kaydı giren merkez kullanıcısıdır)."""
+    idler = sorted({str(x) for x in teslim_idler or [] if x})
+    if not idler or not _var(cur, "ey_toptanci_teslim"):
+        return {}
+    cur.execute("SELECT id, teslim_alan, tarih, kaynak_ref FROM ey_toptanci_teslim WHERE id = ANY(%s) AND NOT iptal", (idler,))
+    return {dict(r)["id"]: {"kim": "merkez girdi" if (dict(r)["kaynak_ref"] or "").startswith("merkez:") else dict(r)["teslim_alan"],
+                            "zaman": dict(r)["tarih"].strftime("%d.%m")} for r in cur.fetchall() or []}
+
+
 def son_toptancilar(cur, urun_idler: List[str]) -> dict:
     """PUBLIC (Sipariş 'varsayılanları uygula'): {urun_id: toptanci_id} — ürünün EN SON teslim edildiği (iptal olmayan) toptancı."""
     idler = sorted({str(x) for x in urun_idler or [] if x})

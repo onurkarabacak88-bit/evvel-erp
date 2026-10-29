@@ -692,11 +692,7 @@ def yolda_listesi(cur, yeni_mi: bool):
         except Exception:  # noqa: BLE001
             log.warning("depo yolda: eski hedefler / kişiler okunamadı", exc_info=True)
     konum_ad = {k["id"]: k["ad"] for k in _konumlar(cur)}
-    def kisi(k):   # 'şube paneli · Ayşe' → 'Ayşe' · ortak giriş → 'merkez' · Fable P2: 'oturumsuz' / 'bilinmiyor' kişi değil → None
-        k = (str(k).rsplit(" · ", 1)[-1].strip() if k else "") or None
-        if k in ("oturumsuz", "bilinmiyor"):
-            return None
-        return "merkez (ortak giriş)" if k and k.startswith("yönetim") else k
+    kisi = _kisi_adi
     bekleyen, fark = [], []
     for r in rs:
         hedef = r.get("hedef_k") or (f"depo:{hedefler.get(r['bag'])}" if hedefler.get(r["bag"]) else None)
@@ -1176,6 +1172,28 @@ def sevk_kalem_durumlari(cur, baglar: List[str]) -> dict:
                   "hasar": t.get("hasar", (0, 0))[0], "fazla": t.get("fazla_kabul", (0, 0))[0],
                   "acik": kabul_var and (eksik_kalan > 0 or hasar_askida > 0 or fazla_askida > 0)}
     return out
+
+
+def _kisi_adi(k):
+    """'şube paneli · Ayşe' → 'Ayşe' · ortak giriş → 'merkez (ortak giriş)' · Fable P2: 'oturumsuz' / 'bilinmiyor' kişi değil → None (TEK kural)."""
+    k = (str(k).rsplit(" · ", 1)[-1].strip() if k else "") or None
+    if k in ("oturumsuz", "bilinmiyor"):
+        return None
+    return "merkez (ortak giriş)" if k and k.startswith("yönetim") else k
+
+
+def sevk_kabul_alanlari(cur, baglar: List[str]) -> dict:
+    """PUBLIC (Sipariş kartı · E26): {bag: {kim, zaman 'GG.AA SS:DD'}} — sevk kaleminin GERÇEK kabulü (şubenin '…:kabul' satırı; ilk olan).
+    Fable L6-116: merkez fark çözümü ('…:coz:sube_saydi') kabul eden sayılmaz; yalnız merkez adına kabul varsa kim = 'merkez adına'."""
+    baglar = sorted({b for b in baglar or [] if str(b).startswith("sevk:")})
+    if not baglar or not _var_tablo(cur, "ey_stok_hareket"):
+        return {}
+    from evvel_yeni_cekirdek import tr_tarih_saat
+    cur.execute("""SELECT DISTINCT ON (bag) bag, kim, zaman, (kaynak_ref LIKE '%%:merkez_kabul') AS merkez FROM ey_stok_hareket
+                    WHERE NOT iptal AND tur='kabul' AND bag = ANY(%s) AND (kaynak_ref LIKE '%%:kabul' OR kaynak_ref LIKE '%%:merkez_kabul')
+                    ORDER BY bag, (kaynak_ref LIKE '%%:merkez_kabul'), zaman""", (baglar,))
+    return {dict(r)["bag"]: {"kim": "merkez adına" if dict(r)["merkez"] else _kisi_adi(dict(r)["kim"]),
+                             "zaman": tr_tarih_saat(dict(r)["zaman"])} for r in cur.fetchall() or []}
 
 
 from evvel_yeni_cekirdek import KuruGeriAl as _Kuru  # noqa: E402 — 1 Kasım öncesi merkez sevki DENEME: yazılır, okunur, geri alınır (F#21)

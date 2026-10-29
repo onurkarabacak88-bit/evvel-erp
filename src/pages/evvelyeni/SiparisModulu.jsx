@@ -153,7 +153,7 @@ export default function SiparisModulu({ onToast }) {
                   </div>
                   {kilitler.map((y) => (
                     <div key={y.id} style={{ fontSize: 12.5, color: R.metin2, paddingLeft: 12 }}>
-                      🔒 {y.kaynak_ad} · <b style={num}>{y.adet}</b>{y.gelen != null ? ` · gelen ${y.gelen}` : ''} · {y.durum === 'karsilandi' && y.gelen != null && y.gelen < y.adet ? (k.eksik_kapandi ? 'eksik kapandı' : 'eksik geldi') : (DURUM[y.durum] || [y.durum])[0]}{/* Y13 (sim 24 Eki): kapanmamış eksiğe "eksik kapandı" yazıyordu */}
+                      🔒 {y.kaynak_ad} · <b style={num}>{y.adet}</b>{y.gelen != null ? ` · gelen ${y.gelen}` : ''} · {y.durum === 'karsilandi' && y.gelen != null && y.gelen < y.adet ? (k.eksik_kapandi ? 'eksik kapandı' : 'eksik geldi') : (DURUM[y.durum] || [y.durum])[0]}{/* Y13 (sim 24 Eki): kapanmamış eksiğe "eksik kapandı" yazıyordu */}{y.alan ? ` · teslim alan ${y.alan}` : ''}{/* E26 (29 Eki): kim · ne zaman aldı */}
                     </div>
                   ))}
                   {k.durum === 'oneri' && acik && <OneriBagla s={s} k={k} urunler={urunler} mesgul={mesgul[s.id]} is_={is_} />}
