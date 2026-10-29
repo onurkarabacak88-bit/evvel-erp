@@ -185,7 +185,7 @@ export default function ToptanciModulu({ onToast }) {
         if (!h.iptal && !h.eski_defter && h.borc != null) kalan += h.borc;
         if (!goster) return;
         const kalemler = (h.kalemler || []).map((k) => `${k.ad} ×${k.adet}`).join(', ');
-        izSatir.push([tKisa(h.tarih), `🚚 teslim${kalemler ? ` · ${kalemler}` : ''}${h.fatura_no ? ` · fatura ${h.fatura_no}` : ''}`,
+        izSatir.push([tKisa(h.tarih), `🚚 teslim${kalemler ? ` · ${kalemler}` : ''}${h.fatura_no ? ` · fatura ${h.fatura_no}` : ''}${(h.fatura_tekrar || []).length ? ` · ⚠ aynı fatura no: ${h.fatura_tekrar.map(tKisa).join(', ')}` : ''}`,
           `→ ${h.sube}`, h.teslim_alan || '',
           h.borc != null ? { t: `${h.eski_defter ? '' : '+'}${fmt(h.borc)}`, renk: h.iptal || h.eski_defter ? R.not : R.kirmizi } : { t: '?', renk: h.eski_defter ? R.not : R.kirmizi }, '',
           { t: fmt(kalan), kalin: true }, h.iptal ? { t: `İPTAL · ${h.iptal_sebep || ''}`, renk: R.not } : { t: DURUM[h.durum].ad, renk: DURUM[h.durum].renk }]);
@@ -297,6 +297,7 @@ export default function ToptanciModulu({ onToast }) {
                   {t.eksik_tahmin_sayi > 0 && <Cip tur="sari">{t.eksik_tahmin_sayi} teslimde fiyatsız kalem</Cip>}
                   {t.vadesi_belirsiz > 0 && <Cip>vadesi tanımsız {fmt(t.vadesi_belirsiz)}</Cip>}
                   {t.sapma_sayi > 0 && <Cip tur="sari">⚠ {t.sapma_sayi} tutar tahminden %30+ farklı</Cip>}
+                  {t.fatura_tekrar_sayi > 0 && <span title="Aynı fatura birden fazla teslimi kapsıyorsa sorun yok; değilse mükerrer ödeme olmasın"><Cip tur="sari">⚠ {t.fatura_tekrar_sayi} teslimde aynı fatura no</Cip></span>}
                   {(() => { const n = t.hareketler.filter((h) => h.tur === 'teslim' && h.belge_eksik).length; return n > 0 ? <Cip tur="kirmizi">📎❌ {n} faturalı teslimin belgesi yok</Cip> : null; })()}
                   {(() => { const n = t.hareketler.filter((h) => h.tur === 'teslim' && !h.iptal && !h.eski_defter && h.kesin_kaynak === 'şube').length; return n > 0 ? <Cip tur="sari">✔ {n} şube tutarı onay bekliyor</Cip> : null; })()}
                 </div>

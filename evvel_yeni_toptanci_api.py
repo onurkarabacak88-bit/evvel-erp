@@ -470,6 +470,7 @@ def _hesap(cur, bugun: date):
                         "vade": vade.isoformat() if vade else None, "teslim_alan": x.get("teslim_alan"), "aciklama": x.get("aciklama"),
                         "iptal": x["iptal"], "iptal_sebep": x.get("iptal_sebep"), "iz": x.get("iz") or [],
                         "belge_sayi": belge_say.get(x["id"], 0),
+                        "fatura_tekrar": [y["tarih"].isoformat() for y in _ayni_fatura(ts, x.get("fatura_no"), x["id"])] if not x["iptal"] else [],
                         "belge_eksik": bool(x.get("fatura_geldi") and not belge_say.get(x["id"]) and not x["iptal"])})
         od_top = sum(o["tutar"] for o in od)
         har += [{**o, "tutar": _tl_sayi(o["tutar"])} for o in od]
@@ -510,12 +511,34 @@ def _hesap(cur, bugun: date):
                     "bilinmeyen_eski": [{"id": b["id"], "tarih": b["tarih"].isoformat()} for b in bilinmeyen if (bugun - b["tarih"]).days >= BILINMEYEN_UYARI_GUN],
                     "vadesi_gecen": _tl_sayi(gecen), "bu_hafta": _tl_sayi(hafta), "uc_gun": _tl_sayi(uc_gun), "vadesi_belirsiz": _tl_sayi(belirsiz),
                     "sapma_sayi": sum(1 for h in har if h.get("sapma_uyari") and not h.get("iptal")),
+                    "fatura_tekrar_sayi": sum(1 for h in har if h.get("fatura_tekrar")),   # 5by-d: aynı fatura no başka teslimde (uyarı)
                     "sube_dagilim": [{"sube": k, **v} for k, v in sorted(sube_dag.items(), key=lambda z: -z[1]["tutar"])],
                     "odeme_dagilim": [{"nereden": k, "tutar": v} for k, v in sorted(odeme_dag.items(), key=lambda z: -z[1])],
                     "hareketler": har, "son_hareket": har[0]["tarih"] if har else None,
                     "fatura_iste": _fatura_iste_ozet(t, fis, sube_ad) if fis else None})
     out.sort(key=lambda x: (-(x["vadesi_gecen"] or 0), -x["bakiye"], x["ad"]))
     return out
+
+
+def _fatura_no_norm(s) -> str:
+    """Mükerrer fatura no karşılaştırması (29 Eki fikir taraması 5by-d · Codex): boşluk atılır, büyük / küçük harf farkı yok sayılır."""
+    return "".join(str(s or "").split()).casefold()
+
+
+def _ayni_fatura(ts: list, fatura_no, haric_id=None) -> list:
+    """Aynı toptancının iptal olmayan BAŞKA teslimlerinde aynı fatura no (normalize) — UYARI içindir, engel değil
+    (aynı fatura birden fazla teslimi kapsayabilir — Codex)."""
+    n = _fatura_no_norm(fatura_no)
+    return [x for x in ts if n and not x["iptal"] and x["id"] != haric_id and _fatura_no_norm(x.get("fatura_no")) == n] if n else []
+
+
+def _ayni_fatura_uyari(cur, toptanci_id: str, fatura_no, haric_id) -> str:
+    cur.execute("SELECT id, tarih, fatura_no, iptal FROM ey_toptanci_teslim WHERE toptanci_id=%s AND fatura_no IS NOT NULL", (str(toptanci_id),))
+    xs = _ayni_fatura([dict(r) for r in cur.fetchall() or []], fatura_no, haric_id)
+    if not xs:
+        return ""
+    gun = ", ".join(x["tarih"].strftime("%d.%m") for x in sorted(xs, key=lambda z: z["tarih"]))
+    return f" ⚠ Aynı fatura no ({str(fatura_no).strip()}) bu toptancıda {gun} teslimde de var — aynı fatura iki teslimi kapsıyorsa sorun yok, değilse kontrol et (mükerrer ödeme olmasın)"
 
 
 def _eski_defter_isaretle(cur, teslimler: list) -> None:
@@ -652,10 +675,11 @@ def merkez_teslim(body: TeslimBody, x_evvel_oturum: Optional[str] = Header(defau
             if cur.fetchone() and not (body.aciklama or "").startswith("!"):
                 raise HTTPException(409, "BENZER KAYIT: aynı toptancı, aynı gün, aynı tutarda teslim zaten var. Gerçekten ikinci teslimse açıklamanın başına ! koy.")
         kim = _aktor(cur, x_evvel_oturum)
+        tekrar = _ayni_fatura_uyari(cur, body.toptanci_id, body.fatura_no, None)   # yazmadan ÖNCE: yeni satır kendini saymasın
         teslim_yaz(cur, kaynak_ref="merkez:" + uuid.uuid4().hex[:12], toptanci_id=body.toptanci_id, toptanci_ad=dict(r)["ad"],
                    sube_id=body.sube_id, gun=gun, kalemler=[], fatura_geldi=body.fatura_geldi, kesin_tutar=t,
                    fatura_no=body.fatura_no, teslim_alan=kim, aciklama=(body.aciklama or "").lstrip("!"), kesin_kaynak="merkez")
-    return {"ok": True, "mesaj": f"{dict(r)['ad']} teslimi girildi" + ("" if t else " — tutar sonra girilecek")}
+    return {"ok": True, "mesaj": f"{dict(r)['ad']} teslimi girildi" + ("" if t else " — tutar sonra girilecek") + tekrar}
 
 
 class TutarBody(BaseModel):
@@ -689,12 +713,13 @@ def teslim_tutar(tid: str, body: TutarBody, x_evvel_oturum: Optional[str] = Head
                     (t, body.fatura_geldi, (body.fatura_no or "").strip()[:40] or None, json.dumps(iz, ensure_ascii=False), tid))
         x["kesin_tutar"] = t
         _fiyat_ogren(cur, x, x["tarih"])
+        tekrar = _ayni_fatura_uyari(cur, x["toptanci_id"], (body.fatura_no or "").strip() or x.get("fatura_no"), tid)
     sap = ""
     if x.get("tahmini"):
         s = (t - int(x["tahmini"])) / int(x["tahmini"])
         if abs(s) > SAPMA_ORAN:
             sap = f" ⚠ tahminden %{round(s * 100)} farklı — birim (koli/adet) karışmış olabilir"
-    return {"ok": True, "mesaj": f"Tutar kesinleşti: {_tl_tr(t)}{sap}"}
+    return {"ok": True, "mesaj": f"Tutar kesinleşti: {_tl_tr(t)}{sap}{tekrar}"}
 
 
 class IptalBody(BaseModel):
