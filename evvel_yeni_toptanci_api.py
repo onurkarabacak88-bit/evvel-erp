@@ -63,7 +63,8 @@ def toptanci_hazirla(cur) -> None:
         return
     if (__import__("evvel_yeni_cekirdek").tablo_var(cur, "ey_toptanci_belge", "idx_ey_top_belge", "ey_urun_fiyat_gecmis", "ey_toptanci_teslim",
                                                     "idx_ey_top_teslim_sube_gun")
-            and _kolon_var(cur, "ey_toptanci_belge", "iptal_zaman") and _kolon_var(cur, "ey_toptanci", "vade_gun")):
+            and _kolon_var(cur, "ey_toptanci_belge", "iptal_zaman") and _kolon_var(cur, "ey_toptanci", "vade_gun")
+            and _kolon_var(cur, "ey_toptanci_teslim", "fatura_istek_zaman")):
         _HAZIR = True
         return
     try:
@@ -124,6 +125,9 @@ def _toptanci_ddl(cur) -> None:
             cur.execute(f"ALTER TABLE ey_toptanci_belge ADD COLUMN IF NOT EXISTS {k_} {t_}")
     if not _var(cur, "idx_ey_top_belge"):
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_top_belge ON ey_toptanci_belge (teslim_id) WHERE NOT iptal")
+    for k_, t_ in (("fatura_istek_zaman", "TIMESTAMPTZ"), ("fatura_istek_kim", "TEXT")):   # 29 Eki 5bv-c: "fatura istendi" izi
+        if not _kolon_var(cur, "ey_toptanci_teslim", k_):
+            cur.execute(f"ALTER TABLE ey_toptanci_teslim ADD COLUMN IF NOT EXISTS {k_} {t_}")
     if not _var(cur, "idx_ey_top_teslim_sube_gun"):   # Codex 22 Eki: panel durumu (5-15 sn) bugünkü teslimleri okur
         cur.execute("CREATE INDEX IF NOT EXISTS idx_ey_top_teslim_sube_gun ON ey_toptanci_teslim (sube_id, tarih, zaman)")
     from evvel_yeni_cekirdek import ayar_oku, ayar_yaz
@@ -412,9 +416,7 @@ def _hesap(cur, bugun: date):
     # 📁 1 KASIM KESİMİ (Opus retro ❌ + Fable L4b D, 28 Eki): eski şube panelinin 1 Kasım ÖNCESİ teslimi (urun_sevk:) ESKİ defterin
     # borcudur — ödemesi de eski "Öde"de; açılış bakiyesi = eski cari bakiye (Ekim teslimleri dahil). Burada sayılırsa çift sayım.
     # Bakiyeye / vadeye / şube dağılımına / bilinmeyene girmez, hareketlerde gri kalır. Yeni panel (pilot) ve merkez teslimi sayılır.
-    _pb = __import__("evvel_yeni_cekirdek").panel_baslangic(cur)
-    for x in teslimler:
-        x["eski_defter"] = (x.get("kaynak_ref") or "").startswith("urun_sevk:") and x["tarih"] < _pb
+    _eski_defter_isaretle(cur, teslimler)
     bilinen = {t["id"] for t in tlar}
     for x in teslimler:
         if x["toptanci_id"] not in bilinen:
@@ -500,6 +502,7 @@ def _hesap(cur, bugun: date):
                     k_ = ("💳 " if n["tur"] == "kart" else "💵 ") + n["ad"]
                     odeme_dag[k_] = round(odeme_dag.get(k_, 0) + n["tutar"], 2)
         eksik_tahmin = [x for x in ts if not x["iptal"] and not x["eski_defter"] and x.get("kesin_tutar") is None and x.get("tahmini") is not None and (x.get("fiyat_eksik") or 0) > 0]
+        fis = _fatura_istenecek(ts, bugun)
         out.append({"id": t["id"], "ad": t["ad"], "kategori": t.get("kategori"), "aktif": t["aktif"], "vade_gun": vg,
                     "eksik_tahmin_sayi": len(eksik_tahmin),
                     "acilis": _tl_sayi(acilis), "kesin": _tl_sayi(kesin), "tahmini": _tl_sayi(tahmini), "odenen": _tl_sayi(od_top),
@@ -509,9 +512,68 @@ def _hesap(cur, bugun: date):
                     "sapma_sayi": sum(1 for h in har if h.get("sapma_uyari") and not h.get("iptal")),
                     "sube_dagilim": [{"sube": k, **v} for k, v in sorted(sube_dag.items(), key=lambda z: -z[1]["tutar"])],
                     "odeme_dagilim": [{"nereden": k, "tutar": v} for k, v in sorted(odeme_dag.items(), key=lambda z: -z[1])],
-                    "hareketler": har, "son_hareket": har[0]["tarih"] if har else None})
+                    "hareketler": har, "son_hareket": har[0]["tarih"] if har else None,
+                    "fatura_iste": _fatura_iste_ozet(t, fis, sube_ad) if fis else None})
     out.sort(key=lambda x: (-(x["vadesi_gecen"] or 0), -x["bakiye"], x["ad"]))
     return out
+
+
+def _eski_defter_isaretle(cur, teslimler: list) -> None:
+    """1 Kasım kesimi kuralı TEK yer (Fable L6-113: _hesap + fatura_iste kopyası): eski panelin panel_baslangic öncesi teslimi eski defterin borcu."""
+    _pb = __import__("evvel_yeni_cekirdek").panel_baslangic(cur)
+    for x in teslimler:
+        x["eski_defter"] = (x.get("kaynak_ref") or "").startswith("urun_sevk:") and x["tarih"] < _pb
+
+
+def _fatura_istenecek(ts: list, bugun: date) -> list:
+    """📲 FATURA İSTE (29 Eki kaçak taraması 5bv-c · sahip "c olsun" · L4b Fable): faturası GELMEMİŞ (fatura_geldi True değil), iptal
+    değil, eski defter değil, 7+ gündür (BILINMEYEN_UYARI_GUN — "tutarı bilinmeyen" bekleyen işiyle AYNI eşik) teslimler. Taze teslim
+    girmez (toptancı faturayı çoğu kez bir sonraki teslimle getirir; erken istemek kaba)."""
+    return [x for x in ts if not x["iptal"] and not x["eski_defter"] and x.get("fatura_geldi") is not True
+            and (bugun - x["tarih"]).days >= BILINMEYEN_UYARI_GUN]
+
+
+def _fatura_iste_ozet(t: dict, fis: list, sube_ad: dict) -> dict:
+    """Toptancı başına TEK kibar mesaj (sahip 29 Eki "daha kibar, teşekkürler") — metin SUNUCUDAN (tek gerçek), fiyat / tutar / bakiye YOK.
+    İz: teslim satırında fatura_istek_zaman / kim (KANIT DEĞİL — Gönder'e WhatsApp'ta sahip basar); hepsi istendiyse en son istek görünür."""
+    from evvel_yeni_cekirdek import telefon_wa, tr_tarih_saat
+    satir = []
+    for x in sorted(fis, key=lambda z: z["tarih"]):
+        kal = __import__("evvel_yeni_cekirdek").json_ac(x["kalemler"], [])
+        ozet = ", ".join(f"{k.get('ad') or 'ürün'} ×{k.get('adet')}" for k in kal[:3]) + (" …" if len(kal) > 3 else "")
+        sube = sube_ad.get(x.get("sube_id")) if x.get("sube_id") else None
+        satir.append(f"• {x['tarih'].strftime('%d.%m')} — {sube + ' şubesi' if sube else 'merkez depo'}" + (f" — {ozet}" if ozet else ""))
+    metin = ("Merhaba, iyi günler 🌷\n\nTULİPİ olarak aşağıdaki teslimatlarımızın faturasını paylaşabilirseniz çok seviniriz:\n\n"
+             + "\n".join(satir) + "\n\nŞimdiden teşekkür ederiz, iyi çalışmalar dileriz.\n\nTULİPİ Coffee")
+    izler = [(x.get("fatura_istek_zaman"), x.get("fatura_istek_kim")) for x in fis]
+    son = max(izler, key=lambda z: z[0]) if all(z for z, _k in izler) else None
+    return {"sayi": len(fis), "wa_no": telefon_wa(t.get("telefon")), "wa_metin": metin,
+            "istendi": tr_tarih_saat(son[0]) if son else None, "isteyen": son[1] if son else None}
+
+
+class FaturaIsteBody(BaseModel):
+    toptanci_id: str
+
+
+@router.post("/fatura-iste")
+def fatura_iste(body: FaturaIsteBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez "📲 Fatura iste"ye bastı → mesaja giren teslimlere "istendi" izi (kim / zaman). Kanıt değil; tekrar basılırsa üstüne yazar.
+    Bekleyen işe yeni satır açmaz — mevcut "tutar bilinmiyor" satırı istendiği tarihi taşır."""
+    _hazirla()
+    with db() as (conn, cur):
+        toptanci_hazirla(cur)
+        kim = merkez_aktor(cur, x_evvel_oturum)
+        cur.execute("SELECT * FROM ey_toptanci_teslim WHERE toptanci_id=%s ORDER BY tarih", (str(body.toptanci_id),))
+        ts = [dict(r) for r in cur.fetchall() or []]
+        _eski_defter_isaretle(cur, ts)
+        fis = _fatura_istenecek(ts, _bugun())
+        if not fis:
+            raise HTTPException(409, "Bu toptancıda faturası istenecek teslim yok — sayfayı yenile")
+        # Fable L6-113: belge ekleme ile AYNI sıra — önce satır kilidi (id sırasıyla), advisory kilit yok (yalnız iz kolonu yazılır)
+        cur.execute("SELECT id FROM ey_toptanci_teslim WHERE id = ANY(%s) ORDER BY id FOR UPDATE", ([x["id"] for x in fis],))
+        cur.execute("UPDATE ey_toptanci_teslim SET fatura_istek_zaman=NOW(), fatura_istek_kim=%s WHERE id = ANY(%s)",
+                    (kim, [x["id"] for x in fis]))
+    return {"ok": True, "mesaj": f"{len(fis)} teslimin faturası istendi olarak işaretlendi — mesajı WhatsApp'ta Gönder'e basmayı unutma"}
 
 
 def toptanci_bakiyesi(cur, tid: str, bugun: date) -> dict:
@@ -550,7 +612,7 @@ def toptanci_isleri(cur) -> list:
                         "tutar": t["uc_gun"], "gecti": False})
         if t["bilinmeyen_eski"]:
             out.append({"tur": "toptanci_tutar", "grup": "tedarik", "id": f"tb:{t['id']}", "tarih": t["bilinmeyen_eski"][0]["tarih"], "ad": t["ad"],
-                        "sayi": len(t["bilinmeyen_eski"])})
+                        "sayi": len(t["bilinmeyen_eski"]), "istendi": (t.get("fatura_iste") or {}).get("istendi")})   # 5bv-c: aynı satır kendini anlatır
     return out
 
 

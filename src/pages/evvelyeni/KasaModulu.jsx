@@ -1795,7 +1795,7 @@ function IsSatir({ x, bugun, uyariSay = 0, onTeyit, onTeslim, onCoz, onKapanis, 
       <div style={{ ...satir, border: `1px solid ${alfa(x.tur === 'toptanci_vade' ? R.kirmizi : R.amber, 55)}` }}>
         <Cip tur={x.tur === 'toptanci_vade' && x.gecti ? 'kirmizi' : 'sari'}>{x.tur === 'toptanci_vade' ? (x.gecti ? '🚚 Vadesi geçti' : '🚚 Vade 3 gün içinde') : '🚚 Tutar bilinmiyor'}</Cip>
         <div style={{ minWidth: 0, fontSize: 13 }}><b>{x.ad}</b>
-          <div style={{ fontSize: 11.5, color: R.not }}>{x.tur === 'toptanci_vade' ? <>{x.gecti ? 'Vadesi geçmiş borç' : '3 gün içinde vadesi dolacak borç'} <b style={num}>{fmt(x.tutar)}</b> ₺ — Ödeme'den "Toptancı" olarak öde</> : `${x.sayi} teslimin tutarı 7+ gündür girilmedi — fatura/ekstre geldiyse tutarı gir`}</div></div>
+          <div style={{ fontSize: 11.5, color: R.not }}>{x.tur === 'toptanci_vade' ? <>{x.gecti ? 'Vadesi geçmiş borç' : '3 gün içinde vadesi dolacak borç'} <b style={num}>{fmt(x.tutar)}</b> ₺ — Ödeme'den "Toptancı" olarak öde</> : `${x.sayi} teslimin tutarı 7+ gündür girilmedi — fatura/ekstre geldiyse tutarı gir${x.istendi ? ` · fatura istendi: ${x.istendi}` : ''}`}</div></div>
         <Dugme kucuk onClick={git}>Toptancılar</Dugme>
       </div>
     );

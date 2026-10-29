@@ -305,6 +305,7 @@ export default function ToptanciModulu({ onToast }) {
               <div style={{ ...num, fontWeight: 800, fontSize: 18, minWidth: 110, textAlign: 'right', color: t.bakiye > 0 ? R.kirmizi : t.bakiye < 0 ? R.amber : R.yesil }}>{fmt(t.bakiye)} ₺</div>
               <span style={{ display: 'flex', gap: 6 }} onClick={(e) => e.stopPropagation()}>
                 <Dugme kucuk onClick={() => setCk(toptanciCk(t))}>🔍 Nerede?</Dugme>
+                {t.fatura_iste && <FaturaIste t={t} mesgul={mesgul} gonder={gonder} />}
                 <Dugme kucuk onClick={() => setTeslimForm({ t, tutar: '', tarih: gunStr(new Date()), fatura_geldi: true, fatura_no: '', aciklama: '' })}>+ Teslim</Dugme>
                 <Dugme ana kucuk onClick={() => ode(t)}>Öde</Dugme>
               </span>
@@ -398,6 +399,23 @@ export default function ToptanciModulu({ onToast }) {
         </Pencere>
       )}
     </div>
+  );
+}
+
+// 📲 FATURA İSTE (29 Eki kaçak taraması 5bv-c · L4b Fable): toptancı başına TEK kibar mesaj (wa.me — sistem hattı yok), metin sunucudan,
+// fiyatsız; 7+ gündür faturası gelmemiş teslimler. Basınca "istendi" izi (kanıt değil). Telefon yoksa düğme yerine Tanımlar yönlendirmesi.
+function FaturaIste({ t, mesgul, gonder }) {
+  const f = t.fatura_iste;
+  if (!f.wa_no) return <Dugme kucuk disabled title="Tanımlar › Toptancılar'da telefon yok">📲 Fatura iste ({f.sayi}) — telefon yok</Dugme>;
+  return (
+    <Dugme kucuk disabled={mesgul} title={f.istendi ? `Son istek ${f.istendi}${f.isteyen ? ` · ${f.isteyen}` : ''}` : '7+ gündür faturası gelmeyen teslimler'}
+      onClick={() => {
+        const url = `https://wa.me/${f.wa_no}?text=${encodeURIComponent(f.wa_metin)}`;
+        const uzun = url.length > 1800;   // L6-111 ile aynı: uzun mesaj panoya
+        if (uzun) { try { navigator.clipboard?.writeText(f.wa_metin)?.catch?.(() => {}); } catch { /* pano yok */ } }
+        window.open(uzun ? `https://wa.me/${f.wa_no}` : url, '_blank', 'noopener');
+        gonder('/evvel-yeni/toptanci/fatura-iste', { toptanci_id: t.id });
+      }}>📲 Fatura iste ({f.sayi}){f.istendi ? ` · istendi ${f.istendi}` : ''}</Dugme>
   );
 }
 
