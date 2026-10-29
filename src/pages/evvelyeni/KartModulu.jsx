@@ -93,6 +93,8 @@ Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır
         const k0 = g.kartlar[0];
         const lim = k0.limit; const kul = k0.kullanilabilir;
         const oran = lim && kul != null ? Math.max(0, Math.min(1, (lim - kul) / lim)) : null;
+        // 29 Eki fikir taraması 5by-b (Codex): doluluk ≥%75 amber · ≥%90 kırmızı — çubuk, rozet ve rakam TEK eşik (limit girilmiş kartta; ortak limitte grup)
+        const dolu = oran == null ? null : oran >= 0.9 ? 'kirmizi' : oran >= 0.75 ? 'sari' : null;
         return (
           <div key={g.grup ? `g:${g.grup.ad}` : k0.id} style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
             {g.grup && <Cip>ortak limit · {g.grup.ad} — {g.kartlar.length} kart aynı limiti kullanır</Cip>}
@@ -103,11 +105,12 @@ Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır
               </div>
               <div style={{ textAlign: 'right' }}>
                 <div style={{ fontSize: 12, color: R.not }}>Kullanılabilir</div>
-                <div style={{ ...num, fontSize: 26, fontWeight: 800, color: kul != null && kul < 0 ? R.kirmizi : R.yesil }}>{kul != null ? fmt(kul) : '—'} ₺</div>
+                <div style={{ ...num, fontSize: 26, fontWeight: 800, color: (kul != null && kul < 0) || dolu === 'kirmizi' ? R.kirmizi : dolu === 'sari' ? R.amber : R.yesil }}>{kul != null ? fmt(kul) : '—'} ₺</div>
+                {dolu && <Cip tur={dolu}>limit doluluğu %{Math.floor(oran * 100)}</Cip>}
                 <div style={{ fontSize: 12, color: R.not }}>limit {lim != null ? fmt(lim) : '—'}{k0.kullanilan != null ? ` · kullanılan ${fmt(k0.kullanilan)}` : ''}</div>
               </div>
             </div>
-            {oran != null && <div style={{ height: 8, borderRadius: 99, background: 'var(--pi-line)', overflow: 'hidden' }}><div style={{ width: `${oran * 100}%`, height: '100%', background: oran > 0.9 ? R.kirmizi : oran > 0.7 ? R.amber : 'var(--pi-accent)' }} /></div>}
+            {oran != null && <div style={{ height: 8, borderRadius: 99, background: 'var(--pi-line)', overflow: 'hidden' }}><div style={{ width: `${oran * 100}%`, height: '100%', background: dolu === 'kirmizi' ? R.kirmizi : dolu === 'sari' ? R.amber : 'var(--pi-accent)' }} /></div>}
             {g.kartlar.map((k) => (
               <div key={k.id} style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: g.kartlar.length > 1 ? '1px solid var(--pi-line)' : 'none', paddingTop: g.kartlar.length > 1 ? 8 : 0 }}>
                 {g.kartlar.length > 1 && <b style={{ fontSize: 14 }}>{k.ad}</b>}
