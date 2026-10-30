@@ -347,7 +347,7 @@ def _yemek_kalemi(k, pid: str, aylik: int, gun: int, uyari: list) -> dict:
         return tam
     kurus = (Decimal(aylik) * gun * hak / (AY_GUN * payda)).quantize(Decimal(1), rounding=ROUND_HALF_UP)   # Codex: kesme değil yuvarlama
     return {"kod": "yemek", "ad": f"Yemek: {gun} gün çalıştı · molası {k.get('limit_dk', 60)} dk'yı geçmeyen {hak}/{payda} gün",   # F4.3 M-4 (sim 27 Eki): formül sahip dilinde
-            "tutar": _tl(int(kurus)), "dusen": h["dusen"]}
+            "tutar": _tl(int(kurus)), "dusen": h["dusen"], "dusen_sayi": max(0, payda - hak)}   # telefon: hakkı oluşmayan gün sayısı (Codex L6)
 
 
 def _gecen_gun(giris, cikis, ay_bas, ay_son, bugun):
@@ -562,10 +562,11 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
                 kes_gun = Decimal(gun)
             if kes_gun:
                 kalemler.append({"kod": "eksik", "ad": f"Eksik gün {kes_gun:g} × maaş/30", "tutar": -_tl(int(kes_gun * maas / AY_GUN))})
-        yemek_dusen = []
+        yemek_dusen, yemek_dusen_sayi = [], 0
         if u.get("yemek"):
             yk = _yemek_kalemi(yemek_k, pid, int(u["yemek"]), gun, uyari)
             yemek_dusen = yk.pop("dusen", [])
+            yemek_dusen_sayi = yk.pop("dusen_sayi", 0)
             kalemler.append(yk)
         if u.get("yol"):
             kalemler.append({"kod": "yol", "ad": f"Yol: aylık × {gun}/30", "tutar": _tl(int(u["yol"]) * gun // AY_GUN)})
@@ -609,7 +610,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
               "hesap_saat": saat if yari else None,   # avans tavanı bunu okur (Fable O-3: _yeni_oneri ikinci kez çalışmasın)
               "yemek_hak": next((k["tutar"] for k in kalemler if k["kod"] == "yemek"), 0), "yemek_dusen": yemek_dusen,
               "gec_gunler": gec_gunler, "gec_kararsiz": gec_kararsiz, "gelmedi_gunler": gel_gunler, "gelmedi_kararsiz": gel_kararsiz, "gelmedi_okunamadi": gel_okunamadi,
-              **({"gunluk": gunluk, "yemek_kaybi": _tl(yemek_kaybi), "dokum_bugun": bugun.isoformat()} if gunluk is not None else {})}
+              **({"gunluk": gunluk, "yemek_kaybi": _tl(yemek_kaybi), "dokum_bugun": bugun.isoformat(), "yemek_dusen_sayi": yemek_dusen_sayi} if gunluk is not None else {})}
         satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, din, odenen, od, e, u, "evvel_yeni", ek, yari))
     satir.sort(key=lambda x: (not x["aktif"], x["ad"]))
     return satir
@@ -719,6 +720,7 @@ def kisi_ozet(cur, personel_id: str, gun: Optional[date] = None) -> dict:
     gl = r.get("gunluk") or []
     return {"ay": ay, "calisma_turu": r.get("calisma_turu"), "hak_edis": r["hak_edis"], "onay": bool(r.get("onay")),
             "bugun": _tl(next((x["tutar"] for x in gl if x["gun"] == bugun_g), 0)), "yemek_kaybi": r.get("yemek_kaybi", 0),
+            "yemek_dusen_sayi": r.get("yemek_dusen_sayi", 0),   # Fable: yalnız sayı (formül / dakika yok) · çalışılan − hak günü (Codex)
             "gunluk": [{"gun": x["gun"], "tutar": _tl(x["tutar"]), "not": x.get("not")} for x in reversed(gl)],
             "kalemler": [{"ad": AD.get(k.get("kod"), "Diğer"), "tutar": k["tutar"]} for k in r.get("kalemler") or [] if k.get("tutar")],
             "avans_mahsup": r["avans_mahsup"], "odenen": r["odenen"], "kalan": r["kalan"]}

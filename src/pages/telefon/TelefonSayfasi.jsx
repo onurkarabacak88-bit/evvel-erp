@@ -833,7 +833,12 @@ function HakEdisKart() {
       {!d.onay && <div style={{ fontSize: 17 }}>Bugün <b style={{ color: T.yesil }}>{para(d.bugun || 0)}</b> hak kazandın</div>}
       <div className="tq-silik">Toplam hak ettiğin tutar</div>
       <b style={{ fontSize: 30, fontFamily: "'Fraunces', serif", marginTop: -6 }}>{para(d.hak_edis)}</b>
-      {d.yemek_kaybi > 0 && <div style={{ color: T.kirmizi, fontWeight: 700 }}>🍽️ {para(d.yemek_kaybi)} yemek molası kaybın var</div>}
+      {d.yemek_kaybi > 0 && (   // sahip 30 Eki: "kazanamadığın hak" — kesinti / ceza dili yok, renk nötr (Fable L4b)
+        <div>
+          <div>🍽️ Kazanamadığın yemek hakkı: <b>{para(d.yemek_kaybi)}</b></div>
+          {d.yemek_dusen_sayi > 0 && <div className="tq-silik">{d.yemek_dusen_sayi} gün yemek hakkı oluşmadı</div>}
+        </div>
+      )}
       <div className="tq-not">{d.onay ? 'Bu ayın hak edişi onaylandı.' : 'Her gün güncellenir, ay sonunda kesinleşir.'}</div>
       <div style={{ background: T.yuzey, border: `1px solid ${T.kenar}`, borderRadius: 12, padding: '10px 12px', display: 'grid', gap: 4 }}>
         {(d.kalemler || []).map((k, i) => (
