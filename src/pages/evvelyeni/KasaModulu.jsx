@@ -21,6 +21,7 @@
 //   · EKRAN KENDİ ARİTMETİĞİNİ KURMAZ: bütün rakamlar sunucudan gelir.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useCallback, useEffect, useRef, useState } from 'react';
+import { yapabilir } from './yetki';   // 🔐 işlem düğmesi izni (sunucu da engeller)
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { AY_UZUN, ayTR, GUN_UZUN } from '../../utils/trTarih';
@@ -1188,7 +1189,9 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
 
   const cepAd = (id) => (veri?.cepler.find((c) => c.id === id) || {}).ad || id;
   // Formu çekmeceden açınca kapanışta aynı çekmeceye geri dönülür (Codex: geldiği yere dönemiyordu).
-  const formAc = (tip, ek = {}, donus = null) => { cekmeceNo.current += 1; onCekmece?.(null); setForm({ tip, ...ek, donus }); };
+  const formAc = (tip, ek = {}, donus = null) => {
+    if (!yapabilir('kasa.islem|kasa.donem|isler.kasa.islem|kasa.teslim.islem')) { onToast?.('Bu işlem için iznin yok — merkeze sor'); return; }   // 🔐
+    cekmeceNo.current += 1; onCekmece?.(null); setForm({ tip, ...ek, donus }); };
   const teyit = async (id) => {
     try { await api(`/evvel-yeni/kasa/hareket/${id}/onay`, { method: 'POST', body: {} }); onToast?.('Onaylandı'); yukle(); } catch (e) { onToast?.(e.message); }
   };
@@ -1364,7 +1367,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
           <div className="pi-eyebrow">Evvel Yeni · Para · dönem {tUzun(veri.baslangic)}</div>
           <h1 style={{ fontSize: 30 }}>{sayfaAd}</h1>
         </div>
-        {sekme !== 'kasam' && (
+        {sekme !== 'kasam' && !veri.budandi && (   /* 🔐 kasa izni yoksa toplam kasa kutusu yok (sunucu parayı budadı) */
           <button type="button" onClick={() => git('kasam')} style={{ marginLeft: 'auto', padding: '8px 14px', borderRadius: 12, background: 'var(--pi-accent-soft)', border: '1px solid var(--pi-line)', cursor: 'pointer', font: 'inherit', color: R.krem, textAlign: 'left' }}>
             <div className="pi-eyebrow">Toplam kasa · {hepsi ? 'şu an' : `${tUzun(gun)} akşamı`}</div>
             <div style={{ ...num, fontSize: 22, fontWeight: 700, color: R.bakirAcik }}>{tl(o.hepsi)}</div>
@@ -1378,6 +1381,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         : (<>
       {/* KAYIT GİR + GÜN SEÇİCİ */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+        {yapabilir('kasa.islem') && <>   {/* 🔐 kasa kaydı izni yoksa kayıt düğmeleri yok */}
         <Dugme ana onClick={() => formAc('dis')}>+ Dış giriş</Dugme>
         <Dugme ana onClick={() => formAc('teslim')}>+ Teslim</Dugme>
         <Dugme ana onClick={() => formAc('tasima')}>+ Taşı / Yatır</Dugme>
@@ -1385,14 +1389,15 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         <Dugme ana onClick={() => formAc('pos')}>+ Online yattı</Dugme>
         <Dugme onClick={() => (onSekme ? onSekme('odemeler') : formAc('odeme'))}>+ Ödeme</Dugme>
         <Dugme onClick={() => formAc('kapanis')}>+ Kapanış</Dugme>
+        </>}
         {/* Fable P3: büyük ve tehlikeli iki düğme gözden uzak "Ayarlar" içinde */}
-        <details style={{ fontSize: 13 }}>
+        {yapabilir('kasa.donem') && <details style={{ fontSize: 13 }}>
           <summary style={{ cursor: 'pointer', color: R.not, padding: '6px 4px' }}>⚙️ Ayarlar</summary>
           <div style={{ display: 'flex', gap: 6, marginTop: 6 }}>
             {veri.senkron?.kopru === 'acik' && <Dugme kucuk onClick={() => formAc('aktar')} title="Dönem başından bu yana kapanış ve teslimleri eski sistemden okur">Eski sistemden aktar</Dugme>}{/* A3: eski köprü kapanınca gizli */}
             <Dugme kucuk onClick={() => formAc('donem')} title="Önceki kayıtlar arşive geçer; her cep sayılıp yeniden başlanır">Yeni başlangıç</Dugme>
           </div>
-        </details>
+        </details>}
         {guneBagli && <div style={{ marginLeft: 'auto', display: 'flex', gap: 4, alignItems: 'center' }}>
           <Dugme kucuk disabled={hepsi || gun <= veri.baslangic} onClick={() => setGun(gunEkle(gun, -1))}>‹</Dugme>
           <input type="date" value={gun} min={veri.baslangic} max={veri.bugun} disabled={hepsi} onChange={(e) => e.target.value && setGun(e.target.value)}

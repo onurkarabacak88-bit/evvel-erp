@@ -485,8 +485,33 @@ def _slug(ad: str) -> str:
 
 
 @router.get("/liste")
-def liste():
-    """Bütün tanımlar tek seferde (aktif + pasif)."""
+def liste(x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Bütün tanımlar tek seferde (aktif + pasif). 🔐 Ortak liste (seçiciler okur) — izin kapısı ZORLA kipindeyse kişinin
+    izni olmayan hassas alanlar budanır (evvel_yeni_yetki.budama_haritasi · Codex: toplu yanıtlar ayrıca süzülür)."""
+    from evvel_yeni_yetki import budama_haritasi
+    return _liste_buda(_liste_tam(), budama_haritasi(x_evvel_oturum))
+
+
+def _liste_buda(d: dict, iz: Optional[dict]) -> dict:
+    if iz is None:
+        return d
+    var = lambda *a: any(iz.get(x) for x in a)   # noqa: E731
+    if not var("tanim.personel"):   # ücret yalnız personel tanımını görene (maaş satırı kendi ucunda)
+        d["personel"] = [{k: v for k, v in x.items() if k not in ("maas", "yemek", "saatlik", "yol", "ucret_eski", "pin_var", "saatlik_otomatik")}
+                         for x in d["personel"]]
+    if not var("tanim.kart", "kart.liste", "kart.takvim"):
+        d["kartlar"] = []
+    if not var("tanim.banka", "kasa.banka", "kasa.mutabakat"):
+        d["bankalar"] = []
+    if not var("tanim.sube", "kira.takvim"):
+        d["subeler"] = [{k: v for k, v in x.items() if not k.startswith("kira") and k not in ("pos_oran", "online_oran")} for x in d["subeler"]]
+    if not var("tanim.toptanci", "toptanci.liste"):
+        d["toptancilar"] = [{k: v for k, v in x.items() if k != "acilis_bakiye"} for x in d["toptancilar"]]
+    d["budandi"] = True
+    return d
+
+
+def _liste_tam():
     from evvel_yeni_kasa_api import kasa_hazirla as _hazirla
     from evvel_yeni_cekirdek import bugun as _bugun
     _hazirla()

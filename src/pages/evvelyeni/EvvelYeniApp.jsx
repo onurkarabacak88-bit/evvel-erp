@@ -12,6 +12,7 @@ import { api } from '../../utils/api';
 import { MODULLER, TUM_SAYFALAR } from './moduller';
 import { kabukDegiskenleri } from './tema';   // renkler TEK kaynak (T4-16)
 import { IS_GRUPLARI, isGrubu, SorKatmani } from './KasaModulu';
+import { izinAyarla, sayfaGorunur } from './yetki';   // 🔐 izin TEK kaynak
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
 
@@ -117,17 +118,36 @@ export default function EvvelYeniApp() {
       .catch(() => setAcikMod(null));
     return undefined;
   }, [durum]);
+  // 🔐 İzin (sahip 30 Eki): /yetki/ben → menü / sayfa / düğme. Okunamazsa ekran KAPANMAZ (Codex L6: gözlemde davranış aynı kalmalı);
+  // asıl engel SUNUCUDA — uygulama kipinde izinsiz istek orada 403 / 503 alır.
+  const [yetki, setYetki] = useState(null);   // null = soruluyor · sunucu yanıtı
+  useEffect(() => {
+    if (durum !== 'tamam') return undefined;
+    api('/evvel-yeni/yetki/ben').then((d) => { izinAyarla(d); setYetki(d); })
+      .catch((e) => {
+        if (e?.status === 403 || e?.status === 401) { izinAyarla({ hepsi: false }); setYetki({ hepsi: false, red: e.message }); return; }   // hesap kapalı / oturum yok
+        izinAyarla({ hepsi: true }); setYetki({ hepsi: true, okunamadi: true });   // geçici okuma hatası: ekran kapanmaz, engel sunucuda
+      });
+    return undefined;
+  }, [durum]);
   const GORUNUR = acikMod ? MODULLER.filter((b) => b.mod === 'kasa' || b.her_zaman || acikMod.has(b.mod)) : MODULLER;
   // 'bolum' taşıyan modülün sayfaları ana bölümün altına eklenir (her sayfa kendi modülünü bilir → kapanınca o da kalkar)
   // Codex (IS 5c): ana bölümü görünmüyorsa (ör. Tanımlar kapalı) 'bolum' taşıyan modül KENDİ başlığıyla çıkar — Sistem durumu kaybolmasın
   const anaVar = (e) => GORUNUR.some((b) => !b.bolum && b.mod === e.bolum);
   const BOLUMLER = GORUNUR.filter((b) => b.menude !== false && (!b.bolum || !anaVar(b))).map((b) => ({
     ...b, sayfalar: [...b.sayfalar.filter((x) => !x.mod || !acikMod || [].concat(x.mod).some((m) => acikMod.has(m))),
-      ...(b.bolum ? [] : GORUNUR.filter((e) => e.bolum === b.mod).flatMap((e) => e.sayfalar))],
-  }));
+      ...(b.bolum ? [] : GORUNUR.filter((e) => e.bolum === b.mod).flatMap((e) => e.sayfalar))].filter((x) => sayfaGorunur(x.id)),
+  })).filter((b) => b.sayfalar.length > 0);   // 🔐 izinsiz sayfa menüde yok; hiç sayfası kalmayan başlık da yok
+  // girişte: izin varsa Kasam, yoksa Bekleyen işler, yoksa ilk izinli sayfa
+  const ILK_SAYFA = ['kasam', ...IS_GRUPLARI.map((g) => g.id)].find((id) => BOLUMLER.some((b) => b.sayfalar.some((x) => x.id === id)))
+    || (BOLUMLER[0] || {}).sayfalar?.[0]?.id;
+  const sayfaKapali = !!yetki && !sayfaGorunur(sekme);
+  useEffect(() => {   // 🔐 doğrudan adresle izinsiz sayfa → ilk izinli sayfa (Fable: yan etki render'da değil)
+    if (sayfaKapali && ILK_SAYFA && ILK_SAYFA !== sekme) sekmeDegis(ILK_SAYFA);
+  });   // eslint-disable-line react-hooks/exhaustive-deps
   // F3.2 (sim 25 Eki): rozet ŞİMDİYİ sayar — geçmiş gün seçiliyken (ör. kayıttan sonra o güne atlayınca) 18 → 4 oluyordu
   const veriGeldi = (v) => setRozet({
-    teslim: v.isler.filter((x) => x.tur === 'teslim').length, farklar: v.acik_fark_simdi ?? v.ozet.acik_fark_sayisi,
+    teslim: v.isler.filter((x) => x.tur === 'teslim').length, farklar: v.acik_fark_simdi ?? v.ozet?.acik_fark_sayisi,
     // Bekleyen işler alt sekmeleri: her biri kendi sayısı (bölüm başlığında toplamı)
     ...Object.fromEntries(IS_GRUPLARI.map((g) => [g.id, v.isler.filter((x) => isGrubu(x) === g.grup).length])),
   });
@@ -213,6 +233,11 @@ export default function EvvelYeniApp() {
           </nav>
           <main className="piapp-ic">
             {(() => {
+              if (!yetki) return <div style={{ padding: 24, color: 'var(--ink3)' }}>İzinler okunuyor…</div>;
+              if (sayfaKapali) {
+                if (ILK_SAYFA && ILK_SAYFA !== sekme) return null;   // yönlendirme etkide
+                return <div style={{ padding: 24, fontSize: 15 }}>🔐 {yetki.red || 'Bu hesaba açılmış ekran yok'} — merkeze sor.</div>;
+              }
               const sy = TUM_SAYFALAR.find((x) => x.id === sekme);
               const mb = sy && GORUNUR.find((b) => b.mod === sy.mod);
               if (sy && !mb && MODULLER.some((b) => b.mod === sy.mod)) {   // B59: kapalı modülün adresi — iskelet/teknik hata yerine açık söz

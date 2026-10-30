@@ -533,6 +533,23 @@ async def evvel_yeni_kapisi(request: Request, call_next):
                 if os.environ.get("EY_KAPI", "").strip().lower() != "gozlem":
                     return JSONResponse(status_code=401, content={"detail": "Merkez oturumu gerekli"},
                                         headers={"Access-Control-Allow-Origin": "*"})   # CORS katmanı içeride — tarayıcı 401'i görsün
+        # 🔐 ROL / İZİN KAPISI (sahip 30 Eki · Codex + Fable + Opus): geçerli merkez jetonu taşıyan istek → kişinin izni. Kip ey_ayar
+        # 'yetki_kapi' (gozlem: yalnız sayar · zorla: 403). EY_KAPI'ya bağlı değil. Kural ve yol sözlüğü TEK yerde: evvel_yeni_yetki.
+        _jeton_y = request.headers.get("X-Evvel-Oturum") or ""
+        if _jeton_y:
+            try:
+                import evvel_yeni_yetki as _yt
+                from starlette.concurrency import run_in_threadpool as _rtp
+                _k = await _rtp(_yt.istek_karari, request.method, yol, _jeton_y)
+            except Exception:  # noqa: BLE001 — karar verilemezse: gözlem kipinde geç; zorla kipinde 503 (erişim açmaz — Codex)
+                logging.getLogger("evvel_yeni_yetki").warning("yetki kapısı karar veremedi", exc_info=True)
+                try:
+                    import evvel_yeni_yetki as _yt2
+                    _k = (503, "İzinler şu an okunamadı — biraz sonra yeniden dene") if _yt2.kip_onbellekli() == "zorla" else None
+                except Exception:  # noqa: BLE001
+                    _k = None
+            if _k:
+                return JSONResponse(status_code=_k[0], content={"detail": _k[1]}, headers={"Access-Control-Allow-Origin": "*"})
     return await call_next(request)
 
 

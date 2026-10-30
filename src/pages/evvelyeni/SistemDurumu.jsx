@@ -117,6 +117,96 @@ function PilotSube({ onToast }) {
   );
 }
 
+// 🔐 YETKİLER (sahip 30 Eki "Mehmet Uçak müdürüm — bütün basamaklar tek tek, sök-tak" · Codex + Fable + Opus): hesap seç → her basamak
+// Kapalı / Görür (ekran) · Kapalı / Yapar (işlem). Kip: gözlem (kimse engellenmez, yalnız sayılır) → zorla. Yalnız sahip ve ortak giriş görür.
+function Yetkiler({ onToast }) {
+  const [k, setK] = useState(null);
+  const [soz, setSoz] = useState(null);
+  const [sec, setSec] = useState('');
+  const [taslak, setTaslak] = useState(null);
+  const [goz, setGoz] = useState(null);
+  const [mesgul, setMesgul] = useState(false);
+  const yukle = useCallback(() => {
+    Promise.all([api('/evvel-yeni/yetki/kullanicilar'), api('/evvel-yeni/yetki/sozluk'), api('/evvel-yeni/yetki/gozlem')])
+      .then(([a, b, c]) => { setK(a); setSoz(b); setGoz(c); }).catch(() => setK(false));
+  }, []);
+  useEffect(() => { yukle(); }, [yukle]);
+  if (k === false || !k || !soz) return null;   // sahip değilse hiç görünmez
+  const kisi = k.kullanicilar.find((x) => x.id === sec);
+  const ac = (x) => { setSec(x.id); setTaslak({ sahip: x.sahip, izinler: { ...x.izinler }, surum: x.surum }); };
+  const kaydet = async () => {
+    setMesgul(true);
+    try { const r = await api(`/evvel-yeni/yetki/kisi/${encodeURIComponent(sec)}`, { method: 'POST', body: taslak }); onToast?.(r.mesaj); yukle(); setSec(''); setTaslak(null); }
+    catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+    setMesgul(false);
+  };
+  const kipYaz = async (kip) => {
+    if (kip === 'zorla' && !(await soruOnay('İzinler UYGULANSIN mı? Kaydı olmayan hesaplar hiçbir ekranı göremez. (Ortak şifre hep tam yetkili kalır.)', 'Evet, uygula'))) return;
+    try { const r = await api('/evvel-yeni/yetki/kip', { method: 'POST', body: { kip } }); onToast?.(r.mesaj); yukle(); }
+    catch (e) { onToast?.(e?.message || 'Değiştirilemedi'); }
+  };
+  const gruplar = [];
+  for (const b of soz.basamaklar) { let g = gruplar.find((x) => x.mod === b.mod); if (!g) { g = { mod: b.mod, s: [] }; gruplar.push(g); } g.s.push(b); }
+  const deger = (a) => taslak?.izinler[a] || 'kapali';
+  const degis = (b, v) => setTaslak((t) => {
+    const iz = { ...t.izinler, [b.anahtar]: v };
+    if (b.tur === 'ekran' && v === 'kapali') soz.basamaklar.filter((x) => x.bagli === b.anahtar).forEach((x) => { iz[x.anahtar] = 'kapali'; });
+    return { ...t, izinler: iz };
+  });
+  return (
+    <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>🔐 Yetkiler</b>
+        {k.kip === 'zorla' ? <Cip tur="yesil">izinler uygulanıyor</Cip> : <Cip tur="sari">gözlem — kimse engellenmiyor</Cip>}
+        <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
+          {k.kip === 'zorla' ? <Dugme kucuk onClick={() => kipYaz('gozlem')}>Gözleme al</Dugme> : <Dugme kucuk ana onClick={() => kipYaz('zorla')}>İzinleri uygula</Dugme>}
+        </span>
+      </div>
+      {k.eslenmemis.length > 0 && <div style={{ color: R.amber, fontSize: 13 }}>İzni yazılmamış hesap: {k.eslenmemis.join(', ')} — uygulanınca bunlar hiçbir ekranı göremez.</div>}
+      <table className="pi-tablo" style={{ fontSize: 13 }}>
+        <thead><tr><th style={{ textAlign: 'left' }}>Hesap</th><th style={{ textAlign: 'left' }}>Durum</th><th /></tr></thead>
+        <tbody>{k.kullanicilar.filter((x) => x.aktif).map((x) => (
+          <tr key={x.id}><td style={{ textAlign: 'left' }}><b>{x.ad}</b> <span style={{ color: R.not }}>{x.kullanici_adi}{x.rol ? ` · ${x.rol}` : ''}</span></td>
+            <td style={{ textAlign: 'left' }}>{x.sahip ? <Cip tur="yesil">sahip — hepsi</Cip> : x.kayit ? `${Object.keys(x.izinler).length} basamak açık` : <span style={{ color: R.amber }}>izin yazılmadı</span>}</td>
+            <td><Dugme kucuk onClick={() => ac(x)}>İzinler</Dugme></td></tr>
+        ))}</tbody>
+      </table>
+      {kisi && taslak && (
+        <div style={{ display: 'grid', gap: 8, borderTop: '1px solid var(--pi-line)', paddingTop: 10 }}>
+          <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+            <b>{kisi.ad}</b>
+            <label style={{ fontSize: 13 }}><input type="checkbox" checked={!!taslak.sahip} onChange={(e) => setTaslak((t) => ({ ...t, sahip: e.target.checked }))} /> Sahip (her şey açık)</label>
+            <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}><Dugme kucuk onClick={() => { setSec(''); setTaslak(null); }}>Vazgeç</Dugme><Dugme kucuk ana disabled={mesgul} onClick={kaydet}>Kaydet</Dugme></span>
+          </div>
+          {!taslak.sahip && gruplar.map((g) => (
+            <div key={g.mod} style={{ display: 'grid', gap: 2 }}>
+              <div style={{ fontSize: 12, color: R.not, letterSpacing: 1, textTransform: 'uppercase', marginTop: 6 }}>{g.mod}{g.s[0] && !g.s[0].modul_acik ? ' · modül kapalı' : ''}</div>
+              {g.s.map((b) => {
+                const ustKapali = b.bagli && deger(b.bagli) !== 'gor';
+                const sec2 = b.tur === 'ekran' ? [['kapali', 'Kapalı'], ['gor', 'Görür']] : [['kapali', 'Kapalı'], ['yap', 'Yapar']];
+                return (
+                  <div key={b.anahtar} style={{ display: 'flex', gap: 8, alignItems: 'center', paddingLeft: b.tur === 'islem' ? 18 : 0, fontSize: 13.5 }}>
+                    <span style={{ flex: 1 }}>{b.tur === 'islem' ? '↳ ' : ''}{b.ad}{b.hassas && <span style={{ color: R.kirmizi, fontSize: 11, marginLeft: 6 }}>HASSAS</span>}</span>
+                    {sec2.map(([v, ad]) => (
+                      <Dugme key={v} kucuk ana={deger(b.anahtar) === v} disabled={v !== 'kapali' && ustKapali} onClick={() => degis(b, v)}>{ad}</Dugme>
+                    ))}
+                  </div>
+                );
+              })}
+            </div>
+          ))}
+        </div>
+      )}
+      {goz?.satirlar?.length > 0 && (
+        <details><summary style={{ cursor: 'pointer', fontSize: 13 }}>Gözlem: uygulansaydı engellenecek {goz.satirlar.length} istek türü</summary>
+          <div style={{ fontSize: 12.5, display: 'grid', gap: 2, marginTop: 6 }}>{goz.satirlar.slice(0, 40).map((x, i) => (
+            <div key={i}>{(k.kullanicilar.find((u) => u.id === x.kid) || {}).ad || x.kid} · {x.yontem} {x.yol} · {x.anahtar} · {x.sayi} kez</div>))}</div>
+        </details>
+      )}
+    </div>
+  );
+}
+
 export default function SistemDurumu({ onToast }) {
   const [g, setG] = useState(null);
   const [m, setM] = useState(null);
@@ -142,6 +232,7 @@ export default function SistemDurumu({ onToast }) {
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
       <div><div className="pi-eyebrow">Evvel Yeni · Tanımlar</div><h1 style={{ fontSize: 30 }}>Sistem durumu</h1></div>
+      <Yetkiler onToast={onToast} />
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!g && !hata && <div style={{ color: R.not }}>Hazırlanıyor…</div>}
       {g && (

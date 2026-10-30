@@ -1086,7 +1086,40 @@ def _gun_coz(gun: Optional[str]) -> str:
 
 
 @router.get("/durum")
-def durum(gun: Optional[str] = None, hepsi: bool = False):
+def durum(gun: Optional[str] = None, hepsi: bool = False, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """🔐 Ortak okuma (Bekleyen işler + ana sayfa): izin kapısı ZORLA kipindeyse kişinin izni olmayan iş grupları ve para alanları
+    budanır (Fable / Codex: isler.kasa görmek kasa derinliğini açmaz)."""
+    from evvel_yeni_yetki import budama_haritasi
+    return _durum_buda(_durum_tam(gun, hepsi), budama_haritasi(x_evvel_oturum))
+
+
+def _durum_buda(d: dict, iz: Optional[dict]) -> dict:
+    """🔐 Alan / cep bazında budama (Codex L6): toplam ve göstergeler yalnız Kasam (ana / kasa.kasam) izniyle; cepler kendi türünün
+    izniyle (şube → kasa.dukkan · ev → kasa.evler · banka / hesap → kasa.banka); hareketler kasa.hareket; işler grup izniyle."""
+    if iz is None:
+        return d
+    from evvel_yeni_yetki import CEP_TUR_ANAHTAR, IS_GRUP_ANAHTAR
+    gruplar = {"kasa", "siparis", "odeme", "tedarik", "personel", "kira", "not"}
+    d["isler"] = [x for x in d.get("isler") or [] if iz.get(IS_GRUP_ANAHTAR[x.get("grup") if x.get("grup") in gruplar else "kasa"])]
+    if not (iz.get("ana") or iz.get("kasa.kasam")):
+        d["ozet"] = {k: (0 if isinstance(v, (int, float)) and not isinstance(v, bool) else v) for k, v in (d.get("ozet") or {}).items()
+                     if not isinstance(v, (dict, list))}   # şekil korunur (ekran çökmesin), para sıfır
+        for k in ("onceki_toplam", "degisim_toplam", "degisim_isletme", "pos_bekleyen_brut"):
+            d[k] = None
+        for k in ("kpi", "pos", "gec_alimlar", "iptaller", "acilis_girilen"):
+            d[k] = [] if isinstance(d.get(k), list) else {}
+    izinli_cep = {c["id"] for c in d.get("cepler") or [] if iz.get(CEP_TUR_ANAHTAR.get(c.get("tur"), "kasa.kasam"))}
+    d["cepler"] = [c for c in d.get("cepler") or [] if c["id"] in izinli_cep]
+    d["anlik_bakiye"] = {k: v for k, v in (d.get("anlik_bakiye") or {}).items() if k in izinli_cep}
+    if not iz.get("kasa.hareket"):
+        d["hareketler"] = []
+    if not iz.get("kasa.fark"):
+        d["acik_fark_simdi"] = 0
+    d["budandi"] = True
+    return d
+
+
+def _durum_tam(gun: Optional[str] = None, hepsi: bool = False):
     """Tek ekranın bütün verisi: seçilen gün AKŞAMI para nerede + o günün hareketleri
     + güne bağlı olmayan bekleyen işler. Ekranın bütün rakamları buradan gelir."""
     _hazirla()
@@ -1190,12 +1223,16 @@ def durum(gun: Optional[str] = None, hepsi: bool = False):
 
 
 @router.get("/cep/{cep_id:path}")
-def cep_detay(cep_id: str, gun: Optional[str] = None, hepsi: bool = False):
+def cep_detay(cep_id: str, gun: Optional[str] = None, hepsi: bool = False, x_evvel_oturum: Optional[str] = Header(default=None)):
     _hazirla()
     with db() as (conn, cur):
         cep_list, C, kayit, _ = _yukle(cur)
     if cep_id not in C:
         raise HTTPException(404, "Cep bulunamadı")
+    from evvel_yeni_yetki import CEP_TUR_ANAHTAR, budama_haritasi   # 🔐 Codex L6: cep ayrıntısı o cep TÜRÜNÜN izniyle
+    _iz = budama_haritasi(x_evvel_oturum)
+    if _iz is not None and not _iz.get(CEP_TUR_ANAHTAR.get(C[cep_id].get("tur"), "kasa.kasam")):
+        raise HTTPException(403, "Bu kasayı görme iznin yok — merkeze sor")
     g = _gun_coz(gun)
     ol_tum = _olaylar(kayit)
     ol = ol_tum if hepsi else [o for o in ol_tum if o["gun"] <= g]
@@ -1843,15 +1880,18 @@ def iptal(hid: str, body: IptalBody, x_evvel_oturum: Optional[str] = Header(defa
     Sayılmış bir cebi etkiliyorsa ya da bir cebi geçmişte eksiye düşürecekse REDDEDİLİR."""
     if not (body.sebep or "").strip():
         raise HTTPException(400, "İptal sebebi zorunlu")
+    from evvel_yeni_yetki import budama_haritasi   # 🔐 Codex L6: ödeme izni yalnız ÖDEME hareketini iptal eder (kasa.iptal hepsini)
+    _iz = budama_haritasi(x_evvel_oturum)
     _hazirla()
     with db() as (conn, cur):
-        return hareket_iptal_yaz(cur, hid, body.sebep, _aktor(cur, x_evvel_oturum))
+        return hareket_iptal_yaz(cur, hid, body.sebep, _aktor(cur, x_evvel_oturum),
+                                 yalniz_tur=None if _iz is None or _iz.get("kasa.iptal") else "odeme")
 
 
 AVANS_REF_ONEKLERI = ("odeme_formu:avans-", "avans:", "avans-eski:")   # Avans'ın yazdığı ödemeler (havale · elden · 1 Kasım devri)
 
 
-def hareket_iptal_yaz(cur, hid: str, sebep: str, kim: str, avans_izni: bool = False) -> dict:
+def hareket_iptal_yaz(cur, hid: str, sebep: str, kim: str, avans_izni: bool = False, yalniz_tur: Optional[str] = None) -> dict:
     """PUBLIC — bir Kasa hareketini iptal eder (kayıt silinmez, 'iptal' kaydı). Kasa ekranının × düğmesi ve sahibi başka modül olan
     bağlı kayıtlar (Avans 'geri al') AYNI kapıdan geçer. Avansa bağlı ödeme yalnız Avans modülünden (avans_izni) iptal edilir —
     yoksa talep 'ödendi' kalır, para / mahsup geri döner (matris AV-1 · Fable L4b A)."""
@@ -1862,6 +1902,8 @@ def hareket_iptal_yaz(cur, hid: str, sebep: str, kim: str, avans_izni: bool = Fa
     h = next((x for x in kayit if x["id"] == hid), None)
     if not h:
         raise HTTPException(404, "Kayıt bulunamadı ya da zaten iptal")
+    if yalniz_tur and h["tur"] != yalniz_tur:
+        raise HTTPException(403, "Bu kaydı iptal etme iznin yok (yalnız ödeme kayıtları) — merkeze sor")
     if not avans_izni and h["tur"] == "odeme" and str(h.get("kaynak_ref") or "").startswith(AVANS_REF_ONEKLERI):
         if str(h.get("kaynak_ref")).startswith("avans-eski:"):
             raise HTTPException(409, "Eski sistemden devredilen avans kaydı — iptal edilmez (para Ekim'de eski sistemde ödendi)")

@@ -67,7 +67,18 @@ def _listeler(cur) -> dict:
 
 
 @router.get("/listeler")
-def listeler():
+def listeler(x_evvel_oturum: Optional[str] = Header(default=None)):
+    """🔐 Avans ekranı da okur: izin kapısı ZORLA kipinde Ödeme izni olmayan kişiye yalnız avansın gereği (şubeler + banka cepleri) döner
+    (Codex L6: ev kasaları, kartlar, alınan borçlar açılmasın)."""
+    from evvel_yeni_yetki import budama_haritasi
+    d = _listeler_tam()
+    iz = budama_haritasi(x_evvel_oturum)
+    if iz is not None and not (iz.get("odeme.defter") or iz.get("odeme.patron")):
+        return {"subeler": d["subeler"], "sube_adlari": d["sube_adlari"], "banka_cepler": d["banka_cepler"], "budandi": True}
+    return d
+
+
+def _listeler_tam():
     """Formun bütün açılır listeleri + ceplerin anlık bakiyesi (nakit/havale kaynağı seçimi için)."""
     _hazirla()
     with db() as (conn, cur):

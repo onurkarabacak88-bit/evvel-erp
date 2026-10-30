@@ -2,6 +2,7 @@
 // 5 büyük kart var olan EY ekranlarını açar; yeni uç yok, aynı oturum. /cep adresi buraya açılır (sahip 27 Eki: eski CepApp kaldırıldı, yeni aynı alanda).
 import React from 'react';
 import { R, kart, dugmeSade } from './KasaModulu';
+import { sayfaGorunur } from './yetki';   // 🔐 izin TEK kaynak
 
 export const CEP_SAYFALAR = [{ id: 'cep_ana', ad: 'Telefon ana sayfası', alt: 'Kasam · beklenen satış · işler · avans · ödeme · sipariş' }];
 
@@ -19,7 +20,7 @@ const KARTLAR = [
 export default function CepAna({ onSekme }) {
   return (
     <div style={{ display: 'grid', gap: 12, maxWidth: 520, margin: '0 auto', padding: '8px 0' }}>
-      {KARTLAR.map((k) => (
+      {KARTLAR.filter((k) => sayfaGorunur(k.id)).map((k) => (   // 🔐 telefon da AYNI izin kaynağı (sahip 30 Eki)
         <button key={k.id} type="button" onClick={() => onSekme(k.id)}
           style={{ ...dugmeSade, ...kart, display: 'flex', alignItems: 'center', gap: 14, padding: '16px 18px', minHeight: 72, textAlign: 'left', width: '100%', cursor: 'pointer' }}>
           <span aria-hidden="true" style={{ fontSize: 28 }}>{k.ikon}</span>

@@ -134,6 +134,8 @@ def modulleri_yukle(app) -> None:
             DURUM[kod] = "hata:" + str(e)[:200]
             log.warning("evvel_yeni %s modülü yüklenemedi (izole, ana akış etkilenmez): %s", kod, e)
     app.include_router(router)
+    import evvel_yeni_yetki   # 🔐 çekirdeğin rol / izin kapısı (30 Eki) — sözlük + kişi izni uçları
+    app.include_router(evvel_yeni_yetki.router)
 
 
 router = APIRouter(prefix="/api/evvel-yeni/moduller", tags=["evvel-yeni-moduller"])
