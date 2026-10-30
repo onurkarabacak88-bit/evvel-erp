@@ -49,7 +49,7 @@ const YAPI = {
       { k: 'pin', ad: 'Panel PIN (4 hane) — değiştirmek için yaz', adYeni: 'Panel PIN (4 hane)', tip: 'password' },
       { k: 'yetki_geri_alma', ad: 'Hatalı teslimi geri alabilir (yetki)', secim: 'evet_yetki' }],
     kolon: (x) => [x.ad, <>{`${x.sube_ad}${x.gorev ? ` · ${x.gorev}` : ''} · ${x.calisma_turu === 'yari' ? 'yarı zamanlı' : 'tam zamanlı'}${x.cikis ? ` · ayrıldı ${tarihNokta(x.cikis)}` : ''}${x.erken_acilis ? ' · erken açılış izni' : ''}${x.pin_var ? '' : ' · PIN yok'}${x.yetki_geri_alma ? ' · geri alma yetkisi' : ''}`}</>,
-      x.calisma_turu === 'yari' ? `saatlik ${fmt(x.saatlik)} · yemek ${fmt(x.yemek)}` : `maaş ${fmt(x.maas)} · yemek ${fmt(x.yemek)}${x.yol ? ` · yol ${fmt(x.yol)}` : ''}`, x.ucret_eski ? <Cip tur="sari">ücret eski sistemden — kontrol et</Cip> : null],
+      x.calisma_turu === 'yari' ? `saatlik ${fmt(x.saatlik)}${x.saatlik_otomatik ? ' (otomatik: asgari ÷ 285)' : ''} · yemek ${fmt(x.yemek)}` : `maaş ${fmt(x.maas)} · yemek ${fmt(x.yemek)}${x.yol ? ` · yol ${fmt(x.yol)}` : ''}`, x.ucret_eski ? <Cip tur="sari">ücret eski sistemden — kontrol et</Cip> : null],
   },
   tanim_banka: {
     tur: 'banka', liste: 'bankalar', baslik: 'Bankalar', tekil: 'banka hesabı',
@@ -144,7 +144,7 @@ export default function TanimModulu({ gorunum, onToast }) {
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: 10 }}>
             {y.alanlar.filter((a) => !(a.yalnizYeni && !yeni) && !(a.duzeltmede && yeni)).map((a) => (
               <label key={a.k} style={{ display: 'flex', flexDirection: 'column', gap: 4, fontSize: 13, fontWeight: 600, color: R.metin2 }}>
-                {(yeni && a.adYeni) || a.ad}{(a.zorunlu || (a.zorunluYeni && yeni && !(a.k === 'maas' && form.calisma_turu === 'yari')) || (a.k === 'saatlik' && yeni && form.calisma_turu === 'yari')) && ' *'}
+                {(yeni && a.adYeni) || a.ad}{(a.zorunlu || (a.zorunluYeni && yeni && !(a.k === 'maas' && form.calisma_turu === 'yari')) ) && ' *'}{a.k === 'saatlik' && form.calisma_turu === 'yari' && <span style={{ fontWeight: 400, fontSize: 12 }}> — Kasım'dan otomatik (asgari ÷ 285), boş bırakılabilir</span>}
                 {a.secim ? (
                   <select style={alan} value={form[a.k] ?? (a.secim === 'banka_tur' ? '' : '')} onChange={(e) => setForm((f) => ({ ...f, [a.k]: e.target.value }))}>
                     {a.secim === 'banka_tur' && <option value="">Seç…</option>}

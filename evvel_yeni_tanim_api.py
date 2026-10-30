@@ -336,13 +336,52 @@ def adlar(cur, tablo: str, idler=None) -> Dict[str, str]:
     return {str(r["id"]): r["ad"] for r in tanim_listesi(cur, tablo, ("ad",), idler=idler)}
 
 
+# 🕘 SAATLİK KURAL (sahip 30 Eki: "tam personel günde 9,5 saat · haftada izin maaşa dahil · burada hesaplanan saatlik ücret neyse part
+# personele de o kadar saatlik ücret verilir" · Codex karar): saatlik = tam zamanlı TABAN aylık ÷ (30 × 9,5) = ÷ 285. Yarı zamanlının
+# saatliği Kasım 2026'dan itibaren OTOMATİK (elle değer istisna değil, saklanır ama kullanılmaz); oran kuruşa erken kesilmez.
+SAATLIK_BOLEN = 285
+TAM_TABAN_VARSAYILAN = {"2026-11": 2807500}   # sahip 30 Eki: asgari ücret 28.075 ₺ (kuruş) — değişince yeni ay sürümü eklenir
+
+
+def tam_taban(cur, ay: str) -> Optional[int]:
+    """PUBLIC — o ay geçerli tam zamanlı taban aylık (kuruş): ey_ayar 'tam_taban' {ay: kuruş} sürümlerinin ay'a kadar en yenisi."""
+    from evvel_yeni_cekirdek import ayar_oku, json_ac
+    s = json_ac(ayar_oku(cur, "tam_taban", None), None) or TAM_TABAN_VARSAYILAN
+    gecerli = [a for a in s if a <= ay]
+    return int(s[max(gecerli)]) if gecerli else None
+
+
+def _u_ay(b, giris) -> str:
+    """Ücretin geçerli olduğu ay (personel kaydında aynı kural: ucret_ay, yoksa giriş ayı, yoksa bu ay)."""
+    from evvel_yeni_cekirdek import bugun as _bugun
+    return (b.ucret_ay or (giris.isoformat() if giris else _bugun().isoformat()))[:7]
+
+
+def otomatik_saatlik_ayi(cur) -> str:
+    """Yarı zamanlı otomatik saatliğin başladığı ay = yeni maaş hesabının ilk ayı (panel_baslangic ayı — Ekim eski bordro korunur)."""
+    from evvel_yeni_cekirdek import panel_baslangic
+    return panel_baslangic(cur).strftime("%Y-%m")
+
+
 def ay_ucretleri(cur, ay: str) -> Dict[str, dict]:
-    """PUBLIC — {personel_id: {maas, yemek, saatlik, yol, degistiren}} o ay GEÇERLİ ücret (gecerli_ay <= ay, en yenisi; kuruş).
-    Tablo Tanımlar'ın (ucret_yaz ile yazılır) — Maaş buradan okur (C-T2-10)."""
+    """PUBLIC — {personel_id: {maas, yemek, saatlik, yol, degistiren[, saatlik_oran, saatlik_otomatik]}} o ay GEÇERLİ ücret
+    (gecerli_ay <= ay, en yenisi; kuruş). Tablo Tanımlar'ın (ucret_yaz ile yazılır) — Maaş buradan okur (C-T2-10).
+    Yarı zamanlıda (otomatik ay ve sonrası) saatlik_oran = tam taban ÷ 285 (Decimal kuruş/saat, yuvarlanmamış) — TEK yer."""
     tanim_hazirla(cur)
     cur.execute("""SELECT DISTINCT ON (personel_id) personel_id, maas, yemek, saatlik, yol, degistiren FROM ey_personel_ucret
                     WHERE gecerli_ay <= %s ORDER BY personel_id, gecerli_ay DESC""", (ay,))
-    return {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
+    out = {dict(r)["personel_id"]: dict(r) for r in cur.fetchall() or []}
+    if ay >= otomatik_saatlik_ayi(cur):
+        taban = tam_taban(cur, ay)
+        if taban:
+            from decimal import Decimal as _D
+            oran = _D(taban) / SAATLIK_BOLEN
+            cur.execute("SELECT id FROM ey_personel WHERE calisma_turu = 'yari'")
+            for r in cur.fetchall() or []:
+                pid = dict(r)["id"]
+                x = out.setdefault(pid, {"personel_id": pid, "maas": 0, "yemek": 0, "saatlik": 0, "yol": 0, "degistiren": None})
+                x.update({"saatlik_oran": oran, "saatlik": int(oran.quantize(_D(1))), "saatlik_otomatik": True})
+    return out
 
 
 def mudur_mu(gorev: Optional[str]) -> bool:
@@ -473,6 +512,12 @@ def liste():
                              "ucret_eski": (r["ucret_kim"] == "eski sistem kopyası"), "kaynak": r["kaynak"],
                              "erken_acilis": bool(r.get("erken_acilis")), "pin_var": bool((r.get("pin_hash") or "").strip()),
                              "yetki_geri_alma": bool(r.get("yetki_geri_alma"))})
+        _U = ay_ucretleri(cur, ay)   # 30 Eki (Codex 6): yarı zamanlıda Kasım'dan otomatik saatlik (asgari ÷ 285) — Maaş ile AYNI çözüm
+        for x in personel:
+            u = _U.get(x["id"]) or {}
+            if x["calisma_turu"] == "yari" and u.get("saatlik_otomatik"):
+                x["saatlik"] = float((u["saatlik_oran"] / 100).quantize(Decimal("0.01")))
+                x["saatlik_otomatik"] = True
         try:
             from evvel_yeni_kira_api import kira_tanimlari
             with savepoint(cur, "sp_ey_t_kira"):
@@ -673,7 +718,7 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                     raise HTTPException(400, "İşe giriş tarihini yaz — maaş o günden sayılır")
                 if b.maas is None and b.calisma_turu != "yari":
                     raise HTTPException(400, "Maaşı yaz (0 olabilir)")
-                if b.calisma_turu == "yari" and b.saatlik is None:   # B35: yarı zamanlıda zorunlu olan SAATLİK ücret
+                if b.calisma_turu == "yari" and b.saatlik is None and not (_u_ay(b, giris) >= otomatik_saatlik_ayi(cur) and tam_taban(cur, _u_ay(b, giris))):   # B35 · 30 Eki: Kasım'dan otomatik
                     raise HTTPException(400, "Yarı zamanlı için saatlik ücreti yaz")
                 tid = "ey-" + uuid.uuid4().hex[:12]
                 cur.execute("""INSERT INTO ey_personel (id, ad, sube_id, gorev, giris, cikis, calisma_turu, erken_acilis, yetki_geri_alma, degistiren)

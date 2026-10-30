@@ -192,7 +192,7 @@ def _plan_satirlari(cur, bas: date, son: date) -> tuple:
 def _yeni_oneri(cur, ay: str) -> dict:
     """YENİ DÖNEM öneri (tekrar denetimi C-T3-13: eski vardiya_takip eski QR'ı okuyordu). Sahip (2026-10-20): saat ÖNCE vardiya
     PLANINDAN; o gün plan yoksa QR giriş–çıkışından; çıkışı okutulmamış / gece sistemin kapattığı gün GÜVENİLMEZ → sayılmaz, uyarı.
-    {pid: {calisma_saat, planli_gun, mesai_saat, guvenilmez_gun}} · mesai = güvenilir QR günü − FM_GUNLUK_ESIK (gerçek süre gerekir)."""
+    {pid: {calisma_saat, planli_gun, mesai_saat, guvenilmez_gun}} · mesai = PLANLANAN saat − FM_GUNLUK_ESIK (30 Eki sahip kuralı / Codex: plansız geç çıkış mesai değil)."""
     y_, m_ = int(ay[:4]), int(ay[5:7])
     bas = date(y_, m_, 1)
     son = (date(y_ + (m_ == 12), m_ % 12 + 1, 1) - timedelta(days=1))
@@ -224,8 +224,8 @@ def _yeni_oneri(cur, ay: str) -> dict:
             o["planli_gun"] += 1
         else:
             o["guvenilmez_gun"] += 1
-        if k in qr and k not in bozuk:
-            o["mesai_saat"] += max(0.0, qr[k] - FM_GUNLUK_ESIK)
+        if k in plan:   # 30 Eki (Codex · sahip kuralı): fazla mesai PLANLANAN 9,5 saatin üstü — QR'dan değil (plansız geç çıkış mesai değil)
+            o["mesai_saat"] += max(0.0, plan[k] - FM_GUNLUK_ESIK)
     for o in out.values():
         o["calisma_saat"] = round(o["calisma_saat"], 2)
         o["mesai_saat"] = round(o["mesai_saat"], 2)
@@ -453,7 +453,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
                                  **({"uyari": ["Aynı adlı eski kayıt bu ay bordroda — çift kayıt olabilir: hak edişi GİRME, önce Tanımlar'da kimliği birleştir"]}
                                     if cift_ad else
                                     {"uyari": ["Bu ayın hak edişi eski bordroda yok — aşağıya Ekim hak edişini gir"]}
-                                    if ey_only and not hak else {})}, False,
+                                    if ey_only and not hak else {})}, (p.get("calisma_turu") or "tam") == "yari",   # 30 Eki: Ekim satırı yarıyı "tam" gösteriyordu
                                 devir_eski=devir_eski))
             continue
         u = ucret.get(pid) or {"maas": 0, "yemek": 0, "saatlik": 0, "yol": 0}
@@ -471,15 +471,17 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         if yari:
             saat = float(e["calisma_saat"]) if e.get("calisma_saat") is not None else o.get("calisma_saat", 0)
             sat = int(u.get("saatlik") or 0)
+            oran = u.get("saatlik_oran") or Decimal(sat)   # Kasım'dan otomatik: tam taban ÷ 285 (Tanımlar ay_ucretleri — TEK yer)
             if not saat and e.get("calisma_saat") is None and gun > 0 and not (o.get("plan_yok") or oneri.get(PLAN_YOK))                     and not o.get("guvenilmez_gun"):   # Fable: çıkışı okutulmamış girişte "QR girişi yok" demesin (üstteki uyarı söylüyor)
                 uyari.append("Bu ay vardiya da QR girişi de yok — ödenecek 0 ₺; doğruysa geç, değilse Vardiya planına yaz ya da elle saat gir")   # F4.3 M-1
             if not sat:
                 uyari.append("Saatlik ücret tanımsız — Tanımlar → Personel")
-            kalemler.append({"kod": "saat", "ad": f"Çalışma {saat:g} saat × {_tl(sat):g} ₺" + (" (elle)" if e.get("calisma_saat") is not None else " (plan / QR)"),
-                             "tutar": _tl(int(Decimal(str(saat)) * sat))})
+            kalemler.append({"kod": "saat", "ad": f"Çalışma {saat:g} saat × {str((oran / 100).quantize(Decimal('0.01'))).replace('.', ',')} ₺"
+                             + (" (asgari ÷ 285)" if u.get("saatlik_otomatik") else "") + (" (elle)" if e.get("calisma_saat") is not None else " (plan / QR)"),
+                             "tutar": _tl(int((Decimal(str(saat)) * oran).quantize(Decimal(1), rounding=ROUND_HALF_UP)))})
             if e.get("bayram_saat"):
                 kalemler.append({"kod": "bayram", "ad": f"Bayram {float(e['bayram_saat']):g} saat × 2",
-                                 "tutar": _tl(int(Decimal(str(e["bayram_saat"])) * sat * BAYRAM_KAT))})
+                                 "tutar": _tl(int((Decimal(str(e["bayram_saat"])) * oran * BAYRAM_KAT).quantize(Decimal(1), rounding=ROUND_HALF_UP)))})
         else:
             if not maas:
                 uyari.append("Maaş tanımsız (0) — Tanımlar → Personel")
@@ -505,7 +507,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         if u.get("yol"):
             kalemler.append({"kod": "yol", "ad": f"Yol: aylık × {gun}/30", "tutar": _tl(int(u["yol"]) * gun // AY_GUN)})
         # ⏰ geç kalma: kes → dakika × dakika ücreti (tam: maaş/30/9,5/60 — mesai ile AYNI birim · yarı: saatlik/60), ₺ tam sayı
-        dk_ucret = (Decimal(int(u.get("saatlik") or 0)) / 60) if yari else (Decimal(maas) / (AY_GUN * GUNLUK_SAAT * 60))   # kuruş / dk
+        dk_ucret = ((u.get("saatlik_oran") or Decimal(int(u.get("saatlik") or 0))) / 60) if yari else (Decimal(maas) / (AY_GUN * GUNLUK_SAAT * 60))   # kuruş / dk
         gec_gunler, gec_kararsiz, kes_top, kes_dk, kes_n = [], 0, 0, 0, 0
         for (gp, gg), gdk in sorted(gec_map.items(), key=lambda z: z[0][1]):
             if gp != pid:
@@ -579,11 +581,30 @@ def avans_tavani(cur, personel_id: str, gun: Optional[date] = None) -> dict:
         saat = r.get("hesap_saat")
         if saat is None:   # eski dönem satırı (1 Kasım öncesi) — hesapla saat üretmedi
             saat = (_yeni_oneri(cur, ay).get(str(personel_id)) or {}).get("calisma_saat", 0)
-        bek = int(Decimal(str(saat)) * int(u.get("saatlik") or 0))
+        bek = int((Decimal(str(saat)) * (u.get("saatlik_oran") or Decimal(int(u.get("saatlik") or 0)))).quantize(Decimal(1), rounding=ROUND_HALF_UP))
     else:
         bek = int(u.get("maas") or 0) + int(u.get("yemek") or 0) + int(u.get("yol") or 0)
     aday = [AVANS_SABIT_TAVAN] + ([int(hak * AVANS_HAKEDIS_ORAN)] if hak > 0 else []) + ([int(bek * AVANS_NET_ORAN)] if bek > 0 else [])
     return {"ay": ay, "tavan": 0 if (hak <= 0 and bek <= 0) else min(aday), "hakedis": hak, "beklenen": bek}
+
+
+def kisi_ozet(cur, personel_id: str, gun: Optional[date] = None) -> dict:
+    """PUBLIC (telefon · T4 · sahip 21 Eki K1 "canlı tahmin görünsün" + 30 Eki "1 Kasım'dan itibaren doğru gösterilsin"): kişinin BU AYKİ
+    tahmini hak edişi — Maaşlar ekranıyla AYNI hesap (hesapla, sadece=pid; ikinci hesap yok). Yalnız kendi rakamı: döküm, avans düşülen,
+    ödenen, kalan. Merkezin uyarıları / başkasının rakamı / ücret tablosu dönmez. Kuruş değil ₺ (ekran biçimi)."""
+    from evvel_yeni_cekirdek import is_gunu as _ig
+    ay = (gun or _ig()).strftime("%Y-%m")
+    _hazirla(cur)
+    r = next(iter(hesapla(cur, ay, sadece=str(personel_id))), None)
+    if not r:
+        return {"ay": ay, "yok": True}
+    saat = r.get("hesap_saat")
+    # sahip 30 Eki: "telefonlarında günlük hak ediş yazsın yeterli, saatlik ücretin yazmasına gerek yok" → ücret / formül dönmez, sade ad
+    AD = {"taban": "Maaş", "saat": f"Çalışma ({saat:g} saat)" if saat else "Çalışma", "yemek": "Yemek", "yol": "Yol",
+          "mesai": "Fazla mesai", "bayram": "Bayram çalışması", "eksik": "Eksik gün", "gec": "Geç kalma kesintisi", "duzeltme": "Düzeltme"}
+    return {"ay": ay, "calisma_turu": r.get("calisma_turu"), "hak_edis": r["hak_edis"], "onay": bool(r.get("onay")),
+            "kalemler": [{"ad": AD.get(k.get("kod"), "Diğer"), "tutar": k["tutar"]} for k in r.get("kalemler") or [] if k.get("tutar")],
+            "avans_mahsup": r["avans_mahsup"], "odenen": r["odenen"], "kalan": r["kalan"]}
 
 
 def personel_giderleri(cur, ay: str) -> list:
