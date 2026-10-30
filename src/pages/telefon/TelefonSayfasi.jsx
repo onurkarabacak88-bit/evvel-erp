@@ -808,9 +808,61 @@ function SimdiKart({ ben, simdi }) {
     </div>
   );
 }
+// ── 💰 TAHMİNİ HAK EDİŞ (T4 · sahip 21 Eki K1 + 30 Eki "1 Kasım'dan itibaren doğru gösterilsin"): Maaşlar ekranıyla AYNI hesap
+// (sunucu Maaş kisi_ozet) — yalnız kendi rakamı; tam zamanlıda taban (gün oranı) + yemek, yarı zamanlıda saat × ücret. Ay sonunda kesinleşir.
+const AY_ADI = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
+function HakEdisKart() {
+  const [d, setD] = useState(null);
+  // Codex L6: ekrana dönünce ve 5 dk'da bir yenilenir; ağ hatasında son bilinen rakam kalır (kart kaybolmaz)
+  useEffect(() => {
+    const al = () => imzaliJson('telefon', 'GET', '/api/evvel-yeni/yoklama/hakedis').then(setD).catch(() => {});
+    al();
+    const zm = setInterval(al, 5 * 60 * 1000);
+    const gor = () => { if (document.visibilityState === 'visible') al(); };
+    document.addEventListener('visibilitychange', gor);
+    return () => { clearInterval(zm); document.removeEventListener('visibilitychange', gor); };
+  }, []);
+  if (!d || d.yok) return null;
+  if (d.kapali) return <div className="tq-kart"><b>💰 Hak edişin</b><div className="tq-silik">{d.kapali}</div></div>;
+  const para = (x) => tlYaz(x, 2);
+  const ayAd = AY_ADI[Number(String(d.ay).slice(5, 7)) - 1] || d.ay;
+  const gunAd = (g) => g ? `${g.slice(8, 10)}.${g.slice(5, 7)}` : 'Ay geneli';
+  return (
+    <div className="tq-kart" style={{ display: 'grid', gap: 8 }}>
+      <div className="tq-silik" style={{ letterSpacing: 1 }}>{ayAd.toLocaleUpperCase('tr')} · {d.onay ? 'ONAYLANDI ✓' : 'TAHMİNİ'}</div>
+      {!d.onay && <div style={{ fontSize: 17 }}>Bugün <b style={{ color: T.yesil }}>{para(d.bugun || 0)}</b> hak kazandın</div>}
+      <div className="tq-silik">Toplam hak ettiğin tutar</div>
+      <b style={{ fontSize: 30, fontFamily: "'Fraunces', serif", marginTop: -6 }}>{para(d.hak_edis)}</b>
+      {d.yemek_kaybi > 0 && <div style={{ color: T.kirmizi, fontWeight: 700 }}>🍽️ {para(d.yemek_kaybi)} yemek molası kaybın var</div>}
+      <div className="tq-not">{d.onay ? 'Bu ayın hak edişi onaylandı.' : 'Her gün güncellenir, ay sonunda kesinleşir.'}</div>
+      <div style={{ background: T.yuzey, border: `1px solid ${T.kenar}`, borderRadius: 12, padding: '10px 12px', display: 'grid', gap: 4 }}>
+        {(d.kalemler || []).map((k, i) => (
+          <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 10, fontSize: 14 }}>
+            <span>{k.ad}</span><b style={{ whiteSpace: 'nowrap', color: k.tutar < 0 ? T.kirmizi : T.metin }}>{para(k.tutar)}</b>
+          </div>
+        ))}
+        {d.avans_mahsup > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: T.metin2 }}><span>Avans (düşülür)</span><b>−{para(d.avans_mahsup)}</b></div>}
+        {d.odenen > 0 && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, color: T.metin2 }}><span>Ödenen</span><b>−{para(d.odenen)}</b></div>}
+        {(d.avans_mahsup > 0 || d.odenen > 0) && <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, borderTop: `1px solid ${T.kenar}`, paddingTop: 4 }}><span>Kalan</span><b>{para(d.kalan)}</b></div>}
+      </div>
+      {(d.gunluk || []).length > 0 && (
+        <div style={{ display: 'grid', gap: 2 }}>
+          <div className="tq-silik" style={{ letterSpacing: 1, marginTop: 4 }}>GÜN GÜN</div>
+          {d.gunluk.map((x) => (
+            <div key={x.gun || 'ay'} style={{ display: 'flex', justifyContent: 'space-between', fontSize: 14, padding: '5px 0', borderBottom: `1px solid ${T.kenar}` }}>
+              <span>{gunAd(x.gun)}{x.not && <span style={{ color: T.metin2, fontSize: 12 }}> · {x.not}</span>}</span><b style={{ color: x.tutar < 0 ? T.kirmizi : T.metin }}>{para(x.tutar)}</b>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function BenSekme({ ben }) {
   return (
     <>
+      <HakEdisKart />
       <AvansKart kartli />
       <div className="tq-kart">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>

@@ -987,6 +987,22 @@ def _avans():
     return a
 
 
+@router.get("/hakedis")
+async def hakedis_tel(request: Request):
+    """💰 Telefon (T4 · sahip K1): bu ayın tahmini hak edişi — Maaş'ın PUBLIC kisi_ozet kapısından (hesap Maaş'ta, tek yer).
+    1 Kasım öncesi kapalı (Ekim eski bordroda); Maaş modülü kapalıysa kart görünmez."""
+    def fn(cur, c, p, _v):
+        from evvel_yeni_cekirdek import yeni_donem
+        from evvel_yeni_moduller import acik as _acik
+        if not _acik("maas"):
+            return {"kapali": "Hak ediş şu an görünmüyor — merkeze sor"}
+        if not yeni_donem(cur):
+            return {"kapali": "Hak edişin 1 Kasım'dan itibaren burada görünecek"}
+        import evvel_yeni_maas_api as maas
+        return maas.kisi_ozet(cur, p["id"])
+    return await _telefon(request, fn)
+
+
 @router.get("/avans")
 async def avans_durum_tel(request: Request):
     """🤝 Telefon: avans tavanı · kullanılabilir · açık talep (sahip 20 Eki: tavan eski oran)."""

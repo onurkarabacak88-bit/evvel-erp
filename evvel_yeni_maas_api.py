@@ -215,17 +215,22 @@ def _yeni_oneri(cur, ay: str) -> dict:
     out = {}
     for k in set(plan) | set(qr) | bozuk:
         pid, _g = k
-        o = out.setdefault(pid, {"calisma_saat": 0.0, "planli_gun": 0, "mesai_saat": 0.0, "guvenilmez_gun": 0})
+        o = out.setdefault(pid, {"calisma_saat": 0.0, "planli_gun": 0, "mesai_saat": 0.0, "guvenilmez_gun": 0, "gun_saat": {}, "mesai_gun": {}})
+        gk = _g.isoformat()
         if k in plan:
             o["calisma_saat"] += plan[k]
             o["planli_gun"] += 1
+            o["gun_saat"][gk] = plan[k]
         elif k in qr and k not in bozuk:
             o["calisma_saat"] += qr[k]
             o["planli_gun"] += 1
+            o["gun_saat"][gk] = qr[k]
         else:
             o["guvenilmez_gun"] += 1
         if k in plan:   # 30 Eki (Codex · sahip kuralı): fazla mesai PLANLANAN 9,5 saatin üstü — QR'dan değil (plansız geç çıkış mesai değil)
             o["mesai_saat"] += max(0.0, plan[k] - FM_GUNLUK_ESIK)
+            if plan[k] > FM_GUNLUK_ESIK:
+                o["mesai_gun"][gk] = plan[k] - FM_GUNLUK_ESIK
     for o in out.values():
         o["calisma_saat"] = round(o["calisma_saat"], 2)
         o["mesai_saat"] = round(o["mesai_saat"], 2)
@@ -596,12 +601,15 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         if e.get("onay") and e.get("kalemler"):
             kalemler = __import__("evvel_yeni_cekirdek").json_ac(e["kalemler"], [])
         hak = sum(_kurus(k["tutar"]) for k in kalemler)
+        gunluk, yemek_kaybi = (_gunluk_dokum(p, ay_bas, ay_son, bugun, gun, yari, maas, u, o, e, kalemler, gec_gunler, gel_gunler, hak)
+                               if sadece and not e.get("onay") else (None, 0))   # Codex L6: onaylı ay dondurulmuş kalemlerle gösterilir, canlı dağıtım yok
         din = devir_in.get(pid, 0)
         mahsup = min(avans + din, max(hak, 0))
         ek = {"gun": gun, "ay_acik": acik, "uyari": uyari, "avans_devir_onceki": _tl(din),
               "hesap_saat": saat if yari else None,   # avans tavanı bunu okur (Fable O-3: _yeni_oneri ikinci kez çalışmasın)
               "yemek_hak": next((k["tutar"] for k in kalemler if k["kod"] == "yemek"), 0), "yemek_dusen": yemek_dusen,
-              "gec_gunler": gec_gunler, "gec_kararsiz": gec_kararsiz, "gelmedi_gunler": gel_gunler, "gelmedi_kararsiz": gel_kararsiz, "gelmedi_okunamadi": gel_okunamadi}
+              "gec_gunler": gec_gunler, "gec_kararsiz": gec_kararsiz, "gelmedi_gunler": gel_gunler, "gelmedi_kararsiz": gel_kararsiz, "gelmedi_okunamadi": gel_okunamadi,
+              **({"gunluk": gunluk, "yemek_kaybi": _tl(yemek_kaybi), "dokum_bugun": bugun.isoformat()} if gunluk is not None else {})}
         satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, din, odenen, od, e, u, "evvel_yeni", ek, yari))
     satir.sort(key=lambda x: (not x["aktif"], x["ad"]))
     return satir
@@ -651,6 +659,48 @@ def avans_tavani(cur, personel_id: str, gun: Optional[date] = None) -> dict:
     return {"ay": ay, "tavan": 0 if (hak <= 0 and bek <= 0) else min(aday), "hakedis": hak, "beklenen": bek}
 
 
+def _gunluk_dokum(p, ay_bas, ay_son, bugun, gun, yari, maas, u, o, e, kalemler, gec_gunler, gel_gunler, hak) -> tuple:
+    """📅 Telefon gün gün döküm (sahip 30 Eki "bugün … ₺ hak kazandın · toplam · yemek molası kaybın · gün gün liste" · Codex B):
+    AYNI hesabın günlere dağılımı — tam: maaş/30 + yemek/30 (kuruş artığı son güne, ay toplamıyla kuruşu kuruşuna) + o günün planlı mesaisi;
+    yarı: o günün saati × saatlik oran (+ yemek/30). Kes dendiyse geç / gelmedi o günden düşer. Yemek molası kaybı AYRI (tam yemek −
+    hak edilen yemek). Elle girilen / ay geneli kalan (düzeltme, bayram, eksik gün, kırpma) tek "ay geneli" satırı — toplam = hak ediş.
+    Dönüş (kuruş): ([{gun, tutar}], yemek_kaybi)."""
+    bas = max(ay_bas, p["giris"]) if p.get("giris") else ay_bas
+    yemek = int(u.get("yemek") or 0)
+    gunler = {}
+    if yari:
+        oran = u.get("saatlik_oran") or Decimal(int(u.get("saatlik") or 0))
+        if e.get("calisma_saat") is None:
+            for g, sa in (o.get("gun_saat") or {}).items():
+                gunler[g] = int((Decimal(str(sa)) * oran).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+    # Codex L6: ücret günü (≤30) TAKVİM günlerine yayılır (31 / 28 günlük ay) — ay toplamı aynı, kuruş artığı son güne
+    son = min(x for x in (ay_son, bugun, p.get("cikis")) if x)   # Codex L6: hesapla'nın gün sayısıyla AYNI "bugün"
+    takvim = [(bas + timedelta(days=i)).isoformat() for i in range((son - bas).days + 1)] if son >= bas else []
+    toplam = (yemek * gun // AY_GUN) + (0 if yari else maas * gun // AY_GUN)
+    if takvim:
+        sabit, artik = divmod(toplam, len(takvim))
+        for i, g in enumerate(takvim):
+            gunler[g] = gunler.get(g, 0) + sabit + (artik if i == len(takvim) - 1 else 0)
+    if not yari and e.get("mesai_saat") is None:
+        for g, ms in (o.get("mesai_gun") or {}).items():
+            if g in gunler:
+                gunler[g] += int(Decimal(str(ms)) * maas / (AY_GUN * GUNLUK_SAAT))
+    notlar = {}
+    for x, ad in [(x, "geç kaldın") for x in gec_gunler] + [(x, "gelmedin") for x in gel_gunler]:
+        if x.get("karar") == "kes" and x["gun"] in gunler:
+            gunler[x["gun"]] -= _kurus(x["tutar"])
+            notlar[x["gun"]] = ad
+    yemek_hak = next((_kurus(k["tutar"]) for k in kalemler if k.get("kod") == "yemek"), 0)
+    yemek_kaybi = max(0, (yemek * gun // AY_GUN if yemek else 0) - yemek_hak)
+    liste = [{"gun": g, "tutar": t, "not": notlar.get(g)} for g, t in sorted(gunler.items())]
+    kalan = hak - sum(gunler.values()) + yemek_kaybi
+    if liste and abs(kalan) < 100:   # kuruş yuvarlaması → son güne
+        liste[-1]["tutar"] += kalan
+    elif kalan:
+        liste.append({"gun": None, "tutar": kalan, "not": None})   # ay geneli (elle düzeltme / bayram / eksik gün / kırpma)
+    return liste, yemek_kaybi
+
+
 def kisi_ozet(cur, personel_id: str, gun: Optional[date] = None) -> dict:
     """PUBLIC (telefon · T4 · sahip 21 Eki K1 "canlı tahmin görünsün" + 30 Eki "1 Kasım'dan itibaren doğru gösterilsin"): kişinin BU AYKİ
     tahmini hak edişi — Maaşlar ekranıyla AYNI hesap (hesapla, sadece=pid; ikinci hesap yok). Yalnız kendi rakamı: döküm, avans düşülen,
@@ -665,7 +715,11 @@ def kisi_ozet(cur, personel_id: str, gun: Optional[date] = None) -> dict:
     # sahip 30 Eki: "telefonlarında günlük hak ediş yazsın yeterli, saatlik ücretin yazmasına gerek yok" → ücret / formül dönmez, sade ad
     AD = {"taban": "Maaş", "saat": f"Çalışma ({saat:g} saat)" if saat else "Çalışma", "yemek": "Yemek", "yol": "Yol",
           "mesai": "Fazla mesai", "bayram": "Bayram çalışması", "eksik": "Eksik gün", "gec": "Geç kalma kesintisi", "gelmedi": "Gelmediğin gün", "duzeltme": "Düzeltme"}
+    bugun_g = r.get("dokum_bugun") or (gun or _ig()).isoformat()   # döküm ile aynı gün (Codex L6)
+    gl = r.get("gunluk") or []
     return {"ay": ay, "calisma_turu": r.get("calisma_turu"), "hak_edis": r["hak_edis"], "onay": bool(r.get("onay")),
+            "bugun": _tl(next((x["tutar"] for x in gl if x["gun"] == bugun_g), 0)), "yemek_kaybi": r.get("yemek_kaybi", 0),
+            "gunluk": [{"gun": x["gun"], "tutar": _tl(x["tutar"]), "not": x.get("not")} for x in reversed(gl)],
             "kalemler": [{"ad": AD.get(k.get("kod"), "Diğer"), "tutar": k["tutar"]} for k in r.get("kalemler") or [] if k.get("tutar")],
             "avans_mahsup": r["avans_mahsup"], "odenen": r["odenen"], "kalan": r["kalan"]}
 
