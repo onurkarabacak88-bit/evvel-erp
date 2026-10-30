@@ -2,6 +2,7 @@
 // Sahip (2026-10-17): "Avans taleplerini görebileceğim bir mekanizma olmalı." Personel QR sayfasından talep eder;
 // burada havaleyle öde (bankadan düşer, maaştan mahsup) · elden ver (şubeden) · reddet.
 import React, { useCallback, useEffect, useState } from 'react';
+import { yapabilir } from './yetki';   // 🔐 işlem düğmesi izni (sunucu da engeller)
 import { api } from '../../utils/api';
 import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, soruOnay, soruYaz } from './KasaModulu';
 // B96: '2026-10-23 11:12' → '23.10 11:12'
@@ -50,14 +51,14 @@ export default function AvansModulu({ onToast }) {
                   {!t.ayrildi && t.yeni && <select value={s.cep || ''} onChange={(e) => set('cep', e.target.value)} style={alan}>
                     <option value="">Banka…</option>{(L?.banka_cepler || []).filter((b) => Number(b.bakiye) > 0).map((b) => <option key={b.id} value={b.id}>{b.ad} · şu an {fmt(b.bakiye)} ₺</option>)}
                   </select>}
-                  {!t.ayrildi && <Dugme kucuk ana disabled={mesgul[t.id] || (t.yeni && !(L?.banka_cepler || []).some((x) => x.id === s.cep && Number(x.bakiye) > 0))} onClick={async () => { const b = (L?.banka_cepler || []).find((x) => x.id === s.cep); if (await soruOnay(`${t.ad} · ${fmt(t.tutar)} ₺ ${b ? b.ad + "'ndan " : ''}havale ettin mi?
+                  {yapabilir('avans.islem') && !t.ayrildi && <Dugme kucuk ana disabled={mesgul[t.id] || (t.yeni && !(L?.banka_cepler || []).some((x) => x.id === s.cep && Number(x.bakiye) > 0))} onClick={async () => { const b = (L?.banka_cepler || []).find((x) => x.id === s.cep); if (await soruOnay(`${t.ad} · ${fmt(t.tutar)} ₺ ${b ? b.ad + "'ndan " : ''}havale ettin mi?
 Önce bankadan gönder, sonra onayla — bankadan düşer, maaştan mahsup edilir, personel "hesabına havale edildi" görür.`)) yap(t, 'onayla', { yontem: 'havale', cep: s.cep }); }}>Havaleyi gönderdim</Dugme>}
                   {!t.ayrildi && <select value={s.sube_id ?? t.kisi_sube_id ?? ''} onChange={(e) => set('sube_id', e.target.value)} style={alan}>
                     <option value="">Şube…</option>{(L?.subeler || []).map((b) => <option key={b.id} value={b.id}>{b.ad}</option>)}
                   </select>}
-                  {!t.ayrildi && <Dugme kucuk disabled={!(s.sube_id ?? t.kisi_sube_id) || mesgul[t.id]} onClick={() => yap(t, 'onayla', { yontem: 'elden', sube_id: s.sube_id ?? t.kisi_sube_id })}>Elden ver</Dugme>}
-                  <Dugme kucuk disabled={mesgul[t.id]} onClick={() => yap(t, 'kapat', { not_: 'daha önce verildi' })}>Kapat (verildi)</Dugme>
-                  <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { const n = await soruYaz(`${t.ad} · ${fmt(t.tutar)} ₺ avans talebi neden reddediliyor? (personel görür)`, false, 2); if (n && n.trim().length >= 2) yap(t, 'reddet', { neden: n.trim() }); }}>Reddet</Dugme>
+                  {yapabilir('avans.islem') && !t.ayrildi && <Dugme kucuk disabled={!(s.sube_id ?? t.kisi_sube_id) || mesgul[t.id]} onClick={() => yap(t, 'onayla', { yontem: 'elden', sube_id: s.sube_id ?? t.kisi_sube_id })}>Elden ver</Dugme>}
+                  {yapabilir('avans.islem') && <Dugme kucuk disabled={mesgul[t.id]} onClick={() => yap(t, 'kapat', { not_: 'daha önce verildi' })}>Kapat (verildi)</Dugme>}
+                  {yapabilir('avans.islem') && <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { const n = await soruYaz(`${t.ad} · ${fmt(t.tutar)} ₺ avans talebi neden reddediliyor? (personel görür)`, false, 2); if (n && n.trim().length >= 2) yap(t, 'reddet', { neden: n.trim() }); }}>Reddet</Dugme>}
                 </span>
               </div>
             );
@@ -74,7 +75,7 @@ export default function AvansModulu({ onToast }) {
               <span style={num}>{fmt(t.tutar)} ₺</span>
               {t.kendine && <Cip tur="sari">kendine teslim</Cip>}
               <Cip tur={t.durum === 'odendi' ? 'yesil' : undefined}>{{ reddedildi: 'reddedildi', kapatildi: 'kapatıldı', odendi: 'ödendi' }[t.durum] || t.durum}</Cip>
-              {t.geri_alinir && t.durum === 'odendi' && <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { const n = await soruYaz(`${t.ad} · ${fmt(t.tutar)} ₺ avans geri alınsın mı? Para ${t.yontem === 'elden' ? 'çekmeceye' : 'bankaya'} geri döner, maaş mahsubu kalkar, talep yeniden bekler. Neden?`, false, 2); if (n && n.trim().length >= 2) yap(t, 'geri-al', { sebep: n.trim() }); }}>Geri al</Dugme>}   {/* matris AV-1: Kasa'dan değil buradan */}
+              {yapabilir('avans.islem') && t.geri_alinir && t.durum === 'odendi' && <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { const n = await soruYaz(`${t.ad} · ${fmt(t.tutar)} ₺ avans geri alınsın mı? Para ${t.yontem === 'elden' ? 'çekmeceye' : 'bankaya'} geri döner, maaş mahsubu kalkar, talep yeniden bekler. Neden?`, false, 2); if (n && n.trim().length >= 2) yap(t, 'geri-al', { sebep: n.trim() }); }}>Geri al</Dugme>}   {/* matris AV-1: Kasa'dan değil buradan */}
             </div>
           ))}
         </div>
@@ -92,7 +93,7 @@ export default function AvansModulu({ onToast }) {
                   {(L?.subeler || []).map((b) => <option key={b.id} value={b.id}>{b.ad}</option>)}
                 </select>
               )}
-              {String(t.id).startsWith('av-') && t.durum === 'onaylandi' && (
+              {String(t.id).startsWith('av-') && t.durum === 'onaylandi' && yapabilir('avans.islem') && (
                 <Dugme kucuk disabled={mesgul[t.id]} onClick={async () => { if (await soruOnay(`${t.ad} · ${fmt(t.tutar)} ₺ — şube teslim etmedi, talep kapatılsın mı? (para hareketi yok)`)) yap(t, 'kapat', { not_: 'şube teslim etmedi — merkez kapattı' }); }}>Kapat</Dugme>
               )}
             </div>

@@ -6,6 +6,7 @@
 // Rakamlar /api/evvel-yeni/maas'tan; ekran yalnız dizer.
 // ─────────────────────────────────────────────────────────────────────────────
 import React, { useEffect, useRef, useState } from 'react';
+import { yapabilir } from './yetki';   // 🔐 işlem düğmesi izni (sunucu da engeller)
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
 import { ALAN, AySecici, Cip, Dugme, etiketStil, fmt, kart, num, PI_CSS, R, soruOnay, soruYaz, tl, useSonIstek } from './KasaModulu';
@@ -140,13 +141,13 @@ export default function MaasModulu({ onToast, onSekme }) {
               <div style={{ border: '1px solid var(--pi-line)', borderRadius: 10, padding: '8px 12px', display: 'grid', gap: 6, fontSize: 13.5 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <b>⏰ Geç kalmalar</b><span style={{ color: R.not, fontSize: 12 }}>kes = geç dakika × dakika ücreti · tam = kesilmez</span>
-                  {!r.onay && r.gec_kararsiz > 0 && <span style={{ marginLeft: 'auto' }}><Dugme kucuk onClick={() => gecKarar('tam', null, true)}>Hepsine tam</Dugme></span>}
+                  {!r.onay && yapabilir('maas.kestam') && r.gec_kararsiz > 0 && <span style={{ marginLeft: 'auto' }}><Dugme kucuk onClick={() => gecKarar('tam', null, true)}>Hepsine tam</Dugme></span>}
                 </div>
                 {r.gec_gunler.map((g) => (
                   <div key={g.gun} style={{ display: 'flex', alignItems: 'center', gap: 8, borderTop: '1px solid var(--pi-line)', paddingTop: 6 }}>
                     <span style={{ flex: 1 }}>{g.gun.slice(8, 10)}.{g.gun.slice(5, 7)} · {g.dk} dk geç · kes → <b style={num}>{fmt(g.tutar)} ₺</b></span>
                     {g.karar && <Cip tur={g.karar === 'kes' ? 'kirmizi' : 'yesil'}>{g.karar === 'kes' ? 'kesilecek' : 'tam alınacak'}</Cip>}
-                    {!r.onay && <>
+                    {!r.onay && yapabilir('maas.kestam') && <>
                       <Dugme kucuk ana={!g.karar} disabled={g.karar === 'kes'} onClick={() => gecKarar('kes', g.gun)}>Kes</Dugme>
                       <Dugme kucuk disabled={g.karar === 'tam'} onClick={() => gecKarar('tam', g.gun)}>Tam al</Dugme>
                     </>}
@@ -158,13 +159,13 @@ export default function MaasModulu({ onToast, onSekme }) {
               <div style={{ border: '1px solid var(--pi-line)', borderRadius: 10, padding: '8px 12px', display: 'grid', gap: 6, fontSize: 13.5 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                   <b>🚫 Gelmeyen günler</b><span style={{ color: R.not, fontSize: 12 }}>planlıydı, QR yok · kes = {r.calisma_turu === 'yari' ? 'o günün plan saati' : 'maaş/30'} · tam = kesilmez</span>
-                  {!r.onay && r.gelmedi_kararsiz > 0 && <span style={{ marginLeft: 'auto' }}><Dugme kucuk onClick={() => gecKarar('tam', null, true, 'gelmedi')}>Hepsine tam</Dugme></span>}
+                  {!r.onay && yapabilir('maas.kestam') && r.gelmedi_kararsiz > 0 && <span style={{ marginLeft: 'auto' }}><Dugme kucuk onClick={() => gecKarar('tam', null, true, 'gelmedi')}>Hepsine tam</Dugme></span>}
                 </div>
                 {r.gelmedi_gunler.map((g) => (
                   <div key={g.gun} style={{ display: 'flex', alignItems: 'center', gap: 8, borderTop: '1px solid var(--pi-line)', paddingTop: 6 }}>
                     <span style={{ flex: 1 }}>{g.gun.slice(8, 10)}.{g.gun.slice(5, 7)} · {g.saat} saat planlı · kes → <b style={num}>{fmt(g.tutar)} ₺</b></span>
                     {g.karar && <Cip tur={g.karar === 'kes' ? 'kirmizi' : 'yesil'}>{g.karar === 'kes' ? 'kesilecek' : 'tam alınacak'}</Cip>}
-                    {!r.onay && <>
+                    {!r.onay && yapabilir('maas.kestam') && <>
                       <Dugme kucuk ana={!g.karar} disabled={g.karar === 'kes'} onClick={() => gecKarar('kes', g.gun, false, 'gelmedi')}>Kes</Dugme>
                       <Dugme kucuk disabled={g.karar === 'tam'} onClick={() => gecKarar('tam', g.gun, false, 'gelmedi')}>Tam al</Dugme>
                     </>}
@@ -192,7 +193,7 @@ export default function MaasModulu({ onToast, onSekme }) {
               {r.avans_devir_sonraki > 0 && <div style={{ fontSize: 13, color: R.amber }}>Avans hak edişi aştı: {fmt(r.avans_devir_sonraki)} ₺ sonraki aya devreder.</div>}
             </div>
 
-            {r.kaynak === 'evvel_yeni' && !r.onay && (
+            {r.kaynak === 'evvel_yeni' && !r.onay && yapabilir('maas.duzelt') && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, borderTop: '1px solid var(--pi-line)', paddingTop: 10 }}>
                 <b style={{ fontSize: 14 }}>Bu aya özel (elle)</b>
                 <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'flex-end', fontSize: 13 }}>
@@ -210,7 +211,7 @@ export default function MaasModulu({ onToast, onSekme }) {
                 </div>
                 <div style={{ fontSize: 12, color: R.not }}>"vardiyadan" yazan kutular boş bırakılırsa Vardiya planı (Personel › Vardiya) kullanılır.</div>
                 <div style={{ display: 'flex', gap: 8 }}><Dugme onClick={kaydet} disabled={mesgul}>Kaydet</Dugme>
-                  {!r.ay_acik && <Dugme ana onClick={() => onayla(false)}>Ayı onayla (dondur)</Dugme>}</div>
+                  {!r.ay_acik && yapabilir('maas.onay') && <Dugme ana onClick={() => onayla(false)}>Ayı onayla (dondur)</Dugme>}</div>
               </div>
             )}
             {r.elle_hak_acik && !r.onay && (
@@ -223,7 +224,7 @@ export default function MaasModulu({ onToast, onSekme }) {
                 <div><Dugme onClick={kaydetHak} disabled={mesgul}>Kaydet</Dugme></div>
               </div>
             )}
-            {r.onay && <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Cip tur="yesil">Onaylı — kalemler donduruldu</Cip><Dugme kucuk onClick={() => onayla(true)}>Onayı kaldır</Dugme></div>}
+            {r.onay && <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}><Cip tur="yesil">Onaylı — kalemler donduruldu</Cip>{yapabilir('maas.onay') && <Dugme kucuk onClick={() => onayla(true)}>Onayı kaldır</Dugme>}</div>}
             {r.kalan > 0 && <div><Dugme ana onClick={() => ode(r)}>Kalanı öde ({fmt(r.oneri['Maaş'])} ₺ maaş)</Dugme></div>}
         </Pencere>
       )}

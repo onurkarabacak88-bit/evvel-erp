@@ -2,6 +2,7 @@
 // Sahip (2026-10-17): "Hem kiraları takip etmek hem işletmelerin (Fatma'nın kira hesabından) borçlanmalarını görmek;
 // basit ama işlevsel." · "Kasım'da sıfır başlasın." 3 sekme: Ev kiraları (ev × ay) · İşletmelerin borcu (şube × ay) · Uyarılar.
 import React, { useEffect, useRef, useState } from 'react';
+import { yapabilir } from './yetki';   // 🔐 işlem düğmesi izni (sunucu da engeller)
 import { api } from '../../utils/api';
 import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayiTR, tKisa } from './KasaModulu';
 import { ayAdi, ayTR, bugunTR } from '../../utils/trTarih';
@@ -114,7 +115,7 @@ function EvKiralari({ onToast }) {
               {bagsiz.slice(-8).reverse().map((g) => (
                 <div key={g.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
                   <span style={{ flex: 1 }}>{tKisa(g.gun)} · <b style={num}>{fmt(g.tutar)}</b> ₺{g.kimden ? ` · ${g.kimden}` : ''}</span>
-                  <Dugme kucuk disabled={mesgul} onClick={() => bagla(g)}>Bunu bağla</Dugme>
+                  {yapabilir('mulk.islem') && <Dugme kucuk disabled={mesgul} onClick={() => bagla(g)}>Bunu bağla</Dugme>}
                 </div>
               ))}
             </div>
@@ -161,8 +162,8 @@ function IsletmeBorcu({ onToast }) {
               <span style={{ width: 52, color: R.metin2 }}>{tKisa(x.gun)}</span>
               <span style={{ flex: 1 }}>{x.yon === 'cikis' ? `Kira hesabı → ${x.karsi}` : `${x.karsi} → kira hesabı`}</span>
               <b style={num}>{fmt(x.tutar)} ₺</b>
-              <Dugme kucuk disabled={mesgul === x.id} onClick={() => karar(x, 'sahsi')}>Şahsi</Dugme>
-              <Dugme kucuk ana disabled={mesgul === x.id} onClick={() => karar(x, 'borc')}>{x.yon === 'cikis' ? 'İşletme borcu' : 'Borç geri ödemesi'}</Dugme>
+              {yapabilir('mulk.islem') && <Dugme kucuk disabled={mesgul === x.id} onClick={() => karar(x, 'sahsi')}>Şahsi</Dugme>}
+              {yapabilir('mulk.islem') && <Dugme kucuk ana disabled={mesgul === x.id} onClick={() => karar(x, 'borc')}>{x.yon === 'cikis' ? 'İşletme borcu' : 'Borç geri ödemesi'}</Dugme>}
             </div>
           ))}
         </div>
@@ -181,8 +182,8 @@ function IsletmeBorcu({ onToast }) {
               <span style={{ flex: 1 }}>{x.yon === 'cikis' ? `Kira hesabı → ${x.karsi}` : `${x.karsi} → kira hesabı`}</span>
               <b style={num}>{fmt(x.tutar)} ₺</b>
               <Cip tur={x.karar === 'sahsi' ? undefined : 'sari'}>{x.karar === 'sahsi' ? 'şahsi' : 'işletme borcu'}</Cip>
-              <Dugme kucuk disabled={mesgul === x.id} onClick={() => karar(x, x.karar === 'sahsi' ? 'borc' : 'sahsi')}>{x.karar === 'sahsi' ? 'Borç yap' : 'Şahsi yap'}</Dugme>
-              <Dugme kucuk disabled={mesgul === x.id} onClick={() => karar(x, '')}>Kararı geri al</Dugme>
+              {yapabilir('mulk.islem') && <Dugme kucuk disabled={mesgul === x.id} onClick={() => karar(x, x.karar === 'sahsi' ? 'borc' : 'sahsi')}>{x.karar === 'sahsi' ? 'Borç yap' : 'Şahsi yap'}</Dugme>}
+              {yapabilir('mulk.islem') && <Dugme kucuk disabled={mesgul === x.id} onClick={() => karar(x, '')}>Kararı geri al</Dugme>}
             </div>
           ))}
         </details>
