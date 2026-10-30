@@ -2,6 +2,7 @@
 // Sahip (2026-10-17): "Fiş kontrol olsun; fiş olmazsa personelle beraber girişi yapan yazsın; ayrı sekmede. Panelden
 // girişlerde yeterli, bizim girişlerimizde gerek yok." Yalnız şube panelinden gelen dükkân giderleri listelenir.
 import React, { useCallback, useEffect, useState } from 'react';
+import { yapabilir } from './yetki';   // 🔐 işlem düğmesi izni (sunucu da engeller)
 import { api } from '../../utils/api';
 import { PI_CSS, R, kart, etiketStil, num, Dugme, Cip, fmt, tKisa } from './KasaModulu';
 
@@ -61,10 +62,10 @@ export default function FisModulu({ onToast }) {
                 <b style={{ ...num, width: 80, textAlign: 'right' }}>{fmt(x.tutar)}</b>
                 <Cip tur={cipTur}>{cipAd}</Cip>
                 <span style={{ display: 'flex', gap: 4 }}>
-                  {x.durum !== 'geldi' && <Dugme kucuk disabled={mesgul === x.ref} onClick={() => isaretle(x.ref, 'geldi')}>Geldi</Dugme>}
-                  {x.durum !== 'gelmedi' && <Dugme kucuk disabled={mesgul === x.ref} onClick={() => isaretle(x.ref, 'gelmedi')}>Gelmedi</Dugme>}
-                  {x.durum === 'bekliyor' && <Dugme kucuk disabled={mesgul === x.ref} onClick={() => isaretle(x.ref, 'muaf')}>Gerekmez</Dugme>}
-                  {x.durum !== 'bekliyor' && <Dugme kucuk disabled={mesgul === x.ref} onClick={() => isaretle(x.ref, 'bekliyor')}>Geri al</Dugme>}
+                  {yapabilir('fis.isaretle') && x.durum !== 'geldi' && <Dugme kucuk disabled={mesgul === x.ref} onClick={() => isaretle(x.ref, 'geldi')}>Geldi</Dugme>}
+                  {yapabilir('fis.isaretle') && x.durum !== 'gelmedi' && <Dugme kucuk disabled={mesgul === x.ref} onClick={() => isaretle(x.ref, 'gelmedi')}>Gelmedi</Dugme>}
+                  {yapabilir('fis.isaretle') && x.durum === 'bekliyor' && <Dugme kucuk disabled={mesgul === x.ref} onClick={() => isaretle(x.ref, 'muaf')}>Gerekmez</Dugme>}
+                  {yapabilir('fis.isaretle') && x.durum !== 'bekliyor' && <Dugme kucuk disabled={mesgul === x.ref} onClick={() => isaretle(x.ref, 'bekliyor')}>Geri al</Dugme>}
                 </span>
               </div>
             );
