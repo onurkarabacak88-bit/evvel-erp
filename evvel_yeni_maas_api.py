@@ -381,11 +381,12 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
     oneri = _yeni_oneri(cur, ay) if not eski_mod else {}   # C-T3-13: yeni dönem plan > QR (eski vardiya_takip değil)
     yemek_k = _yemek_kaynagi(cur, ay, ay_bas, ay_son) if not eski_mod else None
     # ⏰ Geç kalma (sahip 28 Eki · Fable L4b A): uyarı + gün başına kes / tam kararı (ey_personel_yoklama_karar gec_kes | gec_tam)
-    gec_map, gec_uyari, gec_karar = {}, None, {}
+    gec_map, gec_uyari, gec_karar, yok_r = {}, None, {}, {"gunler": []}
     if not eski_mod and min(ay_son, bugun) >= ay_bas:
         try:
             with savepoint(cur, "sp_ey_maas_gec"):
-                gec_map, gec_uyari = _gec_gunler(cur, ay_bas, min(ay_son, bugun))
+                yok_r = _yoklama_hesap(cur, ay_bas, min(ay_son, bugun))   # Fable L6: geç + gelmedi AYNI sonuçtan (K7)
+                gec_map, gec_uyari = _gec_gunler(yok_r)
                 cur.execute("""SELECT DISTINCT ON (personel_id, tarih) personel_id, tarih, karar FROM ey_personel_yoklama_karar
                                 WHERE karar IN ('gec_kes', 'gec_tam') AND iptal_zaman IS NULL AND tarih BETWEEN %s AND %s
                                 ORDER BY personel_id, tarih, zaman DESC""", (ay_bas, ay_son))
@@ -393,6 +394,27 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         except Exception:  # noqa: BLE001 — geç kalma okunamazsa maaş yine hesaplanır, satırda uyarı
             log.warning("maaş: geç kalma okunamadı", exc_info=True)
             gec_map, gec_uyari = {}, "Geç kalma okunamadı"
+    # 🚫 Gelmeyen gün (sahip 30 Eki · Codex + Fable L4b): aynı desen — gelmedi_kes | gelmedi_tam
+    gel_map, gel_karar, gel_izin, gel_panel, gel_uyari, gel_okunamadi = {}, {}, {}, set(), None, False
+    if not eski_mod and min(ay_son, bugun) >= ay_bas and not gec_uyari:   # yoklama kapalı / okunamadı → herkes "okutmadı" görünür, gelmedi ÜRETİLMEZ
+        try:
+            with savepoint(cur, "sp_ey_maas_gelmedi"):
+                gel_map = _gelmedi_gunler(cur, yok_r)
+                if gel_map:
+                    cur.execute("""SELECT DISTINCT ON (personel_id, tarih) personel_id, tarih, karar FROM ey_personel_yoklama_karar
+                                    WHERE karar IN ('gelmedi_kes', 'gelmedi_tam') AND iptal_zaman IS NULL AND tarih BETWEEN %s AND %s
+                                    ORDER BY personel_id, tarih, zaman DESC""", (ay_bas, ay_son))
+                    gel_karar = {(str(r["personel_id"]), r["tarih"].isoformat()): r["karar"] for r in [dict(x) for x in cur.fetchall() or []]}
+                    for z in izin_araliklari(cur, ay_bas, ay_son):
+                        gel_izin.setdefault(str(z["personel_id"]), []).append((z["bas"], z["bit"] or date(2999, 12, 31)))
+                    from evvel_yeni_cekirdek import panel_baslangic as _pbas
+                    gel_panel = {(x["pid"], x["tarih"].isoformat()) for x in _yeni_panel_izi(cur, ay_bas, ay_son, _pbas(cur), hata_firlat=True)}
+        except Exception:  # noqa: BLE001 — okunamazsa maaş yine hesaplanır, satırda uyarı
+            log.warning("maaş: gelmeyen gün okunamadı", exc_info=True)
+            gel_map, gel_uyari, gel_okunamadi = {}, "Gelmeyen gün okunamadı", True
+    if gec_uyari and not eski_mod:
+        gel_uyari = "Gelmeyen gün ölçülemedi (yoklama / vardiya okunamadı) — elle kontrol et"
+        gel_okunamadi = True   # Codex L6 3. tur: kapalı / hatalı ayrımı güvenilmez → ölçülemeyen ay onaylanmaz
     # önceki aydan avans devri (yeni hesap başlangıcından itibaren zincir)
     devir_in = {}
     if not eski_mod and ay >= yh:   # 🔴 E1: ilk yeni ay (Kasım) devri eski Ekim satırından (avans_devir_sonraki = eski mahsup_devir + aşan form avansı)
@@ -468,6 +490,32 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         yari = (p.get("calisma_turu") or "tam") == "yari"
         maas = int(u["maas"] or 0)
         kalemler = []
+        gel_gunler, gel_kararsiz, gel_kes_gun, gel_kes_saat = [], 0, 0, 0.0
+        if gel_map and not (yari and e.get("calisma_saat") is not None) and not __import__("evvel_yeni_tanim_api").mudur_mu(p.get("gorev")):
+            g_bas = date.fromisoformat(str(p["giris"])[:10]) if p.get("giris") else None
+            g_son = date.fromisoformat(str(p["cikis"])[:10]) if p.get("cikis") else None
+            for (gp, gg), gsaat in sorted(gel_map.items(), key=lambda z: z[0][1]):
+                if gp != pid:
+                    continue
+                gd = date.fromisoformat(gg)
+                if (pid, gg) in gel_panel or any(b_ <= gd <= s_ for b_, s_ in gel_izin.get(pid, [])) \
+                        or (g_bas and gd < g_bas) or (g_son and gd > g_son):
+                    continue   # izinli / panelde çalışmış / işe girmeden ya da ayrıldıktan sonra → gelmedi sayılmaz
+                if yari:
+                    oran_g = u.get("saatlik_oran") or Decimal(int(u.get("saatlik") or 0))
+                    gt = int((Decimal(str(gsaat)) * oran_g).quantize(Decimal(1), rounding=ROUND_HALF_UP))
+                else:
+                    gt = maas // AY_GUN
+                gk = {"gelmedi_kes": "kes", "gelmedi_tam": "tam"}.get(gel_karar.get((pid, gg)))
+                gel_gunler.append({"gun": gg, "saat": round(gsaat, 2), "tutar": _tl(gt), "karar": gk})
+                if gk == "kes":
+                    gel_kes_gun, gel_kes_saat = gel_kes_gun + 1, gel_kes_saat + gsaat
+                elif gk is None:
+                    gel_kararsiz += 1
+                    if not e.get("onay"):
+                        uyari.append(f"{gg[8:10]}.{gg[5:7]} planlıydı, gelmedi — kes → {_tl_tr(gt)} ya da tam al (karar ver)")
+        if gel_uyari and not e.get("onay"):
+            uyari.append(gel_uyari)
         if yari:
             saat = float(e["calisma_saat"]) if e.get("calisma_saat") is not None else o.get("calisma_saat", 0)
             sat = int(u.get("saatlik") or 0)
@@ -479,6 +527,9 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
             kalemler.append({"kod": "saat", "ad": f"Çalışma {saat:g} saat × {str((oran / 100).quantize(Decimal('0.01'))).replace('.', ',')} ₺"
                              + (" (asgari ÷ 285)" if u.get("saatlik_otomatik") else "") + (" (elle)" if e.get("calisma_saat") is not None else " (plan / QR)"),
                              "tutar": _tl(int((Decimal(str(saat)) * oran).quantize(Decimal(1), rounding=ROUND_HALF_UP)))})
+            if gel_kes_gun:   # yarı: saat plandan ödendi → kes dendiyse o günün plan saati düşer
+                kalemler.append({"kod": "gelmedi", "ad": f"Gelmedi {gel_kes_gun} gün · {gel_kes_saat:g} saat (kes dendi)",
+                                 "tutar": -_tl(int((Decimal(str(gel_kes_saat)) * oran).quantize(Decimal(1), rounding=ROUND_HALF_UP)))})
             if e.get("bayram_saat"):
                 kalemler.append({"kod": "bayram", "ad": f"Bayram {float(e['bayram_saat']):g} saat × 2",
                                  "tutar": _tl(int((Decimal(str(e["bayram_saat"])) * oran * BAYRAM_KAT).quantize(Decimal(1), rounding=ROUND_HALF_UP)))})
@@ -494,6 +545,13 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
                 kalemler.append({"kod": "bayram", "ad": f"Bayram {float(e['bayram_saat']):g} saat × 2",
                                  "tutar": _tl(int(Decimal(str(e["bayram_saat"])) * maas / (AY_GUN * GUNLUK_SAAT) * BAYRAM_KAT))})
             kes_gun = Decimal(str(e.get("eksik_gun") or 0)) + (Decimal(str(e.get("rapor_gun") or 0)) if e.get("rapor_kesinti") else 0)
+            if gel_kes_gun and kes_gun:
+                uyari.append(f"Elle eksik gün {kes_gun.normalize():f} + gelmedi kes {gel_kes_gun} gün — aynı gün iki kez kesilmiş olabilir, kontrol et")
+            gel_kes = Decimal(gel_kes_gun)
+            if kes_gun + gel_kes > gun:   # MA-2 kırpma ikisinin TOPLAMINA (Fable)
+                gel_kes = max(Decimal(0), Decimal(gun) - min(kes_gun, Decimal(gun)))
+            if gel_kes:
+                kalemler.append({"kod": "gelmedi", "ad": f"Gelmedi {gel_kes:g} gün × maaş/30 (kes dendi)", "tutar": -_tl(int(gel_kes * maas / AY_GUN))})
             if kes_gun > gun:   # matris MA-2 (Fable L4b A): çalışılan günden fazla kesinti hak edişi eksiye düşürürdü — kırp + uyar
                 uyari.append(f"Eksik gün {kes_gun.normalize():f} çalışılan {gun} günden fazla — {gun} gün sayıldı")
                 kes_gun = Decimal(gun)
@@ -526,6 +584,11 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         if gec_uyari and not e.get("onay"):
             uyari.append(f"Geç kalma ölçülemedi — {gec_uyari.replace('⚠', '').strip()}")
         if kes_top:
+            pozitif = max(0, sum(_kurus(k["tutar"]) for k in kalemler))
+            if kes_top > pozitif:
+                uyari.append("Geç kalma kesintisi kalan hak edişi aşıyordu — kalan kadar kesildi")
+                kes_top = pozitif
+        if kes_top:
             kalemler.append({"kod": "gec", "ad": f"Geç kalma {kes_n} gün · {kes_dk} dk (kes dendi)", "tutar": -_tl(kes_top)})
         if e.get("duzeltme"):
             kalemler.append({"kod": "duzeltme", "ad": "Düzeltme" + (f" — {e.get('aciklama')}" if e.get("aciklama") else ""), "tutar": _tl(e["duzeltme"])})
@@ -538,7 +601,7 @@ def hesapla(cur, ay: str, sadece: Optional[str] = None, odemeler: Optional[dict]
         ek = {"gun": gun, "ay_acik": acik, "uyari": uyari, "avans_devir_onceki": _tl(din),
               "hesap_saat": saat if yari else None,   # avans tavanı bunu okur (Fable O-3: _yeni_oneri ikinci kez çalışmasın)
               "yemek_hak": next((k["tutar"] for k in kalemler if k["kod"] == "yemek"), 0), "yemek_dusen": yemek_dusen,
-              "gec_gunler": gec_gunler, "gec_kararsiz": gec_kararsiz}
+              "gec_gunler": gec_gunler, "gec_kararsiz": gec_kararsiz, "gelmedi_gunler": gel_gunler, "gelmedi_kararsiz": gel_kararsiz, "gelmedi_okunamadi": gel_okunamadi}
         satir.append(_satir(p, ay, hak, kalemler, mahsup, avans, din, odenen, od, e, u, "evvel_yeni", ek, yari))
     satir.sort(key=lambda x: (not x["aktif"], x["ad"]))
     return satir
@@ -601,7 +664,7 @@ def kisi_ozet(cur, personel_id: str, gun: Optional[date] = None) -> dict:
     saat = r.get("hesap_saat")
     # sahip 30 Eki: "telefonlarında günlük hak ediş yazsın yeterli, saatlik ücretin yazmasına gerek yok" → ücret / formül dönmez, sade ad
     AD = {"taban": "Maaş", "saat": f"Çalışma ({saat:g} saat)" if saat else "Çalışma", "yemek": "Yemek", "yol": "Yol",
-          "mesai": "Fazla mesai", "bayram": "Bayram çalışması", "eksik": "Eksik gün", "gec": "Geç kalma kesintisi", "duzeltme": "Düzeltme"}
+          "mesai": "Fazla mesai", "bayram": "Bayram çalışması", "eksik": "Eksik gün", "gec": "Geç kalma kesintisi", "gelmedi": "Gelmediğin gün", "duzeltme": "Düzeltme"}
     return {"ay": ay, "calisma_turu": r.get("calisma_turu"), "hak_edis": r["hak_edis"], "onay": bool(r.get("onay")),
             "kalemler": [{"ad": AD.get(k.get("kod"), "Diğer"), "tutar": k["tutar"]} for k in r.get("kalemler") or [] if k.get("tutar")],
             "avans_mahsup": r["avans_mahsup"], "odenen": r["odenen"], "kalan": r["kalan"]}
@@ -642,6 +705,7 @@ class GecKararBody(BaseModel):
     karar: str                       # kes | tam
     gun: Optional[str] = None        # tek gün (YYYY-AA-GG); hepsi=True ise kararsız bütün geç günler
     hepsi: bool = False
+    tur: str = "gec"                 # gec | gelmedi (aynı uç, aynı karar tablosu)
 
 
 @router.post("/{pid}/{ay}/gec-karar")
@@ -652,6 +716,8 @@ def gec_karar(pid: str, ay: str, b: GecKararBody, x_evvel_oturum: Optional[str] 
     from evvel_yeni_cekirdek import aktor as _aktor
     if b.karar not in ("kes", "tam"):
         raise HTTPException(400, "Karar 'kes' ya da 'tam' olmalı")
+    if b.tur not in ("gec", "gelmedi"):
+        raise HTTPException(400, "Tür 'gec' ya da 'gelmedi' olmalı")
     with db() as (conn, cur):
         _hazirla(cur)
         _kisi_ay_dogrula(cur, pid, ay)
@@ -664,16 +730,18 @@ def gec_karar(pid: str, ay: str, b: GecKararBody, x_evvel_oturum: Optional[str] 
         if r and dict(r)["onay"]:
             raise HTTPException(409, "Bu ay onaylanmış — önce onayı kaldır")
         s = next(iter(hesapla(cur, ay[:7], sadece=pid)), None) or {}
-        gunler = [g["gun"] for g in s.get("gec_gunler") or []
+        gunler = [g["gun"] for g in s.get(f"{b.tur}_gunler") or []
                   if (b.hepsi and not g["karar"]) or (not b.hepsi and g["gun"] == (b.gun or "")[:10])]
         if not gunler:
-            raise HTTPException(409, "Bu gün geç kalma listesinde yok — sayfayı yenile")
+            raise HTTPException(409, "Bu gün " + ("geç kalma" if b.tur == "gec" else "gelmeyen gün") + " listesinde yok — sayfayı yenile")
         for g in gunler:
             cur.execute("""UPDATE ey_personel_yoklama_karar SET iptal_zaman=NOW(), iptal_kim=%s
-                            WHERE personel_id=%s AND tarih=%s AND karar IN ('gec_kes', 'gec_tam') AND iptal_zaman IS NULL""", (kim, pid, g))
+                            WHERE personel_id=%s AND tarih=%s AND karar IN (%s, %s) AND iptal_zaman IS NULL""",
+                        (kim, pid, g, b.tur + "_kes", b.tur + "_tam"))
             cur.execute("""INSERT INTO ey_personel_yoklama_karar (id, personel_id, tarih, karar, izin_bitis, aciklama, degistiren)
-                           VALUES (%s,%s,%s,%s,NULL,%s,%s)""", (str(_uuid.uuid4()), pid, g, "gec_" + b.karar, "maaş · geç kalma kararı", kim))
-    return {"ok": True, "mesaj": f"{len(gunler)} geç gün: " + ("maaştan kesilecek" if b.karar == "kes" else "tam alınacak (kesilmez)")}
+                           VALUES (%s,%s,%s,%s,NULL,%s,%s)""", (str(_uuid.uuid4()), pid, g, b.tur + "_" + b.karar,
+                           "maaş · " + ("geç kalma" if b.tur == "gec" else "gelmeyen gün") + " kararı", kim))
+    return {"ok": True, "mesaj": f"{len(gunler)} {'geç' if b.tur == 'gec' else 'gelmeyen'} gün: " + ("maaştan kesilecek" if b.karar == "kes" else "tam alınacak (kesilmez)")}
 
 
 class ElleBody(BaseModel):
@@ -780,10 +848,15 @@ def maas_onay(pid: str, ay: str, kaldir: bool = False, x_evvel_oturum: Optional[
         r = next(iter(hesapla(cur, ay[:7], sadece=pid)), None)
         if not r:
             raise HTTPException(404, "Bu ay için personel satırı yok")
-        if r.get("ay_acik"):
+        from evvel_yeni_cekirdek import is_gunu as _ig
+        if r.get("ay_acik") or _ig().strftime("%Y-%m") <= ay[:7]:   # Codex L6: 00:00–02:00 ayın son iş günü hâlâ açık
             raise HTTPException(400, "Ay bitmeden onaylanamaz")
         if r.get("gec_kararsiz"):   # Fable L4b K5: karar verilmeden 'tam' sessizce kalıplaşmasın
             raise HTTPException(409, f"{r['gec_kararsiz']} geç gün kararsız — kişi penceresinde 'Kes' ya da 'Tam al' de (ya da 'Hepsine tam')")
+        if r.get("gelmedi_okunamadi"):
+            raise HTTPException(409, "Gelmeyen günler ölçülemedi (yoklama / vardiya kapalı ya da okunamadı) — açılınca ya da sayfayı yenileyince onaylanır")
+        if r.get("gelmedi_kararsiz"):
+            raise HTTPException(409, f"{r['gelmedi_kararsiz']} gelmeyen gün kararsız — kişi penceresinde 'Kes' ya da 'Tam al' de (ya da 'Hepsine tam')")
         cur.execute("INSERT INTO ey_maas_ay (personel_id, ay, degistiren) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING", (pid, ay[:7], kim))
         cur.execute("""UPDATE ey_maas_ay SET onay=TRUE, kalemler=%s::jsonb, onaylayan=%s, onay_zaman=NOW()
                         WHERE personel_id=%s AND ay=%s""", (json.dumps(r["kalemler"], ensure_ascii=False), kim, pid, ay[:7]))
@@ -1166,7 +1239,8 @@ def _yoklama_hesap(cur, bas: date, son: date) -> dict:
                 q = next((i for i, x in enumerate(qr_g) if i not in kullanildi and x["pid"] == p["pid"]), None)
             plan_bas = p["baslangic_saat"].strftime("%H:%M") if p.get("baslangic_saat") else None
             s = {"personel_id": p["pid"], "ad": ad(p["pid"]), "plan": f"{plan_bas}–{p['bitis_saat'].strftime('%H:%M') if p.get('bitis_saat') else ''}",
-                 "slot": p.get("slot"), "qr": None, "qr_sube": None, "durum": "okutmadi", "gec_dk": None}
+                 "slot": p.get("slot"), "qr": None, "qr_sube": None, "durum": "okutmadi", "gec_dk": None,
+                 "sonradan": bool(p.get("sonradan")), "plan_saat": float(p.get("saat") or 0)}
             if q is not None:
                 kullanildi.add(q)
                 x = qr_g[q]
@@ -1212,11 +1286,11 @@ def _yoklama_hesap(cur, bas: date, son: date) -> dict:
 
 
 
-def _gec_gunler(cur, bas: date, son: date) -> tuple:
+def _gec_gunler(r: dict) -> tuple:
     """Maaş geç kalma uyarısı (sahip 28 Eki "maaş hesabında uyarıcı olarak dursun, kes ya da tam diyebilelim" · Fable L4b A):
     {(personel_id, gün ISO): geç dakika} — YALNIZ yoklamanın 'gec' saydığı günler (okutmadı / plansız / sonradan / bekleniyor girmez;
-    tolerans içi gün 'zamaninda'). İkinci değer: yoklama ya da vardiya kapalı / okunamadı uyarısı (o zaman geç ölçülemez)."""
-    r = _yoklama_hesap(cur, bas, son)
+    tolerans içi gün 'zamaninda'). İkinci değer: yoklama ya da vardiya kapalı / okunamadı uyarısı (o zaman geç ölçülemez).
+    r = _yoklama_hesap sonucu (hesapla bir kez çalıştırır, geç + gelmedi aynı sonucu okur — K7)."""
     gec = {}
     for g in r["gunler"]:
         for s in g["subeler"]:
@@ -1224,6 +1298,26 @@ def _gec_gunler(cur, bas: date, son: date) -> tuple:
                 if k["durum"] == "gec" and k.get("gec_dk"):
                     gec[(str(k["personel_id"]), g["gun"])] = max(gec.get((str(k["personel_id"]), g["gun"]), 0), int(k["gec_dk"]))
     return gec, r.get("uyari")
+
+
+def _gelmedi_gunler(cur, r: dict) -> dict:
+    """🚫 Gelmeyen gün (sahip 30 Eki "başla" · Codex + Fable L4b): {(personel_id, gün ISO): o günün plan saati} — planlı günün
+    BÜTÜN dilimleri yoklamada 'okutmadi' ise (biri okutulduysa / sonradan yazılmış plan / bekleniyor → gelmedi değil). Yalnız iş günü
+    KAPANMIŞ günler (gün < is_gunu) ve yeni dönem (panel_baslangic). İzin / panel izi / müdür / giriş–çıkış dışı süzmesi hesapla'da."""
+    from evvel_yeni_cekirdek import is_gunu as _ig, panel_baslangic
+    son, bas = (_ig() - timedelta(days=1)).isoformat(), panel_baslangic(cur).isoformat()
+    durum, saat = {}, {}
+    for g in r["gunler"]:
+        if not (bas <= g["gun"] <= son):
+            continue
+        for s in g["subeler"]:
+            for k in s["kisiler"]:
+                if not k.get("plan"):
+                    continue   # plansız QR satırı
+                key = (str(k["personel_id"]), g["gun"])
+                durum.setdefault(key, []).append(k["durum"] == "okutmadi" and not k.get("sonradan"))
+                saat[key] = saat.get(key, 0.0) + float(k.get("plan_saat") or 0)
+    return {k: saat[k] for k, d in durum.items() if d and all(d)}
 
 
 def _yeni_yoklama(cur, bas: date, son: date):
@@ -1245,13 +1339,15 @@ def _yeni_yoklama(cur, bas: date, son: date):
         return pb, None
 
 
-def _yeni_panel_izi(cur, bas: date, son: date, pb: date) -> list:
+def _yeni_panel_izi(cur, bas: date, son: date, pb: date, hata_firlat: bool = False) -> list:
     """Yeni dönem panel izi: QR okutmadan yeni panelde açılış / kapanış / teslim yapan o gün o şubede ÇALIŞTI sayılır."""
     if son < pb:
         return []
     try:
         from evvel_yeni_olay import panel_olaylari   # F#12
     except Exception:  # noqa: BLE001
+        if hata_firlat:
+            raise
         return []
     ad = {"acilis": "panel: açılış", "kapanis": "panel: kapanış", "teslim": "panel: teslim", "teslim_al": "panel: teslim al"}
     out = []
@@ -1260,6 +1356,8 @@ def _yeni_panel_izi(cur, bas: date, son: date, pb: date) -> list:
             ol = panel_olaylari(cur, bas=max(bas, pb), son=son, turler=set(ad))
     except Exception:  # noqa: BLE001
         log.warning("maaş: panel izi okunamadı", exc_info=True)
+        if hata_firlat:   # gelmedi: panel izi okunamazsa çalışan "gelmedi" sanılmasın (Codex L6 2. tur)
+            raise
         return []
     for o in ol:
         if not o.get("personel_id"):
