@@ -457,6 +457,27 @@ def hareketler(cur, *, turler, bas, son, hedefler=None, hedef_onek=None, kaynak_
     return [dict(x) for x in cur.fetchall() or []]
 
 
+def ac_adet_duzelt(cur, sube_id: str, gun: str, urun_ad: str, eski: int, yeni: int, iz: str, yaz: bool) -> dict:
+    """PUBLIC — TEK SEFERLİK (Gider 'urun-ac-duzelt', sahip 31 Eki): yeni panelin ÜRÜN AÇ hareketinde (tur 'ac', depo:şube → dışarı:tuketim)
+    yanlış girilen adedi düzeltir. Eşleşme şube + gün + ürün adı + bugünkü yanlış adet; iz açıklamaya eklenir. Dönüş
+    {"durum": "bulundu" | "zaten" | "yok" | "cok", "sayi": n}. yaz=False yalnız sayar. Kesimden sonra silinir."""
+    depo_hazirla(cur)
+    cur.execute("""SELECT id, adet, COALESCE(aciklama, '') AS aciklama FROM ey_stok_hareket
+                    WHERE yeni AND NOT iptal AND tur='ac' AND kaynak=%s AND hedef='dışarı:tuketim' AND is_gunu=%s
+                      AND lower(urun_ad)=lower(%s)""", (f"depo:{sube_id}", gun, urun_ad))
+    rs = [dict(r) for r in cur.fetchall() or []]
+    hedef = [r for r in rs if int(r["adet"]) == int(eski) and iz not in r["aciklama"]]
+    if not hedef:
+        zaten = any(iz in r["aciklama"] and int(r["adet"]) == int(yeni) for r in rs)
+        return {"durum": "zaten" if zaten else "yok", "sayi": 0}
+    if len(hedef) > 1:
+        return {"durum": "cok", "sayi": len(hedef)}
+    if yaz:
+        cur.execute("UPDATE ey_stok_hareket SET adet=%s, aciklama=%s WHERE id=%s",
+                    (int(yeni), (hedef[0]["aciklama"] + " | " if hedef[0]["aciklama"] else "") + f"{iz} {eski}→{yeni}", hedef[0]["id"]))
+    return {"durum": "bulundu", "sayi": 1}
+
+
 def urun_hareketi_var(cur, urun_id: str) -> bool:
     """PUBLIC: ürünün YENİ evrende (ey_urun kimliğiyle) stok hareketi var mı — Ürün kataloğu birim kilidi bunu sorar."""
     depo_hazirla(cur)

@@ -529,9 +529,11 @@ class SinifBody(BaseModel):
 # 🩹 EKİM ÜRÜN AÇ DÜZELTMESİ (sahip 31 Eki onayı · Fable L4b): 7 kayıtta miktar yanlış (pipet "400/100" = 1 paket; kapak "100" adet =
 # 2 paket / plastik 1 paket). Düzeltme KAYNAĞA (eski operasyon_defter JSON) — gece son aktarım Ekim mal arşivini ve depo senkronu
 # AYNI kaynaktan yeniden türetsin (arşivi elle düzeltmek kaynakla ayrışır). TEK SEFERLİK; 1 Kasım kesiminden sonra bu blok silinir.
-URUN_AC_DUZELTME = (   # (şube, gün, ürün adı, bugünkü YANLIŞ adet, doğru adet)
+URUN_AC_DUZELTME = (   # (şube, gün, ürün adı, bugünkü YANLIŞ adet, doğru adet) — eski defter (eski panel günleri)
     ("sube-tema", "2026-10-04", "Pipet", 400, 1),
     ("sube-zafer", "2026-10-08", "Pipet", 100, 1),
+)
+URUN_AC_DUZELTME_YENI = (   # pilot şube günleri: yeni panelin depo hareketi (canlı kuru deneme: eski defterde yok — Depo PUBLIC ile)
     ("sube-koycegiz", "2026-10-29", "14oz Kapak", 100, 2),
     ("sube-koycegiz", "2026-10-30", "8oz Kapak", 100, 2),
     ("sube-koycegiz", "2026-10-30", "14oz Kapak", 100, 2),
@@ -584,10 +586,26 @@ def urun_ac_duzelt(kuru: bool = True, x_evvel_oturum: Optional[str] = Header(def
                 continue
             plan.append((hedef[0], sid, gun, ad, eski, yeni))
         rapor = [{"sube": p[1], "gun": p[2], "urun": p[3], "eski": p[4], "yeni": p[5], "defter_id": str(p[0]["id"])} for p in plan]
+        from evvel_yeni_depo_api import ac_adet_duzelt
+        yeni_plan = []
+        for sid, gun, ad, eski, yeni in URUN_AC_DUZELTME_YENI:
+            d = ac_adet_duzelt(cur, sid, gun, ad, eski, yeni, DUZELTME_IZ, yaz=False)
+            if d["durum"] == "zaten":
+                yapilmis.append(f"{sid} {gun} {ad}")
+            elif d["durum"] != "bulundu":
+                eksik.append(f"{sid} {gun} {ad} {eski}: yeni panel {d['durum']} ({d['sayi']})")
+            else:
+                yeni_plan.append((sid, gun, ad, eski, yeni))
+                rapor.append({"sube": sid, "gun": gun, "urun": ad, "eski": eski, "yeni": yeni, "defter_id": "yeni panel"})
         if eksik:
             raise HTTPException(409, "Eşleşme tutmadı — hiçbir şey yazılmadı: " + " · ".join(eksik))
-        if kuru or not plan:
+        if kuru or not (plan or yeni_plan):
             return {"ok": True, "kuru": kuru, "duzeltilecek": rapor, "zaten_duzeltilmis": yapilmis}
+        for sid, gun, ad, eski, yeni in yeni_plan:
+            ac_adet_duzelt(cur, sid, gun, ad, eski, yeni, DUZELTME_IZ, yaz=True)
+        if not plan:
+            arsiv_yaz(cur, "gider", "duzeltme:urun_ac:2026-10:yeni", {"duzeltilen": rapor}, kim)
+            return {"ok": True, "kuru": False, "duzeltilen": rapor, "depo_guncellenen": 0}
         cur.execute("SET LOCAL lock_timeout = '5s'")
         cur.execute("ALTER TABLE operasyon_defter DISABLE TRIGGER tr_operasyon_defter_append_only")
         try:
