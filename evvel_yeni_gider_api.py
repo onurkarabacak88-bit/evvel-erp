@@ -526,6 +526,102 @@ class SinifBody(BaseModel):
     kimin: Optional[str] = None
 
 
+# 🩹 EKİM ÜRÜN AÇ DÜZELTMESİ (sahip 31 Eki onayı · Fable L4b): 7 kayıtta miktar yanlış (pipet "400/100" = 1 paket; kapak "100" adet =
+# 2 paket / plastik 1 paket). Düzeltme KAYNAĞA (eski operasyon_defter JSON) — gece son aktarım Ekim mal arşivini ve depo senkronu
+# AYNI kaynaktan yeniden türetsin (arşivi elle düzeltmek kaynakla ayrışır). TEK SEFERLİK; 1 Kasım kesiminden sonra bu blok silinir.
+URUN_AC_DUZELTME = (   # (şube, gün, ürün adı, bugünkü YANLIŞ adet, doğru adet)
+    ("sube-tema", "2026-10-04", "Pipet", 400, 1),
+    ("sube-zafer", "2026-10-08", "Pipet", 100, 1),
+    ("sube-koycegiz", "2026-10-29", "14oz Kapak", 100, 2),
+    ("sube-koycegiz", "2026-10-30", "8oz Kapak", 100, 2),
+    ("sube-koycegiz", "2026-10-30", "14oz Kapak", 100, 2),
+    ("sube-tema", "2026-10-31", "14oz Kapak", 100, 2),
+    ("sube-tema", "2026-10-31", "Plastik Kapak", 100, 1),
+)
+DUZELTME_IZ = "DUZELTME 31.10 sahip onayı"
+
+
+@router.post("/urun-ac-duzelt")
+def urun_ac_duzelt(kuru: bool = True, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Fable L4b korumaları: eşleşme kimlikle değil şube + gün + etiket + ürün adı + BUGÜNKÜ yanlış adet; TAM 7 eşleşme yoksa hiçbir şey
+    yazılmaz · kuru (varsayılan) yalnız gösterir · iz: açıklama sonuna " | DUZELTME …" + Ekim arşivine eski↔yeni · iz taşıyan kayıt
+    atlanır (ikinci koşu 0) · depo senkronunun aynı kalemden yazdığı 'ac:{id}:{sıra}' hareketinde adet güncellenir (Fable L6)."""
+    import json as _json
+    from evvel_yeni_cekirdek import arsiv_yaz
+    with db() as (conn, cur):
+        kim = _aktor(cur, x_evvel_oturum)
+        plan, eksik, yapilmis, satirlar = [], [], [], {}   # satirlar: defter id → TEK çözümleme (aynı kayıtta iki kalem birbirini ezmesin)
+        for sid, gun, ad, eski, yeni in URUN_AC_DUZELTME:
+            cur.execute("""SELECT id, aciklama FROM operasyon_defter WHERE sube_id::text=%s AND tarih=%s
+                             AND etiket IN ('URUN_AC','URUN_KULLANIMA_AL') ORDER BY id""", (sid, gun))
+            bulunan = []
+            for r in cur.fetchall() or []:
+                r = dict(r)
+                acik = str(r["aciklama"] or "")
+                on = next((p for p in ("URUN_AC_JSON:", "URUN_KULLANIMA_AL_JSON:") if acik.startswith(p)), None)
+                if not on:
+                    continue
+                if r["id"] not in satirlar:
+                    govde, _, ek = acik[len(on):].partition(" | ")
+                    try:
+                        satirlar[r["id"]] = {"on": on, "obj": _json.loads(govde.strip()), "ek": ek, "iz": []}
+                    except Exception:  # noqa: BLE001
+                        continue
+                obj = satirlar[r["id"]]["obj"]
+                for i, it in enumerate(obj.get("kalemler") or []):
+                    if isinstance(it, dict) and str(it.get("urun_ad") or "").strip().lower() == ad.lower():
+                        try:
+                            adet = int(it.get("adet") or 0)
+                        except (TypeError, ValueError):
+                            adet = 0
+                        bulunan.append({"id": r["id"], "i": i, "adet": adet, "iz": DUZELTME_IZ in acik})
+            hedef = [b for b in bulunan if b["adet"] == eski and not b["iz"]]
+            if any(b["iz"] and b["adet"] == yeni for b in bulunan) and not hedef:
+                yapilmis.append(f"{sid} {gun} {ad}")
+                continue
+            if len(hedef) != 1:
+                eksik.append(f"{sid} {gun} {ad} {eski}: {len(hedef)} eşleşme")
+                continue
+            plan.append((hedef[0], sid, gun, ad, eski, yeni))
+        rapor = [{"sube": p[1], "gun": p[2], "urun": p[3], "eski": p[4], "yeni": p[5], "defter_id": str(p[0]["id"])} for p in plan]
+        if eksik:
+            raise HTTPException(409, "Eşleşme tutmadı — hiçbir şey yazılmadı: " + " · ".join(eksik))
+        if kuru or not plan:
+            return {"ok": True, "kuru": kuru, "duzeltilecek": rapor, "zaten_duzeltilmis": yapilmis}
+        cur.execute("SET LOCAL lock_timeout = '5s'")
+        cur.execute("ALTER TABLE operasyon_defter DISABLE TRIGGER tr_operasyon_defter_append_only")
+        try:
+            for b, sid, gun, ad, eski, yeni in plan:
+                st = satirlar[b["id"]]
+                obj = st["obj"]
+                # depo senkronunun kaynak_ref sırası = urun_ac_parcala çıktısı (adet > 0 kalemler) — ham dizideki sıradan farklı olabilir
+                j = sum(1 for it in obj["kalemler"][:b["i"]] if isinstance(it, dict) and str(it.get("adet") or "0").isdigit() and int(it["adet"]) > 0)
+                obj["kalemler"][b["i"]] = {**obj["kalemler"][b["i"]], "adet": yeni}
+                st["iz"].append(f"{ad} {eski}→{yeni}")
+                st.setdefault("depo", []).append((f"ac:{b['id']}:{j}", yeni))
+            for did, st in satirlar.items():
+                if not st["iz"]:
+                    continue
+                yeni_acik = (st["on"] + _json.dumps(st["obj"], ensure_ascii=False, separators=(",", ":"))
+                             + " | " + ((st["ek"] + " | ") if st["ek"] else "") + f"{DUZELTME_IZ} {', '.join(st['iz'])} ({kim})")
+                cur.execute("UPDATE operasyon_defter SET aciklama=%s WHERE id=%s", (yeni_acik, did))
+        finally:
+            cur.execute("ALTER TABLE operasyon_defter ENABLE TRIGGER tr_operasyon_defter_append_only")
+        # Fable L6: depo senkronu aynı kalemi yazdıysa (ON CONFLICT DO NOTHING yeni adedi ALMAZ; iptal etmek de geri getirmez) →
+        # YALNIZ o kalemin satırında adet güncellenir (aynı kaydın dokunulmayan kalemlerine dokunulmaz)
+        depo = 0
+        try:
+            with savepoint(cur, "sp_ey_uad_depo"):
+                for st in satirlar.values():
+                    for ref, yeni in st.get("depo") or []:
+                        cur.execute("UPDATE ey_stok_hareket SET adet=%s WHERE kaynak_ref=%s AND NOT COALESCE(iptal, FALSE)", (yeni, ref))
+                        depo += cur.rowcount or 0
+        except Exception:  # noqa: BLE001 — depo tablosu yoksa (tak-çıkar) atla
+            log.warning("gider: ürün aç düzeltmesi depo izi güncellenemedi", exc_info=True)
+        arsiv_yaz(cur, "gider", "duzeltme:urun_ac:2026-10", {"duzeltilen": rapor, "depo_guncellenen": depo}, kim)
+    return {"ok": True, "kuru": False, "duzeltilen": rapor, "depo_guncellenen": depo}
+
+
 @router.post("/siniflandir")
 def siniflandir(body: SinifBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Dükkân giderini PATRON ŞAHSİ (çekiş) olarak ayır ya da geri al. Para hareketine dokunmaz
