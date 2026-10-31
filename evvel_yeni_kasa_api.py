@@ -1164,6 +1164,27 @@ def _durum_tam(gun: Optional[str] = None, hepsi: bool = False):
                            + sum(int(o["veri"].get("f", 0)) for o in gunun_ol if o["olay"] == "cozum" and o["veri"].get("sebep") == "harcandi")),
     }
     cep_durumlari = [_cep_durum(c, ol, D, ref, fl, C) for c in cep_list]
+    # 🧮 DÜKKÂN NAKDİ = SON SAYILAN (sahip 31 Eki · Opus karar · Codex + Fable): bugünün görünümünde kartın büyük rakamı panelin son kör
+    # sayımı; defter küçük satırda (Kasam toplamı DEFTER kalır). Sabah sayımının deftere yazılması bir gün bekler (kilit kuralı) — burada yazılmaz.
+    if not hepsi and g == bugun:
+        try:
+            from evvel_yeni_moduller import acik as _acik
+            if _acik("satis"):
+                from evvel_yeni_cekirdek import is_gunu as _ig
+                from evvel_yeni_satis_api import son_sayimlar
+                ig = _ig()   # Codex L6: panel İŞ GÜNÜNE yazar (00:00–02:00 hâlâ dün) — son sayım iş gününden okunur
+                with db() as (_c2, cur2):   # kısa salt okuma (asıl bağlantı yukarıda kapandı)
+                    ss = son_sayimlar(cur2, ig)
+                dun = _bakiye([o for o in ol_tum if o["gun"] < ig.isoformat()], C)["b"]   # sabah sayımı o iş gününün ÖNCESİ defteriyle (aynı sınır)
+                for cd in cep_durumlari:
+                    s_ = ss.get(str(C.get(cd["id"], {}).get("sube_id") or "")) if cd["tur"] == "sube" else None
+                    if cd["tur"] == "sube":
+                        cd["sayim_bakildi"] = True   # ön yüz: "bugün sayım yok" yalnız bugünün görünümünde (Codex L6)
+                    if s_:
+                        d_ = _tl_sayi(dun.get(cd["id"], 0)) if s_["tur"] == "sabah" else None
+                        cd["son_sayilan"] = {**s_, "defter_sinir": d_, "fark": None if d_ is None else round(s_["tutar"] - d_, 2)}
+        except Exception:  # noqa: BLE001 — gösterim; okunamazsa kart eski haliyle (defter) kalır
+            log.warning("kasa: son sayımlar okunamadı", exc_info=True)
     for cd in cep_durumlari:
         # Fethi'nin evi kaldırıldı (para geçiş hesabına gider) — boşsa ekranda görünmez; geçmiş kayıtları durur
         # sahip: "patronun evinden düşmüş görünmüyor" → bu dönem hareketi olduysa görünür (çıkış izi okunsun)

@@ -286,6 +286,42 @@ def son_kapanislar(cur, gun, subeler=None) -> dict:
     return {sid: v for sid, v in out.items() if not (sid in acilis and acilis[sid] > v[0])}
 
 
+def son_sayimlar(cur, gun) -> dict:
+    """PUBLIC (sahip 31 Eki "panelde gece 200 bıraktım, sabah 210 aldım — bu dükkândaki nakit" · Opus karar · Codex + Fable): iş günü
+    `gun` için şube başına SON kör sayım {tutar, kim, saat, tur: sabah|devir, gece_birakilan, gece_kim, gece_gunu}. Kaynak yeni panel olay
+    defteri (tek okuyucu); YAZMAZ. Kasa'nın deftere sayım yazma / bir gün bekleme kuralı aynen (bu yalnız gösterim). Sayım yoksa şube yok."""
+    from datetime import date as _date
+    from evvel_yeni_cekirdek import sube_baslangic as _sbas, tr_saat
+    g = gun if isinstance(gun, _date) else _date.fromisoformat(str(gun)[:10])
+    out, _sb = {}, {}
+    for o in _panel_olaylari(cur, g, g, {"acilis", "vardiya"}):
+        sid = str(o["sube_id"])
+        if o["is_gunu"] < (_sb[sid] if sid in _sb else _sb.setdefault(sid, _sbas(cur, sid))):
+            continue   # şubenin gerçek başlangıcından önceki prova kaydı
+        v = o["v"]
+        tutar = _kr_tl(v.get("kasa_sayim") if o["tur"] == "acilis" else v.get("sayilan"))   # devir: resmi rakam (tutmadıysa devralanın)
+        if tutar is None:
+            continue
+        kim = o.get("personel_ad") if o["tur"] == "acilis" else ((v.get("devralan") or {}).get("ad") or o.get("personel_ad"))
+        ts = o.get("olay_zamani")
+        if sid not in out or str(ts or "") >= str(out[sid]["_ts"] or ""):
+            out[sid] = {"tutar": tutar, "kim": kim, "saat": tr_saat(ts, g), "tur": "sabah" if o["tur"] == "acilis" else "devir", "_ts": ts,
+                        "gun": g.isoformat()}
+    if out:
+        gece = son_kapanislar(cur, g, set(out))
+        kim_g = {}
+        for gd in {v[0] for v in gece.values()}:   # Codex L6: yalnız esas alınan günün kapanışı; şube başlangıcından önceki (prova / arşiv) kişi YOK
+            for o in _panel_olaylari(cur, gd, gd, {"kapanis"}):
+                sid = str(o["sube_id"])
+                if sid in gece and gece[sid][0] == gd and gd >= _sb.get(sid, _sbas(cur, sid)):
+                    kim_g[sid] = o.get("personel_ad")
+        for sid, x in out.items():
+            x.pop("_ts", None)
+            if sid in gece:
+                x.update(gece_gunu=gece[sid][0].isoformat(), gece_birakilan=gece[sid][1], gece_kim=kim_g.get(sid))
+    return out
+
+
 def _elle_teslimler() -> dict:
     """{(şube, gün): ["Fethi 1.500", …]} — yönetimin Kasa'ya ELLE girdiği teslimler (panelden / eski panelden gelmeyen).
     Devir defterinin eski ve yeni okuyucusu ORTAK (Fable T-1: blok birebir kopyaydı)."""

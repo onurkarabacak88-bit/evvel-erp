@@ -189,6 +189,7 @@ function Cip({ children, tur }) {
 function CepKart({ c, onAc, serit }) {
   const s = SEVIYE[c.seviye] || SEVIYE.gri;
   const bos = c.seviye === 'gri';
+  const ss = c.tur === 'sube' ? c.son_sayilan : null;   // 🧮 son kör sayım (yalnız bugünün görünümü)
   return (
     <button type="button" onClick={() => onAc(c.id)} style={{
       ...(serit ? kart : {}), textAlign: 'left', width: '100%', cursor: 'pointer', fontFamily: 'inherit',
@@ -201,8 +202,23 @@ function CepKart({ c, onAc, serit }) {
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: serit ? 'flex-start' : 'baseline', gap: serit ? 2 : 8, flexDirection: serit ? 'column' : 'row' }}>
         <span style={{ fontWeight: 700, fontSize: 13 }}>{serit && <span style={{ ...etiketStil, display: 'block' }}>{c.kira ? 'Kira hesabı' : ({ ev: 'Patron evi', sube: 'Dükkân nakdi', banka: 'Banka', hesap: 'Geçiş hesabı' }[c.tur])}</span>}{c.ad}</span>
-        <span style={{ ...num, fontSize: serit ? 21 : 15, fontWeight: 600, color: bos ? R.not2 : R.krem }}>{tl(c.bakiye)}</span>
+        <span style={{ ...num, fontSize: serit ? 21 : 15, fontWeight: 600, color: (ss ? false : bos) ? R.not2 : R.krem }}>{tl(ss ? ss.tutar : c.bakiye)}</span>
       </div>
+      {/* 🧮 sahip 31 Eki · Opus: dükkân kartında BÜYÜK rakam = son kör sayım (kim · ne zaman); defter küçük satırda (Kasam toplamına giren) */}
+      {ss && (
+        <span style={{ fontSize: 11.5, color: R.metin2 }}>
+          Son sayılan · {ss.kim || '?'} · {ss.gun && ss.gun !== new Date().toLocaleDateString('sv-SE', { timeZone: 'Europe/Istanbul' }) ? tKisa(ss.gun) : 'bugün'} {ss.saat} · {ss.tur === 'devir' ? 'devir sayımı' : 'sabah kör sayımı'} <span style={{ color: R.not2 }}>· gün içinde değişmiş olabilir</span>
+        </span>
+      )}
+      {ss && (
+        <span style={{ fontSize: 11.5, color: R.not2 }}>
+          defter {tl(c.bakiye)} (Kasam toplamına giren){ss.fark ? ` · ${fmt(Math.abs(ss.fark))} ${ss.fark > 0 ? 'fazla' : 'eksik'} · yarın işlenir (geçici)` : ss.fark === 0 ? ' · tuttu' : ''}
+        </span>
+      )}
+      {ss && ss.gece_birakilan != null && ss.tur === 'sabah' && ss.gece_birakilan !== ss.tutar && (
+        <span style={{ fontSize: 11.5, color: R.amber }}>gece {fmt(ss.gece_birakilan)} bıraktım ({ss.gece_kim || '?'}) · sabah {fmt(ss.tutar)} aldım</span>
+      )}
+      {c.tur === 'sube' && !ss && c.sayim_bakildi && serit && <span style={{ fontSize: 11.5, color: R.not2 }}>bugün sayım yok · defter</span>}
       {c.kirmizi.map((t, i) => <span key={`k${i}`} style={{ fontSize: 11.5, fontWeight: 700, color: R.kirmizi }}>● {t}</span>)}
       {c.sari.map((t, i) => <span key={`s${i}`} style={{ fontSize: 11.5, fontWeight: 700, color: R.amber }}>● {t}</span>)}
       {!bos && c.tur !== 'sube' && c.gelen.length > 0 && (
