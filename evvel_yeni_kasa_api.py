@@ -1119,6 +1119,15 @@ def _durum_buda(d: dict, iz: Optional[dict]) -> dict:
     return d
 
 
+def _tr_saat_kisa(ts) -> str:
+    """Kayıt anı → TR "SS:DD" (sayım kartının "sonra çıkan" satırı)."""
+    from zoneinfo import ZoneInfo
+    try:
+        return ts.astimezone(ZoneInfo("Europe/Istanbul")).strftime("%H:%M") if getattr(ts, "tzinfo", None) else ts.strftime("%H:%M")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def _durum_tam(gun: Optional[str] = None, hepsi: bool = False):
     """Tek ekranın bütün verisi: seçilen gün AKŞAMI para nerede + o günün hareketleri
     + güne bağlı olmayan bekleyen işler. Ekranın bütün rakamları buradan gelir."""
@@ -1164,27 +1173,50 @@ def _durum_tam(gun: Optional[str] = None, hepsi: bool = False):
                            + sum(int(o["veri"].get("f", 0)) for o in gunun_ol if o["olay"] == "cozum" and o["veri"].get("sebep") == "harcandi")),
     }
     cep_durumlari = [_cep_durum(c, ol, D, ref, fl, C) for c in cep_list]
-    # 🧮 DÜKKÂN NAKDİ = SON SAYILAN (sahip 31 Eki · Opus karar · Codex + Fable): bugünün görünümünde kartın büyük rakamı panelin son kör
-    # sayımı; defter küçük satırda (Kasam toplamı DEFTER kalır). Sabah sayımının deftere yazılması bir gün bekler (kilit kuralı) — burada yazılmaz.
-    if not hepsi and g == bugun:
+    # 🧮 DÜKKÂN NAKDİ SAYIM KARTI (sahip 31 Eki · Codex + Fable tarafsız · Opus karar B): bugünün görünümünde şube kartının büyük rakamı EN SON
+    # geçerli sayım (açılış · ara · devir · kapanışta bıraktım), sonrasında çekmeceden çıkanlar saatli ayrı satır; tahmin, defter, fark tutarı
+    # KARTTA YOK (Kasam toplamı defter kalır; deftere yazma / bir gün bekleme / açık fark kuralları değişmez).
+    if not hepsi:   # sahip 31 Eki "gün gün ileri geri": seçilen günün AKŞAMINDAKİ son sayım (bugün → panelin iş günü)
         try:
             from evvel_yeni_moduller import acik as _acik
-            if _acik("satis"):
-                from evvel_yeni_cekirdek import is_gunu as _ig
-                from evvel_yeni_satis_api import son_sayimlar
-                ig = _ig()   # Codex L6: panel İŞ GÜNÜNE yazar (00:00–02:00 hâlâ dün) — son sayım iş gününden okunur
-                with db() as (_c2, cur2):   # kısa salt okuma (asıl bağlantı yukarıda kapandı)
-                    ss = son_sayimlar(cur2, ig)
-                dun = _bakiye([o for o in ol_tum if o["gun"] < ig.isoformat()], C)["b"]   # sabah sayımı o iş gününün ÖNCESİ defteriyle (aynı sınır)
-                for cd in cep_durumlari:
-                    s_ = ss.get(str(C.get(cd["id"], {}).get("sube_id") or "")) if cd["tur"] == "sube" else None
-                    if cd["tur"] == "sube":
-                        cd["sayim_bakildi"] = True   # ön yüz: "bugün sayım yok" yalnız bugünün görünümünde (Codex L6)
-                    if s_:
-                        d_ = _tl_sayi(dun.get(cd["id"], 0)) if s_["tur"] == "sabah" else None
-                        cd["son_sayilan"] = {**s_, "defter_sinir": d_, "fark": None if d_ is None else round(s_["tutar"] - d_, 2)}
-        except Exception:  # noqa: BLE001 — gösterim; okunamazsa kart eski haliyle (defter) kalır
+            if not _acik("satis"):
+                raise RuntimeError("Satış modülü kapalı")
+            from evvel_yeni_cekirdek import is_gunu as _ig
+            from evvel_yeni_satis_api import son_sayimlar
+            sg = _ig() if g == bugun else date.fromisoformat(g)
+            with db() as (_c2, cur2):   # kısa salt okuma (asıl bağlantı yukarıda kapandı)
+                ss = son_sayimlar(cur2, sg)
+            canli_teslim = {h.get("kaynak_ref") for h in kayit if h["tur"] == "teslim" and h.get("kaynak_ref")}   # Codex: Kasa'dan iptal edilen ara teslim düşer
+            for cd in cep_durumlari:
+                if cd["tur"] != "sube":
+                    continue
+                cd["sayim_bakildi"] = True
+                sid = str(C.get(cd["id"], {}).get("sube_id") or "")
+                s_ = ss.get(sid)
+                if not s_:
+                    continue
+                sonra = [z for z in (s_.get("sonra") or []) if not z.get("kok") or z["kok"] in canli_teslim]
+                for h in kayit:   # sayımdan SONRA şube çekmecesinden çıkan ödeme parçaları (anlık gider · elden avans) — kayıt anıyla
+                    if (h["tur"] != "odeme" or not h.get("kayit_zamani") or not s_.get("ts")
+                            or h["is_gunu"] < s_["gun"] or h["is_gunu"] > sg.isoformat()
+                            or (h["is_gunu"] == s_["gun"] and h["kayit_zamani"] <= s_["ts"])):   # Codex: ara teslimle AYNI ölçüt — sonraki iş günü doğrudan sonra, aynı gün saatle
+                        continue
+                    for p in h["veri"].get("parcalar") or []:
+                        if p.get("cep") == cd["id"] and int(p.get("tutar") or 0):
+                            sonra.append({"tutar": _tl_sayi(int(p["tutar"])), "ts": h["kayit_zamani"],
+                                          "ne": "elden avans" if h["veri"].get("kaynak") == "sube_avansi" else "gider",
+                                          "saat": _tr_saat_kisa(h["kayit_zamani"])})
+                sonra.sort(key=lambda z: z["ts"].timestamp() if hasattr(z.get("ts"), "timestamp") else 0)
+                cd["son_sayilan"] = {"tutar": s_["tutar"], "kim": s_["kim"], "tur": s_["tur"], "gun": s_["gun"], "saat": s_["saat"],
+                                     "ts": s_["ts"].isoformat() if hasattr(s_.get("ts"), "isoformat") else s_.get("ts"),
+                                     "sonra": [{k: (v.isoformat() if hasattr(v, "isoformat") else v) for k, v in z.items() if k != "kok"} for z in sonra],
+                                     "sonra_toplam": round(sum(z["tutar"] or 0 for z in sonra), 2)}
+        except Exception:  # noqa: BLE001 — gösterim; okunamazsa kart DEFTERE DÖNMEZ, "sayım okunamadı" der (Codex L6)
             log.warning("kasa: son sayımlar okunamadı", exc_info=True)
+            for cd in cep_durumlari:
+                if cd["tur"] == "sube":
+                    cd["sayim_bakildi"], cd["sayim_hata"] = True, True
+                    cd.pop("son_sayilan", None)
     for cd in cep_durumlari:
         # Fethi'nin evi kaldırıldı (para geçiş hesabına gider) — boşsa ekranda görünmez; geçmiş kayıtları durur
         # sahip: "patronun evinden düşmüş görünmüyor" → bu dönem hareketi olduysa görünür (çıkış izi okunsun)

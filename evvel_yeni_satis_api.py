@@ -287,38 +287,37 @@ def son_kapanislar(cur, gun, subeler=None) -> dict:
 
 
 def son_sayimlar(cur, gun) -> dict:
-    """PUBLIC (sahip 31 Eki "panelde gece 200 bıraktım, sabah 210 aldım — bu dükkândaki nakit" · Opus karar · Codex + Fable): iş günü
-    `gun` için şube başına SON kör sayım {tutar, kim, saat, tur: sabah|devir, gece_birakilan, gece_kim, gece_gunu}. Kaynak yeni panel olay
-    defteri (tek okuyucu); YAZMAZ. Kasa'nın deftere sayım yazma / bir gün bekleme kuralı aynen (bu yalnız gösterim). Sayım yoksa şube yok."""
+    """PUBLIC — DÜKKÂN NAKDİ SAYIM KARTI (sahip 31 Eki "gece 200 bıraktım, sabah 210 aldım · ara sayım da var · hangisi son sayılmışsa zaman
+    etiketine göre o güncellemeli" · Codex + Fable tarafsız görüş · Opus karar B): şube başına EN SON geçerli sayım — açılış (kör) · ara kasa
+    sayımı (kör) · devir (resmi rakam: tutmadıysa devralanın) · kapanışta "bıraktım" (teslim sonrası); sıra = olay anı (eşitlikte kayıt kimliği,
+    kararlı). İş gününe bağlı DEĞİL (02:00 kartı etkilemez) — son ZINCIR_GERI_GUN gün. Sayımdan SONRA çekmeceden çıkan ara teslimler `sonra`
+    (saatli) — tahmin YOK. Yeni panel olay defteri (iptaller süzülü, prova kaydı yok); YAZMAZ. Dönüş {sube: {tutar, kim, tur, ts, gun, saat, sonra}}."""
     from datetime import date as _date
     from evvel_yeni_cekirdek import sube_baslangic as _sbas, tr_saat
     g = gun if isinstance(gun, _date) else _date.fromisoformat(str(gun)[:10])
-    out, _sb = {}, {}
-    for o in _panel_olaylari(cur, g, g, {"acilis", "vardiya"}):
+    out, _sb, teslim = {}, {}, {}
+    for o in _panel_olaylari(cur, g - timedelta(days=ZINCIR_GERI_GUN), g, {"acilis", "vardiya", "ara_sayim", "kapanis", "teslim"}):
         sid = str(o["sube_id"])
         if o["is_gunu"] < (_sb[sid] if sid in _sb else _sb.setdefault(sid, _sbas(cur, sid))):
             continue   # şubenin gerçek başlangıcından önceki prova kaydı
-        v = o["v"]
-        tutar = _kr_tl(v.get("kasa_sayim") if o["tur"] == "acilis" else v.get("sayilan"))   # devir: resmi rakam (tutmadıysa devralanın)
+        v, tur = o["v"], o["tur"]
+        if tur == "teslim":   # ara teslim — çekmeceden çıkış (sayım değil)
+            teslim.setdefault(sid, []).append(o)
+            continue
+        tutar = _kr_tl(v.get("kasa_sayim") if tur == "acilis" else v.get("birakilan") if tur == "kapanis" else v.get("sayilan"))
         if tutar is None:
             continue
-        kim = o.get("personel_ad") if o["tur"] == "acilis" else ((v.get("devralan") or {}).get("ad") or o.get("personel_ad"))
-        ts = o.get("olay_zamani")
-        if sid not in out or str(ts or "") >= str(out[sid]["_ts"] or ""):
-            out[sid] = {"tutar": tutar, "kim": kim, "saat": tr_saat(ts, g), "tur": "sabah" if o["tur"] == "acilis" else "devir", "_ts": ts,
-                        "gun": g.isoformat()}
-    if out:
-        gece = son_kapanislar(cur, g, set(out))
-        kim_g = {}
-        for gd in {v[0] for v in gece.values()}:   # Codex L6: yalnız esas alınan günün kapanışı; şube başlangıcından önceki (prova / arşiv) kişi YOK
-            for o in _panel_olaylari(cur, gd, gd, {"kapanis"}):
-                sid = str(o["sube_id"])
-                if sid in gece and gece[sid][0] == gd and gd >= _sb.get(sid, _sbas(cur, sid)):
-                    kim_g[sid] = o.get("personel_ad")
-        for sid, x in out.items():
-            x.pop("_ts", None)
-            if sid in gece:
-                x.update(gece_gunu=gece[sid][0].isoformat(), gece_birakilan=gece[sid][1], gece_kim=kim_g.get(sid))
+        kim = ((v.get("devralan") or {}).get("ad") or o.get("personel_ad")) if tur == "vardiya" else o.get("personel_ad")
+        anahtar = (o["is_gunu"].isoformat(), str(o.get("olay_zamani") or ""), str(o.get("id") or ""))   # Fable: önce iş günü (geç girilen eski kapanış bugünü geçmez)
+        if sid not in out or anahtar >= out[sid]["_k"]:
+            out[sid] = {"tutar": tutar, "kim": kim, "_k": anahtar, "ts": o.get("olay_zamani"),
+                        "tur": {"acilis": "sabah", "vardiya": "devir", "ara_sayim": "ara", "kapanis": "kapanis"}[tur],
+                        "gun": o["is_gunu"].isoformat(), "saat": tr_saat(o.get("olay_zamani"), o["is_gunu"])}
+    for sid, x in out.items():
+        k = x.pop("_k")
+        x["sonra"] = [{"tutar": _kr_tl(t["v"].get("tutar")), "ne": "ara teslim", "ts": t.get("olay_zamani"), "kok": t.get("kok"),
+                       "saat": tr_saat(t.get("olay_zamani"), t["is_gunu"])}
+                      for t in teslim.get(sid, []) if (t["is_gunu"].isoformat(), str(t.get("olay_zamani") or ""), str(t.get("id") or "")) > k]
     return out
 
 
