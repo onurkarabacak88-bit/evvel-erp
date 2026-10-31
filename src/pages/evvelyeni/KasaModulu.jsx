@@ -299,7 +299,7 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit, onFis }) {
   }
   if (h.tur === 'sayim') {
     ust = cepAd(h.cep); alt = `Defterde ${fmt(h.beklenen)} · sayılan ${fmt(h.sayilan)}`;
-    cip = !h.fark ? <Cip tur="yesil">tuttu</Cip> : <Cip tur="kirmizi">{fmt(Math.abs(h.fark))} {h.fark > 0 ? 'eksik' : 'fazla'}</Cip>;
+    cip = !h.fark ? <Cip tur="yesil">tuttu</Cip> : <Cip tur={h.barem ? undefined : 'kirmizi'}>{fmt(Math.abs(h.fark))} {h.fark > 0 ? 'eksik' : 'fazla'}{h.barem ? ' · barem içi' : ''}</Cip>;   // E1: 40 ₺ altı personel sayımı iş değil
   }
   if (h.tur === 'cozum') {
     const zarar = h.zarar;
@@ -1676,6 +1676,13 @@ function AcikSayfa({ onCoz, onCepAc, onKapanis, yenile }) {
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 10 }}>
         {acikOzet(v).map((k) => <OzetKutusu key={k.etiket} etiket={k.etiket} deger={k.yazi || fmt(k.tutar)} renk={k.renk} />)}
       </div>
+      {v.barem && (v.barem.eksik > 0 || v.barem.fazla > 0) && (   /* E1 (sahip 31 Eki): 40 ₺ altı sayım farkı iş üretmez — ama birikim görünür */
+        <div style={{ ...kart, padding: '10px 14px', fontSize: 13, display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'baseline' }}>
+          <b>🪙 Barem içi ({fmt(v.barem.esik)} ₺ altı)</b>
+          <span>{fmt(v.barem.eksik)} ₺ eksik · {fmt(v.barem.fazla)} ₺ fazla</span>
+          <span style={{ color: R.not }}>{Object.entries(v.barem.sube || {}).map(([c, t]) => `${c} ${fmt(t)}`).join(' · ')} · karar istemez, birikimi izlenir</span>
+        </div>
+      )}
       <div style={{ ...kart, padding: 12, display: 'flex', flexDirection: 'column', gap: 6 }}>
         <b>Çözülmemiş farklar {acik.length ? <Cip tur="kirmizi">{acik.length}</Cip> : <Cip tur="yesil">yok</Cip>}</b>
         {acik.map((x) => (
@@ -1685,6 +1692,7 @@ function AcikSayfa({ onCoz, onCepAc, onKapanis, yenile }) {
               <div style={{ fontSize: 12, color: R.not }}>{tUzun(x.tarih)} · <span style={num}>{fmt(Math.abs(x.kalan ?? x.f))}</span> ₺ {x.f > 0 ? 'eksik' : 'fazla'}{x.kismi ? ` (fark ${fmt(Math.abs(x.f))} — ${x.kismi.map((k) => `${fmt(Math.abs(k.f))} ${k.sebep_ad}`).join(', ')})` : ''}{x.sayim_notu ? ` · ${x.sayim_notu}` : ''}</div>
               {(x.notlar || []).map((n) => <div key={n.id} style={{ fontSize: 12, color: R.krem, background: R.girinti, borderRadius: 7, padding: '4px 8px', marginTop: 3 }}>📝 {tUzun(n.is_gunu)} {n.saat} · <b>{n.personel}</b>: {n.metin}</div>)}
               {x.tekrar_uyari && <div style={{ fontSize: 12, color: R.amber, fontWeight: 600 }}>🔁 {x.tekrar_uyari}</div>}
+              {x.olasi_vardiya && <div style={{ fontSize: 12, color: R.not }}>🕑 Olası vardiya: {x.olasi_vardiya.vardiya}{x.olasi_vardiya.kim ? ` (${x.olasi_vardiya.kim})` : ''} {fmt(Math.abs(x.olasi_vardiya.fark))} ₺ eksik · tahmin, kanıt değil</div>}
               {x.defter_eksi && <div style={{ fontSize: 12, color: R.kirmizi }}>⚠ Sayım anında defter eksideydi</div>}
               {x.kapanis_yok && (   /* Opus S3: fark büyük olasılıkla satış nakdi — önce kapanış */
                 <div style={{ fontSize: 12, color: R.amber, fontWeight: 600, display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap', marginTop: 3 }}>
@@ -1701,17 +1709,17 @@ function AcikSayfa({ onCoz, onCepAc, onKapanis, yenile }) {
         <div style={{ padding: '9px 14px', borderBottom: `1px solid ${R.cizgi}` }}><b>Gün gün</b></div>
         <div style={{ overflowX: 'auto' }}>
           <table className="pi-tablo pi-excel">
-            <thead><tr><th>Gün</th><th>Yeni fark</th><th title="Defteri değiştiren çözümler (bulundu / şubede)">Deftere geri</th><th title="Defter sayıma eşitlendi (fazla kabul / ekstre doğru)">Kabul</th><th>Açılış eşitleme</th><th>Kayba</th><th>Harcamaya</th><th>Gün sonu açık</th><th>Toplam kayıp</th><th>Toplam kayıtsız harcama</th></tr></thead>
+            <thead><tr><th>Gün</th><th>Yeni fark</th><th title="40 ₺ altı sayım farkı — açığa girmez (E1)">Barem içi</th><th title="Defteri değiştiren çözümler (bulundu / şubede)">Deftere geri</th><th title="Defter sayıma eşitlendi (fazla kabul / ekstre doğru)">Kabul</th><th>Açılış eşitleme</th><th>Kayba</th><th>Harcamaya</th><th>Gün sonu açık</th><th>Toplam kayıp</th><th>Toplam kayıtsız harcama</th></tr></thead>
             <tbody>
               {/* F3.7 (sim 26 Eki · Opus + Fable A): en yeni gün üstte — çekmecedeki defterle (iz) ve Devirler / Yemek molalarıyla aynı;
                   birikimli sütunlar sunucuda kronolojik hesaplanır, yalnız GÖSTERİM ters */}
               {v.gun_gun.length ? v.gun_gun.slice().reverse().map((x) => (
                 <tr key={x.gun}>
-                  <td style={num}>{tUzun(x.gun)}</td><td style={num}>{x.yeni ? fmt(x.yeni) : '—'}</td><td style={{ ...num, color: R.yesil }}>{x.geri_donen ? fmt(x.geri_donen) : '—'}</td><td style={num}>{x.kabul_edilen ? fmt(Math.abs(x.kabul_edilen)) : '—'}</td><td style={num}>{x.baslangic_esitleme ? fmt(Math.abs(x.baslangic_esitleme)) : '—'}</td>
+                  <td style={num}>{tUzun(x.gun)}</td><td style={num}>{x.yeni ? fmt(x.yeni) : '—'}</td><td style={{ ...num, color: R.not }}>{x.barem_ici ? fmt(x.barem_ici) : '—'}</td><td style={{ ...num, color: R.yesil }}>{x.geri_donen ? fmt(x.geri_donen) : '—'}</td><td style={num}>{x.kabul_edilen ? fmt(Math.abs(x.kabul_edilen)) : '—'}</td><td style={num}>{x.baslangic_esitleme ? fmt(Math.abs(x.baslangic_esitleme)) : '—'}</td>
                   <td style={{ ...num, color: R.kirmizi }}>{x.kayba_yazilan ? fmt(x.kayba_yazilan) : '—'}</td><td style={{ ...num, color: R.amber }}>{x.harcamaya_yazilan ? fmt(x.harcamaya_yazilan) : '—'}</td>
                   <td style={{ ...num, fontWeight: 700 }}>{fmt(x.gun_sonu_acik)}</td><td style={num}>{fmt(x.toplam_kayip)}</td><td style={num}>{fmt(x.toplam_harcanan)}</td>
                 </tr>
-              )) : <tr><td colSpan={10}>Henüz fark yok.</td></tr>}
+              )) : <tr><td colSpan={11}>Henüz fark yok.</td></tr>}
             </tbody>
           </table>
         </div>

@@ -75,6 +75,9 @@ OTOMATIK_KABUL_GUN = 0
 FARK_ESIK_KURUS = 2000      # 20 ₺ — (eski: Bekleyen işler eşiği; 2026-10-20'den beri fark yalnız Açık farklar'da)
 DUZELTME_SURESI_GUN = 7
 ACIK = "__acik"                          # açık fark kovası (cep değil)
+BAREM = "__barem"                        # barem içi fark kovası (cep değil) — sahip 31 Eki: 40 ₺ altı personel kasa farkı tek tek iş üretmez
+BAREM_KURUS = 4000                       # 40 ₺ (sahip baremi; KASA_FARK_ESASLARI E1)
+BAREM_BAS = "2026-11-01"                 # yalnız yeni dönem sayımları (Ekim'in kapatılmış farkları çift sayılmasın)
 YOLDA = "__yolda"                        # teslim edildi, "aldım" bekleniyor (cep değil)
 # Kasa kilidi + para üst sınırı ÇEKİRDEKTE (KASA_KILIT · MAKS_KURUS) — yerel kopya kalktı (Codex T1-35)
 
@@ -116,6 +119,7 @@ SEBEPLER = {
     "ekstre_dogru": "Ekstre doğru — masraf / komisyon / eksik kayıt",   # Fable (21 Eki): banka eksiğinde döngüsüz yol
     "kartla": "Kartla ödenmiş, nakit olarak da yazılmış (çift kayıt)",   # sahip (21 Eki): kart ZATEN çekildi → POS toplamı doğru; yalnız fazla nakit düşer
     "teslim_edildi": "Patrona elden verildi, kaydı girilmemiş",   # sahip 31 Eki (Köyceğiz 29.10 10.000): fark kapanır, para PATRONUN cebine geçer
+    "barem": "Barem içi (40 ₺ altı) — kendiliğinden",   # E1: yalnız sistem yazar (gerçek çözüm kaydı yok)
 }
 
 
@@ -427,6 +431,8 @@ def _etki(o: dict, C: dict) -> List[dict]:
         f = int(v.get("beklenen", 0)) - int(v.get("sayilan", 0))
         if f == 0:
             return []
+        if _barem_mi(o, C, f):   # E1: defter sayıma eşitlenir, fark açık kovaya değil BAREM kovasına (silinmez, birikir)
+            return [{"cep": o["cep"], "d": -f, "etiket": "Sayım farkı (barem içi)"}, {"cep": BAREM, "d": f, "etiket": "Sayım farkı (barem içi)"}]
         return [{"cep": o["cep"], "d": -f, "etiket": "Sayım farkı"}, {"cep": ACIK, "d": f, "etiket": "Sayım farkı"}]
     if t == "cozum":
         f, sb = int(v.get("f", 0)), v.get("sebep")
@@ -443,9 +449,21 @@ def _etki(o: dict, C: dict) -> List[dict]:
     return []
 
 
+def _barem_mi(o: dict, C: dict, f: Optional[int] = None) -> bool:
+    """E1 (sahip 31 Eki): şube dükkân nakdi SAYIM farkı 40 ₺ altıysa barem içi — Açık farklar'a düşmez, karar istemez, BAREM kovasında
+    birikir (kişi / şube izlemesi E2). Yalnız yeni dönem (BAREM_BAS) · yalnız panel sayımı (personel) · banka / ev / teslim farkı hariç."""
+    if o.get("olay") != "sayim" or str(o.get("gun") or "") < BAREM_BAS or (C.get(o.get("cep")) or {}).get("tur") != "sube":
+        return False
+    v = o.get("veri") or {}
+    if v.get("baslangic") or v.get("kaynak") != "acilis_sayimi":   # Codex L6: yalnız PERSONEL (panel) sayımı — merkezin elle / başlangıç sayımı açık fark olur
+        return False
+    f = int(v.get("beklenen", 0)) - int(v.get("sayilan", 0)) if f is None else f
+    return 0 < abs(f) < BAREM_KURUS
+
+
 def _bakiye(ol: List[dict], C: dict) -> dict:
     b = {cid: 0 for cid in C}
-    b[ACIK] = b[YOLDA] = 0
+    b[ACIK] = b[YOLDA] = b[BAREM] = 0
     kayip = harcanan = acik_kira = 0
     for o in ol:
         for e in _etki(o, C):
@@ -466,7 +484,7 @@ def _bakiye(ol: List[dict], C: dict) -> dict:
     return {"b": b, "ev": ev, "sube": sube, "gecis": gecis, "banka": banka, "nakit": ev + sube,
             "kira": kira, "hepsi": toplam + kira,
             "yolda": b[YOLDA], "gecis_yolda": gecis + b[YOLDA],
-            "toplam": toplam, "acik": b[ACIK], "defter": toplam + b[ACIK] - acik_kira, "acik_kira": acik_kira,
+            "toplam": toplam, "acik": b[ACIK], "defter": toplam + b[ACIK] - acik_kira, "acik_kira": acik_kira, "barem": b[BAREM],
             "kayip": kayip, "harcanan": harcanan}
 
 
@@ -485,7 +503,7 @@ def _farklar(ol: List[dict], C: dict) -> List[dict]:
         if o["olay"] == "sayim":
             f = int(o["veri"].get("beklenen", 0)) - int(o["veri"].get("sayilan", 0))
             if f:
-                out.append({"id": o["id"], "tarih": o["gun"], "tur": "sayim", "f": f, "cep": o["cep"], "sube_cep": None,
+                out.append({"id": o["id"], "tarih": o["gun"], "tur": "sayim", "f": f, "cep": o["cep"], "sube_cep": None, "barem": _barem_mi(o, C, f),
                             "ad": f"{C.get(o['cep'], {}).get('ad', '?')} {'ekstresi' if C.get(o['cep'], {}).get('tur') in ('banka', 'hesap') else 'sayımı'}"})   # F3.8: banka için ekstre
     sayimlar = {o["id"]: o for o in ol if o["olay"] == "sayim"}
     kapanisli = {(o.get("cep"), o["gun"]) for o in ol if o["olay"] == "kapanis"}
@@ -506,6 +524,11 @@ def _farklar(ol: List[dict], C: dict) -> List[dict]:
         x["kalan"] = x["f"] - sum(int(c["veri"].get("f", 0)) for c in cl)
         if len(cl) > 1 or (cl and x["kalan"] != 0):   # kısmi / çok parçalı (ör. 480 = 470 kartla + 10) — kapanınca da görünür
             x["kismi"] = [{"sebep_ad": SEBEPLER.get(c["veri"].get("sebep"), ""), "f": _tl_sayi(int(c["veri"].get("f", 0))), "tarih": c["gun"]} for c in cl]
+        if not cl and x.get("barem"):   # E1: barem içi — kendiliğinden kapalı, iş üretmez (kayıt ve tutar yerinde)
+            x["kalan"] = 0
+            x["coz"] = {"sebep": "barem", "sebep_ad": SEBEPLER["barem"], "sorumlu": None, "not": None, "tarih": x["tarih"],
+                        "kaydeden": "sistem (barem)", "patron": None, "teslim_eden": None}
+            continue
         c = cl[-1] if cl and x["kalan"] == 0 else None
         x["coz"] = None if not c else {"sebep": c["veri"].get("sebep"), "sebep_ad": SEBEPLER.get(c["veri"].get("sebep"), ""),
                                         "sorumlu": c["veri"].get("sorumlu"), "not": c["veri"].get("not"), "tarih": c["gun"],
@@ -534,6 +557,35 @@ def _farklar(ol: List[dict], C: dict) -> List[dict]:
                 break
 
     return out
+
+
+def _olasi_vardiya(fl: List[dict], C: dict) -> None:
+    """E5 (IS 5co Opus): açık şube sayım EKSİĞİ olan günde Faz 2 vardiya kasası açığın ≥%75'ini tek vardiyaya koyuyorsa ve öbür vardiya
+    ±100 ₺ içindeyse farka gri "olası vardiya" bilgisi — tahmin, kanıt değil; borç / sorumluluk YAZILMAZ, iş üretmez, yalnız merkez görür.
+    Satış PUBLIC (vardiya_kasalari) — Satış kapalıysa ya da okunamazsa sessizce yok."""
+    aday = [x for x in fl if not x["coz"] and x["tur"] == "sayim" and x["f"] > 0 and (C.get(x["cep"]) or {}).get("tur") == "sube"]
+    if not aday:
+        return
+    try:
+        from evvel_yeni_moduller import acik as _acik
+        if not _acik("satis"):
+            return
+        from evvel_yeni_satis_api import vardiya_kasalari
+        vk = vardiya_kasalari({x["tarih"] for x in aday})
+    except Exception:  # noqa: BLE001 — bilgi satırı; okunamazsa açık farklar yine gelir
+        log.warning("kasa: olası vardiya okunamadı", exc_info=True)
+        return
+    for x in aday:
+        v = vk.get((str((C.get(x["cep"]) or {}).get("sube_id") or ""), x["tarih"]))
+        if not v:
+            continue
+        e = {k: max(0.0, -float(v[k].get("fark") or 0)) for k in ("v1", "v2")}
+        for ad, obur in (("v1", "v2"), ("v2", "v1")):
+            if (e[ad] > 0 and e[ad] >= 0.75 * (e["v1"] + e["v2"]) and abs(float(v[obur].get("fark") or 0)) <= 100
+                    and v[ad].get("durum") != "az" and e[ad] >= 0.5 * x["f"] / 100):   # Fable L6: küçük vardiya farkı büyük açığa yapışmasın
+                x["olasi_vardiya"] = {"vardiya": "1. vardiya" if ad == "v1" else "2. vardiya", "kim": v[ad].get("kim"),
+                                      "fark": v[ad].get("fark")}
+                break
 
 
 def _not_ekle(cur, fl: List[dict], C: dict) -> None:
@@ -840,7 +892,8 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
         d.update(alt=alt, alt_ad=t[0], geri_odenecek=t[2], kimden=v.get("kimden"), not_=v.get("not"))
     elif r["tur"] == "sayim":
         d.update(beklenen=_tl_sayi(int(v.get("beklenen", 0))), sayilan=_tl_sayi(int(v.get("sayilan", 0))),
-                 fark=_tl_sayi(int(v.get("beklenen", 0)) - int(v.get("sayilan", 0))))
+                 fark=_tl_sayi(int(v.get("beklenen", 0)) - int(v.get("sayilan", 0))),
+                 barem=_barem_mi({"olay": "sayim", "gun": r["is_gunu"], "cep": r.get("cep"), "veri": v}, C))   # Codex L6: ekranda gri
     elif r["tur"] == "cozum":
         d.update(sebep=v.get("sebep"), sebep_ad=SEBEPLER.get(v.get("sebep"), ""), sorumlu=v.get("sorumlu"),
                  not_=v.get("not"), fark_ad=v.get("fark_ad"), f=_tl_sayi(int(v.get("f", 0))),
@@ -863,7 +916,7 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
 
 
 def _ozet(D: dict, fl: List[dict]) -> dict:
-    o = {k: _tl_sayi(D[k]) for k in ("toplam", "ev", "sube", "gecis", "banka", "nakit", "kira", "hepsi", "yolda", "gecis_yolda", "acik", "defter", "kayip", "harcanan")}
+    o = {k: _tl_sayi(D[k]) for k in ("toplam", "ev", "sube", "gecis", "banka", "nakit", "kira", "hepsi", "yolda", "gecis_yolda", "acik", "defter", "kayip", "harcanan", "barem")}   # Fable L6: barem özet de görünsün
     acik = [x for x in fl if not x["coz"]]
     o["acik_eksik"] = _tl_sayi(sum(x.get("kalan", x["f"]) for x in acik if x["f"] > 0))
     o["acik_fazla"] = _tl_sayi(-sum(x.get("kalan", x["f"]) for x in acik if x["f"] < 0))
@@ -1428,9 +1481,11 @@ def acik_defter():
         ol = _olaylar(kayit)
         fl = _farklar(ol, C)
         _not_ekle(cur, [x for x in fl if not x["coz"]], C)
+    _olasi_vardiya(fl, C)   # E5: bağlantı kapandıktan sonra (Satış kendi kısa bağlantısını açar)
     satir, kum_kayip, kum_harc = [], 0, 0
     for d in sorted({o["gun"] for o in ol}):
-        yeni = sum(x["f"] for x in fl if x["tarih"] == d)
+        yeni = sum(x["f"] for x in fl if x["tarih"] == d and not x.get("barem"))
+        brm = sum(x["f"] for x in fl if x["tarih"] == d and x.get("barem"))   # E1: barem içi (açık kovaya girmez)
         cz = [o for o in ol if o["olay"] == "cozum" and o["gun"] == d]
         geri = sum(int(o["veri"].get("f", 0)) for o in cz if o["veri"].get("sebep") in ("bulundu", "subede"))   # Codex: defter gerçekten değişti
         kab = sum(abs(int(o["veri"].get("f", 0))) for o in cz if o["veri"].get("sebep") in ("kabul", "ekstre_dogru", "kartla"))   # Codex: yönler birbirini silmesin
@@ -1440,16 +1495,22 @@ def acik_defter():
         kum_kayip += kay
         kum_harc += har
         son = _bakiye([o for o in ol if o["gun"] <= d], C)["acik"]
-        if not (yeni or geri or kay or har or son or kab or bas_ or cz):
+        brm_var = any(x["tarih"] == d and x.get("barem") for x in fl)   # Codex L6: +30 / −30 aynı gün → net 0 ama gün görünür
+        if not (yeni or geri or kay or har or son or kab or bas_ or cz or brm_var):
             continue
         satir.append({"gun": d, "yeni": _tl_sayi(yeni), "geri_donen": _tl_sayi(geri), "kayba_yazilan": _tl_sayi(kay),
                       "kabul_edilen": _tl_sayi(kab), "baslangic_esitleme": _tl_sayi(bas_),
-                      "harcamaya_yazilan": _tl_sayi(har), "gun_sonu_acik": _tl_sayi(son),
+                      "harcamaya_yazilan": _tl_sayi(har), "gun_sonu_acik": _tl_sayi(son), "barem_ici": _tl_sayi(brm),
                       "toplam_kayip": _tl_sayi(kum_kayip), "toplam_harcanan": _tl_sayi(kum_harc)})
     D = _bakiye(ol, C)
     oz = _ozet(D, fl)
     return {"acik": oz["acik"], "acik_eksik": oz["acik_eksik"], "acik_fazla": oz["acik_fazla"],
             "kayip": oz["kayip"], "harcanan": oz["harcanan"],
+            "barem": {"toplam": _tl_sayi(D["barem"]), "esik": _tl_sayi(BAREM_KURUS), "baslangic": BAREM_BAS,   # E1: birikim (net; + eksik)
+                      "eksik": _tl_sayi(sum(x["f"] for x in fl if x.get("barem") and x["f"] > 0)),
+                      "fazla": _tl_sayi(-sum(x["f"] for x in fl if x.get("barem") and x["f"] < 0)),
+                      "sube": {(C.get(cid) or {}).get("kisa") or cid: _tl_sayi(sum(x["f"] for x in fl if x.get("barem") and x["cep"] == cid))
+                               for cid in sorted({x["cep"] for x in fl if x.get("barem")})}},
             "farklar": [{**x, "f": _tl_sayi(x["f"]), "kalan": _tl_sayi(x["kalan"])} for x in fl], "gun_gun": satir}
 
 
@@ -1756,6 +1817,8 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
         x = next((z for z in _farklar(ol, C) if z["id"] == body.fark_id), None)
         if not x:
             raise HTTPException(404, "Fark bulunamadı")
+        if x.get("barem"):
+            raise HTTPException(409, "Bu fark barem içinde (40 ₺ altı) — çözülmez, birikimde izlenir")
         if x["coz"]:
             raise HTTPException(409, "Bu fark zaten kapanmış")
         if body.sebep not in _sebep_secenekleri(x, ol, C):

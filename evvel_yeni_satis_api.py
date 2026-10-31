@@ -905,6 +905,19 @@ def _zaman(x):
     return x if getattr(x, "tzinfo", None) else None
 
 
+def vardiya_kasalari(aylar) -> dict:
+    """PUBLIC — Kasa açık farkının "olası vardiya" satırı (IS 5co · KASA_FARK_ESASLARI E5): Faz 2 vardiya kasası, yalnız İKİ vardiyaya
+    bölünebilen günler. Dönüş {(sube_id, "YYYY-AA-GG"): {"v1": {kim, fark, durum…}, "v2": {…}}}. YAZMAZ; devir defterinin TEK hesabını okur."""
+    out = {}
+    for ay in sorted({str(a)[:7] for a in aylar if a}):
+        for s in (devir_defteri(ay) or {}).get("subeler") or []:
+            for g in s.get("gunler") or []:
+                vk = g.get("vardiya_kasa") or {}
+                if isinstance(vk.get("v1"), dict) and isinstance(vk.get("v2"), dict):
+                    out[(str(s.get("sube_id")), str(g.get("gun")))] = vk
+    return out
+
+
 def _vardiya_kasa_doldur(bekleyen: list) -> None:
     """FAZ 2 (DEVIR_KURGU_V2, sahip 24 Eki): günü kasa devriyle iki vardiyaya böler — YALNIZ OKUR, yeni tablo yok. Ay başına TEK bağlantı +
     TEK defter yüklemesi (Opus Y7). Nakit satış / gider / ara teslim / kör sayım güvenilirliği Kasa mutabakatının TEK HESABINDAN
