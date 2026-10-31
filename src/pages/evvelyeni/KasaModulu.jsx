@@ -303,7 +303,7 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit, onFis }) {
   }
   if (h.tur === 'cozum') {
     const zarar = h.zarar;
-    ust = h.sebep_ad; alt = `${h.fark_ad || ''}${h.sorumlu ? ` · sorumlu: ${h.sorumlu}` : ''}${h.not_ ? ` · ${h.not_}` : ''}`;
+    ust = h.sebep_ad; alt = `${h.fark_ad || ''}${h.sorumlu ? ` · sorumlu: ${h.sorumlu}` : ''}${h.patron ? ` · ${h.patron}'a verildi${h.teslim_eden ? ` (veren: ${h.teslim_eden})` : ''}` : ''}${h.not_ ? ` · ${h.not_}` : ''}`;
     renk = zarar ? R.kirmizi : R.krem; tutar = zarar ? `−${fmt(Math.abs(h.f))}` : fmt(Math.abs(h.f));
   }
   if (h.tur === 'odeme') {
@@ -477,6 +477,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         if (tip === 'coz') {
           body.fark_id = form.id; body.sebep = d.sebep; body.sorumlu = d.sorumlu; body.not = d.not;
           if (d.sebep === 'kartla' && String(d.tutar || '').trim()) body.tutar = String(d.tutar).trim();   // kısmi (sunucu TrTutar okur)
+          if (d.sebep === 'teslim_edildi') { body.hedef = d.patron; body.teslim_eden = d.teslim_eden; }   // sahip 31 Eki (patron ayrı alan — d.hedef başka formlar için ön seçili; patron boşken düğme kapalı): para patronun cebine
         }
         await api('/evvel-yeni/kasa/hareket', { method: 'POST', body });
         onToast?.('Kaydedildi');
@@ -666,6 +667,12 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
               {fark.notlar.map((n) => <div key={n.id}>{tUzun(n.is_gunu)} {n.saat} · <b>{n.personel}</b>: {n.metin}</div>)}
             </div>
           )}
+          {d.sebep === 'teslim_edildi' && (
+            <div style={izgara}>
+              <Alan etiket="Hangi patrona verildi?"><select value={d.patron || ''} onChange={set('patron')} style={alanStil}>{['', ...PATRONLAR].map((x) => <option key={x} value={x}>{x || '— Seç —'}</option>)}</select></Alan>
+              <Alan etiket="Kim verdi?"><input value={d.teslim_eden || ''} onChange={set('teslim_eden')} style={alanStil} placeholder="ör. Mehmet Uçak" /></Alan>
+            </div>
+          )}
           {d.sebep === 'kartla' && (
             <Alan etiket={`Kartla ödenen tutar (boş = ${fmt(Math.abs(fark.kalan ?? fark.f))})`}><input inputMode="decimal" value={d.tutar || ''} onChange={set('tutar')} style={alanStil} placeholder={String(Math.abs(fark.kalan ?? fark.f))} /></Alan>
           )}
@@ -673,7 +680,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
           {fark.sayim_notu && <div style={{ fontSize: 12, color: R.not }}>🕗 {fark.sayim_notu}</div>}
           {fark.defter_eksi && <div style={{ fontSize: 12.5, color: R.kirmizi }}>⚠ Sayım anında defter EKSİDEYDİ — önceki bir çözüm ya da teslim yanlış olabilir.</div>}
           {d.sebep && (() => { const s = fark.sebep_secenekleri.find((z) => z.kod === d.sebep); return s?.etki ? <div style={{ padding: '8px 12px', borderRadius: 9, fontSize: 12.5, background: R.girinti }}>📒 {s.etki}</div> : null; })()}
-          <Alan etiket="Açıklama" ipucu={['kayip', 'harcandi', 'bulundu', 'ekstre_dogru', 'kartla'].includes(d.sebep) ? 'Bu sebepte zorunlu (ne oldu / nerede bulundu?)' : null}><input value={d.not || ''} onChange={set('not')} style={alanStil} /></Alan>
+          <Alan etiket="Açıklama" ipucu={['kayip', 'harcandi', 'bulundu', 'ekstre_dogru', 'kartla', 'teslim_edildi'].includes(d.sebep) ? 'Bu sebepte zorunlu (ne oldu / nerede bulundu?)' : null}><input value={d.not || ''} onChange={set('not')} style={alanStil} /></Alan>
         </>)}
 
         {tip === 'iptal' && (<>
@@ -722,7 +729,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
 
         {hata && <div style={{ color: R.kirmizi, fontSize: 13, fontWeight: 600 }}>{hata}</div>}
         <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 8 }}>
-          <Dugme ana onClick={gonder} disabled={mesgul || (tip === 'aktar' && !aktar) || (tip === 'coz' && (!fark || !d.sebep))}>
+          <Dugme ana onClick={gonder} disabled={mesgul || (tip === 'aktar' && !aktar) || (tip === 'coz' && (!fark || !d.sebep || (d.sebep === 'teslim_edildi' && (!d.patron || !String(d.teslim_eden || '').trim()))))}>
             {mesgul ? 'Kaydediliyor…' : tip === 'donem' ? (donem ? `${tUzun(d.is_gunu)} itibarıyla yeni dönemi başlat` : 'Önce ne olacağını göster')
               : tip === 'aktar' ? 'Aktar' : tip === 'iptal' ? 'İptal et' : tip === 'coz' ? 'Farkı kapat' : 'Kaydet'}
           </Dugme>
@@ -1298,7 +1305,7 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
             { etiket: f.f > 0 ? 'Eksik' : 'Fazla', deger: tl(Math.abs(f.f)), renk: R.kirmizi },
             { etiket: 'Durum', deger: f.coz ? 'Kapandı' : 'Açık', renk: f.coz ? R.yesil : R.kirmizi },
           ],
-          not: f.coz ? `${f.coz.sebep_ad} · ${tUzun(f.coz.tarih)}${f.coz.sorumlu ? ` · sorumlu: ${f.coz.sorumlu}` : ''}${f.coz.kaydeden ? ` · kaydeden: ${f.coz.kaydeden}` : ''}${f.coz.not ? ` · ${f.coz.not}` : ''}`
+          not: f.coz ? `${f.coz.sebep_ad} · ${tUzun(f.coz.tarih)}${f.coz.sorumlu ? ` · sorumlu: ${f.coz.sorumlu}` : ''}${f.coz.patron ? ` · ${f.coz.patron}'a verildi${f.coz.teslim_eden ? ` (veren: ${f.coz.teslim_eden})` : ''}` : ''}${f.coz.kaydeden ? ` · kaydeden: ${f.coz.kaydeden}` : ''}${f.coz.not ? ` · ${f.coz.not}` : ''}`
             : 'Para silinmedi, gider de sayılmadı. Sebebi bulunana kadar "açık fark" olarak bekliyor.',
           listeBaslik: 'İlgili cepler',
           satirlar: [
