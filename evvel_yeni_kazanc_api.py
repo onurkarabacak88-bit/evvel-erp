@@ -4,7 +4,8 @@ Sahip kararları:
   · "Para şubenin ama bende duruyor" → kazanç PARANIN YERİNDEN bağımsız; Kasa'ya bakmaz.
   · "Şubeler sanki hiç borcu yokmuş gibi" → kredi / ev taksiti / patron şahsi YOK (patron katmanı).
   · "Hangi şube kâr ediyor, zarar edenin yükü hangisinin üstünde — bunu görmeliyim."
-  · Ortak giderler şubelere DAĞITILMAZ; ayrı satırda işletme toplamından düşer.
+  · Ortak giderler (ortak personel dahil) şubelere CİRO payıyla yük gösterilir (IS 5db · Fable + Opus: kâr oranı döngüseldi —
+    hiçbir şube zarara düşemiyor, Tema'nın açığı gizleniyordu); zarar eden açığı ayrı bilgi satırı, kimseye devredilmez.
 
 Hiçbir şey yazmaz; Gelir ve Gider modüllerinin hesabını yan yana koyar (iki taraf KDV dahil).
 """
@@ -76,19 +77,14 @@ def kazanc_ozet(ay: Optional[str] = None):
     zarar = [s for s in subeler if s["kazanc"] < 0]
     toplam_kar = sum(s["kazanc"] for s in kar)
     toplam_zarar = -sum(s["kazanc"] for s in zarar)
-    # YÜK: zarar edenlerin açığı + ortak gider, kâr edenlerin kârı ORANINDA onların üstündedir
-    yuk_toplam = toplam_zarar + ortak
+    # YÜK (IS 5db): ortak gider her şubeye CİRO payıyla; kâr / zarar devri YOK (zarar eden açığı yalnız bilgi)
+    ciro_top = sum(s["gelir"] for s in subeler if s["gelir"] > 0)
     for s in subeler:
-        if s["kazanc"] > 0 and toplam_kar:
-            pay = s["kazanc"] / toplam_kar
-            s["tasidigi_yuk"] = _r(yuk_toplam * pay)
-            s["yuk_sonrasi"] = _r(s["kazanc"] - yuk_toplam * pay)
-            s["tasidiklari"] = [{"ad": z["ad"], "tutar": _r(-z["kazanc"] * pay)} for z in zarar] + \
-                               ([{"ad": "Ortak giderler", "tutar": _r(ortak * pay)}] if ortak else [])
-        else:
-            s["tasidigi_yuk"] = 0.0
-            s["yuk_sonrasi"] = s["kazanc"]
-            s["tasidiklari"] = []
+        pay = (s["gelir"] / ciro_top) if (ciro_top and s["gelir"] > 0) else 0
+        s["ciro_payi"] = round(pay * 100, 1)
+        s["tasidigi_yuk"] = _r(ortak * pay)
+        s["yuk_sonrasi"] = _r(s["kazanc"] - ortak * pay)
+        s["tasidiklari"] = [{"ad": f"Ortak giderler (ciro payı %{s['ciro_payi']})", "tutar": _r(ortak * pay)}] if (ortak and pay) else []
     isletme = _r(sum(s["kazanc"] for s in subeler) - ortak)
     return {
         "ay": gel["ay"], "ay_basi": gel["ay_basi"], "ay_bitti": gel["ay_bitti"], "turler": TURLER,
@@ -98,6 +94,6 @@ def kazanc_ozet(ay: Optional[str] = None):
         "zarar_eden_acigi": _r(toplam_zarar), "kar_edenlerin_kari": _r(toplam_kar),
         "cekis_toplam": _r(gid["cekis_toplam"]),
         "not": "Kazanç = gelir (kapanış, KDV dahil) − şubenin kendi gideri (mal=sayımdan tüketim × fiyat, kira, personel, fatura, "
-               "dükkân, komisyon). Kredi, ev taksiti ve patron şahsi DAHİL DEĞİL. Zarar eden şubelerin açığı ve ortak "
-               "giderler, kâr eden şubelerin üstüne kârları oranında yük olarak gösterilir.",
+               "dükkân, komisyon; personel kadro normu oranında). Kredi, ev taksiti ve patron şahsi DAHİL DEĞİL. Ortak giderler "
+               "(ortak personel dahil) şubelere CİRO payıyla yük olarak gösterilir; zarar eden şubenin açığı kimseye devredilmez.",
     }

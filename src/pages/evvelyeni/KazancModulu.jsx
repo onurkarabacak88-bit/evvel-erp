@@ -38,7 +38,7 @@ export default function KazancModulu() {
     satirlar: [
       { ad: 'Gelir · nakit', tutar: tl(s.gelir_kirilim.nakit) }, { ad: 'Gelir · POS', tutar: tl(s.gelir_kirilim.pos) }, { ad: 'Gelir · online', tutar: tl(s.gelir_kirilim.online) },
       ...Object.entries(s.gider_kirilim).filter(([, t]) => t).map(([k, t]) => ({ ad: `Gider · ${v.turler[k] || k}${k === 'kira' && s.kira_tam_ay ? ` (ay içi: ${v.ay_ici.gecen_gun}/${v.ay_ici.ay_gun} gün · tam ay ${tl(s.kira_tam_ay)})` : ''}`, tutar: `− ${tl(t)}` })),
-      ...s.tasidiklari.map((x) => ({ ad: `Taşıdığı · ${x.ad}`, tutar: `− ${tl(x.tutar)}`, detay: 'kârı oranında payına düşen' })),
+      ...s.tasidiklari.map((x) => ({ ad: `Taşıdığı · ${x.ad}`, tutar: `− ${tl(x.tutar)}`, detay: 'cirosu oranında payına düşen' })),
     ],
   });
 
@@ -95,9 +95,9 @@ export default function KazancModulu() {
         ))}
       </div>
 
-      {v.zarar_eden_acigi + v.ortak_gider > 0 && (
+      {v.ortak_gider > 0 && (   /* Fable L6 (5db): zarar devri yok — başlık yalnız ortak gider varken */
         <div style={{ ...kart, padding: 14 }}>
-          <b>Kim kimi taşıyor?</b> <span style={{ color: R.not, fontSize: 12.5 }}>zarar eden şubelerin açığı + ortak giderler, kâr edenlerin kârı oranında</span>
+          <b>Kim kimi taşıyor?</b> <span style={{ color: R.not, fontSize: 12.5 }}>ortak giderler (ortak personel dahil) her şubeye cirosu oranında · zarar eden açığı kimseye devredilmez</span>
           {v.subeler.filter((s) => s.tasidiklari.length).map((s) => (
             <div key={s.cep} style={{ padding: '8px 0', borderBottom: '1px solid var(--pi-line)', fontSize: 13.5 }}>
               <b>{s.ad}</b> taşıyor: {s.tasidiklari.map((x) => `${x.ad} ${fmt(x.tutar)} ₺`).join(' · ')}

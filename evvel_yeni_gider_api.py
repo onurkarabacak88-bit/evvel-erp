@@ -37,6 +37,11 @@ from evvel_yeni_kasa_api import kapanis_kanallari as _kapanis_kanallari   # TEK 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/evvel-yeni/gider", tags=["evvel-yeni-gider"])
 
+# 👥 ŞUBE PERSONEL YÜKÜ (IS 5db · sahip 31 Eki "kart şubesi vergisel, isimler önemli değil, maaşlar aynı" · Fable + Opus tarafsız → Opus karar):
+# şube personelinin TOPLAM hak edişi şubelere KADRO NORMU oranında; kişinin kart şubesi dağıtım anahtarı DEĞİL. Kart şubesi olmayan
+# (İbrahim / Merve) ORTAK'ta kalır (Kazanç ciroyla dağıtır). Sonraki adım: 1 Kasım'dan QR yoklamasıyla gerçekleşen kişi-gün (norm = yedek).
+PERSONEL_NORM = {"sube-zafer": 4, "sube-tema": 1.5, "sube-koycegiz": 1.5, "sube-alsancak": 1.5}   # 1,5 = 1 tam + 1 yarı zamanlı
+
 TURLER = {"mal": "Mal (tüketim — sayımdan)", "kira": "Kira", "fatura": "Fatura / abonelik", "personel": "Personel",
           "dukkan": "Dükkân küçük giderleri", "anlik": "Anlık gider", "diger": "Diğer", "komisyon": "POS / online komisyonu"}
 KALEMLER = list(TURLER)
@@ -451,16 +456,30 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
     except Exception as e:  # noqa: BLE001
         log.warning("evvel-yeni gider: maaş hak edişi okunamadı: %s", str(e)[:200])
         pg = []
+    havuz, havuz_kisi = 0, []
     for x in pg:
         satir = {"gun": a_ + "-01", "tur": "personel", "aciklama": x["ad"] + (" · tahmini (ay onaylanmadı)" if x["tahmini"] else ""),
                  "adet": None, "birim": None, "tutar": _tl_sayi(x["tutar"]), "not": "hak ediş" + (" · eski sistem" if x["kaynak"] == "eski_sistem" else "")}
-        sid = x["sube_id"]
-        if sid in S:
-            S[sid]["personel"] += x["tutar"]
-            S[sid]["satirlar"].append(satir)
+        if x["sube_id"] in S:   # şube personeli → havuz (kart şubesi vergisel; yük normla dağıtılır)
+            havuz += x["tutar"]
+            havuz_kisi.append(satir)
         else:
             ORTAK["toplam"] += x["tutar"]
             ORTAK["satirlar"].append(satir)
+    norm = {sid: Decimal(str(PERSONEL_NORM.get(sid, 0))) for sid in S if sid not in pasif_sube}
+    ntop = sum(norm.values())
+    if havuz and ntop:
+        paylar = {sid: int(Decimal(havuz) * n / ntop) for sid, n in norm.items() if n}
+        if paylar:   # kuruş artığı en büyük paya — toplam havuzla birebir
+            paylar[max(paylar, key=lambda k: norm[k])] += havuz - sum(paylar.values())
+        for sid, t in paylar.items():
+            S[sid]["personel"] += t
+            S[sid]["satirlar"].append({"gun": a_ + "-01", "tur": "personel", "adet": None, "birim": None, "tutar": _tl_sayi(t),
+                                       "aciklama": f"Şube personeli payı · kadro {norm[sid].normalize()} / {ntop.normalize()} (toplam {_tl_sayi(havuz)} ₺)",
+                                       "not": "kadro normu — kişinin kart şubesi vergisel, dağıtım anahtarı değil"})
+    elif havuz:   # norm tanımsız (yeni şube) → eski davranış yerine ORTAK'a (sessizce kaybolmasın)
+        ORTAK["toplam"] += havuz
+        ORTAK["satirlar"] += havuz_kisi
     # 2) DÜKKÂN KÜÇÜK GİDERLERİ (Kasa'daki 'dukkan_gideri' ödemeleri) + patron şahsi ayrımı
     cekisler = []
     from evvel_yeni_kasa_api import dukkan_giderleri   # Kasa'nın tek okuyucusu (Kaçırılan #1 — süzgeç iki yerdeydi)
@@ -512,6 +531,8 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
             "turler": TURLER, "toplam": _tl_sayi(sube_top + ORTAK["toplam"]), "sube_toplam": _tl_sayi(sube_top),
             **{k: _tl_sayi(v) for k, v in T.items()},
             "ortak": {"toplam": _tl_sayi(ORTAK["toplam"]), "satirlar": sorted(ORTAK["satirlar"], key=lambda x: x["gun"])},
+            "personel_kisiler": {"toplam": _tl_sayi(havuz), "satirlar": havuz_kisi, "norm": {k: float(v) for k, v in norm.items()},
+                                 "not": "Şube personelinin kişi kişi hak edişi (bilgi) — şubelere kadro normu oranında yüklenir"},
             "sevk_bedeli": _tl_sayi(sum(_kurus(x["sevk_bedeli"]) for x in out)),
             "subeler": out, "cekisler": cekisler, "cekis_toplam": _tl_sayi(sum(_kurus(x["tutar"]) for x in cekisler)),
             "fiyat_eksik_toplam": sum(x["fiyat_eksik"] for x in out), "sube_disi_satir": disarida,
