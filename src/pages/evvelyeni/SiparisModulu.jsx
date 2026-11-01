@@ -14,6 +14,10 @@ const DURUM = {
   yolda: ['Yolda', 'bakir'], karsilandi: ['Karşılandı', 'yesil'], oneri: ['Katalog dışı öneri', 'kirmizi'], iptal: ['İptal', undefined],
 };
 const kilitli = (y) => !['hazirlaniyor', 'bekleniyor'].includes(y.durum);   // yola çıkmış / teslime bağlanmış → değişmez
+// sahip 2 Kas ("bu iki kalem çok altta kalmış, üste çek"): uzun siparişte iş bekleyen kalem dipte kayboluyordu →
+// önce yönlendirilmemiş, sonra toptancıdan beklenen, sonra depo / yolda, en son gelen ve iptal (aynı grupta şubenin sırası korunur)
+const SIRA = (k) => (k.durum === 'yonlendirilmedi' || k.durum === 'oneri' ? 0 : k.durum === 'iptal' ? 4 : k.durum === 'karsilandi' ? 3
+  : k.yonler.some((y) => y.durum === 'bekleniyor') ? 1 : 2);
 
 export default function SiparisModulu({ onToast }) {
   const [gorunum, setGorunum] = useState('acik');
@@ -129,7 +133,8 @@ export default function SiparisModulu({ onToast }) {
               </div>
             )}
             {s.notu && <div style={{ fontSize: 12.5, color: R.metin2 }}>📝 {s.notu}</div>}
-            {s.kalemler.map((k) => {
+            {(s.toptancilar || []).length > 0 && <ToptanciIletim s={s} acik={acik} mesgul={mesgul[s.id]} is_={is_} />}
+            {[...s.kalemler].sort((x, y) => SIRA(x) - SIRA(y)).map((k) => {
               const [dAd0, dTur0] = DURUM[k.durum] || [k.durum];
               // B28: kısmen yönlendirilmişse kaç adedin beklediğini söyle
               let dAd = k.durum === 'yonlendirilmedi' && k.yonsuz > 0 && k.yonsuz < k.adet ? `${k.yonsuz} adet yönlendirilmedi` : dAd0;
@@ -200,7 +205,6 @@ export default function SiparisModulu({ onToast }) {
                 </div>
               );
             })}
-            {(s.toptancilar || []).length > 0 && <ToptanciIletim s={s} acik={acik} mesgul={mesgul[s.id]} is_={is_} />}
           </div>
         );
       })}
