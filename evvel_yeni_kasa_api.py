@@ -1272,7 +1272,7 @@ def _durum_tam(gun: Optional[str] = None, hepsi: bool = False):
                     for p in h["veri"].get("parcalar") or []:
                         if p.get("cep") == cd["id"] and int(p.get("tutar") or 0):
                             sonra.append({"tutar": _tl_sayi(int(p["tutar"])), "ts": h["kayit_zamani"],
-                                          "ne": "elden avans" if h["veri"].get("kaynak") == "sube_avansi" else "gider",
+                                          "ne": {"sube_avansi": "elden avans", "musteri_iadesi": "müşteri iadesi"}.get(h["veri"].get("kaynak"), "gider"),
                                           "saat": _tr_saat_kisa(h["kayit_zamani"])})
                 sonra.sort(key=lambda z: z["ts"].timestamp() if hasattr(z.get("ts"), "timestamp") else 0)
                 cd["son_sayilan"] = {"tutar": s_["tutar"], "kim": s_["kim"], "tur": s_["tur"], "gun": s_["gun"], "saat": s_["saat"],
@@ -2732,15 +2732,21 @@ def cekmece_cikislari(cur, gun: str, kayit: Optional[list] = None, C: Optional[d
             if not cep.startswith("sube:") or not int(p.get("tutar") or 0):
                 continue
             avans = v.get("kaynak") == "sube_avansi"
+            iade = v.get("kaynak") == "musteri_iadesi"   # sahip 1 Kas (Fable L4b): çekmeceden nakit müşteri iadesi
             ad = (f"Avans · {(v.get('konu') or {}).get('personel_ad') or ''}".strip(" ·") if avans
+                  else v.get("aciklama") or "Müşteri iadesi" if iade
                   else " · ".join(x for x in [v.get("kategori"), v.get("aciklama")] if x) or "Ödeme")
-            if v.get("kaynak") not in ("dukkan_gideri", "sube_avansi"):
+            if v.get("kaynak") not in PANEL_CEKMECE:
                 ad += " (Kasa'dan)"   # Fable R: panel dışı ödeme — sahip çift kaydı görebilsin
-            out.append({"sube_id": cep[len("sube:"):], "tutar": _tl_sayi(int(p["tutar"])), "ad": ad, "tur": "avans" if avans else "gider",
+            out.append({"sube_id": cep[len("sube:"):], "tutar": _tl_sayi(int(p["tutar"])), "ad": ad,
+                        "tur": "avans" if avans else "iade" if iade else "gider",
                         "kim": v.get("giren") or h.get("kaydeden"),   # Fable B5: elden avansta 'giren' yok → kaydeden (panelde veren)
                         "zaman": h.get("kayit_zamani"),   # Faz 2 (sahip 24 Eki): Satış devir defteri çıkışı vardiyaya böler
-                        "panel": v.get("kaynak") in ("dukkan_gideri", "sube_avansi")})
+                        "panel": v.get("kaynak") in PANEL_CEKMECE})
     return out
+
+
+PANEL_CEKMECE = ("dukkan_gideri", "sube_avansi", "musteri_iadesi")   # panelden çekmece çıkışı kaynakları (tek liste)
 
 
 def _sube_cekmece_odeme(cur, *, sube_id: str, gun: str, tutar: int, veri: dict, kim: str, kaynak_ref: str) -> dict:
@@ -2778,6 +2784,18 @@ def dukkan_gideri_yaz(cur, *, sube_id: str, gun: str, tutar: int, aciklama: str,
         veri["kategori"] = str(kategori).strip()[:40]
     if fis is not None:
         veri["fis_gonderildi"] = bool(fis)
+    return _sube_cekmece_odeme(cur, sube_id=sube_id, gun=gun, tutar=tutar, veri=veri, kim=kim, kaynak_ref=kaynak_ref)
+
+
+def musteri_iadesi_yaz(cur, *, sube_id: str, gun: str, tutar: int, fis_no: str, kim: str, kaynak_ref: str,
+                       giren_id: Optional[str] = None, giren: Optional[str] = None) -> dict:
+    """PUBLIC — müşteriye ÇEKMECEDEN elden verilen nakit iade (POS'tan iade fişi kesilmedi; sahip 1 Kas, Fable L4b). Kasa 'odeme' ·
+    kaynak 'musteri_iadesi' · gider DEĞİL (satış iadesi; Gider / Fiş kontrol okumaz) — kapanış kör sayımı ve Satış mutabakatı
+    cekmece_cikislari'ndan düşer. Kuruş."""
+    veri = {"aciklama": f"Müşteri iadesi · fiş {str(fis_no or '').strip()[:40]}", "kaynak": "musteri_iadesi", "gider": False,
+            "konu": {"tip": "iade", "ad": "Müşteri iadesi"}}   # Fable L6: Ödeme listesi / Kasa konu adını buradan okur (tek yer)
+    if giren_id:
+        veri.update(giren_id=str(giren_id), giren=giren)
     return _sube_cekmece_odeme(cur, sube_id=sube_id, gun=gun, tutar=tutar, veri=veri, kim=kim, kaynak_ref=kaynak_ref)
 
 

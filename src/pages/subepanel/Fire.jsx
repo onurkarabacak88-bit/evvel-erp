@@ -8,6 +8,7 @@
 // personel ayrı satır; 'Sayım düzeltmesi' gidere girmez.
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
+import { sayiTR } from '../../utils/trSayi';
 import { adetAyarla, AdetGirdi, C, Hero, kalemGovde, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, TONLAR, urunHaritasi, yeniIstek } from './ortak';
 
 const BARDAK = '__bardak__';   // sunucu oneri anahtarı: bardak işaretli ürünler
@@ -32,6 +33,8 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
   const [aciklama, setAciklama] = useState(ilk?.aciklama || '');
   const [fis, setFis] = useState(ilk?.fis || '');
   const [iadeSaat, setIadeSaat] = useState(ilk?.iadeSaat || '');
+  const [para, setPara] = useState(ilk?.para || '');            // sahip 1 Kas: para nasıl iade edildi (pos · nakit · yok)
+  const [paraTutar, setParaTutar] = useState(ilk?.paraTutar || '');
   const [mAd, setMAd] = useState('');      // kişisel veri — taslağa YAZILMAZ
   const [mTel, setMTel] = useState('');
   const [acikGrup, setAcikGrup] = useState(null);
@@ -46,9 +49,9 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
   const [hata, setHata] = useState('');
   useEffect(() => {
     if (!sebep && !Object.values(adet).some((n) => n > 0) && !aciklama && !fis) { taslakKaldir(anahtar); return; }
-    taslakYaz(anahtar, { adim, sebep, hazirlik, iadeSebep, adet, aciklama, fis, iadeSaat, istek });
+    taslakYaz(anahtar, { adim, sebep, hazirlik, iadeSebep, adet, aciklama, fis, iadeSaat, para, paraTutar, istek });
   },
-    [adim, sebep, hazirlik, iadeSebep, adet, aciklama, fis, iadeSaat, istek, anahtar]);
+    [adim, sebep, hazirlik, iadeSebep, adet, aciklama, fis, iadeSaat, para, paraTutar, istek, anahtar]);
 
   const sebepler = d.fire_sebepleri || [];
   const sb = sebepler.find((x) => x.kod === sebep);
@@ -78,12 +81,15 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
   const onayEksik = sebep === 'diger' && aciklama.trim().length < 10 ? 'Ne olduğunu en az 10 harfle yaz'
     : sebep === 'iade' && !fis.trim() ? 'Fiş numarasını yaz'
       : sebep === 'iade' && !/^\d{1,2}:\d{2}$/.test(iadeSaat) ? 'İade saatini gir'
-        : sebep === 'iade' && saatIleri(iadeSaat) ? 'İade saati şu andan ileri olamaz' : '';   // F-1 (sim 25 Eki · Opus): PIN'den SONRA reddediliyordu
+        : sebep === 'iade' && saatIleri(iadeSaat) ? 'İade saati şu andan ileri olamaz'   // F-1 (sim 25 Eki · Opus): PIN'den SONRA reddediliyordu
+          : sebep === 'iade' && !para ? 'Para nasıl iade edildi? — seç'
+            : sebep === 'iade' && para === 'nakit' && !(sayiTR(paraTutar, 0) > 0) ? 'Çekmeceden verilen tutarı yaz' : '';   // tek kaynak trSayi (Fable L6)
   const hazirlikAd = (d.hazirlik_turleri || []).find((x) => x.kod === hazirlik)?.ad;
   const iadeAd = (d.iade_sebepleri || []).find((x) => x.kod === iadeSebep)?.ad;
+  const paraAd = { pos: 'POS iadesi', nakit: `çekmeceden nakit ${paraTutar} ₺`, yok: 'para iadesi yok' }[para];
 
   const temizle = () => {
-    setAdim(1); setSebep(''); setHazirlik(''); setIadeSebep(''); setAdet({}); setAciklama(''); setFis(''); setIadeSaat('');
+    setAdim(1); setSebep(''); setHazirlik(''); setIadeSebep(''); setAdet({}); setAciklama(''); setFis(''); setIadeSaat(''); setPara(''); setParaTutar('');
     setMAd(''); setMTel(''); setAra(''); setIstek(yeniIstek()); taslakKaldir(anahtar);
   };
   const kaydet = async () => {
@@ -94,7 +100,8 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
       const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/fire`, { method: 'POST', body: {
         personel_id: kisi, pin, istek_id: istek, istemci_gunu: d.gun, sebep, aciklama: aciklama.trim() || null,
         hazirlik_turu: sebep === 'hazirlik_deneme' ? hazirlik : null,
-        iade: sebep === 'iade' ? { sebep: iadeSebep, fis_no: fis.trim(), iade_saat: iadeSaat, musteri_ad: mAd.trim() || null, musteri_tel: mTel.trim() || null } : null,
+        iade: sebep === 'iade' ? { sebep: iadeSebep, fis_no: fis.trim(), iade_saat: iadeSaat, musteri_ad: mAd.trim() || null, musteri_tel: mTel.trim() || null,
+          para, tutar: para === 'nakit' ? paraTutar.trim() : null } : null,
         kalemler: kalemGovde(Object.fromEntries(secili)) } });
       setOnay(0); setPin(''); setKisi('');
       temizle();
@@ -188,6 +195,12 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
             <label style={{ display: 'grid', gap: 4 }}>Müşteri adı (isteğe bağlı)<input className="sp-in" style={{ fontSize: 18 }} value={mAd} onChange={(e) => setMAd(e.target.value.slice(0, 80))} /></label>
             <label style={{ display: 'grid', gap: 4 }}>Müşteri telefonu (isteğe bağlı)<input className="sp-in" inputMode="tel" value={mTel} onChange={(e) => setMTel(e.target.value.replace(/[^\d+ ]/g, '').slice(0, 20))} /></label>
             <span style={{ color: C.soluk, fontSize: 12 }}>Müşteri bilgisi yalnız merkezde görünür.</span>
+            {/* sahip 1 Kas (Fable L4b): para nasıl iade edildi — çekmeceden nakitte tutar çekmeceden düşer, akşam kasa farkı çıkmaz */}
+            <b style={{ marginTop: 4 }}>💵 Para nasıl iade edildi? (zorunlu)</b>
+            <div style={{ display: 'grid', gap: 6 }}>
+              {(d.para_iade || []).map((x) => <Kart kapali={kapali} key={x.kod} secik={para === x.kod} renk={C.sari} onClick={() => setPara(x.kod)}><b>{x.ad}</b></Kart>)}
+            </div>
+            {para === 'nakit' && <label style={{ display: 'grid', gap: 4 }}>Çekmeceden verilen tutar ₺ (zorunlu)<input className="sp-in" style={{ fontSize: 20 }} inputMode="decimal" value={paraTutar} onChange={(e) => setParaTutar(e.target.value.replace(/[^\d.,]/g, '').slice(0, 12))} /></label>}
           </div>)}
         <label className="sp-kart" style={{ display: 'grid', gap: 4 }}>
           <span style={{ color: C.soluk, fontSize: 12, fontWeight: 700 }}>{sebep === 'diger' ? 'NE OLDU? (en az 10 harf)' : 'AÇIKLAMA (isteğe bağlı)'}</span>
@@ -223,7 +236,7 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
           <div style={{ display: 'grid', gap: 4, maxHeight: '30vh', overflow: 'auto' }}>
             {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{n}</b></div>)}
           </div>
-          {sebep === 'iade' && <div style={{ color: C.soluk }}>Fiş {fis} · {iadeSaat}</div>}
+          {sebep === 'iade' && <div style={{ color: C.soluk }}>Fiş {fis} · {iadeSaat}{paraAd ? ` · ${paraAd}` : ''}</div>}
           <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim bildiriyor?"
             devam={kaydet} devamYazi="✓ Fireyi kaydet" mesgul={mesgul} />
         </Modal>

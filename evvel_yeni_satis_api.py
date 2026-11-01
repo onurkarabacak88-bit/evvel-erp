@@ -602,7 +602,8 @@ def _fire_yeni(cur, gun: str) -> dict:
                                                           "aciklama": v.get("aciklama"), "kim": o.get("personel_ad"),
                                                           "saat": tr_saat(o.get("olay_zamani"), g),
                                                           # F-2 (sim 25 Eki): iade ayrıntısı yazılıyor ama hiçbir ekran okumuyordu — panel "yalnız merkezde görünür" diyor
-                                                          "iade": ({kk: iv.get(kk) for kk in ("sebep_ad", "fis_no", "iade_saat", "musteri_ad", "musteri_tel")} if iv else None)})
+                                                          "iade": ({**{kk: iv.get(kk) for kk in ("sebep_ad", "fis_no", "iade_saat", "musteri_ad", "musteri_tel", "para", "para_ad")},
+                                                                    "tutar": _tl_sayi(iv["tutar"]) if iv.get("tutar") else None} if iv else None)})   # sahip 1 Kas: para iadesi
     return out
 
 
@@ -1121,6 +1122,7 @@ def _devir_defteri_eski(ay: Optional[str] = None):
 
 
 from evvel_yeni_cekirdek import tr_saat as _tr_saat   # Dalga 4 (F#4): saat biçimi TEK yerde — çekirdek (birebir kopyasıydı)
+from evvel_yeni_cekirdek import tl_sayi as _tl_sayi   # kuruş → ₺ sayı (TEK yer)
 from evvel_yeni_cekirdek import tl as _tl_tr   # Türkçe para biçimi TEK yer (f-string içinde iç içe tırnak YOK — canlı Python 3.11)
 
 

@@ -159,7 +159,7 @@ function GunlukDokum() {
             {s.fire.length > 0 && (
               <div style={{ fontSize: 12.5, background: 'var(--pi-bg)', borderRadius: 9, padding: '7px 10px' }}>
                 <b>Fire ({s.fire_toplam})</b>
-                {s.fire.map((f, i) => <div key={i}>{f.saat} · {f.adet} × {f.ad} — <b>{f.sebep}</b>{f.iade ? [f.iade.sebep_ad, f.iade.fis_no && `fiş ${f.iade.fis_no}`, f.iade.iade_saat && `iade ${f.iade.iade_saat}`].filter(Boolean).map((x) => ` · ${x}`).join('') : ''}{f.kim ? ` · ${f.kim}` : ''}{f.aciklama ? ` · ${f.aciklama}` : ''}
+                {s.fire.map((f, i) => <div key={i}>{f.saat} · {f.adet} × {f.ad} — <b>{f.sebep}</b>{f.iade ? [f.iade.sebep_ad, f.iade.fis_no && `fiş ${f.iade.fis_no}`, f.iade.iade_saat && `iade ${f.iade.iade_saat}`, f.iade.para === 'nakit' ? `💵 çekmeceden nakit iade ${fmt(f.iade.tutar)} ₺` : f.iade.para === 'pos' ? 'POS iadesi' : f.iade.para === 'yok' ? 'para iadesi yok' : null].filter(Boolean).map((x) => ` · ${x}`).join('') : ''}{f.kim ? ` · ${f.kim}` : ''}{f.aciklama ? ` · ${f.aciklama}` : ''}
                   {f.iade && (f.iade.musteri_ad || f.iade.musteri_tel) ? <span style={{ color: R.metin2 }}> · müşteri {[f.iade.musteri_ad, f.iade.musteri_tel].filter(Boolean).join(' ')}</span> : null}</div>)}
               </div>
             )}

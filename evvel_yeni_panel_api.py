@@ -173,6 +173,9 @@ def _fire_sebepleri(kategoriler) -> list:
     return out
 IADE_SEBEPLERI = {"begenmedi": "Beğenmedi", "sicaklik": "Sıcaklık / ısı", "yanlis_verildi": "Yanlış ürün verildi",
                   "yabanci_madde": "Yabancı madde", "bekleme": "Uzun bekleme", "hasar": "Hasar / ambalaj"}   # eski 6 kart (eski sunucu ATIYORDU)
+# sahip 1 Kas (Fable L4b): para nasıl iade edildi — 'nakit' çekmeceden düşer (Kasa musteri_iadesi_yaz), öbürleri yalnız kayıt
+PARA_IADE = {"pos": "POS'tan iade / iptal fişi kesildi (nakit ya da kart)", "nakit": "Çekmeceden elden nakit verildi (POS'ta iade yok)",
+             "yok": "Para iadesi yok — ürün değiştirildi / ikram"}
 HAZIRLIK_TURLERI = {"yanlis_urun": "Yanlış ürün yapıldı", "bardak_degisti": "Bardak / boy değişti", "deneme": "Deneme / eğitim"}
 # fire DIŞI çıkışlar ayrı konuma gider (maliyet raporunda ayrı satır — sahip D9; iade ayrı satır — sahip 20 Eki)
 FIRE_HEDEF = {"ikram": "dışarı:ikram", "personel_kullanim": "dışarı:personel", "sayim_hatasi": "dışarı:sayim", "iade": "dışarı:iade"}
@@ -495,6 +498,7 @@ def panel_durum(sube_id: str):
             "kapanis_merkezde": _merkezde_mi(sube_id, gun),   # Fable B5: telefonsuz merkeze gönderildi (panel aynı geceyi yeniden doldurmasın)
             "fire_sebepleri": _fire_sebepleri(kat_hepsi),
             "iade_sebepleri": [{"kod": k, "ad": v} for k, v in IADE_SEBEPLERI.items()],
+            "para_iade": [{"kod": k, "ad": v} for k, v in PARA_IADE.items()],
             "hazirlik_turleri": [{"kod": k, "ad": v} for k, v in HAZIRLIK_TURLERI.items()],
             "toptancilar": toptancilar, "teslimler_bugun": teslimler_bugun, "son_teslimler": son_teslimler, "siparis_red": siparis_red, "toptanci_acik": _modul_acik("toptanci"), "siparis_acik": _modul_acik("siparis"),   # Basamak 8: Tedarikçiden teslim al (yumuşak bağ)
             "saat": {"acilis": "%02d:%02d" % ACILIS_SAAT, "kapanis": "%02d:%02d" % KAPANIS_SAAT}}
@@ -1451,6 +1455,8 @@ class IadeBilgi(BaseModel):
     iade_saat: str                    # "HH:MM"
     musteri_ad: Optional[str] = None  # personele GÖSTERİLMEZ (yalnız merkez)
     musteri_tel: Optional[str] = None
+    para: Optional[str] = None        # PARA_IADE (zorunlu — sahip 1 Kas)
+    tutar: Optional[TrTutar] = None   # yalnız 'nakit'te zorunlu
 
 
 class FireBody(BaseModel):
@@ -1495,7 +1501,13 @@ def fire(sube_id: str, b: FireBody):
             _n, _t = _sim.hour * 60 + _sim.minute, int(m_.group(1)) * 60 + int(m_.group(2))
             if not (_n < 120 and _t >= 120) and _t > _n + 5:   # Fable D6-S: ileri saat yazılmasın (gece yarısı sonrası: dünkü saat geçerli)
                 raise HTTPException(400, "İade saati şu andan ileri olamaz")
+            if b.iade.para not in PARA_IADE:
+                raise HTTPException(400, "Para nasıl iade edildi? — POS / çekmeceden nakit / iade yok seç")
+            para_t = _tl(b.iade.tutar, "İade tutarı") if b.iade.para == "nakit" else None
+            if b.iade.para == "nakit" and para_t <= 0:
+                raise HTTPException(400, "Çekmeceden verilen iade tutarını yaz")
             iade = {"sebep": b.iade.sebep, "sebep_ad": IADE_SEBEPLERI[b.iade.sebep],
+                    "para": b.iade.para, "para_ad": PARA_IADE[b.iade.para], "tutar": para_t,
                     "fis_no": b.iade.fis_no.strip()[:40], "iade_saat": b.iade.iade_saat.strip(),
                     "musteri_ad": (b.iade.musteri_ad or "").strip()[:80] or None,
                     "musteri_tel": re.sub(r"[^\d+]", "", b.iade.musteri_tel or "")[:20] or None}
@@ -1518,6 +1530,13 @@ def fire(sube_id: str, b: FireBody):
                         aciklama=sebep_ad + (f" ({HAZIRLIK_TURLERI[hazirlik]})" if hazirlik else "") + (f" — {aciklama}" if aciklama else "")
                         + (f" · {iade['sebep_ad']} · fiş {iade['fis_no']}" if iade else ""),
                         bag=kok, gun=c["gun"])
+        if oid is not None and iade and iade["para"] == "nakit":
+            if _modul_acik("kasa"):   # yumuşak bağ: Kasa kapalıysa olayda kalır (merkez görür)
+                from evvel_yeni_kasa_api import musteri_iadesi_yaz
+                musteri_iadesi_yaz(cur, sube_id=str(sube_id), gun=c["gun"].isoformat(), tutar=para_t, fis_no=iade["fis_no"],
+                                   kim=f"{KIM} · {p['ad']}", kaynak_ref=f"{kok}:iade", giren_id=p["id"], giren=p["ad"])
+            else:
+                log.warning("panel: kasa modülü kapalı — nakit iade yalnız olayda (%s)", kok)
         return {"olay": oid, "tekrar": oid is None, "mesaj": "Fire kaydedildi"}
     return _calistir(sube_id, b.istek_id, is_, tur=_TUR, govde=b.model_dump(mode="json"))
 
