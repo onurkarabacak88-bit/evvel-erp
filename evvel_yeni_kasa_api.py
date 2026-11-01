@@ -87,11 +87,13 @@ PATRON_CEPLERI = [
     ("ev:fatma", "Fatma'nın evi", "Fatma", "ev", 12),
     ("hesap:fethi", "Fethi'nin hesabı", "Fethi hesabı", "hesap", 40),
     ("banka:fatma_kira", "Fatma'nın kira hesabı", "Fatma kira", "banka", 59),
+    # Sahip 1 Kas · Fable L4b: ELDEN alınan kira işletme nakdine (ev:fatma) karışmasın — Mülk defterinin nakit cebi
+    ("nakit:kira", "Fatma'nın elindeki kira", "Kira nakdi", "ev", 58),
 ]
 # Sahip: "Fatma'nın kirasından ödeme yaparken destek alıyoruz" → kira hesabı havuzun
 # İÇİNDE (ödemede kaynak seçilebilir) ama işletme parasından AYRI görünür; ondan çıkan
 # ödeme "kiradan destek" diye işaretlenir. ([[project_mulk_defteri]] ayrımı korunur.)
-KIRA_CEPLERI = {"banka:fatma_kira"}
+KIRA_CEPLERI = {"banka:fatma_kira", "nakit:kira"}
 # PUBLIC — patronlar + nakit teslim hedefleri TEK liste (tekrar denetimi C-T1-34: Ödeme/Fatura/Panel ayrı listeler tutuyordu;
 # yeni panel Fethi teslimini 'ev:fethi'ye, eski aktarım 'hesap:fethi'ye yazıyordu). Sahip (2026-10-16): Fethi'ye teslim GEÇİŞ HESABINA.
 PATRONLAR = ("Onur", "Fethi", "Fatma")
@@ -353,7 +355,7 @@ def _iptal_hedef(h: Optional[dict], C: dict) -> dict:
     ad = lambda cid: C.get(cid, {}).get("ad", cid) if cid else None  # noqa: E731
     v = h.get("veri") or {}
     tut = int(v["sayilan"]) if h["tur"] == "sayim" and v.get("sayilan") is not None else h.get("tutar")
-    yer = ad(h.get("cep")) or " → ".join(x for x in (ad(h.get("kaynak")), ad(h.get("hedef"))) if x) or (v.get("aciklama") or "")[:60] or None
+    yer = (" + ".join(ad(p["cep"]) for p in v["parcalar"]) if v.get("parcalar") else ad(h.get("cep"))) or " → ".join(x for x in (ad(h.get("kaynak")), ad(h.get("hedef"))) if x) or (v.get("aciklama") or "")[:60] or None
     return {"hedef_tur": h["tur"], "hedef_tutar": _tl_sayi(int(tut)) if tut is not None else None, "hedef_yer": yer, "hedef_gun": h.get("is_gunu")}
 
 
@@ -410,7 +412,10 @@ def _etki(o: dict, C: dict) -> List[dict]:
         alt = v.get("alt", "diger")
         tanim = DIS_TURLERI.get(alt, DIS_TURLERI["diger"])
         k = ((v.get("kimden") or "Patron") + " desteği") if alt == "destek" else tanim[1]
-        return [{"cep": o["cep"], "d": o["tutar"], "etiket": tanim[0] + (" · " + v["kimden"] if v.get("kimden") else ""), "kaynak": k}]
+        et = tanim[0] + (" · " + v["kimden"] if v.get("kimden") else "")
+        if v.get("parcalar"):   # sahip 1 Kas: girişin TEK formu — Ödeme gibi parça parça (havale + elden)
+            return [{"cep": p["cep"], "d": int(p["tutar"]), "etiket": et, "kaynak": k} for p in v["parcalar"]]
+        return [{"cep": o["cep"], "d": o["tutar"], "etiket": et, "kaynak": k}]
     if t == "teslim_cikis":
         return [{"cep": o["kaynak"], "d": -o["tutar"], "etiket": "Teslim → " + ad(o["hedef"])},
                 {"cep": YOLDA, "d": o["tutar"], "etiket": "Yolda"}]
@@ -890,6 +895,8 @@ def _hareket_dto(r: dict, C: dict, ol: List[dict]) -> dict:
         alt = v.get("alt", "diger")
         t = DIS_TURLERI.get(alt, DIS_TURLERI["diger"])
         d.update(alt=alt, alt_ad=t[0], geri_odenecek=t[2], kimden=v.get("kimden"), not_=v.get("not"))
+        if v.get("parcalar"):   # Fable L6: parçalı giriş satırda parça parça (yalnız ilk cep görünmesin)
+            d["parcalar"] = [{"cep": p["cep"], "ad": C.get(p["cep"], {}).get("ad", p["cep"]), "tutar": _tl_sayi(int(p["tutar"]))} for p in v["parcalar"]]
     elif r["tur"] == "sayim":
         d.update(beklenen=_tl_sayi(int(v.get("beklenen", 0))), sayilan=_tl_sayi(int(v.get("sayilan", 0))),
                  fark=_tl_sayi(int(v.get("beklenen", 0)) - int(v.get("sayilan", 0))),
@@ -1289,9 +1296,9 @@ def _durum_tam(gun: Optional[str] = None, hepsi: bool = False):
             cd["gizli"] = True
     pos_list = _pos_durumu(ol, C, oranlar, ref)
     for cd in cep_durumlari:
+        cd["kira"] = cd["id"] in KIRA_CEPLERI   # elindeki kira (tur ev) da kira cebi — ekran teslim / ev listelerinde ayırsın
         if cd["tur"] != "banka":
             continue
-        cd["kira"] = cd["id"] in KIRA_CEPLERI
         for x in pos_list:
             if x["banka_cep"] == cd["id"] and x["bekleyen_brut"] > 0.004:
                 m = f"{'POS' if x['kanal'] == 'pos' else 'Online'} {_tl(_kurus(x['bekleyen_brut']))} bankaya gelecek" + (f" · {x['gun_sayisi']} gündür" if x["gun_sayisi"] else "")
@@ -1721,10 +1728,26 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
                                 "panel_sonradan": [{"nakit": tut, "kart": kart + onl, "pos": kart, "online": onl, "zaman": _simdi_iso()}]})
             gec_kilitli = True
     elif t == "dis":
-        cep_var(body.cep)
         alt = body.alt if body.alt in DIS_TURLERI else None
         if not alt:
             raise HTTPException(400, "Giriş türü seç")
+        parca_ = None
+        if body.parcalar:   # parçalı giriş (Ödeme simetriği): her parça bir cebe, toplam = Σ parça
+            parca_ = [{"cep": p.cep, "tutar": _kurus(p.tutar)} for p in body.parcalar if p.tutar and _kurus(p.tutar) > 0]
+            if not parca_:
+                raise HTTPException(400, "Tutar gir")
+            if len({p["cep"] for p in parca_}) != len(parca_):
+                raise HTTPException(400, "Aynı cep iki kez seçilemez")
+            for p in parca_:
+                cep_var(p["cep"])
+            body.cep, tut = parca_[0]["cep"], sum(p["tutar"] for p in parca_)
+        else:
+            cep_var(body.cep)
+        cepler_ = [p["cep"] for p in parca_] if parca_ else [body.cep]   # tek parça da tek-cep kaydı olarak yazılır (eski biçim)
+        if alt == "kira" and any(c not in KIRA_CEPLERI for c in cepler_):
+            raise HTTPException(400, "Kira yalnız kira ceplerine girer (kira hesabı / elindeki kira)")
+        if alt != "kira" and "nakit:kira" in cepler_:
+            raise HTTPException(400, "Elindeki kira cebine yalnız kira girer")
         if tut <= 0:
             raise HTTPException(400, "Tutar gir")
         if alt in ("destek", "borc", "kredi") and not (body.kimden or "").strip():
@@ -1732,10 +1755,14 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
         veri_ = {"alt": alt, "kimden": (body.kimden or "").strip()[:80], "not": (body.not_ or "").strip()[:200]}
         if isinstance(body.bag, dict):
             veri_["bag"] = {str(k)[:20]: (str(v)[:80] if v is not None else None) for k, v in list(body.bag.items())[:6]}
+        if parca_ and len(parca_) > 1:
+            veri_["parcalar"] = parca_
         yeni = _sahte(t, gun, cep=body.cep, tutar=tut, veri=veri_)
     elif t == "teslim":
         cep_var(body.kaynak, {"sube"})
         cep_var(body.hedef, {"ev", "hesap"})
+        if body.hedef in KIRA_CEPLERI:   # Fable L4b: işletme teslimi kira cebine yapılmaz (Mülk ayrımı)
+            raise HTTPException(400, "Şube teslimi kira cebine yapılamaz")
         if tut <= 0:
             raise HTTPException(400, "Tutar gir")
         yeni = _sahte(t, gun, kaynak=body.kaynak, hedef=body.hedef, tutar=tut, durum="bekliyor",

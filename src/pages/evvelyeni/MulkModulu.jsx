@@ -71,9 +71,10 @@ function EvKiralari({ onToast }) {
   const tahsilEt = async () => {
     if (mesgul) return; setMesgul(true);
     try {
-      const tt = sayiTR(tah.tutar);
-      if (Number.isNaN(tt) || tt <= 0) { onToast?.('Tahsilat tutarını sayı olarak yaz (ör. 25.000,00)'); setMesgul(false); return; }
-      const r = await api('/evvel-yeni/mulk/tahsilat', { method: 'POST', body: { mulk_id: tah.e.id, ay: tah.a.ay, tutar: tt, tarih: tah.tarih, istek_id: tah.istek_id } });
+      const hv = String(tah.tutar || '').trim() ? sayiTR(tah.tutar) : 0;   // bankaya gelen
+      const el = String(tah.elden || '').trim() ? sayiTR(tah.elden) : 0;   // sahip 1 Kas: elden alınan
+      if (Number.isNaN(hv) || Number.isNaN(el) || hv < 0 || el < 0 || hv + el <= 0) { onToast?.('Tutarı sayı olarak yaz (ör. 25.000,00)'); setMesgul(false); return; }
+      const r = await api('/evvel-yeni/mulk/tahsilat', { method: 'POST', body: { mulk_id: tah.e.id, ay: tah.a.ay, havale: hv || null, elden: el || null, tarih: tah.tarih, istek_id: tah.istek_id } });
       onToast?.(r.mesaj); setTah(null); yukle();
     } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
     setMesgul(false);
@@ -98,15 +99,21 @@ function EvKiralari({ onToast }) {
           <div>Kira <b style={num}>{fmt(sec.a.beklenen)}</b> ₺ · gelen <b style={num}>{fmt(sec.a.odenen)}</b> ₺ · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺{sec.a.fazla > 0 && <> · <b style={{ color: R.amber }}>+{fmt(sec.a.fazla)} ₺ fazla geldi</b></>}</div>
           <div style={{ color: R.not, fontSize: 13 }}>Ödeme günü {tKisa(sec.a.vade)} · {DURUM[sec.a.durum]?.ad}{sec.e.kiraci ? ` · ${sec.e.kiraci}` : ''}</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {sec.a.kalan > 0 && <Dugme kucuk ana onClick={() => { setTah({ e: sec.e, a: sec.a, tutar: String(sec.a.kalan), tarih: gunBugun(), istek_id: yeniId() }); setSec(null); }}>Kira geldi →</Dugme>}
+            {sec.a.kalan > 0 && <Dugme kucuk ana onClick={() => { setTah({ e: sec.e, a: sec.a, tutar: '', elden: '', tarih: gunBugun(), istek_id: yeniId() }); setSec(null); }}>Kira geldi →</Dugme>}
             <Dugme kucuk onClick={() => { setForm({ id: sec.e.id, ad: sec.e.ad, kiraci: sec.e.kiraci || '', tutar: String(sec.e.kira), gecerli_ay: ayBugun(), odeme_gunu: String(sec.e.odeme_gunu), artis_ayi: sec.e.artis_ayi ? String(sec.e.artis_ayi) : '', baslangic_ay: sec.e.baslangic_ay, bitis_ay: sec.e.bitis_ay || '', aktif: sec.e.aktif, not_: sec.e.not || '' }); setSec(null); }}>Evi düzelt</Dugme>
           </div>
         </Pencere>
       )}
       {tah && (
         <Pencere baslik={`💰 ${tah.e.ad} · ${ayAdi(tah.a.ay)} kirası geldi`} onKapat={() => setTah(null)}>
-          <div style={{ fontSize: 13, color: R.metin2 }}>Fatma'nın kira hesabına giriş olarak yazılır.</div>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Gelen tutar (₺)<input style={alan} inputMode="decimal" value={tah.tutar} onChange={(e) => setTah((t) => ({ ...t, tutar: e.target.value }))} /></label>
+          <div style={{ fontSize: 13, color: R.metin2 }}>Nasıl geldiyse oraya yaz — ikisi birden de olur. Elden alınan kira Fatma'nın evine değil "elindeki kira"ya girer (kahve parasına karışmaz).</div>
+          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>🏦 Bankaya gelen — Fatma'nın kira hesabı (₺)<input style={alan} inputMode="decimal" value={tah.tutar} placeholder="0" onChange={(e) => setTah((t) => ({ ...t, tutar: e.target.value }))} /></label>
+          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>💵 Elden alınan (₺)<input style={alan} inputMode="decimal" value={tah.elden || ''} placeholder="0" onChange={(e) => setTah((t) => ({ ...t, elden: e.target.value }))} /></label>
+          {(() => {   // Fable L6: iki alan boş açılır; toplam beklenenle kıyaslanır (çift yazma görünsün)
+            const hv = sayiTR(tah.tutar || '0'), el = sayiTR(tah.elden || '0'), top = (Number.isNaN(hv) ? 0 : hv) + (Number.isNaN(el) ? 0 : el);
+            const fz = top - tah.a.kalan;
+            return <div style={{ fontSize: 13, color: fz > 0.5 ? R.amber : R.not }}>Bekleyen <b style={num}>{fmt(tah.a.kalan)}</b> ₺ · yazılan toplam <b style={num}>{fmt(top)}</b> ₺{fz > 0.5 && <> · <b>{fmt(fz)} ₺ fazla</b></>}</div>;
+          })()}
           <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Geldiği gün<input style={alan} type="date" value={tah.tarih} max={gunBugun()} onChange={(e) => setTah((t) => ({ ...t, tarih: e.target.value }))} /></label>
           <div><Dugme ana disabled={mesgul} onClick={tahsilEt}>Kaydet</Dugme></div>
           {bagsiz.length > 0 && (

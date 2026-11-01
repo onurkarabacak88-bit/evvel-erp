@@ -282,7 +282,9 @@ def kalem_kaydet(b: KalemBody, mid: Optional[str] = None, x_evvel_oturum: Option
 class TahsilatBody(BaseModel):
     mulk_id: str
     ay: str
-    tutar: TrTutar
+    tutar: Optional[TrTutar] = None   # eski istemci: tamamı bankaya
+    havale: Optional[TrTutar] = None  # sahip 1 Kas: bankaya (Fatma'nın kira hesabı) gelen
+    elden: Optional[TrTutar] = None   # elden alınan → Fatma'nın elindeki kira (Mülk nakdi, işletmeye karışmaz)
     tarih: Optional[str] = None
     istek_id: Optional[str] = None
 
@@ -303,12 +305,19 @@ def tahsilat(b: TahsilatBody, x_evvel_oturum: Optional[str] = Header(default=Non
         raise HTTPException(404, "Ev bulunamadı")
     k = dict(k)
     import evvel_yeni_kasa_api as kasa
-    r = kasa.hareket_ekle(kasa.HareketBody(tur="dis", is_gunu=(b.tarih or _bugun().isoformat())[:10], cep=KIRA_CEP, tutar=b.tutar, alt="kira",
+    hv = b.havale if (b.havale is not None or b.elden is not None) else b.tutar
+    parcalar = [kasa.Parca(cep=c, tutar=t) for c, t in ((KIRA_CEP, hv), ("nakit:kira", b.elden)) if t is not None and _kurus(t) > 0]
+    if not parcalar:
+        raise HTTPException(400, "Tutar gir")
+    toplam_tl = _tl_sayi(sum(_kurus(p.tutar) for p in parcalar))   # mesajdaki fazla / kalan hesabı toplamla
+    r = kasa.hareket_ekle(kasa.HareketBody(tur="dis", is_gunu=(b.tarih or _bugun().isoformat())[:10], cep=parcalar[0].cep,
+                                           parcalar=parcalar, tutar=None, alt="kira",
                                            kimden=(k.get("kiraci") or k["ad"])[:80], not_=f"{k['ad']} · {ay} kirası",
                                            bag={"modul": "mulk", "id": b.mulk_id, "ay": ay}, istek_id=b.istek_id), x_evvel_oturum)
-    msj = r.get("mesaj") or f"{k['ad']} · {_AY[int(ay[5:7]) - 1]} kirası Fatma'nın kira hesabına girdi"
+    nereye = " + ".join(("kira hesabına" if p.cep == KIRA_CEP else "elden (elindeki kira)") for p in parcalar)
+    msj = (r.get("mesaj") if r.get("tekrar") else None) or f"{k['ad']} · {_AY[int(ay[5:7]) - 1]} kirası girdi — {nereye}"
     if hucre and hucre["beklenen"] and not r.get("tekrar"):
-        fz = round(_tl_sayi(_kurus(b.tutar)) - hucre["kalan"], 2)
+        fz = round(toplam_tl - hucre["kalan"], 2)
         if fz >= 1:
             msj += f" · ⚠ {hucre['kalan']:,.0f} ₺ bekleniyordu, {fz:,.0f} ₺ FAZLA geldi (Uyarılar'da görünür)".replace(",", ".")
     return {"ok": True, "tekrar": bool(r.get("tekrar")), "mesaj": msj}

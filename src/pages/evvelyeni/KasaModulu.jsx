@@ -207,7 +207,7 @@ function CepKart({ c, onAc, serit }) {
       boxShadow: serit && c.seviye === 'kirmizi' ? `inset 0 0 0 1px ${alfa(R.kirmizi, 35)}` : 'none',
     }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: serit ? 'flex-start' : 'baseline', gap: serit ? 2 : 8, flexDirection: serit ? 'column' : 'row' }}>
-        <span style={{ fontWeight: 700, fontSize: 13 }}>{serit && <span style={{ ...etiketStil, display: 'block' }}>{c.kira ? 'Kira hesabı' : ({ ev: 'Patron evi', sube: 'Dükkân nakdi', banka: 'Banka', hesap: 'Geçiş hesabı' }[c.tur])}</span>}{c.ad}</span>
+        <span style={{ fontWeight: 700, fontSize: 13 }}>{serit && <span style={{ ...etiketStil, display: 'block' }}>{c.kira ? (c.tur === 'ev' ? 'Kira nakdi' : 'Kira hesabı') : ({ ev: 'Patron evi', sube: 'Dükkân nakdi', banka: 'Banka', hesap: 'Geçiş hesabı' }[c.tur])}</span>}{c.ad}</span>
         {sayimKarti && !ss
           ? <span style={{ fontSize: serit ? 17 : 14, fontWeight: 600, color: R.not2 }}>{c.sayim_hata ? 'sayım okunamadı' : 'sayım yok'}</span>
           : <span style={{ ...num, fontSize: serit ? 21 : 15, fontWeight: 600, color: eski ? R.not2 : (ss ? false : bos) ? R.not2 : R.krem }}>{tl(ss ? ss.tutar : c.bakiye)}</span>}
@@ -565,7 +565,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         {tip === 'teslim' && (
           <div style={izgara}>
             <Alan etiket="Teslim eden şube"><select value={d.kaynak} onChange={set('kaynak')} style={alanStil}>{secenek(['sube'], true)}</select></Alan>
-            <Alan etiket="Teslim alan patron"><select value={d.hedef} onChange={set('hedef')} style={alanStil}>{secenek(['ev', 'hesap'])}</select></Alan>
+            <Alan etiket="Teslim alan patron"><select value={d.hedef} onChange={set('hedef')} style={alanStil}>{secenek(['ev', 'hesap']).filter((o) => !(cepler.find((c) => c.id === o.key) || {}).kira)}</select></Alan>
             <Alan etiket="Teslim eden personel"><select value={d.teslim_eden || ''} onChange={set('teslim_eden')} style={alanStil}>
               <option value="">Seç…</option>
               {personeller.filter((p) => !(d.kaynak || '').startsWith('sube:') || !p.sube_id || p.sube_id === d.kaynak.slice(5)).map((p) => <option key={p.id} value={p.ad}>{p.ad}</option>)}
@@ -1346,12 +1346,12 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
   if (!veri) return <div className="pi"><style>{PI_CSS}</style><div style={{ color: R.not }}>Kasa okunuyor…</div></div>;
 
   const o = veri.ozet;
-  const evler = veri.cepler.filter((c) => c.tur === 'ev' && !c.gizli);
+  const evler = veri.cepler.filter((c) => c.tur === 'ev' && !c.gizli && !c.kira);   // Fable L6: kira nakdi Evler'e karışmaz (o.ev kira hariç)
   const subeler = veri.cepler.filter((c) => c.tur === 'sube' && !c.gizli);   // B13: boş pasif şube görünmez
   const hesaplar = veri.cepler.filter((c) => c.tur === 'hesap');
   const bankalar = veri.cepler.filter((c) => c.tur === 'banka' && !c.kira && !c.gizli);
-  const kiraHesap = veri.cepler.filter((c) => c.tur === 'banka' && c.kira);
-  const acilisEksik = veri.cepler.filter((c) => !c.gizli && !(veri.acilis_girilen || []).includes(c.id));
+  const kiraHesap = veri.cepler.filter((c) => c.kira);   // kira hesabı + elindeki kira (o.kira ikisini de sayar)
+  const acilisEksik = veri.cepler.filter((c) => !c.gizli && !(c.kira && c.tur === 'ev') && !(veri.acilis_girilen || []).includes(c.id));   // kira nakdi 0'dan başlar
   const deg = veri.degisim_toplam;      // B6: manşetle aynı kapsam (kira dahil)
   const degIs = veri.degisim_isletme;   // işletme parası ayrı
   const k = veri.kpi;
