@@ -697,7 +697,8 @@ def liste(gorunum: str = "acik", gun_sayisi: int = 30, x_evvel_oturum: Optional[
         uids = sorted({k["urun_id"] for s in hepsi for k in s["kalemler"] if k.get("urun_id")})
         bil = urun_bilgi(cur, uids)
         son_top = _son_toptancilar(cur, uids)
-        aktif_top = set(_toptanci_adlari(cur))
+        top_ad = _toptanci_adlari(cur)   # sahip 1 Kas (Fable L4b): seçim listesi de buradan — Ödeme izni olmayan müdür de görsün
+        aktif_top = set(top_ad)
         try:   # sahip 28 Eki: toptancıya WhatsApp — okunamazsa liste bozulmaz, yalnız iletim bloğu çıkmaz
             with savepoint(cur, "sp_sip_iletim"):
                 _toptanci_iletimleri(cur, hepsi, bil)
@@ -726,11 +727,12 @@ def liste(gorunum: str = "acik", gun_sayisi: int = 30, x_evvel_oturum: Optional[
                 top = None
             k["oneri_kaynak"] = top if (k["pasta"] or depo_yetmedi) else (f"depo:{depo}" if k.get("urun_id") else None)
     sec = [s for s in hepsi if (s["durum"] == "acik") == (gorunum != "gecmis")]
-    return {"siparisler": sec if gorunum != "gecmis" else list(reversed(sec)), "depo": depo}
+    return {"siparisler": sec if gorunum != "gecmis" else list(reversed(sec)), "depo": depo,
+            "toptancilar": [{"id": i, "ad": a} for i, a in top_ad.items()]}
 
 
 def _son_toptancilar(cur, uids: List[str]) -> dict:
-    """'Varsayılanları uygula' (A11): Toptancılar'ın son_toptancilar kapısı (modül kapalıysa boş)."""
+    """'Hepsini nereden… → ⭐ Önerilen' (A11, eski 'Varsayılanları uygula'): Toptancılar'ın son_toptancilar kapısı (modül kapalıysa boş)."""
     f = _toptanci("son_toptancilar")
     if not f:
         return {}

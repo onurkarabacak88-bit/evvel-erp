@@ -2,7 +2,7 @@
 // burada kalem kalem yönlendirilir: merkez DEPO (Sevk → Depodan gelen) ya da TOPTANCI (şube Tedarikçiden teslim al'da karşılar).
 // Bölünebilir (5 depodan + 5 toptancıdan). Stok / borç YAZMAZ — yalnız "nereden gelecek" kararı. Katalog dışı öneri → ürüne bağla / reddet.
 // Eksik karşılanan kalem → sebep yazıp kapat. Yola çıkmış / teslime bağlanmış satır değişmez (sunucu da reddeder).
-// Ortak parçalar KasaModulu'ndan (PI_CSS, R, kart, Dugme, Cip) — yeni stil yazılmaz. Listeler: /odeme/listeler (toptancılar) + /urun/katalog.
+// Ortak parçalar KasaModulu'ndan (PI_CSS, R, kart, Dugme, Cip) — yeni stil yazılmaz. Listeler: kendi ucu /siparis/liste (aktif toptancılar — Ödeme izni olmayan müdür de görür, sahip 1 Kas) + /urun/katalog.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
 import { ALAN, Cip, Dugme, kart, num, PI_CSS, R, sayfayaGit, sor, tKisa } from './KasaModulu';
@@ -18,7 +18,6 @@ const kilitli = (y) => !['hazirlaniyor', 'bekleniyor'].includes(y.durum);   // y
 export default function SiparisModulu({ onToast }) {
   const [gorunum, setGorunum] = useState('acik');
   const [v, setV] = useState(null);
-  const [L, setL] = useState(null);
   const [kat, setKat] = useState([]);
   const [hata, setHata] = useState('');
   const [taslak, setTaslak] = useState({});   // sid → { i → [{kaynak, adet}] }
@@ -30,13 +29,12 @@ export default function SiparisModulu({ onToast }) {
     .catch((e) => setHata(e?.message || 'Siparişler okunamadı')), [gorunum]);
   useEffect(() => { yukle(); }, [yukle]);
   useEffect(() => {
-    api('/evvel-yeni/odeme/listeler').then(setL).catch(() => setHata('Toptancı listesi okunamadı — sayfayı yenile'));
     api('/evvel-yeni/urun/katalog?hepsi=false').then((d) => setKat(d?.kategoriler || [])).catch(() => {});
   }, []);
   const kaynaklar = useMemo(() => [
     ...(v?.depo ? [{ id: `depo:${v.depo}`, ad: '📦 Merkez depo' }] : []),
-    ...((L?.toptancilar || []).map((t) => ({ id: `toptanci:${t.id}`, ad: `🚚 ${t.ad}` }))),
-  ], [v, L]);
+    ...((v?.toptancilar || []).map((t) => ({ id: `toptanci:${t.id}`, ad: `🚚 ${t.ad}` }))),
+  ], [v]);
   const urunler = useMemo(() => kat.flatMap((k) => (k.urunler || []).map((u) => ({ ...u, kategori: k.ad }))), [kat]);
 
   const is_ = async (sid, yol, govde, mesaj) => {
@@ -60,12 +58,22 @@ export default function SiparisModulu({ onToast }) {
     return ac;
   };
   const yonSet = (s, k, liste) => setTaslak((o) => ({ ...o, [s.id]: { ...(o[s.id] || {}), [k.i]: liste } }));
-  const varsayilan = (s) => {
-    const ek = {};
-    s.kalemler.forEach((k) => {
-      if (k.durum === 'yonlendirilmedi' && k.yonsuz > 0 && k.oneri_kaynak) ek[k.i] = [...yonlerOf(s, k), { kaynak: k.oneri_kaynak, adet: k.yonsuz }];
+  // sahip 1 Kas (Fable L4b): "Hepsini: Nereden…" — yönlendirilmemiş kalemlerin KALANI tek seçimle; 'oneri' = kalem başına önerilen
+  // (eski 'Varsayılanları uygula'). ÜSTÜNE YAZAR (taban sunucudaki açık satırlar) → iki kez basınca toplam aşmaz. Pasta depoya gitmez.
+  const uygunlar = (s) => s.kalemler.filter((k) => k.durum === 'yonlendirilmedi' && k.yonsuz > 0 && k.urun_id);
+  const hepsini = (s, secim) => {
+    if (!secim) return;
+    const ek = {}; const pasta = []; const onerisiz = []; let ezilen = 0;
+    uygunlar(s).forEach((k) => {
+      const kaynak = secim === 'oneri' ? k.oneri_kaynak : secim;
+      if (!kaynak) { onerisiz.push(k.ad); return; }
+      if (k.pasta && kaynak.startsWith('depo:')) { pasta.push(k.ad); return; }
+      if (taslak[s.id]?.[k.i]) ezilen += 1;   // Fable L6: elle yapılmış taslak değişti — söylensin
+      ek[k.i] = [...k.yonler.filter((y) => !kilitli(y)).map((y) => ({ kaynak: y.kaynak, adet: y.adet })), { kaynak, adet: k.yonsuz }];
     });
     setTaslak((o) => ({ ...o, [s.id]: { ...(o[s.id] || {}), ...ek } }));
+    const ad = secim === 'oneri' ? 'önerilene' : (kaynaklar.find((x) => x.id === secim)?.ad || '');
+    onToast?.(`${Object.keys(ek).length} kalem → ${ad}${ezilen ? ` · ${ezilen} kalemde elle yapılan seçim değişti` : ''}${pasta.length ? ` · 🍰 ${pasta.join(', ')}: pasta depodan gönderilmez — toptancı seç` : ''}${onerisiz.length ? ` · öneri yok: ${onerisiz.join(', ')}` : ''} — kaydetmek için «Yönlendir»`);
   };
   const kaydet = async (s) => {
     const t = taslak[s.id] || {};
@@ -107,10 +115,19 @@ export default function SiparisModulu({ onToast }) {
               {s.deneme && <Cip tur="sari">deneme</Cip>}
               {s.durum !== 'acik' && <Cip tur={s.durum === 'iptal' ? undefined : 'yesil'}>{s.durum === 'iptal' ? `iptal${s.iptal_sebep ? ` — ${s.iptal_sebep}` : ''}` : 'tamamlandı'}</Cip>}
               <span style={{ flex: 1 }} />
-              {acik && <Dugme kucuk disabled={mesgul[s.id]} onClick={() => varsayilan(s)} title="Yönlendirilmemiş kalemleri son toptancıya / merkez depoya doldur">Varsayılanları uygula</Dugme>}
               {acik && <Dugme kucuk ana disabled={mesgul[s.id] || !degisti} onClick={() => kaydet(s)}>{mesgul[s.id] ? 'Kaydediliyor…' : 'Yönlendir'}</Dugme>}
               {acik && <Dugme kucuk disabled={mesgul[s.id]} onClick={async () => { const r = await sor({ soru: 'Sipariş neden iptal ediliyor?', giris: true, tamam: 'Siparişi iptal et' }); if (r && r.trim()) is_(s.id, 'iptal', { sebep: r.trim(), surum: s.surum }, 'Sipariş iptal edildi'); }}>Siparişi iptal</Dugme>}
             </div>
+            {acik && uygunlar(s).length > 0 && (
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+                <select value="" disabled={mesgul[s.id]} style={{ ...alan, flex: '1 1 160px', minWidth: 0 }} title="Yönlendirilmemiş bütün kalemleri tek seçimle doldur — tek tek değiştirilebilir"
+                  onChange={(e) => hepsini(s, e.target.value)}>
+                  <option value="">Hepsini nereden… ({uygunlar(s).length} kalem)</option>
+                  <option value="oneri">⭐ Önerilen (son toptancı / depo)</option>
+                  {kaynaklar.map((x) => <option key={x.id} value={x.id}>{x.ad}</option>)}
+                </select>
+              </div>
+            )}
             {s.notu && <div style={{ fontSize: 12.5, color: R.metin2 }}>📝 {s.notu}</div>}
             {s.kalemler.map((k) => {
               const [dAd0, dTur0] = DURUM[k.durum] || [k.durum];
