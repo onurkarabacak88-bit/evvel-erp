@@ -146,7 +146,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
   const iptalEt = async (x) => {
     const sebep = await soruYaz(`"${x.aciklama}" (${fmt(x.toplam)} ₺) iptal edilsin mi?\nKısaca neden yaz:`);
     if (!sebep || !sebep.trim()) return;
-    try { await api(`/evvel-yeni/kasa/hareket/${x.id}/iptal`, { method: 'POST', body: { sebep: sebep.trim() } }); onToast?.('Ödeme iptal edildi — para cebine geri döndü'); setTb(null); listeYukle(); api('/evvel-yeni/odeme/listeler').then(setL).catch(() => {}); }
+    try { await api(`/evvel-yeni/kasa/hareket/${x.id}/iptal`, { method: 'POST', body: { sebep: sebep.trim() } }); onToast?.(x.devir ? 'Kayıt geri alındı (para hareketsizdi — hiçbir cep değişmedi)' : 'Ödeme iptal edildi — para cebine geri döndü'); setTb(null); listeYukle(); api('/evvel-yeni/odeme/listeler').then(setL).catch(() => {}); }
     catch (e) { onToast?.(e?.message || 'İptal edilemedi'); }
   };
   const parcaSet = (i, k, v) => setF((x) => ({ ...x, parcalar: x.parcalar.map((p, j) => (j === i ? { ...p, [k]: v } : p)) }));
@@ -408,7 +408,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
       {/* ÖDEME DEFTERİ — gün gün (sahip: ayrı sekme) */}
       {defter && (() => {
         const gosterilen = (liste?.odemeler || []).filter((x) => tumAy || x.tarih === gun);
-        const t = (k) => gosterilen.reduce((a, x) => a + (k === 'toplam' ? x.toplam : k === 'nakit' ? x.nakit.reduce((q, n) => q + n.tutar, 0) : x.kart.reduce((q, n) => q + n.tutar, 0)), 0);
+        const t = (k) => gosterilen.reduce((a, x) => a + (k === 'toplam' ? (x.devir ? 0 : x.toplam) :   /* para hareketsiz devir ay toplamına girmez (sunucuyla aynı) */ k === 'nakit' ? x.nakit.reduce((q, n) => q + n.tutar, 0) : x.kart.reduce((q, n) => q + n.tutar, 0)), 0);
         return (
       <div style={{ ...kart, overflow: 'hidden' }}>
         <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--pi-line)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>

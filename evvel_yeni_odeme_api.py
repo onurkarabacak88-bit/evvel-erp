@@ -275,7 +275,7 @@ def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
         etiket += f" · {body.aciklama.strip()[:60]}"
 
     # ── PARÇALAR ──
-    nakit_parca, kart_parca = [], []
+    nakit_parca, kart_parca, hareketsiz = [], [], 0
     for p in body.parcalar:
         t = _kurus(p.tutar)
         if t < 0:
@@ -295,9 +295,19 @@ def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
             if not k:
                 raise HTTPException(400, "Kart seç")
             kart_parca.append({"kart_id": k["id"], "kart_ad": k["ad"], "tutar": t})
+        elif p.yontem == "hareketsiz":   # sahip 2 Kas (Fable L4b): eski sistemde / önceki ay ödenmiş maaş — kasadan çıkmaz
+            hareketsiz += t
         else:
             raise HTTPException(400, "Ödeme yöntemi: nakit / havale / kart")
-    if not nakit_parca and not kart_parca:
+    if hareketsiz:
+        from evvel_yeni_maas_api import _yeni_hesap
+        if len(body.parcalar) != 1 or body.konu != "personel" or body.personel_kalemi != "Maaş":   # Fable L6: Ekim'de yemek ayrı kalem değil
+            raise HTTPException(400, "Para hareketsiz kayıt yalnız tek başına, personelin maaşı için girilir")
+        if ait_ay >= _yeni_hesap(cur):
+            raise HTTPException(400, "Para hareketsiz kayıt yalnız eski sistem ayları (Ekim ve öncesi) için — bu ay para hareketli ödenir")
+        if len((body.aciklama or "").strip()) < 10:
+            raise HTTPException(400, "Ne zaman / nereden ödendiğini en az 10 harfle yaz")
+    if not nakit_parca and not kart_parca and not hareketsiz:
         raise HTTPException(400, "Tutar gir")
     if body.konu == "kart_borcu" and kart_parca:
         raise HTTPException(400, "Kart borcu kartla ödenemez — nakit ya da havale seç")
@@ -305,7 +315,7 @@ def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
         raise HTTPException(400, "Personel ödemesi kartla yapılmaz — nakit ya da havale seç")
     if len({x["cep"] for x in nakit_parca}) != len(nakit_parca):
         raise HTTPException(400, "Aynı cep iki kez seçilemez")
-    toplam = sum(x["tutar"] for x in nakit_parca) + sum(x["tutar"] for x in kart_parca)
+    toplam = sum(x["tutar"] for x in nakit_parca) + sum(x["tutar"] for x in kart_parca) + hareketsiz
     if konu.get("borc_ref"):   # D-1: kalandan fazla geri ödeme yok (iki borca birden de yok — her ödeme tek borca)
         if str(gun) < str(borc["tarih"]):
             raise HTTPException(400, f'Bu borç {borc["tarih"]} günü alındı — ondan önceki bir güne geri ödeme girilemez')
@@ -318,6 +328,9 @@ def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
             "yontemler": [x["yontem"] for x in nakit_parca] + ["kart"] * len(kart_parca),
             "kart_parcalar": kart_parca, "konu": konu, "gider": gider_mi, "ait_ay": ait_ay,
             "toplam": toplam, "kaynak": "odeme_formu", "not": (body.aciklama or "").strip()[:200]}
+    if hareketsiz:   # devir_kaydi_yaz ile AYNI biçim (Kasa etkisi yok, Ödeme defteri 'devir' sayar, ay toplamına girmez)
+        veri.update(yontemler=["hareketsiz"], kaynak="eski_devir", gider=False,
+                    aciklama=f"Eski sistemde ödenen · para hareketsiz · {etiket}"[:120])
     if kimin == "patron" and body.patron in PATRONLAR:
         veri["patron"] = body.patron
     if not body.tekrar_onay:
@@ -330,14 +343,22 @@ def odeme_yaz(cur, body: OdemeBody, kim: str) -> dict:
             if any((x["cep"], x["tutar"]) in eski for x in nakit_parca):
                 raise HTTPException(409, f"BENZER KAYIT: aynı gün, aynı yerden, aynı tutarda bir ödeme zaten var — "
                                          f"\"{h['veri'].get('aciklama') or 'Ödeme'}\". Aynı harcamayı iki kez girmiyorsan yine de kaydedebilirsin.")
-    if body.konu == "personel" and body.personel_kalemi in ("Maaş", "Yemek ücreti") and not body.tekrar_onay:
+    if body.konu == "personel" and body.personel_kalemi in ("Maaş", "Yemek ücreti") and (not body.tekrar_onay or hareketsiz):
         try:
             from evvel_yeni_maas_api import hesapla as _maas_hesapla
             ms = next(iter(_maas_hesapla(cur, ait_ay, sadece=str(body.personel_id))), None)
         except Exception:  # noqa: BLE001
+            if hareketsiz:
+                raise HTTPException(503, "Maaş hesabı okunamadı — tekrar dene")
             ms = None
+        if hareketsiz and ms is None:
+            raise HTTPException(400, "Bu kişinin o ay kalanı yok — kapatılacak bir şey bulunamadı")
+        if hareketsiz and (ms.get("odeme_kalemleri") or {}).get("Eski sistemde ödenen"):   # Fable L6: iki sistemde max alınır, kapanmaz
+            raise HTTPException(400, "Bu kişiye eski sistemde zaten ödeme görünüyor — para hareketsiz kayıt girilmez, merkeze sor")
         if ms is not None:
             sinir = _kurus(ms["oneri"].get(body.personel_kalemi, 0))
+            if hareketsiz and toplam > sinir + 100:   # Fable: para yokken fazla kapatma sahte kapanış olur — onayla geçilmez
+                raise HTTPException(400, f"Kalan {_tl(sinir)} — para hareketsiz kayıt kalandan fazla olamaz")
             if toplam > sinir + 100:
                 raise HTTPException(409, f"KALANI AŞIYOR: {ms['ad']} · {ait_ay} için kalan {body.personel_kalemi.lower()} "
                                          f"{_tl(sinir)} — girilen {_tl(toplam)}. Doğruysa yine de kaydedebilirsin.")
