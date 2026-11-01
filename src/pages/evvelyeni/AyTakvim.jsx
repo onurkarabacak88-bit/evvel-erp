@@ -10,6 +10,7 @@ const GRI = 'var(--pi-ink3, #7F6C57)';
 export const DURUM = {
   odendi: { renk: R.yesil, ad: 'ödendi', ikon: '✓' },
   kismi: { renk: R.amber, ad: 'kısmi', ikon: '◐' },
+  asgari_odendi: { renk: '#6E9F6A', ad: 'asgari ödendi · kalan devretti', ikon: '◑' },   // yalnız kart (sahip 1 Kas)
   odeme_var: { renk: R.amber, ad: 'ödeme var · ekstre bilinmiyor', ikon: '?' },
   gecikti: { renk: R.kirmizi, ad: 'gecikti', ikon: '!' },
   yaklasiyor: { renk: '#D9822B', ad: 'yaklaşıyor', ikon: '⏰' },
@@ -30,10 +31,10 @@ export function YilSecici({ yil, setYil }) {
 }
 
 // ek: [{ ad, renk }] — ekrana özgü işaret (ör. kira artış ayı, çerçeveli)
-export function Lejant({ ek = [] }) {
+export function Lejant({ ek = [], durumlar = ['odendi', 'kismi', 'gecikti', 'yaklasiyor', 'gelecek'] }) {
   return (
     <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap', fontSize: 12.5 }}>
-      {['odendi', 'kismi', 'gecikti', 'yaklasiyor', 'gelecek'].map((k) => (
+      {durumlar.map((k) => (
         <span key={k}><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 3, background: DURUM[k].renk, marginRight: 5 }} />{DURUM[k].ad}</span>
       ))}
       {ek.map((x) => <span key={x.ad}><span style={{ display: 'inline-block', width: 10, height: 10, borderRadius: 3, border: `2px solid ${x.renk}`, background: `${x.renk}33`, marginRight: 5 }} />{x.ad}</span>)}

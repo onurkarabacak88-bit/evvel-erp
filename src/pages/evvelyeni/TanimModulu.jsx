@@ -62,7 +62,7 @@ const YAPI = {
     not: 'Kartın bankadaki kullanılabilir limiti Kartlar bölümünden teyit edilir. Aynı limiti paylaşan kartlara aynı "ortak limit" adını yaz.',
     alanlar: [{ k: 'ad', ad: 'Kart adı (ör. Garanti Onur 3018)', zorunlu: true }, { k: 'banka', ad: 'Banka' }, { k: 'kimin', ad: 'Kimin kartı' },
       { k: 'limit_tutar', ad: 'Kart limiti ₺', sayi: true }, { k: 'kesim_gunu', ad: 'Hesap kesim günü (1–31)', sayi: true }, { k: 'son_odeme_gunu', ad: 'Son ödeme günü (1–31)', sayi: true },
-      { k: 'limit_grup', ad: 'Ortak limit adı (varsa)' }],
+      { k: 'limit_grup', ad: 'Ortak limit adı (varsa)', bosGonder: true }],   // boşaltılınca '' gider = gruptan çıkar (KB-6, Fable L6)
     kolon: (x) => [x.ad, [x.banka, x.kimin].filter(Boolean).join(' · ') || '—', `limit ${x.limit_tutar != null ? fmt(x.limit_tutar) : '—'} · kesim ${x.kesim_gunu || '—'} · son ödeme ${x.son_odeme_gunu || '—'}${x.limit_grup ? ` · ortak: ${x.limit_grup}` : ''}`],
   },
   tanim_toptanci: {
@@ -108,6 +108,7 @@ export default function TanimModulu({ gorunum, onToast }) {
         if (a.sayi) { const n = sayi(form[a.k]); if (Number.isNaN(n)) throw new Error(`${a.ad}: sayı yaz`); if (n != null) body[a.k] = n; }
         else if (a.secim === 'sube') body[a.k] = form[a.k] || (yeni ? null : 'ortak');
         else if (a.secim === 'evet_hayir' || a.secim === 'erken' || a.secim === 'evet_yetki') body[a.k] = form[a.k] === '1' ? true : form[a.k] === '0' ? false : null;
+        else if (a.bosGonder) body[a.k] = form[a.k] ?? '';
         else body[a.k] = form[a.k] || null;
       }
       const r = await api(`/evvel-yeni/tanim/${y.tur}${form.id ? `/${encodeURIComponent(form.id)}` : ''}`, { method: 'POST', body });

@@ -8,7 +8,8 @@ SADE MODEL — tek rakam: KULLANILABİLİR LİMİT (bankanın uygulamasında yaz
   · Sonrası: Ödeme formunda KARTLA ödenen her parça kullanılabiliri AZALTIR; "Kart borcu" ödemesi ARTIRIR.
   · Teyit: bankadaki rakam girilir → yeni çıpa; sistemin beklediğiyle FARK gösterilir (girilmemiş harcama/ödeme).
   · Son ödeme: kartın son ödeme günü + teyitte girilen ekstre borcu − o tarihten sonra ödenen = KALAN.
-  Taksit / faiz / asgari / satır eşleştirme YOK (bilinçli).
+  Taksit / faiz / satır eşleştirme YOK (bilinçli). Asgari HESAPLANMAZ — bankanın yazdığı rakam yalnız takvim etiketi için girilir
+  (sahip 1 Kas, Fable L4b): "asgari ödendi · kalan devretti"; devreden kısım bir sonraki ekstre teyidiyle bankadan gelir.
 """
 
 import uuid
@@ -36,6 +37,7 @@ def kart_hazirla(cur) -> None:
     """Kart alanları + teyit defteri; ilk çıpa eski sistemin son ekstre kaydından (yalnız BOŞ olanlara)."""
     global _HAZIR
     if _HAZIR:
+        _asgari_kolonu(cur)
         return
     from evvel_yeni_tanim_api import kartlar as _kartlar, tanim_hazirla
     tanim_hazirla(cur)   # eski kart limit/kesim kopyası da orada (ey_kart Tanımlar'ın — F#31)
@@ -68,6 +70,29 @@ def kart_hazirla(cur) -> None:
     except Exception:  # noqa: BLE001
         pass
     _HAZIR = True
+    _asgari_kolonu(cur)
+
+
+_ASGARI = False
+
+
+def _asgari_kolonu(cur) -> None:
+    """Sahip 1 Kas (Fable L4b): ekstre teyidinde bankanın yazdığı ASGARİ. Yalnız eksikse, savepoint + lock_timeout (avans teslim_pid kalıbı)."""
+    global _ASGARI
+    if _ASGARI:
+        return
+    ck = __import__("evvel_yeni_cekirdek")
+    if not ck.kolon_var(cur, "ey_kart_teyit", "asgari"):
+        try:
+            with savepoint(cur, "sp_ey_kart_asgari"):
+                _lt = ck.lock_timeout_ayarla(cur, "3s")
+                cur.execute("ALTER TABLE ey_kart_teyit ADD COLUMN IF NOT EXISTS asgari BIGINT")
+                ck.lock_timeout_ayarla(cur, _lt)
+        except Exception:  # noqa: BLE001
+            pass   # sonraki istekte yeniden
+        return   # Codex P1 (adım 62): kuran işlem geri alınabilir → bayrak ancak SONRAKİ istekte kolon görülünce açılır
+    if not ck.ddl_bu_islemde(cur):
+        _ASGARI = True
 
 
 def _hareketler(kayit) -> dict:
@@ -113,8 +138,11 @@ def ekstre_teyitleri(satirlar) -> dict:
         e = int(t["ekstre_borc"])
         o = out.get(a)
         if o and o["son"] == t["son_odeme"] and o["ekstre"] == e:
+            if t.get("asgari"):   # Fable L4b (1 Kas): asgari sonradan aynı ekstre yeniden teyit edilerek eklenir — EN SON girilen
+                o["asgari"] = int(t["asgari"])
             continue   # aynı ekstrenin yeniden teyidi — ilk teyit tarihi korunur
-        out[a] = {"ekstre": e, "son": t["son_odeme"], "tarih": t["tarih"], "zaman": t.get("zaman")}
+        out[a] = {"ekstre": e, "son": t["son_odeme"], "tarih": t["tarih"], "zaman": t.get("zaman"),
+                  "asgari": int(t["asgari"]) if t.get("asgari") else None}
     return out
 
 
@@ -177,7 +205,12 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
         limit = int(k["limit_tutar"]) if k.get("limit_tutar") else None
         # son ödeme: çıpanın ekstre borcu − çıpadan sonra yapılan borç ödemeleri
         ekstre_cipa = next((t for t in ty if t.get("ekstre_borc") is not None), None)   # Codex P2: 0 TL ekstre de teyittir (takvimle aynı)
+        # sahip 1 Kas (Fable L4b): borç dağılımı — bu dönem harcaması (son ekstre teyidinden sonra formdan) + önceki dönemlerden devreden
+        # (kullanılan − bu dönem; içinde ekstre kalanı + taksitler — ayırmaya veri yok, uydurulmaz). Tanımlar'daki açılış borcu yalnız bilgi.
+        ref = ekstre_cipa or cipa
+        bdh = -sum(x["tutar"] for x in hs if x["tur"] == "harcama" and ref and _teyitten_sonra(x, ref["tarih"], ref.get("zaman")))
         so = None
+        asgari = None
         if ekstre_cipa:
             if ekstre_cipa.get("son_odeme"):   # C-T1-09: takvimle AYNI kural — ödeme o ekstrenin ayına yerleştiyse düşülür
                 ety = [t for t in reversed(ty) if t.get("son_odeme") and t.get("ekstre_borc") is not None]   # B3: takvimle AYNI teyit kümesi
@@ -186,8 +219,10 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
                 ttar = {a: v["tarih"] for a, v in ets.items()}
                 tzam = {a: v["zaman"] for a, v in ets.items()}
                 e_ay = ekstre_cipa["son_odeme"].strftime("%Y-%m")
+                asgari = (ets.get(e_ay) or {}).get("asgari")
                 odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and odeme_ayi(k, x["gun"], x.get("donem"), tson, ttar, x.get("zaman"), tzam) == e_ay)
             else:
+                asgari = int(ekstre_cipa["asgari"]) if ekstre_cipa.get("asgari") else None
                 odenen = sum(x["tutar"] for x in hs if x["tur"] == "borc_odeme" and _teyitten_sonra(x, ekstre_cipa["tarih"], ekstre_cipa.get("zaman")))
             son_tarih = ekstre_cipa.get("son_odeme")
             kaydi = False
@@ -200,7 +235,11 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
                   "ekstre": _tl_sayi(int(ekstre_cipa["ekstre_borc"])), "odenen": _tl_sayi(odenen), "kalan": _tl_sayi(kalan),
                   "ekstre_tarihi": ekstre_cipa["tarih"].isoformat(), "eski": ekstre_cipa["kaynak"] == "eski_sistem",
                   # Fable: son günü geçen ekstrenin kalanı sıradaki aya taşınıyordu → yeni ekstre girilene kadar "teyit gerekli"
-                  "teyit_gerekli": kaydi}
+                  "teyit_gerekli": kaydi,
+                  # sahip 1 Kas: bankanın asgarisi ödendiyse vade karşılandı — kalan devreder (bir sonraki ekstreyle bankadan gelir)
+                  "asgari": _tl_sayi(asgari) if asgari else None,
+                  "asgari_odendi": bool(asgari and not kaydi and kalan > 0 and odenen >= asgari - 100),
+                  "asgari_odenmisti": bool(asgari and kaydi and kalan > 0 and odenen >= asgari - 100)}   # Fable L6 c2: takvimle aynı söz
             if kaydi:
                 so["kalan"] = None
         else:
@@ -216,6 +255,8 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
                       "not": cipa.get("not_"), "fark": (_tl_sayi(int(cipa["kullanilabilir"]) - int(cipa["sistem_beklenen"]))
                                                        if cipa.get("sistem_beklenen") is not None else None)} if cipa else None),
             "teyit_gun_once": (bugun - cipa["tarih"]).days if cipa else None,
+            "acilis_borc": _tl_sayi(int(k["acilis_borc"])) if k.get("acilis_borc") else None,   # Tanımlar · dönem başı — yalnız bilgi
+            "borc_dagilim": _borc_dagilim(limit - kul if (limit and kul is not None) else None, bdh),
             "hareketler": [{**x, "tutar": _tl_sayi(x["tutar"])} for x in reversed(sonra)][:40],
             "son_odeme": so,
             "teyitler": [{"id": t["id"], "tarih": t["tarih"].isoformat(), "kullanilabilir": _tl_sayi(int(t["kullanilabilir"])),
@@ -226,6 +267,7 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
             "_cipa_zaman": cipa.get("zaman") if cipa else None,
             "_sonra_kr": [(x["gun"], int(x["tutar"])) for x in sonra],   # C-T1-02: teyit beklenen BÜTÜN hareketlerden (kuruş)
             "_limit": limit,
+            "_bdh": bdh,
         })
     # ORTAK LİMİT (ör. aynı bankanın iki kartı tek limiti paylaşır): grubun en yeni teyidi + TÜM grup kartlarının sonraki hareketleri
     gruplar = {}
@@ -245,7 +287,16 @@ def kart_durumu(cur, bugun: Optional[date] = None, kayit=None) -> list:
                          "kullanilabilir": _tl_sayi(kul) if kul is not None else None,
                          "kullanilan": _tl_sayi(lim - kul) if (lim and kul is not None) else None, "teyit_karti": en["ad"] if en else None}
             k["kullanilabilir"], k["kullanilan"], k["limit"] = k["grup"]["kullanilabilir"], k["grup"]["kullanilan"], k["grup"]["limit"]
+            k["borc_dagilim"] = _borc_dagilim(lim - kul if (lim and kul is not None) else None, sum(x["_bdh"] for x in ks))   # Fable: grupta grup toplamı
     return out
+
+
+def _borc_dagilim(kullanilan, bu_donem) -> Optional[dict]:
+    """Kullanılan (kuruş) = bu dönem harcaması + önceki dönemlerden devreden. Devreden eksi çıkarsa 0 + teyit notu (Fable L4b)."""
+    if kullanilan is None:
+        return None
+    devreden = kullanilan - bu_donem
+    return {"bu_donem": _tl_sayi(bu_donem), "devreden": _tl_sayi(max(0, devreden)), "tutmuyor": devreden < 0}
 
 
 def kart_isleri(cur, kayit) -> list:
@@ -253,7 +304,8 @@ def kart_isleri(cur, kayit) -> list:
     out = []
     for k in kart_durumu(cur, kayit=kayit):
         so = k["son_odeme"]
-        if so and not so.get("eski") and so["gun_kaldi"] is not None and 0 <= so["gun_kaldi"] <= 7 and (so["kalan"] is None or so["kalan"] > 0):
+        if (so and not so.get("eski") and not so.get("asgari_odendi") and so["gun_kaldi"] is not None and 0 <= so["gun_kaldi"] <= 7
+                and (so["kalan"] is None or so["kalan"] > 0)):
             out.append({"tur": "kart_son_odeme", "grup": "odeme", "id": f"kso:{k['id']}:{so['tarih']}", "tarih": so["tarih"], "ad": k["ad"],
                         "gun_kaldi": so["gun_kaldi"], "kalan": so["kalan"], "ekstre": so["ekstre"]})
     return out
@@ -298,13 +350,13 @@ def kart_takvimi(yil: Optional[int] = None):
         kart_hazirla(cur)
         kartlar = __import__("evvel_yeni_tanim_api").kartlar(cur)   # Tanımlar'ın kapısı (F#31)
         # Codex: aynı aya birden çok teyit → EN SON girilen kazanır (sıralı okuma); teyitteki gerçek son ödeme tarihi korunur
-        cur.execute("""SELECT kart_id, ekstre_borc, son_odeme, tarih, zaman FROM ey_kart_teyit
+        cur.execute("""SELECT * FROM ey_kart_teyit
                         WHERE ekstre_borc IS NOT NULL AND son_odeme IS NOT NULL AND kaynak <> 'geri_alindi' ORDER BY tarih, zaman""")
         kart_ty = {}
         for r in cur.fetchall() or []:
             r = dict(r)
             kart_ty.setdefault(r["kart_id"], []).append(r)
-        teyit = {(kid_, a): (v["ekstre"], v["son"], v["tarih"], v["zaman"])   # S-B1: kart özetiyle AYNI tek kural
+        teyit = {(kid_, a): (v["ekstre"], v["son"], v["tarih"], v["zaman"], v["asgari"])   # S-B1: kart özetiyle AYNI tek kural
                  for kid_, rs in kart_ty.items() for a, v in ekstre_teyitleri(rs).items()}
         eski = _eski_plan(cur)
         bas = kasa.donem_baslangici(cur).strftime("%Y-%m")
@@ -335,10 +387,12 @@ def kart_takvimi(yil: Optional[int] = None):
             ty = teyit.get((k["id"], a))
             son = sonlar[a] if (ty or k.get("son_odeme_gunu")) else None
             od_yeni = yer.get(a, 0)
-            e = eski.get((k["id"], a)) or {}
+            # sahip 1 Kas (Fable L4b b): eski sistem kesildi — arşiv YALNIZ Evvel Yeni öncesi aylar için (Ziraat Ekim 111.000 mükerrerdi)
+            e = (eski.get((k["id"], a)) or {}) if a < bas else {}
             od_e = int(e.get("odenen") or 0)
             od, iki_yerde = gecis_odenen(od_yeni, od_e)   # iki sistemde de varsa TOPLANMAZ — TEK kural (C-T1-08)
             ekstre, ekstre_kaynak = (ty[0] if ty else None), "teyit"
+            asg = ty[4] if ty else None   # bankanın asgarisi (sahip 1 Kas)
             if ekstre is None and e.get("ekstre"):
                 ekstre, ekstre_kaynak = int(e["ekstre"]), "eski"
             if ekstre is None:
@@ -349,9 +403,13 @@ def kart_takvimi(yil: Optional[int] = None):
                 durum = "once"              # S-B2: kart eklenmeden önce son günü geçmiş ay 'gecikti' değil (eski kartlarda eklenme boş → eski kural)
             else:   # TEK kural (çekirdek takvim_durumu — C-T1-11)
                 durum = takvim_durumu(ekstre, od, son, bugun, once=a < bas)
+                # bankanın asgarisi ödendi → borç kapanmadı ama vade karşılandı (kart özel; çekirdek değişmez)
+                if durum in ("kismi", "gecikti") and asg and od >= asg - 100:
+                    durum = "asgari_odendi"
             aylar.append({"ay": a, "son_odeme": son.isoformat() if son else None, "ekstre": _tl_sayi(ekstre) if ekstre is not None else None,
                           "ekstre_kaynak": ekstre_kaynak, "odenen": _tl_sayi(od),
-                          "kalan": _tl_sayi(max(0, ekstre - od)) if ekstre is not None else None, "durum": durum, "iki_yerde": iki_yerde})
+                          "kalan": _tl_sayi(max(0, ekstre - od)) if ekstre is not None else None, "durum": durum, "iki_yerde": iki_yerde,
+                          "asgari": _tl_sayi(asg) if asg else None})
         out.append({"id": k["id"], "ad": k["ad"], "kimin": k.get("kimin"), "son_odeme_gunu": k.get("son_odeme_gunu"), "aylar": aylar,
                     "yil_odenen": round(sum(x["odenen"] for x in aylar), 2)})
     return {"yil": yil, "bugun": bugun.isoformat(), "baslangic": bas, "kartlar": out}
@@ -364,7 +422,7 @@ def kart_ozet():
         kartlar = kart_durumu(cur)
     bugun = _bugun()
     for k in kartlar:
-        for x in ("_cipa_tarih", "_cipa_kul", "_cipa_zaman", "_limit", "_sonra_kr"):
+        for x in ("_cipa_tarih", "_cipa_kul", "_cipa_zaman", "_limit", "_sonra_kr", "_bdh"):
             k.pop(x, None)
     goruldu, tekil = set(), []
     for k in kartlar:   # ortak limitli grup toplamda BİR kez
@@ -372,7 +430,8 @@ def kart_ozet():
         if anahtar not in goruldu:
             goruldu.add(anahtar)
             tekil.append(k)
-    yaklasan = [k for k in kartlar if k["son_odeme"] and not k["son_odeme"].get("eski") and k["son_odeme"]["gun_kaldi"] is not None and 0 <= k["son_odeme"]["gun_kaldi"] <= 7
+    yaklasan = [k for k in kartlar if k["son_odeme"] and not k["son_odeme"].get("eski") and not k["son_odeme"].get("asgari_odendi")
+                and k["son_odeme"]["gun_kaldi"] is not None and 0 <= k["son_odeme"]["gun_kaldi"] <= 7
                 and (k["son_odeme"]["kalan"] is None or k["son_odeme"]["kalan"] > 0)]
     return {"bugun": bugun.isoformat(), "kartlar": kartlar,
             "toplam": {"limit": round(sum(k["limit"] or 0 for k in tekil), 2),
@@ -387,6 +446,7 @@ class TeyitBody(BaseModel):
     kullanilabilir: TrTutar
     tarih: Optional[str] = None
     ekstre_borc: Optional[TrTutar] = None
+    asgari: Optional[TrTutar] = None   # bankanın yazdığı asgari (sahip 1 Kas) — hesaplanmaz
     son_odeme: Optional[str] = None
     not_: Optional[str] = None
 
@@ -406,6 +466,13 @@ def kart_teyit(kid: str, body: TeyitBody, x_evvel_oturum: Optional[str] = Header
         raise HTTPException(400, "Kullanılabilir limit eksi olamaz")
     if body.ekstre_borc is not None and _kurus(body.ekstre_borc) < 0:
         raise HTTPException(400, "Ekstre borcu eksi olamaz")
+    asg = _kurus(body.asgari) if body.asgari is not None else 0
+    if asg < 0:
+        raise HTTPException(400, "Asgari eksi olamaz")
+    if asg and body.ekstre_borc is None:
+        raise HTTPException(400, "Asgari ancak ekstre borcuyla birlikte girilir")
+    if asg and asg > _kurus(body.ekstre_borc):
+        raise HTTPException(400, "Asgari ekstre borcundan büyük olamaz")
     _hazirla()
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
@@ -416,15 +483,17 @@ def kart_teyit(kid: str, body: TeyitBody, x_evvel_oturum: Optional[str] = Header
         lim = (max((k.get("_limit") or 0) for k in hepsi if (k.get("grup") or {}).get("ad") == d["grup"]["ad"]) if d.get("grup")
                else d.get("_limit")) or None   # ortak limitli grupta grubun limiti
         beklenen = None
+        onceki_kaynak = (d.get("cipa") or {}).get("kaynak")
+        d_acilis = _kurus(d["acilis_borc"]) if d.get("acilis_borc") else 0
         if d.get("grup"):
             if tarih == bugun and d["grup"]["kullanilabilir"] is not None:
                 beklenen = _kurus(d["grup"]["kullanilabilir"])
         elif d["cipa"] and d["cipa"]["tarih"] <= tarih.isoformat():
             beklenen = int(d["_cipa_kul"]) + sum(t for g, t in d["_sonra_kr"] if g <= tarih.isoformat())   # ekrandaki 40 değil, hepsi
         eb = _kurus(body.ekstre_borc) if body.ekstre_borc is not None else None
-        cur.execute("""INSERT INTO ey_kart_teyit (id, kart_id, tarih, kullanilabilir, ekstre_borc, son_odeme, sistem_beklenen, kaynak, not_, girilen)
-                       VALUES (%s,%s,%s,%s,%s,%s,%s,'elle',%s,%s)""",
-                    ("kt-" + uuid.uuid4().hex[:12], kid, tarih, _kurus(body.kullanilabilir), eb, son, beklenen,   # Codex P1: 0 ₺ ekstre de teyit
+        cur.execute("""INSERT INTO ey_kart_teyit (id, kart_id, tarih, kullanilabilir, ekstre_borc, asgari, son_odeme, sistem_beklenen, kaynak, not_, girilen)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'elle',%s,%s)""",
+                    ("kt-" + uuid.uuid4().hex[:12], kid, tarih, _kurus(body.kullanilabilir), eb, asg or None, son, beklenen,   # Codex P1: 0 ₺ ekstre de teyit
                      (body.not_ or "").strip()[:200] or None, kim))
     fark = (_kurus(body.kullanilabilir) - beklenen) if beklenen is not None else None
     if fark is None:
@@ -432,8 +501,16 @@ def kart_teyit(kid: str, body: TeyitBody, x_evvel_oturum: Optional[str] = Header
     elif abs(fark) < 100:
         msg = "Teyit kaydedildi — sistemle TUTTU ✓"
     else:
-        msg = (f"Teyit kaydedildi — bankada {_tl_tr(abs(fark))} {'daha AZ' if fark < 0 else 'daha FAZLA'} kullanılabilir: "
-               + ("forma girilmemiş kart harcaması olabilir" if fark < 0 else "girilmemiş kart borcu ödemesi / iade olabilir"))
+        # sahip 1 Kas (Fable L4b): önceki çıpa eski sistemin TAHMİNİ ise (taksitleri bilmez) eksi fark eskiden devreden borç olabilir;
+        # gerçek banka teyidinden sonra devreden borç zaten o rakamın içindedir → o durumda anılmaz (yanlış yere baktırmaz)
+        if fark < 0 and onceki_kaynak == "eski_sistem":
+            neden = "ilk gerçek banka teyidi — eskiden devreden borç / taksit olabilir" + (
+                " (Tanımlar'da devreden borç " + _tl_tr(int(d_acilis)) + ")" if d_acilis else "")
+        elif fark < 0:
+            neden = "forma girilmemiş kart harcaması ya da banka faiz / ücreti olabilir"
+        else:
+            neden = "girilmemiş kart borcu ödemesi / iade olabilir"
+        msg = f"Teyit kaydedildi — bankada {_tl_tr(abs(fark))} {'daha AZ' if fark < 0 else 'daha FAZLA'} kullanılabilir: " + neden
     if lim and _kurus(body.kullanilabilir) > lim:   # matris KA-1 (Fable L4b A): fazla ödemede banka limitin üstünü gösterir — engel değil, soru
         msg += f" · limitin {_tl_tr(_kurus(body.kullanilabilir) - lim)} üstünde — kartta alacak (fazla ödeme) var mı?"
     return {"ok": True, "mesaj": msg, "fark": _tl_sayi(fark) if fark is not None else None}

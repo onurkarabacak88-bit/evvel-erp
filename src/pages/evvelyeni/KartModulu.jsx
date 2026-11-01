@@ -25,7 +25,7 @@ const gunBugun = bugunTR;   // Dalga 5 (C-T4-02): tarih tek kaynaktan
 export default function KartModulu({ onToast }) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
-  const [teyit, setTeyit] = useState(null);   // {kart, kullanilabilir, ekstre_borc, son_odeme, tarih}
+  const [teyit, setTeyit] = useState(null);   // {kart, kullanilabilir, ekstre_borc, asgari, son_odeme, tarih, not_}
   const [acik, setAcik] = useState(null);
   const [mesgul, setMesgul] = useState(false);
   const no = useRef(0);
@@ -36,12 +36,13 @@ export default function KartModulu({ onToast }) {
   useEffect(() => { yukle(); }, [yukle]);
 
   const kaydet = async () => {
-    const k = sayi(teyit.kullanilabilir); const e = sayi(teyit.ekstre_borc);
+    const k = sayi(teyit.kullanilabilir); const e = sayi(teyit.ekstre_borc); const a = sayi(teyit.asgari);
     if (k == null || Number.isNaN(k)) { onToast?.('Bankada yazan kullanılabilir limiti yaz'); return; }
     if (Number.isNaN(e)) { onToast?.('Ekstre borcu: sayı yaz'); return; }
+    if (Number.isNaN(a)) { onToast?.('Asgari: sayı yaz'); return; }
     setMesgul(true);
     try {
-      const r = await api(`/evvel-yeni/kart/${teyit.kart.id}/teyit`, { method: 'POST', body: { kullanilabilir: k, ekstre_borc: e, son_odeme: teyit.son_odeme || null, tarih: teyit.tarih || null } });
+      const r = await api(`/evvel-yeni/kart/${teyit.kart.id}/teyit`, { method: 'POST', body: { kullanilabilir: k, ekstre_borc: e, asgari: a, son_odeme: teyit.son_odeme || null, tarih: teyit.tarih || null, not_: (teyit.not_ || '').trim() || null } });
       onToast?.(r.mesaj); setTeyit(null); yukle();
     } catch (x) { onToast?.(x?.message || 'Kaydedilemedi'); } finally { setMesgul(false); }
   };
@@ -110,6 +111,15 @@ Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır
                 <div style={{ fontSize: 12, color: R.not }}>limit {lim != null ? fmt(lim) : '—'}{k0.kullanilan != null ? ` · kullanılan ${fmt(k0.kullanilan)}` : ''}</div>
               </div>
             </div>
+            {/* sahip 1 Kas (Fable L4b): kart borcu ayrı ayrı — bu dönem harcaması (formdan) + önceki dönemlerden devreden (ekstre kalanı + taksitler) */}
+            {k0.borc_dagilim && (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 14px', fontSize: 13 }}>
+                <span>Kart borcu: önceki dönemlerden devreden <b style={num}>{fmt(k0.borc_dagilim.devreden)}</b> ₺ <span style={{ color: R.not }}>(ekstre kalanı + taksitler)</span></span>
+                <span>· bu dönem harcaması <b style={num}>{fmt(k0.borc_dagilim.bu_donem)}</b> ₺ <span style={{ color: R.not }}>(son ekstreden beri, ödeme formundan)</span></span>
+                {k0.borc_dagilim.tutmuyor && <span style={{ color: R.amber }}>· harcama kullanılandan fazla — bankadaki rakamı gir</span>}
+                {g.kartlar.filter((k) => k.acilis_borc).map((k) => <span key={k.id} style={{ color: R.not }}>· {g.kartlar.length > 1 ? `${k.ad.trim()}: ` : ''}açılışta devreden (Tanımlar, dönem başı) {fmt(k.acilis_borc)} ₺</span>)}
+              </div>
+            )}
             {oran != null && <div style={{ height: 8, borderRadius: 99, background: 'var(--pi-line)', overflow: 'hidden' }}><div style={{ width: `${oran * 100}%`, height: '100%', background: dolu === 'kirmizi' ? R.kirmizi : dolu === 'sari' ? R.amber : 'var(--pi-accent)' }} /></div>}
             {g.kartlar.map((k) => (
               <div key={k.id} style={{ display: 'flex', flexDirection: 'column', gap: 6, borderTop: g.kartlar.length > 1 ? '1px solid var(--pi-line)' : 'none', paddingTop: g.kartlar.length > 1 ? 8 : 0 }}>
@@ -123,7 +133,7 @@ Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır
                   {k.teyit_gun_once != null && k.teyit_gun_once > 35 && <Cip tur="sari">teyit eski</Cip>}
                   <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
                     {k.hareketler.length > 0 && <Dugme kucuk onClick={() => setAcik(acik === k.id ? null : k.id)}>{acik === k.id ? 'Gizle' : `${k.hareketler.length} hareket`}</Dugme>}
-                    <Dugme ana kucuk onClick={() => setTeyit({ kart: k, kullanilabilir: '', ekstre_borc: '', son_odeme: '', tarih: gunBugun() })}>Bankadaki rakamı gir</Dugme>
+                    <Dugme ana kucuk onClick={() => setTeyit({ kart: k, kullanilabilir: '', ekstre_borc: '', asgari: '', son_odeme: '', tarih: gunBugun(), not_: '' })}>Bankadaki rakamı gir</Dugme>
                     <Dugme kucuk onClick={() => sil(k)}>🗑 Sil</Dugme>
                   </span>
                 </div>
@@ -131,7 +141,8 @@ Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır
                   {/* F3.13 (sim 26 Eki): ekstredeki tarih tanımdaki günden farklıysa söylensin ("15'i" yazıp 12 Kasım göstermek kafa karıştırıyordu) */}
                   {k.son_odeme_gunu && Number(String(k.son_odeme.tarih).slice(8, 10)) !== k.son_odeme_gunu && <span style={{ color: R.not }}> · ekstredeki tarih (tanımda ayın {k.son_odeme_gunu}. günü)</span>}
                   {k.son_odeme.eski ? <span style={{ color: R.not }}> · eski sistemden ekstre {fmt(k.son_odeme.ekstre)} — yeni ekstreyi girince takip başlar</span>
-                    : k.son_odeme.kalan != null ? <> · ekstre {fmt(k.son_odeme.ekstre)} − ödenen {fmt(k.son_odeme.odenen)} = kalan <b style={{ ...num, color: k.son_odeme.kalan > 0 ? R.kirmizi : R.yesil }}>{fmt(k.son_odeme.kalan)}</b> ₺</> : <span style={{ color: k.son_odeme.teyit_gerekli ? R.amber : R.not }}> · {k.son_odeme.teyit_gerekli ? 'önceki ekstrenin son günü geçti — yeni ekstreyi gir (Bankadaki rakamı gir)' : 'ekstre tutarı girilmedi'}</span>}</div>}
+                    : k.son_odeme.asgari_odendi ? <> · ekstre {fmt(k.son_odeme.ekstre)} − ödenen {fmt(k.son_odeme.odenen)} · <b style={{ color: R.yesil }}>asgari ({fmt(k.son_odeme.asgari)}) ödendi</b> · kalan <b style={num}>{fmt(k.son_odeme.kalan)}</b> ₺ devreder</>
+                    : k.son_odeme.kalan != null ? <> · ekstre {fmt(k.son_odeme.ekstre)} − ödenen {fmt(k.son_odeme.odenen)} = kalan <b style={{ ...num, color: k.son_odeme.kalan > 0 ? R.kirmizi : R.yesil }}>{fmt(k.son_odeme.kalan)}</b> ₺{k.son_odeme.asgari ? <span style={{ color: R.not }}> · asgari {fmt(k.son_odeme.asgari)}</span> : null}</> : <span style={{ color: k.son_odeme.teyit_gerekli ? R.amber : R.not }}> · {k.son_odeme.teyit_gerekli ? `${k.son_odeme.asgari_odenmisti ? 'asgari ödenmişti, kalan devretti · ' : ''}önceki ekstrenin son günü geçti — yeni ekstreyi gir (Bankadaki rakamı gir)` : 'ekstre tutarı girilmedi'}</span>}</div>}
                 {acik === k.id && (
                   <table style={{ borderCollapse: 'collapse', fontSize: 12.5, width: '100%' }}><tbody>
                     {k.hareketler.map((h, i) => (
@@ -154,8 +165,10 @@ Kartlar ekranından ve ödeme formundan kalkar. Geçmiş ödemelerde adı kalır
             <div style={{ fontSize: 12.5, color: R.not }}>Bankanın uygulamasında yazanı gir. Sistem beklediğiyle karşılaştırır; fark varsa forma girilmemiş harcama/ödeme vardır. Bundan sonra bu rakamdan devam eder.</div>
             <Etiket ad="Kullanılabilir limit ₺ *"><input style={alan} inputMode="decimal" value={teyit.kullanilabilir} onChange={(e) => setTeyit({ ...teyit, kullanilabilir: e.target.value })} autoFocus /></Etiket>
             <Etiket ad="Ekstre borcu ₺ (ekstre geldiyse)"><input style={alan} inputMode="decimal" value={teyit.ekstre_borc} onChange={(e) => setTeyit({ ...teyit, ekstre_borc: e.target.value })} /></Etiket>
+            <Etiket ad="Asgari ödeme ₺ (ekstrede yazıyorsa)"><input style={alan} inputMode="decimal" value={teyit.asgari} onChange={(e) => setTeyit({ ...teyit, asgari: e.target.value })} /></Etiket>
             <Etiket ad="Ekstrenin son ödeme tarihi"><input style={alan} type="date" value={teyit.son_odeme} onChange={(e) => setTeyit({ ...teyit, son_odeme: e.target.value })} /></Etiket>
             <Etiket ad="Bu rakam hangi günün"><input style={alan} type="date" value={teyit.tarih} max={gunBugun()} onChange={(e) => setTeyit({ ...teyit, tarih: e.target.value })} /></Etiket>
+            <Etiket ad="Not (fark varsa nedeni — ör. eskiden devreden taksit)"><input style={alan} maxLength={200} value={teyit.not_} onChange={(e) => setTeyit({ ...teyit, not_: e.target.value })} /></Etiket>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
               <Dugme kucuk onClick={() => setTeyit(null)} disabled={mesgul}>Vazgeç</Dugme>
               <Dugme ana onClick={kaydet} disabled={mesgul}>{mesgul ? 'Kaydediliyor…' : 'Kaydet'}</Dugme>
@@ -185,7 +198,7 @@ export function KartTakvim({ onSekme }) {
   const satirlar = (v?.kartlar || []).map((k) => ({
     id: k.id, baslik: k.ad, alt: k.son_odeme_gunu ? `son ödeme ${k.son_odeme_gunu}'i` : 'son ödeme günü tanımsız', k,
     aylar: k.aylar.map((a) => ({ ...a, ust: a.odenen > 0 ? fmt(a.odenen) : a.ekstre != null ? fmt(a.ekstre) : a.durum === 'once' ? '·' : '?',
-      alt: a.iki_yerde ? '⚠ iki sistemde' : (a.durum === 'kismi' || (a.odenen > 0 && a.kalan > 0)) ? `kalan ${fmt(a.kalan)}` : (a.ekstre == null && !['once', 'odendi'].includes(a.durum) ? 'ekstre yok' : null) })),
+      alt: a.iki_yerde ? '⚠ iki sistemde' : a.durum === 'asgari_odendi' ? `kalan ${fmt(a.kalan)} devretti` : (a.durum === 'kismi' || (a.odenen > 0 && a.kalan > 0)) ? `kalan ${fmt(a.kalan)}` : (a.ekstre == null && !['once', 'odendi'].includes(a.durum) ? 'ekstre yok' : null) })),
     sag: fmt(k.yil_odenen), sagAlt: 'ödenen',
   }));
   return (
@@ -195,7 +208,7 @@ export function KartTakvim({ onSekme }) {
         <div><div className="pi-eyebrow">Evvel Yeni · Kartlar</div><h1 style={{ fontSize: 30 }}>Kart ödeme takvimi</h1></div>
         <YilSecici yil={yil} setYil={setYil} />
       </div>
-      <Lejant />
+      <Lejant durumlar={['odendi', 'asgari_odendi', 'kismi', 'gecikti', 'yaklasiyor', 'gelecek']} />
       {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
       {!v && !hata && <div style={{ color: R.not }}>Takvim hazırlanıyor…</div>}
       {v && <AyIzgara satirlar={satirlar} onHucre={(s, a, i) => setSec({ k: s.k, a, i })} />}
@@ -203,7 +216,8 @@ export function KartTakvim({ onSekme }) {
       {sec && (
         <Pencere baslik={`💳 ${sec.k.ad} · ${AY_UZUN[sec.i]} ${v.yil}`} onKapat={() => setSec(null)}>
           <div>Ekstre <b style={num}>{tutarYaz(sec.a.ekstre)}</b> ₺{sec.a.ekstre_kaynak === 'eski' && <span style={{ color: R.not }}> (eski sistemin tutarı)</span>}
-            {' '}· ödenen <b style={num}>{fmt(sec.a.odenen)}</b> ₺{sec.a.kalan != null && <> · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺</>}</div>
+            {' '}· ödenen <b style={num}>{fmt(sec.a.odenen)}</b> ₺{sec.a.kalan != null && <> · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺</>}{sec.a.asgari != null && <> · asgari <b style={num}>{fmt(sec.a.asgari)}</b> ₺</>}</div>
+          {sec.a.durum === 'asgari_odendi' && <div style={{ fontSize: 12.5, color: R.not }}>Bankanın asgarisi ödendi — vade karşılandı. Kalan bir sonraki ekstreye devretti; yeni ekstreyi girince oradan görünür.</div>}
           <div style={{ color: R.not, fontSize: 13 }}>{sec.a.son_odeme ? `Son ödeme ${tKisa(sec.a.son_odeme)}` : 'Son ödeme günü tanımsız'} · {DURUM[sec.a.durum]?.ad}</div>
           {sec.a.iki_yerde && <div style={{ fontSize: 12.5, color: R.amber }}>⚠ Hem eski sistemde hem Evvel Yeni'de ödeme var — biri mükerrer olabilir (toplanmadı).</div>}
           {sec.a.durum === 'odeme_var' && <div style={{ fontSize: 12.5, color: R.amber }}>Ödeme var ama bu ayın ekstre tutarı girilmedi — borcun kapandığı bilinmiyor (Kartlar → teyit).</div>}

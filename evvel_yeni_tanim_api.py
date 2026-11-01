@@ -790,9 +790,11 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                             (ad, (b.banka or "").strip()[:40] or None, (b.kimin or "").strip()[:40] or None,
                              _kurus(b.acilis_borc) if b.acilis_borc is not None else None, b.aktif, kim, tid))
             cur.execute("""UPDATE ey_kart SET limit_tutar=COALESCE(%s,limit_tutar), kesim_gunu=COALESCE(%s,kesim_gunu),
-                             son_odeme_gunu=COALESCE(%s,son_odeme_gunu), limit_grup=COALESCE(%s,limit_grup) WHERE id=%s""",
+                             son_odeme_gunu=COALESCE(%s,son_odeme_gunu),
+                             limit_grup=CASE WHEN %s THEN %s ELSE limit_grup END WHERE id=%s""",
                         (_kurus(b.limit_tutar) if b.limit_tutar is not None else None, b.kesim_gunu, b.son_odeme_gunu,
-                         (b.limit_grup or "").strip()[:40] or None, tid))
+                         # sim 1 Kas (KB-6): boş gönderilen ortak limit adı = gruptan ÇIKAR (COALESCE kartı grupta kilitliyordu); gönderilmezse değişmez
+                         b.limit_grup is not None, (b.limit_grup or "").strip()[:40] or None, tid))
             return {"ok": True, "id": tid, "mesaj": f"Kart {'eklendi' if yeni else 'güncellendi'}"}
 
         # toptancı
