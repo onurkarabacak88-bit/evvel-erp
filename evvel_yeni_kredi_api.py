@@ -108,6 +108,26 @@ def kredi_listesi(cur) -> list:
     return [{"id": str(k["id"]), "ad": k["ad"]} for k in _krediler(cur)]
 
 
+# 💰 PARA GİRİŞİ sağlayıcısı (tak-çıkar · IS 5ds · Codex L4b): "Kredi kullanımı" yalnız Krediler'de tanımlı krediye bağlanır —
+# taksit planı burada kalır, giriş ikinci bir yükümlülük yazmaz (alt 'kredi' — alinan_borclar onu okur).
+def _giris_kredi_dogrula(cur, b) -> dict:
+    k = next((x for x in kredi_listesi(cur) if x["id"] == str(b.kredi_id or "")), None)
+    if not k:
+        raise HTTPException(400, "Krediyi seç — listede yoksa önce Krediler › + Kredi ekle")
+    return {"bag": {"modul": "kredi", "id": k["id"]}, "kimden": k["ad"][:80], "not": f"{k['ad']} · kredi kullanımı"}
+
+
+def _giris_kredi_secenek(cur) -> dict:
+    return {"krediler": kredi_listesi(cur)}
+
+
+try:
+    import evvel_yeni_kasa_api as _kasa_giris
+    _kasa_giris.giris_konusu_kaydet("kredi", _giris_kredi_dogrula, _giris_kredi_secenek)
+except Exception:  # noqa: BLE001
+    logging.getLogger(__name__).warning("kredi: para girişi konusu kaydedilemedi", exc_info=True)
+
+
 def _yeni_odenen(cur) -> dict:
     """Ödeme modülünün PUBLIC özetinden (tek okuma): {(kredi_id, 'YYYY-AA'): kuruş} — ait olduğu ay (takvimden seçilen)."""
     import evvel_yeni_odeme_api as odeme
