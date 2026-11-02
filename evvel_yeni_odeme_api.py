@@ -49,7 +49,9 @@ KONULAR = {
     "kart_borcu": {"ad": "Kart borcu", "gider": False},
     # Sahip (2026-10-17, envanter 18): vergi muhasebecide hesaplanır; burada yalnız ÖDEME — şube/ortak, tür, ait ay (gider sayılmaz)
     "vergi": {"ad": "Vergi", "gider": False},
-    "sgk": {"ad": "SGK", "gider": False},      # sahip: "SGK ödemesi ayrı, vergi ayrı" — ikisi de tek yoldan
+    # sahip 2 Kas ("SGK gider olarak girdik, ortak gidere düşmüyor mu" → "başlat") · Fable L4b: SGK işveren primi GİDER — Gider ekranı
+    # okurken konu tipinden karar verir (eski kayıtların saklı bayrağı False olsa da), yük kadro normuyla dağıtılır (kayıttaki şube vergisel)
+    "sgk": {"ad": "SGK", "gider": True},
     "diger": {"ad": "Diğer", "gider": True},
 }
 FATURA_TURLERI = ["Elektrik", "Su", "Doğalgaz", "İnternet / telefon", "POS cihaz ücreti", "Diğer abonelik"]
@@ -433,7 +435,7 @@ def odeme_duzelt(hid: str, body: DuzeltBody, x_evvel_oturum: Optional[str] = Hea
                 raise HTTPException(400, "Kredi bulunamadı")
             v["konu"] = {**{a: b for a, b in (v.get("konu") or {}).items() if a not in ("borc_ref", "borc_ad")},
                          "kredi_id": k["id"], "kredi_ad": k["ad"]}   # Codex P1: bağlar birbirini dışlar (çift mahsup yok)
-        if body.kimin is not None and body.kimin != v.get("kimin_kod") and tip in ("vergi", "sgk"):   # Fable: vergi şubesi düzeltilebilsin (gider değil)
+        if body.kimin is not None and body.kimin != v.get("kimin_kod") and tip in ("vergi", "sgk"):   # Fable: vergi / SGK şubesi düzeltilebilsin (SGK yükü yine kadro normuyla)
             if body.kimin not in list(subeler) + ["ortak"]:
                 raise HTTPException(400, "Geçerli bir şube seç ya da Ortak")
             v["kimin_kod"] = body.kimin

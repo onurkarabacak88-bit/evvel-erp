@@ -43,7 +43,8 @@ router = APIRouter(prefix="/api/evvel-yeni/gider", tags=["evvel-yeni-gider"])
 PERSONEL_NORM = {"sube-zafer": 4, "sube-tema": 1.5, "sube-koycegiz": 1.5, "sube-alsancak": 1.5}   # 1,5 = 1 tam + 1 yarı zamanlı
 
 TURLER = {"mal": "Mal (tüketim — sayımdan)", "kira": "Kira", "fatura": "Fatura / abonelik", "personel": "Personel",
-          "dukkan": "Dükkân küçük giderleri", "anlik": "Anlık gider", "diger": "Diğer", "komisyon": "POS / online komisyonu"}
+          "dukkan": "Dükkân küçük giderleri", "anlik": "Anlık gider", "diger": "Diğer", "komisyon": "POS / online komisyonu",
+          "sgk": "SGK (işveren primi)"}
 KALEMLER = list(TURLER)
 VARSAYILAN_KDV = Decimal("0.10")
 _SINIF_HAZIR = False
@@ -413,13 +414,19 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
         S[sid]["sevk_satir"].append({"gun": r["gun"].isoformat(), "aciklama": f"{r['ad']} · {r['kaynak']}", "adet": float(adet),
                                      "birim": float(birim_kdvli.quantize(Decimal('0.01'))), "tutar": _tl_sayi(t)})
     # 1c) ÖDEME FORMUNDAN GİDERLER — ait olduğu ay; şubeye ya da Ortak'a
+    sgk_havuz, sgk_kayit = 0, []
     for h in kayit:
         v = h["veri"]
-        if h["tur"] != "odeme" or v.get("kaynak") != "odeme_formu" or not v.get("gider"):
-            continue
-        if (v.get("ait_ay") or h["is_gunu"][:7]) != a_:
+        if h["tur"] != "odeme" or v.get("kaynak") != "odeme_formu":
             continue
         tip = (v.get("konu") or {}).get("tip") or "diger"
+        if (not v.get("gider") and tip != "sgk") or (v.get("ait_ay") or h["is_gunu"][:7]) != a_:
+            continue   # SGK eski kayıtta gider:False saklı — konu tipinden karar (Fable L4b, göç yok)
+        if tip == "sgk":   # işveren primi → SGK havuzu (aşağıda kadro normuyla); kayıttaki şube / Ortak yalnız bilgi
+            sgk_havuz += int(v.get("toplam", h["tutar"]))
+            sgk_kayit.append({"gun": h["is_gunu"], "tur": "sgk", "aciklama": v.get("aciklama"), "adet": None, "birim": None,
+                              "tutar": _tl_sayi(int(v.get("toplam", h["tutar"]))), "not": "ödeme: " + " + ".join(sorted(set(v.get("yontemler") or [])))})
+            continue
         if tip in ("personel", "kira"):
             continue   # personel hak edişten, kira TAHAKKUKTAN yazılır (aşağıda) — ödeme yalnız kasayı etkiler
         tip = tip if tip in TURLER else "diger"
@@ -480,6 +487,20 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
     elif havuz:   # norm tanımsız (yeni şube) → eski davranış yerine ORTAK'a (sessizce kaybolmasın)
         ORTAK["toplam"] += havuz
         ORTAK["satirlar"] += havuz_kisi
+    # 1d') SGK İŞVEREN PRİMİ — maaşla AYNI anahtar (Fable L4b): SGK şirket / kart şubesi bazında ödenir (Zafer Ltd'nin primi Köyceğiz'de
+    # çalışanı da kapsar) → toplam, kadro normuyla şubelere; Ortak seçilen SGK da havuza. Ödeme modülü kapalıysa kayıt yok → 0 (Kazanç uyarır)
+    if sgk_havuz and ntop:
+        sp = {sid: int(Decimal(sgk_havuz) * n / ntop) for sid, n in norm.items() if n}
+        if sp:
+            sp[max(sp, key=lambda k: norm[k])] += sgk_havuz - sum(sp.values())
+        for sid, t in sp.items():
+            S[sid]["sgk"] += t
+            S[sid]["satirlar"].append({"gun": a_ + "-01", "tur": "sgk", "adet": None, "birim": None, "tutar": _tl_sayi(t),
+                                       "aciklama": f"Şube SGK payı · kadro {norm[sid].normalize()} / {ntop.normalize()} (toplam {_tl_sayi(sgk_havuz)} ₺)",
+                                       "not": "kadro normu — SGK'nın ödendiği şirket vergisel, dağıtım anahtarı değil"})
+    elif sgk_havuz:
+        ORTAK["toplam"] += sgk_havuz
+        ORTAK["satirlar"] += sgk_kayit
     # 2) DÜKKÂN KÜÇÜK GİDERLERİ (Kasa'daki 'dukkan_gideri' ödemeleri) + patron şahsi ayrımı
     cekisler = []
     from evvel_yeni_kasa_api import dukkan_giderleri   # Kasa'nın tek okuyucusu (Kaçırılan #1 — süzgeç iki yerdeydi)
@@ -533,6 +554,8 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
             "ortak": {"toplam": _tl_sayi(ORTAK["toplam"]), "satirlar": sorted(ORTAK["satirlar"], key=lambda x: x["gun"])},
             "personel_kisiler": {"toplam": _tl_sayi(havuz), "satirlar": havuz_kisi, "norm": {k: float(v) for k, v in norm.items()},
                                  "not": "Şube personelinin kişi kişi hak edişi (bilgi) — şubelere kadro normu oranında yüklenir"},
+            "sgk_kayitlar": {"toplam": _tl_sayi(sgk_havuz), "satirlar": sgk_kayit,
+                             "not": "Ödeme › SGK kayıtları (bilgi) — şubelere kadro normu oranında yüklenir"},
             "sevk_bedeli": _tl_sayi(sum(_kurus(x["sevk_bedeli"]) for x in out)),
             "subeler": out, "cekisler": cekisler, "cekis_toplam": _tl_sayi(sum(_kurus(x["tutar"]) for x in cekisler)),
             "fiyat_eksik_toplam": sum(x["fiyat_eksik"] for x in out), "sube_disi_satir": disarida,

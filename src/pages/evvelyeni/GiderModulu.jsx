@@ -17,9 +17,9 @@ export const GIDER_SAYFALAR = [
   { id: 'giderler', ad: 'Giderlerim', alt: 'Şube şube · mal · kira · personel' },
 ];
 
-const KALEM = ['mal', 'kira', 'personel', 'fatura', 'dukkan', 'anlik', 'diger', 'komisyon'];
-const TUR_RENK = { mal: 'var(--pi-accent)', kira: '#7a5c3e', personel: '#4f6d7a', fatura: '#8a7a3a', dukkan: 'var(--pi-warn)', anlik: '#b08850', diger: '#999', komisyon: 'var(--pi-ink3)' };
-const TUR_AD = { mal: 'Mal (tüketim — sayımdan)', kira: 'Kira', personel: 'Personel', fatura: 'Fatura', dukkan: 'Dükkân küçük', anlik: 'Anlık', diger: 'Diğer', komisyon: 'Komisyon', sevk: 'Depodan sevk (gider DEĞİL)' };
+const KALEM = ['mal', 'kira', 'personel', 'fatura', 'dukkan', 'anlik', 'diger', 'komisyon', 'sgk'];
+const TUR_RENK = { mal: 'var(--pi-accent)', kira: '#7a5c3e', personel: '#4f6d7a', fatura: '#8a7a3a', dukkan: 'var(--pi-warn)', anlik: '#b08850', diger: '#999', komisyon: 'var(--pi-ink3)', sgk: '#5b6f8f' };
+const TUR_AD = { mal: 'Mal (tüketim — sayımdan)', kira: 'Kira', personel: 'Personel', fatura: 'Fatura', dukkan: 'Dükkân küçük', anlik: 'Anlık', diger: 'Diğer', komisyon: 'Komisyon', sgk: 'SGK (işveren primi)', sevk: 'Depodan sevk (gider DEĞİL)' };
 
 export default function GiderModulu({ onToast }) {
   const [ay, setAy] = useState(ayTR);

@@ -63,6 +63,9 @@ def kazanc_ozet(ay: Optional[str] = None):
             uyarilar.append("Kira tanımlı değil (Tanımlar → Şubeler)")
         if not d.get("personel"):
             uyarilar.append("Bu ay personel hak edişi yok (Personel › Maaşlar)")
+        if gid.get("ay_bitti") and d.get("personel") and not ((gid.get("sgk_kayitlar") or {}).get("toplam")):   # SGK ertesi ay ödenir — biten ay;
+            # o ay HİÇ SGK kaydı yoksa (norm tanımsızken ORTAK'a giden SGK yanlış alarm vermesin — Fable L6)
+            uyarilar.append("Bu ay SGK kaydı yok (Ödeme › SGK) — kazanç olduğundan YÜKSEK görünür")
         subeler.append({
             "cep": g["cep"], "ad": g["ad"], "gelir": gelir, "gider": gider, "kazanc": _r(gelir - gider),
             "marj_yuzde": round((gelir - gider) * 100 / gelir, 1) if gelir else None,
@@ -94,6 +97,6 @@ def kazanc_ozet(ay: Optional[str] = None):
         "zarar_eden_acigi": _r(toplam_zarar), "kar_edenlerin_kari": _r(toplam_kar),
         "cekis_toplam": _r(gid["cekis_toplam"]),
         "not": "Kazanç = gelir (kapanış, KDV dahil) − şubenin kendi gideri (mal=sayımdan tüketim × fiyat, kira, personel, fatura, "
-               "dükkân, komisyon; personel kadro normu oranında). Kredi, ev taksiti ve patron şahsi DAHİL DEĞİL. Ortak giderler "
+               "dükkân, komisyon, SGK işveren primi; personel ve SGK kadro normu oranında). Kredi, ev taksiti ve patron şahsi DAHİL DEĞİL. Ortak giderler "
                "(ortak personel dahil) şubelere CİRO payıyla yük olarak gösterilir; zarar eden şubenin açığı kimseye devredilmez.",
     }

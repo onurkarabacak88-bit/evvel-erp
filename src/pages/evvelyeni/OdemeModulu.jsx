@@ -194,7 +194,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
           <div style={{ ...etiketStil, marginBottom: 8 }}>1 · Ne için ödendi?</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
             {L.konular.map((k) => (
-              <button key={k.kod} type="button" onClick={() => { setBenzer(false); setF((x) => ({ konu: k.kod, tarih: x.tarih, ait_ay: x.ait_ay, istek_id: x.istek_id,
+              <button key={k.kod} type="button" onClick={() => { setBenzer(false); setF((x) => ({ konu: k.kod, tarih: x.tarih, ait_ay: k.kod === 'sgk' && x.ait_ay === ayBugun() ? ayKaydir(ayTR(), -1) : x.ait_ay, istek_id: x.istek_id,   /* SGK = önceki ayın primi (Fable L4b) */
                 parcalar: ['kart_borcu', 'personel'].includes(k.kod) ? x.parcalar.map((q) => (q.yontem === 'kart' ? { ...q, yontem: 'nakit', kart_id: '' } : q)) : x.parcalar })); }} style={{
                 padding: '10px 16px', borderRadius: 12, font: 'inherit', fontSize: 15, fontWeight: 600, cursor: 'pointer',
                 border: `1px solid ${f.konu === k.kod ? 'var(--pi-accent)' : 'var(--pi-line)'}`,
@@ -387,13 +387,13 @@ export default function OdemeModulu({ onToast, gorunum }) {
           <div style={{ padding: '10px 14px', borderRadius: 10, background: 'var(--pi-bg)', fontSize: 14, display: 'flex', gap: 12, flexWrap: 'wrap', alignItems: 'center' }}>
             <span>Toplam <b style={num}>{fmt(toplam)}</b> ₺</span>
             {konuObj && (konuObj.gider && f.kimin !== 'patron'
-              ? <Cip tur="sari">şube/ortak GİDERİ olarak yazılacak</Cip>
-              : <Cip>gider DEĞİL — {f.konu === 'toptanci' ? 'toptancı borcunu kapatır' : f.konu === 'kart_borcu' ? 'kart borcunu kapatır' : f.konu === 'kredi' ? 'patronun borcu' : f.konu === 'vergi' ? 'vergi ödemesi (vergiyi muhasebeci hesaplar)' : f.konu === 'sgk' ? 'SGK primi ödemesi' : f.konu === 'kira' ? "o ayın kirasını kapatır (gider tanımlı kiradan, ait olduğu aya yazılır)" : f.konu === 'personel' ? "personelin kalanını kapatır (gider Maaşlar'ın hak edişinden yazılır)" : 'patron çekişi'}</Cip>)}
+              ? <Cip tur="sari">{f.konu === 'sgk' ? 'GİDER — şubelere kadro payıyla (maaş gibi)' : 'şube/ortak GİDERİ olarak yazılacak'}</Cip>
+              : <Cip>gider DEĞİL — {f.konu === 'toptanci' ? 'toptancı borcunu kapatır' : f.konu === 'kart_borcu' ? 'kart borcunu kapatır' : f.konu === 'kredi' ? 'patronun borcu' : f.konu === 'vergi' ? 'vergi ödemesi (vergiyi muhasebeci hesaplar)' : f.konu === 'kira' ? "o ayın kirasını kapatır (gider tanımlı kiradan, ait olduğu aya yazılır)" : f.konu === 'personel' ? "personelin kalanını kapatır (gider Maaşlar'ın hak edişinden yazılır)" : 'patron çekişi'}</Cip>)}
             {f.parcalar.some((p) => p.yontem === 'kart') && <Cip>kart kısmı kasadan düşmez, kart borcu olur</Cip>}
           </div>
           {kiminAd !== null && f.konu && (
             <div style={{ fontSize: 14, padding: '10px 14px', borderRadius: 10, border: '1px solid var(--pi-line)' }}>
-              ✔ Kontrol: <b>{kiminAd || '— şube/kişi seçilmedi —'}</b> · <b>{ayAdi(giderAyi)}</b> {konuObj?.gider && f.kimin !== 'patron' ? 'gideri olarak yazılacak' : ''}
+              ✔ Kontrol: <b>{kiminAd || '— şube/kişi seçilmedi —'}</b> · <b>{ayAdi(giderAyi)}</b> {f.konu === 'sgk' ? 'SGK gideri — şubelere kadro payıyla dağılır (Fable L6)' : konuObj?.gider && f.kimin !== 'patron' ? 'gideri olarak yazılacak' : ''}
             </div>
           )}
           {hata && <div style={{ color: R.kirmizi, fontWeight: 600, fontSize: 15, padding: '10px 14px', borderRadius: 10, background: 'var(--pi-bg)' }}>{hata}</div>}
@@ -435,7 +435,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
                   <td style={{ textAlign: 'left' }}>{x.kimin || '—'}</td>
                   <td style={{ textAlign: 'left', fontSize: 12 }}>{[...x.nakit.map((n) => `${n.ad} ${fmt(n.tutar)}`), ...x.kart.map((k) => `💳 ${k.ad} ${fmt(k.tutar)}`)].join(' + ')}</td>
                   <td style={{ ...num, fontWeight: 700 }}>{fmt(x.toplam)}</td>
-                  <td style={{ textAlign: 'left' }}>{['vergi', 'sgk'].includes(x.konu_tip) ? <Cip>{x.konu_tip === 'sgk' ? 'SGK' : 'vergi'} · {ayAdi(x.ait_ay)}</Cip> : x.gider ? <Cip tur="sari">gider · {ayAdi(x.ait_ay)}</Cip> : x.konu === 'Dükkân gideri' ? <Cip>dükkân gideri</Cip> : <span style={{ color: R.not }}>gider değil</span>}</td>
+                  <td style={{ textAlign: 'left' }}>{x.konu_tip === 'sgk' ? <Cip tur="sari">SGK gideri · {ayAdi(x.ait_ay)}</Cip> : x.konu_tip === 'vergi' ? <Cip>vergi · {ayAdi(x.ait_ay)}</Cip> : x.gider ? <Cip tur="sari">gider · {ayAdi(x.ait_ay)}</Cip> : x.konu === 'Dükkân gideri' ? <Cip>dükkân gideri</Cip> : <span style={{ color: R.not }}>gider değil</span>}</td>
                   <td style={{ whiteSpace: 'nowrap' }}>
                     {x.duzeltilebilir && x.gider !== undefined && (['kira', 'fatura', 'anlik', 'personel', 'diger', 'vergi', 'sgk'].includes(x.konu_tip) || (x.konu_tip === 'kredi' && (krediler?.length > 0 || x.borc_ref || (L.alinan_borclar || []).length > 0))) && (
                       <Dugme kucuk onClick={(e) => { e?.stopPropagation?.(); setDuz({ id: x.id, tarih: x.tarih, konu_tip: x.konu_tip, kredi_id: x.kredi_id || '', borc_ref: x.borc_ref || '', borc_ad: x.borc_ad || '', bagli_borc: x.borc_ref || '', kimin: x.kimin_kod || '', ait_ay: x.ait_ay || '', aciklama: x.aciklama || '', baslik: `${x.aciklama} · ${fmt(x.toplam)} ₺` }); }}>Düzelt</Dugme>)}{' '}
