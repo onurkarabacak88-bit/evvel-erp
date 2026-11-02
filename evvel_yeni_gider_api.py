@@ -272,9 +272,11 @@ def _tuketim_satirlari_yeni(cur, bas: date, son: date) -> list:
             k = (h["kaynak"].split(":", 1)[1], h["is_gunu"], h["urun_id"], etiket[h["hedef"]])
             top.setdefault(k, [h["urun_ad"], 0])[1] += int(h["adet"])
     satir = []
+    from evvel_yeni_urun_api import urun_bilgi as _ub   # KDV oranı Ürün'ün kapısından (marj katmanı: malın KDV'si ayrılır)
+    kdvler = {k: v.get("kdv_oran") for k, v in (_ub(cur, sorted({str(u) for (_s, _g, u, _t) in top})) or {}).items()} if top else {}
     for (sid, gun, uid, tur), (ad, adet) in top.items():
         f = fiyat(uid, gun)
-        satir.append({"sube_id": sid, "gun": gun, "kalem_kodu": uid, "ad": ad or uid, "adet": adet,
+        satir.append({"sube_id": sid, "gun": gun, "kalem_kodu": uid, "ad": ad or uid, "adet": adet, "kdv": kdvler.get(str(uid)),
                       "birim_kurus": f["kurus"] if f else None, "fk": f["kaynak"] if f else None, "fiyat_tarihi": f.get("tarih") if f else None,
                       "kaynak": {"ac": "ürün aç", "gununde": "gününde tüketilir (pasta — girişte)",
                                  **{v: v for v in etiket.values()}}.get(tur, "günlük sayım (kullanılan)"),   # fire etiketleri TEK yer (Depo)
@@ -363,7 +365,7 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
     subeler = {c["sube_id"]: c for c in cep_list if c["tur"] == "sube"}
     sube_cep = {sid: "sube:" + sid for sid in subeler}
     S = {sid: {**{k: 0 for k in KALEMLER}, "satirlar": [], "fiyat_eksik": 0, "katalog": 0, "kesin_degil": set(),
-               "sevk": 0, "sevk_eksik": 0, "sevk_satir": []} for sid in subeler}
+               "sevk": 0, "sevk_eksik": 0, "sevk_satir": [], "mal_kdv": 0, "kdv_varsayilan": 0} for sid in subeler}
     ORTAK = {"toplam": 0, "satirlar": []}
     disarida = 0
     # 1) MAL
@@ -390,6 +392,13 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
             t = _kurus((adet * birim_kdvli).quantize(Decimal("0.01")))
             not_ = f"{r['fk']}" + (f" ({r['fiyat_tarihi']})" if r.get("fiyat_tarihi") else "") + f" · KDV %{int(kdv * 100)} dahil"
         S[sid]["mal"] += t
+        # MARJ KATMANI (Fable + Codex 2 Kas): malın içindeki KDV — oran yoksa %10 varsayılır ve sayılır (ekranda "varsayılan" notu)
+        if "birim_kurus" in r:
+            kd = Decimal(str(r["kdv"])) if r.get("kdv") is not None else VARSAYILAN_KDV
+        else:
+            kd = kdv   # eski dönem: maliyete eklenen oranın AYNISI ayrılır (Fable L6: %0 kalemde iki hesap ayrışmasın)
+        S[sid]["kdv_varsayilan"] += r.get("kdv") is None
+        S[sid]["mal_kdv"] += int(Decimal(t) * kd / (1 + kd))
         S[sid]["katalog"] += r["fk"] == "katalog"
         S[sid]["satirlar"].append({"gun": r["gun"].isoformat(), "tur": "mal", "aciklama": f"{r['ad']} · {r['kaynak']}",
                                    "adet": float(adet), "birim": float(birim_kdvli.quantize(Decimal('0.01'))), "tutar": _tl_sayi(t),
@@ -539,6 +548,7 @@ def gider_ozet(ay: Optional[str] = None, evren: Optional[str] = None):
             continue   # F3.13 (sim 26 Eki): PASİF şube bu ay boşsa "0 ₺ gider yok" kartı çıkmaz (Kasam B13 ile aynı; harcaması varsa görünür)
         out.append({"sube_id": sid, "cep": sube_cep[sid], "ad": subeler[sid]["kisa"], "depo_mu": sid == depo,
                     "toplam": _tl_sayi(top), **{k: _tl_sayi(s[k]) for k in KALEMLER},
+                    "mal_kdv": _tl_sayi(s["mal_kdv"]), "kdv_varsayilan": s["kdv_varsayilan"],
                     "fiyat_eksik": s["fiyat_eksik"], "katalog_fiyatli": s["katalog"], "kesin_olmayan_gun": sorted(s["kesin_degil"]),
                     "kira_durum": s.get("kira_durum"),
                     "sevk_bedeli": _tl_sayi(s["sevk"]), "sevk_fiyat_eksik": s["sevk_eksik"],

@@ -26,6 +26,7 @@ export default function KazancModulu() {
 
   const ayAd = tUzun(v.ay_basi).split(' ')[1];
   const renk = (x) => (x >= 0 ? R.yesil : R.kirmizi);
+  const yz = (p) => (p == null ? '' : ` · %${p}`);
   const enBuyuk = Math.max(1, ...v.subeler.map((s) => Math.max(s.gelir, s.gider)));
 
   const ac = (s) => setCk({
@@ -39,6 +40,14 @@ export default function KazancModulu() {
       { ad: 'Gelir · nakit', tutar: tl(s.gelir_kirilim.nakit) }, { ad: 'Gelir · POS', tutar: tl(s.gelir_kirilim.pos) }, { ad: 'Gelir · online', tutar: tl(s.gelir_kirilim.online) },
       ...Object.entries(s.gider_kirilim).filter(([, t]) => t).map(([k, t]) => ({ ad: `Gider · ${v.turler[k] || k}${k === 'kira' && s.kira_tam_ay ? ` (ay içi: ${v.ay_ici.gecen_gun}/${v.ay_ici.ay_gun} gün · tam ay ${tl(s.kira_tam_ay)})` : ''}`, tutar: `− ${tl(t)}` })),
       ...s.tasidiklari.map((x) => ({ ad: `Taşıdığı · ${x.ad}`, tutar: `− ${tl(x.tutar)}`, detay: 'cirosu oranında payına düşen' })),
+      // 📐 MARJ KATMANLARI (KDV'siz, tahmini — sahip 2 Kas · Fable + Codex): kazanç rakamını değiştirmez, yan bilgi
+      ...(s.katman ? [
+        { ad: '📐 Net satış (KDV hariç)', tutar: tl(s.katman.net_satis), detay: `ciro ÷ 1,10 · içindeki satış KDV'si ${tl(s.katman.satis_kdv)}` },
+        { ad: `📐 Brüt marj${yz(s.katman.brut_yuzde)}`, tutar: tl(s.katman.brut), detay: 'net satış − mal (KDV hariç)' + (s.katman.kdv_varsayilan ? ` · ${s.katman.kdv_varsayilan} kalemde KDV oranı yok, %10 varsayıldı` : '') },
+        { ad: `📐 Katkı payı${yz(s.katman.katki_yuzde)}`, tutar: tl(s.katman.katki), detay: 'brüt − komisyon − dükkân − anlık' },
+        { ad: `📐 FAVÖK (yaklaşık)${yz(s.katman.favok_yuzde)}`, tutar: tl(s.katman.favok), detay: 'katkı − kira − personel − SGK − fatura − diğer − ortak pay (ortak pay KDV dahil)' },
+        { ad: '🧾 Ödenecek KDV (tahmini, kârdan düşülmez)', tutar: tl(s.katman.odenecek_kdv), detay: 'satış KDV − mal KDV − fatura KDV' },
+      ] : []),
     ],
   });
 
@@ -68,6 +77,16 @@ export default function KazancModulu() {
         </div>
         {v.cekis_toplam > 0 && <div style={{ marginLeft: 'auto', fontSize: 12.5, color: R.not }}>Patron çekişi {fmt(v.cekis_toplam)} ₺ (kazançtan ayrı)</div>}
       </div>
+
+      {v.katman && v.katman.net_satis > 0 && (   /* 📐 dünya usulü KDV'siz katmanlar — sahip 2 Kas · tahmini, açıklaması title'da */
+        <div title={v.katman_notu} style={{ ...kart, padding: '10px 16px', display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 13 }}>
+          <b style={{ fontSize: 12, letterSpacing: '.04em', color: R.not }}>KDV'SİZ MARJ (TAHMİNİ)</b>
+          {[['Net satış', v.katman.net_satis, null], ['Brüt marj', v.katman.brut, v.katman.brut_yuzde], ['Katkı payı', v.katman.katki, v.katman.katki_yuzde], ['FAVÖK ≈', v.katman.favok, v.katman.favok_yuzde]].map(([a, t, p]) => (
+            <span key={a}>{a} <b style={{ ...num, color: t < 0 ? R.kirmizi : undefined }}>{fmt(t)}</b>{p != null && <span style={{ color: R.not }}> %{p}</span>}</span>
+          ))}
+          <span style={{ marginLeft: 'auto', color: R.not }}>🧾 Ödenecek KDV ≈ <b style={num}>{fmt(v.katman.odenecek_kdv)}</b> ₺ · vergi, amortisman, kredi faizi dahil değil</span>
+        </div>
+      )}
 
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(260px, 1fr))', gap: 12 }}>
         {v.subeler.map((s) => (
