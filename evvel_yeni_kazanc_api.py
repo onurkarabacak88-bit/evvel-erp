@@ -26,8 +26,8 @@ def _r(x) -> float:
 
 
 # 📐 MARJ KATMANLARI (sahip 2 Kas "dünya sistemlerinde hesaplanan marjlar burada yok" · Fable + Codex L4b): KDV'siz net satış üzerinden
-# brüt → katkı → FAVÖK (yaklaşık). Kazanç rakamı DEĞİŞMEZ (KDV dahil, bugünkü tek gerçek); katman yan bilgi. Ödenecek KDV ayrı satır,
-# kârdan ikinci kez düşülmez. Vergi, amortisman, kredi faizi YOK (veri yok — sonraki katman).
+# brüt → katkı → FAVÖK (yaklaşık). FAVÖK = KDV dahil kazanç − tahmini ödenecek KDV → Kazanç ekranının ANA rakamı (sahip 2 Kas
+# "KDV düşülmesi gerekiyor"); KDV dahil kazanç alanları değişmez, yanında gösterilir. Ödenecek KDV bir kez düşülür. Vergi, amortisman, kredi faizi YOK (veri yok — sonraki katman).
 SATIS_KDV = Decimal("0.10")      # kafe satışı %10 (paket su / şişe ürün vb. farklı oranlar ayrıştırılmaz — tahmin)
 FATURA_KDV = Decimal("0.20")     # elektrik / doğalgaz / internet %20 (su farklı olabilir — tahmin)
 KATMAN_NOTU = ("KDV'siz katmanlar (tahmini): net satış = ciro ÷ 1,10 · brüt marj = net satış − mal (KDV hariç) · katkı payı = brüt − "
@@ -47,6 +47,8 @@ def _katman(gelir: float, d: dict) -> dict:
     mal_kdv = Decimal(str(d.get("mal_kdv") or 0))
     fat = Decimal(str(d.get("fatura") or 0))
     fat_kdv = fat * FATURA_KDV / (1 + FATURA_KDV)
+    if g <= 0:   # Fable L6: satışı olmayan şubede KDV mahsubu yok — KDV düşülmüş kazanç = KDV dahil kazanç (kart ile üst rakam tutar)
+        mal_kdv = fat_kdv = Decimal(0)
     brut = net - (Decimal(str(d.get("mal") or 0)) - mal_kdv)
     katki = brut - sum(Decimal(str(d.get(k) or 0)) for k in ("komisyon", "dukkan", "anlik"))
     sabit = sum(Decimal(str(d.get(k) or 0)) for k in ("kira", "personel", "sgk", "diger")) + (fat - fat_kdv)
@@ -85,7 +87,7 @@ def kazanc_ozet(ay: Optional[str] = None):
             continue   # B13: hareketsiz PASİF şube görünmez (gideri varsa görünür — gizli maliyet olmasın)
         uyarilar = []
         if gelir > 0 and not d.get("mal"):
-            uyarilar.append("Mal tüketimi 0 (akşam bar sayımı yok) — kazanç olduğundan YÜKSEK görünür")
+            uyarilar.append("Mal tüketimi 0 (akşam bar sayımı yok) — kazanç ve ödenecek KDV olduğundan YÜKSEK görünür")
         if d.get("fiyat_eksik"):
             uyarilar.append(f"{d['fiyat_eksik']} ürünün fiyatı yok — gider eksik")
         if g.get("eksik_gunler"):
@@ -99,8 +101,11 @@ def kazanc_ozet(ay: Optional[str] = None):
         if gid.get("ay_bitti") and d.get("personel") and not ((gid.get("sgk_kayitlar") or {}).get("toplam")):   # SGK ertesi ay ödenir — biten ay;
             # o ay HİÇ SGK kaydı yoksa (norm tanımsızken ORTAK'a giden SGK yanlış alarm vermesin — Fable L6)
             uyarilar.append("Bu ay SGK kaydı yok (Ödeme › SGK) — kazanç olduğundan YÜKSEK görünür")
+        km = _katman(gelir, d)
         subeler.append({
-            "katman": _katman(gelir, d),
+            "katman": km,
+            # sahip 2 Kas "KDV düşülmesi gerekiyor · bunu da göstermeli" · Fable L4b: kartın büyük rakamı (ortak pay öncesi, tahmini KDV düşülmüş)
+            "kazanc_kdvsiz": _r(gelir - gider - km["odenecek_kdv"]),
             "cep": g["cep"], "ad": g["ad"], "gelir": gelir, "gider": gider, "kazanc": _r(gelir - gider),
             "marj_yuzde": round((gelir - gider) * 100 / gelir, 1) if gelir else None,
             "gelir_kirilim": {"nakit": _r(g["nakit"]), "pos": _r(g["pos"]), "online": _r(g["online"])},
@@ -108,7 +113,7 @@ def kazanc_ozet(ay: Optional[str] = None):
             "uyarilar": uyarilar,
             "kira_tam_ay": kira_tam if oran < 1 else None,
         })
-    subeler.sort(key=lambda x: -x["kazanc"])
+    subeler.sort(key=lambda x: -x["kazanc_kdvsiz"])   # ekranda görünen büyük rakam neyse sıra o (Fable L4b)
     ortak = _r(gid["ortak"]["toplam"])
     kar = [s for s in subeler if s["kazanc"] > 0]
     zarar = [s for s in subeler if s["kazanc"] < 0]
@@ -139,7 +144,7 @@ def kazanc_ozet(ay: Optional[str] = None):
         "isletme_kazanci": isletme, "subeler": subeler, "katman": kt, "katman_notu": KATMAN_NOTU,
         "zarar_eden_acigi": _r(toplam_zarar), "kar_edenlerin_kari": _r(toplam_kar),
         "cekis_toplam": _r(gid["cekis_toplam"]),
-        "not": "Kazanç = gelir (kapanış, KDV dahil) − şubenin kendi gideri (mal=sayımdan tüketim × fiyat, kira, personel, fatura, "
+        "not": "Ana rakam KDV DÜŞÜLMÜŞ kazanç (≈, tahmini ödenecek KDV düşüldü; KDV dahil kazanç yanında). Kazanç = gelir (kapanış, KDV dahil) − şubenin kendi gideri (mal=sayımdan tüketim × fiyat, kira, personel, fatura, "
                "dükkân, komisyon, SGK işveren primi; personel ve SGK kadro normu oranında). Kredi, ev taksiti ve patron şahsi DAHİL DEĞİL. Ortak giderler "
                "(ortak personel dahil) şubelere CİRO payıyla yük olarak gösterilir; zarar eden şubenin açığı kimseye devredilmez.",
     }

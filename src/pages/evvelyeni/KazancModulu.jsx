@@ -27,13 +27,18 @@ export default function KazancModulu() {
   const ayAd = tUzun(v.ay_basi).split(' ')[1];
   const renk = (x) => (x >= 0 ? R.yesil : R.kirmizi);
   const yz = (p) => (p == null ? '' : ` · %${p}`);
+  // sahip 2 Kas "KDV düşülmesi gerekiyor · bunu da göstermeli" (Fable L4b): büyük rakam KDV düşülmüş (≈ FAVÖK); hareketsiz ayda KDV dahile düşer
+  const kdvli = !(v.katman && v.katman.net_satis > 0);
+  const ana = kdvli ? v.isletme_kazanci : v.katman.favok;
+  const kk = (s) => (s.kazanc_kdvsiz != null ? s.kazanc_kdvsiz : s.kazanc);
+  const mj = (s) => (s.kazanc_kdvsiz != null && s.katman?.net_satis ? Math.round((s.kazanc_kdvsiz * 1000) / s.katman.net_satis) / 10 : s.marj_yuzde);
   const enBuyuk = Math.max(1, ...v.subeler.map((s) => Math.max(s.gelir, s.gider)));
 
   const ac = (s) => setCk({
     tip: 'ŞUBE KAZANCI', baslik: `${s.ad} · ${ayAd}`,
-    alt: 'Gelir − şubenin kendi gideri. Kredi, ev taksiti, patron şahsi dahil değil.',
-    kpi: [{ etiket: 'Kazanç', deger: tl(s.kazanc), renk: renk(s.kazanc) }, { etiket: 'Gelir', deger: tl(s.gelir) }, { etiket: 'Gider', deger: tl(s.gider) },
-      ...(s.tasidigi_yuk ? [{ etiket: 'Taşıdığı yük', deger: tl(s.tasidigi_yuk) }, { etiket: 'Yükten sonra', deger: tl(s.yuk_sonrasi), renk: renk(s.yuk_sonrasi) }] : [])],
+    alt: 'Gelir − şubenin kendi gideri − tahmini ödenecek KDV. Kredi, ev taksiti, patron şahsi dahil değil.',
+    kpi: [{ etiket: 'Kazanç · KDV düşülmüş ≈', deger: tl(kk(s)), renk: renk(kk(s)) }, ...(kk(s) !== s.kazanc ? [{ etiket: 'KDV dahil', deger: tl(s.kazanc) }] : []), { etiket: 'Gelir', deger: tl(s.gelir) }, { etiket: 'Gider', deger: tl(s.gider) },
+      ...(s.tasidigi_yuk ? [{ etiket: 'Taşıdığı yük', deger: tl(s.tasidigi_yuk) }, { etiket: 'Yükten sonra', deger: tl(s.katman ? s.katman.favok : s.yuk_sonrasi), renk: renk(s.katman ? s.katman.favok : s.yuk_sonrasi) }] : [])],
     not: s.uyarilar.length ? '⚠ ' + s.uyarilar.join(' · ') : null,
     listeBaslik: 'Kalem kalem',
     satirlar: [
@@ -46,7 +51,7 @@ export default function KazancModulu() {
         { ad: `📐 Brüt marj${yz(s.katman.brut_yuzde)}`, tutar: tl(s.katman.brut), detay: 'net satış − mal (KDV hariç)' + (s.katman.kdv_varsayilan ? ` · ${s.katman.kdv_varsayilan} kalemde KDV oranı yok, %10 varsayıldı` : '') },
         { ad: `📐 Katkı payı${yz(s.katman.katki_yuzde)}`, tutar: tl(s.katman.katki), detay: 'brüt − komisyon − dükkân − anlık' },
         { ad: `📐 FAVÖK (yaklaşık)${yz(s.katman.favok_yuzde)}`, tutar: tl(s.katman.favok), detay: 'katkı − kira − personel − SGK − fatura − diğer − ortak pay (ortak pay KDV dahil)' },
-        { ad: '🧾 Ödenecek KDV (tahmini, kârdan düşülmez)', tutar: tl(s.katman.odenecek_kdv), detay: 'satış KDV − mal KDV − fatura KDV' },
+        { ad: '🧾 Ödenecek KDV (tahmini) — yukarıdaki KDV düşülmüş kazançtan düşüldü', tutar: tl(s.katman.odenecek_kdv), detay: 'satış KDV − mal KDV − fatura KDV · kesin rakam muhasebeciden' },
       ] : []),
     ],
   });
@@ -64,8 +69,9 @@ export default function KazancModulu() {
 
       <div style={{ ...kart, padding: '16px 20px', background: 'var(--pi-accent-soft)', display: 'flex', gap: 24, flexWrap: 'wrap', alignItems: 'flex-end' }}>
         <div>
-          <div style={etiketStil}>{ayAd} işletme kazancı{v.ay_bitti ? '' : ` · bugüne kadar${v.ay_ici ? ` (kira ${v.ay_ici.gecen_gun}/${v.ay_ici.ay_gun} gün oranında)` : ''}`}</div>
-          <div style={{ ...num, fontSize: 40, fontWeight: 700, color: renk(v.isletme_kazanci), lineHeight: 1.05 }}>{tl(v.isletme_kazanci)}</div>
+          <div style={etiketStil}>{ayAd} işletme kazancı{kdvli ? '' : ' · KDV düşülmüş ≈'}{v.ay_bitti ? '' : ` · bugüne kadar${v.ay_ici ? ` (kira ${v.ay_ici.gecen_gun}/${v.ay_ici.ay_gun} gün oranında)` : ''}`}</div>
+          <div title={v.katman_notu} style={{ ...num, fontSize: 40, fontWeight: 700, color: renk(ana), lineHeight: 1.05 }}>{tl(ana)}</div>
+          {!kdvli && <div style={{ fontSize: 12.5, color: R.not, marginTop: 3 }}>KDV dahil <b style={num}>{fmt(v.isletme_kazanci)}</b> · ödenecek KDV ≈ <b style={num}>{fmt(v.katman.odenecek_kdv)}</b> (tahmini — kesin rakam muhasebeciden)</div>}
         </div>
         <div style={{ display: 'flex', gap: 20, flexWrap: 'wrap' }}>
           {/* F3.13 (sim 26 Eki): rakamlar tıklanmıyordu (ölü sayı) → kaynağı olan ekran (o ekran kendi ay seçicisiyle açılır) */}
@@ -81,7 +87,7 @@ export default function KazancModulu() {
       {v.katman && v.katman.net_satis > 0 && (   /* 📐 dünya usulü KDV'siz katmanlar — sahip 2 Kas · tahmini, açıklaması title'da */
         <div title={v.katman_notu} style={{ ...kart, padding: '10px 16px', display: 'flex', gap: 18, flexWrap: 'wrap', alignItems: 'baseline', fontSize: 13 }}>
           <b style={{ fontSize: 12, letterSpacing: '.04em', color: R.not }}>KDV'SİZ MARJ (TAHMİNİ)</b>
-          {[['Net satış', v.katman.net_satis, null], ['Brüt marj', v.katman.brut, v.katman.brut_yuzde], ['Katkı payı', v.katman.katki, v.katman.katki_yuzde], ['FAVÖK ≈', v.katman.favok, v.katman.favok_yuzde]].map(([a, t, p]) => (
+          {[['Net satış', v.katman.net_satis, null], ['Brüt marj', v.katman.brut, v.katman.brut_yuzde], ['Katkı payı', v.katman.katki, v.katman.katki_yuzde]]   /* FAVÖK = ana rakam (KDV düşülmüş) — iki yerde aynı rakam olmasın (Fable L4b) */.map(([a, t, p]) => (
             <span key={a}>{a} <b style={{ ...num, color: t < 0 ? R.kirmizi : undefined }}>{fmt(t)}</b>{p != null && <span style={{ color: R.not }}> %{p}</span>}</span>
           ))}
           <span style={{ marginLeft: 'auto', color: R.not }}>🧾 Ödenecek KDV ≈ <b style={num}>{fmt(v.katman.odenecek_kdv)}</b> ₺ · vergi, amortisman, kredi faizi dahil değil</span>
@@ -92,11 +98,12 @@ export default function KazancModulu() {
         {v.subeler.map((s) => (
           <button key={s.cep} type="button" onClick={() => ac(s)} style={{
             ...kart, textAlign: 'left', cursor: 'pointer', font: 'inherit', color: R.krem, padding: '14px 16px',
-            borderLeft: `5px solid ${renk(s.kazanc)}`, display: 'flex', flexDirection: 'column', gap: 7,
+            borderLeft: `5px solid ${renk(kk(s))}`, display: 'flex', flexDirection: 'column', gap: 7,
           }}>
-            <span style={etiketStil}>{!s.gelir && !s.gider ? 'Hareket yok' : s.kazanc >= 0 ? 'Kâr ediyor' : 'Zarar ediyor'}</span>
+            <span style={etiketStil}>{!s.gelir && !s.gider ? 'Hareket yok' : kk(s) >= 0 ? 'Kâr ediyor' : 'Zarar ediyor'}</span>
             <b style={{ fontSize: 15 }}>{s.ad}</b>
-            <span style={{ ...num, fontSize: 26, fontWeight: 700, color: renk(s.kazanc) }}>{tl(s.kazanc)}</span>
+            <span style={{ ...num, fontSize: 26, fontWeight: 700, color: renk(kk(s)) }}>{tl(kk(s))}</span>
+            {s.kazanc_kdvsiz != null && s.gelir > 0 && <span style={{ fontSize: 11.5, color: R.not, marginTop: -5 }}>KDV düşülmüş ≈ · KDV dahil {fmt(s.kazanc)}</span>}
             {[['Gelir', s.gelir, 'var(--pi-good)'], ['Gider', s.gider, 'var(--pi-bad)']].map(([a, t, c]) => (
               <div key={a} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 12 }}>
                 <span style={{ width: 38, color: R.metin2 }}>{a}</span>
@@ -104,9 +111,9 @@ export default function KazancModulu() {
                 <span style={{ ...num, width: 70, textAlign: 'right' }}>{fmt(t)}</span>
               </div>
             ))}
-            {s.tasidigi_yuk > 0 && <span style={{ fontSize: 12.5 }}>🏋️ Taşıdığı yük <b style={num}>{fmt(s.tasidigi_yuk)}</b> → kalan <b style={{ ...num, color: renk(s.yuk_sonrasi) }}>{fmt(s.yuk_sonrasi)}</b></span>}
+            {s.tasidigi_yuk > 0 && <span style={{ fontSize: 12.5 }}>🏋️ Taşıdığı yük <b style={num}>{fmt(s.tasidigi_yuk)}</b> → kalan <b style={{ ...num, color: renk(s.katman ? s.katman.favok : s.yuk_sonrasi) }}>{fmt(s.katman ? s.katman.favok : s.yuk_sonrasi)}</b></span>}
             <span style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
-              {s.marj_yuzde != null && <Cip>marj %{s.marj_yuzde}</Cip>}
+              {mj(s) != null && <Cip>marj %{mj(s)}</Cip>}   {/* KDV düşülmüş kazanç ÷ KDV'siz net satış — büyük rakamla aynı dil */}
               {s.uyarilar.length > 0 && <Cip tur="sari">{s.uyarilar.length} eksik</Cip>}
               <span style={{ marginLeft: 'auto', color: 'var(--pi-accent)', fontWeight: 700 }}>›</span>
             </span>
