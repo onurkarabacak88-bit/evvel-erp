@@ -261,9 +261,10 @@ function odemeFisi(h, cepAd) {
       { etiket: 'Toplam', deger: tl(h.genel_toplam ?? kasadan + karttan) },
       { etiket: 'Kasadan', deger: tl(kasadan), renk: R.kirmizi },
       ...(karttan ? [{ etiket: 'Kartla (borç oldu)', deger: tl(karttan) }] : []),
-      { etiket: 'Gider kimin', deger: h.gider === false ? 'gider değil' : (h.kimin || 'Ortak') },
-      ...(h.gider && m ? [{ etiket: 'Hangi ayın gideri', deger: `${AY_AD[Number(m) - 1]} ${y}` }] : []),
-      ...(!h.gider && m && ['Vergi', 'SGK'].includes(h.konu) ? [{ etiket: 'Hangi ayın', deger: `${AY_AD[Number(m) - 1]} ${y}` }] : []),   // Codex: vergi/SGK dönemi fişte
+      // SGK = gider, yükü kadro payıyla (adım 143 · Fable L6): eski kayıtta saklı bayrak 'gider değil' olsa da fiş konuya göre söyler (eski sistem devri sayılmaz — Fable L6)
+      { etiket: 'Gider kimin', deger: h.konu === 'SGK' && !h.eski_sistem ? `SGK gideri · kadro payıyla (${h.kimin || 'Ortak'} adına ödendi)` : h.gider === false ? 'gider değil' : (h.kimin || 'Ortak') },
+      ...((h.gider || (h.konu === 'SGK' && !h.eski_sistem)) && m ? [{ etiket: 'Hangi ayın gideri', deger: `${AY_AD[Number(m) - 1]} ${y}` }] : []),
+      ...(!h.gider && m && h.konu === 'Vergi' ? [{ etiket: 'Hangi ayın', deger: `${AY_AD[Number(m) - 1]} ${y}` }] : []),   // Codex: vergi/SGK dönemi fişte
     ],
     not: `Toplam kasa: ${fmt(h.toplam_once)} → ${fmt(h.toplam_sonra)} ₺`
       + (h.kiradan_destek ? ` · Fatma kira hesabından destek ${fmt(h.kiradan_destek)} ₺` : '')
