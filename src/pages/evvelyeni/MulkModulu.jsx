@@ -4,7 +4,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { yapabilir } from './yetki';   // 🔐 işlem düğmesi izni (sunucu da engeller)
 import { api } from '../../utils/api';
-import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayiTR, tKisa } from './KasaModulu';
+import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayiTR, sor, tKisa } from './KasaModulu';
 import { ayAdi, ayTR, bugunTR } from '../../utils/trTarih';
 import { AY, AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici } from './AyTakvim';
 
@@ -68,15 +68,19 @@ function EvKiralari({ onToast }) {
     } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
     setMesgul(false);
   };
-  const tahsilEt = async () => {
-    if (mesgul) return; setMesgul(true);
+  const tahsilEt = async (tekrar = false) => {   // tekrar = BENZER KAYIT onaylandı (tıklama olayı buraya gelmez)
+    if (mesgul && tekrar !== true) return; setMesgul(true);
     try {
       const hv = String(tah.tutar || '').trim() ? sayiTR(tah.tutar) : 0;   // bankaya gelen
       const el = String(tah.elden || '').trim() ? sayiTR(tah.elden) : 0;   // sahip 1 Kas: elden alınan
       if (Number.isNaN(hv) || Number.isNaN(el) || hv < 0 || el < 0 || hv + el <= 0) { onToast?.('Tutarı sayı olarak yaz (ör. 25.000,00)'); setMesgul(false); return; }
-      const r = await api('/evvel-yeni/mulk/tahsilat', { method: 'POST', body: { mulk_id: tah.e.id, ay: tah.a.ay, havale: hv || null, elden: el || null, tarih: tah.tarih, istek_id: tah.istek_id } });
+      const r = await api('/evvel-yeni/mulk/tahsilat', { method: 'POST', body: { mulk_id: tah.e.id, ay: tah.a.ay, havale: hv || null, elden: el || null, tarih: tah.tarih, istek_id: tah.istek_id, tekrar_onay: tekrar === true } });
       onToast?.(r.mesaj); setTah(null); yukle();
-    } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
+    } catch (e) {
+      // Fable L6 (IS 5ds): tek kapının BENZER KAYIT uyarısı — Ödeme gibi sorulur, bilerek geçilir (bağ / cep kuralları yine geçerli)
+      if (e?.status === 409 && /BENZER KAYIT/.test(e?.message || '') && !tekrar && await sor({ soru: e.message, tamam: 'Evet, ikinci giriş' })) return tahsilEt(true);
+      onToast?.(e?.message || 'Kaydedilemedi');
+    }
     setMesgul(false);
   };
   const satirlar = (v?.evler || []).map((e) => ({
@@ -115,7 +119,7 @@ function EvKiralari({ onToast }) {
             return <div style={{ fontSize: 13, color: fz > 0.5 ? R.amber : R.not }}>Bekleyen <b style={num}>{fmt(tah.a.kalan)}</b> ₺ · yazılan toplam <b style={num}>{fmt(top)}</b> ₺{fz > 0.5 && <> · <b>{fmt(fz)} ₺ fazla</b></>}</div>;
           })()}
           <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Geldiği gün<input style={alan} type="date" value={tah.tarih} max={gunBugun()} onChange={(e) => setTah((t) => ({ ...t, tarih: e.target.value }))} /></label>
-          <div><Dugme ana disabled={mesgul} onClick={tahsilEt}>Kaydet</Dugme></div>
+          <div><Dugme ana disabled={mesgul} onClick={() => tahsilEt(false)}>Kaydet</Dugme></div>
           {bagsiz.length > 0 && (
             <div style={{ borderTop: `1px solid ${R.cizgi}`, paddingTop: 8, display: 'grid', gap: 4, fontSize: 13 }}>
               <div style={{ color: R.metin2 }}>Bu kira Kasa'ya daha önce girildiyse yenisini yazma — o girişi bu eve <b>bağla</b> (para iki kez girmesin):</div>

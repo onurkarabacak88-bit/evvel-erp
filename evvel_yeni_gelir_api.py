@@ -18,13 +18,12 @@ from fastapi import APIRouter, HTTPException
 
 from database import db
 from evvel_yeni_kasa_api import komisyon as _komisyon
-from evvel_yeni_kasa_api import (DIS_TURLERI, KIRA_CEPLERI, kasa_baslangic as _baslangic, kasa_hazirla as _hazirla, pos_oranlari as _oranlar, kasa_kayitlari as _yukle,
+from evvel_yeni_kasa_api import (DIS_TURLERI, giris_gelir_sinifi, kasa_baslangic as _baslangic, kasa_hazirla as _hazirla, pos_oranlari as _oranlar, kasa_kayitlari as _yukle,
                                  kapanissiz_gunler)
 from evvel_yeni_cekirdek import bugun as _bugun, tl_sayi as _tl_sayi
 
 router = APIRouter(prefix="/api/evvel-yeni/gelir", tags=["evvel-yeni-gelir"])
 
-GELIR_SAYILMAZ = {"borc", "kredi", "destek"}     # para girişi ama kazanç değil
 
 
 def _ay_sinirlari(ay: Optional[str]):
@@ -123,14 +122,16 @@ def gelir_ozet(ay: Optional[str] = None):
         matris.append(satir)
 
     # Satış dışı girişler
-    diger, sayilmaz = {}, {}
+    # sahip 2 Kas (IS 5ds · Fable + Codex L4b): sınıf TEK kuraldan (Kasa giris_gelir_sinifi) — ev kirası Mülk defteri, işletme geliri DEĞİL
+    diger, sayilmaz, mulk = {}, {}, {}
     for h in kayit:
         if h["tur"] != "dis" or not (bas_i <= h["is_gunu"] <= son_i):
             continue
         alt = h["veri"].get("alt", "diger")
         ad = DIS_TURLERI.get(alt, DIS_TURLERI["diger"])[0]
-        hedef = sayilmaz if alt in GELIR_SAYILMAZ else diger
-        k = ad + (" (kira hesabı · işletmeden ayrı)" if h.get("cep") in KIRA_CEPLERI else "")
+        sinif = giris_gelir_sinifi(h["veri"])
+        hedef = {"mulk": mulk, "degil": sayilmaz}.get(sinif, diger)
+        k = ad
         hedef[k] = hedef.get(k, 0) + h["tutar"]
 
     T = {k: sum(s_.get(k, 0) for s_ in S.values()) for k in ("nakit", "pos", "online")}
@@ -145,6 +146,7 @@ def gelir_ozet(ay: Optional[str] = None):
         "subeler": subeler, "matris": matris,
         "diger_gelirler": [{"ad": k, "tutar": _tl_sayi(v)} for k, v in diger.items()],
         "gelir_sayilmayanlar": [{"ad": k, "tutar": _tl_sayi(v)} for k, v in sayilmaz.items()],
+        "mulk_gelirleri": [{"ad": k, "tutar": _tl_sayi(v)} for k, v in mulk.items()],   # ev kirası — işletmeden ayrı (Mülk defteri)
     }
 
 

@@ -10,6 +10,7 @@ import KasaModulu, { SAYFALAR, IS_GRUPLARI } from './KasaModulu';
 import SistemDurumu, { SISTEM_SAYFALAR } from './SistemDurumu';
 import CepAna, { CEP_SAYFALAR } from './CepAna';
 import GelirModulu, { GELIR_SAYFALAR } from './GelirModulu';
+import ParaGirisi from './ParaGirisi';
 import GiderModulu, { GIDER_SAYFALAR } from './GiderModulu';
 import OdemeModulu, { ODEME_SAYFALAR, PatronHarcama } from './OdemeModulu';
 import KazancModulu, { KAZANC_SAYFALAR } from './KazancModulu';
@@ -38,7 +39,8 @@ export const MODULLER = [
   // 📋 Bekleyen işler — kendi başlığı + konu alt sekmeleri (sahip 2026-10-17). Her zaman görünür (çekirdek görünüm).
   { mod: 'isler', her_zaman: true, ad: 'Bekleyen işler', ikon: '📋', sektor: 'genel', sayfalar: IS_GRUPLARI,
     g: (s, c) => <KasaModulu gorunum={s} onSekme={c.onSekme} onToast={c.onToast} onVeri={c.onVeri} sekmesiz /> },
-  { mod: 'gelir', ad: 'Gelir', ikon: '📥', sektor: 'genel', sayfalar: GELIR_SAYFALAR, g: () => <GelirModulu /> },
+  { mod: 'gelir', ad: 'Gelir', ikon: '📥', sektor: 'genel', sayfalar: GELIR_SAYFALAR,
+    g: (s, c) => (s === 'para_girisi' ? <ParaGirisi onToast={c.onToast} /> : <GelirModulu />) },   // sahip 2 Kas (IS 5ds): tek giriş kapısı
   { mod: 'gider', ad: 'Gider', ikon: '💸', sektor: 'genel', sayfalar: GIDER_SAYFALAR, g: (s, c) => <GiderModulu onToast={c.onToast} /> },
   { mod: 'avans', bolum: 'maas', ad: 'Avans talepleri', ikon: '🤝', sektor: 'genel', sayfalar: AVANS_SAYFALAR, g: (s, c) => <AvansModulu onToast={c.onToast} /> },
   { mod: 'vardiya', bolum: 'maas', ad: 'Vardiya planı', ikon: '🗓️', sektor: 'genel', sayfalar: VARDIYA_SAYFALAR, g: (s, c) => <VardiyaModulu onToast={c.onToast} /> },

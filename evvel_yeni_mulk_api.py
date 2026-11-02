@@ -287,6 +287,7 @@ class TahsilatBody(BaseModel):
     elden: Optional[TrTutar] = None   # elden alınan → Fatma'nın elindeki kira (Mülk nakdi, işletmeye karışmaz)
     tarih: Optional[str] = None
     istek_id: Optional[str] = None
+    tekrar_onay: bool = False         # tek kapının BENZER KAYIT uyarısını bilerek geç (IS 5ds)
 
 
 @router.post("/tahsilat")
@@ -310,10 +311,12 @@ def tahsilat(b: TahsilatBody, x_evvel_oturum: Optional[str] = Header(default=Non
     if not parcalar:
         raise HTTPException(400, "Tutar gir")
     toplam_tl = _tl_sayi(sum(_kurus(p.tutar) for p in parcalar))   # mesajdaki fazla / kalan hesabı toplamla
-    r = kasa.hareket_ekle(kasa.HareketBody(tur="dis", is_gunu=(b.tarih or _bugun().isoformat())[:10], cep=parcalar[0].cep,
-                                           parcalar=parcalar, tutar=None, alt="kira",
-                                           kimden=(k.get("kiraci") or k["ad"])[:80], not_=f"{k['ad']} · {ay} kirası",
-                                           bag={"modul": "mulk", "id": b.mulk_id, "ay": ay}, istek_id=b.istek_id), x_evvel_oturum)
+    # sahip 2 Kas (IS 5ds, Codex L4b): eski kapı da TEK yazıcıya delege — kira kuralları (ev + ay bağı, kira cepleri) giris_yaz'da
+    kasa.kasa_hazirla()
+    with db() as (conn, cur):
+        r = kasa.giris_yaz(cur, kasa.GirisBody(konu="kira", is_gunu=(b.tarih or _bugun().isoformat())[:10], parcalar=parcalar,
+                                               mulk_id=b.mulk_id, ay=ay, istek_id=b.istek_id, tekrar_onay=b.tekrar_onay),
+                           _aktor(cur, x_evvel_oturum))
     nereye = " + ".join(("kira hesabına" if p.cep == KIRA_CEP else "elden (elindeki kira)") for p in parcalar)
     msj = (r.get("mesaj") if r.get("tekrar") else None) or f"{k['ad']} · {_AY[int(ay[5:7]) - 1]} kirası girdi — {nereye}"
     if hucre and hucre["beklenen"] and not r.get("tekrar"):
@@ -321,6 +324,40 @@ def tahsilat(b: TahsilatBody, x_evvel_oturum: Optional[str] = Header(default=Non
         if fz >= 1:
             msj += f" · ⚠ {hucre['kalan']:,.0f} ₺ bekleniyordu, {fz:,.0f} ₺ FAZLA geldi (Uyarılar'da görünür)".replace(",", ".")
     return {"ok": True, "tekrar": bool(r.get("tekrar")), "mesaj": msj}
+
+
+# 💰 PARA GİRİŞİ sağlayıcısı (tak-çıkar · IS 5ds): "Ev kirası" konusu yalnız bu modül yüklüyken var — ev + ay doğrulaması burada.
+def _giris_kira_dogrula(cur, b) -> dict:
+    ay = _ay_dogrula(b.ay, "Ay")
+    if not b.mulk_id or not ay:
+        raise HTTPException(400, "Ev ve kiranın ait olduğu ayı seç")
+    cur.execute("SELECT ad, kiraci FROM ey_mulk WHERE id=%s", (b.mulk_id,))
+    k = cur.fetchone()
+    if not k:
+        raise HTTPException(404, "Ev bulunamadı")
+    k = dict(k)
+    return {"bag": {"modul": "mulk", "id": b.mulk_id, "ay": ay}, "kimden": (k.get("kiraci") or k["ad"])[:80], "not": f"{k['ad']} · {ay} kirası"}
+
+
+def _giris_kira_secenek(cur) -> dict:
+    """Formun ev listesi + her evin kalanı olan ayları (son 3 ay + bu ay; 'Kira gelmedi' birden çok ay olabilir → ay sorulur)."""
+    bugun = _bugun()
+    aylar = {ay_kaydir(bugun.strftime("%Y-%m"), -i) for i in range(4)}
+    evler = {}
+    for yil in sorted({int(a[:4]) for a in aylar}):
+        for e in _takvim(cur, yil)["evler"]:
+            if not e["aktif"]:
+                continue
+            x = evler.setdefault(e["id"], {"id": e["id"], "ad": e["ad"], "kiraci": e.get("kiraci"), "kira": e["kira"], "acik_aylar": []})
+            x["acik_aylar"] += [{"ay": a["ay"], "kalan": a["kalan"]} for a in e["aylar"] if a["ay"] in aylar and a["kalan"] > 0]
+    return {"evler": sorted(evler.values(), key=lambda x: x["ad"])}
+
+
+try:   # Kasa yüklü değilse (modül kapalı) konu kaydı yapılmaz — Para girişi'nde 'Ev kirası' görünmez
+    import evvel_yeni_kasa_api as _kasa_giris
+    _kasa_giris.giris_konusu_kaydet("kira", _giris_kira_dogrula, _giris_kira_secenek)
+except Exception:  # noqa: BLE001
+    log.warning("mülk: para girişi konusu kaydedilemedi", exc_info=True)
 
 
 _AY = ("Ocak", "Şubat", "Mart", "Nisan", "Mayıs", "Haziran", "Temmuz", "Ağustos", "Eylül", "Ekim", "Kasım", "Aralık")

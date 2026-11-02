@@ -1626,6 +1626,7 @@ class HareketBody(BaseModel):
     online: Optional[TrTutar] = None
     bag: Optional[dict] = None          # 🧩 tak-çıkar: bu kaydı hangi modülün neyine bağlar (ör. {"modul":"mulk","id":..,"ay":..}) — Kasa yorumlamaz
     istek_id: Optional[str] = None      # formun tek kimliği — tekrar gönderilirse İKİNCİ KEZ yazılmaz
+    giris: Optional[dict] = None        # 💰 Para girişi (giris_yaz) konu etiketi {konu, gelir?} — yalnız tek kapıdan gelir
 
 
 def _yaz(cur, tur, gun, kaydeden, cep=None, kaynak=None, hedef=None, tutar=0, durum=None, veri=None, kaynak_ref=None):
@@ -1746,13 +1747,17 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
         cepler_ = [p["cep"] for p in parca_] if parca_ else [body.cep]   # tek parça da tek-cep kaydı olarak yazılır (eski biçim)
         if alt == "kira" and any(c not in KIRA_CEPLERI for c in cepler_):
             raise HTTPException(400, "Kira yalnız kira ceplerine girer (kira hesabı / elindeki kira)")
-        if alt != "kira" and "nakit:kira" in cepler_:
-            raise HTTPException(400, "Elindeki kira cebine yalnız kira girer")
+        if alt != "kira" and any(c in KIRA_CEPLERI for c in cepler_):   # Codex L4b (2 Kas): kira hesabı da açıktı — iki kira cebi de yalnız kiraya
+            raise HTTPException(400, "Kira ceplerine yalnız kira girer")
         if tut <= 0:
             raise HTTPException(400, "Tutar gir")
         if alt in ("destek", "borc", "kredi") and not (body.kimden or "").strip():
             raise HTTPException(400, "Kimden geldiğini yaz")
         veri_ = {"alt": alt, "kimden": (body.kimden or "").strip()[:80], "not": (body.not_ or "").strip()[:200]}
+        if isinstance(body.giris, dict):   # tek kapının konu etiketi (gelir sınıfı giris_gelir_sinifi'nden okunur)
+            veri_["konu"] = str(body.giris.get("konu") or "")[:20]
+            if "gelir" in body.giris:
+                veri_["gelir"] = bool(body.giris["gelir"])
         if isinstance(body.bag, dict):
             veri_["bag"] = {str(k)[:20]: (str(v)[:80] if v is not None else None) for k, v in list(body.bag.items())[:6]}
         if parca_ and len(parca_) > 1:
@@ -1809,6 +1814,8 @@ def kasa_yaz(cur, body: "HareketBody", kim: str, kaynak_ref: Optional[str] = Non
         # 💳 POS/online parası bankaya YATTI (net). Brüt karşılığı: verilmezse şubenin
         # komisyon oranıyla TAHMİN edilir (etiketli) — fark otomatik "komisyon" sayılmaz.
         cep_var(body.cep, {"banka"})
+        if body.cep in KIRA_CEPLERI:   # Mülk ayrımı: satış parası kira hesabına girmez
+            raise HTTPException(400, "Online yatış kira hesabına girmez — şube bankası seç")
         sube_cep = body.kaynak if body.kaynak in C and C[body.kaynak]["tur"] == "sube" else None
         if not sube_cep:
             sid = C[body.cep].get("sube_id")
@@ -1951,6 +1958,189 @@ def _kanal_duzelt(cur, h: dict, t: int, kim: str, cozum_id: str) -> None:
     cur.execute("UPDATE para_izi_hareket SET tutar=%s, veri=%s::jsonb WHERE id=%s", (yeni_tutar, json.dumps(v, ensure_ascii=False), h["id"]))
 
 
+# ─────────────── 💰 PARA GİRİŞİ — TEK KAPI (sahip 2 Kas · IS 5ds · GELIR_GIRISI_KURGU.md · Fable + Codex L4b) ───────────────
+# Ödeme'nin (odeme_yaz) aynası: kasaya dışarıdan para girişinin TEK yolu giris_yaz (+ şube paneli kapanışı + otomatik POS; taşıma ayrı).
+# YENİ TABLO YOK — konuya göre Kasa'nın kendi yazıcısı (kasa_yaz) çağrılır: online → pos_yatis (bekleyen online hesabı onu okur),
+# öteki konular → dis (alt anahtarları DEĞİŞMEZ; konu üst etiket). Modüle bağlı konu (kira = Mülk, kredi = Krediler) sağlayıcıyla
+# gelir (tak-çıkar): sağlayıcı yoksa konu listede yok ve sunucu reddeder. Sahip kararı K1/K4: iade / verilen borç / emanet AÇILMAZ.
+GIRIS_KONULARI = {
+    "kira": {"ad": "Ev kirası", "alt": "kira", "gelir": "mulk", "saglayici": True,
+             "ipucu": "Mülk defteri — işletme gelirine karışmaz; yalnız kira ceplerine"},
+    "online": {"ad": "Online satış yatışı", "alt": None, "gelir": False,
+               "ipucu": "Yemeksepeti / Getir vb. — ciro kapanışta sayıldı; POS buraya girilmez (ertesi gün kendiliğinden)"},
+    "kredi": {"ad": "Kredi kullanımı", "alt": "kredi", "gelir": False, "saglayici": True,
+              "ipucu": "Krediler'deki kredi seçilir — taksit planı orada, ikinci borç yazılmaz"},
+    "borc": {"ad": "Alınan borç (kişiden)", "alt": "borc", "gelir": False, "kimden": True,
+             "ipucu": "Geri ödenecek — geri ödemesi Ödeme › Kredi / borç"},
+    "destek": {"ad": "Patron desteği", "alt": "destek", "gelir": False, "patron": True, "ipucu": "Desteği koyan patron"},
+    "satis": {"ad": "Demirbaş / eşya satışı", "alt": "satis", "gelir": True, "sube": True,
+              "ipucu": "Satış dışı gelir — şube kazancına girmez (sahip K2)"},
+    "diger": {"ad": "Diğer", "alt": "diger", "gelir": None, "ipucu": "Gelir mi değil mi seç, ne olduğunu yaz"},
+}
+_GIRIS_SAGLAYICI = {}   # konu → (dogrula(cur, body) → {"bag", "kimden", "not"}, secenek(cur) → dict)
+
+
+def giris_konusu_kaydet(konu: str, dogrula, secenek=None) -> None:
+    """PUBLIC (tak-çıkar): modül kendi giriş konusunun doğrulayıcısını / seçeneklerini kaydeder (Mülk → kira, Krediler → kredi)."""
+    _GIRIS_SAGLAYICI[konu] = (dogrula, secenek)
+
+
+def giris_gelir_sinifi(veri: dict) -> str:
+    """PUBLIC — dış girişin gelir sınıfı TEK kural: 'mulk' (kira — işletmeden ayrı) · 'isletme' (satış dışı gelir) · 'degil'
+    (borç / kredi / destek / gelir olmayan diğer). Eski kayıtta konu yoksa alt türden okunur (geçmiş toplam değişmez)."""
+    alt = (veri or {}).get("alt") or "diger"
+    if alt == "kira":
+        return "mulk"
+    if alt in ("borc", "kredi", "destek"):
+        return "degil"
+    if alt == "diger" and (veri or {}).get("gelir") is False:
+        return "degil"
+    return "isletme"
+
+
+class GirisBody(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+    konu: str
+    is_gunu: Optional[str] = None
+    parcalar: Optional[List[Parca]] = None   # cep + tutar (Ödeme simetriği); online tek parça (şube bankası)
+    kimden: Optional[str] = None
+    not_: Optional[str] = Field(None, alias="not")
+    gelir: Optional[bool] = None             # yalnız 'diger': gelir mi?
+    sube_id: Optional[str] = None            # 'satis': hangi şubenin
+    brut: Optional[TrTutar] = None           # 'online': brüt satış (bilmiyorsan boş → oranla tahmin, etiketli)
+    mulk_id: Optional[str] = None            # 'kira' (sağlayıcı doğrular)
+    ay: Optional[str] = None
+    kredi_id: Optional[str] = None           # 'kredi' (sağlayıcı doğrular)
+    tekrar_onay: bool = False                # BENZER KAYIT uyarısını bilerek geç (bağ / cep / kilit yasaklarını AŞAMAZ)
+    istek_id: Optional[str] = None
+
+
+def _benzer_giris(kayit: list, tur: str, gun: str, cepler: set, tutar: int, alt: Optional[str], bag: Optional[dict] = None, kimden: str = "") -> bool:
+    """Aynı gün + aynı tür / alt + aynı cep + aynı tutar + AYNI BAĞ (ev·ay / kredi / şube) + aynı kimden → benzer kayıt (Ödeme BENZER
+    KAYIT aynası). Bağ ve kimden şart: aynı gün aynı tutarda iki ayrı evin kirası mükerrer sayılmasın. (kayıtlar iptal süzülmüş gelir;
+    giris_yaz'ın okuduğu liste verilir — Fable L6: tam tablo bir kez daha okunmasın)"""
+    for h in kayit:
+        if h["tur"] != tur or h["is_gunu"] != gun:
+            continue
+        v = h.get("veri") or {}
+        if tur == "dis" and (v.get("alt") != alt or (v.get("bag") or None) != (bag or None) or (v.get("kimden") or "") != (kimden or "")):
+            continue
+        hc = {p["cep"] for p in v.get("parcalar", [])} or {h.get("cep")}
+        if hc & cepler and int(h["tutar"] or 0) == tutar:
+            return True
+    return False
+
+
+def giris_yaz(cur, b: GirisBody, kim: str) -> dict:
+    """PUBLIC — kasaya dışarıdan para girişinin TEK yazıcısı (Para girişi formu + Mülk 'Kira geldi'). Çağıranın işleminde;
+    önce kasa_hazirla(). Konu kurallarını uygular, sonra Kasa'nın kendi yazıcısı kasa_yaz (sayım kilidi / tarih / tekrar orada)."""
+    k = GIRIS_KONULARI.get(b.konu)
+    if not k:
+        raise HTTPException(400, "Giriş konusu seç")
+    if k.get("saglayici") and b.konu not in _GIRIS_SAGLAYICI:
+        raise HTTPException(400, f"{k['ad']} için ilgili modül kapalı")
+    gun = (b.is_gunu or _bugun().isoformat())[:10]
+    if b.istek_id:   # Codex L4b: istek_id KESİN tekrar koruması BENZER KAYIT uyarısından önce (aynı form iki kez gönderildi → yazılmaz)
+        cur.execute("SELECT 1 FROM para_izi_hareket WHERE kaynak_ref = %s OR kaynak_ref LIKE %s LIMIT 1",
+                    (f"hareket:{b.istek_id[:64]}", f"hareket:{b.istek_id[:64]}#%"))
+        if cur.fetchone():
+            return {"ok": True, "id": None, "idler": [], "tekrar": True, "mesaj": "Bu giriş zaten yazılmıştı (ikinci kez yazılmadı)"}
+    ham = list(b.parcalar or [])
+    if any(p.tutar is not None and _kurus(p.tutar) < 0 for p in ham):
+        raise HTTPException(400, "Tutar eksi olamaz")   # Codex: eskiden eksi parça sessizce düşüyordu
+    ps = [{"cep": p.cep, "tutar": _kurus(p.tutar)} for p in ham if p.tutar is not None and _kurus(p.tutar) > 0]
+    if not ps:
+        raise HTTPException(400, "Tutar gir")
+    if len({p["cep"] for p in ps}) != len(ps):
+        raise HTTPException(400, "Aynı cep iki kez seçilemez")
+    _, C, kayit, _ = _yukle(cur)
+    for p in ps:
+        c = C.get(p["cep"])
+        if not c:
+            raise HTTPException(400, "Cep bulunamadı")
+        if c["tur"] == "sube":
+            raise HTTPException(400, "Dükkân çekmecesine para girişi şube panelinden (kapanış) yapılır")
+        if (p["cep"] in KIRA_CEPLERI) != (b.konu == "kira"):
+            raise HTTPException(400, "Kira ceplerine yalnız ev kirası girer; ev kirası yalnız kira ceplerine girer")
+    cepler = {p["cep"] for p in ps}
+    toplam = sum(p["tutar"] for p in ps)
+    not_ = (b.not_ or "").strip()
+    kimden = (b.kimden or "").strip()
+    bag = None
+
+    if b.konu == "online":
+        if len(ps) != 1 or C[ps[0]["cep"]]["tur"] != "banka":
+            raise HTTPException(400, "Online yatış tek bir şube bankasına girer")
+        if not b.tekrar_onay and _benzer_giris(kayit, "pos_yatis", gun, cepler, toplam, None):
+            raise HTTPException(409, "BENZER KAYIT: aynı gün, aynı bankaya, aynı tutarda online yatış zaten var. Gerçekten ikinci yatışsa onayla.")
+        hb = HareketBody(tur="pos_yatis", is_gunu=gun, cep=ps[0]["cep"], tutar=_tl_sayi(toplam), alt="online",
+                         kart=b.brut if b.brut is not None and _kurus(b.brut) > 0 else None, not_=not_ or None, istek_id=b.istek_id)
+        return kasa_yaz(cur, hb, kim)
+
+    if k.get("saglayici"):
+        dogrula, _sec = _GIRIS_SAGLAYICI[b.konu]
+        s = dogrula(cur, b) or {}
+        bag, kimden, not_ = s.get("bag"), (s.get("kimden") or kimden), (not_ or s.get("not") or "")
+        if not bag:
+            raise HTTPException(400, f"{k['ad']}: bağ kurulamadı")
+    if k.get("kimden") and not kimden:
+        raise HTTPException(400, "Kimden geldiğini yaz")
+    if k.get("patron") and kimden not in PATRONLAR:
+        raise HTTPException(400, "Desteği koyan patronu seç")
+    if k.get("sube"):
+        if not b.sube_id or not any(c.get("sube_id") == b.sube_id for c in C.values()):
+            raise HTTPException(400, "Hangi şubenin satışı? Şube seç")
+        bag = {"modul": "sube", "id": b.sube_id}
+    if b.konu == "diger":
+        if b.gelir is None:
+            raise HTTPException(400, "Gelir mi değil mi seç")
+        if len(not_) < 10:
+            raise HTTPException(400, "Ne olduğunu yaz (en az 10 harf)")
+    bag = {str(a)[:20]: (str(x)[:80] if x is not None else None) for a, x in (bag or {}).items()} or None   # kasa_yaz ile aynı biçim
+    if not b.tekrar_onay and _benzer_giris(kayit, "dis", gun, cepler, toplam, k["alt"], bag, kimden):
+        raise HTTPException(409, f"BENZER KAYIT: aynı gün, aynı cebe, aynı tutarda '{k['ad']}' girişi zaten var. Gerçekten ikinci girişse onayla.")
+    hb = HareketBody(tur="dis", is_gunu=gun, cep=ps[0]["cep"], parcalar=[Parca(cep=p["cep"], tutar=_tl_sayi(p["tutar"])) for p in ps],
+                     alt=k["alt"], kimden=kimden or None, not_=not_ or None, bag=bag, istek_id=b.istek_id,
+                     giris={"konu": b.konu, **({"gelir": bool(b.gelir)} if b.konu == "diger" else {})})
+    return kasa_yaz(cur, hb, kim)
+
+
+@router.get("/giris/listeler")
+def giris_listeler():
+    """Para girişi formunun listeleri: konular (kapalı modülün konusu yok) · cepler · patronlar · sağlayıcı seçenekleri."""
+    _hazirla()
+    with db() as (conn, cur):
+        _, C, kayit, _ = _yukle(cur)
+        # eski "Online yattı" penceresinin bilgisi korunur: şube bankası başına bankaya gelecek online brüt / beklenen net / en eski gün
+        online = [x for x in _pos_durumu(_olaylar(kayit), C, _oranlar(cur), _bugun().isoformat()) if x["kanal"] == "online" and x["bekleyen_brut"] > 0.004]
+        sec = {}
+        for kn, (_d, s) in _GIRIS_SAGLAYICI.items():
+            if s:
+                try:
+                    with savepoint(cur, "sp_giris_sec"):
+                        sec[kn] = s(cur)
+                except Exception:  # noqa: BLE001 — seçenek okunamazsa o konu boş liste ile gelir
+                    log.warning("kasa: giriş seçenekleri okunamadı (%s)", kn, exc_info=True)
+                    sec[kn] = {}
+    konular = [{"kod": kn, "ad": v["ad"], "ipucu": v.get("ipucu"), "gelir": v["gelir"]}
+               for kn, v in GIRIS_KONULARI.items() if not v.get("saglayici") or kn in _GIRIS_SAGLAYICI]
+    cepler = [{"id": cid, "ad": c["ad"], "tur": c["tur"], "kira": cid in KIRA_CEPLERI, "sube_id": c.get("sube_id")}
+              for cid, c in C.items() if c["tur"] != "sube" and not c.get("gizli")]
+    subeler = sorted({(c.get("sube_id"), c.get("kisa") or c["ad"]) for c in C.values() if c["tur"] == "sube" and c.get("sube_id")},
+                     key=lambda x: x[1])
+    return {"konular": konular, "cepler": cepler, "patronlar": list(PATRONLAR),
+            "subeler": [{"id": i, "ad": a} for i, a in subeler], "secenekler": sec, "online_bekleyen": online}
+
+
+@router.post("/giris")
+def giris_kaydet(body: GirisBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Para girişi formu — tek transaction + modül kilidi (kasa_yaz içinde)."""
+    _hazirla()
+    with db() as (conn, cur):
+        return giris_yaz(cur, body, _aktor(cur, x_evvel_oturum))
+
+
+
 @router.post("/hareket")
 def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Tek yazma kapısı. Tek transaction + modül kilidi: ya tamamı yazılır ya hiçbiri."""
@@ -1961,6 +2151,8 @@ def hareket_ekle(body: HareketBody, x_evvel_oturum: Optional[str] = Header(defau
             if body.tur != "teslim" or body.kesim_ref not in {x.get("ref") for x in kesim_elle_listesi(cur, hepsi=True) if x.get("tur") == "teslim"}:
                 raise HTTPException(400, "Bu kayıt son aktarım listesinde yok — sayfayı yenile")
             ref = body.kesim_ref
+        if body.tur in ("dis", "pos_yatis"):   # sahip 2 Kas (IS 5ds, Codex): ikinci giriş yolu kalmasın — tek kapı giris_yaz
+            raise HTTPException(400, "Para girişi Gelir › Para girişi gir'den yapılır")
         return kasa_yaz(cur, body, _aktor(cur, x_evvel_oturum), kaynak_ref=ref)
 
 

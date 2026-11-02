@@ -45,7 +45,7 @@ _S = [
     ("kasa.dukkan", "kasa", "Dükkân nakitleri", "e", 1, None, ["subeler"]),
     ("kasa.evler", "kasa", "Evler (Onur · Fatma)", "e", 1, None, ["evler"]),
     ("kasa.banka", "kasa", "Bankalar", "e", 1, None, ["bankalar"]),
-    ("kasa.hareket", "kasa", "Günlük hareketler", "e", 1, None, ["hareketler"]),
+    ("kasa.hareket", "kasa", "Günlük hareketler", "e", 1, None, ["hareketler", "para_girisi"]),   # Fable L6: dış girişi Kasam'dan yapan sayfayı görür
     ("kasa.uyari", "kasa", "Uyarılar", "e", 0, None, ["uyarilar"]),
     ("kasa.teslim", "kasa", "Teslim onayları", "e", 1, None, ["teslim"]),
     ("kasa.teslim.islem", "kasa", "Teslimi al / düzelt", "i", 1, "kasa.teslim", []),
@@ -55,6 +55,9 @@ _S = [
     ("kasa.iptal", "kasa", "Kasa hareketi iptal", "i", 1, "kasa.hareket", []),
     ("kasa.donem", "kasa", "Dönem kapat / eski sistemden aktar", "i", 1, "kasa.kasam", []),
     ("gelir.liste", "gelir", "Gelirlerim", "e", 1, None, ["gelirler"]),
+    # sahip 2 Kas (IS 5ds · Fable L6): para girişi TEK kapı — Ödeme (odeme.defter / odeme.gir) aynası; eski kasa.islem sahibi de girer
+    ("gelir.giris", "gelir", "Para girişi gir", "e", 1, None, ["para_girisi"]),
+    ("gelir.giris.islem", "gelir", "Para girişini kaydet", "i", 1, "gelir.giris", []),
     ("gider.liste", "gider", "Giderlerim", "e", 1, None, ["giderler"]),
     ("gider.siniflandir", "gider", "Gideri sınıflandır", "i", 0, "gider.liste", []),
     ("fis.kontrol", "fis", "Anlık gider fiş kontrol", "e", 0, None, ["fis_kontrol"]),
@@ -172,7 +175,8 @@ _Y = [
     ("GET", "/kasa/durum", "*"), ("GET", "/kasa/cep/{x}", "kasa.kasam|kasa.dukkan|kasa.evler|kasa.banka|kasa.hareket"),
     ("GET", "/kasa/teslimler", "kasa.teslim"), ("GET", "/kasa/banka-mutabakat", "kasa.mutabakat"),
     ("GET", "/kasa/acik-defter", "kasa.fark"), ("GET", "/kasa/fark/{x}", "kasa.fark"),
-    ("POST", "/kasa/hareket", "kasa.islem"), ("POST", "/kasa/hareket/{x}/onay", "kasa.teslim.islem|kasa.islem"),
+    ("POST", "/kasa/hareket", "kasa.islem"), ("GET", "/kasa/giris/listeler", "gelir.giris|kasa.islem|kasa.hareket"),
+    ("POST", "/kasa/giris", "gelir.giris.islem|kasa.islem"), ("POST", "/kasa/hareket/{x}/onay", "kasa.teslim.islem|kasa.islem"),
     ("POST", "/kasa/hareket/{x}/iptal", "kasa.iptal|odeme.gir"), ("POST", "/kasa/aktar", "kasa.donem"),
     ("POST", "/kasa/hareket/{x}/teslim-duzelt", "kasa.teslim.islem"), ("POST", "/kasa/onay-toplu", "kasa.islem"),
     ("POST", "/kasa/donem", "kasa.donem"),

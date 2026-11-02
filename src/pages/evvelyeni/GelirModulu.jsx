@@ -13,6 +13,7 @@ import { ayTR, gunKisa } from '../../utils/trTarih';
 
 export const GELIR_SAYFALAR = [
   { id: 'gelirler', ad: 'Gelirlerim', alt: 'Şube şube · gün gün satış' },
+  { id: 'para_girisi', ad: 'Para girişi gir', alt: 'Kira · online · kredi · borç · destek · diğer' },   // sahip 2 Kas (IS 5ds): Ödeme / gider gir'in aynası
 ];
 
 const KANAL_RENK = { nakit: 'var(--pi-good)', pos: 'var(--pi-accent)', online: 'var(--pi-warn)' };
@@ -163,6 +164,14 @@ export default function GelirModulu() {
             <div key={x.ad} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--pi-line)', fontSize: 13 }}><span>{x.ad}</span><b style={num}>{fmt(x.tutar)}</b></div>
           )) : <div style={{ color: R.not, fontSize: 13, marginTop: 6 }}>Bu ay yok.</div>}
         </div>
+        {(v.mulk_gelirleri || []).length > 0 && (   /* sahip 2 Kas (IS 5ds): ev kirası işletme geliri değil — Mülk defteri ayrı */
+          <div style={{ ...kart, padding: 14 }}>
+            <b>Kira hesabı (Mülk)</b> <span style={{ color: R.not, fontSize: 12 }}>işletmeden ayrı defter</span>
+            {v.mulk_gelirleri.map((x) => (
+              <div key={x.ad} style={{ display: 'flex', justifyContent: 'space-between', gap: 8, padding: '6px 0', borderBottom: '1px solid var(--pi-line)', fontSize: 13 }}><span>{x.ad}</span><b style={num}>{fmt(x.tutar)}</b></div>
+            ))}
+          </div>
+        )}
       </div>
       <Cekmece v={ck} onKapat={() => setCk(null)} />
     </div>

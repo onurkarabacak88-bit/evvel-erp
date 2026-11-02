@@ -338,8 +338,8 @@ function HareketSatir({ h, cepAd, onIptal, onTeyit, onFis }) {
 
 // ─── Form penceresi ───
 const BASLIK = {
-  acilis: 'Açılış bakiyesi', donem: 'Yeni başlangıç', kapanis: 'Şube kapanışı', dis: 'Dış kaynaktan giriş', teslim: 'Şubeden teslim',
-  tasima: 'Para taşı / hesaba yatır', sayim: 'Sayım / ekstre bakiyesi', pos: 'Online platform parası bankaya yattı', odeme: 'Ödeme', coz: 'Farkı çöz', iptal: 'Kaydı iptal et', aktar: 'Eski sistemden aktar',
+  acilis: 'Açılış bakiyesi', donem: 'Yeni başlangıç', kapanis: 'Şube kapanışı', teslim: 'Şubeden teslim',
+  tasima: 'Para taşı / hesaba yatır', sayim: 'Sayım / ekstre bakiyesi', odeme: 'Ödeme', coz: 'Farkı çöz', iptal: 'Kaydı iptal et', aktar: 'Eski sistemden aktar',
 };
 // 🔄 VERİ YÜKLE — "son istek kazanır" kancası TEK yerde (Dalga 5, T4-09: 12 modül aynı no/useRef/try bloğunu kopyalıyordu).
 // yol değişince yeniden yükler; geç gelen ESKİ yanıt yok sayılır. sifirla: yüklerken eski veri gizlensin. Dönüş: yukle (elle yenile).
@@ -405,7 +405,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
     .map((c) => <option key={c.id} value={c.id}>{c.ad}{bakiyeli ? ` · ${fmt(bak[c.id])} ₺` : ''}</option>);
   const ilk = (turler) => (cepler.find((c) => (!turler || turler.includes(c.tur)) && !c.gizli) || {}).id || '';
   const [d, setD] = useState(() => ({
-    is_gunu: form.gun || gun, cep: form.cep || (tip === 'pos' ? ((cepler.find((c) => c.tur === 'banka' && !c.kira) || {}).id || '') : ilk(tip === 'kapanis' ? ['sube'] : null)),
+    is_gunu: form.gun || gun, cep: form.cep || ilk(tip === 'kapanis' ? ['sube'] : null),
     kaynak: form.kaynak || ilk(tip === 'teslim' ? ['sube'] : null), hedef: ilk(tip === 'teslim' ? ['ev'] : ['ev', 'hesap']), tutar: form.tutar != null ? String(form.tutar) : '',
     alt: 'borc', kimin: 'Ortak', parcalar: [{ cep: '', tutar: '' }], sorumlu: '', sebep: '',
   }));
@@ -459,8 +459,7 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         onToast?.(r?.iptal_sayi > 1 ? `Taşımanın ${r.iptal_sayi} satırı birlikte iptal edildi (iz duruyor)` : 'Kayıt iptal edildi (iz duruyor)');
       } else {
         const body = { tur: tip === 'coz' ? 'cozum' : tip, is_gunu: d.is_gunu };
-        if (['acilis', 'kapanis', 'dis', 'sayim', 'pos'].includes(tip)) body.cep = d.cep;
-        if (tip === 'pos') { body.tur = 'pos_yatis'; body.alt = 'online'; body.kart = d.kart ? Number(d.kart) : null; }
+        if (['acilis', 'kapanis', 'sayim'].includes(tip)) body.cep = d.cep;
         if (tip === 'teslim') { body.kaynak = d.kaynak; body.hedef = d.hedef; body.teslim_eden = d.teslim_eden; if (form.kesim_ref) body.kesim_ref = form.kesim_ref; }   // E7: son aktarım listesinden
         if (tip === 'tasima') {
           body.hedef = d.hedef;
@@ -469,7 +468,6 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
         if (tip === 'sayim') body.sayilan = Number(d.sayilan);
         else if (tip !== 'coz' && tip !== 'odeme' && tip !== 'tasima') body.tutar = Number(d.tutar);
         if (tip === 'kapanis') { body.kart = Number(d.kart || 0); body.online = Number(d.online || 0); }
-        if (tip === 'dis') { body.alt = d.alt; body.kimden = d.kimden; body.not = d.not; }
         if (tip === 'odeme') {
           body.tutar = Number(d.tutar); body.aciklama = d.aciklama; body.kimin = d.kimin;
           body.parcalar = d.parcalar.filter((p) => p.cep && Number(p.tutar) > 0).map((p) => ({ cep: p.cep, tutar: Number(p.tutar) }));
@@ -524,43 +522,6 @@ function FormPenceresi({ form, veri, gun, onKapat, onBitti, onToast }) {
             <Alan etiket="Online (₺)" ipucu="Platform öder, elle girilir"><input type="number" min="0" step="0.01" value={d.online || ''} onChange={set('online')} style={alanStil} /></Alan>
           </div>
         </>)}
-
-        {tip === 'pos' && (() => {
-          const bc = cepler.find((c) => c.id === d.cep) || {};
-          const bek = (veri.pos || []).filter((x) => x.banka_cep === d.cep);
-          return (<>
-            <div style={{ fontSize: 12.5, color: R.metin2 }}><b>POS (kart) ertesi gün kendiliğinden yatar — buraya girilmez.</b> Burası yalnız online platform (Yemeksepeti, Getir vb.) yatışları için. Yatan <b>net</b> tutarı gir; brüt satışı bilmiyorsan boş bırak.</div>
-            <div style={izgara}>
-              <Alan etiket="Hangi şubenin bankasına"><select value={d.cep} onChange={set('cep')} style={alanStil}>{cepler.filter((c) => c.tur === 'banka' && !c.kira && !c.gizli).map((c) => <option key={c.id} value={c.id}>{c.ad}</option>)}</select></Alan>
-              {tutarAlani('Yatan net (₺)')}
-              <Alan etiket="Brüt satış (₺)" ipucu="Bilmiyorsan boş bırak"><input type="number" min="0" step="0.01" value={d.kart || ''} onChange={set('kart')} style={alanStil} /></Alan>
-              {gunAlani}
-            </div>
-            {bc.tur === 'banka' && (bek.length ? bek.map((x) => (
-              <div key={x.kanal} style={{ padding: '8px 12px', borderRadius: 9, fontSize: 12.5, background: R.girinti, color: R.metin2 }}>
-                {x.sube} {x.kanal === 'pos' ? 'POS' : 'online'}: bankaya gelecek <b style={num}>{fmt(x.bekleyen_brut)}</b> ₺ brüt
-                {x.oran ? <> · %{fmt(x.oran)} komisyonla beklenen net ≈ <b style={num}>{fmt(x.beklenen_net)}</b> ₺</> : null}
-                {x.en_eski_gun ? ` · en eskisi ${tUzun(x.en_eski_gun)}` : ''}
-              </div>
-            )) : <div style={{ fontSize: 12.5, color: R.not }}>Bu bankanın şubesinde bekleyen POS yok.</div>)}
-          </>);
-        })()}
-
-        {tip === 'dis' && (
-          <div style={izgara}>
-            <Alan etiket="Ne geldi"><select value={d.alt} onChange={set('alt')} style={alanStil}>{(veri.dis_turleri || []).map((x) => <option key={x.kod} value={x.kod}>{x.ad}</option>)}</select></Alan>
-            <Alan etiket="Kimden" ipucu={d.alt === 'destek' ? 'Desteği koyan patron' : (['borc', 'kredi'].includes(d.alt) ? 'Geri ödenecek — kimden alındı' : null)}>
-              <input list="pi-kisiler" value={d.kimden || ''} onChange={set('kimden')} style={alanStil} placeholder="ör. Ziraat, Onur" />
-              <datalist id="pi-kisiler">{PATRONLAR.map((p) => <option key={p} value={p} />)}</datalist>
-            </Alan>
-            <Alan etiket="Hangi cebe girdi" ipucu={d.alt === 'kira' ? 'Kira genelde Fatma\'nın kira hesabına girer' : null}>
-              <select value={d.cep} onChange={set('cep')} style={alanStil}>{secenek(null)}</select>
-            </Alan>
-            {tutarAlani()}
-            {gunAlani}
-            <Alan etiket="Not"><input value={d.not || ''} onChange={set('not')} style={alanStil} /></Alan>
-          </div>
-        )}
 
         {tip === 'teslim' && (
           <div style={izgara}>
@@ -1223,6 +1184,11 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
   const formAc = (tip, ek = {}, donus = null) => {
     if (!yapabilir('kasa.islem|kasa.donem|isler.kasa.islem|kasa.teslim.islem')) { onToast?.('Bu işlem için iznin yok — merkeze sor'); return; }   // 🔐
     cekmeceNo.current += 1; onCekmece?.(null); setForm({ tip, ...ek, donus }); };
+  // sahip 2 Kas (IS 5ds · Fable + Codex L4b): para girişi TEK kapıda — Kasam yalnız yönlendirir (Ödeme'deki ey_odeme_on aynası)
+  const girisAc = (konu) => {
+    try { if (konu) sessionStorage.setItem('ey_giris_on', JSON.stringify({ konu })); } catch { /* gizli pencere */ }
+    if (onSekme) onSekme('para_girisi'); else sayfayaGit('para_girisi');
+  };
   const teyit = async (id) => {
     try { await api(`/evvel-yeni/kasa/hareket/${id}/onay`, { method: 'POST', body: {} }); onToast?.('Onaylandı'); yukle(); } catch (e) { onToast?.(e.message); }
   };
@@ -1413,11 +1379,11 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
       {/* KAYIT GİR + GÜN SEÇİCİ */}
       <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
         {yapabilir('kasa.islem') && <>   {/* 🔐 kasa kaydı izni yoksa kayıt düğmeleri yok */}
-        <Dugme ana onClick={() => formAc('dis')}>+ Dış giriş</Dugme>
+        <Dugme ana onClick={() => girisAc('')}>+ Para girişi</Dugme>   {/* sahip 2 Kas (IS 5ds): dış giriş + online yatış TEK kapıda — Gelir › Para girişi gir */}
         <Dugme ana onClick={() => formAc('teslim')}>+ Teslim</Dugme>
         <Dugme ana onClick={() => formAc('tasima')}>+ Taşı / Yatır</Dugme>
         <Dugme ana onClick={() => formAc('sayim')}>+ Sayım</Dugme>
-        <Dugme ana onClick={() => formAc('pos')}>+ Online yattı</Dugme>
+        <Dugme ana onClick={() => girisAc('online')}>+ Online yattı</Dugme>
         <Dugme onClick={() => (onSekme ? onSekme('odemeler') : formAc('odeme'))}>+ Ödeme</Dugme>
         <Dugme onClick={() => formAc('kapanis')}>+ Kapanış</Dugme>
         </>}
