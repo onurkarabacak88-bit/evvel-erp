@@ -704,11 +704,26 @@ def liste(gorunum: str = "acik", gun_sayisi: int = 30, x_evvel_oturum: Optional[
                 _toptanci_iletimleri(cur, hepsi, bil)
         except Exception:  # noqa: BLE001
             log.warning("sipariş: toptancı iletimleri okunamadı", exc_info=True)
+        gnd = []
+        if depo and gorunum != "gecmis":
+            try:   # depoda ayrılan payı okunamazsa liste bozulmaz, yalnız "başka siparişe ayrıldı" çıkmaz
+                with savepoint(cur, "sp_sip_ayrilan"):
+                    gnd = gonderilecek(cur, depo)
+            except Exception:  # noqa: BLE001
+                log.warning("sipariş: depoda ayrılan pay okunamadı", exc_info=True)
     for s in hepsi:
         for k in s["kalemler"]:
             for y in k.get("yonler") or []:
                 y.pop("iletim_zaman", None)
                 y.pop("iletim_kim", None)
+    # sahip 2 Kas (Fable + Codex L4b): depo seçilince "depoda N · M başka siparişe ayrıldı" — depodan henüz yola çıkmamış yönler
+    # (gonderilecek: tarih süzgeçsiz, iptal / yola çıkmış hariç, YÖNLENDİRİLEN adet) ürün bazında; kalemin KENDİ payı düşülür
+    ayrilan, yon_adet = {}, {}
+    for g in gnd:
+        for x in g["kalemler"]:
+            if x.get("urun_id"):
+                ayrilan[str(x["urun_id"])] = ayrilan.get(str(x["urun_id"]), 0) + x["adet"]
+                yon_adet[x["yon_id"]] = x["adet"]
     for s in hepsi:
         for k in s["kalemler"]:
             b = bil.get(str(k.get("urun_id") or ""), {})
@@ -716,6 +731,8 @@ def liste(gorunum: str = "acik", gun_sayisi: int = 30, x_evvel_oturum: Optional[
             top = f"toptanci:{son_top[k['urun_id']]}" if k.get("urun_id") in son_top else None
             if depo and k.get("urun_id") and not k["pasta"]:
                 k["depo_stok"] = depo_stok.get(str(k["urun_id"]), 0)
+                kendi = sum(yon_adet.get(y.get("id"), 0) for y in k.get("yonler") or [])
+                k["depo_ayrilan"] = max(0, ayrilan.get(str(k["urun_id"]), 0) - kendi)
             # Y6 (sim 24 Eki): depocu rafa bakıp YOK dediyse ya da kısmi gönderdiyse yeni satır yine "Merkez depo" ile açılmasın → son
             # toptancı (o da yoksa boş: merkez bilerek seçer). Sahip 24 Eki: SİSTEM KAYDINA bakılmaz — sayım hatasıyla kayıt eksi/0 olup
             # rafta mal olabilir; tek gerçek depocunun VAR/YOK'u (kayıt yalnız bilgi olarak gösterilir)
