@@ -350,7 +350,14 @@ def _giris_kira_secenek(cur) -> dict:
                 continue
             x = evler.setdefault(e["id"], {"id": e["id"], "ad": e["ad"], "kiraci": e.get("kiraci"), "kira": e["kira"], "acik_aylar": []})
             x["acik_aylar"] += [{"ay": a["ay"], "kalan": a["kalan"]} for a in e["aylar"] if a["ay"] in aylar and a["kalan"] > 0]
-    return {"evler": sorted(evler.values(), key=lambda x: x["ad"])}
+    # IS 5ds parça 3 (Codex): Mülk'ün "Bunu bağla" listesi Para girişi formuna taşındı — yeni tahsilat yazmadan eski girişi eve bağlar
+    try:   # Fable L6-140: bağlanmamış listesi okunamazsa ev listesi kaybolmasın
+        with savepoint(cur, "sp_mulk_bagsiz"):
+            bagsiz = _baglanmamis(cur)
+    except Exception:  # noqa: BLE001
+        log.warning("mülk: bağlanmamış kira girişleri okunamadı", exc_info=True)
+        bagsiz = []
+    return {"evler": sorted(evler.values(), key=lambda x: x["ad"]), "baglanmamis": bagsiz}
 
 
 try:   # Kasa yüklü değilse (modül kapalı) konu kaydı yapılmaz — Para girişi'nde 'Ev kirası' görünmez
@@ -400,8 +407,11 @@ def _bekleyen(cur, baglam: dict) -> list:
         top = sum(a["kalan"] for a in e["gec"])
         out.append({"tur": "mulk_kira", "genel": True, "grup": "kira", "id": f"mulk:{e['id']}", "tarih": e["gec"][0]["vade"],
                     "etiket": "🏠 Kira gelmedi", "ad": f"{e['ad']}{(' · ' + e['kiraci']) if e.get('kiraci') else ''}",
-                    "alt": f"{len(e['gec'])} ay · {top:,.0f} ₺ — geldiyse Kira hesabı → 'Kira geldi'".replace(",", "."),
-                    "sayfa": "mulk_takvim", "dugme": "Ev kiraları"})
+                    "alt": f"{len(e['gec'])} ay · {top:,.0f} ₺ — geldiyse 'Kira geldi →'".replace(",", "."),
+                    # IS 5ds parça 3: doğrudan Para girişi formu, ev seçili (birden çok ay açıksa form ayı sorar)
+                    "sayfa": "para_girisi", "dugme": "Kira geldi →",
+                    "on": {"anahtar": "ey_giris_on", "deger": {"konu": "kira", "mulk_id": e["id"],
+                                                                "ay": e["gec"][0]["ay"] if len(e["gec"]) == 1 else ""}}})
     return out
 
 
@@ -450,15 +460,14 @@ def uyarilar():
             "fazla": fazla}
 
 
-@router.get("/baglanmamis")
-def baglanmamis():
+def _baglanmamis(cur) -> list:
     """Kasa'ya daha önce (bu modül dışında) girilmiş, hiçbir eve bağlanmamış kira girişleri — 'Kira geldi' yerine BAĞLANIR (Codex)."""
     import evvel_yeni_kasa_api as kasa
-    with db() as (conn, cur):
-        d = kasa.defter_ozeti(cur)
-    return {"girisler": [{"id": h["id"], "gun": h["is_gunu"], "tutar": _tl_sayi(h["tutar"]), "kimden": (h["veri"] or {}).get("kimden"),
-                          "not": (h["veri"] or {}).get("not")}
-                         for h in d["kayitlar"] if h["tur"] == "dis" and (h["veri"] or {}).get("alt") == "kira" and not (h["veri"] or {}).get("bag")][-60:]}
+    d = kasa.defter_ozeti(cur)
+    return [{"id": h["id"], "gun": h["is_gunu"], "tutar": _tl_sayi(h["tutar"]), "kimden": (h["veri"] or {}).get("kimden"),
+             "not": (h["veri"] or {}).get("not")}
+            for h in d["kayitlar"] if h["tur"] == "dis" and (h["veri"] or {}).get("alt") == "kira" and not (h["veri"] or {}).get("bag")][-60:]
+
 
 
 class BaglaBody(BaseModel):

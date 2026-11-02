@@ -22,6 +22,10 @@ export default function KrediModulu({ onToast, onSekme }) {
     try { window.sessionStorage.setItem('ey_odeme_on', JSON.stringify({ konu: 'kredi', kredi_id: k.id, kredi_ad: k.ad, ait_ay: a.ay, tutar: a.kalan })); } catch { /* yut */ }
     onSekme?.('odemeler');
   };
+  const kullanimGeldi = (k) => {   // IS 5ds parça 3: kredi kullanımı (para bankaya geldi) TEK kapıdan — kredi seçili
+    try { window.sessionStorage.setItem('ey_giris_on', JSON.stringify({ konu: 'kredi', kredi_id: k.id })); } catch { /* yut */ }
+    onSekme?.('para_girisi');
+  };
   const kaydet = async () => {
     try {
       const tk = sayiTR(form.aylik_taksit);
@@ -90,6 +94,7 @@ export default function KrediModulu({ onToast, onSekme }) {
           {sec.a.iki_yerde && <div style={{ color: R.amber, fontSize: 13 }}>⚠ Bu taksit hem eski sistemde hem Evvel Yeni'de ödenmiş görünüyor — biri mükerrer olabilir (toplanmadı).</div>}
           <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-start', flexWrap: 'wrap' }}>
             {sec.a.kalan > 0 && sec.a.durum !== 'once' && <Dugme kucuk ana onClick={() => ode(sec.k, sec.a)}>Bu taksiti öde →</Dugme>}
+            <Dugme kucuk onClick={() => kullanimGeldi(sec.k)}>Kredi kullanımı geldi →</Dugme>
             <Dugme kucuk onClick={() => { setForm({ id: sec.k.id, ad: sec.k.ad, tur: sec.k.tur || 'Kredi', aylik_taksit: String(sec.k.taksit), odeme_gunu: String(sec.k.odeme_gunu), ilk_ay: sec.k.ilk_ay, taksit_sayisi: sec.k.son_ay ? String(monthsBetween(sec.k.ilk_ay, sec.k.son_ay)) : '', aktif: true }); setSec(null); }}>Krediyi düzelt</Dugme>
           </div>
         </Pencere>

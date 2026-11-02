@@ -1491,6 +1491,11 @@ export default function KasaModulu({ gorunum, onToast, onSekme, sekmesiz, onVeri
         {veri.pos.length > 0 && (
           <div style={{ ...kart, padding: '10px 14px', fontSize: 12.5, color: R.metin2 }}>
             POS ertesi gün kendiliğinden yatar; online elle girilir. Bankaya gelecek: {veri.pos.filter((x) => x.bekleyen_brut > 0.004).map((x) => `${x.sube} ${x.kanal === 'pos' ? 'POS' : 'online'} ${fmt(x.bekleyen_brut)} ₺`).join(' · ') || 'yok'}
+            {veri.pos.some((x) => x.kanal === 'online' && x.bekleyen_brut > 0.004) && (   /* IS 5ds parça 3: online yatışı tek kapıdan, banka seçili */
+              <span> · {veri.pos.filter((x) => x.kanal === 'online' && x.bekleyen_brut > 0.004).map((x) => (
+                <Dugme key={x.banka_cep} kucuk onClick={() => { try { sessionStorage.setItem('ey_giris_on', JSON.stringify({ konu: 'online', banka: x.banka_cep })); } catch { /* yut */ } sayfayaGit('para_girisi'); }}>{x.sube} online yattı →</Dugme>
+              ))}</span>
+            )}
           </div>
         )}
         {kiraHesap.length > 0 && (<><div id="kira-bolumu" style={etiketStil}>Kira hesabı · işletmeden ayrı</div><KartIzgara liste={kiraHesap} /></>)}
@@ -1821,7 +1826,11 @@ function IsSatir({ x, bugun, uyariSay = 0, onTeyit, onTeslim, onCoz, onKapanis, 
     );
   }
   if (x.genel) {   // 🧩 tak-çıkar: modülün kendi tarif ettiği satır (etiket · ad · alt · sayfa) — Kasa modülü tanımaz
-    const git = () => { sayfayaGit(x.sayfa, x.sorgu || ''); };   // Y1 (sim 24 Eki): satır ilgili kaydı da taşır (?odak=…)
+    const git = () => {   // Y1 (sim 24 Eki): satır ilgili kaydı da taşır (?odak=…)
+      // IS 5ds parça 3: modül formu dolu açtırabilir — {anahtar, deger} sessionStorage'a (ey_odeme_on / ey_giris_on deseni), sonra sayfa
+      if (x.on?.anahtar) { try { sessionStorage.setItem(x.on.anahtar, JSON.stringify(x.on.deger || {})); } catch { /* gizli pencere */ } }
+      sayfayaGit(x.sayfa, x.sorgu || '');
+    };
     return (
       <div style={{ ...satir, border: `1px solid ${alfa(x.kirmizi ? R.kirmizi : R.amber, 55)}` }}>   {/* x.kirmizi: modül 'gecikti' der (kredi 29 Eki) */}
         <Cip tur={x.kirmizi ? 'kirmizi' : 'sari'}>{x.etiket}</Cip>

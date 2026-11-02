@@ -4,8 +4,8 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { yapabilir } from './yetki';   // 🔐 işlem düğmesi izni (sunucu da engeller)
 import { api } from '../../utils/api';
-import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayiTR, sor, tKisa } from './KasaModulu';
-import { ayAdi, ayTR, bugunTR } from '../../utils/trTarih';
+import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayiTR, tKisa } from './KasaModulu';
+import { ayAdi, ayTR } from '../../utils/trTarih';
 import { AY, AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici } from './AyTakvim';
 
 export const MULK_SAYFALAR = [
@@ -15,8 +15,6 @@ export const MULK_SAYFALAR = [
 ];
 const alan = { ...ALAN, minWidth: 0, width: '100%' };   // temel stil KasaModulu ALAN (T4-15)
 const ayBugun = ayTR;     // C-T4-02: UTC değil TR (tahsilat tarihi gece 00–03 arası dün olmasın)
-const gunBugun = bugunTR;
-const yeniId = () => `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
 
 function useVeri(yol, yil) {
   const [v, setV] = useState(null);
@@ -41,20 +39,17 @@ function Baslik({ ad, yil, setYil, children }) {
   );
 }
 
-function EvKiralari({ onToast }) {
+function EvKiralari({ onToast, onSekme }) {
   const [yil, setYil] = useState(() => new Date().getFullYear());
   const [v, hata, yukle] = useVeri('/evvel-yeni/mulk/takvim', yil);
   const [sec, setSec] = useState(null);
   const [form, setForm] = useState(null);
-  const [tah, setTah] = useState(null);   // {e, a, tutar, tarih, istek_id}
   const [mesgul, setMesgul] = useState(false);
-  const [bagsiz, setBagsiz] = useState([]);
-  useEffect(() => { if (tah) api('/evvel-yeni/mulk/baglanmamis').then((d) => setBagsiz(d.girisler || [])).catch(() => setBagsiz([])); }, [tah]);
-  const bagla = async (g) => {
-    if (mesgul) return; setMesgul(true);
-    try { const r = await api('/evvel-yeni/mulk/bagla', { method: 'POST', body: { hareket_id: g.id, mulk_id: tah.e.id, ay: tah.a.ay } }); onToast?.(r.mesaj); setTah(null); yukle(); }
-    catch (e) { onToast?.(e?.message || 'Bağlanamadı'); }
-    setMesgul(false);
+  // sahip 2 Kas (IS 5ds parça 3 · Fable + Codex L4b): kira girişi TEK kapıda — Mülk kendi formunu açmaz, ev + ay seçili yönlendirir
+  // ("Bunu bağla" — eve bağlanmamış eski girişler — Para girişi formunda, Mülk sağlayıcısının listesiyle)
+  const kiraGeldi = (e, ay) => {
+    try { window.sessionStorage.setItem('ey_giris_on', JSON.stringify({ konu: 'kira', mulk_id: e.id, ay: ay || '' })); } catch { /* gizli pencere */ }
+    onSekme?.('para_girisi');
   };
   const kaydet = async () => {
     if (mesgul) return; setMesgul(true);
@@ -66,21 +61,6 @@ function EvKiralari({ onToast }) {
       const r = await api(`/evvel-yeni/mulk${form.id ? `?mid=${encodeURIComponent(form.id)}` : ''}`, { method: 'POST', body: govde });
       onToast?.(r.mesaj); setForm(null); yukle();
     } catch (e) { onToast?.(e?.message || 'Kaydedilemedi'); }
-    setMesgul(false);
-  };
-  const tahsilEt = async (tekrar = false) => {   // tekrar = BENZER KAYIT onaylandı (tıklama olayı buraya gelmez)
-    if (mesgul && tekrar !== true) return; setMesgul(true);
-    try {
-      const hv = String(tah.tutar || '').trim() ? sayiTR(tah.tutar) : 0;   // bankaya gelen
-      const el = String(tah.elden || '').trim() ? sayiTR(tah.elden) : 0;   // sahip 1 Kas: elden alınan
-      if (Number.isNaN(hv) || Number.isNaN(el) || hv < 0 || el < 0 || hv + el <= 0) { onToast?.('Tutarı sayı olarak yaz (ör. 25.000,00)'); setMesgul(false); return; }
-      const r = await api('/evvel-yeni/mulk/tahsilat', { method: 'POST', body: { mulk_id: tah.e.id, ay: tah.a.ay, havale: hv || null, elden: el || null, tarih: tah.tarih, istek_id: tah.istek_id, tekrar_onay: tekrar === true } });
-      onToast?.(r.mesaj); setTah(null); yukle();
-    } catch (e) {
-      // Fable L6 (IS 5ds): tek kapının BENZER KAYIT uyarısı — Ödeme gibi sorulur, bilerek geçilir (bağ / cep kuralları yine geçerli)
-      if (e?.status === 409 && /BENZER KAYIT/.test(e?.message || '') && !tekrar && await sor({ soru: e.message, tamam: 'Evet, ikinci giriş' })) return tahsilEt(true);
-      onToast?.(e?.message || 'Kaydedilemedi');
-    }
     setMesgul(false);
   };
   const satirlar = (v?.evler || []).map((e) => ({
@@ -103,34 +83,9 @@ function EvKiralari({ onToast }) {
           <div>Kira <b style={num}>{fmt(sec.a.beklenen)}</b> ₺ · gelen <b style={num}>{fmt(sec.a.odenen)}</b> ₺ · kalan <b style={num}>{fmt(sec.a.kalan)}</b> ₺{sec.a.fazla > 0 && <> · <b style={{ color: R.amber }}>+{fmt(sec.a.fazla)} ₺ fazla geldi</b></>}</div>
           <div style={{ color: R.not, fontSize: 13 }}>Ödeme günü {tKisa(sec.a.vade)} · {DURUM[sec.a.durum]?.ad}{sec.e.kiraci ? ` · ${sec.e.kiraci}` : ''}</div>
           <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            {sec.a.kalan > 0 && <Dugme kucuk ana onClick={() => { setTah({ e: sec.e, a: sec.a, tutar: '', elden: '', tarih: gunBugun(), istek_id: yeniId() }); setSec(null); }}>Kira geldi →</Dugme>}
+            {sec.a.kalan > 0 && <Dugme kucuk ana onClick={() => kiraGeldi(sec.e, sec.a.ay)}>Kira geldi →</Dugme>}
             <Dugme kucuk onClick={() => { setForm({ id: sec.e.id, ad: sec.e.ad, kiraci: sec.e.kiraci || '', tutar: String(sec.e.kira), gecerli_ay: ayBugun(), odeme_gunu: String(sec.e.odeme_gunu), artis_ayi: sec.e.artis_ayi ? String(sec.e.artis_ayi) : '', baslangic_ay: sec.e.baslangic_ay, bitis_ay: sec.e.bitis_ay || '', aktif: sec.e.aktif, not_: sec.e.not || '' }); setSec(null); }}>Evi düzelt</Dugme>
           </div>
-        </Pencere>
-      )}
-      {tah && (
-        <Pencere baslik={`💰 ${tah.e.ad} · ${ayAdi(tah.a.ay)} kirası geldi`} onKapat={() => setTah(null)}>
-          <div style={{ fontSize: 13, color: R.metin2 }}>Nasıl geldiyse oraya yaz — ikisi birden de olur. Elden alınan kira Fatma'nın evine değil "elindeki kira"ya girer (kahve parasına karışmaz).</div>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>🏦 Bankaya gelen — Fatma'nın kira hesabı (₺)<input style={alan} inputMode="decimal" value={tah.tutar} placeholder="0" onChange={(e) => setTah((t) => ({ ...t, tutar: e.target.value }))} /></label>
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>💵 Elden alınan (₺)<input style={alan} inputMode="decimal" value={tah.elden || ''} placeholder="0" onChange={(e) => setTah((t) => ({ ...t, elden: e.target.value }))} /></label>
-          {(() => {   // Fable L6: iki alan boş açılır; toplam beklenenle kıyaslanır (çift yazma görünsün)
-            const hv = sayiTR(tah.tutar || '0'), el = sayiTR(tah.elden || '0'), top = (Number.isNaN(hv) ? 0 : hv) + (Number.isNaN(el) ? 0 : el);
-            const fz = top - tah.a.kalan;
-            return <div style={{ fontSize: 13, color: fz > 0.5 ? R.amber : R.not }}>Bekleyen <b style={num}>{fmt(tah.a.kalan)}</b> ₺ · yazılan toplam <b style={num}>{fmt(top)}</b> ₺{fz > 0.5 && <> · <b>{fmt(fz)} ₺ fazla</b></>}</div>;
-          })()}
-          <label style={{ display: 'grid', gap: 4, fontSize: 13 }}>Geldiği gün<input style={alan} type="date" value={tah.tarih} max={gunBugun()} onChange={(e) => setTah((t) => ({ ...t, tarih: e.target.value }))} /></label>
-          <div><Dugme ana disabled={mesgul} onClick={() => tahsilEt(false)}>Kaydet</Dugme></div>
-          {bagsiz.length > 0 && (
-            <div style={{ borderTop: `1px solid ${R.cizgi}`, paddingTop: 8, display: 'grid', gap: 4, fontSize: 13 }}>
-              <div style={{ color: R.metin2 }}>Bu kira Kasa'ya daha önce girildiyse yenisini yazma — o girişi bu eve <b>bağla</b> (para iki kez girmesin):</div>
-              {bagsiz.slice(-8).reverse().map((g) => (
-                <div key={g.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                  <span style={{ flex: 1 }}>{tKisa(g.gun)} · <b style={num}>{fmt(g.tutar)}</b> ₺{g.kimden ? ` · ${g.kimden}` : ''}</span>
-                  {yapabilir('mulk.islem') && <Dugme kucuk disabled={mesgul} onClick={() => bagla(g)}>Bunu bağla</Dugme>}
-                </div>
-              ))}
-            </div>
-          )}
         </Pencere>
       )}
       {form && (
@@ -261,6 +216,7 @@ function Uyarilar({ onSekme }) {
       {(v?.geciken || []).map((g) => (
         <div key={g.id + g.ay} style={{ ...kart, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
           <Cip tur="kirmizi">Kira gelmedi</Cip><span style={{ flex: 1 }}><b>{g.ad}</b>{g.kiraci ? ` · ${g.kiraci}` : ''} · {ayAdi(g.ay)} · kalan <b style={num}>{fmt(g.kalan)}</b> ₺</span>
+          <Dugme kucuk ana onClick={() => { try { window.sessionStorage.setItem('ey_giris_on', JSON.stringify({ konu: 'kira', mulk_id: g.id, ay: g.ay })); } catch { /* yut */ } onSekme?.('para_girisi'); }}>Kira geldi →</Dugme>   {/* IS 5ds parça 3 */}
           <Dugme kucuk onClick={() => onSekme?.('mulk_takvim')}>Ev kiraları</Dugme>
         </div>
       ))}
@@ -283,7 +239,7 @@ export default function MulkModulu({ gorunum, onToast, onSekme }) {
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
-      {gorunum === 'mulk_borc' ? <IsletmeBorcu onToast={onToast} /> : gorunum === 'mulk_uyari' ? <Uyarilar onSekme={onSekme} /> : <EvKiralari onToast={onToast} />}
+      {gorunum === 'mulk_borc' ? <IsletmeBorcu onToast={onToast} /> : gorunum === 'mulk_uyari' ? <Uyarilar onSekme={onSekme} /> : <EvKiralari onToast={onToast} onSekme={onSekme} />}
     </div>
   );
 }

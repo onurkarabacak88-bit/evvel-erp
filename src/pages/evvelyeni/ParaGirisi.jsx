@@ -2,7 +2,7 @@
 // kasaya dışarıdan para girişinin TEK formu (şube kapanışı + otomatik POS + taşıma ayrı). Sunucu: evvel_yeni_kasa_api giris_yaz (/kasa/giris).
 // Konular sunucudan (kapalı modülün konusu gelmez). Öteki ekranlar kendi formunu açmaz: sessionStorage 'ey_giris_on' ile ön doldurup buraya gelir.
 // Sahip K1/K4: iade gelen para · verilen borç tahsilatı · emanet AÇILMADI.
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { yeniIstekId } from '../../utils/cihazImza';
 import { ALAN, Dugme, kart, PI_CSS, R, sor } from './KasaModulu';
@@ -49,6 +49,21 @@ export default function ParaGirisi({ onToast }) {
   const evler = L?.secenekler?.kira?.evler || [];
   const ev = evler.find((e) => e.id === f.mulk_id);
   const krediler = L?.secenekler?.kredi?.krediler || [];
+  const bagsiz = L?.secenekler?.kira?.baglanmamis || [];
+  // IS 5ds parça 3: evin tek açık ayı varsa kendiliğinden seçilir ("Kira gelmedi" birden çok ay olabilir → o zaman sorulur)
+  const otoAy = useRef('');   // Fable L6-140: ev başına BİR kez — kullanıcı ayı boşaltırsa geri doldurulmaz
+  useEffect(() => {
+    if (f.konu !== 'kira' || !ev || otoAy.current === ev.id) return;
+    otoAy.current = ev.id;
+    if (!f.ay && ev.acik_aylar.length === 1) setF((x) => ({ ...x, ay: ev.acik_aylar[0].ay }));
+  }, [f.konu, f.ay, ev]);
+  const sayi = (t) => { const n = Number(String(t || '').replace(/\./g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+  const bagla = async (g) => {   // eski "Kira geldi" penceresindeki "Bunu bağla": para yeniden yazılmaz, eski giriş eve + aya bağlanır (Codex)
+    setMesgul(true); setHata('');
+    try { const r = await api('/evvel-yeni/mulk/bagla', { method: 'POST', body: { hareket_id: g.id, mulk_id: f.mulk_id, ay: f.ay } }); onToast?.(r?.mesaj || 'Bağlandı'); setF(BOS('kira')); yukle(); }
+    catch (e) { setHata(e?.message || 'Bağlanamadı'); }
+    setMesgul(false);
+  };
 
   const govde = (tekrar) => {
     const b = { konu: f.konu, is_gunu: f.is_gunu, not: f.not || null, istek_id: istek, tekrar_onay: !!tekrar };
@@ -120,6 +135,24 @@ export default function ParaGirisi({ onToast }) {
               <Etiket ad="Bankaya (Fatma'nın kira hesabı)"><input style={alan} inputMode="decimal" placeholder="₺" value={f.havale} onChange={(e) => set('havale', e.target.value)} /></Etiket>
               <Etiket ad="Elden (Fatma'nın elindeki kira)"><input style={alan} inputMode="decimal" placeholder="₺" value={f.elden} onChange={(e) => set('elden', e.target.value)} /></Etiket>
             </div>
+            {ev && f.ay && (() => {   // eski Mülk penceresinin bilgisi: bekleyen · yazılan toplam · fazla (çift yazma görünsün)
+              const h = ev.acik_aylar.find((a) => a.ay === f.ay);
+              if (!h) return null;   // açık aylar listesinde olmayan ay (ör. peşin kira) — "bekleyen 0" yanıltmasın
+              const kalan = h.kalan || 0;
+              const top = sayi(f.havale) + sayi(f.elden); const fz = top - kalan;
+              return <div style={{ fontSize: 12.5, color: fz > 0.5 ? R.amber : R.not }}>Bekleyen <b>{kalan.toLocaleString('tr-TR')}</b> ₺ · yazılan toplam <b>{top.toLocaleString('tr-TR')}</b> ₺{fz > 0.5 ? ` · ${fz.toLocaleString('tr-TR')} ₺ fazla` : ''}</div>;
+            })()}
+            {ev && f.ay && bagsiz.length > 0 && izinVar('mulk.islem') && (
+              <div style={{ borderTop: '1px solid var(--pi-line)', paddingTop: 8, display: 'grid', gap: 4, fontSize: 13 }}>
+                <div style={{ color: R.metin2 }}>Bu kira Kasa'ya daha önce girildiyse yenisini yazma — o girişi bu eve <b>bağla</b> (para iki kez girmesin):</div>
+                {bagsiz.slice(-8).reverse().map((g) => (
+                  <div key={g.id} style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+                    <span style={{ flex: 1 }}>{g.gun} · <b>{Number(g.tutar).toLocaleString('tr-TR')}</b> ₺{g.kimden ? ` · ${g.kimden}` : ''}</span>
+                    <Dugme kucuk disabled={mesgul} onClick={() => bagla(g)}>Bunu bağla</Dugme>
+                  </div>
+                ))}
+              </div>
+            )}
           </>)}
 
           {f.konu === 'online' && (
