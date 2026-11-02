@@ -82,6 +82,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
     const t = on.tutar > 0 ? String(on.tutar) : '';
     otoTutar.current = t;
     setF({ ...BOS(), konu: on.konu, personel_id: on.personel_id, personel_kalemi: on.personel_kalemi, ait_ay: on.ait_ay || ayBugun(), kimin: on.kimin, patron: on.patron, toptanci_id: on.toptanci_id, kredi_id: on.kredi_id, kredi_ad: on.kredi_ad, sube_id: on.sube_id,
+      ...(on.fatura_turu ? { fatura_turu: on.fatura_turu } : {}),   // POS cihaz ücreti "Elle gir" (Fable L6): tür hazır gelsin
       kart_donem: on.konu === 'kart_borcu' ? (on.ait_ay || '') : '',
       parcalar: [{ yontem: 'havale', cep: '', kart_id: '', tutar: t }] });
   }, [L]);

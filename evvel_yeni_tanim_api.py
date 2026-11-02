@@ -36,7 +36,7 @@ _HAZIR = False
 
 # Dalga 3 (F#31, C-T2-05/06): Yoklama/Kira/Kart/Toptancı'nın Tanımlar tablolarına eklediği kolonlar artık BURADA tanımlı (tek şema sahibi);
 # o modüller ALTER atmaz, yazarken tanim_guncelle'yi çağırır.
-_TANIM_NESNE = {"ey_sube": ("depo", "lat", "lng", "yaricap_m", "kira_artis_ayi", "kira_odeme_gunu", "kira_yok"),
+_TANIM_NESNE = {"ey_sube": ("depo", "lat", "lng", "yaricap_m", "kira_artis_ayi", "kira_odeme_gunu", "kira_yok", "pos_cihaz_ucreti"),
                 "ey_personel": ("cikis", "calisma_turu", "kisi_id", "erken_acilis", "pin_salt", "pin_hash", "yetki_geri_alma", "konum_muaf"),
                 "ey_kart": ("limit_tutar", "kesim_gunu", "son_odeme_gunu", "limit_grup", "eklenme"), "ey_toptanci": ("vade_gun",),
                 "ey_personel_ucret": ("saatlik", "yol"), "ey_pin_deneme": ()}
@@ -93,6 +93,8 @@ def _tanim_ddl(cur) -> None:
     cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_artis_ayi INT")
     cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_odeme_gunu INT")
     cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS kira_yok BOOLEAN NOT NULL DEFAULT FALSE")
+    # sahip 2 Kas: bankanın her ay kestiği POS cihaz ücreti (kuruş) — Ödeme'nin aylık otomatik işi yazar; 0 = yazmaz
+    cur.execute("ALTER TABLE ey_sube ADD COLUMN IF NOT EXISTS pos_cihaz_ucreti BIGINT NOT NULL DEFAULT 0")
     cur.execute("""CREATE TABLE IF NOT EXISTS ey_personel (
         id TEXT PRIMARY KEY, ad TEXT NOT NULL, sube_id TEXT, gorev TEXT, giris DATE,
         aktif BOOLEAN NOT NULL DEFAULT TRUE, kaynak TEXT NOT NULL DEFAULT 'evvel_yeni', degistiren TEXT, zaman TIMESTAMPTZ NOT NULL DEFAULT NOW())""")
@@ -431,8 +433,13 @@ def _konum_coz(t: str) -> tuple:
 
 def subeler(cur, hepsi: bool = False):
     tanim_hazirla(cur)
-    cur.execute(f"SELECT id, ad, pos_oran, online_oran, aktif, depo FROM ey_sube {'' if hepsi else 'WHERE aktif'} ORDER BY ad")
+    cur.execute(f"SELECT id, ad, pos_oran, online_oran, aktif, depo, pos_cihaz_ucreti FROM ey_sube {'' if hepsi else 'WHERE aktif'} ORDER BY ad")
     return [dict(r) for r in cur.fetchall() or []]
+
+
+def pos_cihaz_ucretleri(cur) -> dict:
+    """PUBLIC (Ödeme aylık otomatik işi): aktif şube → aylık POS cihaz ücreti (kuruş, > 0 olanlar)."""
+    return {s["id"]: int(s["pos_cihaz_ucreti"]) for s in subeler(cur) if int(s.get("pos_cihaz_ucreti") or 0) > 0}
 
 
 def depo_sube_id(cur) -> Optional[str]:
@@ -562,7 +569,7 @@ def _liste_tam():
                      "kira_odeme_gunu": (kira_t.get(s["id"]) or {}).get("odeme_gunu"), "kira_gecmis": (kira_t.get(s["id"]) or {}).get("gecmis", []),
                      "kira_yok": (kira_t.get(s["id"]) or {}).get("kira_yok", False),
                      "konum": (f"{konum[s['id']]['lat']}, {konum[s['id']]['lng']}" if (konum.get(s["id"]) or {}).get("lat") is not None else None),
-                     "yaricap_m": (konum.get(s["id"]) or {}).get("yaricap_m")}
+                     "yaricap_m": (konum.get(s["id"]) or {}).get("yaricap_m"), "pos_cihaz_ucreti": _tl(s.get("pos_cihaz_ucreti") or 0)}
                     for s in sube],
         "personel": personel, "kartlar": kart, "toptancilar": top, "bankalar": banka, "ay": ay,
     }
@@ -574,6 +581,7 @@ class TanimBody(BaseModel):
     # şube
     pos_oran: Optional[Decimal] = None
     online_oran: Optional[Decimal] = None
+    pos_cihaz_ucreti: Optional[TrTutar] = None   # aylık banka POS cihaz ücreti (₺) — 0 = otomatik yazılmaz
     # personel
     sube_id: Optional[str] = None
     gorev: Optional[str] = None
@@ -698,6 +706,10 @@ def _yaz(tur: str, tid: Optional[str], b: TanimBody, jeton: Optional[str]):
                 cur.execute("""UPDATE ey_sube SET ad=COALESCE(%s,ad), pos_oran=COALESCE(%s,pos_oran), online_oran=COALESCE(%s,online_oran),
                                  aktif=COALESCE(%s,aktif), degistiren=%s, zaman=NOW() WHERE id=%s""",
                             (ad, b.pos_oran, b.online_oran, b.aktif, kim, tid))
+            if b.pos_cihaz_ucreti is not None:
+                if _kurus(b.pos_cihaz_ucreti) < 0:
+                    raise HTTPException(400, "POS cihaz ücreti eksi olamaz")
+                cur.execute("UPDATE ey_sube SET pos_cihaz_ucreti=%s, degistiren=%s, zaman=NOW() WHERE id=%s", (_kurus(b.pos_cihaz_ucreti), kim, tid))
             if b.konum is not None and b.konum.strip():
                 lat, lng = _konum_coz(b.konum)
                 tanim_guncelle(cur, "ey_sube", tid, {"lat": lat, "lng": lng}, kim=kim)

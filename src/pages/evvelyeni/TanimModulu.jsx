@@ -27,12 +27,13 @@ const YAPI = {
     tur: 'sube', liste: 'subeler', baslik: 'Şubeler', tekil: 'şube',
     not: 'Şube eklenince Kasa\'da "dükkân nakdi" ve "bankası" cepleri kendiliğinden açılır.',
     alanlar: [{ k: 'ad', ad: 'Şube adı', zorunlu: true }, { k: 'pos_oran', ad: 'POS komisyonu %', sayi: true }, { k: 'online_oran', ad: 'Online komisyonu %', sayi: true },
+      { k: 'pos_cihaz_ucreti', ad: 'POS cihaz ücreti (aylık ₺, banka keser — her ay otomatik gider)', sayi: true },   // sahip 2 Kas
       { k: 'kira', ad: 'Aylık kira ₺', sayi: true }, { k: 'kira_ay', ad: 'Kira hangi aydan geçerli', tip: 'month' },
       { k: 'kira_odeme_gunu', ad: 'Kira ödeme günü (1–31)', sayi: true }, { k: 'kira_artis_ayi', ad: 'Kira artış ayı (1–12, ör. 6 = Haziran)', sayi: true },
       { k: 'kira_yok', ad: 'Kira yok — mülk bizim', secim: 'evet_hayir' },
       // B36: telefon yoklamasının konum kontrolü — Google Haritalar'da şubeye sağ tık → üstteki sayıları kopyala
       { k: 'konum', ad: 'Konum (Google Haritalar: enlem, boylam)' }, { k: 'yaricap_m', ad: 'Konum yarıçapı (metre, ör. 150)', sayi: true }],
-    kolon: (x) => [x.ad, `POS %${fmt(x.pos_oran)} · online %${fmt(x.online_oran)}`,
+    kolon: (x) => [x.ad, `POS %${fmt(x.pos_oran)} · online %${fmt(x.online_oran)}${x.pos_cihaz_ucreti ? ` · cihaz ${fmt(x.pos_cihaz_ucreti)} ₺/ay` : ''}`,
       x.kira_yok ? 'mülk bizim — kira yok' : x.kira != null ? `kira ${fmt(x.kira)} ₺${x.kira_odeme_gunu ? ` · her ayın ${x.kira_odeme_gunu}'i` : ''}${x.kira_artis_ayi ? ` · artış ${['Ocak','Şubat','Mart','Nisan','Mayıs','Haziran','Temmuz','Ağustos','Eylül','Ekim','Kasım','Aralık'][x.kira_artis_ayi - 1]}` : ''}` : 'kira tanımsız', x.konum ? `📍 ${x.yaricap_m || 150} m` : '📍 konum yok'],
   },
   tanim_personel: {

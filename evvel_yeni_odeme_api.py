@@ -52,7 +52,8 @@ KONULAR = {
     "sgk": {"ad": "SGK", "gider": False},      # sahip: "SGK ödemesi ayrı, vergi ayrı" — ikisi de tek yoldan
     "diger": {"ad": "Diğer", "gider": True},
 }
-FATURA_TURLERI = ["Elektrik", "Su", "Doğalgaz", "İnternet / telefon", "Diğer abonelik"]
+FATURA_TURLERI = ["Elektrik", "Su", "Doğalgaz", "İnternet / telefon", "POS cihaz ücreti", "Diğer abonelik"]
+POS_CIHAZ = "POS cihaz ücreti"   # sahip 2 Kas: banka her ay keser → aylık otomatik gider (otomatik_isler)
 VERGI_TURLERI = ["KDV", "Muhtasar / stopaj", "Gelir / kurumlar vergisi", "Diğer vergi"]
 # Sahip (2026-10-17): "SGK da vergi de ödemelerden TEK düşümle; her alan bu alana yönlendirsin" → SGK/vergi personel kaleminden çıktı (Vergi konusu)
 PERSONEL_KALEMLERI = ["Maaş", "Avans", "Yemek ücreti", "Prim"]
@@ -676,3 +677,83 @@ def devir_kaydi_yaz(cur, *, personel_id: str, personel_ad: Optional[str], tutar:
             "ait_ay": str(ait_ay)[:7], "toplam": int(tutar), "parcalar": [], "gider": False, "kaynak": "eski_devir",
             "aciklama": f"Eski sistem devri · para hareketsiz · {aciklama}"[:120]}
     return hareket_kaydet(cur, tur="odeme", gun=gun, tutar=int(tutar), veri=veri, kim=kim, kaynak_ref=kaynak_ref, para_cepleri=set())
+
+
+# ─────────────── 💳 POS CİHAZ ÜCRETİ — aylık otomatik gider (sahip 2 Kas · Fable L4b) ───────────────
+# "her ay kendimiz uğraşmayalım, 950 olarak bütün şubelere gir, tutar değişince sabiti değiştiririz" → tutar Tanımlar › Şube
+# (pos_cihaz_ucreti). Yalnız İÇİNDE BULUNULAN AY yazılır (geçmişe dönük yok); şube × ay BİR kez (istek kimliği → kaynak_ref;
+# iptal edilmiş olsa da yeniden yazılmaz — elle düzeltme sahibin). Ödeme'nin kendi yazıcısıyla: Fatura / abonelik · POS cihaz
+# ücreti · şube bankasından havale · gider · ait ay. Kayıt günü ayın 1'i; banka o güne sayıldıysa (sayım kilidi) bugün denenir.
+# Yazılamazsa (cep yok / kilit / bakiye) sessiz kalmaz: Bekleyen işler › Ödeme'ye tek satır (Fable L4b).
+def _pos_cihaz_istek(sid: str, ay: str) -> str:
+    return f"pos_cihaz:{sid}:{ay}"
+
+
+def _pos_cihaz_eksik(cur, kayit: Optional[list] = None) -> list:
+    """Bu ay için POS cihaz ücreti HİÇ yazılmamış şubeler: [(şube, kuruş)]. Yazılmış sayılır: otomatik kayıt (iptal edilmiş olsa da —
+    elle düzeltme sahibin) YA DA o şube + o ay için elle girilmiş, iptal edilmemiş 'POS cihaz ücreti' ödemesi (Fable L6 🔴: elle
+    "Elle gir"den sonra otomatik iş aynı ücreti ikinci kez yazmasın, Bekleyen satırı da düşsün)."""
+    from evvel_yeni_kasa_api import kaynak_refleri
+    from evvel_yeni_tanim_api import pos_cihaz_ucretleri
+    ay = _bugun().strftime("%Y-%m")
+    elle = {x["sube_id"] for x in konu_odemeleri(cur, "fatura", kayit=kayit)   # Fable L6-2: Bekleyen okunmuş kaydı verir
+            if (x["konu"] or {}).get("fatura_turu") == POS_CIHAZ and x["ay"] == ay}   # konu_odemeleri iptalleri zaten düşer
+    return [(sid, u) for sid, u in pos_cihaz_ucretleri(cur).items()
+            if sid not in elle and not kaynak_refleri(cur, f"odeme_formu:{_pos_cihaz_istek(sid, ay)}")]
+
+
+def otomatik_isler() -> dict:
+    """Ödeme'nin ARKA PLAN görevi (manifest 'odeme_otomatik'): bu ayın POS cihaz ücretlerini yazar. Şube başına savepoint —
+    biri yazılamazsa diğerleri yine yazılır, bir sonraki koşuda yeniden denenir."""
+    from database import savepoint
+    _hazirla()
+    yazilan, hatalar, atlanan = 0, {}, {}
+    with db() as (conn, cur):
+        bugun = _bugun()
+        ay = bugun.strftime("%Y-%m")
+        _, C, _, _ = _yukle(cur)
+        for sid, ucret in _pos_cihaz_eksik(cur):
+            banka = f"banka:{sid}"
+            if banka not in C:   # Fable L6: her saat "kısmi hata" gürültüsü olmasın — Bekleyen satırı zaten söylüyor
+                atlanan[sid] = "şube banka cebi yok"
+                continue
+            for gun in dict.fromkeys((f"{ay}-01", bugun.isoformat())):
+                try:
+                    with savepoint(cur, "sp_pos_cihaz"):
+                        odeme_yaz(cur, OdemeBody(konu="fatura", tarih=gun, ait_ay=ay, sube_id=sid, fatura_turu=POS_CIHAZ,
+                                                 aciklama="banka POS cihaz ücreti (otomatik)",
+                                                 parcalar=[Parca(yontem="havale", cep=banka, tutar=_tl_sayi(ucret))],
+                                                 istek_id=_pos_cihaz_istek(sid, ay), tekrar_onay=True),
+                                  "otomatik (banka kesintisi)")
+                    yazilan += 1
+                    hatalar.pop(sid, None)
+                    break
+                except HTTPException as e:
+                    hatalar[sid] = str(e.detail)[:120]
+                except Exception as e:  # noqa: BLE001 — Fable L6: beklenmeyen hata yalnız o şubeyi atlatsın (savepoint geri aldı)
+                    hatalar[sid] = f"beklenmeyen: {str(e)[:100]}"
+    if hatalar:
+        log.warning("ödeme: POS cihaz ücreti yazılamadı %s", hatalar)
+    return {"yazilan": yazilan, "hatalar": hatalar, "atlanan": atlanan}
+
+
+def _pos_cihaz_isleri(cur, b) -> list:
+    """Bekleyen işler › Ödeme: bu ay yazılamamış POS cihaz ücreti (ayın 2'sinden sonra — ilk koşuya fırsat). Merkez kararı:
+    elle gir ya da Tanımlar'da tutarı 0 yap."""
+    bugun = _bugun()
+    if bugun.day < 2:
+        return []
+    from evvel_yeni_tanim_api import subeler
+    ad = {s["id"]: s["ad"] for s in subeler(cur)}
+    ay = bugun.strftime("%Y-%m")
+    return [{"tur": "pos_cihaz", "genel": True, "grup": "odeme", "id": f"pos_cihaz:{sid}:{ay}", "tarih": f"{ay}-01",
+             "etiket": "💳 POS cihaz ücreti yazılamadı", "ad": f"{ad.get(sid, sid)} · {_tl_sayi(u):,.0f} ₺".replace(",", "."),
+             "alt": "banka o gün sayılmış ya da bakiye yetmemiş olabilir — elle gir (Fatura / abonelik › POS cihaz ücreti)",
+             "sayfa": "odemeler", "dugme": "Elle gir",
+             "on": {"anahtar": "ey_odeme_on", "deger": {"konu": "fatura", "sube_id": sid, "ait_ay": ay, "fatura_turu": POS_CIHAZ,
+                                                         "tutar": _tl_sayi(u)}}}
+            for sid, u in _pos_cihaz_eksik(cur, (b or {}).get("kayit"))]
+
+
+from evvel_yeni_cekirdek import bekleyen_is_kaydet  # noqa: E402
+bekleyen_is_kaydet("pos_cihaz", _pos_cihaz_isleri)
