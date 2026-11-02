@@ -405,7 +405,7 @@ def _bekleyen(cur, baglam: dict) -> list:
                     "alt": "işletme borcu mu, şahsi mi — karar ver", "sayfa": "mulk_borc", "dugme": "İşletmelerin borcu"})
     for e in _gecikenler(cur):
         top = sum(a["kalan"] for a in e["gec"])
-        out.append({"tur": "mulk_kira", "genel": True, "grup": "kira", "id": f"mulk:{e['id']}", "tarih": e["gec"][0]["vade"],
+        out.append({"tur": "mulk_kira", "genel": True, "grup": "kira", "id": f"mulk:{e['id']}", "tarih": e["gec"][0]["vade"], "gecikti": True,   # rozet 🔴 (genelge: kira gecikti)
                     "etiket": "🏠 Kira gelmedi", "ad": f"{e['ad']}{(' · ' + e['kiraci']) if e.get('kiraci') else ''}",
                     "alt": f"{len(e['gec'])} ay · {top:,.0f} ₺ — geldiyse 'Kira geldi →'".replace(",", "."),
                     # IS 5ds parça 3: doğrudan Para girişi formu, ev seçili (birden çok ay açıksa form ayı sorar)

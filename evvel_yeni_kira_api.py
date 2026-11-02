@@ -280,7 +280,7 @@ def _bekleyen(cur, baglam: dict) -> list:
         top = sum(a["kalan"] for a in g)
         aylar = ", ".join(_AY_AD[int(a["ay"][5:7]) - 1] for a in g)
         v = g[0]["vade"]
-        out.append({"tur": "sube_kira_gecikti", "genel": True, "grup": "odeme", "id": f"sube_kira:{sid}", "tarih": v,
+        out.append({"tur": "sube_kira_gecikti", "genel": True, "grup": "odeme", "id": f"sube_kira:{sid}", "tarih": v, "gecikti": True,   # rozet 🔴 (genelge: vadesi geçti)
                     "etiket": "🏠 Şube kirası ödenmedi", "ad": s["ad"],
                     "alt": f"{aylar} · {f'{top:,.0f}'.replace(',', '.')} ₺ kalan · son gün {v[8:10]}.{v[5:7]}",
                     "sayfa": "kira_takvimi", "dugme": "Kira takvimi"})

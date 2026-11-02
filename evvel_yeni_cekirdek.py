@@ -655,12 +655,37 @@ def bekleyen_isler(cur, baglam: dict, hatalar: Optional[List[str]] = None) -> Li
     return out
 
 
+# 🔴 ROZET SÖZLEŞMESİ (ROZET_GENELGESI.md §6 · sahip 2 Kas · Fable + Codex L4b) — TEK DEFTER: rozet, Bekleyen işler satırının
+# süzgeçli görünümüdür (ayrı rozet sağlayıcısı YOK). Satır alanları (sağlayıcı yazar, yazmazsa varsayılan):
+#   rozet: False → rozet yakmaz · rozet_sayfa → işin YAPILDIĞI sayfa (genel satırda 'sayfa' kullanılır) · rozet_adet → bağımsız iş sayısı
+#   kirmizi / gecikti / gecti → 🔴 (yoksa 🟠). Bilgi / uyarı / "Gördüm" satırı rozet yakmaz (R1).
+ROZET_BILGI = {"kapanis_uyarili", "yoklama_devir_tutmadi", "yoklama_devir_tutmuyor", "yoklama_mola_uzun"}   # Fable L6: gerçek tür adları   # genelge R1 + tablo (yoklama: devir tutmadı bilgi)
+ROZET_GRUPLANMAZ = {"kapanis_sonradan", "sube_not"}   # Kasa bilgiMi aynası: "Gördüm"lü olsa da KARAR satırı (KasaModulu GRUPLANMAZ)
+ROZET_SAYFA = {"teslim": "teslim"}   # Kasa satırının icra sayfası (Kasa › Teslim onayları); öteki Kasa satırları Bekleyen işler sekmesinde
+
+
+def rozet_karti(x: dict) -> Optional[dict]:
+    """PUBLIC — bir Bekleyen iş satırının rozet karşılığı ya da None (bilgi). {sayfa (None = grubun Bekleyen sekmesi), grup, renk, adet}."""
+    if x.get("rozet") is False or x.get("tur") in ROZET_BILGI or (
+            x.get("genel") and x.get("gordum") and x.get("tur") not in ROZET_GRUPLANMAZ):
+        return None
+    sayfa = x.get("rozet_sayfa") or (x.get("sayfa") if x.get("genel") else None) or ROZET_SAYFA.get(x.get("tur"))
+    sayfa = str(sayfa).split("?", 1)[0] or None if sayfa else None   # 'satis_kontrol?gun=…' → menü kimliği (Fable L6)
+    gecikti = bool(x.get("kirmizi") or x.get("gecikti") or x.get("gecti")   # 'gecti': toptancı vadesi geçti (genelge tablosu 🔴) — Fable L6 2. tur
+                   or "gecikti" in str(x.get("etiket") or "").lower())
+    try:
+        adet = max(1, int(x.get("rozet_adet") or 1))
+    except (TypeError, ValueError):
+        adet = 1
+    return {"sayfa": sayfa, "grup": x.get("grup") or "kasa", "renk": "kirmizi" if gecikti else "turuncu", "adet": adet}
+
+
 def bekleyen_saglayicilar() -> List[str]:
     return sorted(_BEKLEYEN_IS)
 
 
 __all__ = ["TrTutar", "bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "kolon_var", "bir_kez", "ddl_kur", "ddl_bu_islemde", "lock_timeout_ayarla", "KuruGeriAl",
-           "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "MAKS_KURUS", "KASA_KILIT", "datetime",
+           "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "rozet_karti", "MAKS_KURUS", "KASA_KILIT", "datetime",
            "ayar_oku", "ayar_yaz", "arsiv_oku", "arsiv_yaz", "arsiv_cift_oku", "arsiv_cift_yaz", "is_gunu", "panel_baslangic", "sube_baslangic", "en_erken_baslangic", "pilot_subeler", "pilot_baslangiclari", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik", "eski_panel_zinciri_acik_onbellekli", "eski_yazim_kapisi"]
 
 

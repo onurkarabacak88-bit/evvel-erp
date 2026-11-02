@@ -7,11 +7,11 @@
 //   Evvel'in oturum jetonunu kullanır: Evvel'e girmiş tarayıcıda yeniden şifre sormaz.
 // Adresler: /evvel-yeni · /evvel-yeni/<sayfa>
 // ─────────────────────────────────────────────────────────────────────────────
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { MODULLER, TUM_SAYFALAR } from './moduller';
 import { kabukDegiskenleri } from './tema';   // renkler TEK kaynak (T4-16)
-import { IS_GRUPLARI, isGrubu, SorKatmani } from './KasaModulu';
+import { IS_GRUPLARI, SorKatmani } from './KasaModulu';
 import { izinAyarla, sayfaGorunur } from './yetki';   // 🔐 izin TEK kaynak
 
 const OTURUM_ANAHTAR = 'evvel_oturum';   // Evvel ile aynı jeton
@@ -145,12 +145,41 @@ export default function EvvelYeniApp() {
   useEffect(() => {   // 🔐 doğrudan adresle izinsiz sayfa → ilk izinli sayfa (Fable: yan etki render'da değil)
     if (sayfaKapali && ILK_SAYFA && ILK_SAYFA !== sekme) sekmeDegis(ILK_SAYFA);
   });   // eslint-disable-line react-hooks/exhaustive-deps
-  // F3.2 (sim 25 Eki): rozet ŞİMDİYİ sayar — geçmiş gün seçiliyken (ör. kayıttan sonra o güne atlayınca) 18 → 4 oluyordu
-  const veriGeldi = (v) => setRozet({
-    teslim: v.isler.filter((x) => x.tur === 'teslim').length, farklar: v.acik_fark_simdi ?? v.ozet?.acik_fark_sayisi,
-    // Bekleyen işler alt sekmeleri: her biri kendi sayısı (bölüm başlığında toplamı)
-    ...Object.fromEntries(IS_GRUPLARI.map((g) => [g.id, v.isler.filter((x) => isGrubu(x) === g.grup).length])),
-  });
+  // 🔴 ROZET (ROZET_GENELGESI.md §6 · parça 1): menü her sayfada /kasa/rozetler'den okur (Bekleyen işler ile TEK defter, aynı budama) —
+  // 60 sn'de bir + sekmeye dönünce + bir işlem bitince (Kasa'nın onVeri'si). İş, YAPILDIĞI sayfada yanar; o sayfa menüde yoksa
+  // (izin / modül kapalı) kendi Bekleyen işler sekmesinde. Bilgi / uyarı (açık fark dahil — sahip S3) rozet yakmaz.
+  const menuSayfalari = new Set(BOLUMLER.flatMap((b) => b.sayfalar.map((x) => x.id)));
+  const rozetSon = useRef(0);   // son okuma zamanı (Fable L6: art arda onVeri'de 5 sn'de bir okur)
+  const rozetYukle = () => { rozetSon.current = Date.now(); return api('/evvel-yeni/kasa/rozetler').then((d) => {
+    const r = {};
+    (d?.rozetler || []).forEach((x) => {
+      const grupSayfa = (IS_GRUPLARI.find((g) => g.grup === x.grup) || IS_GRUPLARI[0]).id;
+      const hedef = x.sayfa && menuSayfalari.has(x.sayfa) ? x.sayfa : grupSayfa;
+      const o = r[hedef] || { n: 0, kirmizi: false };
+      r[hedef] = { n: o.n + (x.adet || 1), kirmizi: o.kirmizi || x.renk === 'kirmizi' };
+    });
+    setRozet(r);
+  }).catch(() => { /* okunamazsa eski rozet kalır (hata ≠ 0 — R5) */ }); };
+  const rozetRef = useRef(rozetYukle);
+  rozetRef.current = rozetYukle;   // aralık her zaman GÜNCEL menüyü (izin değişince) kullanır — Fable L6 bayat kapanış
+  // Kasa'da işlem / yenileme bitti → rozet tazelenir. 5 sn içinde ikinci işlem (art arda teslim onayı) ATLANMAZ, 5 sn dolunca
+  // bir kez okunur (Fable L6 2. tur: atlanınca rozet 60 sn bayat kalıyordu — R2 "iş kapanınca rozet hemen düşer")
+  const rozetBekleyen = useRef(null);
+  const veriGeldi = () => {
+    const kalan = 5000 - (Date.now() - rozetSon.current);
+    if (kalan <= 0) rozetYukle();
+    else if (!rozetBekleyen.current) rozetBekleyen.current = setTimeout(() => { rozetBekleyen.current = null; rozetRef.current(); }, kalan);
+  };
+  useEffect(() => {
+    if (durum !== 'tamam' || !yetki) return undefined;
+    rozetRef.current();
+    const t = setInterval(() => { if (document.visibilityState !== 'hidden') rozetRef.current(); }, 60000);   // gizli sekmede okumaz
+    const gor = () => { if (document.visibilityState === 'visible') rozetRef.current(); };
+    document.addEventListener('visibilitychange', gor);
+    return () => { clearInterval(t); clearTimeout(rozetBekleyen.current); rozetBekleyen.current = null; document.removeEventListener('visibilitychange', gor); };
+  }, [durum, yetki]);
+  const rozetStil = (kirmizi, buyuk) => ({ background: kirmizi ? 'var(--bad)' : 'var(--warn)', color: 'var(--on)', borderRadius: 999,
+    padding: buyuk ? '0 8px' : '0 7px', fontSize: buyuk ? 12 : 11.5, fontWeight: 700, letterSpacing: 0 });
 
   useEffect(() => {
     document.title = 'Evvel Yeni';
@@ -209,7 +238,11 @@ export default function EvvelYeniApp() {
               // Sahip (2026-10-16): "ana başlıklar açılır kapanır; tıklayınca aşağı doğru açılsın, basmadıkça kapalı dursun"
               const ac = acik.includes(b.ad);
               const aktif = b.sayfalar.some((m) => m.id === sekme);
-              const rozetTop = b.sayfalar.reduce((t, m) => t + (Number(rozet[m.id]) || 0), 0);
+              // başlık = alt sayfalarının toplamı, gecikme baskın. R7: aynı iş iki başlıkta SAYILMAZ — kendi sayfası olan iş yalnız orada
+              // yanar, Bekleyen işler sekmesine düşmez (rozetYukle tek hedef); böylece Bekleyen işler başlığı yalnız sayfası olmayan
+              // işleri (Kasa kapanış onayı gibi) toplar — kapalı menüde de görünür, gözden kaçmaz (sim 2 Kas)
+              const rozetTop = b.sayfalar.reduce((t, m) => t + ((rozet[m.id] || {}).n || 0), 0);
+              const rozetKirmizi = b.sayfalar.some((m) => (rozet[m.id] || {}).kirmizi);
               return (<React.Fragment key={b.ad}>
               {/* Sahip: "altında başka başlık yoksa (Şube kazancı gibi) basınca alta açmak yerine DİREKT açılsın" */}
               <button type="button" className="piapp-baslik" aria-expanded={b.sayfalar.length > 1 ? ac : undefined} data-aktif={aktif ? '1' : '0'}
@@ -220,13 +253,13 @@ export default function EvvelYeniApp() {
                 }}>
                 <span className="ikon" aria-hidden="true">{b.ikon}</span><span style={{ flex: 1 }}>{b.ad}</span>{b.sayfalar.length > 1 && <span className="ok">▶</span>}
                 {aktif && !ac && b.sayfalar.length > 1 && <span className="nokta" title="Açık sayfa bu bölümde" />}
-                {!ac && rozetTop > 0 && <span style={{ background: 'var(--bad)', color: 'var(--on)', borderRadius: 999, padding: '0 7px', fontSize: 11.5, fontWeight: 700, letterSpacing: 0 }}>{rozetTop}</span>}
+                {!ac && rozetTop > 0 && <span style={rozetStil(rozetKirmizi)} title={rozetKirmizi ? 'gecikmiş iş var' : 'bekleyen iş'}>{rozetKirmizi ? '! ' : ''}{rozetTop}</span>}
               </button>
               {ac && b.sayfalar.length > 1 && b.sayfalar.map((m) => (
               <a key={m.id} href={m.id === 'kasam' ? TABAN : `${TABAN}/${m.id}`} aria-current={sekme === m.id ? 'page' : undefined}
                 onClick={(e) => { e.preventDefault(); sekmeDegis(m.id); setMenuAcik(false); }}>
                 <span>{m.ad}<small>{m.alt}</small></span>
-                {rozet[m.id] ? <span style={{ background: 'var(--bad)', color: 'var(--on)', borderRadius: 999, padding: '0 8px', fontSize: 12, fontWeight: 700 }}>{rozet[m.id]}</span> : null}
+                {(rozet[m.id] || {}).n ? <span style={rozetStil(rozet[m.id].kirmizi, true)} title={rozet[m.id].kirmizi ? 'gecikmiş iş var' : 'bekleyen iş'}>{rozet[m.id].kirmizi ? '! ' : ''}{rozet[m.id].n}</span> : null}
               </a>
             ))}</React.Fragment>);
             })}

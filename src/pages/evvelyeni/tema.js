@@ -16,6 +16,6 @@ export const RENK = {
 // Modül adları (--pi-*): 'on' modülde '--pi-on-accent' adını taşır
 const PI_AD = (k) => (k === 'on' ? 'on-accent' : k);
 export const piDegiskenleri = (mod) => Object.entries(RENK[mod]).map(([k, v]) => `--pi-${PI_AD(k)}:${v}`).join(';');
-// Kabuk adları (--bg, --paper, --line, --ink, --ink3, --accent, --on, --bad)
-const KABUK = ['bg', 'paper', 'line', 'ink', 'ink3', 'accent', 'on', 'bad'];
+// Kabuk adları (--bg, --paper, --line, --ink, --ink3, --accent, --on, --bad, --warn — rozet 🟠, ROZET_GENELGESI R4)
+const KABUK = ['bg', 'paper', 'line', 'ink', 'ink3', 'accent', 'on', 'bad', 'warn'];
 export const kabukDegiskenleri = (mod) => KABUK.map((k) => `--${k}:${RENK[mod][k]}`).join(';');

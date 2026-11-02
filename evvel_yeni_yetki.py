@@ -172,7 +172,8 @@ _Y = [
     ("GET", "/kart/takvim", "kart.takvim|isler.odeme"), ("GET", "/kart/ozet", "kart.liste|kart.takvim|tanim.kart"),
     ("POST", "/kart/{x}/teyit", "kart.islem"), ("POST", "/kart/teyit/{x}/sil", "kart.islem"),
     # kasa (/kasa/durum ortak: içerik izne göre BUDANIR — Bekleyen işler + ana sayfa)
-    ("GET", "/kasa/durum", "*"), ("GET", "/kasa/cep/{x}", "kasa.kasam|kasa.dukkan|kasa.evler|kasa.banka|kasa.hareket"),
+    ("GET", "/kasa/durum", "*"), ("GET", "/kasa/rozetler", "*"),   # rozet: durum ile aynı budama (iş grubu izni)
+    ("GET", "/kasa/cep/{x}", "kasa.kasam|kasa.dukkan|kasa.evler|kasa.banka|kasa.hareket"),
     ("GET", "/kasa/teslimler", "kasa.teslim"), ("GET", "/kasa/banka-mutabakat", "kasa.mutabakat"),
     ("GET", "/kasa/acik-defter", "kasa.fark"), ("GET", "/kasa/fark/{x}", "kasa.fark"),
     ("POST", "/kasa/hareket", "kasa.islem"), ("GET", "/kasa/giris/listeler", "gelir.giris|kasa.islem|kasa.hareket"),

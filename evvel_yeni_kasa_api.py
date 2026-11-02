@@ -1161,6 +1161,16 @@ def durum(gun: Optional[str] = None, hepsi: bool = False, x_evvel_oturum: Option
     return _durum_buda(_durum_tam(gun, hepsi), budama_haritasi(x_evvel_oturum))
 
 
+@router.get("/rozetler")
+def rozetler(x_evvel_oturum: Optional[str] = Header(default=None)):
+    """🔴 Merkez menü rozetleri (ROZET_GENELGESI.md §6 · parça 1): Bekleyen işler ile AYNI satırlar (tek defter, aynı izin budaması),
+    yalnız rozet karşılığı olanlar — {sayfa, grup, renk, adet}. Para / ad / ayrıntı dönmez. Menü her sayfada okur (60 sn + işlem sonrası)."""
+    from evvel_yeni_cekirdek import rozet_karti
+    from evvel_yeni_yetki import budama_haritasi
+    d = _durum_buda(_durum_tam(None, False), budama_haritasi(x_evvel_oturum))
+    return {"rozetler": [r for r in (rozet_karti(x) for x in d.get("isler") or []) if r]}
+
+
 def _durum_buda(d: dict, iz: Optional[dict]) -> dict:
     """🔐 Alan / cep bazında budama (Codex L6): toplam ve göstergeler yalnız Kasam (ana / kasa.kasam) izniyle; cepler kendi türünün
     izniyle (şube → kasa.dukkan · ev → kasa.evler · banka / hesap → kasa.banka); hareketler kasa.hareket; işler grup izniyle."""
