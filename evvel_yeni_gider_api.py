@@ -580,118 +580,50 @@ class SinifBody(BaseModel):
     kimin: Optional[str] = None
 
 
-# 🩹 EKİM ÜRÜN AÇ DÜZELTMESİ (sahip 31 Eki onayı · Fable L4b): 7 kayıtta miktar yanlış (pipet "400/100" = 1 paket; kapak "100" adet =
-# 2 paket / plastik 1 paket). Düzeltme KAYNAĞA (eski operasyon_defter JSON) — gece son aktarım Ekim mal arşivini ve depo senkronu
-# AYNI kaynaktan yeniden türetsin (arşivi elle düzeltmek kaynakla ayrışır). TEK SEFERLİK; 1 Kasım kesiminden sonra bu blok silinir.
-URUN_AC_DUZELTME = (   # (şube, gün, ürün adı, bugünkü YANLIŞ adet, doğru adet) — eski defter (eski panel günleri)
-    ("sube-tema", "2026-10-04", "Pipet", 400, 1),
-    ("sube-zafer", "2026-10-08", "Pipet", 100, 1),
+# 🩹 ÜRÜN AÇ DÜZELTMESİ (sahip onayıyla) — yeni panelin depo hareketinde yanlış adet (kapak / pipet "100" tane = 1–2 paket).
+# 1 Kasım kesimi: eski operasyon_defter bölümü SİLİNDİ (31 Eki koşusu yapıldı; eski tablo artık okunmaz). Her satır KENDİ izini taşır —
+# daha önce düzeltilen satır "zaten" sayılır, ikinci koşu hiçbir şey yazmaz. Eşleşme Depo PUBLIC ac_adet_duzelt (şube + gün + ad + YANLIŞ adet).
+URUN_AC_DUZELTME_YENI = (   # (şube, gün, ürün adı, bugünkü YANLIŞ adet, doğru adet, iz)
+    ("sube-koycegiz", "2026-10-29", "14oz Kapak", 100, 2, "DUZELTME 31.10 sahip onayı"),
+    ("sube-koycegiz", "2026-10-30", "8oz Kapak", 100, 2, "DUZELTME 31.10 sahip onayı"),
+    ("sube-koycegiz", "2026-10-30", "14oz Kapak", 100, 2, "DUZELTME 31.10 sahip onayı"),
+    ("sube-tema", "2026-10-31", "14oz Kapak", 100, 2, "DUZELTME 31.10 sahip onayı"),
+    ("sube-tema", "2026-10-31", "Plastik Kapak", 100, 1, "DUZELTME 31.10 sahip onayı"),
+    ("sube-zafer", "2026-10-31", "14oz Kapak", 100, 2, "DUZELTME 03.11 sahip onayı"),        # sahip 3 Kas "düzelt" (5.700 → 114 ₺)
+    ("sube-koycegiz", "2026-11-02", "Plastik Kapak", 100, 1, "DUZELTME 03.11 sahip onayı"),  # sahip 3 Kas "düzelt" (7.560 → 75,6 ₺)
 )
-URUN_AC_DUZELTME_YENI = (   # pilot şube günleri: yeni panelin depo hareketi (canlı kuru deneme: eski defterde yok — Depo PUBLIC ile)
-    ("sube-koycegiz", "2026-10-29", "14oz Kapak", 100, 2),
-    ("sube-koycegiz", "2026-10-30", "8oz Kapak", 100, 2),
-    ("sube-koycegiz", "2026-10-30", "14oz Kapak", 100, 2),
-    ("sube-tema", "2026-10-31", "14oz Kapak", 100, 2),
-    ("sube-tema", "2026-10-31", "Plastik Kapak", 100, 1),
+# Yanlış Ürün Aç eksiye düşürdükten SONRA yapılan sayım farkı (Fable L6 adım 148): düzeltilmezse bakiye çift şişer — canlı izle doğrulandı
+URUN_AC_SAYIM_DUZELTME = (   # (konum, gün, ürün adı, bugünkü YANLIŞ fark, doğru fark, iz)
+    ("depo:sube-zafer", "2026-11-01", "14oz Kapak", 100, 2, "DUZELTME 03.11 sahip onayı"),   # "defter −100, sayılan 0" → defter −2
 )
-DUZELTME_IZ = "DUZELTME 31.10 sahip onayı"
 
 
 @router.post("/urun-ac-duzelt")
 def urun_ac_duzelt(kuru: bool = True, x_evvel_oturum: Optional[str] = Header(default=None)):
-    """Fable L4b korumaları: eşleşme kimlikle değil şube + gün + etiket + ürün adı + BUGÜNKÜ yanlış adet; TAM 7 eşleşme yoksa hiçbir şey
-    yazılmaz · kuru (varsayılan) yalnız gösterir · iz: açıklama sonuna " | DUZELTME …" + Ekim arşivine eski↔yeni · iz taşıyan kayıt
-    atlanır (ikinci koşu 0) · depo senkronunun aynı kalemden yazdığı 'ac:{id}:{sıra}' hareketinde adet güncellenir (Fable L6)."""
-    import json as _json
-    from evvel_yeni_cekirdek import arsiv_yaz
+    """Kuru (varsayılan) yalnız gösterir · eşleşmeyen satır varsa HİÇBİR ŞEY yazılmaz · iz hareket açıklamasına + arşive (koşu günüyle)."""
+    from evvel_yeni_cekirdek import arsiv_yaz, is_gunu as _bugun
+    from evvel_yeni_depo_api import ac_adet_duzelt, sayim_adet_duzelt
+    isler = [(ac_adet_duzelt, "ürün aç", *t) for t in URUN_AC_DUZELTME_YENI] + [(sayim_adet_duzelt, "sayım farkı", *t) for t in URUN_AC_SAYIM_DUZELTME]
     with db() as (conn, cur):
         kim = _aktor(cur, x_evvel_oturum)
-        plan, eksik, yapilmis, satirlar = [], [], [], {}   # satirlar: defter id → TEK çözümleme (aynı kayıtta iki kalem birbirini ezmesin)
-        for sid, gun, ad, eski, yeni in URUN_AC_DUZELTME:
-            cur.execute("""SELECT id, aciklama FROM operasyon_defter WHERE sube_id::text=%s AND tarih=%s
-                             AND etiket IN ('URUN_AC','URUN_KULLANIMA_AL') ORDER BY id""", (sid, gun))
-            bulunan = []
-            for r in cur.fetchall() or []:
-                r = dict(r)
-                acik = str(r["aciklama"] or "")
-                on = next((p for p in ("URUN_AC_JSON:", "URUN_KULLANIMA_AL_JSON:") if acik.startswith(p)), None)
-                if not on:
-                    continue
-                if r["id"] not in satirlar:
-                    govde, _, ek = acik[len(on):].partition(" | ")
-                    try:
-                        satirlar[r["id"]] = {"on": on, "obj": _json.loads(govde.strip()), "ek": ek, "iz": []}
-                    except Exception:  # noqa: BLE001
-                        continue
-                obj = satirlar[r["id"]]["obj"]
-                for i, it in enumerate(obj.get("kalemler") or []):
-                    if isinstance(it, dict) and str(it.get("urun_ad") or "").strip().lower() == ad.lower():
-                        try:
-                            adet = int(it.get("adet") or 0)
-                        except (TypeError, ValueError):
-                            adet = 0
-                        bulunan.append({"id": r["id"], "i": i, "adet": adet, "iz": DUZELTME_IZ in acik})
-            hedef = [b for b in bulunan if b["adet"] == eski and not b["iz"]]
-            if any(b["iz"] and b["adet"] == yeni for b in bulunan) and not hedef:
-                yapilmis.append(f"{sid} {gun} {ad}")
-                continue
-            if len(hedef) != 1:
-                eksik.append(f"{sid} {gun} {ad} {eski}: {len(hedef)} eşleşme")
-                continue
-            plan.append((hedef[0], sid, gun, ad, eski, yeni))
-        rapor = [{"sube": p[1], "gun": p[2], "urun": p[3], "eski": p[4], "yeni": p[5], "defter_id": str(p[0]["id"])} for p in plan]
-        from evvel_yeni_depo_api import ac_adet_duzelt
-        yeni_plan = []
-        for sid, gun, ad, eski, yeni in URUN_AC_DUZELTME_YENI:
-            d = ac_adet_duzelt(cur, sid, gun, ad, eski, yeni, DUZELTME_IZ, yaz=False)
+        plan, eksik, yapilmis = [], [], []
+        for fn, tur, yer, gun, ad, eski, yeni, iz in isler:
+            d = fn(cur, yer, gun, ad, eski, yeni, iz, yaz=False)
             if d["durum"] == "zaten":
-                yapilmis.append(f"{sid} {gun} {ad}")
+                yapilmis.append(f"{yer} {gun} {ad} ({tur})")
             elif d["durum"] != "bulundu":
-                eksik.append(f"{sid} {gun} {ad} {eski}: yeni panel {d['durum']} ({d['sayi']})")
+                eksik.append(f"{yer} {gun} {ad} {eski} ({tur}): {d['durum']} ({d['sayi']})")
             else:
-                yeni_plan.append((sid, gun, ad, eski, yeni))
-                rapor.append({"sube": sid, "gun": gun, "urun": ad, "eski": eski, "yeni": yeni, "defter_id": "yeni panel"})
+                plan.append((fn, tur, yer, gun, ad, eski, yeni, iz))
+        rapor = [{"yer": p[2], "gun": p[3], "urun": p[4], "tur": p[1], "eski": p[5], "yeni": p[6]} for p in plan]
         if eksik:
             raise HTTPException(409, "Eşleşme tutmadı — hiçbir şey yazılmadı: " + " · ".join(eksik))
-        if kuru or not (plan or yeni_plan):
+        if kuru or not plan:
             return {"ok": True, "kuru": kuru, "duzeltilecek": rapor, "zaten_duzeltilmis": yapilmis}
-        for sid, gun, ad, eski, yeni in yeni_plan:
-            ac_adet_duzelt(cur, sid, gun, ad, eski, yeni, DUZELTME_IZ, yaz=True)
-        if not plan:
-            arsiv_yaz(cur, "gider", "duzeltme:urun_ac:2026-10:yeni", {"duzeltilen": rapor}, kim)
-            return {"ok": True, "kuru": False, "duzeltilen": rapor, "depo_guncellenen": 0}
-        cur.execute("SET LOCAL lock_timeout = '5s'")
-        cur.execute("ALTER TABLE operasyon_defter DISABLE TRIGGER tr_operasyon_defter_append_only")
-        try:
-            for b, sid, gun, ad, eski, yeni in plan:
-                st = satirlar[b["id"]]
-                obj = st["obj"]
-                # depo senkronunun kaynak_ref sırası = urun_ac_parcala çıktısı (adet > 0 kalemler) — ham dizideki sıradan farklı olabilir
-                j = sum(1 for it in obj["kalemler"][:b["i"]] if isinstance(it, dict) and str(it.get("adet") or "0").isdigit() and int(it["adet"]) > 0)
-                obj["kalemler"][b["i"]] = {**obj["kalemler"][b["i"]], "adet": yeni}
-                st["iz"].append(f"{ad} {eski}→{yeni}")
-                st.setdefault("depo", []).append((f"ac:{b['id']}:{j}", yeni))
-            for did, st in satirlar.items():
-                if not st["iz"]:
-                    continue
-                yeni_acik = (st["on"] + _json.dumps(st["obj"], ensure_ascii=False, separators=(",", ":"))
-                             + " | " + ((st["ek"] + " | ") if st["ek"] else "") + f"{DUZELTME_IZ} {', '.join(st['iz'])} ({kim})")
-                cur.execute("UPDATE operasyon_defter SET aciklama=%s WHERE id=%s", (yeni_acik, did))
-        finally:
-            cur.execute("ALTER TABLE operasyon_defter ENABLE TRIGGER tr_operasyon_defter_append_only")
-        # Fable L6: depo senkronu aynı kalemi yazdıysa (ON CONFLICT DO NOTHING yeni adedi ALMAZ; iptal etmek de geri getirmez) →
-        # YALNIZ o kalemin satırında adet güncellenir (aynı kaydın dokunulmayan kalemlerine dokunulmaz)
-        depo = 0
-        try:
-            with savepoint(cur, "sp_ey_uad_depo"):
-                for st in satirlar.values():
-                    for ref, yeni in st.get("depo") or []:
-                        cur.execute("UPDATE ey_stok_hareket SET adet=%s WHERE kaynak_ref=%s AND NOT COALESCE(iptal, FALSE)", (yeni, ref))
-                        depo += cur.rowcount or 0
-        except Exception:  # noqa: BLE001 — depo tablosu yoksa (tak-çıkar) atla
-            log.warning("gider: ürün aç düzeltmesi depo izi güncellenemedi", exc_info=True)
-        arsiv_yaz(cur, "gider", "duzeltme:urun_ac:2026-10", {"duzeltilen": rapor, "depo_guncellenen": depo}, kim)
-    return {"ok": True, "kuru": False, "duzeltilen": rapor, "depo_guncellenen": depo}
+        for fn, _tur, yer, gun, ad, eski, yeni, iz in plan:
+            fn(cur, yer, gun, ad, eski, yeni, iz, yaz=True)
+        arsiv_yaz(cur, "gider", f"duzeltme:urun_ac:yeni:{_bugun().isoformat()}", {"duzeltilen": rapor}, kim)
+    return {"ok": True, "kuru": False, "duzeltilen": rapor, "zaten_duzeltilmis": yapilmis}
 
 
 @router.post("/siniflandir")

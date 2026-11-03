@@ -457,14 +457,8 @@ def hareketler(cur, *, turler, bas, son, hedefler=None, hedef_onek=None, kaynak_
     return [dict(x) for x in cur.fetchall() or []]
 
 
-def ac_adet_duzelt(cur, sube_id: str, gun: str, urun_ad: str, eski: int, yeni: int, iz: str, yaz: bool) -> dict:
-    """PUBLIC — TEK SEFERLİK (Gider 'urun-ac-duzelt', sahip 31 Eki): yeni panelin ÜRÜN AÇ hareketinde (tur 'ac', depo:şube → dışarı:tuketim)
-    yanlış girilen adedi düzeltir. Eşleşme şube + gün + ürün adı + bugünkü yanlış adet; iz açıklamaya eklenir. Dönüş
-    {"durum": "bulundu" | "zaten" | "yok" | "cok", "sayi": n}. yaz=False yalnız sayar. Kesimden sonra silinir."""
-    depo_hazirla(cur)
-    cur.execute("""SELECT id, adet, COALESCE(aciklama, '') AS aciklama FROM ey_stok_hareket
-                    WHERE yeni AND NOT iptal AND tur='ac' AND kaynak=%s AND hedef='dışarı:tuketim' AND is_gunu=%s
-                      AND lower(urun_ad)=lower(%s)""", (f"depo:{sube_id}", gun, urun_ad))
+def _adet_duzelt(cur, eski: int, yeni: int, iz: str, yaz: bool) -> dict:
+    """Ortak gövde (Fable L6 adım 148): çağıranın SELECT'i (id, adet, aciklama) imleçte — YANLIŞ adette ve izsiz TEK satır düzeltilir."""
     rs = [dict(r) for r in cur.fetchall() or []]
     hedef = [r for r in rs if int(r["adet"]) == int(eski) and iz not in r["aciklama"]]
     if not hedef:
@@ -477,6 +471,27 @@ def ac_adet_duzelt(cur, sube_id: str, gun: str, urun_ad: str, eski: int, yeni: i
                     (int(yeni), (hedef[0]["aciklama"] + " | " if hedef[0]["aciklama"] else "") + f"{iz} {eski}→{yeni}", hedef[0]["id"]))
     return {"durum": "bulundu", "sayi": 1}
 
+def ac_adet_duzelt(cur, sube_id: str, gun: str, urun_ad: str, eski: int, yeni: int, iz: str, yaz: bool) -> dict:
+    """PUBLIC — Gider 'urun-ac-duzelt' (sahip onayıyla, satır satır listeli): yeni panelin ÜRÜN AÇ hareketinde (tur 'ac', depo:şube →
+    dışarı:tuketim) yanlış girilen adedi düzeltir. Eşleşme şube + gün + ürün adı + bugünkü yanlış adet; iz açıklamaya eklenir. Dönüş
+    {"durum": "bulundu" | "zaten" | "yok" | "cok", "sayi": n}. yaz=False yalnız sayar. Sonraki sayım farkını DÜZELTMEZ (çağıran önce bakar)."""
+    depo_hazirla(cur)
+    cur.execute("""SELECT id, adet, COALESCE(aciklama, '') AS aciklama FROM ey_stok_hareket
+                    WHERE yeni AND NOT iptal AND tur='ac' AND kaynak=%s AND hedef='dışarı:tuketim' AND is_gunu=%s
+                      AND lower(urun_ad)=lower(%s)""", (f"depo:{sube_id}", gun, urun_ad))
+    return _adet_duzelt(cur, eski, yeni, iz, yaz)
+
+
+
+def sayim_adet_duzelt(cur, konum: str, gun: str, urun_ad: str, eski: int, yeni: int, iz: str, yaz: bool) -> dict:
+    """PUBLIC — ac_adet_duzelt'in eşi (Fable L6 adım 148): yanlış Ürün Aç'tan SONRA yapılan sayım, eksiye düşmüş defteri farkla sıfırladıysa
+    (ör. defter −100, sayılan 0 → +100) Ürün Aç düzeltilince bu fark da düzelmeli; yoksa bakiye çift şişer. Eşleşme konum + gün + ad +
+    YANLIŞ fark adedi (sayim / acilis_sayim); iz açıklamaya. Dönüş ac_adet_duzelt ile aynı biçim."""
+    depo_hazirla(cur)
+    cur.execute("""SELECT id, adet, COALESCE(aciklama, '') AS aciklama FROM ey_stok_hareket
+                    WHERE yeni AND NOT iptal AND tur IN ('sayim', 'acilis_sayim') AND (kaynak=%s OR hedef=%s) AND is_gunu=%s
+                      AND lower(urun_ad)=lower(%s)""", (konum, konum, gun, urun_ad))
+    return _adet_duzelt(cur, eski, yeni, iz, yaz)
 
 def urun_hareketi_var(cur, urun_id: str) -> bool:
     """PUBLIC: ürünün YENİ evrende (ey_urun kimliğiyle) stok hareketi var mı — Ürün kataloğu birim kilidi bunu sorar."""
