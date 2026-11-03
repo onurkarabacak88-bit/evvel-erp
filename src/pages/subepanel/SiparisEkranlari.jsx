@@ -5,7 +5,7 @@
 // ya da "🚚 Yola çıkar" (kısmi → kalan merkeze döner). Sunucu: evvel_yeni_panel_api (/siparis, /siparisler, /gonderilecek) → Sipariş modülü.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, yeniIstek, panelOku } from './ortak';
+import { BirimCipi, adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, yeniIstek, panelOku } from './ortak';
 import { tarihNokta } from '../../utils/trTarih';
 
 const DURUM = {
@@ -117,7 +117,7 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
             return (
               <div key={u.id} style={{ display: 'grid', gap: 4, padding: 6, borderRadius: 10, background: n ? 'rgba(34,197,94,.1)' : C.bg2 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad} <span style={{ color: C.soluk, fontSize: 12, fontWeight: 500 }}>{u.birim}</span> <RozetU id={u.id} /></span>
+                  <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad} <BirimCipi u={u} /> <RozetU id={u.id} /></span>
                   <AdetGirdi n={n} azalt={() => degis(u.id, n - 1)} artir={() => degis(u.id, n + 1)} genislik={96} font={30}
                     yaz={(v) => degis(u.id, v)} />   {/* ortak − adet + (F#51) */}
                 </div>

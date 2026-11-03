@@ -9,7 +9,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { adetAyarla, AdetGirdi, C, Hero, kalemGovde, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, TONLAR, urunHaritasi, yeniIstek } from './ortak';
+import { BirimCipi, adetAyarla, AdetGirdi, C, Hero, kalemGovde, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, TONLAR, urunHaritasi, yeniIstek } from './ortak';
 
 const BARDAK = '__bardak__';   // sunucu oneri anahtarı: bardak işaretli ürünler
 const aktifSay = (k) => `${k.urunler.filter((u) => u.aktif).length} ürün`;   // pencere / arama pasifi gizler → sayı da aktif (D6-R)
@@ -221,7 +221,7 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
             const n = adet[u.id] || 0;
             return (
               <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 6, borderRadius: 10, background: n ? 'rgba(239,68,68,.12)' : C.bg2 }}>
-                <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad} <span style={{ color: C.soluk, fontSize: 12, fontWeight: 500 }}>{u.birim}</span></span>
+                <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad} <BirimCipi u={u} /></span>
                 <AdetGirdi n={n} azalt={() => art(u.id, -1)} artir={() => art(u.id, 1)} yaz={(v) => degis(u.id, v)} genislik={90} font={32} kapali={kapali} />
               </div>);
           })}

@@ -395,6 +395,12 @@ def panel_durum(sube_id: str):
         per = [{"id": str(p["id"]), "ad": p["ad"]} for p in sl["personel"]
                if p["aktif"] and str(p.get("sube_id") or "") == str(sube_id)]
         kat_hepsi = katalog(cur, hepsi=True)   # Fable: tek sorgu — aktif liste bundan süzülür
+        olagan = {}
+        try:
+            with savepoint(cur, "sp_panel_olagan"):
+                olagan = ac_olagan(cur, str(sube_id), gun)
+        except Exception:  # noqa: BLE001 — okunamazsa yalnız paket / birim eşiği kalır
+            log.warning("panel durum: olağan açış okunamadı", exc_info=True)
         toptancilar = [{"id": str(t["id"]), "ad": t["ad"], "kategori": t.get("kategori")} for t in sl.get("toptancilar") or []]
         kat = [{**k, "urunler": [x for x in k["urunler"] if x.get("aktif", True)]} for k in kat_hepsi if k.get("aktif", True)]
         bugunku = [{"id": o["id"], "tur": o["tur"], "zaman": str(o["olay_zamani"])[11:16], "kim": o.get("personel_ad"),
@@ -475,7 +481,7 @@ def panel_durum(sube_id: str):
             except Exception:  # noqa: BLE001
                 log.warning("panel durum: teslimler okunamadı", exc_info=True)
     def _u(x):
-        return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici"),
+        return {"id": x["id"], "ad": x["ad"], "birim": x["birim"], "koli_ici": x.get("koli_ici"), "sayim_ici": x.get("sayim_ici"),
                 "bardak": __import__("evvel_yeni_urun_api").bardak_mi(x["ad"])}   # TEK bardak kuralı (F#9) — ekran tahmin etmez
     return {"sube": {"id": s["id"], "ad": s["ad"], "depo": depo_mu}, "depo_acik": depo_acik, "depo_yolda": depo_yolda, "gonderilecek_sayi": gonderilecek_sayi, "avans_elden": avans_elden, "gun": gun.isoformat(), "kuru": gun < bas, "panel_baslangic": bas.isoformat(),
             "personel": per, "teslim_alanlar": [{"id": c, "ad": a} for a, c in _TH.items()],
@@ -486,7 +492,10 @@ def panel_durum(sube_id: str):
             "ac_katalog": [{"id": str(k.get("id")), "kategori": k["ad"], "emoji": k.get("emoji"),
                             # Codex P1: pasta (gununde) BURADAN atılmaz — Tedarikçiden teslim + Sipariş ver aynı listeyi kullanır (pasta seçilemiyordu).
                             # Ürün Aç ekranı 'gununde'yi kendisi gizler; sunucu da açmayı reddeder (girişte tüketildi).
-                            "urunler": [{**_u(x), "takip": x.get("takip") or "sayim", "aktif": bool(x.get("aktif", True))} for x in k["urunler"]]}
+                            "urunler": [{**_u(x), "takip": x.get("takip") or "sayim", "aktif": bool(x.get("aktif", True)),
+                                         "olagan": olagan.get(str(x["id"])),   # ekrandaki "genelde N açılıyor" (Fable L6)
+                                         "supheli_esik": supheli_esik(x["birim"], x.get("sayim_ici"), olagan.get(str(x["id"])))}
+                                        for x in k["urunler"]]}
                            for k in kat_hepsi if k.get("aktif", True)],
             "bugun": bugunku, "yoklama": yok,
             "ara_sayim": ara,   # ⏱ yalnız BEKLİYORKEN (plan saati / fark ASLA dönmez — kör)
@@ -992,6 +1001,54 @@ class UrunAcBody(BaseModel):
     kalemler: List[Kalem]
     istek_id: str
     aciklama: Optional[str] = None     # eski panel "Not (isteğe bağlı)"
+    emin: bool = False                 # olağandışı adet ekranda "Evet, doğru" ile onaylandı
+
+
+# 📦 OLAĞANDIŞI ADET (sahip 3 Kas, Fable L4b): paket birimli üründe paket kutusuna TANE yazılıyordu (Zafer 31 Eki 14oz kapak 100 paket,
+# Köyceğiz 2 Kas plastik kapak 100 paket) → gider şişti, depo eksiye düştü. Kural TEK yer: panel_durum eşiği ekrana verir, urun_ac aynısını uygular.
+OLAGAN_GUN = 60          # ortanca penceresi
+OLAGAN_EN_AZ = 5         # bu kadar açış yoksa ortanca kullanılmaz (az kayıtta kirli satır ortancayı ele geçirir)
+
+
+_OLAGAN_ONB: dict = {}   # (şube, gün) → ortanca; bugün hesaba girmediği için gün içinde değişmez (Fable L6: panel_durum 15 sn'de bir)
+_OLAGAN_KILIT = __import__("threading").Lock()   # Fable L6 tur 2: run_in_threadpool eşzamanlı okuma/yazım (dict döngüsü + pop yarışı)
+
+
+def ac_olagan(cur, sube_id: str, gun: date) -> dict:
+    """{urun_id: ortanca tek seferlik açış adedi} — bu şubenin son 60 günlük ÜRÜN AÇ hareketleri (Depo PUBLIC kapısı, tek sorgu).
+    Süreç içi günlük önbellek (tek uvicorn süreci — Dockerfile; işçi çoğalırsa her işçi kendi hesabını yapar, sonuç aynı veriden).
+    Geçmiş gün düzeltmesi (ac_adet_duzelt) ertesi gün yansır."""
+    anahtar = (str(sube_id), gun.isoformat())
+    with _OLAGAN_KILIT:
+        if anahtar in _OLAGAN_ONB:
+            return _OLAGAN_ONB[anahtar]
+    from statistics import median
+    from evvel_yeni_depo_api import hareketler
+    kaynak = f"depo:{sube_id}"
+    g = {}
+    for h in hareketler(cur, turler=("ac",), bas=gun - timedelta(days=OLAGAN_GUN), son=gun - timedelta(days=1),
+                        kaynak_onek=[kaynak]):
+        if h["kaynak"] != kaynak:   # Fable L6 tur 2: önek LIKE 'depo:X%' komşu şubeyi (depo:X2) de alır — tam eşleşme
+            continue
+        g.setdefault(str(h["urun_id"]), []).append(int(h["adet"]))
+    sonuc = {u: median(a) for u, a in g.items() if len(a) >= OLAGAN_EN_AZ}
+    with _OLAGAN_KILIT:
+        for k in [k for k in list(_OLAGAN_ONB) if k[1] != anahtar[1]]:
+            _OLAGAN_ONB.pop(k, None)   # dünün anahtarları atılır (bellek büyümez)
+        _OLAGAN_ONB[anahtar] = sonuc
+    return sonuc
+
+
+def supheli_esik(birim: Optional[str], sayim_ici, olagan) -> Optional[int]:
+    """Bu adet ve üstü 'emin misin?' ister. Eşikler: paket içi tane (≥10) · ortancanın 10 katı (≥10) · birimi adet olmayanda 20."""
+    adaylar = []
+    if sayim_ici:
+        adaylar.append(max(int(sayim_ici), 10))
+    if olagan:
+        adaylar.append(max(int(10 * olagan), 10))
+    if (birim or "adet") != "adet":
+        adaylar.append(20)
+    return min(adaylar) if adaylar else None
 
 
 def _kalemler(cur, kalemler: List[Kalem], takip: Optional[str] = None, pasif_olur: bool = False) -> list:
@@ -1433,9 +1490,26 @@ def urun_ac(sube_id: str, b: UrunAcBody):
         k = _kalemler(cur, b.kalemler, pasif_olur=True)
         if any(__import__("evvel_yeni_urun_api").gununde_tuketilir(x) for x in k):   # sahip P1: pasta depoya girerken tüketildi — açılırsa çift gider
             raise HTTPException(400, "Pasta gibi gününde tüketilen ürün Ürün Aç'ta açılmaz — listeyi yenileyin")
+        bil = __import__("evvel_yeni_urun_api").urun_bilgi(cur, [x["urun_id"] for x in k])
+        olg = {}
+        try:   # salt OKUMA, ayrı bağlantıda (DDL yok) — patlarsa asıl işlem zehirlenmez
+            with db() as (_oc, ocur):
+                olg = ac_olagan(ocur, sube_id, c["gun"])
+        except Exception:  # noqa: BLE001 — okunamazsa paket / birim eşiği yine uygulanır (Ürün Aç düşmez)
+            log.warning("ürün aç: olağan açış okunamadı", exc_info=True)
+        supheli = []
+        for x in k:
+            u = bil.get(x["urun_id"]) or {}
+            e = supheli_esik(u.get("birim"), u.get("sayim_ici"), olg.get(str(x["urun_id"])))
+            if e and x["adet"] >= e:
+                supheli.append(x)
+        if supheli and not b.emin:
+            raise HTTPException(400, "Olağandışı adet (" + ", ".join(f"{x['ad']} {x['adet']}" for x in supheli)
+                                + ") — sayfayı yenileyip ekranda onaylayın")
         kok = panel_kok("ac", sube_id, b.istek_id)
         oid = _olay(cur, sube_id=sube_id, tur="urun_ac", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
-                       personel_id=p["id"], personel_ad=p["ad"], veri={"kalemler": k, "aciklama": (b.aciklama or "").strip()[:200] or None})
+                       personel_id=p["id"], personel_ad=p["ad"], veri={"kalemler": k, "aciklama": (b.aciklama or "").strip()[:200] or None,
+                                                                         "supheli_onay": [x["urun_id"] for x in supheli] or None})
         for i, x in enumerate(k):
             if oid is None:   # tekrar gönderim
                 continue

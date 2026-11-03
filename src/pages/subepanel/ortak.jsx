@@ -187,6 +187,24 @@ export function AdetGirdi({ n, azalt, artir, yaz, genislik = 96, font = 30, kapa
     <button type="button" className="sp-pm" onClick={artir} disabled={kapali} tabIndex={klavye ? -1 : undefined}>+</button>
   </>);
 }
+// 📦 BİRİM ÇİPİ — TEK parça (sahip 3 Kas, Fable L4b): paket birimli üründe kutuya TANE yazılıyordu (14oz kapak 100 paket). Adet olmayan birim
+// turuncu ve büyük; paket içi biliniyorsa "1 paket = 50 tane". Ürün Aç / Fire / Sipariş / Tedarikçi teslim aynısını kullanır.
+export function BirimCipi({ u }) {
+  const b = u?.birim || 'adet';
+  if (b === 'adet') return <span style={{ color: C.soluk, fontSize: 12, fontWeight: 500 }}>adet</span>;
+  return (
+    <span style={{ display: 'inline-block', marginLeft: 4, padding: '2px 8px', borderRadius: 8, background: 'rgba(245,158,11,.18)',
+      border: `1px solid ${C.sari}`, color: C.sari, fontSize: 14, fontWeight: 800, whiteSpace: 'nowrap' }}>
+      📦 {b.toLocaleUpperCase('tr')} · {u.sayim_ici ? `1 ${b} = ${u.sayim_ici} tane` : `${b} sayısı yaz (tane değil)`}
+    </span>
+  );
+}
+// "2 paket (100 tane)" — özet / onay satırları (karma birimde "adet" yazmasın)
+export const miktarYazi = (n, u) => {
+  const b = u?.birim || 'adet';
+  if (b === 'adet') return `${n} adet`;
+  return `${n} ${b}${u?.sayim_ici ? ` (${n * u.sayim_ici} tane)` : ''}`;
+};
 // ➕➖ adet değiştirme — TEK kural (Fable D6-R: Ürün aç / Fire / Tedarikçi / Sipariş 4 kopya, sınırlar 9999 ↔ 99999 farklıydı).
 // Sınır sunucuyla aynı (çekirdek MAKS_ADET 99999). art: hızlı dokunuşta kaybolmasın diye önceki değer üzerinden.
 export const MAKS_ADET = 99999;

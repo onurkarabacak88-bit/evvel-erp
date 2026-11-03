@@ -5,7 +5,7 @@
 // Sök-tak: Toptancılar modülü kapalıysa ekran "kapalı" der. Sipariş modu / eksik bildirimi sipariş basamağıyla (ertelendi). Bip YOK (sahip).
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, qrBoyut, sor, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek, panelOku } from './ortak';
+import { BirimCipi, adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, qrBoyut, sor, TabletQR, taslakKaldir, taslakOku, taslakYaz, tl, tutar, tutarNum, urunHaritasi, yeniIstek, panelOku } from './ortak';
 
 
 export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, secimBildir, tabletVar }) {
@@ -243,7 +243,7 @@ export default function TedarikciTeslim({ d, subeId, adaylar, kapali, bitti, sec
             return (
               <div key={u.id} style={{ display: 'grid', gap: 4, padding: 6, borderRadius: 10, background: n ? 'rgba(34,197,94,.1)' : C.bg2, opacity: u.aktif ? 1 : 0.6 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad}{!u.aktif && ' 🚫'} <span style={{ color: C.soluk, fontSize: 12, fontWeight: 500 }}>{u.birim}</span></span>
+                  <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad}{!u.aktif && ' 🚫'} <BirimCipi u={u} /></span>
                   <AdetGirdi n={n} azalt={() => art(u.id, -1)} artir={() => art(u.id, 1)} genislik={96} font={30}
                     yaz={(v) => { setKoli((o) => { const x = { ...o }; delete x[u.id]; return x; }); degis(u.id, v); }} />   {/* ortak − adet + (F#51) */}
                 </div>

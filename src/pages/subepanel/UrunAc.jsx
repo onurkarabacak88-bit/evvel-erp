@@ -4,7 +4,7 @@
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek, panelYaz, panelOku } from './ortak';
+import { adetAyarla, AdetGirdi, BirimCipi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek, panelYaz, panelOku, miktarYazi } from './ortak';
 
 
 export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir }) {
@@ -20,6 +20,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   const [pin, setPin] = useState('');             // YALNIZ bellekte (taslağa / hiçbir yere yazılmaz)
   const [istek, setIstek] = useState(() => ilk?.istek || yeniIstek());
   const [mesgul, setMesgul] = useState(false);
+  const [emin, setEmin] = useState(false);       // olağandışı adet 'Evet, doğru' ile geçildi (sunucu da ister)
   const [hata, setHata] = useState('');
   const [mesaj, setMesaj] = useState(ilk && Object.keys(ilk.adet || {}).length ? 'taslak' : '');
   const [flas, setFlas] = useState(false);
@@ -53,6 +54,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   const secili = Object.entries(adet).filter(([id, n]) => n > 0 && urunMap[id]);
   const kalem = secili.length;
   const toplam = secili.reduce((a, [, n]) => a + n, 0);
+  const hepAdet = secili.every(([id]) => (urunMap[id]?.birim || 'adet') === 'adet');   // karma birimde "toplam N adet" yazılmaz (Fable)
   useEffect(() => { secimBildir?.(kalem); }, [kalem, secimBildir]);
   useEffect(() => {   // eski: onaylanmamış seçim varken sayfadan çıkışta uyarı
     if (!kalem) return undefined;
@@ -62,8 +64,24 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   }, [kalem]);
 
   const sonKisiAnahtar = `sp_urunac_kisi:${subeId}`;
-  const onayAc = () => {
+  const onayAc = async () => {
     setHata('');
+    // 📦 olağandışı adet — eşik SUNUCUDAN (supheli_esik, tek kural); TEK soru penceresi, ana düğme "Düzelt" (Fable L4b)
+    const supheli = secili.filter(([id, n]) => urunMap[id]?.supheli_esik && n >= urunMap[id].supheli_esik);
+    if (supheli.length) {
+      const c = await sor({
+        soru: 'Bu sayılar her zamankinden çok yüksek — doğru mu?',
+        alt: supheli.map(([id, n]) => {
+          const u = urunMap[id];
+          const gen = u.olagan ? ` Bu şubede genelde ${Math.max(1, Math.round(u.olagan))} ${u.birim || 'adet'} açılıyor.` : '';   // "neden sordu" görünsün (Fable L6)
+          return u.birim && u.birim !== 'adet' ? `• ${u.ad}: ${miktarYazi(n, u)} yazdın — ${u.birim} sayısını mı yazdın, tane mi?${gen}` : `• ${u.ad}: ${n} adet yazdın.${gen}`;
+        }).join('\n'),
+        secenekler: [{ deger: 'duzelt', yazi: '✏️ Düzelt — sayıyı değiştireceğim', ana: true }, { deger: 'evet', yazi: 'Evet, doğru — bu kadar açıyorum' }],
+        iptal: 'Geri dön',
+      });
+      if (c !== 'evet') { setEmin(false); return; }
+      setEmin(true);
+    } else setEmin(false);
     let son = '';
     try { son = localStorage.getItem(sonKisiAnahtar) || ''; } catch { son = ''; }
     if (!kisi && son && adaylar.some((p) => p.id === son)) setKisi(son);
@@ -82,13 +100,13 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
     setMesgul(true); setHata('');
     try {
       const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/urun-ac`, { method: 'POST', body: {
-        personel_id: kisi, pin, istek_id: istek, istemci_gunu: d.gun, aciklama: not.trim() || null,
+        personel_id: kisi, pin, istek_id: istek, istemci_gunu: d.gun, aciklama: not.trim() || null, emin,
         kalemler: secili.map(([urun_id, n]) => ({ urun_id, adet: n })) } });
       try { localStorage.setItem(sonKisiAnahtar, kisi); } catch { /* yok */ }
       setFlas(true); window.setTimeout(() => setFlas(false), 2000);   // sahip (19 Eki): bip sesi YOK
       setOnay(0); setPin(''); setKisi('');
       temizle();
-      bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : `✅ Ürün Aç tamamlandı — ${kalem} kalem / ${toplam} adet`, !!r.kuru);
+      bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : `✅ Ürün Aç tamamlandı — ${kalem} kalem${hepAdet ? ` / ${toplam} adet` : ''}`, !!r.kuru);
     } catch (e) {
       const t = panelHata(e, { setHata, pinSifirla: () => { setPin(''); setOnay(1); }, yeniIstekVer: () => setIstek(yeniIstek()) });
       if (t === 'farkli') { setOnay(0); setPin(''); }
@@ -110,7 +128,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
       {/* yapışkan onay çubuğu — G41 (sim 23 Eki): HEP yerinde (seçim yokken soluk); ilk + dokunuşunda belirip sayfayı itiyordu → ikinci dokunuş kayıyordu */}
       <div className="sp-kart" style={{ position: 'sticky', top: 0, zIndex: 5, display: 'grid', gap: 6, borderColor: kalem ? C.yesil : undefined }}>
         <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          <b style={{ flex: 1, color: kalem ? undefined : C.soluk }}>{kalem ? `🔓 ${kalem} çeşit · toplam ${toplam} adet seçildi` : '🔓 Henüz ürün seçilmedi'}</b>
+          <b style={{ flex: 1, color: kalem ? undefined : C.soluk }}>{kalem ? `🔓 ${kalem} çeşit${hepAdet ? ` · toplam ${toplam} adet` : ''} seçildi` : '🔓 Henüz ürün seçilmedi'}</b>
           <button className="sp-btn sp-yesil" disabled={!kalem || kapali || mesgul} style={kalem ? undefined : { opacity: 0.35 }} onClick={onayAc}>Onayla →</button>   {/* G12: kısa yazı; kişi + PIN açılan pencerede */}
         </div>
       </div>
@@ -135,7 +153,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
             const n = adet[u.id] || 0;
             return (
               <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 6, borderRadius: 10, background: n ? 'rgba(34,197,94,.1)' : C.bg2, opacity: u.aktif ? 1 : 0.6 }}>
-                <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad}{!u.aktif && ' 🚫'} <span style={{ color: C.soluk, fontSize: 12, fontWeight: 500 }}>{u.kategori} · {u.birim}</span></span>
+                <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad}{!u.aktif && ' 🚫'} <span style={{ color: C.soluk, fontSize: 12, fontWeight: 500 }}>{u.kategori}</span> <BirimCipi u={u} /></span>
                 <AdetGirdi n={n} azalt={() => art(u.id, -1)} artir={() => art(u.id, 1)} genislik={90} font={32} yaz={(v) => degis(u.id, v)} />
               </div>
             );
@@ -152,8 +170,8 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
       {/* seçim özeti + not */}
       <div className="sp-kart" style={{ display: 'grid', gap: 8 }}>
         {kalem === 0 ? <span style={{ color: C.soluk }}>Henüz ürün seçilmedi</span> : (<>
-          <div style={{ fontSize: 28, fontWeight: 900, color: C.yesil }}>{kalem} kalem · {toplam} adet <span style={{ fontSize: 15, fontWeight: 700 }}>aktif kullanıma alınacak</span></div>
-          {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8, fontSize: 14 }}><span style={{ flex: 1 }}>{urunMap[id].ad} <span style={{ color: C.soluk }}>· {urunMap[id].kategori}</span></span><b>{n}</b></div>)}
+          <div style={{ fontSize: 28, fontWeight: 900, color: C.yesil }}>{kalem} kalem{hepAdet ? ` · ${toplam} adet` : ''} <span style={{ fontSize: 15, fontWeight: 700 }}>aktif kullanıma alınacak</span></div>
+          {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8, fontSize: 14 }}><span style={{ flex: 1 }}>{urunMap[id].ad} <span style={{ color: C.soluk }}>· {urunMap[id].kategori}</span></span><b>{miktarYazi(n, urunMap[id])}</b></div>)}
           <label style={{ display: 'grid', gap: 4 }}><span style={{ color: C.soluk, fontSize: 12, fontWeight: 700 }}>NOT (isteğe bağlı)</span>
             <input className="sp-in" style={{ fontSize: 16 }} value={not} onChange={(e) => setNot(e.target.value.slice(0, 200))} placeholder="Opsiyonel açıklama…" /></label>
         </>)}
@@ -172,7 +190,7 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
                 const n = adet[u.id] || 0;
                 return (
                   <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: 6, borderRadius: 10, background: n ? 'rgba(34,197,94,.1)' : C.bg2, opacity: u.aktif ? 1 : 0.6 }}>
-                    <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad}{!u.aktif && ' 🚫'} <span style={{ color: C.soluk, fontSize: 12, fontWeight: 500 }}>{u.birim}</span></span>
+                    <span style={{ flex: 1, fontWeight: 700, fontSize: 16 }}>{u.ad}{!u.aktif && ' 🚫'} <BirimCipi u={u} /></span>
                     <AdetGirdi n={n} azalt={() => art(u.id, -1)} artir={() => art(u.id, 1)} genislik={90} font={32}
                       yaz={(v) => degis(u.id, v)} />   {/* ortak − adet + (F#51) */}
                   </div>
@@ -186,9 +204,9 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
 
       {/* onay: TEK pencere — özet + kişi + PIN + kaydet (sahip 23 Eki, G13/G23: ikinci özet basamağı kalktı) */}
       {onay > 0 && (
-        <Modal baslik={`🔓 ${toplam} adet ürün açılacak`} kapat={() => { setOnay(0); setPin(''); }}>
+        <Modal baslik={hepAdet ? `🔓 ${toplam} adet ürün açılacak` : `🔓 ${kalem} çeşit ürün açılacak`} kapat={() => { setOnay(0); setPin(''); }}>
           <div style={{ display: 'grid', gap: 4, maxHeight: '30vh', overflow: 'auto' }}>
-            {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{n}</b></div>)}
+            {secili.map(([id, n]) => <div key={id} style={{ display: 'flex', gap: 8 }}><span style={{ flex: 1 }}>{urunMap[id].ad}</span><b>{miktarYazi(n, urunMap[id])}</b></div>)}
           </div>
           {not.trim() && <div style={{ color: C.soluk }}>Not: {not.trim()}</div>}
           <KisiPin adaylar={adaylar} kisi={kisi} setKisi={setKisi} pin={pin} setPin={setPin} hata={hata} soru="Kim açıyor?"
