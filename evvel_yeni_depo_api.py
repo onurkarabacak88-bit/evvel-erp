@@ -605,7 +605,7 @@ def depo_ozet(evren: Optional[str] = None):
         if yeni:
             from evvel_yeni_urun_api import katalog as _ey_katalog
             katalog = [{"kid": str(k["id"]), "kat": k["ad"], "emoji": k.get("emoji"), "id": str(u["id"]), "ad": u["ad"],
-                        "takip": u.get("takip"), "koli_ici": u.get("koli_ici"), "birim": u.get("birim")}   # Sevk et: pasta süzgeci + koli
+                        "takip": u.get("takip"), "koli_ici": u.get("koli_ici"), "birim": u.get("birim"), "sayim_ici": u.get("sayim_ici")}   # Sevk et: pasta süzgeci + koli + paket içi
                        for k in _ey_katalog(cur) for u in k["urunler"]]
             # F2 R4-9 (sim 26 Eki): pasif ürün (Süt 1L) stokta "Katalogda eşleşmeyen" görünüyordu — katalogda VAR, yalnız pasif
             pasif = {str(u["id"]): u["ad"] for k in _ey_katalog(cur, hepsi=True) for u in k["urunler"]
@@ -639,7 +639,7 @@ def depo_ozet(evren: Optional[str] = None):
         goruldu.add(u["id"])
         kat_ad[u["kid"]] = f"{u['emoji'] or ''} {u['kat']}".strip()
         satirlar.append({"urun_id": u["id"], "ad": u["ad"], "kategori": kat_ad[u["kid"]], "takip": u.get("takip"), "koli_ici": u.get("koli_ici"),
-                         "birim": u.get("birim")})
+                         "birim": u.get("birim"), "sayim_ici": u.get("sayim_ici")})   # adım 149: "3 paket (300 tane)"
     ek = [{"urun_id": uid, "ad": pasif.get(uid) or uad or uid, "kategori": PASIF_GRUP if uid in pasif else ESLESMEYEN_GRUP,
            "katalog_disi": "pasif" if uid in pasif else "eslesmeyen"}   # Codex: ekran süzgeci kategori METNİNE değil bu alana bakar
           for uid, uad in hareketli.items() if uid not in goruldu]   # katalogda olmayan ama hareketi olan (eski kod) — kaybolmasın
@@ -730,12 +730,15 @@ def yolda_listesi(cur, yeni_mi: bool):
     konum_ad = {k["id"]: k["ad"] for k in _konumlar(cur)}
     kisi = _kisi_adi
     bekleyen, fark = [], []
+    from evvel_yeni_urun_api import urun_bilgi as _ub   # adım 149: farklarda birim ("+100 paket fazla" birim hatasını gösterir)
+    _bil = _ub(cur, sorted({str(r["urun_id"]) for r in rs if r.get("urun_id")}))
     for r in rs:
         hedef = r.get("hedef_k") or (f"depo:{hedefler.get(r['bag'])}" if hedefler.get(r["bag"]) else None)
         x = {"id": r["bag"], "urun": r["urun_ad"], "urun_id": r["urun_id"], "sevk": int(r["sevk"] or 0), "kabul": int(r["kabul"] or 0),
              "fazla": int(r["fazla"] or 0), "cozulen": int(r["cozulen"] or 0), "merkez_kabul": bool(r.get("merkez")), "sevk_gunu": r["sevk_gunu"].isoformat() if r["sevk_gunu"] else None,
              "kabul_gunu": r["kabul_gunu"].isoformat() if r.get("kabul_gunu") else None,
-             "hasar": int(r["hasar"] or 0), "nereden": konum_ad.get(r["kaynak"], r["kaynak"]), "nereye": konum_ad.get(hedef, hedef), "hedef": hedef}
+             "hasar": int(r["hasar"] or 0), "nereden": konum_ad.get(r["kaynak"], r["kaynak"]), "nereye": konum_ad.get(hedef, hedef), "hedef": hedef,
+             "birim": (_bil.get(str(r.get("urun_id"))) or {}).get("birim"), "sayim_ici": (_bil.get(str(r.get("urun_id"))) or {}).get("sayim_ici")}
         # sahip 21 Eki: farkta gönderen + kabul eden personel adı (yoksa None → ekran '—')
         ek = eski_kisi.get(r["bag"], (None, None))
         x["sevk_eden"] = kisi(r.get("sevk_kim")) or ek[0]

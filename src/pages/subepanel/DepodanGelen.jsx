@@ -5,7 +5,7 @@
 // Sunucu: evvel_yeni_panel_api.depodan_kabul → Depo kabul_yaz (tek işlem). Sök-tak: Depo modülü kapalıysa ekran "kapalı" der.
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { C, Hero, KisiPin, Modal, ModulKapali, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
+import { BirimCipi, olagandisiSor, C, Hero, KisiPin, Modal, ModulKapali, panelHata, taslakKaldir, taslakOku, taslakYaz, yeniIstek } from './ortak';
 import { tarihNokta } from '../../utils/trTarih';
 
 export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
@@ -38,9 +38,12 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
   const sayilan = kalemler.filter((k) => (say[k.bag]?.n ?? '') !== '').length;
   const yaz = (bag, alan, deger) => setSay((o) => ({ ...o, [bag]: { ...(o[bag] || {}), [alan]: deger === '' ? '' : Math.max(0, Math.min(99999, Number(deger) || 0)) } }));
   const art = (bag, dlt) => setSay((o) => { const n = o[bag]?.n; return { ...o, [bag]: { ...(o[bag] || {}), n: Math.max(0, (n === '' || n == null ? 0 : n) + dlt) } }; });
-  const onayAc = () => {
+  const onayAc = async () => {
     setHata('');
     if (sayilan < kalemler.length) { setHata(`Her ürünü say — ${kalemler.length - sayilan} ürün boş. Hiç gelmediyse 0 yaz.`); return; }
+    // adım 149: paket ürüne TANE sayılmış olabilir — eşik birime bakar, beklenene değil (kör kalır); sunucu engeli yok, fark merkeze düşer
+    const supheli = kalemler.map((k) => [k, Number(say[k.bag]?.n || 0) + Number(say[k.bag]?.h || 0)]).filter(([k, n]) => k.paket_esik && n >= k.paket_esik);
+    if (supheli.length && !(await olagandisiSor(supheli, 'saydın', false))) return;
     setOnay(1);
   };
   const kaydet = async () => {
@@ -97,7 +100,7 @@ export default function DepodanGelen({ d, subeId, adaylar, bitti }) {
             return (
               <div key={k.bag} style={{ display: 'grid', gap: 4, padding: 8, borderRadius: 10, background: (s.n ?? '') !== '' ? 'rgba(34,197,94,.1)' : C.bg2 }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-                  <span style={{ flex: 1, minWidth: 140, fontWeight: 700, fontSize: 16 }}>{k.ad}</span>
+                  <span style={{ flex: 1, minWidth: 140, fontWeight: 700, fontSize: 16 }}>{k.ad} <BirimCipi u={k} /></span>
                   <button type="button" className="sp-pm" onClick={() => art(k.bag, -1)}>−</button>
                   <input className="sp-in" style={{ width: 96, textAlign: 'center', fontSize: 30, fontWeight: 800, padding: '4px 6px' }} inputMode="numeric"
                     value={s.n ?? ''} placeholder="?" onChange={(e) => yaz(k.bag, 'n', e.target.value.replace(/\D/g, ''))} />

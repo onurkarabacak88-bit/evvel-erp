@@ -434,6 +434,11 @@ def panel_durum(sube_id: str):
                     from evvel_yeni_depo_api import yoldakiler
                     from evvel_yeni_tanim_api import depo_sube_id   # depo bayrağı Tanımlar'ın PUBLIC'i (F#28 — Depo'nun özel fonksiyonu değil)
                     depo_yolda = yoldakiler(cur, str(sube_id))
+                    _bk = {str(u["id"]): u for kk in kat_hepsi for u in kk["urunler"]}   # birim / paket içi — kör kalır, adet sızmaz (adım 149)
+                    for _p in depo_yolda:
+                        for _k in _p.get("kalemler") or []:
+                            _u = _bk.get(str(_k.get("urun_id"))) or {}
+                            _k.update(birim=_u.get("birim"), sayim_ici=_u.get("sayim_ici"), paket_esik=paket_tane_esik(_u.get("birim"), _u.get("sayim_ici")))
                     depo_mu = depo_sube_id(cur) == str(sube_id)
             except Exception:  # noqa: BLE001
                 log.warning("panel durum: depo okunamadı", exc_info=True)
@@ -494,6 +499,7 @@ def panel_durum(sube_id: str):
                             # Ürün Aç ekranı 'gununde'yi kendisi gizler; sunucu da açmayı reddeder (girişte tüketildi).
                             "urunler": [{**_u(x), "takip": x.get("takip") or "sayim", "aktif": bool(x.get("aktif", True)),
                                          "olagan": olagan.get(str(x["id"])),   # ekrandaki "genelde N açılıyor" (Fable L6)
+                                         "paket_esik": paket_tane_esik(x["birim"], x.get("sayim_ici")),   # Sipariş / Depodan Gelen (adım 149)
                                          "supheli_esik": supheli_esik(x["birim"], x.get("sayim_ici"), olagan.get(str(x["id"])))}
                                         for x in k["urunler"]]}
                            for k in kat_hepsi if k.get("aktif", True)],
@@ -1039,16 +1045,57 @@ def ac_olagan(cur, sube_id: str, gun: date) -> dict:
     return sonuc
 
 
+def paket_tane_esik(birim: Optional[str], sayim_ici) -> Optional[int]:
+    """Paket / kutu birimli üründe 'paket içi tane' kadar ya da fazlası yazıldıysa TANE yazılmış olabilir (≥10). Sipariş ve Depodan Gelen
+    YALNIZ bunu kullanır (Fable L4b adım 149: toplu siparişte / sevkte ortanca ve 20 kuralı yanlış alarm verir)."""
+    if (birim or "adet") == "adet" or not sayim_ici:
+        return None
+    return max(int(sayim_ici), 10)
+
+
 def supheli_esik(birim: Optional[str], sayim_ici, olagan) -> Optional[int]:
-    """Bu adet ve üstü 'emin misin?' ister. Eşikler: paket içi tane (≥10) · ortancanın 10 katı (≥10) · birimi adet olmayanda 20."""
+    """Bu adet ve üstü 'emin misin?' ister (Ürün Aç / Fire). Eşikler: paket içi tane (≥10) · ortancanın 10 katı (≥10) · birimi adet olmayanda 20."""
     adaylar = []
-    if sayim_ici:
-        adaylar.append(max(int(sayim_ici), 10))
+    pe = paket_tane_esik(birim, sayim_ici)
+    if pe:
+        adaylar.append(pe)
     if olagan:
         adaylar.append(max(int(10 * olagan), 10))
     if (birim or "adet") != "adet":
         adaylar.append(20)
     return min(adaylar) if adaylar else None
+
+
+def supheli_kalemler(cur, sube_id: str, gun: date, k: list, yalniz_paket: bool = False) -> list:
+    """TEK kontrol (Ürün Aç · Fire · Sipariş): eşiği geçen kalemler. yalniz_paket=True → yalnız paket içi tane kuralı (Sipariş).
+    Ortanca okuması ayrı bağlantıda salt okuma — patlarsa asıl işlem zehirlenmez, paket / birim eşiği yine uygulanır."""
+    idler = [x["urun_id"] for x in k if x.get("urun_id")]
+    if not idler:
+        return []
+    bil = __import__("evvel_yeni_urun_api").urun_bilgi(cur, idler)
+    olg = {}
+    if not yalniz_paket:
+        try:
+            with db() as (_oc, ocur):
+                olg = ac_olagan(ocur, sube_id, gun)
+        except Exception:  # noqa: BLE001
+            log.warning("panel: olağan açış okunamadı", exc_info=True)
+    out = []
+    for x in k:
+        u = bil.get(x.get("urun_id")) or {}
+        if not x.get("ad"):
+            x["ad"] = u.get("ad")   # Fable L6 149: sipariş kaleminde ad yok — hata metni ürünü söylesin
+        e = (paket_tane_esik(u.get("birim"), u.get("sayim_ici")) if yalniz_paket
+             else supheli_esik(u.get("birim"), u.get("sayim_ici"), olg.get(str(x.get("urun_id")))))
+        if e and int(x["adet"]) >= e:
+            out.append(x)
+    return out
+
+
+def _supheli_kapi(supheli: list, emin: bool) -> None:
+    if supheli and not emin:
+        raise HTTPException(400, "Olağandışı adet (" + ", ".join(f"{x.get('ad') or ''} {x['adet']}" for x in supheli)
+                            + ") — sayfayı yenileyip ekranda onaylayın")
 
 
 def _kalemler(cur, kalemler: List[Kalem], takip: Optional[str] = None, pasif_olur: bool = False) -> list:
@@ -1221,6 +1268,7 @@ class SiparisBody(BaseModel):
     kalemler: List[SiparisKalem]
     notu: Optional[str] = None
     istek_id: str
+    emin: bool = False                 # paket ürüne tane yazılmış olabilir — ekranda onaylandı (adım 149)
 
 
 @router.post("/{sube_id}/siparis")
@@ -1232,11 +1280,14 @@ def siparis_ver(sube_id: str, b: SiparisBody):
         _gun_acik_mi(cur, c, sube_id)
         p = _personel(cur, sube_id, b.personel_id)
         _pin(cur, p, b.pin)
+        supheli = supheli_kalemler(cur, sube_id, c["gun"], [x.model_dump() for x in b.kalemler if x.urun_id], yalniz_paket=True)
+        _supheli_kapi(supheli, b.emin)
         r = S.siparis_yaz(cur, sube_id=str(sube_id), kalemler=[x.model_dump() for x in b.kalemler], kim=f"{KIM} · {p['ad']}",
                           personel_id=p["id"], istek_id=b.istek_id, notu=b.notu, deneme=c["kuru"], gun=c["gun"])
         if not c["kuru"]:   # olay defteri yalnız gerçek dönemde (deneme siparişi okuyuculara karışmasın)
             _olay(cur, sube_id=sube_id, tur="siparis", is_gunu=c["gun"], kok=panel_kok("siparis", sube_id, b.istek_id), kaynak_tablo="panel",
-                  personel_id=p["id"], personel_ad=p["ad"], veri={"siparis_id": r["siparis_id"], "kalem": r["kalem"], "istek_id": b.istek_id})
+                  personel_id=p["id"], personel_ad=p["ad"], veri={"siparis_id": r["siparis_id"], "kalem": r["kalem"], "istek_id": b.istek_id,
+                                                               "supheli_onay": [x["urun_id"] for x in supheli] or None})
         c["kalici"] = True
         return {"siparis_id": r["siparis_id"], "tekrar": r["tekrar"],
                 "mesaj": ("Bu sipariş zaten gönderilmişti ✓" if r["tekrar"] else f"🛒 Sipariş gönderildi — {r['kalem']} kalem")
@@ -1490,22 +1541,8 @@ def urun_ac(sube_id: str, b: UrunAcBody):
         k = _kalemler(cur, b.kalemler, pasif_olur=True)
         if any(__import__("evvel_yeni_urun_api").gununde_tuketilir(x) for x in k):   # sahip P1: pasta depoya girerken tüketildi — açılırsa çift gider
             raise HTTPException(400, "Pasta gibi gününde tüketilen ürün Ürün Aç'ta açılmaz — listeyi yenileyin")
-        bil = __import__("evvel_yeni_urun_api").urun_bilgi(cur, [x["urun_id"] for x in k])
-        olg = {}
-        try:   # salt OKUMA, ayrı bağlantıda (DDL yok) — patlarsa asıl işlem zehirlenmez
-            with db() as (_oc, ocur):
-                olg = ac_olagan(ocur, sube_id, c["gun"])
-        except Exception:  # noqa: BLE001 — okunamazsa paket / birim eşiği yine uygulanır (Ürün Aç düşmez)
-            log.warning("ürün aç: olağan açış okunamadı", exc_info=True)
-        supheli = []
-        for x in k:
-            u = bil.get(x["urun_id"]) or {}
-            e = supheli_esik(u.get("birim"), u.get("sayim_ici"), olg.get(str(x["urun_id"])))
-            if e and x["adet"] >= e:
-                supheli.append(x)
-        if supheli and not b.emin:
-            raise HTTPException(400, "Olağandışı adet (" + ", ".join(f"{x['ad']} {x['adet']}" for x in supheli)
-                                + ") — sayfayı yenileyip ekranda onaylayın")
+        supheli = supheli_kalemler(cur, sube_id, c["gun"], k)
+        _supheli_kapi(supheli, b.emin)
         kok = panel_kok("ac", sube_id, b.istek_id)
         oid = _olay(cur, sube_id=sube_id, tur="urun_ac", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                        personel_id=p["id"], personel_ad=p["ad"], veri={"kalemler": k, "aciklama": (b.aciklama or "").strip()[:200] or None,
@@ -1543,6 +1580,7 @@ class FireBody(BaseModel):
     iade: Optional[IadeBilgi] = None   # 'iade' için zorunlu
     hazirlik_turu: Optional[str] = None   # 'hazirlik_deneme' için zorunlu (HAZIRLIK_TURLERI)
     istek_id: str
+    emin: bool = False                 # olağandışı adet ekranda "Evet, doğru" ile onaylandı (adım 149)
 
 
 @router.post("/{sube_id}/fire")
@@ -1587,10 +1625,13 @@ def fire(sube_id: str, b: FireBody):
                     "musteri_tel": re.sub(r"[^\d+]", "", b.iade.musteri_tel or "")[:20] or None}
         sebep_ad = FIRE_SEBEPLERI[b.sebep]
         k = _kalemler(cur, b.kalemler)
+        supheli = supheli_kalemler(cur, sube_id, c["gun"], k)
+        _supheli_kapi(supheli, b.emin)
         kok = panel_kok("fire", sube_id, b.istek_id)
         oid = _olay(cur, sube_id=sube_id, tur="fire", is_gunu=c["gun"], kok=kok, kaynak_tablo="panel",
                     personel_id=p["id"], personel_ad=p["ad"],
                     veri={"kalemler": k, "sebep": b.sebep, "sebep_ad": sebep_ad, "aciklama": aciklama or None, "iade": iade,
+                          "supheli_onay": [x["urun_id"] for x in supheli] or None,
                           "hazirlik_turu": hazirlik, "hazirlik_ad": HAZIRLIK_TURLERI.get(hazirlik) if hazirlik else None})
         hedef = FIRE_HEDEF.get(b.sebep, "dışarı:fire")
         for i, x in enumerate(k):

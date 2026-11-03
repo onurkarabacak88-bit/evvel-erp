@@ -4,7 +4,7 @@
 // Kullanımda / Bitti YOK (istisna 4). Taslak tablette (iş gününe bağlı). Sunucu: evvel_yeni_panel_api.urun_ac.
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { api } from '../../utils/api';
-import { adetAyarla, AdetGirdi, BirimCipi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek, panelYaz, panelOku, miktarYazi } from './ortak';
+import { adetAyarla, AdetGirdi, BirimCipi, C, Hero, KategoriKartlari, KisiPin, Modal, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, urunHaritasi, yeniIstek, panelYaz, panelOku, miktarYazi, olagandisiSor } from './ortak';
 
 
 export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir }) {
@@ -67,21 +67,9 @@ export default function UrunAc({ d, subeId, adaylar, kapali, bitti, secimBildir 
   const onayAc = async () => {
     setHata('');
     // 📦 olağandışı adet — eşik SUNUCUDAN (supheli_esik, tek kural); TEK soru penceresi, ana düğme "Düzelt" (Fable L4b)
-    const supheli = secili.filter(([id, n]) => urunMap[id]?.supheli_esik && n >= urunMap[id].supheli_esik);
-    if (supheli.length) {
-      const c = await sor({
-        soru: 'Bu sayılar her zamankinden çok yüksek — doğru mu?',
-        alt: supheli.map(([id, n]) => {
-          const u = urunMap[id];
-          const gen = u.olagan ? ` Bu şubede genelde ${Math.max(1, Math.round(u.olagan))} ${u.birim || 'adet'} açılıyor.` : '';   // "neden sordu" görünsün (Fable L6)
-          return u.birim && u.birim !== 'adet' ? `• ${u.ad}: ${miktarYazi(n, u)} yazdın — ${u.birim} sayısını mı yazdın, tane mi?${gen}` : `• ${u.ad}: ${n} adet yazdın.${gen}`;
-        }).join('\n'),
-        secenekler: [{ deger: 'duzelt', yazi: '✏️ Düzelt — sayıyı değiştireceğim', ana: true }, { deger: 'evet', yazi: 'Evet, doğru — bu kadar açıyorum' }],
-        iptal: 'Geri dön',
-      });
-      if (c !== 'evet') { setEmin(false); return; }
-      setEmin(true);
-    } else setEmin(false);
+    const supheli = secili.filter(([id, n]) => urunMap[id]?.supheli_esik && n >= urunMap[id].supheli_esik).map(([id, n]) => [urunMap[id], n]);
+    if (supheli.length && !(await olagandisiSor(supheli))) { setEmin(false); return; }
+    setEmin(supheli.length > 0);
     let son = '';
     try { son = localStorage.getItem(sonKisiAnahtar) || ''; } catch { son = ''; }
     if (!kisi && son && adaylar.some((p) => p.id === son)) setKisi(son);

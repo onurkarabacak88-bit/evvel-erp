@@ -9,6 +9,7 @@ import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
 import { ALAN, Cekmece, Cip, Dugme, kart, num, PI_CSS, R, sor, tKisa } from './KasaModulu';
 import { yeniIstekId as yeniIstek } from '../../utils/cihazImza';
+import { miktarYazi } from '../../utils/miktar';   // "3 paket (300 tane)" — TEK yer (adım 149)
 
 export const DEPO_SAYFALAR = [
   { id: 'depo_nerede', ad: 'Depo — Nerede?', alt: 'Ürün × konum · tıkla → iz' },
@@ -75,8 +76,8 @@ function Nerede() {
       setCk({
         tip: 'DEPO · NEREDE?', baslik: `${s.ad} · ${k.ad}`,
         alt: 'Bu ürünün bu konumdaki bütün hareketleri — en yeni üstte; kalan satır satır yürür.',
-        kpi: [{ etiket: 'Kalan', deger: `${r.kalan} adet`, renk: r.kalan < 0 ? R.kirmizi : undefined },
-          ...(s.eski?.[k.id] != null ? [{ etiket: 'Eski sistem diyor', deger: `${s.eski[k.id]} adet` }] : [])],
+        kpi: [{ etiket: 'Kalan', deger: miktarYazi(r.kalan, s), renk: r.kalan < 0 ? R.kirmizi : undefined },
+          ...(s.eski?.[k.id] != null ? [{ etiket: 'Eski sistem diyor', deger: miktarYazi(s.eski[k.id], s) }] : [])],
         not: r.kalan < 0 ? 'Eksi: bu konuma giriş (teslim al / kabul) girilmemiş ya da açılış sayımı yapılmamış olabilir.' : null,
         varsayilan: 'iz',
         tablo: {
@@ -189,7 +190,7 @@ function Yoldakiler({ onToast, mod }) {
                 <td style={{ ...hucre, whiteSpace: 'nowrap' }}>{x.sevk_gunu ? tKisa(x.sevk_gunu) : '—'}<div style={{ fontSize: 11.5, color: x.gec ? R.kirmizi : R.not }}>{x.gun} gün</div></td>
                 <td style={hucre}><b>{x.urun}</b><div style={{ fontSize: 11.5, color: R.not }}>{x.nereden} → {x.nereye}</div>
                   <div style={{ fontSize: 11.5, color: R.not }}>📤 Gönderen: <b>{x.sevk_eden || '—'}</b></div></td>
-                <td style={{ ...hucre, textAlign: 'right', ...num, fontWeight: 700 }}>{x.sevk} adet</td>
+                <td style={{ ...hucre, textAlign: 'right', ...num, fontWeight: 700 }}>{miktarYazi(x.sevk, x)}</td>
                 <td style={{ ...hucre, textAlign: 'right' }}><Dugme kucuk onClick={() => kabul(x)}>Merkez adına kabul</Dugme></td>
               </tr>
             ))}
@@ -203,19 +204,19 @@ function Yoldakiler({ onToast, mod }) {
             {v.fark.map((x) => {
               // R4-5 (sim 25 Eki · Opus): karar düğmeleri dar hücrede ürün/şube sütununu eziyor, taşıyordu → aynı kaydın ALTINDA tam genişlik satır
               const satir = { display: 'flex', gap: 6, justifyContent: 'flex-end', flexWrap: 'wrap' };
-              const durum = x.hasar > 0 ? <>{x.hasar} adet HASARLI geldi — ASKIDA{x.fazla > 0 && <div style={{ fontSize: 11.5, color: R.not, marginTop: 4, fontWeight: 400 }}>+{x.fazla} sağlam fazla da var — hasarı çözünce görünür</div>}</>
-                : x.fazla > 0 ? <>+{x.fazla} fazla geldi — ASKIDA (birim karışmış olabilir)</>
-                  : <>{x.eksik} adet eksik geldi — yolda kaldı</>;
+              const durum = x.hasar > 0 ? <>{miktarYazi(x.hasar, x)} HASARLI geldi — ASKIDA{x.fazla > 0 && <div style={{ fontSize: 11.5, color: R.not, marginTop: 4, fontWeight: 400 }}>+{miktarYazi(x.fazla, x)} sağlam fazla da var — hasarı çözünce görünür</div>}</>
+                : x.fazla > 0 ? <>+{miktarYazi(x.fazla, x)} fazla geldi — ASKIDA (birim karışmış olabilir)</>
+                  : <>{miktarYazi(x.eksik, x)} eksik geldi — yolda kaldı</>;
               const dugmeler = x.hasar > 0 ? (<>
-                <Dugme kucuk onClick={() => coz(x, 'hasar_fire', `${x.urun}: ${x.hasar} hasarlı adet FİRE yazılsın mı?`)}>Fire yaz</Dugme>
-                <Dugme kucuk onClick={() => coz(x, 'hasar_iade', `${x.urun}: ${x.hasar} hasarlı adet ${x.nereden} deposuna GERİ dönsün mü?`)}>Kaynağa geri</Dugme></>)
+                <Dugme kucuk onClick={() => coz(x, 'hasar_fire', `${x.urun}: ${miktarYazi(x.hasar, x)} hasarlı FİRE yazılsın mı?`)}>Fire yaz</Dugme>
+                <Dugme kucuk onClick={() => coz(x, 'hasar_iade', `${x.urun}: ${miktarYazi(x.hasar, x)} hasarlı ${x.nereden} deposuna GERİ dönsün mü?`)}>Kaynağa geri</Dugme></>)
                 : x.fazla > 0 ? (<>
-                  <Dugme kucuk onClick={() => coz(x, 'fazla_onay', `${x.urun}: ${x.fazla} adet fazla GERÇEKTEN geldi mi? Şube stoğuna eklensin mi?`)}>Gerçekten geldi</Dugme>
-                  <Dugme kucuk onClick={() => coz(x, 'fazla_ret', `${x.urun}: ${x.fazla} adet fazla yanlış (birim hatası) — reddedilsin mi?`)}>Yanlış, reddet</Dugme></>)
+                  <Dugme kucuk onClick={() => coz(x, 'fazla_onay', `${x.urun}: ${miktarYazi(x.fazla, x)} fazla GERÇEKTEN geldi mi? Şube stoğuna eklensin mi?`)}>Gerçekten geldi</Dugme>
+                  <Dugme kucuk onClick={() => coz(x, 'fazla_ret', `${x.urun}: ${miktarYazi(x.fazla, x)} fazla yanlış (birim hatası) — reddedilsin mi?`)}>Yanlış, reddet</Dugme></>)
                   : (<>
-                    <Dugme kucuk onClick={() => coz(x, 'kayip', `${x.urun}: ${x.eksik} adet KAYIP olarak kapatılsın mı?`)}>Kayıp</Dugme>
-                    <Dugme kucuk onClick={() => coz(x, 'iade', `${x.urun}: ${x.eksik} adet ${x.nereden} deposuna GERİ yazılsın mı (hiç çıkmamış)?`)}>Kaynağa geri</Dugme>
-                    <Dugme kucuk onClick={() => coz(x, 'sube_saydi', `${x.urun}: gelen TAMMIŞ, şube yanlış saymış — ${x.eksik} adet şube stoğuna eklensin mi?`)}>Şube yanlış saydı</Dugme></>);
+                    <Dugme kucuk onClick={() => coz(x, 'kayip', `${x.urun}: ${miktarYazi(x.eksik, x)} KAYIP olarak kapatılsın mı?`)}>Kayıp</Dugme>
+                    <Dugme kucuk onClick={() => coz(x, 'iade', `${x.urun}: ${miktarYazi(x.eksik, x)} ${x.nereden} deposuna GERİ yazılsın mı (hiç çıkmamış)?`)}>Kaynağa geri</Dugme>
+                    <Dugme kucuk onClick={() => coz(x, 'sube_saydi', `${x.urun}: gelen TAMMIŞ, şube yanlış saymış — ${miktarYazi(x.eksik, x)} şube stoğuna eklensin mi?`)}>Şube yanlış saydı</Dugme></>);
               return (
                 <React.Fragment key={x.id}>
                   <tr>
@@ -272,7 +273,7 @@ function SevkEt({ onToast }) {
     if (!hedef) { onToast?.('Hangi şubeye? Hedef seç'); return; }
     if (!secili.length) { onToast?.('En az bir ürün seç'); return; }
     const h = hedefler.find((k) => k.sube_id === hedef);
-    if (!(await sor({ soru: `${merkez?.ad || 'Merkez depo'} → ${h?.ad}\n\n${secili.map((u) => `• ${u.ad}: ${toplam(u)}`).join('\n')}\n\nYola çıksın mı?`, tamam: '🚚 Yola çıkar' }))) return;
+    if (!(await sor({ soru: `${merkez?.ad || 'Merkez depo'} → ${h?.ad}\n\n${secili.map((u) => `• ${u.ad}: ${miktarYazi(toplam(u), u)}`).join('\n')}\n\nYola çıksın mı?`, tamam: '🚚 Yola çıkar' }))) return;
     setMesgul(true);
     try {
       const r = await api('/evvel-yeni/depo/sevk', { method: 'POST',
@@ -317,11 +318,11 @@ function SevkEt({ onToast }) {
             <React.Fragment key={u.urun_id}>
               {baslik && <div style={{ fontWeight: 800, padding: '8px 4px 4px' }}>{baslik}</div>}
               <div style={{ display: 'flex', gap: 8, alignItems: 'center', padding: '3px 4px', borderTop: '1px solid var(--pi-line)', flexWrap: 'wrap' }}>
-                <span style={{ flex: 1, minWidth: 140, fontSize: 14 }}>{u.ad}<span style={{ fontSize: 11.5, color: dep < t ? R.kirmizi : R.not }}> · depoda {dep}</span></span>
+                <span style={{ flex: 1, minWidth: 140, fontSize: 14 }}>{u.ad}<span style={{ fontSize: 11.5, color: dep < t ? R.kirmizi : R.not }}> · depoda {dep}</span>{u.birim && u.birim !== 'adet' && <span style={{ fontSize: 11.5, fontWeight: 700, color: R.amber }}> · 📦 {u.birim} sayısı{u.sayim_ici ? ` (1 ${u.birim} = ${u.sayim_ici} tane)` : ''}</span>}</span>
                 {u.koli_ici > 1 && <>
                   <input inputMode="numeric" placeholder="koli" value={(adet[u.urun_id] || {}).koli ?? ''} onChange={(e) => setA(u.urun_id, 'koli', e.target.value)} style={{ ...alan, width: 64, textAlign: 'right' }} />
                   <span style={{ fontSize: 12, color: R.not }}>× {u.koli_ici} +</span></>}
-                <input inputMode="numeric" placeholder="adet" value={(adet[u.urun_id] || {}).tek ?? ''} onChange={(e) => setA(u.urun_id, 'tek', e.target.value)} style={{ ...alan, width: 72, textAlign: 'right' }} />
+                <input inputMode="numeric" placeholder={u.birim || 'adet'} value={(adet[u.urun_id] || {}).tek ?? ''} onChange={(e) => setA(u.urun_id, 'tek', e.target.value)} style={{ ...alan, width: 72, textAlign: 'right' }} />
                 <b style={{ ...num, width: 48, textAlign: 'right' }}>{t || ''}</b>
               </div>
             </React.Fragment>

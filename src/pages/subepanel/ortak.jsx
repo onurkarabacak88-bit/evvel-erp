@@ -6,6 +6,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { cihazId, imzaliFetch, imzaliJson } from '../../utils/cihazImza';
 import { sayiTR } from '../../utils/trSayi';
+import { miktarYazi as miktarYaziIc } from '../../utils/miktar';
 
 export const C = { bg: '#0b0f1a', bg1: '#111827', bg2: '#1a2236', bg3: '#222d42', cizgi: 'rgba(99,120,160,0.18)', yazi: '#f0f4ff', soluk: '#7a8ba8',
   mavi: '#3b82f6', cyan: '#06b6d4', yesil: '#22c55e', sari: '#f59e0b', kirmizi: '#ef4444', mor: '#8b5cf6', turuncu: '#f97316' };
@@ -199,12 +200,23 @@ export function BirimCipi({ u }) {
     </span>
   );
 }
-// "2 paket (100 tane)" — özet / onay satırları (karma birimde "adet" yazmasın)
-export const miktarYazi = (n, u) => {
-  const b = u?.birim || 'adet';
-  if (b === 'adet') return `${n} adet`;
-  return `${n} ${b}${u?.sayim_ici ? ` (${n * u.sayim_ici} tane)` : ''}`;
-};
+// "2 paket (100 tane)" — özet / onay satırları (karma birimde "adet" yazmasın); TEK yer utils/miktar (merkez Depo da kullanır)
+export { miktarYazi } from '../../utils/miktar';
+// 📦 OLAĞANDIŞI ADET SORUSU — TEK pencere (Ürün Aç · Fire · Sipariş · Depodan Gelen; adım 147/149). liste = [[urun, n], …] eşiği geçenler.
+// Eşik SUNUCUDAN gelir (supheli_esik / paket_esik); ekran yalnız sorar. Ana düğme "Düzelt" (telaşta güvenli taraf). Döner: true = "Evet, doğru".
+export async function olagandisiSor(liste, fiil = 'yazdın', genelde = true) {   // genelde: "bu şubede genelde N açılıyor" (yalnız Ürün Aç — Fable L6 149)
+  if (!liste.length) return true;
+  const c = await sor({
+    soru: 'Bu sayılar her zamankinden çok yüksek — doğru mu?',
+    alt: liste.map(([u, n]) => {
+      const gen = genelde && u.olagan ? ` Bu şubede genelde ${Math.max(1, Math.round(u.olagan))} ${u.birim || 'adet'} açılıyor.` : '';
+      return u.birim && u.birim !== 'adet' ? `• ${u.ad}: ${miktarYaziIc(n, u)} ${fiil} — ${u.birim} sayısını mı ${fiil}, tane mi?${gen}` : `• ${u.ad}: ${n} adet ${fiil}.${gen}`;
+    }).join('\n'),
+    secenekler: [{ deger: 'duzelt', yazi: '✏️ Düzelt — sayıyı değiştireceğim', ana: true }, { deger: 'evet', yazi: 'Evet, doğru — bu kadar' }],
+    iptal: 'Geri dön',
+  });
+  return c === 'evet';
+}
 // ➕➖ adet değiştirme — TEK kural (Fable D6-R: Ürün aç / Fire / Tedarikçi / Sipariş 4 kopya, sınırlar 9999 ↔ 99999 farklıydı).
 // Sınır sunucuyla aynı (çekirdek MAKS_ADET 99999). art: hızlı dokunuşta kaybolmasın diye önceki değer üzerinden.
 export const MAKS_ADET = 99999;

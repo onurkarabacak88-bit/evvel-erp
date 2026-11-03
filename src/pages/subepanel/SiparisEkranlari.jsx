@@ -5,7 +5,7 @@
 // ya da "🚚 Yola çıkar" (kısmi → kalan merkeze döner). Sunucu: evvel_yeni_panel_api (/siparis, /siparisler, /gonderilecek) → Sipariş modülü.
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
-import { BirimCipi, adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, yeniIstek, panelOku } from './ortak';
+import { BirimCipi, olagandisiSor, adetAyarla, AdetGirdi, C, Hero, KategoriKartlari, KisiPin, Modal, ModulKapali, panelHata, sor, taslakKaldir, taslakOku, taslakYaz, yeniIstek, panelOku } from './ortak';
 import { tarihNokta } from '../../utils/trTarih';
 
 const DURUM = {
@@ -36,6 +36,7 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
   const [v, , yukle] = useSiparisler(subeId);
   const [adet, setAdet] = useState(ilk?.adet || {});
   const [oneri, setOneri] = useState(ilk?.oneri || []);      // [{ad, adet}] katalog dışı (D4)
+  const [emin, setEmin] = useState(false);   // paket ürüne tane yazılmış olabilir — onaylandı (adım 149; yalnız paket içi kuralı)
   const [not, setNot] = useState(ilk?.not || '');
   const [istek, setIstek] = useState(() => ilk?.istek || yeniIstek());
   const [acikKat, setAcikKat] = useState(null);
@@ -60,14 +61,19 @@ export function SiparisVer({ d, subeId, adaylar, kapali, bitti }) {
     if (onAd.trim().length < 2 || !(a > 0)) { setHata('Katalogda olmayan ürünün adını ve adedini yaz'); return; }
     setOneri((o) => [...o, { ad: onAd.trim().slice(0, 80), adet: a }]); setOnAd(''); setOnAdet(''); setHata('');
   };
-  const onayAc = () => { setHata(''); if (!secili.length && !oneri.length) { setHata('En az bir ürün seç'); return; } setOnay(1); };
+  const onayAc = async () => {
+    setHata(''); if (!secili.length && !oneri.length) { setHata('En az bir ürün seç'); return; }
+    const supheli = secili.filter(([id, n]) => urunMap[id]?.paket_esik && n >= urunMap[id].paket_esik).map(([id, n]) => [urunMap[id], n]);
+    if (supheli.length && !(await olagandisiSor(supheli, 'yazdın', false))) { setEmin(false); return; }
+    setEmin(supheli.length > 0); setOnay(1);
+  };
   const kaydet = async () => {
     if (mesgul) return;
     setMesgul(true); setHata('');
     try {
       const r = await api(`/evvel-yeni/panel/${encodeURIComponent(subeId)}/siparis`, { method: 'POST', body: {
         personel_id: kisi, pin, istek_id: istek, istemci_gunu: d.gun, notu: not.trim() || null,
-        kalemler: [...secili.map(([urun_id, n]) => ({ urun_id, adet: n })), ...oneri.map((o) => ({ ad: o.ad, adet: o.adet }))] } });
+        kalemler: [...secili.map(([urun_id, n]) => ({ urun_id, adet: n })), ...oneri.map((o) => ({ ad: o.ad, adet: o.adet }))], emin } });
       setOnay(0); setPin(''); setKisi(''); temizle(); yukle();
       bitti(r.mesaj || 'Sipariş gönderildi', false);
     } catch (e) {

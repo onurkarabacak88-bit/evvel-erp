@@ -9,7 +9,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { api } from '../../utils/api';
 import { sayiTR } from '../../utils/trSayi';
-import { BirimCipi, adetAyarla, AdetGirdi, C, Hero, kalemGovde, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, TONLAR, urunHaritasi, yeniIstek } from './ortak';
+import { BirimCipi, olagandisiSor, adetAyarla, AdetGirdi, C, Hero, kalemGovde, KategoriKartlari, KisiPin, Modal, panelHata, taslakKaldir, taslakOku, taslakYaz, TONLAR, urunHaritasi, yeniIstek } from './ortak';
 
 const BARDAK = '__bardak__';   // sunucu oneri anahtarı: bardak işaretli ürünler
 const aktifSay = (k) => `${k.urunler.filter((u) => u.aktif).length} ürün`;   // pencere / arama pasifi gizler → sayı da aktif (D6-R)
@@ -26,6 +26,7 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
   const anahtar = `sp_taslak:${subeId}:${d.gun}:fire_sihirbaz`;
   const ilk = useMemo(() => taslakOku(anahtar), [anahtar]);
   const [adim, setAdim] = useState(ilk?.adim || 1);
+  const [emin, setEmin] = useState(false);   // olağandışı adet 'Evet, doğru' ile geçildi (adım 149 — sunucu da ister)
   const [sebep, setSebep] = useState(ilk?.sebep || '');
   const [hazirlik, setHazirlik] = useState(ilk?.hazirlik || '');
   const [iadeSebep, setIadeSebep] = useState(ilk?.iadeSebep || '');
@@ -92,6 +93,12 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
     setAdim(1); setSebep(''); setHazirlik(''); setIadeSebep(''); setAdet({}); setAciklama(''); setFis(''); setIadeSaat(''); setPara(''); setParaTutar('');
     setMAd(''); setMTel(''); setAra(''); setIstek(yeniIstek()); taslakKaldir(anahtar);
   };
+  const onayAc = async () => {
+    setHata('');
+    const supheli = secili.filter(([id, n]) => urunMap[id]?.supheli_esik && n >= urunMap[id].supheli_esik).map(([id, n]) => [urunMap[id], n]);
+    if (supheli.length && !(await olagandisiSor(supheli, 'yazdın', false))) { setEmin(false); return; }
+    setEmin(supheli.length > 0); setOnay(1);
+  };
   const kaydet = async () => {
     if (mesgul) return;
     if (!/^\d{4}$/.test(pin)) { setHata('4 haneli PIN gir'); setOnay(1); return; }
@@ -102,7 +109,7 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
         hazirlik_turu: sebep === 'hazirlik_deneme' ? hazirlik : null,
         iade: sebep === 'iade' ? { sebep: iadeSebep, fis_no: fis.trim(), iade_saat: iadeSaat, musteri_ad: mAd.trim() || null, musteri_tel: mTel.trim() || null,
           para, tutar: para === 'nakit' ? paraTutar.trim() : null } : null,
-        kalemler: kalemGovde(Object.fromEntries(secili)) } });
+        kalemler: kalemGovde(Object.fromEntries(secili)), emin } });
       setOnay(0); setPin(''); setKisi('');
       temizle();
       bitti(r.kuru ? `DENEME — ${r.mesaj || 'kaydedilmedi'}` : `✅ Fire kaydedildi — ${kalem} kalem / ${toplam} adet`, !!r.kuru);
@@ -210,7 +217,7 @@ export default function Fire({ d, subeId, adaylar, kapali, bitti }) {
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="sp-btn" disabled={mesgul} onClick={() => { if (silSor) { setSilSor(false); temizle(); } else setSilSor(true); }}
             style={silSor ? { background: C.kirmizi, color: '#fff', fontWeight: 800 } : { color: C.soluk }}>{silSor ? '🗑 Silinsin mi? Tekrar bas' : '✕ Vazgeç'}</button>
-          <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={!!onayEksik || !kalem || kapali || mesgul} onClick={() => { setHata(''); setOnay(1); }}>Onayla — personel + PIN</button>
+          <button className="sp-btn sp-yesil" style={{ flex: 1 }} disabled={!!onayEksik || !kalem || kapali || mesgul} onClick={onayAc}>Onayla — personel + PIN</button>
         </div>
       </>)}
 
