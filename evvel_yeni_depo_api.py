@@ -493,6 +493,55 @@ def sayim_adet_duzelt(cur, konum: str, gun: str, urun_ad: str, eski: int, yeni: 
                       AND lower(urun_ad)=lower(%s)""", (konum, konum, gun, urun_ad))
     return _adet_duzelt(cur, eski, yeni, iz, yaz)
 
+
+def sevk_kalem_duzelt(cur, parti_id: str, sira: int, urun_ad: str, eski: dict, yeni: dict, iz: str, yaz: bool) -> dict:
+    """PUBLIC — birim düzeltmesi (sahip 4 Kas: şube TANE girdi, sistem PAKET sandı — Plastik Kapak "300" = 3 paket): bir sevk kaleminin
+    (bag sevk:<parti>:<sıra>) sevk / kabul / iade_geri satırlarını TÜR TÜR bugünkü YANLIŞ adetle eşler; hepsi tutarsa adet + iz yazılır ve
+    ey_sevk_parti.kalemler[sıra].adet yeni sevk adedi olur. Satır hareketten SONRA sayılmış konumdaysa (hareket_iptal kuralı) durur — o sayım
+    farkı ayrıca sayim_adet_duzelt ile listeye eklenmeli (Fable L4b). Dönüş {"durum": bulundu|zaten|yok|cok|sayimli, "sayi", "neden"}."""
+    depo_hazirla(cur)
+    _sevk_hazirla(cur)
+    i = int(sira)
+    bag = f"sevk:{parti_id}:{i}"
+    cur.execute("SELECT kaynak, hedef, kalemler FROM ey_sevk_parti WHERE id=%s AND NOT iptal", (parti_id,))
+    p = cur.fetchone()
+    if not p:
+        return {"durum": "yok", "sayi": 0, "neden": "paket yok ya da iptal"}
+    p = dict(p)
+    kal = list(p["kalemler"] or [])
+    if i >= len(kal) or (kal[i].get("ad") or "").lower() != urun_ad.lower():
+        return {"durum": "yok", "sayi": 0, "neden": "kalem adı tutmuyor"}
+    _konum_kilidi(cur, f"depo:{p['kaynak']}", f"depo:{p['hedef']}")   # F2: konum ÖNCE
+    _bag_kilidi(cur, bag)                                               # F2: kalem SONRA
+    cur.execute("""SELECT id, tur, adet, urun_id, kaynak, hedef, zaman, COALESCE(aciklama, '') AS aciklama FROM ey_stok_hareket
+                    WHERE yeni AND NOT iptal AND bag=%s AND tur = ANY(%s) FOR UPDATE""", (bag, list(eski)))
+    rs = [dict(r) for r in cur.fetchall() or []]
+    if rs and all(iz in r["aciklama"] for r in rs) and \
+            sorted((r["tur"], int(r["adet"])) for r in rs) == sorted((t, int(a)) for t, a in yeni.items()):
+        return {"durum": "zaten", "sayi": 0, "neden": ""}
+    hedef = []
+    for t, a in eski.items():
+        m = [r for r in rs if r["tur"] == t and int(r["adet"]) == int(a) and iz not in r["aciklama"]]
+        if len(m) != 1:
+            return {"durum": "yok" if not m else "cok", "sayi": len(m), "neden": f"{t} {a}"}
+        hedef.append((m[0], int(yeni[t])))
+    for r, _y in hedef:   # sonradan sayıldıysa stok kesinleşti → dokunma (hareket_iptal / kabul_yaz ile aynı kural)
+        kon = [k for k in (r["kaynak"], r["hedef"]) if k.startswith("depo:") or k.startswith("bar:")]
+        cur.execute("""SELECT konum, zaman FROM ey_stok_sayim WHERE yeni AND konum = ANY(%s) AND zaman > %s
+                         AND satirlar @> %s::jsonb ORDER BY zaman LIMIT 1""", (kon, r["zaman"], json.dumps([{"urun_id": str(r["urun_id"])}])))
+        s = cur.fetchone()
+        if s:
+            return {"durum": "sayimli", "sayi": 0, "neden": f"{r['tur']} sonrası {dict(s)['konum']} {str(dict(s)['zaman'])[:16]} sayıldı"}
+    if yaz:
+        for r, y in hedef:
+            cur.execute("UPDATE ey_stok_hareket SET adet=%s, aciklama=%s WHERE id=%s",
+                        (y, (r["aciklama"] + " | " if r["aciklama"] else "") + f"{iz} {r['adet']}→{y}", r["id"]))
+        if "sevk" in yeni:
+            kal[i] = {**kal[i], "adet": int(yeni["sevk"])}
+            cur.execute("UPDATE ey_sevk_parti SET kalemler=%s::jsonb WHERE id=%s", (json.dumps(kal, ensure_ascii=False), parti_id))
+    return {"durum": "bulundu", "sayi": len(hedef), "neden": ""}
+
+
 def urun_hareketi_var(cur, urun_id: str) -> bool:
     """PUBLIC: ürünün YENİ evrende (ey_urun kimliğiyle) stok hareketi var mı — Ürün kataloğu birim kilidi bunu sorar."""
     depo_hazirla(cur)
@@ -1268,6 +1317,48 @@ def sevk_et(body: SevkBody, x_evvel_oturum: Optional[str] = Header(default=None)
         (f"Paket zaten gönderilmişti ({sonuc['kalem']} ürün)" if sonuc.get("tekrar") else f"{sonuc['kalem']} ürün yola çıktı") + \
         (f" · ⚠ depoda görünmeyen: {', '.join(sonuc['eksi'][:5])}" if sonuc.get("eksi") else "")
     return sonuc
+
+
+# 🩹 BİRİM DÜZELTMESİ (sahip 4 Kas onayı): 1–3 Kasım'da şube TANE girdi, sistem PAKET sandı; merkez depo (Tema) "VAR" ile siparişteki sayıyı
+# aynen sevk etti. Gider /urun-ac-duzelt ile aynı desen — sabit liste, kuru varsayılan, biri tutmazsa HİÇBİRİ yazılmaz, her satır kendi izi.
+BIRIM_IZ = "DUZELTME 04.11 sahip onayı (tane→paket)"
+BIRIM_SEVK_DUZELTME = (   # (parti, kalem sırası, ürün, {tür: bugünkü YANLIŞ adet}, {tür: doğru adet})
+    ("4198667577c3", 16, "Plastik Kapak", {"sevk": 300, "kabul": 200, "iade_geri": 100}, {"sevk": 3, "kabul": 2, "iade_geri": 1}),   # Tema → Zafer
+    ("61d5e6606b7c", 3, "Plastik Kapak", {"sevk": 100, "kabul": 100}, {"sevk": 1, "kabul": 1}),                                        # Tema → Alsancak
+    ("61d5e6606b7c", 1, "14oz Kapak", {"sevk": 100, "kabul": 100}, {"sevk": 2, "kabul": 2}),                                           # Tema → Alsancak
+)
+BIRIM_SAYIM_DUZELTME = (   # (konum, gün, ürün, bugünkü YANLIŞ fark, doğru fark) — açılış sayımı 260 TANE = 5 paket
+    ("depo:sube-zafer", "2026-11-01", "8oz Kapak", 256, 1),
+)
+
+
+@router.post("/birim-duzelt")
+def birim_duzelt(kuru: bool = True, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Kuru (varsayılan) yalnız gösterir · eşleşmeyen / sonradan sayılmış satır varsa HİÇBİR ŞEY yazılmaz · iz hareket açıklamasına + arşive."""
+    from evvel_yeni_cekirdek import arsiv_yaz
+    with db() as (conn, cur):
+        depo_hazirla(cur)
+        kim = merkez_aktor(cur, x_evvel_oturum)   # çekirdek kapısı (F#2)
+        isler = [("sevk", p, s, ad, e, y) for p, s, ad, e, y in BIRIM_SEVK_DUZELTME] + [("sayim", k, g, ad, e, y) for k, g, ad, e, y in BIRIM_SAYIM_DUZELTME]
+        plan, eksik, yapilmis = [], [], []
+        for tur, a, b, ad, e, y in isler:
+            d = sevk_kalem_duzelt(cur, a, b, ad, e, y, BIRIM_IZ, yaz=False) if tur == "sevk" else sayim_adet_duzelt(cur, a, b, ad, e, y, BIRIM_IZ, yaz=False)
+            yer = f"{a} {b} {ad}"
+            if d["durum"] == "zaten":
+                yapilmis.append(yer)
+            elif d["durum"] != "bulundu":
+                eksik.append(f"{yer}: {d['durum']} {d.get('neden') or d.get('sayi', '')}")
+            else:
+                plan.append((tur, a, b, ad, e, y))
+        rapor = [{"tur": t, "yer": f"{a} {b}", "urun": ad, "eski": e, "yeni": y} for t, a, b, ad, e, y in plan]
+        if eksik:
+            raise HTTPException(409, "Eşleşme tutmadı — hiçbir şey yazılmadı: " + " · ".join(eksik))
+        if kuru or not plan:
+            return {"ok": True, "kuru": kuru, "duzeltilecek": rapor, "zaten_duzeltilmis": yapilmis}
+        for tur, a, b, ad, e, y in plan:
+            (sevk_kalem_duzelt if tur == "sevk" else sayim_adet_duzelt)(cur, a, b, ad, e, y, BIRIM_IZ, yaz=True)
+        arsiv_yaz(cur, "depo", f"duzeltme:birim:{_is_gunu().isoformat()}", {"duzeltilen": rapor}, kim)
+    return {"ok": True, "kuru": False, "duzeltilen": rapor, "zaten_duzeltilmis": yapilmis}
 
 
 class SevkIptalBody(BaseModel):
