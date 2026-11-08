@@ -424,7 +424,11 @@ def urun_duzelt(uid: str, b: UrunBody, x_evvel_oturum: Optional[str] = Header(de
             _ayni_ad(cur, b.kategori_id, yeni["ad"], uid)
         # Fable (altyapı #6): BİRİM KİLİDİ — yeni panel ey_urun kimliğiyle hareket yazıyor; hareket görmüş ürünün birim/çevrim
         # alanları değişirse eski adetlerin anlamı kayar → 409. Depo kapalıysa (tak-çıkar) kilit uygulanamaz, sessiz geçilir.
-        birim_alanlari = {"birim", "sayim_ici", "fatura_ici", "koli_ici", "fatura_birim"}
+        # sahip 8 Kas ("8oz / 14oz kapak 1 paket = 100 adet, katalogda 50") · Codex L4b: sayim_ici kilit DIŞI — hareketler sayım
+        # biriminde (paket) saklanır, sayim_ici gösterimde ("3 paket (300 tane)") ve panel uyarı eşiğinde okunur; birim_maliyet /
+        # faturadan_sayima da okur ama çağrısı yok (Codex L6) — çağrı eklenirse bu kilit yeniden düşünülür. Eski adet kaymaz.
+        # degisen = _dogrula SONRASI gerçek fark → aynı istekte birim / koli / fatura alanı değişirse kilit yine çalışır. İz ey_urun_iz'de.
+        birim_alanlari = {"birim", "fatura_ici", "koli_ici", "fatura_birim"}
         if birim_alanlari & set(degisen):
             try:
                 from evvel_yeni_moduller import acik as _acik
