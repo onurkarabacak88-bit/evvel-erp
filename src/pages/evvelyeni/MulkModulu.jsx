@@ -7,6 +7,7 @@ import { api } from '../../utils/api';
 import { ALAN, Cip, Dugme, fmt, kart, num, PI_CSS, R, sayiTR, tKisa } from './KasaModulu';
 import { ayAdi, ayTR } from '../../utils/trTarih';
 import { AY, AY_UZUN, AyIzgara, DURUM, Lejant, Pencere, YilSecici } from './AyTakvim';
+import { EN_COK_AY, FazlaSoru, kiraDagit } from './KiraDagilim';   // sahip 10 Kas: fazla kira nereye sayılsın (Para girişi ile aynı parça)
 
 export const MULK_SAYFALAR = [
   { id: 'mulk_takvim', ad: 'Ev kiraları', alt: 'Ev × ay · kira geldi mi' },
@@ -203,10 +204,46 @@ function IsletmeBorcu({ onToast }) {
   );
 }
 
-function Uyarilar({ onSekme }) {
+// Daha önce girilmiş fazla kirayı aylara dağıtır (para değişmez · sunucu: /mulk/dagit). Ay'a birden çok giriş varsa hangisi sorulur.
+function FazlaDagit({ g, onBitti, onToast }) {
+  const girisler = (g.girisler || []).filter((x) => !x.dagitilmis && x.ay === g.ay);
+  const [hid, setHid] = useState(girisler.length === 1 ? girisler[0].id : '');
+  const [yon, setYon] = useState(null);
+  const [mesgul, setMesgul] = useState(false);
+  const [hata, setHata] = useState('');
+  const gi = girisler.find((x) => x.id === hid);
+  if (!girisler.length) return <span style={{ color: R.not, fontSize: 12.5 }}>dağıtılmış giriş — Ev kiraları'ndan bak</span>;
+  const kalanSec = gi ? Math.max(0, g.beklenen - (g.odenen - gi.tutar)) : 0;   // bu giriş olmadan ayın kalanı
+  const acik = [...(g.kalanlar || []), { ay: g.ay, kalan: kalanSec }];   // geri / ileri ayların kalanı + bu girişsiz bu ay
+  const dag = gi && yon ? kiraDagit(g.ay, gi.tutar, acik, yon) : [];
+  const kaydet = async () => {
+    if (dag.length < 2 || dag.length > EN_COK_AY) { setHata(dag.length > EN_COK_AY ? `En çok ${EN_COK_AY} aya dağıtılır` : 'Seçim yap'); return; }
+    setMesgul(true); setHata('');
+    try { const r = await api('/evvel-yeni/mulk/dagit', { method: 'POST', body: { hareket_id: gi.id, dagilim: Object.fromEntries(dag.map((d) => [d.ay, d.tutar])) } }); onToast?.(r?.mesaj || 'Dağıtıldı'); onBitti(); }
+    catch (e) { setHata(e?.message || 'Kaydedilemedi'); }
+    setMesgul(false);
+  };
+  return (
+    <div style={{ display: 'grid', gap: 8, width: '100%' }}>
+      {girisler.length > 1 && (
+        <select value={hid} style={alan} onChange={(e) => { setHid(e.target.value); setYon(null); }}>
+          <option value="">Hangi giriş…</option>
+          {girisler.map((x) => <option key={x.id} value={x.id}>{tKisa(x.gun)} · {fmt(x.tutar)} ₺</option>)}
+        </select>
+      )}
+      {gi && <FazlaSoru ay={g.ay} toplam={gi.tutar} acik={acik} secim={yon} onSecim={setYon} />}
+      {hata && <div style={{ color: R.kirmizi }}>{hata}</div>}
+      {gi && yon && <div><Dugme kucuk ana disabled={mesgul} onClick={kaydet}>{mesgul ? 'Kaydediliyor…' : 'Böyle say'}</Dugme></div>}
+    </div>
+  );
+}
+
+function Uyarilar({ onSekme, onToast }) {
   const [v, setV] = useState(null);
   const [hata, setHata] = useState(null);
-  useEffect(() => { api('/evvel-yeni/mulk/uyarilar').then(setV).catch((e) => setHata(e?.message || 'okunamadı')); }, []);
+  const [acik, setAcik] = useState('');   // hangi "fazla" satırında dağıtım açık
+  const yukle = () => api('/evvel-yeni/mulk/uyarilar').then(setV).catch((e) => setHata(e?.message || 'okunamadı'));
+  useEffect(() => { yukle(); }, []);   // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <>
       <Baslik ad="Uyarılar" />
@@ -222,8 +259,10 @@ function Uyarilar({ onSekme }) {
       ))}
       {(v?.fazla || []).map((g) => (
         <div key={`f${g.id}${g.ay}`} style={{ ...kart, padding: '10px 14px', display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
-          <Cip tur="sari">Fazla geldi</Cip><span style={{ flex: 1 }}><b>{g.ad}</b>{g.kiraci ? ` · ${g.kiraci}` : ''} · {ayAdi(g.ay)} · beklenen <b style={num}>{fmt(g.beklenen)}</b> ₺, gelen <b style={num}>{fmt(g.odenen)}</b> ₺ → <b style={num}>+{fmt(g.fazla)}</b> ₺ (sonraki aya ait olabilir)</span>
+          <Cip tur="sari">Fazla geldi</Cip><span style={{ flex: 1 }}><b>{g.ad}</b>{g.kiraci ? ` · ${g.kiraci}` : ''} · {ayAdi(g.ay)} · beklenen <b style={num}>{fmt(g.beklenen)}</b> ₺, gelen <b style={num}>{fmt(g.odenen)}</b> ₺ → <b style={num}>+{fmt(g.fazla)}</b> ₺</span>
+          {yapabilir('mulk.islem') && <Dugme kucuk ana={acik === g.id + g.ay} onClick={() => setAcik(acik === g.id + g.ay ? '' : g.id + g.ay)}>Nereye sayılsın?</Dugme>}
           <Dugme kucuk onClick={() => onSekme?.('mulk_takvim')}>Ev kiraları</Dugme>
+          {acik === g.id + g.ay && <FazlaDagit g={g} onToast={onToast} onBitti={() => { setAcik(''); yukle(); }} />}
         </div>
       ))}
       {(v?.artis || []).map((e) => (
@@ -239,7 +278,7 @@ export default function MulkModulu({ gorunum, onToast, onSekme }) {
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
       <style>{PI_CSS}</style>
-      {gorunum === 'mulk_borc' ? <IsletmeBorcu onToast={onToast} /> : gorunum === 'mulk_uyari' ? <Uyarilar onSekme={onSekme} /> : <EvKiralari onToast={onToast} onSekme={onSekme} />}
+      {gorunum === 'mulk_borc' ? <IsletmeBorcu onToast={onToast} /> : gorunum === 'mulk_uyari' ? <Uyarilar onSekme={onSekme} onToast={onToast} /> : <EvKiralari onToast={onToast} onSekme={onSekme} />}
     </div>
   );
 }

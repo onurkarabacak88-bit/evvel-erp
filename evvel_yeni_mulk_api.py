@@ -18,7 +18,7 @@ import uuid
 from datetime import date
 
 from evvel_yeni_cekirdek import TrTutar   # para alanı: Türkçe tutar kuralı (TEK yer)
-from typing import Optional
+from typing import Dict, Optional
 
 from fastapi import APIRouter, Header, HTTPException
 from pydantic import BaseModel
@@ -74,8 +74,38 @@ def _tutar(k: dict, ay: str) -> int:
     return t
 
 
+DAGILIM_EN_COK = 4   # bir kira girişi en çok 4 aya dağılır (bağ metni Kasa'nın 80 karakter sınırına sığar — Fable L4b)
+
+
+def _dagilim_yaz(d: dict) -> Optional[str]:
+    """{ay: kuruş} → bağ metni "2026-10:400000,2026-11:1600000" (tek ay → None: eski biçim). TEK yazıcı."""
+    d = {a: int(t) for a, t in d.items() if int(t) > 0}
+    if len(d) < 2:
+        return None
+    s = ",".join(f"{a}:{d[a]}" for a in sorted(d))
+    if len(d) > DAGILIM_EN_COK or len(s) > 80:
+        raise HTTPException(400, f"Bir kira girişi en çok {DAGILIM_EN_COK} aya dağıtılabilir")
+    return s
+
+
+def _dagilim_oku(bag: dict, tutar: int) -> Optional[dict]:
+    """Bağ metni → {ay: kuruş}; bozuksa ya da toplam girişin tutarını tutmuyorsa None (savunma: tamamı bag.ay'a). TEK okuyucu."""
+    s = (bag or {}).get("dagilim")
+    if not s:
+        return None
+    try:
+        d = {}
+        for p in str(s).split(","):
+            a, t = p.split(":")
+            _ay_dogrula(a, "Ay")
+            d[a] = d.get(a, 0) + int(t)
+    except (ValueError, HTTPException):
+        return None
+    return d if sum(d.values()) == int(tutar) and all(t > 0 for t in d.values()) else None
+
+
 def _gelenler(defter: dict) -> dict:
-    """Kasa dış girişlerinden (alt=kira, bağ modul=mulk): {(mulk_id, ay): kuruş}."""
+    """Kasa dış girişlerinden (alt=kira, bağ modul=mulk): {(mulk_id, ay): kuruş}. Bağda dağılım varsa aylara bölünür (sahip 10 Kas)."""
     out = {}
     for h in defter["kayitlar"]:
         if h["tur"] != "dis" or (h["veri"] or {}).get("alt") != "kira":
@@ -83,9 +113,48 @@ def _gelenler(defter: dict) -> dict:
         bag = (h["veri"] or {}).get("bag") or {}
         if bag.get("modul") != "mulk" or not bag.get("id"):
             continue
-        k = (bag["id"], (bag.get("ay") or h["is_gunu"])[:7])
-        out[k] = out.get(k, 0) + int(h["tutar"])
+        dag = _dagilim_oku(bag, h["tutar"]) or {(bag.get("ay") or h["is_gunu"])[:7]: int(h["tutar"])}
+        for a, t in dag.items():
+            out[(bag["id"], a)] = out.get((bag["id"], a), 0) + t
     return out
+
+
+def _kalanlar(cur, geri: int = 3, ileri: int = 3) -> dict:
+    """{ev: [{ay, kalan}]} — bugünden geri / ileri ayların kalanı, YIL SINIRINI AŞAR (Fable L6 B3/B4: dağılım "gelecek aya"
+    sonraki ayın kirasını bilsin, Ocak'taki fazla Kasım / Aralık borcunu görsün). Kalanı 0 olan ay da döner (dolu ay atlanır)."""
+    bu = _bugun().strftime("%Y-%m")
+    aylar = {ay_kaydir(bu, i) for i in range(-geri, ileri + 1)}
+    out = {}
+    for yil in sorted({int(a[:4]) for a in aylar}):
+        for e in _takvim(cur, yil)["evler"]:
+            out.setdefault(e["id"], []).extend({"ay": a["ay"], "kalan": a["kalan"]} for a in e["aylar"] if a["ay"] in aylar and a["beklenen"] > 0)
+    return {k: sorted(v, key=lambda x: x["ay"]) for k, v in out.items()}
+
+
+def _dagilim_dogrula(cur, mulk_id: str, ana_ay: str, dagilim: Optional[dict], toplam: int) -> Optional[str]:
+    """Formdan gelen {ay: tutar} → doğrulanmış bağ metni. Kurallar (Fable L4b + L6 B1): her ay evin başlangıç/bitiş
+    aralığında ve bugünden ±12 ay · her parça > 0 · Σ parça == girişin toplamı (kuruş) · en çok 4 ay. Boş / tek ay → None."""
+    if not dagilim:
+        return None
+    d = {}
+    for a, t in dagilim.items():
+        a = _ay_dogrula(a, "Dağılım ayı")
+        k = _kurus(t)
+        if k <= 0:
+            raise HTTPException(400, "Dağılımdaki her ayın tutarı 0'dan büyük olmalı")
+        d[a] = d.get(a, 0) + k
+    # Fable L6 B1: birikmiş borç ana aya pay bırakmayabilir (Eylül + Ekim açık, Kasım'a 20.000) — ana ay yalnız formun ayı (bilgi)
+    if sum(d.values()) != toplam:
+        raise HTTPException(400, "Dağılımın toplamı girilen tutarı tutmuyor — sayfayı yenile")
+    cur.execute("SELECT baslangic_ay, bitis_ay FROM ey_mulk WHERE id=%s", (mulk_id,))
+    e = dict(cur.fetchone() or {})
+    bu = _bugun().strftime("%Y-%m")
+    for a in d:
+        if a < (e.get("baslangic_ay") or a) or (e.get("bitis_ay") and a > e["bitis_ay"]):
+            raise HTTPException(400, f"{a}: ev o ay kirada değil")
+        if not ay_kaydir(bu, -12) <= a <= ay_kaydir(bu, 12):
+            raise HTTPException(400, f"{a}: en çok 12 ay geri / ileri dağıtılır")
+    return _dagilim_yaz(d)
 
 
 def _takvim(cur, yil: int) -> dict:
@@ -288,6 +357,7 @@ class TahsilatBody(BaseModel):
     tarih: Optional[str] = None
     istek_id: Optional[str] = None
     tekrar_onay: bool = False         # tek kapının BENZER KAYIT uyarısını bilerek geç (IS 5ds)
+    ay_dagilim: Optional[Dict[str, TrTutar]] = None   # sahip 10 Kas: {ay: tutar} — fazla geçmiş borca / gelecek aya (Para girişi ile aynı kural)
 
 
 @router.post("/tahsilat")
@@ -315,11 +385,12 @@ def tahsilat(b: TahsilatBody, x_evvel_oturum: Optional[str] = Header(default=Non
     kasa.kasa_hazirla()
     with db() as (conn, cur):
         r = kasa.giris_yaz(cur, kasa.GirisBody(konu="kira", is_gunu=(b.tarih or _bugun().isoformat())[:10], parcalar=parcalar,
-                                               mulk_id=b.mulk_id, ay=ay, istek_id=b.istek_id, tekrar_onay=b.tekrar_onay),
+                                               mulk_id=b.mulk_id, ay=ay, ay_dagilim=b.ay_dagilim, istek_id=b.istek_id,
+                                               tekrar_onay=b.tekrar_onay),
                            _aktor(cur, x_evvel_oturum))
     nereye = " + ".join(("kira hesabına" if p.cep == KIRA_CEP else "elden (elindeki kira)") for p in parcalar)
     msj = (r.get("mesaj") if r.get("tekrar") else None) or f"{k['ad']} · {_AY[int(ay[5:7]) - 1]} kirası girdi — {nereye}"
-    if hucre and hucre["beklenen"] and not r.get("tekrar"):
+    if hucre and hucre["beklenen"] and not r.get("tekrar") and not b.ay_dagilim:
         fz = round(toplam_tl - hucre["kalan"], 2)
         if fz >= 1:
             msj += f" · ⚠ {hucre['kalan']:,.0f} ₺ bekleniyordu, {fz:,.0f} ₺ FAZLA geldi (Uyarılar'da görünür)".replace(",", ".")
@@ -336,7 +407,11 @@ def _giris_kira_dogrula(cur, b) -> dict:
     if not k:
         raise HTTPException(404, "Ev bulunamadı")
     k = dict(k)
-    return {"bag": {"modul": "mulk", "id": b.mulk_id, "ay": ay}, "kimden": (k.get("kiraci") or k["ad"])[:80], "not": f"{k['ad']} · {ay} kirası"}
+    bag = {"modul": "mulk", "id": b.mulk_id, "ay": ay}
+    dag = _dagilim_dogrula(cur, b.mulk_id, ay, getattr(b, "ay_dagilim", None), sum(_kurus(p.tutar) for p in b.parcalar or []))
+    if dag:   # sahip 10 Kas: fazla geçmiş borca / gelecek aya sayılır
+        bag["dagilim"] = dag
+    return {"bag": bag, "kimden": (k.get("kiraci") or k["ad"])[:80], "not": f"{k['ad']} · {ay} kirası" + (" (aylara dağıtıldı)" if dag else "")}
 
 
 def _giris_kira_secenek(cur) -> dict:
@@ -357,6 +432,9 @@ def _giris_kira_secenek(cur) -> dict:
     except Exception:  # noqa: BLE001
         log.warning("mülk: bağlanmamış kira girişleri okunamadı", exc_info=True)
         bagsiz = []
+    kal = _kalanlar(cur)   # dağılım için geri / ileri ayların kalanı (Para girişi "Fazla nereye sayılsın?")
+    for x in evler.values():
+        x["kalanlar"] = kal.get(x["id"], [])
     return {"evler": sorted(evler.values(), key=lambda x: x["ad"]), "baglanmamis": bagsiz}
 
 
@@ -453,6 +531,11 @@ def uyarilar():
         fazla = [{"id": e["id"], "ad": e["ad"], "kiraci": e.get("kiraci"), "ay": a["ay"], "fazla": a["fazla"], "beklenen": a["beklenen"], "odenen": a["odenen"]}
                  for y in sorted({int(x[:4]) for x in son3}) for e in _takvim(cur, y)["evler"] for a in e["aylar"]
                  if a["ay"] in son3 and a.get("fazla", 0) >= 1]
+        if fazla:   # Fable L4b: "Nereye sayılsın?" hangi girişi düzelttiğini bilsin — o evin o aya düşen kira girişleri
+            gir, kal = _ay_girisleri(cur), _kalanlar(cur)
+            for f in fazla:
+                f["girisler"] = gir.get((f["id"], f["ay"]), [])
+                f["kalanlar"] = [x for x in kal.get(f["id"], []) if x["ay"] != f["ay"]]   # o ay FazlaDagit'te girişsiz kalanla eklenir
     simdi, sonraki = bugun.month, bugun.month % 12 + 1
     return {"geciken": [{"id": e["id"], "ad": e["ad"], "kiraci": e.get("kiraci"), "ay": a["ay"], "kalan": a["kalan"]} for e in gec for a in e["gec"]],
             "artis": [{"id": k["id"], "ad": k["ad"], "artis_ayi": k["artis_ayi"]} for k in evler
@@ -488,6 +571,47 @@ def bagla(b: BaglaBody):
         if not kasa.dis_giris_bagla(cur, b.hareket_id, {"modul": "mulk", "id": b.mulk_id, "ay": ay}, "kira"):
             raise HTTPException(409, "Bu giriş bulunamadı ya da zaten bir eve bağlı")
     return {"ok": True, "mesaj": "Giriş eve bağlandı (para değişmedi)"}
+
+
+def _ay_girisleri(cur) -> dict:
+    """{(ev, ay): [{id, gun, tutar, dagitilmis}]} — iptal edilmemiş, eve bağlı kira girişleri (dağılımlı giriş her ayında görünür)."""
+    import evvel_yeni_kasa_api as kasa
+    out = {}
+    for h in kasa.defter_ozeti(cur)["kayitlar"]:
+        v = h["veri"] or {}
+        bag = v.get("bag") or {}
+        if h["tur"] != "dis" or v.get("alt") != "kira" or bag.get("modul") != "mulk" or not bag.get("id"):
+            continue
+        dag = _dagilim_oku(bag, h["tutar"])
+        for a in (dag or {(bag.get("ay") or h["is_gunu"])[:7]: 0}):
+            out.setdefault((bag["id"], a), []).append({"id": h["id"], "gun": h["is_gunu"], "tutar": _tl_sayi(h["tutar"]), "ay": (bag.get("ay") or h["is_gunu"])[:7],
+                                                      "dagitilmis": bool(dag)})
+    return out
+
+
+class DagitBody(BaseModel):
+    hareket_id: str
+    dagilim: Dict[str, TrTutar]   # {ay: tutar} — toplam girişin tutarı (Türkçe tutar kuralı — Fable L6 B2)
+
+
+@router.post("/dagit")
+def dagit(b: DagitBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Sahip 10 Kas: daha önce girilmiş kira girişinin hangi aylara sayılacağını DEĞİŞTİRİR (para değişmez, aynı ev).
+    İptal + yeniden giriş yerine (Fable L4b: sayılmış cep iptali reddeder, kasa izi 3 satır olur) Kasa'nın bağ güncelleme kapısı."""
+    _hazirla()
+    import evvel_yeni_kasa_api as kasa
+    with db() as (conn, cur):
+        h = next((x for x in kasa.defter_ozeti(cur)["kayitlar"] if x["id"] == b.hareket_id and x["tur"] == "dis"
+                  and (x["veri"] or {}).get("alt") == "kira"), None)
+        bag = ((h or {}).get("veri") or {}).get("bag") or {}
+        if not h or bag.get("modul") != "mulk" or not bag.get("id"):
+            raise HTTPException(404, "Kira girişi bulunamadı (iptal edilmiş ya da eve bağlı değil)")
+        ana = bag.get("ay") or h["is_gunu"][:7]
+        dag = _dagilim_dogrula(cur, bag["id"], ana, b.dagilim, int(h["tutar"]))
+        yeni = {"modul": "mulk", "id": bag["id"], "ay": ana, **({"dagilim": dag} if dag else {})}
+        if not kasa.dis_giris_bag_guncelle(cur, b.hareket_id, "kira", bag, yeni, _aktor(cur, x_evvel_oturum)):
+            raise HTTPException(409, "Giriş değişmiş — sayfayı yenile")
+    return {"ok": True, "mesaj": "Kira aylara dağıtıldı (para değişmedi)" if dag else "Kira tek aya sayıldı (para değişmedi)"}
 
 
 bekleyen_is_kaydet("mulk_kira", _bekleyen)

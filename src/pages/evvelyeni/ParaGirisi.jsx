@@ -7,13 +7,14 @@ import { api } from '../../utils/api';
 import { yeniIstekId } from '../../utils/cihazImza';
 import { ALAN, Dugme, kart, PI_CSS, R, sor } from './KasaModulu';
 import { izinVar } from './yetki';   // 🔐 izin TEK kaynak
+import { EN_COK_AY, FazlaSoru, kiraDagit } from './KiraDagilim';   // sahip 10 Kas: fazla kira nereye sayılsın
 
 const alan = { ...ALAN, width: '100%', padding: '10px 12px', fontSize: 15, minWidth: 0 };
 const bugun = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const AY = ['Ocak', 'Şubat', 'Mart', 'Nisan', 'Mayıs', 'Haziran', 'Temmuz', 'Ağustos', 'Eylül', 'Ekim', 'Kasım', 'Aralık'];
 const ayAd = (a) => (a ? `${AY[Number(a.slice(5, 7)) - 1]} ${a.slice(0, 4)}` : '');
 const BOS = (konu = '') => ({ konu, is_gunu: bugun(), parcalar: [{ cep: '', tutar: '' }], havale: '', elden: '', kimden: '', not: '', gelir: null,
-  sube_id: '', brut: '', mulk_id: '', ay: '', kredi_id: '', banka: '' });
+  sube_id: '', brut: '', mulk_id: '', ay: '', kredi_id: '', banka: '', fazla_yon: null });
 
 function Etiket({ ad, ipucu, children }) {
   return (
@@ -58,6 +59,12 @@ export default function ParaGirisi({ onToast }) {
     if (!f.ay && ev.acik_aylar.length === 1) setF((x) => ({ ...x, ay: ev.acik_aylar[0].ay }));
   }, [f.konu, f.ay, ev]);
   const sayi = (t) => { const n = Number(String(t || '').replace(/\./g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+  // sahip 10 Kas: seçilen ayın kalanını aşan kira → "nereye sayılsın?" (seçilmeden kaydedilmez)
+  const kiraTop = sayi(f.havale) + sayi(f.elden);
+  const kiraAcik = ev?.kalanlar || ev?.acik_aylar || [];   // Fable L6 B3/B4: geri / ileri ayların kalanı (yıl sınırını aşar)
+  const kiraFazla = f.konu === 'kira' && !!ev && !!f.ay && kiraAcik.some((a) => a.ay === f.ay)
+    && kiraTop - (kiraAcik.find((a) => a.ay === f.ay)?.kalan || 0) >= 1;
+  const kiraDag = kiraFazla && f.fazla_yon ? kiraDagit(f.ay, kiraTop, kiraAcik, f.fazla_yon) : [];
   const bagla = async (g) => {   // eski "Kira geldi" penceresindeki "Bunu bağla": para yeniden yazılmaz, eski giriş eve + aya bağlanır (Codex)
     setMesgul(true); setHata('');
     try { const r = await api('/evvel-yeni/mulk/bagla', { method: 'POST', body: { hareket_id: g.id, mulk_id: f.mulk_id, ay: f.ay } }); onToast?.(r?.mesaj || 'Bağlandı'); setF(BOS('kira')); yukle(); }
@@ -70,6 +77,7 @@ export default function ParaGirisi({ onToast }) {
     if (f.konu === 'kira') {
       b.mulk_id = f.mulk_id; b.ay = f.ay;
       b.parcalar = [{ cep: 'banka:fatma_kira', tutar: f.havale }, { cep: 'nakit:kira', tutar: f.elden }].filter((p) => String(p.tutar || '').trim());
+      if (kiraDag.length > 1) b.ay_dagilim = Object.fromEntries(kiraDag.map((d) => [d.ay, d.tutar]));
     } else if (f.konu === 'online') {
       b.parcalar = [{ cep: f.banka, tutar: f.parcalar[0]?.tutar }]; b.brut = String(f.brut || '').trim() || null;
     } else {
@@ -82,6 +90,8 @@ export default function ParaGirisi({ onToast }) {
     return b;
   };
   const kaydet = async (tekrar = false) => {
+    if (kiraFazla && !f.fazla_yon) { setHata('Fazla kiranın nereye sayılacağını seç'); return; }
+    if (kiraDag.length > EN_COK_AY) { setHata(`Bir kira en çok ${EN_COK_AY} aya dağıtılır — tutarı kontrol et`); return; }
     setMesgul(true); setHata('');
     try {
       const r = await api('/evvel-yeni/kasa/giris', { method: 'POST', body: govde(tekrar) });
@@ -139,8 +149,8 @@ export default function ParaGirisi({ onToast }) {
               const h = ev.acik_aylar.find((a) => a.ay === f.ay);
               if (!h) return null;   // açık aylar listesinde olmayan ay (ör. peşin kira) — "bekleyen 0" yanıltmasın
               const kalan = h.kalan || 0;
-              const top = sayi(f.havale) + sayi(f.elden); const fz = top - kalan;
-              return <div style={{ fontSize: 12.5, color: fz > 0.5 ? R.amber : R.not }}>Bekleyen <b>{kalan.toLocaleString('tr-TR')}</b> ₺ · yazılan toplam <b>{top.toLocaleString('tr-TR')}</b> ₺{fz > 0.5 ? ` · ${fz.toLocaleString('tr-TR')} ₺ fazla` : ''}</div>;
+              if (kiraFazla) return <FazlaSoru ay={f.ay} toplam={kiraTop} acik={kiraAcik} secim={f.fazla_yon} onSecim={(y) => { set('fazla_yon', y); setHata(''); }} />;
+              return <div style={{ fontSize: 12.5, color: R.not }}>Bekleyen <b>{kalan.toLocaleString('tr-TR')}</b> ₺ · yazılan toplam <b>{kiraTop.toLocaleString('tr-TR')}</b> ₺</div>;
             })()}
             {ev && f.ay && bagsiz.length > 0 && izinVar('mulk.islem') && (
               <div style={{ borderTop: '1px solid var(--pi-line)', paddingTop: 8, display: 'grid', gap: 4, fontSize: 13 }}>

@@ -198,7 +198,7 @@ _Y = [
     # mülk
     ("GET", "/mulk/takvim", "mulk.ev|isler.mulk"), ("GET", "/mulk/borc", "mulk.borc"), ("GET", "/mulk/uyarilar", "mulk.uyari"),
     ("POST", "/mulk", "mulk.islem"), ("POST", "/mulk/tahsilat", "mulk.islem"),
-    ("POST", "/mulk/karar", "mulk.islem"), ("POST", "/mulk/bagla", "mulk.islem"),
+    ("POST", "/mulk/karar", "mulk.islem"), ("POST", "/mulk/bagla", "mulk.islem"), ("POST", "/mulk/dagit", "mulk.islem"),
     # ödeme
     ("GET", "/odeme/listeler", "odeme.defter|odeme.patron|avans.islem"), ("GET", "/odeme/liste", "odeme.defter"),
     ("GET", "/odeme/personel-durum", "odeme.defter|maas.maaslar"), ("GET", "/odeme/patron", "odeme.patron"),

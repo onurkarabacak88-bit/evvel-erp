@@ -289,6 +289,27 @@ def dis_giris_bagla(cur, hid: str, bag: dict, alt: str) -> bool:
     return True
 
 
+def dis_giris_bag_guncelle(cur, hid: str, alt: str, eski: dict, yeni: dict, kim: str) -> bool:
+    """PUBLIC servis (sahip 10 Kas · Fable L4b): bağlı bir DIŞ GİRİŞİN bağını, AYNI modül + kimlik içinde değiştirir (ör. kira hangi
+    aylara sayılır); para DEĞİŞMEZ. Kasa bağın anlamını bilmez. Eski bağ veri["bag_gecmis"] listesinde kalır (kim + zaman).
+    Bağ eskisiyle birebir aynı değilse (araya başka değişiklik girdi) ya da başka modül / kimliğe kaydırılıyorsa False."""
+    cur.execute("""SELECT veri FROM para_izi_hareket WHERE id=%s AND tur='dis'
+                    AND id NOT IN (SELECT veri->>'hedef_id' FROM para_izi_hareket WHERE tur='iptal' AND veri ? 'hedef_id') FOR UPDATE""", (hid,))
+    r = cur.fetchone()
+    if not r:
+        return False
+    v = __import__("evvel_yeni_cekirdek").json_ac(dict(r)["veri"], {})
+    duz = lambda b: {str(k)[:20]: (str(x)[:80] if x is not None else None) for k, x in list((b or {}).items())[:6]}   # noqa: E731 — giris_yaz ile aynı biçim
+    yeni = duz(yeni)
+    if v.get("alt") != alt or not v.get("bag") or v["bag"] != duz(eski) \
+            or (yeni.get("modul"), yeni.get("id")) != (v["bag"].get("modul"), v["bag"].get("id")):
+        return False
+    v["bag_gecmis"] = (v.get("bag_gecmis") or []) + [{"bag": v["bag"], "kim": kim, "zaman": _simdi_iso()}]
+    v["bag"] = yeni
+    cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(v, ensure_ascii=False), hid))
+    return True
+
+
 def donem_baslangici(cur) -> date:
     """PUBLIC servis: geçerli dönemin ilk günü (takvimler 'Evvel Yeni öncesi' ayları ayırmak için)."""
     return _baslangic(cur)
@@ -2020,6 +2041,7 @@ class GirisBody(BaseModel):
     brut: Optional[TrTutar] = None           # 'online': brüt satış (bilmiyorsan boş → oranla tahmin, etiketli)
     mulk_id: Optional[str] = None            # 'kira' (sağlayıcı doğrular)
     ay: Optional[str] = None
+    ay_dagilim: Optional[Dict[str, TrTutar]] = None   # 'kira': {ay: tutar} — fazla geçmiş borca / gelecek aya (sağlayıcı doğrular)
     kredi_id: Optional[str] = None           # 'kredi' (sağlayıcı doğrular)
     tekrar_onay: bool = False                # BENZER KAYIT uyarısını bilerek geç (bağ / cep / kilit yasaklarını AŞAMAZ)
     istek_id: Optional[str] = None
