@@ -17,6 +17,7 @@ import { Gonderilecek, SiparisTakip, SiparisVer } from './SiparisEkranlari';
 import UrunAc from './UrunAc';
 import Fire from './Fire';
 import AraSayim from './AraSayim';
+import UrunSayim from './UrunSayim';   // 📦 merkez ürün sayımı istedi (adım 154)
 import { C, CSS, cihazTuruOku, cihazTuruYaz, KisiPin, Modal, panelHata, qrBoyut, SayiTusTakimi, sor, SorKatmani, TabletQR, taslakKaldir, taslakOku, taslakTemizle, taslakYaz, tutar, tutarNum, yeniIstek, panelYaz, panelOku } from './ortak';
 import { gunKaydir, tarihNokta } from '../../utils/trTarih';
 
@@ -128,11 +129,11 @@ export default function SubePaneli({ subeId }) {
   const kapiAcik = !!d && yok.var && !d.acilis_var && !d.kapanis_var && !(d.kuru && kapiGecildi) && !(yok.girenler || []).some((g) => g.acik);
   useEffect(() => {   // eski panel: 15 sn (POLL_MS), sekme gizliyken durur, öne gelince hemen çeker; kapı / QR / devir beklerken 5 sn
     yukle();
-    const t = window.setInterval(() => { if (!document.hidden) yukle(); }, kapiAcik || qrGorunur || devirBekliyor || d?.ara_sayim ? 5000 : 15000);   // ⏱ ara sayım bekliyorken de 5 sn
+    const t = window.setInterval(() => { if (!document.hidden) yukle(); }, kapiAcik || qrGorunur || devirBekliyor || d?.ara_sayim || d?.urun_sayim ? 5000 : 15000);   // ⏱ ara sayım bekliyorken de 5 sn
     const gor = () => { if (!document.hidden) yukle(); };
     document.addEventListener('visibilitychange', gor);
     return () => { window.clearInterval(t); document.removeEventListener('visibilitychange', gor); };
-  }, [yukle, kapiAcik, qrGorunur, devirBekliyor, !!d?.ara_sayim]);   // eslint-disable-line react-hooks/exhaustive-deps
+  }, [yukle, kapiAcik, qrGorunur, devirBekliyor, !!d?.ara_sayim, !!d?.urun_sayim]);   // eslint-disable-line react-hooks/exhaustive-deps
   const [saat, setSaat] = useState(() => new Date());
   useEffect(() => { const t = window.setInterval(() => setSaat(new Date()), 10000); return () => window.clearInterval(t); }, []);
   const [molaQr, setMolaQr] = useState(false);
@@ -396,6 +397,8 @@ export default function SubePaneli({ subeId }) {
 
       {/* ⏱ ARA SAYIM — tam ekran (z 75), sunucu görev açınca */}
       {d.ara_sayim && <AraSayim key={d.ara_sayim.onay_id} subeId={subeId} a={d.ara_sayim} tabletVar={tabletVar} yenile={yukle} />}
+      {/* 📦 MERKEZ ÜRÜN SAYIMI — tam ekran (z 75), sayılana kadar; ara sayım öncelikli; giriş kapısı (QR) önce — onay için içeride kişi gerekir */}
+      {d.urun_sayim && !d.ara_sayim && !kapiAcik && !sihirbazBasari && <UrunSayim key={d.urun_sayim.onay_id} subeId={subeId} u={d.urun_sayim} tabletVar={tabletVar} yenile={yukle} />}
       {/* 🔑 AÇILIŞ ÖNCESİ KAPI (eski §1a "Personel Girişi Gerekli" — eski QR + kasa kilidi PIN'i KALKTI, yerine yeni dönen QR) */}
       {kapiAcik && (
         <div style={{ position: 'fixed', inset: 0, zIndex: 70, background: 'rgba(5,8,15,.96)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
@@ -453,7 +456,7 @@ export default function SubePaneli({ subeId }) {
         </div>
       )}
       {/* ── MODALLAR ── */}
-      {sihirbazAcik && (sihirbazBasari || !kapiAcik) && (
+      {sihirbazAcik && (sihirbazBasari || !kapiAcik) && (sihirbazBasari || !d.urun_sayim) && (   /* 📦 merkez sayımı açılıştan ÖNCE (Fable L4b); başlamış açılış bozulmaz */
         <AcilisSihirbazi key={d.gun} d={d} subeId={subeId} tabletVar={tabletVar} kapatilabilir={!!d.kuru}
           kapat={() => { setSihirbazElle(false); setDenemeKapandi(true); }}
           basladi={() => setSihirbazBasari(true)}

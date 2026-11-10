@@ -557,12 +557,13 @@ def bakiye(cur, konum: Optional[str] = None, urun_id: Optional[str] = None) -> d
 
 
 def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sayim", kaynak_ref: Optional[str] = None,
-              ad_coz=None, gun: Optional[date] = None, eski_evren: bool = False) -> dict:
+              ad_coz=None, gun: Optional[date] = None, eski_evren: bool = False, kismi: bool = False) -> dict:
     """PUBLIC: kör sayım → her sayılan ürün için FARK hareketi (sayılan − o anki defter). Boş bırakılan SAYILMAZ (0 sayılmaz).
     tur: 'sayim' (merkez) · 'acilis' (konumdaki açılış) · 'gunluk' (şube paneli: fark<0 = 'tuketim' (bardak satışı),
     fark>0 = 'sayim'). kaynak_ref verilirse aynı sayım ikinci kez yazılmaz ({'tekrar': True}) — kaynak_ref KONUMU içermeli
     (ör. panel:kapanis:{şube}:{gün}; kilit konum bazlı). gun: İŞ GÜNÜ (panel c['gun'] — gece 00:00–02:00 kapanışı dünün)
-    — verilmezse bugün. Yeni evren (varsayılan): yalnız ey_urun kimliği; eski_evren=True yalnız geçişte merkezin eski-katalog sayımı."""
+    — verilmezse bugün. Yeni evren (varsayılan): yalnız ey_urun kimliği; eski_evren=True yalnız geçişte merkezin eski-katalog sayımı.
+    kismi=True (merkezin birkaç ürün için istediği sayım — Fable L4b 10 Kas): konumun ilk sayımı olsa da AÇILIŞ sayılmaz."""
     depo_hazirla(cur)
     if not (konum.startswith("depo:") or konum.startswith("bar:")):
         raise HTTPException(400, "Sayım yalnız bir şube deposunda ya da barında yapılır")
@@ -573,8 +574,10 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
         import hashlib
         sid = "ss-" + hashlib.md5(kaynak_ref.encode("utf-8")).hexdigest()[:12]
         cur.execute("SELECT 1 FROM ey_stok_sayim WHERE id=%s", (sid,))
-        if cur.fetchone():
-            return {"sayim_id": sid, "tekrar": True, "kayit": [], "farklar": []}
+        if cur.fetchone():   # Codex L6 (154): tekrarda özgün sayımın satırları döner (onay yeniden işlenirse sonuç 'fark yok' sanılmasın)
+            cur.execute("SELECT satirlar FROM ey_stok_sayim WHERE id=%s", (sid,))
+            k_ = __import__("evvel_yeni_cekirdek").json_ac(dict(cur.fetchone() or {}).get("satirlar"), []) or []
+            return {"sayim_id": sid, "tekrar": True, "kayit": k_, "farklar": [x for x in k_ if x.get("fark")]}
     else:
         sid = "ss-" + uuid.uuid4().hex[:12]
     B = _bakiyeler(cur, yeni=not eski_evren)
@@ -614,9 +617,12 @@ def sayim_yaz(cur, *, konum: str, satirlar: List[dict], kim: str, tur: str = "sa
     if not kayit:
         raise HTTPException(400, "Hiç ürün sayılmadı")
     ilk = False
-    if not eski_evren and tur == "sayim":   # Fable: yeni evrende konumun İLK merkez sayımı = açılış sayımı (panel günlük sayımı değil)
-        cur.execute("SELECT 1 FROM ey_stok_sayim WHERE konum=%s AND yeni LIMIT 1", (konum,))
+    if not eski_evren and tur == "sayim" and not kismi:   # Fable: yeni evrende konumun İLK merkez sayımı = açılış sayımı (panel günlük sayımı değil)
+        cur.execute("""SELECT 1 FROM ey_stok_sayim WHERE konum=%s AND yeni AND NOT (satirlar @> '[{"kismi": true}]'::jsonb) LIMIT 1""", (konum,))
         ilk = cur.fetchone() is None
+    if kismi:   # Codex L6: kısmi sayım satırları işaretli — konumun sonraki ilk TAM merkez sayımı hâlâ açılış sayılır
+        for k_ in kayit:
+            k_["kismi"] = True
     cur.execute("INSERT INTO ey_stok_sayim (id, konum, is_gunu, kim, acilis, satirlar, yeni, zaman) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s, clock_timestamp())",
                 (sid, konum, gun, kim, tur == "acilis" or ilk, json.dumps(kayit, ensure_ascii=False), not eski_evren))
     _yaz(cur, rows, yeni=not eski_evren)

@@ -10,6 +10,7 @@ import { api } from '../../utils/api';
 import { ALAN, Cekmece, Cip, Dugme, kart, num, PI_CSS, R, sor, tKisa } from './KasaModulu';
 import { yeniIstekId as yeniIstek } from '../../utils/cihazImza';
 import { miktarYazi } from '../../utils/miktar';   // "3 paket (300 tane)" — TEK yer (adım 149)
+import { yapabilir } from './yetki';   // 🔐 işlem düğmesi izni (sunucu da engeller)
 
 export const DEPO_SAYFALAR = [
   { id: 'depo_nerede', ad: 'Depo — Nerede?', alt: 'Ürün × konum · tıkla → iz' },
@@ -61,11 +62,55 @@ export default function DepoModulu({ gorunum, onToast }) {
   if (gorunum === 'depo_yolda') return <Yoldakiler onToast={onToast} mod="yolda" />;
   if (gorunum === 'depo_fark') return <Yoldakiler onToast={onToast} mod="fark" />;
   if (gorunum === 'depo_sayim') return <DepoSayim onToast={onToast} />;
-  return <Nerede />;
+  return <Nerede onToast={onToast} />;
 }
 
-function Nerede() {
+// 📦 İSTENEN SAYIMLAR (adım 154 · sahip 10 Kas "her kırmızı yanan yere sayım iste" · Fable L4b: sonuç Bekleyen işler'i şişirmez, burada)
+// Açık istek (şube paneli sayılana kadar kilitli) + son 7 günün sonucu (sayan · fark). Sunucu: evvel_yeni_panel_api urun_sayim_*.
+function IstenenSayimlar({ istekler, adlar, yukle, onToast }) {
+  const [mesgul, setMesgul] = useState('');
+  if (!istekler || !istekler.length) return null;
+  const yer = (k) => (String(k || '').startsWith('bar:') ? 'bar' : 'depo');
+  const iptal = async (x) => {
+    if (!(await sor({ soru: `${x.sube} ${yer(x.konum)} sayım isteği iptal edilsin mi? Panel kilidi kalkar.`, tamam: 'Evet, iptal et' }))) return;
+    setMesgul(x.id);
+    try { const r = await api('/evvel-yeni/panel/urun-sayim-iptal', { method: 'POST', body: { onay_id: x.id } }); onToast?.(r?.mesaj || 'İptal edildi'); yukle(); }
+    catch (e) { onToast?.(e?.message || 'İptal edilemedi'); }
+    setMesgul('');
+  };
+  return (
+    <div style={{ ...kart, padding: '10px 12px', display: 'grid', gap: 6, fontSize: 13 }}>
+      <b>📋 İstenen sayımlar</b>
+      {istekler.map((x) => (
+        <div key={x.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+          {x.acik ? <Cip tur="sari">{x.durum === 'isleniyor' ? 'onaylanıyor' : x.gonderildi ? 'sayıldı · onay bekliyor' : 'bekliyor · panel kilitli'}</Cip>
+            : x.durum === 'onaylandi' ? <Cip tur={x.kuru ? undefined : 'yesil'}>{x.kuru ? 'deneme — stok yazılmadı' : 'sayıldı'}</Cip>
+              : <Cip>{x.durum === 'iptal' ? 'iptal' : x.durum === 'sure_doldu' ? 'süresi doldu (30 gün)' : x.durum}</Cip>}
+          <span style={{ flex: 1, minWidth: 220 }}>
+            <b>{x.sube}</b> · {yer(x.konum)} · {x.urun_sayi} ürün{x.isteyen ? ` · ${x.isteyen}` : ''}{x.istenme ? ` · ${tKisa(x.istenme.slice(0, 10))} ${x.istenme.slice(11, 16)}` : ''}
+            {x.durum === 'onaylandi' && <> · sayan <b>{x.sayan || '?'}</b> · {x.farklar.length ? x.farklar.map((f) => `${adlar[f.urun_id] || 'ürün'} ${f.fark > 0 ? '+' : ''}${f.fark}`).join(', ') : 'fark yok ✓'}</>}
+            {x.durum === 'iptal' && x.mesaj ? <span style={{ color: R.not }}> · {x.mesaj}</span> : null}
+          </span>
+          {x.acik && x.durum !== 'isleniyor' && yapabilir('depo.sayim.islem') && <Dugme kucuk disabled={mesgul === x.id} onClick={() => iptal(x)}>İptal</Dugme>}
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function Nerede({ onToast }) {
   const [v, hata, yukle, setEvren] = useOzet();
+  const [istekler, setIstekler] = useState(null);
+  const istekYukle = useCallback(() => api('/evvel-yeni/panel/urun-sayim-istekleri').then((r) => setIstekler(r?.istekler || [])).catch(() => setIstekler([])), []);
+  useEffect(() => { istekYukle(); }, [istekYukle]);
+  const sayimIste = async (k, liste) => {   // 📦 adım 154: kırmızı ürünlerin sayımı şubeden istenir
+    const sube = (k.ad || '').replace(' · bar', '');
+    if (!(await sor({ soru: `${sube} ${k.id.startsWith('bar:') ? 'bar' : 'depo'} · ${liste.length} ürün sayılsın mı? (${liste.slice(0, 4).map((x) => x.ad).join(', ')}${liste.length > 4 ? '…' : ''}) — şube paneli sayılana kadar kilitlenir.`, tamam: '📦 Sayım iste' }))) return;
+    try {
+      const r = await api('/evvel-yeni/panel/urun-sayim-istek', { method: 'POST', body: { konum: k.id, urun_idler: liste.map((x) => x.urun_id) } });
+      onToast?.(r?.mesaj || 'Sayım istendi'); istekYukle();
+    } catch (e) { onToast?.(e?.message || 'Sayım istenemedi'); }
+  };
   const [ara, setAra] = useState('');
   // F5.3 S-1: Bekleyen "Stok eksi › Depo" ?eksi=1 ile gelir → yalnız eksiler süzülü açılır
   const [sadeceEksi, setSadeceEksi] = useState(() => { try { return new window.URLSearchParams(window.location.search).get('eksi') === '1'; } catch { return false; } });
@@ -96,6 +141,9 @@ function Nerede() {
   let sonKat = null;
   const hucre = { padding: '5px 8px', borderTop: '1px solid var(--pi-line)', fontSize: 13 };
   const subeK = v.konumlar.filter((k) => k.id.startsWith('depo:') || k.id.startsWith('bar:'));   // sahip: yolda / askıda kendi sekmesinde, burada karışmasın
+  const isteyebilir = yapabilir('depo.sayim.islem') && (v.evren || 'yeni') === 'yeni';
+  const kirmizi = (k) => v.satirlar.filter((s) => s.bakiye[k.id] < 0);
+  const adlar = Object.fromEntries(v.satirlar.map((s) => [s.urun_id, s.ad]));
   return (
     <div className="pi" style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
       <style>{PI_CSS}</style>
@@ -109,6 +157,7 @@ function Nerede() {
         </span>
       </div>
       <div style={{ fontSize: 12.5, color: R.not }}>{v.not}</div>
+      <IstenenSayimlar istekler={istekler} adlar={adlar} yukle={() => { istekYukle(); yukle(); }} onToast={onToast} />
       <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
         {v.konumlar.filter((k) => k.id.startsWith('depo:') || k.id.startsWith('bar:')).map((k) => (
           <Cip key={k.id} tur={k.acilis_sayimi ? 'yesil' : 'sari'}>{k.ad}: {k.acilis_sayimi ? `açılış sayımı var${k.son_sayim ? ` · son ${tKisa(k.son_sayim)}` : ''}` : 'açılış sayımı YOK'}</Cip>
@@ -118,7 +167,9 @@ function Nerede() {
         <table style={{ borderCollapse: 'collapse', width: '100%', minWidth: 760 }}>
           <thead><tr style={{ fontSize: 12, color: R.metin2, textAlign: 'right' }}>
             <th style={{ ...hucre, textAlign: 'left', borderTop: 'none' }}>Ürün</th>
-            {subeK.map((k) => <th key={k.id} style={{ ...hucre, borderTop: 'none' }}>{k.ad}</th>)}
+            {subeK.map((k) => { const kr = isteyebilir ? kirmizi(k) : []; return (
+              <th key={k.id} style={{ ...hucre, borderTop: 'none' }}>{k.ad}
+                {kr.length > 0 && <div><Dugme kucuk onClick={() => sayimIste(k, kr)}>📦 Kırmızıları say ({kr.length})</Dugme></div>}</th>); })}
           </tr></thead>
           <tbody>{satirlar.map((s) => {
             const baslik = s.kategori !== sonKat ? s.kategori : null;
@@ -136,6 +187,8 @@ function Nerede() {
                           width: '100%', border: 'none', background: b < 0 ? `color-mix(in srgb, ${R.kirmizi} 14%, transparent)` : 'transparent', cursor: 'pointer',
                           font: 'inherit', ...num, fontWeight: b ? 700 : 400, color: b < 0 ? R.kirmizi : b ? 'var(--pi-ink)' : R.not, padding: '4px 6px', borderRadius: 6, textAlign: 'right',
                         }}>{b || '·'}</button>
+                        {b < 0 && isteyebilir && <button type="button" onClick={() => sayimIste(k, [s])} title="Bu ürünün sayımını şubeden iste"
+                          style={{ border: 'none', background: 'transparent', color: R.kirmizi, cursor: 'pointer', fontSize: 11, padding: '0 4px', font: 'inherit' }}>📦 Sayım iste</button>}
                       </td>
                     );
                   })}
