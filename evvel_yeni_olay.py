@@ -176,11 +176,19 @@ def olaylar(cur, sube_id: Optional[str] = None, bas: Any = None, son: Any = None
             continue
         if r["kok"] not in son_surum or r["surum"] > son_surum[r["kok"]]["surum"]:
             son_surum[r["kok"]] = r
+    ilk = {}   # Fable L4b (10 Kas): kökün İŞLEM anı = son iptalden sonraki İLK sürümün zamanı (merkez düzeltmesi yeni sürüm yazar,
+    # kapanış saati kaymasın — devir defteri / vardiya kasası / bugünkü liste bunu okur; olay_zamani defterde dürüst kalır)
+    for r in rows:
+        if r["tur"] == "iptal" or (r["kok"] in iptal and r["olay_zamani"] <= iptal[r["kok"]]):
+            continue
+        if r["kok"] not in ilk or r["olay_zamani"] < ilk[r["kok"]]:
+            ilk[r["kok"]] = r["olay_zamani"]
     out = []
     for r in son_surum.values():
         if turler and r["tur"] not in turler:
             continue
         r["iptal"] = r["kok"] in iptal and iptal[r["kok"]] >= r["olay_zamani"]
+        r["islem_zamani"] = ilk.get(r["kok"], r["olay_zamani"])
         out.append(r)
     out.sort(key=lambda r: r["olay_zamani"])
     return out

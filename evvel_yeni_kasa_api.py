@@ -3292,20 +3292,21 @@ def _tablo_var(cur) -> bool:
     return __import__("evvel_yeni_cekirdek").tablo_var(cur, "para_izi_hareket")   # çekirdek (F#14)
 
 
-def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None, pos=None, online=None) -> None:
+def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None, pos=None, online=None) -> str:
     """Panel kapanışı (X raporu) → Para İzi kapanış beyanı. Onaylanmamışsa şube
-    düzeltince tutar güncellenir (beyan); onaylanmışsa tutar DEĞİŞMEZ, not düşülür."""
+    düzeltince tutar güncellenir (beyan); onaylanmışsa tutar DEĞİŞMEZ, not düşülür.
+    Döner (Fable L4b 10 Kas — merkez düzeltmesi sessiz kalmasın): yok · yazildi · ayni · guncellendi · not_dusuldu · yazilamadi"""
     try:
         with savepoint(cur, "sp_pi_panel_kapanis"):
             if not _tablo_var(cur) or not _try_kilit(cur):
-                return
+                return "yazilamadi"
             g = gun.isoformat() if hasattr(gun, "isoformat") else str(gun)[:10]
             if g < _baslangic(cur).isoformat():
-                return
+                return "yok"
             cep = "sube:" + str(sube_id)
             cur.execute("SELECT 1 FROM para_izi_cep WHERE id=%s", (cep,))
             if not cur.fetchone():
-                return
+                return "yok"
             n, k = _kurus(round(float(nakit or 0), 2)), _kurus(round(float(kart or 0), 2))   # panel float gönderir
             ayrim = {} if pos is None else {"pos": _kurus(round(float(pos or 0), 2)), "online": _kurus(round(float(online or 0), 2))}
             ref = f"kapanis:{sube_id}:{g}"
@@ -3324,10 +3325,10 @@ def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None,
                          veri={"kart": k, "eski_kaynak": "panel", **ayrim, "sayimdan_sonra": True,
                                "panel_sonradan": [{"nakit": n, "kart": k, **ayrim, "zaman": _simdi_iso()}]},
                          kaynak_ref=ref)
-                    return
+                    return "not_dusuldu"
                 _yaz(cur, "kapanis", g, "şube paneli" + (f" · {kim}" if kim else ""), cep=cep, tutar=n,
                      durum="bekliyor", veri={"kart": k, "eski_kaynak": "panel", **ayrim}, kaynak_ref=ref)
-                return
+                return "yazildi"
             r = dict(r)
             veri = __import__("evvel_yeni_cekirdek").json_ac(r["veri"], {})
             ayni_ayrim = not ayrim or (int(veri.get("pos", -1)) == ayrim["pos"] and int(veri.get("online", -1)) == ayrim["online"])
@@ -3343,14 +3344,15 @@ def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None,
                     # Codex: panel Kasa'daki tutara GERİ döndü → eski 'sonradan' bildirimi kapansın
                     veri["panel_sonradan"].append({**yeni_s, "zaman": _simdi_iso()})
                     cur.execute("UPDATE para_izi_hareket SET veri=%s::jsonb WHERE id=%s", (json.dumps(veri, ensure_ascii=False), r["id"]))
-                return
+                return "ayni"
             if not guncellenebilir and {a: son_s.get(a) for a in yeni_s} == yeni_s:
-                return   # Fable S: aynı beyan yeniden geldi — not çoğalmasın, Gördüm bozulmasın (güncellenebilir kayıtta bu kıyas YAPILMAZ — Codex)
+                return "not_dusuldu"   # Fable S: aynı beyan yeniden geldi — not çoğalmasın, Gördüm bozulmasın (güncellenebilir kayıtta bu kıyas YAPILMAZ — Codex)
             if guncellenebilir:
                 veri["kart"] = k
                 veri.update(ayrim)
                 cur.execute("UPDATE para_izi_hareket SET tutar=%s, veri=%s::jsonb WHERE id=%s",
                             (n, json.dumps(veri, ensure_ascii=False), r["id"]))
+                return "guncellendi"
             else:
                 veri.setdefault("panel_sonradan", []).append({**yeni_s, "zaman": _simdi_iso()})
                 veri.pop("sonradan_goruldu", None)   # yeni değişiklik → merkez yeniden görsün (Bekleyen işler)
@@ -3358,8 +3360,10 @@ def panel_kapanis_yaz(cur, sube_id, gun, nakit, kart, kim: Optional[str] = None,
                             (json.dumps(veri, ensure_ascii=False), r["id"]))
                 log.warning("evvel-yeni kasa: %s kapanış panelde değişti %s %s — tutar değişmedi, not düştü",
                             "sayımlı" if sayimli else "onaylı", cep, g)
+                return "not_dusuldu"
     except Exception as e:  # noqa: BLE001 — panel ASLA durmaz
         log.warning("evvel-yeni kasa panel kapanış yazılamadı: %s", str(e)[:200])
+    return "yazilamadi"
 
 
 def _yetim_teslimler(cur, canli: set, bas) -> set:

@@ -206,6 +206,7 @@ _Y = [
     ("POST", "/odeme/personel-ucret", "tanim.personel.islem"), ("POST", "/odeme/patron-ata", "odeme.patron.islem"),
     # şube paneli — merkezin Bekleyen işler eylemleri kapıda; geri kalanı şube PC (cihaz) → kapı dışı
     ("POST", "/panel/ara-sayim-gordum", "isler.kasa.islem"), ("POST", "/panel/gec-kapanis", "isler.kasa.islem"),
+    ("POST", "/panel/kapanis-duzelt", "isler.kasa.islem"),   # sahip 10 Kas: kapanış nakit / POS düzeltmesi (merkez)
     ("POST", "/panel/kapanis-uyari-gordum", "isler.kasa.islem"), ("POST", "/panel/not-gordum", "isler.notlar.islem"),
     ("*", "/panel/{x}", None), ("*", "/panel/{x}/{y}", None), ("*", "/panel/{x}/{y}/{z}", None), ("*", "/panel/{x}/{y}/{z}/{w}", None),
     # satış

@@ -403,7 +403,7 @@ def panel_durum(sube_id: str):
             log.warning("panel durum: olağan açış okunamadı", exc_info=True)
         toptancilar = [{"id": str(t["id"]), "ad": t["ad"], "kategori": t.get("kategori")} for t in sl.get("toptancilar") or []]
         kat = [{**k, "urunler": [x for x in k["urunler"] if x.get("aktif", True)]} for k in kat_hepsi if k.get("aktif", True)]
-        bugunku = [{"id": o["id"], "tur": o["tur"], "zaman": str(o["olay_zamani"])[11:16], "kim": o.get("personel_ad"),
+        bugunku = [{"id": o["id"], "tur": o["tur"], "zaman": str(o.get("islem_zamani") or o["olay_zamani"])[11:16], "kim": o.get("personel_ad"),
                     "iptal": o.get("iptal", False)}
                    for o in olaylar(cur, sube_id=sube_id, bas=gun, son=gun) if (o.get("kaynak_tablo") or "") == "panel"]
         bas = _baslangic(cur, sube_id)
@@ -2329,6 +2329,66 @@ def gec_kapanis(body: DenemeBody, x_evvel_oturum: Optional[str] = Header(default
     sonuc = _kapanis_yaz(r["sube_id"], kb, gun=r["is_gunu"], merkez=kim, isle_deneme=body.deneme_id,
                          telefonsuz=telefonsuz if isinstance(telefonsuz, dict) else None)
     return {"ok": True, "mesaj": "Geç kapanış işlendi", "sonuc": sonuc}
+
+
+class KapanisDuzeltBody(BaseModel):
+    sube_id: str
+    gun: str
+    nakit: TrTutar
+    pos: TrTutar
+    online: TrTutar = Decimal(0)
+    sebep: str
+
+
+_KASA_SONUC = {"guncellendi": "Kasa da güncellendi", "ayni": "Kasa zaten doğruydu",
+               "not_dusuldu": "Kasa kaydı onaylı / sayılmış — tutar değişmedi, Bekleyen işler'e 'Panel kapanışı sonradan değişti' düştü",
+               "yazildi": "Kasa'ya kapanış yazıldı", "yok": "Kasa'da bu şube / gün için kayıt açılmadı"}
+
+
+@router.post("/kapanis-duzelt")
+def kapanis_duzelt(body: KapanisDuzeltBody, x_evvel_oturum: Optional[str] = Header(default=None)):
+    """Merkez (sahip 10 Kas "tema kapanışı postla nakitin yerleri ters yazılmış" · Fable L4b): panel kapanışının nakit / POS / online
+    beyanını düzeltir. Kapanış olayına AYNI kökte yeni sürüm (veri aynen, yalnız ciro + düzeltme izi; kaynak 'panel' kalır,
+    teslim / sayım / yoklama yeniden yazılmaz) + aynı işlemde Kasa'nın PUBLIC panel_kapanis_yaz'ı (onaysız kayıt güncellenir,
+    onaylı / sayılmışta 'sonradan değişti' notu). Kapanış ANI kaymaz: okuyucular olaylar().islem_zamani'nı kullanır."""
+    sebep = (body.sebep or "").strip()
+    if len(sebep) < 10:
+        raise HTTPException(400, "Neden düzelttiğini yaz (en az 10 harf)")
+    try:
+        g = date.fromisoformat(str(body.gun)[:10])
+    except ValueError:
+        raise HTTPException(400, "Gün YYYY-AA-GG olmalı")
+    nakit, pos, onl = _tl(body.nakit, "Nakit"), _tl(body.pos, "POS"), _tl(body.online, "Online")
+    from evvel_yeni_olay import olay_yaz, olaylar
+    from evvel_yeni_kasa_api import panel_kapanis_yaz
+    with db() as (conn, cur):
+        kim = merkez_aktor(cur, x_evvel_oturum)
+        _sube(cur, body.sube_id)
+        if g < _baslangic(cur, body.sube_id):
+            raise HTTPException(409, "Bu gün şubenin gerçek kayıt başlangıcından önce (prova) — düzeltilmez")
+        kok = panel_kok("kapanis", body.sube_id, g.isoformat())
+        o = next((x for x in olaylar(cur, sube_id=body.sube_id, bas=g, son=g, turler={"kapanis"})
+                  if x["kok"] == kok and (x.get("kaynak_tablo") or "") == "panel"), None)
+        if not o:
+            raise HTTPException(404, "Bu günün panel kapanışı bulunamadı")
+        if o.get("iptal"):
+            raise HTTPException(409, "Bu kapanış iptal edilmiş")
+        v = __import__("evvel_yeni_cekirdek").json_ac(o.get("veri"), {})
+        eski = {"nakit": int(v.get("nakit") or 0), "pos": int(v.get("pos") or 0), "online": int(v.get("online") or 0)}
+        yeni = {"nakit": nakit, "pos": pos, "online": onl}
+        if eski != yeni:   # Fable: düzeltme izinde ZAMAN yok (kaynak_ref = gövde özeti — tekrar gönderim yeni sürüm doğurmasın; zaman sütunda)
+            v.update(yeni)
+            v["duzeltmeler"] = list(v.get("duzeltmeler") or []) + [{"eski": eski, "kim": kim, "sebep": sebep[:200]}]
+            olay_yaz(cur, sube_id=body.sube_id, tur="kapanis", is_gunu=g, kok=kok, veri=v, kaynak_tablo="panel",
+                     personel_id=o.get("personel_id"), personel_ad=o.get("personel_ad"), tutar=Decimal(nakit) / 100,
+                     neden=f"merkez düzeltme · {kim} · {sebep}"[:300])
+        # Kasa her durumda aynı kapıdan eşitlenir (panel zaten doğruysa da Kasa eski kalmış olabilir)
+        ks = panel_kapanis_yaz(cur, body.sube_id, g, Decimal(nakit) / 100, Decimal(pos + onl) / 100, f"merkez düzeltme · {kim}",
+                               pos=Decimal(pos) / 100, online=Decimal(onl) / 100)
+        if ks == "yazilamadi":
+            raise HTTPException(503, "Kasa güncellenemedi — tekrar dene (hiçbir şey değişmedi)")
+    return {"ok": True, "panel": "değişmedi (zaten böyleydi)" if eski == yeni else "düzeltildi", "kasa": ks,
+            "mesaj": ("Panel kapanışı zaten bu rakamlardaydı" if eski == yeni else "Panel kapanışı düzeltildi") + " · " + _KASA_SONUC.get(ks, ks)}
 
 
 def _kapanis_isleri(cur) -> list:

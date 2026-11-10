@@ -308,11 +308,11 @@ def son_sayimlar(cur, gun) -> dict:
         if tutar is None:
             continue
         kim = ((v.get("devralan") or {}).get("ad") or o.get("personel_ad")) if tur == "vardiya" else o.get("personel_ad")
-        anahtar = (o["is_gunu"].isoformat(), str(o.get("olay_zamani") or ""), str(o.get("id") or ""))   # Fable: önce iş günü (geç girilen eski kapanış bugünü geçmez)
+        anahtar = (o["is_gunu"].isoformat(), str(o.get("islem_zamani") or o.get("olay_zamani") or ""), str(o.get("id") or ""))   # Fable: önce iş günü (geç girilen eski kapanış bugünü geçmez)
         if sid not in out or anahtar >= out[sid]["_k"]:
-            out[sid] = {"tutar": tutar, "kim": kim, "_k": anahtar, "ts": o.get("olay_zamani"),
+            out[sid] = {"tutar": tutar, "kim": kim, "_k": anahtar, "ts": o.get("islem_zamani") or o.get("olay_zamani"),
                         "tur": {"acilis": "sabah", "vardiya": "devir", "ara_sayim": "ara", "kapanis": "kapanis"}[tur],
-                        "gun": o["is_gunu"].isoformat(), "saat": tr_saat(o.get("olay_zamani"), o["is_gunu"])}
+                        "gun": o["is_gunu"].isoformat(), "saat": tr_saat(o.get("islem_zamani") or o.get("olay_zamani"), o["is_gunu"])}
     for sid, x in out.items():
         k = x.pop("_k")
         x["sonra"] = [{"tutar": _kr_tl(t["v"].get("tutar")), "ne": "ara teslim", "ts": t.get("olay_zamani"), "kok": t.get("kok"),
@@ -866,7 +866,7 @@ def _devir_defteri_yeni(ay: Optional[str] = None, hafif: bool = False):
             if k:
                 kv = k["v"]
                 tes = kv.get("teslimler") or []
-                aksam = {"kim": k.get("personel_ad"), "saat": tr_saat(k.get("olay_zamani"), g), "kor_toplam": tl(kv.get("kor_sayim")),
+                aksam = {"kim": k.get("personel_ad"), "saat": tr_saat(k.get("islem_zamani") or k.get("olay_zamani"), g), "kor_toplam": tl(kv.get("kor_sayim")),
                          "teslim": sum(int(t.get("tutar") or 0) for t in tes) / 100,
                          "kime": ", ".join(f"{alan_ad.get(t.get('alan'), t.get('alan'))} {int(t.get('tutar') or 0) / 100:.0f}" for t in tes) or None,
                          "ara_teslim": ", ".join(ara) or None, "birakilan": tl(kv.get("birakilan"))}
@@ -960,7 +960,7 @@ def _vardiya_kasa(cur, kayit, C, sid, g, a, vd, k, teslimler, vardiya_bardaklari
     if vv.get("merkez_istisna") and not _zaman(vv.get("sayim_ts")):   # Opus N1: merkez kapattı, sayım anı yok → kapatma anı sınır OLAMAZ
         return {"neden": "merkez kapattı, sayım anı belirsiz — vardiyaya bölünemedi"}
     kesim = _zaman(vv.get("sayim_ts")) or _zaman(vd.get("olay_zamani"))   # Opus Y2: gerçek SAYIM anı (merkez saatler sonra kapatsa da)
-    kap_ts = _zaman(k.get("olay_zamani"))
+    kap_ts = _zaman(k.get("islem_zamani") or k.get("olay_zamani"))   # merkez düzeltmesi kapanış anını kaydırmaz (Fable L4b 10 Kas)
     if None in (av.get("kasa_sayim"), vv.get("sayilan"), kv.get("kor_sayim"), kv.get("nakit")) or not kesim or not kap_ts:
         return {"neden": "sabah / devir / akşam sayımı ya da nakit satış eksik"}
     gi = g.isoformat()

@@ -9,6 +9,7 @@ import React, { useEffect, useRef, useState } from 'react';
 import { api } from '../../utils/api';
 import { AySecici, Cip, Dugme, fmt, kart, num, PI_CSS, R, tKisa, useSonIstek } from './KasaModulu';
 import { ayTR, gunKaydir, tarihKaydir } from '../../utils/trTarih';
+import { yapabilir } from './yetki';   // 🔐 işlem düğmesi izni (sunucu da engeller)
 
 // Sahip: "Beklenen satışı AYRI sekme yap; ilk alanda KESİN veriler (satılan, fire, kasa açığı) olsun."
 export const SATIS_SAYFALAR = [
@@ -25,6 +26,55 @@ const DURUM = {
   birikiyor: { tur: undefined, ad: 'Referans oluşuyor' },
   hesaplanmadi: { tur: undefined, ad: 'Veri eksik' },
 };
+
+// ── 🧾 KAPANIŞ NAKİT / POS DÜZELT (sahip 10 Kas "tema kapanışı postla nakitin yerleri ters yazılmış" · Fable L4b): panel kapanışının
+// ciro beyanı merkezden düzeltilir — panel olayı yeni sürüm + Kasa aynı kapıdan (sunucu: /panel/kapanis-duzelt). Kör sayım yanında.
+const tlYaz = (x) => (x == null || x === '' ? '' : String(x).replace('.', ','));
+function KapanisDuzelt({ subeId, gun, ciro, m, onBitti }) {
+  const [acik, setAcik] = useState(false);
+  const [f, setF] = useState({ nakit: '', pos: '', online: '', sebep: '' });
+  const [mesgul, setMesgul] = useState(false);
+  const [mesaj, setMesaj] = useState('');
+  // Fable L6: panel BRÜT nakdi (Kasa'daki 'kartla ödenmiş' düzeltmesi düşülmeden) — sunucu düzeltmeyi kendisi düşer, çift düşüm olmasın
+  const panelNakit = m?.z_nakit != null ? Math.round((m.z_nakit + (m.z_duzeltme || 0)) * 100) / 100 : null;
+  const ac = () => { setF({ nakit: tlYaz(panelNakit ?? ciro?.nakit), pos: tlYaz(ciro?.pos ?? ''), online: tlYaz(ciro?.online || 0), sebep: '' }); setMesaj(''); setAcik(true); };
+  const sayi = (t) => { const n = Number(String(t || '').replace(/\./g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
+  const yeniTop = sayi(f.nakit) + sayi(f.pos) + sayi(f.online);
+  const kaydet = async () => {
+    setMesgul(true); setMesaj('');
+    try {
+      const r = await api('/evvel-yeni/panel/kapanis-duzelt', { method: 'POST', body: { sube_id: subeId, gun, nakit: f.nakit, pos: f.pos, online: f.online || '0', sebep: f.sebep } });
+      setMesaj(`✓ ${r?.mesaj || 'Düzeltildi'}`); setAcik(false); onBitti?.();
+    } catch (e) { setMesaj(e?.message || 'Kaydedilemedi'); }
+    setMesgul(false);
+  };
+  if (!yapabilir('isler.kasa.islem')) return null;
+  if (!acik) return <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}><Dugme kucuk onClick={ac}>🧾 Kapanış nakit / POS düzelt</Dugme>{mesaj && <span style={{ fontSize: 12.5, color: mesaj.startsWith('✓') ? R.yesil : R.kirmizi }}>{mesaj}</span>}</div>;
+  const alan = { font: 'inherit', padding: '6px 8px', borderRadius: 8, border: '1px solid var(--pi-line)', background: 'var(--pi-paper)', color: 'var(--pi-ink)', width: '100%', minWidth: 0 };
+  return (
+    <div style={{ border: '1px solid var(--pi-line)', borderRadius: 9, padding: 10, display: 'grid', gap: 8, fontSize: 13 }}>
+      <b>🧾 Kapanış nakit / POS düzelt</b>
+      <div style={{ color: R.metin2, fontSize: 12.5 }}>{ciro ? <>Kasa'daki ciro: nakit <b>{fmt(ciro.nakit)}</b> · POS <b>{fmt(ciro.pos)}</b>{ciro.online ? <> · online <b>{fmt(ciro.online)}</b></> : null}</> : <span style={{ color: R.amber }}>Kasa'da bu güne kapanış kaydı yok — düzeltince yazılır</span>}
+        {m?.z_duzeltme ? <> · kartla ödenmiş düzeltmesi <b>−{fmt(m.z_duzeltme)}</b> (Kasa kendisi düşer)</> : null}
+        {panelNakit != null && Math.abs(panelNakit - (m.z_duzeltme || 0) - (ciro?.nakit || 0)) >= 1 ? <> · <span style={{ color: R.amber }}>panel kapanışındaki nakit <b>{fmt(panelNakit)}</b></span></> : null}
+        {m?.kor_sayim != null ? <> · akşam kör sayım <b>{fmt(m.kor_sayim)}</b></> : null}</div>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8 }}>
+        <label>Nakit<input style={alan} inputMode="decimal" value={f.nakit} onChange={(e) => setF({ ...f, nakit: e.target.value })} /></label>
+        <label>POS<input style={alan} inputMode="decimal" value={f.pos} onChange={(e) => setF({ ...f, pos: e.target.value })} /></label>
+        <label>Online<input style={alan} inputMode="decimal" value={f.online} onChange={(e) => setF({ ...f, online: e.target.value })} /></label>
+      </div>
+      <div><Dugme kucuk onClick={() => setF({ ...f, nakit: f.pos, pos: f.nakit })}>⇄ Nakit ile POS'u ters çevir</Dugme></div>
+      {ciro && Math.abs(yeniTop - (m?.z_duzeltme || 0) - (ciro.toplam || 0)) >= 1 && <div style={{ color: R.amber }}>Toplam ciro değişiyor: {fmt(ciro.toplam)} → {fmt(yeniTop)} ₺</div>}
+      <input style={alan} placeholder="Neden? (en az 10 harf — ör. POS ile nakit ters yazılmış)" value={f.sebep} onChange={(e) => setF({ ...f, sebep: e.target.value })} />
+      {mesaj && <div style={{ color: R.kirmizi }}>{mesaj}</div>}
+      <div style={{ display: 'flex', gap: 8 }}>
+        <Dugme kucuk ana disabled={mesgul || f.sebep.trim().length < 10} onClick={kaydet}>{mesgul ? 'Kaydediliyor…' : 'Düzelt'}</Dugme>
+        <Dugme kucuk onClick={() => setAcik(false)}>Vazgeç</Dugme>
+      </div>
+      <div style={{ color: R.not, fontSize: 11.5 }}>Kasa kaydı onaylı ya da çekmece sayılmışsa Kasa tutarı değişmez — Bekleyen işler'e "Panel kapanışı sonradan değişti" düşer.</div>
+    </div>
+  );
+}
 
 // ── 💵 KASA AÇIĞI — eski Evvel'in kapanış mutabakatı (sahip: "parasal açığı görmemiz lazım, Evvel bunu hesaplıyordu") ──
 function KasaAcigi({ m, ciro, teslimler = [] }) {
@@ -90,7 +140,8 @@ function GunlukDokum() {
     }).catch(() => { /* dün kalır */ });
     return () => { canli = false; };
   }, []);
-  useSonIstek(`/evvel-yeni/satis/gun?gun=${gun}`, setV, setHata, true);   // ortak 'son istek kazanır' (T4-09)
+  const [tazele, setTazele] = useState(0);   // kapanış düzeltmesinden sonra döküm yeniden okunur
+  useSonIstek(`/evvel-yeni/satis/gun?gun=${gun}${tazele ? `&t=${tazele}` : ''}`, setV, setHata, true);   // ortak 'son istek kazanır' (T4-09)
   const bugunGun = tarihKaydir(0);   // F1.10 (sim 25 Eki): › ile gelecek güne gidiliyordu — bugünden ileri gün yok
   const kaydir = (k) => setGun((g) => { const y = gunKaydir(g, k); return y > bugunGun ? bugunGun : y; });   // Fable: adresten ileri gün gelirse ‹ / › bugüne kırpar, takılmaz
   const acikYaz = (x) => (x == null ? '—' : Math.abs(x) < 1 ? 'yok' : x > 0 ? `${fmt(Math.round(x))} ₺ AÇIK` : `${fmt(Math.round(-x))} ₺ fazla`);
@@ -164,6 +215,7 @@ function GunlukDokum() {
               </div>
             )}
             <KasaAcigi m={s.kasa_mutabakat} ciro={s.ciro} teslimler={s.teslimler} />
+            {s.kasa_mutabakat?.z_nakit != null && <KapanisDuzelt subeId={s.sube_id} gun={gun} ciro={s.ciro} m={s.kasa_mutabakat} onBitti={() => setTazele(Date.now())} />}
           </div>
         ))}
       </div>}
