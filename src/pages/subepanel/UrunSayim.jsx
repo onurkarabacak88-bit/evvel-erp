@@ -1,11 +1,40 @@
 // 📦 MERKEZ ÜRÜN SAYIMI İSTEDİ — tam ekran (sahip 10 Kas "her kırmızı yanan yere sayım iste … panelde bütün işlem kilitlense … panelin
-// ortasında bu gözükse" · Fable L4b + Codex: kırmızı (birkaç ürün) PANELDE, bütün ürünler telefonda — adım 155). Ara kasa sayımı örüntüsü:
+// ortasında bu gözükse" · Fable L4b + Codex: kırmızı (birkaç ürün) PANELDE — adım 154; bütün ürünler telefonda — adım 156). Ara kasa sayımı örüntüsü:
 // ürünler KÖR sayılır (beklenen / fark ASLA gösterilmez) → 'Sayımı gönder' → ekranda QR → sayan kişi KENDİ telefonuyla onaylar.
 // Süre YOK (sayılana kadar); merkez isteği iptal edebilir. Sunucu: evvel_yeni_panel_api urun_sayim_* · kilit _sayim_kilidi (409).
 import React, { useEffect, useState } from 'react';
 import { BirimCipi, C, panelHata, panelYaz, qrBoyut, TabletQR, taslakOku, taslakYaz } from './ortak';
 
-export default function UrunSayim({ subeId, u, tabletVar, yenile }) {
+// 📋 BÜTÜN ÜRÜNLER (adım 156 · Codex karar A): sayım personelin TELEFONUNDA — panel yalnız kilit perdesi + ilerleme (form yok, rakam yok).
+function TamSayimPerde({ u }) {
+  const oran = u.toplam ? Math.round((u.dolu / u.toplam) * 100) : 0;
+  return (
+    <div className="sp-perde" style={{ position: 'fixed', inset: 0, zIndex: 75, background: 'rgba(5,8,15,.97)', display: 'flex', alignItems: 'center', justifyContent: 'center', padding: 16 }}>
+      <div className="sp-kart" style={{ width: 'min(600px,100%)', display: 'grid', gap: 14, textAlign: 'center', borderColor: C.sari }}>
+        <div style={{ fontSize: 44 }}>📋</div>
+        <b style={{ fontSize: 24 }}>Merkez bütün ürünlerin sayımını istiyor · {u.yer}</b>
+        {u.not && <div style={{ color: C.sari, fontWeight: 700 }}>📝 {u.not}</div>}
+        <div style={{ color: C.soluk }}>Panel sayım bitene kadar kilitli. Sayım <b style={{ color: C.yazi }}>telefondan</b> yapılır: içerideki biri telefonunda <b style={{ color: C.yazi }}>“📋 SAY”</b> kartına dokunsun.</div>
+        <div style={{ height: 14, borderRadius: 999, background: C.bg3, overflow: 'hidden' }}>
+          <div style={{ width: `${oran}%`, height: '100%', background: C.yesil, transition: 'width .3s' }} />
+        </div>
+        <b style={{ fontSize: 30 }}>{u.dolu} / {u.toplam}</b>
+        <div style={{ fontWeight: 700, color: u.ustlenen ? C.yesil : C.sari }}>
+          {u.ustlenen ? `${u.ustlenen} sayıyor${u.dk != null ? ` · son hareket ${u.dk} dk önce` : ''}` : 'Henüz kimse başlamadı'}
+        </div>
+        {u.durum === 'isleniyor' && <div style={{ color: C.sari, fontWeight: 700 }}>Sayım kaydediliyor…</div>}
+        {u.durum === 'hata' && u.mesaj && <div style={{ color: C.kirmizi, fontWeight: 700 }}>Kaydedilemedi: {u.mesaj} — telefondan yeniden “Bitir”</div>}
+        <div style={{ color: C.soluk, fontSize: 12.5 }}>Telefonu olmayan: telefonu bağlı bir arkadaş saysın ya da merkeze haber ver — merkez isteği iptal edebilir.</div>
+      </div>
+    </div>
+  );
+}
+
+export default function UrunSayim(props) {
+  return props.u?.kapsam === 'tam' ? <TamSayimPerde u={props.u} /> : <KirmiziSayim {...props} />;
+}
+
+function KirmiziSayim({ subeId, u, tabletVar, yenile }) {
   const anahtar = `sp_taslak:${subeId}:urun_sayim:${u.onay_id}`;
   const [say, setSay] = useState(() => ({ ...(taslakOku(anahtar) || {}), ...(u.sayilan || {}) }));   // 'hata'da sunucudaki sayılar geri gelir
   const [gonderildi, setGonderildi] = useState(!!u.gonderildi && u.durum !== 'hata');

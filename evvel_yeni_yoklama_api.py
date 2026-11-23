@@ -896,6 +896,18 @@ async def _telefon(request: Request, fn):
     return await run_in_threadpool(_is)
 
 
+def _urun_sayim_daveti(cur, sube_id: str) -> Optional[dict]:
+    """Panel'in PUBLIC okuyucusu (urun_sayim_davet) — yumuşak bağ: Panel kapalıysa (tak-çıkar) ya da okunamazsa davet yok."""
+    try:
+        if not __import__("evvel_yeni_moduller").acik("panel"):   # Codex L6: kapalı modülün görevi davet üretmesin
+            return None
+        with savepoint(cur, "sp_ben_urun_sayim"):
+            return __import__("evvel_yeni_panel_api").urun_sayim_davet(cur, sube_id)
+    except Exception:  # noqa: BLE001
+        log.warning("yoklama ben: ürün sayımı daveti okunamadı", exc_info=True)
+        return None
+
+
 @router.get("/ben")
 async def ben(request: Request, sube: Optional[str] = None, qr: Optional[str] = None):
     """Telefon ekranı: kim, hangi şube, bugün giriş / çıkış, yapabileceği tek düğme."""
@@ -944,8 +956,10 @@ async def ben(request: Request, sube: Optional[str] = None, qr: Optional[str] = 
             d = devir_durum(cur, str(son["sube_id"]))
             if d and d["durum"] in DEVIR_YENI_ACIK and p["id"] in (d.get("devreden_id"), d.get("devralan_id")):
                 devir = {"rol": "devreden" if p["id"] == d.get("devreden_id") else "devralan", "devreden": d.get("devreden"), "ev": True}
+        # 📋 merkez bütün ürünlerin sayımını istedi (adım 156) — yalnız o şubede İÇERİDE olana
+        urun_sayim = _urun_sayim_daveti(cur, str(son["sube_id"])) if acik and son.get("sube_id") and (not sube or son.get("sube_id") == sube) else None
         return {"kisi": p["ad"], "muaf": bool(p.get("konum_muaf")), "konum_gerekli": konum_gerekli(cur, str(sube or ""), p), "gun": is_gunu().isoformat(), "sube": sube, "sube_ad": sube_ad,
-                "mola": mola, "devir": devir,
+                "mola": mola, "devir": devir, "urun_sayim": urun_sayim,
                 "qr_gecerli": (qr_dogrula(cur, str(sube), qr or "") is not None) if sube else None,   # Fable #7: süresi dolan QR baştan söylensin
                 "yemek_tam": bool(p.get("mudur")),   # müdür: yemek mola şartsız tam (Maaş ile aynı kural; _personel 'mudur' hesaplar)
                 "acik": acik, "acik_sube": son.get("sube_id") if acik else None, "acik_sube_ad": son.get("sube_ad") if acik else None,

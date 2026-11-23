@@ -144,10 +144,11 @@ export default function TelefonSayfasi({ mod, davet, sube, jeton }) {
       <style>{CSS}</style>
       <SorKatmani />
       {mod === 'bagla' && <Bagla davet={davet} />}
-      {mod === 'qr' && (onayKimligi() ? <OnayIslem sube={sube} jeton={jeton} onay={onayKimligi()} />
+      {mod !== 'bagla' && sayimKimligi() ? <UrunSayimIslem oid={sayimKimligi()} /> : null}
+      {mod === 'qr' && !sayimKimligi() && (onayKimligi() ? <OnayIslem sube={sube} jeton={jeton} onay={onayKimligi()} />
         : devirKimligi() ? <DevirIslem sube={sube} jeton={jeton} did={devirKimligi()} />
         : teslimKimligi() ? <FaturaCek sube={sube} tid={teslimKimligi()} /> : <QrIslem sube={sube} jeton={jeton} />)}
-      {mod === 'durum' && <Ev />}
+      {mod === 'durum' && !sayimKimligi() && <Ev />}
     </div>
   );
 }
@@ -292,6 +293,7 @@ function QrIslem({ sube, jeton }) {
             {ben.acik && ben.acik_sube && ben.acik_sube !== sube && <div style={{ color: T.kirmizi, fontWeight: 700 }}>Önce {ben.acik_sube_ad || 'diğer şube'}'den çıkış yap</div>}
             {isHata && !(konumKarti && konumRet(isHata.metin)) && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata.metin}</div>}
             {(!qrOk || /süresi doldu/i.test(isHata?.metin || '')) && <QrOkut yazi="QR'ı yeniden okut" />}   {/* sahip 28 Eki: "yeniden okut" denince elde düğme olsun */}
+            <SayimDavet us={ben?.urun_sayim} />
             {devirVar && (<>   {/* v2: devir sayfasına davet — KÖR (rakam yok) */}
               <div style={{ background: '#FFF6EC', border: `1px solid ${T.aksan}`, borderRadius: 12, padding: '10px 12px', fontWeight: 700 }}>
                 💵 Kasa devri sürüyor — {devir.rol === 'devreden' ? 'kasa sende, sayıp devredeceksin' : `kasayı sen alacaksan kendi say${devir.devreden ? ` (veren: ${devir.devreden})` : ''}`}
@@ -485,6 +487,165 @@ function OnayIslem({ sube, jeton, onay }) {
             {!girisGerek && ozet.tur === 'kapanis' && (ben?.yapabilir || []).includes('cikis') && (<>
               <div className="tq-not">Kapanışı sen yapmıyorsan onaylama — yalnız çıkışını yap:</div>
               <button className="tq-btn tq-kucuk" disabled={mesgul || !konumHazir} onClick={async () => { if (await sor({ soru: 'Kapanışı SEN yapmıyorsun — yalnız çıkışın yazılsın mı?', alt: 'Kapanışçı olarak kaydedilmezsin.', tamam: '🚪 Evet, yalnız çıkış', iptal: 'Vazgeç' })) yap('cikis'); }}>{yazi('cikis', '🚪 Sadece çıkış yap')}</button>
+            </>)}
+          </>)}
+        </div>
+      )}
+    </>
+  );
+}
+
+// ── 📋 /q?us={görev}: MERKEZ BÜTÜN ÜRÜNLERİN SAYIMINI İSTEDİ (adım 156 · Codex karar A) — sayım bu telefonda. Kimlik cihazdan; ilk dokunan
+// ÜSTLENİR (tek kişi), 15 dk hareketsiz kalırsa başkası devralır, yazılanlar kalır. Her kutu sunucuya anında yazılır. KÖR: beklenen / fark YOK.
+const sayimKimligi = () => urlKimlik('us');
+
+function SayimDavet({ us }) {
+  if (!us?.oid) return null;
+  return (
+    <a className="tq-btn tq-ana" style={{ textDecoration: 'none', display: 'grid', gap: 2, textAlign: 'center' }} href={`/q?us=${encodeURIComponent(us.oid)}`}>
+      <span>📋 Merkez sayım istiyor · {us.yer} · {us.toplam} ürün — SAY</span>
+      <span style={{ fontSize: 13, fontWeight: 600 }}>{us.ustlenen ? `${us.ustlenen} sayıyor · ${us.dolu}/${us.toplam}` : us.dolu ? `${us.dolu}/${us.toplam} sayıldı — devam et` : 'henüz kimse başlamadı'}</span>
+    </a>
+  );
+}
+
+function UrunSayimIslem({ oid }) {
+  const bagli = !!cihazId('telefon');
+  const [b, setB] = useState(null);
+  const [hata, setHata] = useState('');
+  const [isHata, setIsHata] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+  const [sonuc, setSonuc] = useState(null);
+  const [say, setSay] = useState({});         // ekrandaki kutular (sunucuya yazılanla aynı tutulur)
+  const [kayit, setKayit] = useState({});     // urun_id → 'yaziliyor' | 'hata'
+  const [konum, konumAl] = useKonum(bagli);
+  const zamanlayici = useRef({});
+  const zincir = useRef({});    // ürün başına kayıtlar SIRAYLA (Codex L6: eski istek yeniyi ezmesin)
+  const sonDeger = useRef({});
+  const [bitiriliyor, setBitiriliyor] = useState(false);   // Bitir'den önce bekleyen kayıtlar gönderilirken kutular kilitli
+  const yol = `/api/evvel-yeni/panel/onay/${encodeURIComponent(oid)}/urun-sayim`;
+  const yukle = useCallback(() => {
+    if (!bagli) return;
+    setHata('');
+    imzaliJson('telefon', 'GET', yol).then((x) => { setB(x); setSay(Object.fromEntries(Object.entries(x.sayilan || {}).map(([k, v]) => [k, String(v)]))); })
+      .catch((e) => setHata(agMesaji(e, 'Okunamadı')));
+  }, [bagli, yol]);
+  useEffect(() => { yukle(); }, [yukle]);
+  if (!bagli) return <TanimliDegil />;
+
+  const ustlen = async () => {
+    if (mesgul) return;
+    setMesgul(true); setIsHata('');
+    try { const x = await imzaliJson('telefon', 'POST', `${yol}/ustlen`, {}); setB(x); setSay(Object.fromEntries(Object.entries(x.sayilan || {}).map(([k, v]) => [k, String(v)]))); }
+    catch (e) { setIsHata(agMesaji(e, 'Üstlenilemedi')); }
+    setMesgul(false);
+  };
+  const gonderSatir = async (uid, v) => {
+    try {
+      const x = await imzaliJson('telefon', 'POST', `${yol}/satir`, { urun_id: uid, sayilan: v === '' ? null : Number(v) });
+      setB((o) => (o ? { ...o, dolu: x.dolu } : o));
+      if (sonDeger.current[uid] === v) setKayit((o) => { const n = { ...o }; delete n[uid]; return n; });   // yenisi bekliyorsa işaret kalır
+      return true;
+    } catch (e) {
+      setKayit((o) => ({ ...o, [uid]: 'hata' }));
+      setIsHata(agMesaji(e, 'Kaydedilemedi — tekrar yaz'));
+      if (e?.status === 409) yukle();   // başkası devraldı / sayım kapandı
+      return false;
+    }
+  };
+  const kuyruga = (uid, v) => {
+    zincir.current[uid] = (zincir.current[uid] || Promise.resolve()).then(() => gonderSatir(uid, v));
+    return zincir.current[uid];
+  };
+  const yaz = (uid, v) => {
+    const t = v.replace(/\D/g, '').slice(0, 5);
+    setSay((o) => ({ ...o, [uid]: t }));
+    sonDeger.current[uid] = t;
+    setKayit((o) => ({ ...o, [uid]: 'bekliyor' }));   // Codex L6: yazar yazmaz "kaydedilmedi" sayılır — Bitir eski değerle gitmesin
+    window.clearTimeout(zamanlayici.current[uid]);
+    zamanlayici.current[uid] = window.setTimeout(() => { delete zamanlayici.current[uid]; kuyruga(uid, t); }, 600);   // yazmayı bitirince sunucuya
+  };
+  const hepsiniGonder = async () => {   // bekleyen kutuları hemen gönder + bütün kayıtları bekle
+    Object.entries(zamanlayici.current).forEach(([uid, tm]) => { window.clearTimeout(tm); delete zamanlayici.current[uid]; kuyruga(uid, sonDeger.current[uid]); });
+    const sonuc = await Promise.all(Object.values(zincir.current));
+    return sonuc.every((x) => x !== false);
+  };
+  const bitir = async () => {
+    if (mesgul || bitiriliyor) return;
+    const bos = (b?.urunler || []).filter((u) => (say[u.id] ?? '') === '');
+    if (bos.length) { setIsHata(`${bos.length} ürün boş — elde yoksa 0 yaz`); return; }
+    setBitiriliyor(true); setIsHata('');
+    try {
+      if (!(await hepsiniGonder())) { setIsHata('Bazı kutular kaydedilemedi — kırmızı kutuyu yeniden yaz'); return; }
+      if (!(await sor({ soru: 'Sayımı bitir?', alt: `${b.toplam} ürünün hepsi sayıldı. Bitirince merkeze gider, değiştirilemez.`, tamam: '✅ Bitir', iptal: 'Kontrol edeceğim' }))) return;
+      setMesgul(true);
+      const r = await imzaliJson('telefon', 'POST', `${yol}/bitir`, { lat: konum.lat, lng: konum.lng });
+      setSonuc(r);
+    } catch (e) { setIsHata(agMesaji(e, 'Bitirilemedi')); }
+    finally { setMesgul(false); setBitiriliyor(false); }
+  };
+  const ilkBos = () => {
+    const u = (b?.urunler || []).find((x) => (say[x.id] ?? '') === '');
+    if (u) { const el = document.getElementById(`us-${u.id}`); el?.scrollIntoView({ block: 'center' }); el?.focus(); }
+  };
+
+  const gruplar = [];
+  (b?.urunler || []).forEach((u) => { const son = gruplar[gruplar.length - 1]; if (son && son.ad === (u.kategori || '')) son.u.push(u); else gruplar.push({ ad: u.kategori || '', u: [u] }); });
+  const dolu = (b?.urunler || []).filter((u) => (say[u.id] ?? '') !== '').length;
+  const toplam = b?.toplam || 0;
+
+  return (
+    <>
+      <Marka alt={b?.sube_ad ? `${b.sube_ad} · ürün sayımı` : 'Ürün sayımı'} />
+      {sonuc ? (
+        <div className="tq-kart" style={{ textAlign: 'center' }}>
+          <div style={{ fontSize: 72, color: T.yesil, lineHeight: 1 }}>✓</div>
+          <b style={{ fontSize: 24 }}>Sayım bitti · {saatSimdi()}</b>
+          <div className="tq-not">{sonuc.mesaj}</div>
+          <div className="tq-silik">Panel kilidi birkaç saniye içinde kalkar.</div>
+          <a className="tq-btn tq-kucuk" href="/q" style={{ textDecoration: 'none' }}>Ana sayfa</a>
+        </div>
+      ) : (
+        <div className="tq-kart">
+          {hata && <><div style={{ color: T.kirmizi, fontWeight: 700 }}>{hata}</div><button className="tq-btn tq-kucuk" onClick={yukle}>Tekrar dene</button>
+            <a className="tq-btn tq-kucuk" href="/q" style={{ textDecoration: 'none' }}>Ana sayfa</a></>}
+          {!hata && !b && <div className="tq-not">Hazırlanıyor…</div>}
+          {b && (<>
+            <div style={{ fontSize: 22, fontWeight: 800 }}>📋 Bütün ürünler · {b.yer}</div>
+            {b.not && <div style={{ color: T.aksanKoyu, fontWeight: 700 }}>📝 {b.not}</div>}
+            <div className="tq-not">Her ürünü <b>tek tek say</b> ve yaz — elde yoksa <b>0</b>. Yazdığın her kutu hemen kaydedilir; telefon kapansa da kaybolmaz.</div>
+            {!b.ben ? (<>
+              {b.ustlenen ? <div style={{ color: T.kirmizi, fontWeight: 700 }}>{b.ustlenen} sayıyor ({b.dolu}/{b.toplam}). {b.devir_dk} dk hareketsiz kalırsa devralabilirsin.</div>
+                : <div className="tq-not">{b.devralinabilir ? 'Önceki sayan durdu — kaldığı yerden sen devam edebilirsin.' : `${b.toplam} ürün sayılacak.`}</div>}
+              {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata}</div>}
+              <button className="tq-btn tq-ana" disabled={mesgul || !!b.ustlenen} onClick={ustlen}>{mesgul ? 'Bekle…' : b.devralinabilir || b.dolu ? '📋 DEVAM ET — SAYIMI ÜSTLEN' : '📋 SAYIMA BAŞLA'}</button>
+              <button className="tq-btn tq-kucuk" onClick={yukle}>Yenile</button>
+            </>) : (<>
+              <div style={{ position: 'sticky', top: 0, zIndex: 2, background: T.kart, paddingBottom: 6, display: 'grid', gap: 6 }}>
+                <div style={{ height: 10, borderRadius: 999, background: T.yuzey, overflow: 'hidden' }}>
+                  <div style={{ width: `${toplam ? Math.round((dolu / toplam) * 100) : 0}%`, height: '100%', background: T.yesil }} />
+                </div>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <b>{dolu} / {toplam} yazıldı</b>
+                  {dolu < toplam && <button type="button" className="tq-btn tq-kucuk" style={{ width: 'auto', minHeight: 40 }} onClick={ilkBos}>İlk boşa git ↓</button>}
+                </div>
+              </div>
+              {b.durum === 'hata' && b.mesaj && <div style={{ color: T.kirmizi, fontWeight: 700 }}>Kaydedilemedi: {b.mesaj} — kontrol edip yeniden Bitir</div>}
+              {gruplar.map((g) => (
+                <div key={g.ad} style={{ display: 'grid', gap: 6 }}>
+                  <div style={{ position: 'sticky', top: 52, zIndex: 1, background: T.zemin, padding: '6px 8px', borderRadius: 8, fontWeight: 800 }}>{g.ad || 'Diğer'}</div>
+                  {g.u.map((u) => (
+                    <div key={u.id} style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 8px', borderRadius: 10, background: (say[u.id] ?? '') !== '' ? '#EEF7EE' : T.yuzey }}>
+                      <span style={{ flex: 1, fontWeight: 700 }}>{u.ad}<span className="tq-silik"> · {u.birim || 'adet'}{u.sayim_ici ? ` (1 = ${u.sayim_ici} tane)` : ''}</span></span>
+                      <input id={`us-${u.id}`} inputMode="numeric" autoComplete="off" placeholder="?" value={say[u.id] ?? ''} onChange={(e) => yaz(u.id, e.target.value)} disabled={bitiriliyor || mesgul}
+                        style={{ ...GIRDI, width: 96, textAlign: 'center', fontSize: 24, fontWeight: 800, padding: '6px 8px', borderColor: kayit[u.id] === 'hata' ? T.kirmizi : T.kenar }} />
+                    </div>
+                  ))}
+                </div>
+              ))}
+              {isHata && <div style={{ color: T.kirmizi, fontWeight: 700 }}>{isHata}</div>}
+              <div className="tq-not"><KonumSatiri muaf={false} konum={konum} konumAl={konumAl} /></div>
+              <button className="tq-btn tq-yesil" disabled={mesgul || bitiriliyor || dolu < toplam} onClick={bitir}>{mesgul || bitiriliyor ? 'Gönderiliyor…' : dolu < toplam ? `${toplam - dolu} ürün kaldı` : '✅ SAYIMI BİTİR'}</button>
             </>)}
           </>)}
         </div>
@@ -775,6 +936,7 @@ function SimdiKart({ ben, simdi }) {
             <b style={{ fontSize: 24, fontFamily: "'Fraunces', serif" }}>{ben.giris ? `${ben.giris}'den beri` : 'İçeridesin'}</b>
           </div>
         </div>
+        <SayimDavet us={ben.urun_sayim} />
         {ben.devir?.ev && (   // Fable T1 #2: devir bekliyor (yalnız rol + ad — tutar yok; işlem devir QR'ında)
           <div style={{ background: '#FFF6EC', border: `1px solid ${T.aksan}`, borderRadius: 12, padding: '10px 12px', fontWeight: 700 }}>
             💵 {ben.devir.rol === 'devralan' ? `${ben.devir.devreden || 'Arkadaşın'} kasayı sana devrediyor` : 'Kasa devrin sürüyor'} — paneldeki devir QR'ını okut

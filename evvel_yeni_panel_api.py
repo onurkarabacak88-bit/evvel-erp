@@ -1918,13 +1918,43 @@ def _sayim_kilidi(cur, c: dict, sube_id: str) -> None:
         raise HTTPException(409, "📦 Merkez ürün sayımı istedi — önce ekrandaki ürünleri say ve telefonla onayla")
 
 
+US_DEVIR_DK = 15   # 📋 tam sayım (telefonda): üstlenen 15 dk hareketsizse başka telefon devralır (yazılanlar kalır) — kasa devri penceresi
+
+
+def _us_dk(g: dict) -> Optional[int]:
+    """Üstlenenin son hareketinden bu yana dakika (yoksa None)."""
+    from datetime import datetime
+    ts = g.get("ustlenme_ts")
+    if not ts:
+        return None
+    try:
+        return max(0, int((__import__("evvel_yeni_cekirdek").simdi_tr() - datetime.fromisoformat(ts)).total_seconds() // 60))
+    except (TypeError, ValueError):
+        return None
+
+
+def _us_ilerleme(g: dict) -> dict:
+    """📋 tam sayım ilerlemesi — KÖR (yalnız kaç ürün dolduruldu; rakam yok)."""
+    say = g.get("sayilan") or {}
+    ids = [u["id"] for u in g.get("urunler") or []]
+    dk = _us_dk(g)
+    return {"toplam": len(ids), "dolu": sum(1 for i in ids if say.get(i) is not None), "ustlenen": g.get("ustlenen_ad"),
+            "ustlenen_id": g.get("ustlenen_id"), "dk": dk, "ustlenen_gecerli": bool(g.get("ustlenen_id")) and dk is not None and dk < US_DEVIR_DK}
+
+
 def _urun_sayim_durum(cur, sube_id: str) -> Optional[dict]:
-    """/durum için KÖR görünüm: ürün adı · birim · paket içi — defter / fark / isteyen notu dışında hiçbir rakam yok."""
+    """/durum için KÖR görünüm: ürün adı · birim · paket içi — defter / fark / isteyen notu dışında hiçbir rakam yok.
+    📋 tam sayım (telefonda, adım 156): ürün listesi panele DÖNMEZ — yalnız ilerleme + üstlenen."""
     r = _urun_sayim_satir(cur, sube_id)
     if not r:
         return None
     g = __import__("evvel_yeni_cekirdek").json_ac(r["govde"], {})
     konum = g.get("konum") or ""
+    if g.get("kapsam") == "tam":
+        il = _us_ilerleme(g)
+        return {"onay_id": r["id"], "konum": konum, "yer": "bar (tezgah)" if konum.startswith("bar:") else "depo", "kapsam": "tam",
+                "not": g.get("not"), "toplam": il["toplam"], "dolu": il["dolu"], "ustlenen": il["ustlenen"] if il["ustlenen_gecerli"] else None,
+                "dk": il["dk"], "durum": r["durum"], "mesaj": r.get("mesaj")}
     return {"onay_id": r["id"], "konum": konum, "yer": "bar (tezgah)" if konum.startswith("bar:") else "depo", "kapsam": g.get("kapsam"),
             "not": g.get("not"), "urunler": [{k: u.get(k) for k in ("id", "ad", "birim", "sayim_ici", "paket_esik")} for u in g.get("urunler") or []],
             "gonderildi": g.get("sayilan") is not None, "sayilan": g.get("sayilan") if r["durum"] == "hata" else None,
@@ -1933,7 +1963,8 @@ def _urun_sayim_durum(cur, sube_id: str) -> Optional[dict]:
 
 class UrunSayimIstekBody(BaseModel):
     konum: str                     # depo:{şube} · bar:{şube}
-    urun_idler: List[str]
+    urun_idler: List[str] = []
+    kapsam: Optional[str] = None   # None / 'kirmizi' (seçili ürünler, panelde) · 'tam' (bütün ürünler, TELEFONDA — adım 156)
     not_: Optional[str] = Field(None, alias="not")
 
     model_config = {"populate_by_name": True}
@@ -1942,12 +1973,18 @@ class UrunSayimIstekBody(BaseModel):
 @router.post("/urun-sayim-istek")
 def urun_sayim_istek(body: UrunSayimIstekBody, x_evvel_oturum: Optional[str] = Header(default=None)):
     """Merkez Depo › Nerede?: seçili (kırmızı) ürünlerin sayımını şubeden ister. Aynı şubede tek açık istek — aynı konumdaki açık
-    isteğe (henüz gönderilmemişse) ürün EKLENİR. Pasta (gününde tüketilen) süzülür. Şube panelinde sayılana kadar işlem kilitli."""
+    isteğe (henüz gönderilmemişse) ürün EKLENİR. Pasta (gününde tüketilen) süzülür. Şube panelinde sayılana kadar işlem kilitli.
+    kapsam='tam' (sahip 10 Kas "bütün ürünleri say" · Codex A): liste İSTEK ANINDA dondurulur — bar:X tezgahta sayılanlar (kapanış
+    listesi), depo:X aktif katalog − pasta; sayım personelin TELEFONUNDA (panel yalnız kilit + ilerleme)."""
     from evvel_yeni_urun_api import gununde_tuketilir, urun_bilgi
     konum = (body.konum or "").strip()
     tur_, _, sid = konum.partition(":")
     if tur_ not in ("depo", "bar") or not sid:
         raise HTTPException(400, "Konum: depo:<şube> ya da bar:<şube>")
+    if body.kapsam not in (None, "", "kirmizi", "tam"):
+        raise HTTPException(400, "Kapsam: kirmizi ya da tam")
+    if body.kapsam == "tam":
+        return _urun_sayim_tam_iste(konum, tur_, sid, body, x_evvel_oturum)
     idler = list(dict.fromkeys(str(x) for x in body.urun_idler or [] if x))
     if not idler:
         raise HTTPException(400, "Sayılacak ürün seç")
@@ -1968,7 +2005,7 @@ def urun_sayim_istek(body: UrunSayimIstekBody, x_evvel_oturum: Optional[str] = H
         ek = ""
         if r:
             g = __import__("evvel_yeni_cekirdek").json_ac(r["govde"], {})
-            if g.get("konum") != konum or g.get("sayilan") is not None or r["durum"] != "bekliyor":
+            if g.get("konum") != konum or g.get("kapsam") == "tam" or g.get("sayilan") is not None or r["durum"] != "bekliyor":
                 raise HTTPException(409, f"Bu şubede açık bir sayım isteği var ({g.get('konum')}) — önce o sayılsın ya da iptal et")
             var = {u["id"] for u in g.get("urunler") or []}
             yeni = [u for u in urunler if u["id"] not in var]
@@ -1986,6 +2023,37 @@ def urun_sayim_istek(body: UrunSayimIstekBody, x_evvel_oturum: Optional[str] = H
             n = len(urunler)
     return {"ok": True, "onay_id": oid, "mesaj": f"Sayım istendi — {n} ürün{ek} · şube paneli sayılana kadar kilitli"
             + (f" · pasta sayılmaz: {', '.join(pasta[:3])}" if pasta else "") + (f" · {yok} ürün katalogda yok, istenmedi" if yok else "")}
+
+
+def _urun_sayim_tam_iste(konum: str, tur_: str, sid: str, body, jeton) -> dict:
+    """📋 Tam sayım isteği: ürün listesi şimdi dondurulur (katalog sonradan değişse de şube aynı listeyi sayar)."""
+    from evvel_yeni_urun_api import gununde_tuketilir, katalog
+    _onay_hazirla()
+    with db() as (conn, cur):
+        kim = merkez_aktor(cur, jeton)
+        sube = _sube(cur, sid)
+        urunler = []
+        for k in katalog(cur):   # aktif kategori + aktif ürün, kategori sırası
+            for u in k["urunler"]:
+                if (tur_ == "bar" and tezgahta_sayilir(u)) or (tur_ == "depo" and not gununde_tuketilir(u)):
+                    urunler.append({"id": u["id"], "ad": u["ad"], "birim": u.get("birim"), "sayim_ici": u.get("sayim_ici"),
+                                    "kategori": k["ad"], "paket_esik": paket_tane_esik(u.get("birim"), u.get("sayim_ici"))})
+        if not urunler:
+            raise HTTPException(400, "Bu konumda sayılacak ürün yok")
+        cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_onay:{sid}:urun_sayim",))
+        r = _urun_sayim_satir(cur, sid)
+        if r:
+            g0 = __import__("evvel_yeni_cekirdek").json_ac(r["govde"], {})
+            raise HTTPException(409, f"Bu şubede açık bir sayım isteği var ({g0.get('konum')}) — önce o sayılsın ya da iptal et")
+        oid = "us-" + uuid.uuid4().hex[:16]
+        g = {"oid": oid, "konum": konum, "kapsam": "tam", "urunler": urunler, "isteyen": kim,
+             "not": (body.not_ or "").strip()[:200] or None, "istenme": __import__("evvel_yeni_cekirdek").simdi_tr().isoformat()}
+        cur.execute("""INSERT INTO ey_panel_onay (id, sube_id, tur, govde, ozet, durum, son)
+                       VALUES (%s,%s,'urun_sayim',%s::jsonb,%s,'bekliyor', NOW() + %s * INTERVAL '1 day')""",
+                    (oid, sid, json.dumps(g, ensure_ascii=False), f"Bütün ürünler sayımı · {len(urunler)} ürün", URUN_SAYIM_GUN))
+    yer = "bar" if tur_ == "bar" else "depo"
+    return {"ok": True, "onay_id": oid, "mesaj": f"Bütün ürünlerin sayımı istendi — {sube['ad']} {yer} · {len(urunler)} ürün · "
+            "sayım personelin telefonunda, panel sayılana kadar kilitli"}
 
 
 class UrunSayimIptalBody(BaseModel):
@@ -2028,6 +2096,7 @@ def urun_sayim_istekleri(x_evvel_oturum: Optional[str] = Header(default=None)):
                     "kuru": bool(s.get("kuru")),   # deneme şubesi: stok yazılmadı — şerit 'deneme' der (Codex L6)
                     "isteyen": g.get("isteyen"), "istenme": g.get("istenme"), "gonderildi": g.get("sayilan") is not None,
                     "sayan": r.get("personel_ad"), "acik": acik,
+                    "ilerleme": ({k: v for k, v in _us_ilerleme(g).items() if k != "ustlenen_id"} if g.get("kapsam") == "tam" else None),
                     "farklar": s.get("farklar") or [], "sayilan_sayi": len(s.get("kayit") or [])})
     return {"istekler": out}
 
@@ -2047,6 +2116,8 @@ def urun_sayim_gonder(sube_id: str, b: UrunSayimGonderBody):
         if not r or r["durum"] not in ("bekliyor", "hata"):
             raise HTTPException(409, "Sayım şu an telefondan onaylanıyor — birkaç saniye bekle" if r else "Şu an ürün sayımı istenmiyor")
         g = __import__("evvel_yeni_cekirdek").json_ac(r["govde"], {})
+        if g.get("kapsam") == "tam":
+            raise HTTPException(409, "Bütün ürünlerin sayımı personelin telefonunda yapılır")
         say = {}
         for u in g.get("urunler") or []:
             v = (b.sayilan or {}).get(u["id"])
@@ -2067,7 +2138,7 @@ def urun_sayim_duzelt(sube_id: str):
     with db() as (conn, cur):
         cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_onay:{sube_id}:urun_sayim",))
         cur.execute("""UPDATE ey_panel_onay SET govde = govde - 'sayilan', durum='bekliyor' WHERE sube_id=%s AND tur='urun_sayim'
-                        AND durum IN ('bekliyor','hata') AND son > NOW() RETURNING id""", (str(sube_id),))
+                        AND durum IN ('bekliyor','hata') AND son > NOW() AND COALESCE(govde->>'kapsam','') <> 'tam' RETURNING id""", (str(sube_id),))
         if not cur.fetchone():
             raise HTTPException(409, "Düzeltilecek sayım yok (onaylanıyor olabilir)")
     return {"ok": True}
@@ -2100,9 +2171,10 @@ def urun_sayim_yaz(sube_id: str, b: UrunSayimBody) -> dict:
             raise HTTPException(409, "Bu sayım başka şubenin")
         satir = [{"urun_id": u["id"], "sayilan": b.sayilan.get(u["id"])} for u in b.urunler if b.sayilan.get(u["id"]) is not None]
         if len(satir) != len(b.urunler):
-            raise HTTPException(400, "Bütün ürünler sayılmalı — panelde 'Düzelt' deyip eksikleri yaz")
-        d = sayim_yaz(cur, konum=b.konum, satirlar=satir, kim=f"{KIM} · {p['ad']} (merkez istedi)", tur="sayim",
-                      kaynak_ref=f"panel:urun_sayim:{b.konum}:{b.oid}", gun=c["gun"], kismi=True)
+            raise HTTPException(400, "Bütün ürünler sayılmalı — eksikleri yaz")
+        tam = b.kapsam == "tam"   # 📋 tam konum sayımı: kismi=False (konumun ilk sayımıysa açılış bayrağı doğru — Fable ek hüküm)
+        d = sayim_yaz(cur, konum=b.konum, satirlar=satir, kim=f"{KIM} · {p['ad']} (merkez istedi{' · bütün ürünler' if tam else ''})",
+                      tur="sayim", kaynak_ref=f"panel:urun_sayim:{b.konum}:{b.oid}", gun=c["gun"], kismi=not tam)
         return {"mesaj": f"{len(satir)} ürün sayıldı ✓", "kayit": d.get("kayit"), "farklar": d.get("farklar")}
     return _calistir(sube_id, "us-" + str(b.oid).replace("-", "")[:40], is_, tur="urun_sayim", govde=b.model_dump(mode="json"))
 
@@ -2366,6 +2438,8 @@ async def onay_onayla(oid: str, request: Request):
             if not o:
                 raise HTTPException(404, "Onay bulunamadı")
             o = dict(o)
+            if o["tur"] == "urun_sayim" and __import__("evvel_yeni_cekirdek").json_ac(o["govde"], {}).get("kapsam") == "tam":
+                raise HTTPException(409, "Bütün ürünlerin sayımı telefondaki sayım sayfasından bitirilir (QR onayı yok)")
             if o["durum"] == "onaylandi":
                 return {"tekrar": True, "mesaj": o["mesaj"], "kisi": o["personel_ad"]}
             if o["durum"] == "isleniyor" and not o["takildi"]:
@@ -2410,6 +2484,177 @@ async def onay_onayla(oid: str, request: Request):
     if kod:
         raise HTTPException(kod, mesaj)
     return {"ok": True, "mesaj": mesaj, "kuru": bool((sonuc or {}).get("kuru"))}
+
+
+# ─────────────── 📋 BÜTÜN ÜRÜNLERİ SAY — TELEFONDA (adım 156 · Codex karar A · Fable L4b ek hükümleri) ───────────────
+# Görev 'urun_sayim' kapsam='tam'. Kimlik telefondan (Yoklama telefon_kisisi — tek kapı); kişi o şubede BUGÜN içeride olmalı. İlk dokunan
+# ÜSTLENİR (tek kişi); 15 dk hareketsizse başka telefon devralır, yazılanlar kalır. Her kutu sunucuya anında yazılır (yarım kalırsa kaybolmaz).
+# KÖR: telefona yalnız ürün adı · birim · kategori + yazılanlar döner; defter / fark ASLA. BİTİR = hepsi dolu + konum → Depo sayim_yaz (tam).
+def urun_sayim_davet(cur, sube_id: str) -> Optional[dict]:
+    """PUBLIC (Yoklama /ben — telefon ana kartı): şubede açık 📋 tam sayım varsa davet (KÖR: kaç ürün, kim sayıyor). Kapanmış günde yok."""
+    r = _urun_sayim_satir(cur, sube_id)
+    if not r or _gun_kapali(cur, sube_id, _bugun()):
+        return None
+    g = __import__("evvel_yeni_cekirdek").json_ac(r["govde"], {})
+    if g.get("kapsam") != "tam":
+        return None
+    il = _us_ilerleme(g)
+    konum = g.get("konum") or ""
+    return {"oid": r["id"], "yer": "bar (tezgah)" if konum.startswith("bar:") else "depo", "toplam": il["toplam"], "dolu": il["dolu"],
+            "ustlenen": il["ustlenen"] if il["ustlenen_gecerli"] else None, "ustlenen_id": il["ustlenen_id"] if il["ustlenen_gecerli"] else None}
+
+
+def _us_telefon(cur, oid: str, p: dict, kilit: bool = False) -> tuple:
+    """Telefon uçlarının ortak denetimi: görev (tam, açık) + kişi o şubede bugün içeride. (satır, govde)"""
+    if kilit:
+        cur.execute("SELECT sube_id FROM ey_panel_onay WHERE id=%s", (oid,))
+        k = cur.fetchone()
+        if k:
+            cur.execute("SELECT pg_advisory_xact_lock(hashtext(%s))", (f"ey_panel_onay:{dict(k)['sube_id']}:urun_sayim",))
+    cur.execute("SELECT *, son > NOW() AS suruyor, islenme < NOW() - INTERVAL '2 minutes' AS takildi FROM ey_panel_onay "
+                "WHERE id=%s AND tur='urun_sayim'" + (" FOR UPDATE" if kilit else ""), (oid,))
+    r = cur.fetchone()
+    if not r:
+        raise HTTPException(404, "Sayım bulunamadı")
+    r = dict(r)
+    g = __import__("evvel_yeni_cekirdek").json_ac(r["govde"], {})
+    if g.get("kapsam") != "tam":
+        raise HTTPException(409, "Bu sayım panelden yapılır")
+    if r["durum"] == "onaylandi":
+        raise HTTPException(409, "Bu sayım bitti ✓")
+    if r["durum"] not in URUN_SAYIM_AKTIF or not r["suruyor"]:
+        raise HTTPException(409, "Bu sayım artık açık değil (merkez iptal etti ya da süresi doldu)")
+    if kilit and r["durum"] == "isleniyor" and not r["takildi"]:   # Codex L6: kaydedilirken satır / devralma / ikinci Bitir yok
+        raise HTTPException(409, "Sayım kaydediliyor — birkaç saniye bekle")
+    y = _yoklama()
+    if y is None or not y.acik_mi(cur, str(r["sube_id"]), p["id"]):
+        raise HTTPException(409, "Önce bu şubede QR ile giriş yap — sayımı içerideki personel yapar")
+    return r, g
+
+
+def _us_gorunum(r: dict, g: dict, p: dict, sube_ad: Optional[str]) -> dict:
+    il = _us_ilerleme(g)
+    ben = il["ustlenen_id"] == p["id"]
+    konum = g.get("konum") or ""
+    return {"oid": r["id"], "sube_ad": sube_ad, "yer": "bar (tezgah)" if konum.startswith("bar:") else "depo", "not": g.get("not"),
+            "urunler": [{k: u.get(k) for k in ("id", "ad", "birim", "sayim_ici", "kategori", "paket_esik")} for u in g.get("urunler") or []],
+            "sayilan": (g.get("sayilan") or {}) if ben else {},   # yalnız üstlenene (devralan kaldığı yerden sürdürür) — başkasına rakam yok
+            "toplam": il["toplam"], "dolu": il["dolu"], "ben": ben, "kisi": p["ad"],
+            "ustlenen": il["ustlenen"] if (il["ustlenen_gecerli"] and not ben) else None,
+            "devralinabilir": bool(il["ustlenen_id"]) and not il["ustlenen_gecerli"] and not ben,
+            "durum": r["durum"], "mesaj": r.get("mesaj") if r["durum"] == "hata" else None, "devir_dk": US_DEVIR_DK}
+
+
+async def _us_telefon_is(request: Request, oid: str, fn):
+    """İmzalı telefon isteği → fn(cur, p, r, g, v) aynı işlemde."""
+    y = _yoklama()
+    if y is None:
+        raise HTTPException(400, "Telefon sistemi kapalı")
+    _onay_hazirla()
+    ham = await request.body()
+
+    def _is():
+        with db() as (conn, cur):
+            _c, p = y.telefon_kisisi(cur, request.headers, request.method, request.url.path, ham)   # Yoklama'nın tek kapısı (K4)
+            try:
+                v = json.loads(ham) if ham else {}
+            except ValueError:
+                raise HTTPException(400, "İstek okunamadı")
+            r, g = _us_telefon(cur, oid, p, kilit=request.method != "GET")
+            return fn(cur, p, r, g, v if isinstance(v, dict) else {})
+    return await run_in_threadpool(_is)
+
+
+@router.get("/onay/{oid}/urun-sayim")
+async def us_telefon_oku(oid: str, request: Request):
+    """Telefon: sayım listesi (KÖR) + ilerleme + kim sayıyor."""
+    def fn(cur, p, r, g, _v):
+        ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube", [r["sube_id"]]).get(str(r["sube_id"]))
+        return _us_gorunum(r, g, p, ad)
+    return await _us_telefon_is(request, oid, fn)
+
+
+def _us_yaz(cur, oid: str, ek: dict) -> None:
+    cur.execute("UPDATE ey_panel_onay SET govde = govde || %s::jsonb WHERE id=%s", (json.dumps(ek, ensure_ascii=False), oid))
+
+
+@router.post("/onay/{oid}/urun-sayim/ustlen")
+async def us_telefon_ustlen(oid: str, request: Request):
+    """Telefon: sayımı üstlen (tek kişi). Başkası son 15 dk içinde sayıyorsa 409; hareketsizse devralınır — yazılanlar kalır."""
+    def fn(cur, p, r, g, _v):
+        il = _us_ilerleme(g)
+        if il["ustlenen_id"] and il["ustlenen_id"] != p["id"] and il["ustlenen_gecerli"]:
+            raise HTTPException(409, f"{il['ustlenen']} sayıyor — {US_DEVIR_DK} dk hareketsiz kalırsa devralabilirsin")
+        ek = {"ustlenen_id": p["id"], "ustlenen_ad": p["ad"], "ustlenme_ts": __import__("evvel_yeni_cekirdek").simdi_tr().isoformat()}
+        if il["ustlenen_id"] and il["ustlenen_id"] != p["id"]:
+            ek["devirler"] = (g.get("devirler") or []) + [{"onceki": g.get("ustlenen_ad"), "yeni": p["ad"], "zaman": ek["ustlenme_ts"]}]
+        _us_yaz(cur, oid, ek)
+        g.update(ek)
+        ad = __import__("evvel_yeni_tanim_api").adlar(cur, "ey_sube", [r["sube_id"]]).get(str(r["sube_id"]))
+        return {"ok": True, **_us_gorunum(r, g, p, ad)}
+    return await _us_telefon_is(request, oid, fn)
+
+
+def _us_ustlenen_mi(g: dict, p: dict) -> None:
+    if g.get("ustlenen_id") != p["id"]:
+        raise HTTPException(409, "Sayımı başka biri üstlendi — sayfayı yenile")
+
+
+@router.post("/onay/{oid}/urun-sayim/satir")
+async def us_telefon_satir(oid: str, request: Request):
+    """Telefon: tek kutu (ürün → adet; boş = sil). Yalnız üstlenen; her yazışta üstlenme süresi tazelenir."""
+    def fn(cur, p, r, g, v):
+        _us_ustlenen_mi(g, p)
+        uid = str(v.get("urun_id") or "")
+        u = next((x for x in g.get("urunler") or [] if x["id"] == uid), None)
+        if not u:
+            raise HTTPException(400, "Ürün bu sayımda yok — sayfayı yenile")
+        say = dict(g.get("sayilan") or {})
+        if v.get("sayilan") in (None, ""):
+            say.pop(uid, None)
+        else:
+            say[uid] = _tam(v.get("sayilan"), u.get("ad") or "Sayılan")
+        ts = __import__("evvel_yeni_cekirdek").simdi_tr().isoformat()
+        _us_yaz(cur, oid, {"sayilan": say, "ustlenme_ts": ts})
+        g.update(sayilan=say, ustlenme_ts=ts)
+        il = _us_ilerleme(g)
+        return {"ok": True, "dolu": il["dolu"], "toplam": il["toplam"]}
+    return await _us_telefon_is(request, oid, fn)
+
+
+@router.post("/onay/{oid}/urun-sayim/bitir")
+async def us_telefon_bitir(oid: str, request: Request):
+    """Telefon BİTİR: hepsi dolu + konum → görev 'isleniyor' → Depo sayim_yaz (tam) → 'onaylandi'. Yanıtta fark YOK (kör)."""
+    y = _yoklama()
+
+    def fn(cur, p, r, g, v):
+        _us_ustlenen_mi(g, p)
+        say = g.get("sayilan") or {}
+        eksik = [u["ad"] for u in g.get("urunler") or [] if say.get(u["id"]) is None]
+        if eksik:
+            raise HTTPException(400, f"{len(eksik)} ürün boş ({', '.join(eksik[:3])}{'…' if len(eksik) > 3 else ''}) — elde yoksa 0 yaz")
+        y.konum_kontrol(cur, str(r["sube_id"]), p, v.get("lat"), v.get("lng"))
+        cur.execute("""UPDATE ey_panel_onay SET durum='isleniyor', personel_id=%s, personel_ad=%s, islenme=clock_timestamp() WHERE id=%s
+                        RETURNING islenme""", (p["id"], p["ad"], oid))
+        return {"sube_id": str(r["sube_id"]), "govde": {**g, "personel_id": p["id"]}, "p": p, "islenme": dict(cur.fetchone())["islenme"]}
+    x = await _us_telefon_is(request, oid, fn)
+    try:
+        sonuc = await run_in_threadpool(lambda: urun_sayim_yaz(x["sube_id"], UrunSayimBody(**x["govde"])))
+        durum, mesaj, kod = "onaylandi", f"{x['p']['ad']} adına · {sonuc.get('mesaj') or 'kaydedildi'}", None
+    except HTTPException as e:
+        sonuc, durum, mesaj, kod = None, "hata", str(e.detail), e.status_code
+    except Exception as e:  # noqa: BLE001
+        log.error("tam sayım işlenemedi %s: %s", oid, str(e)[:300])
+        sonuc, durum, mesaj, kod = None, "hata", "Kaydedilemedi — tekrar dene", 503
+
+    def _kapat():   # Codex L6: yalnız BU işlemin kaydı kapatılır (takılıp yeniden denenmiş işlem diğerinin sonucunu ezmesin)
+        with db() as (conn, cur):
+            cur.execute("UPDATE ey_panel_onay SET durum=%s, mesaj=%s, sonuc=%s::jsonb WHERE id=%s AND durum='isleniyor' AND islenme=%s",
+                        (durum, mesaj, json.dumps(sonuc or {}, ensure_ascii=False, default=str), oid, x["islenme"]))
+    await run_in_threadpool(_kapat)
+    if kod:
+        raise HTTPException(kod, mesaj)
+    return {"ok": True, "mesaj": f"{(sonuc or {}).get('mesaj') or 'Sayım kaydedildi'} — teşekkürler", "kuru": bool((sonuc or {}).get("kuru"))}
 
 
 class AraSayimGonderBody(BaseModel):
