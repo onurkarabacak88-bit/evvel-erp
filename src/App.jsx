@@ -308,7 +308,27 @@ function AdminGirisKapisi({ onBasarili }) {
   );
 }
 
+// 🏠 KÖK ADRES → EVVEL YENİ (sahip 23 Kas 2026: "artık evvel yeniyi kullanıyoruz").
+// Kök adres eski kadife panele düşüyordu. Eski panel kesimden sonra BOŞ KALAN eski
+// tabloları okuduğu için yanlış alarm üretiyor — örn. "📅 Girilmemiş ciro — 14 gün"
+// (TasarimV2.jsx), oysa aynı günlerin kapanışları Evvel Yeni'de girilmiş durumda.
+// Eski arayüz SİLİNMEDİ: /eski adresinden açılır (geri dönüş kapısı).
+// Adres düzeltmesi RENDER DIŞINDA yapılır (Codex L6-158: yan etki render sırasında olmaz) — main.jsx çağırır.
+// Yer imiyle gelen klasik ekran (#klasik:...) KORUNUR; soru/hash parçası (?jeton=… · #…) KAYBOLMAZ.
+export function kokAdresiDuzelt() {
+  try {
+    if (window.location.pathname !== '/') return;
+    if (readPageFromHash() !== null) return;
+    window.history.replaceState(null, '', '/evvel-yeni' + window.location.search + window.location.hash);
+  } catch (_) { /* history yoksa akış yaşar — App yine Evvel Yeni'yi açar */ }
+}
+
 export default function App() {
+  // Kök adres: yukarıdaki düzeltme yapılamadıysa da ekran Evvel Yeni'dir (saf kontrol, yan etki yok).
+  if (window.location.pathname === '/' && readPageFromHash() === null) {
+    return <EvvelYeniApp />;
+  }
+
   // 🌱 EVVEL YENİ — sade çekirdek, KENDİ ADRESİNDE ayrı uygulama (sahip 2026-10-15:
   // "kadife tasarımda değil ayrı bir alanda yap, sonra eskiyi tamamen kaldırsak").
   // Sahip: "evvel yeni yapalım" · "para izi hiç kullanma" → yalnız /evvel-yeni.
