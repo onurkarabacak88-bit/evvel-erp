@@ -112,6 +112,9 @@ def kira_yaz(cur, sube_id: str, kim: str, tutar=None, gecerli_ay=None, artis_ayi
             date.fromisoformat(ay + "-01")
         except ValueError:
             raise HTTPException(400, "Kira hangi aydan geçerli: YYYY-AA")
+        if not gecerli_ay and kira_tutari(cur, sube_id, ay) == _kurus(tutar):
+            tutar = None   # adım 155 (Codex L6): Tanımlar'da başka alan (POS ücreti) düzeltilince aynı kira yeniden sürüm açmasın
+    if tutar is not None:
         cur.execute("""INSERT INTO ey_sube_kira (sube_id, gecerli_ay, tutar, degistiren) VALUES (%s,%s,%s,%s)
                        ON CONFLICT (sube_id, gecerli_ay) DO UPDATE SET tutar=EXCLUDED.tutar, degistiren=EXCLUDED.degistiren, zaman=NOW()""",
                     (sube_id, ay, _kurus(tutar), kim))

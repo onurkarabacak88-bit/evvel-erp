@@ -746,7 +746,7 @@ def _pos_cihaz_isleri(cur, b) -> list:
     if bugun.day < 2:
         return []
     from evvel_yeni_tanim_api import subeler
-    ad = {s["id"]: s["ad"] for s in subeler(cur)}
+    ad = {s["id"]: s["ad"] for s in subeler(cur, hepsi=True)}   # adım 155: pasif şubenin cihazı da (Alsancak)
     ay = bugun.strftime("%Y-%m")
     return [{"tur": "pos_cihaz", "genel": True, "grup": "odeme", "id": f"pos_cihaz:{sid}:{ay}", "tarih": f"{ay}-01",
              "etiket": "💳 POS cihaz ücreti yazılamadı", "ad": f"{ad.get(sid, sid)} · {_tl_sayi(u):,.0f} ₺".replace(",", "."),

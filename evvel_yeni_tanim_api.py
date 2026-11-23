@@ -438,8 +438,10 @@ def subeler(cur, hepsi: bool = False):
 
 
 def pos_cihaz_ucretleri(cur) -> dict:
-    """PUBLIC (Ödeme aylık otomatik işi): aktif şube → aylık POS cihaz ücreti (kuruş, > 0 olanlar)."""
-    return {s["id"]: int(s["pos_cihaz_ucreti"]) for s in subeler(cur) if int(s.get("pos_cihaz_ucreti") or 0) > 0}
+    """PUBLIC (Ödeme aylık otomatik işi): şube → aylık POS cihaz ücreti (kuruş, > 0 olanlar). PASİF şube DAHİL (sahip 23 Kas:
+    Alsancak kapandı ama banka POS cihazı hâlâ aktif — ücret cihaza bağlı, şubenin açık olmasına değil); cihaz iade edilince
+    Tanımlar'da ücret 0 yapılır, yazım durur."""
+    return {s["id"]: int(s["pos_cihaz_ucreti"]) for s in subeler(cur, hepsi=True) if int(s.get("pos_cihaz_ucreti") or 0) > 0}
 
 
 def depo_sube_id(cur) -> Optional[str]:

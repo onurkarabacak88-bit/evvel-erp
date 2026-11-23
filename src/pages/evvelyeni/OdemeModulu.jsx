@@ -232,6 +232,7 @@ export default function OdemeModulu({ onToast, gorunum }) {
             {(['kira', 'fatura'].includes(f.konu) || (f.konu === 'anlik' && f.kimin !== 'patron')) && (
               <Etiket ad="Hangi şube"><select style={alan} value={f.sube_id || ''} onChange={(e) => set('sube_id', e.target.value)}>
                 <option value="">Seç…</option>{L.subeler.map((s) => <option key={s.id} value={s.id}>{s.ad}</option>)}
+                {f.sube_id && !L.subeler.some((s) => s.id === f.sube_id) && <option value={f.sube_id}>{subeAd(f.sube_id) || f.sube_id} (pasif)</option>}   {/* adım 155: Bekleyen › POS cihaz ücreti pasif şubeyi ön doldurur */}
               </select></Etiket>
             )}
             {f.konu === 'kira' && kd && (

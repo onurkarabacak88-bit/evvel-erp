@@ -173,7 +173,7 @@ export default function TanimModulu({ gorunum, onToast }) {
             {y.kolon(x).map((h, i) => h == null ? null : <span key={i} style={i === 0 ? { fontWeight: 700, minWidth: 160 } : { fontSize: 13, color: R.metin2, ...(typeof h === 'string' && /\d/.test(h) ? num : {}) }}>{h}</span>)}
             {x.aktif === false && <Cip>pasif</Cip>}
             <span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}>
-              {x.aktif !== false && <Dugme kucuk onClick={() => duzeltAc(x)}>Düzelt</Dugme>}
+              {(x.aktif !== false || y.tur === 'sube') && <Dugme kucuk onClick={() => duzeltAc(x)}>Düzelt</Dugme>}   {/* sahip 23 Kas: pasif şubenin POS cihaz ücreti 0 yapılabilsin (cihaz iade) */}
               <Dugme kucuk onClick={() => aktiflik(x)}>{x.aktif === false ? (y.tur === 'kart' ? 'Geri getir' : 'Aktif yap') : (y.tur === 'kart' ? '🗑 Sil' : 'Pasif yap')}</Dugme>
             </span>
           </div>
