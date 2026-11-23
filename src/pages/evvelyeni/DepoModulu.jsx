@@ -83,7 +83,10 @@ function IstenenSayimlar({ istekler, adlar, yukle, onToast }) {
       <b>📋 İstenen sayımlar</b>
       {istekler.map((x) => (
         <div key={x.id} style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
-          {x.acik ? <Cip tur="sari">{x.durum === 'isleniyor' ? 'onaylanıyor' : x.gonderildi ? 'sayıldı · onay bekliyor' : 'bekliyor · panel kilitli'}</Cip>
+          <Cip tur={x.kapsam === 'tam' ? undefined : 'kirmizi'}>{x.kapsam === 'tam' ? '📋 tam' : '🔴 kırmızı'}</Cip>
+          {x.acik ? <Cip tur="sari">{x.durum === 'isleniyor' ? (x.kapsam === 'tam' ? 'kaydediliyor' : 'onaylanıyor')
+            : x.kapsam === 'tam' ? (x.ilerleme?.ustlenen_gecerli ? `${x.ilerleme.ustlenen} sayıyor · ${x.ilerleme.dolu}/${x.ilerleme.toplam}` : `telefonda bekliyor · ${x.ilerleme?.dolu || 0}/${x.ilerleme?.toplam || x.urun_sayi}`)
+              : x.gonderildi ? 'sayıldı · onay bekliyor' : 'bekliyor · panel kilitli'}</Cip>
             : x.durum === 'onaylandi' ? <Cip tur={x.kuru ? undefined : 'yesil'}>{x.kuru ? 'deneme — stok yazılmadı' : 'sayıldı'}</Cip>
               : <Cip>{x.durum === 'iptal' ? 'iptal' : x.durum === 'sure_doldu' ? 'süresi doldu (30 gün)' : x.durum}</Cip>}
           <span style={{ flex: 1, minWidth: 220 }}>
@@ -108,6 +111,16 @@ function Nerede({ onToast }) {
     if (!(await sor({ soru: `${sube} ${k.id.startsWith('bar:') ? 'bar' : 'depo'} · ${liste.length} ürün sayılsın mı? (${liste.slice(0, 4).map((x) => x.ad).join(', ')}${liste.length > 4 ? '…' : ''}) — şube paneli sayılana kadar kilitlenir.`, tamam: '📦 Sayım iste' }))) return;
     try {
       const r = await api('/evvel-yeni/panel/urun-sayim-istek', { method: 'POST', body: { konum: k.id, urun_idler: liste.map((x) => x.urun_id) } });
+      onToast?.(r?.mesaj || 'Sayım istendi'); istekYukle();
+    } catch (e) { onToast?.(e?.message || 'Sayım istenemedi'); }
+  };
+  const tamIste = async (k) => {   // 📋 adım 156: bütün ürünler — sayım personelin telefonunda (Codex karar A)
+    const sube = (k.ad || '').replace(' · bar', '');
+    const bar = k.id.startsWith('bar:');
+    if (!(await sor({ soru: `${sube} ${bar ? 'bar' : 'depo'} · BÜTÜN ürünler sayılsın mı? Şube paneli sayılana kadar kilitlenir · sayım personelin telefonunda.`,
+      ipucu: bar ? 'Kapanış bar\'ı zaten sayıyor — gün içi tam bar sayımı yalnız şüphe varsa, boş saatte iste.' : undefined, tamam: '📋 Bütün ürünleri say' }))) return;
+    try {
+      const r = await api('/evvel-yeni/panel/urun-sayim-istek', { method: 'POST', body: { konum: k.id, kapsam: 'tam' } });
       onToast?.(r?.mesaj || 'Sayım istendi'); istekYukle();
     } catch (e) { onToast?.(e?.message || 'Sayım istenemedi'); }
   };
@@ -169,7 +182,8 @@ function Nerede({ onToast }) {
             <th style={{ ...hucre, textAlign: 'left', borderTop: 'none' }}>Ürün</th>
             {subeK.map((k) => { const kr = isteyebilir ? kirmizi(k) : []; return (
               <th key={k.id} style={{ ...hucre, borderTop: 'none' }}>{k.ad}
-                {kr.length > 0 && <div><Dugme kucuk onClick={() => sayimIste(k, kr)}>📦 Kırmızıları say ({kr.length})</Dugme></div>}</th>); })}
+                {kr.length > 0 && <div><Dugme kucuk onClick={() => sayimIste(k, kr)}>📦 Kırmızıları say ({kr.length})</Dugme></div>}
+                {isteyebilir && <div><Dugme kucuk onClick={() => tamIste(k)}>📋 Bütün ürünleri say</Dugme></div>}</th>); })}
           </tr></thead>
           <tbody>{satirlar.map((s) => {
             const baslik = s.kategori !== sonKat ? s.kategori : null;
