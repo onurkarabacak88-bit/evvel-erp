@@ -83,6 +83,60 @@ function SonAktarim({ onToast }) {
   );
 }
 
+// ✂️ ARŞİV SAĞLAMASI (24 Kas · Codex L4b D — HİÇBİR ŞEY YAZMAZ): eski okuyucular SİLİNMEDEN önce sorulan tek soru —
+// 1 Kasım son aktarımının yazdığı arşiv, eski tablodan BUGÜN hesaplananla aynı mı? Eski tablolar ayakta olduğu için şimdi
+// ölçülebilir, silindikten sonra ölçülemez. "yok" = arşiv hiç yazılmamış (boş arşivden farklı) → silmek sayıları sıfırlar.
+const _tl = (k) => ((k || 0) / 100).toLocaleString('tr-TR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + ' ₺';
+const SAGLAMA = {
+  ayni: { renk: 'yesil', isaret: '✓', soz: 'arşiv eski tabloyla AYNI — bu adımın eski okuyucusu güvenle silinebilir' },
+  fark: { renk: 'kirmizi', isaret: '✗', soz: 'arşiv ile eski tablo TUTMUYOR — silinirse ekranlar yanlış gösterir' },
+  yok: { renk: 'kirmizi', isaret: '⚠', soz: 'arşiv YAZILMAMIŞ — şimdi silinirse eski aylar boş görünür' },
+  kaynaksiz: { renk: 'amber', isaret: '?', soz: 'eski tablo okunamadı — karşılaştırılamadı' },
+  saglamasiz: { renk: 'not', isaret: '○', soz: 'sağlaması henüz yazılmadı' },
+  hata: { renk: 'amber', isaret: '?', soz: 'sağlama çalışmadı' },
+};
+
+function ArsivSaglamasi() {
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+  const bak = async () => {
+    setMesgul(true); setHata('');
+    try { setV(await api('/evvel-yeni/moduller/kesim-sagla')); } catch (e) { setHata(e?.message || 'Okunamadı'); }
+    setMesgul(false);
+  };
+  return (
+    <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>✂️ Arşiv sağlaması</b>
+        <Cip>yazmaz · yalnız karşılaştırır</Cip>
+      </div>
+      <div style={{ fontSize: 12.5, color: R.not }}>Eski sistemin okuyucuları kaldırılmadan önceki son kontrol: son aktarımın dondurduğu arşiv, eski tablodan bugün hesaplananla aynı mı? Eski tablolar hâlâ duruyorken ölçülebilir — kaldırıldıktan sonra ölçülemez.</div>
+      <div><Dugme ana disabled={mesgul} onClick={bak}>{mesgul ? 'Karşılaştırılıyor…' : 'Arşivi eski tabloyla karşılaştır'}</Dugme></div>
+      {hata && <div style={{ color: R.kirmizi, fontSize: 13 }}>{hata}</div>}
+      {v && (v.saglanan || []).length === 0 && <div style={{ fontSize: 13, color: R.not }}>Sağlaması olan adım yok.</div>}
+      {v && [...(v.saglanan || [])].sort((a, b) => (a.sonuc === 'saglamasiz') - (b.sonuc === 'saglamasiz')).map((x) => {
+        const d = SAGLAMA[x.sonuc] || SAGLAMA.hata;
+        return (
+          <div key={x.kod} style={{ borderTop: `1px solid ${R.cizgi}`, paddingTop: 8, fontSize: 13 }}>
+            <div style={{ color: R[d.renk] }}><b>{d.isaret} {x.ad}</b> — {d.soz}</div>
+            {x.mesaj && x.sonuc !== 'saglamasiz' && <div style={{ fontSize: 12, color: R.metin2 }}>{x.mesaj}</div>}
+            {x.arsiv_kayit != null && (
+              <div style={{ fontSize: 12, color: R.metin2 }}>
+                arşiv {x.arsiv_kayit} satır · {_tl(x.arsiv_toplam)}
+                {x.eski_kayit != null && <> ↔ eski tablo {x.eski_kayit} satır · {_tl(x.eski_toplam)}</>}
+              </div>)}
+            {(x.ornek || []).map((o, i) => (
+              <div key={i} style={{ fontSize: 11.5, color: R.amber }}>• {o.anahtar}: arşiv {o.arsiv == null ? 'yok' : (typeof o.arsiv === 'number' ? _tl(o.arsiv) : o.arsiv)} ↔ eski {o.eski == null ? 'yok' : (typeof o.eski === 'number' ? _tl(o.eski) : o.eski)}</div>))}
+          </div>
+        );
+      })}
+      {v && (v.yapilmamis || []).length > 0 && <div style={{ fontSize: 12.5, color: R.kirmizi }}>⚠ {v.yapilmamis.length} adım hazır değil ({(v.hazir || []).length} hazır) — eski okuyucuları kaldırma yayını BEKLETİLMELİ. Sağlaması yazılmamış adımlar da kapıyı kapalı tutar.</div>}
+      {v && (v.saglanan || []).length > 0 && (v.yapilmamis || []).length === 0 && <div style={{ fontSize: 12.5, color: R.yesil }}>✓ Hepsi tutuyor — eski okuyucuları kaldırma yayını yapılabilir.</div>}
+    </div>
+  );
+}
+
 // 🧪 PİLOT ŞUBE (sahip 27 Eki · Fable L4b A): bir şube 1 Kasım'dan önce yeni panelde GERÇEK kayda geçer; eski panel o şube için kapanır.
 // Kaldırınca şube denemeye döner (yazılmış kayıtlar kalır). Sunucu: evvel_yeni_moduller /pilot.
 function PilotSube({ onToast }) {
@@ -267,6 +321,7 @@ export default function SistemDurumu({ onToast }) {
         </div>
       )}
       <SonAktarim onToast={onToast} />
+      <ArsivSaglamasi />
       <PilotSube onToast={onToast} />
       {m && (
         <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>

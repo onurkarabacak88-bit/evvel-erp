@@ -535,6 +535,21 @@ def teyit_sil(tid: str, x_evvel_oturum: Optional[str] = Header(default=None)):
 bekleyen_is_kaydet("kart", lambda cur, b: kart_isleri(cur, b["kayit"]))
 
 
+# ✂️ ARŞİV SAĞLAMASI (24 Kas · Codex L4b D — YAZMAZ): Faz B eski okuyucuyu silmeden ÖNCE arşivin doğruluğunu KANITLAR.
+# Arşivdeki "eski ödenen kart borcu" ↔ eski odeme_plani'ndan ŞİMDİ hesaplanan aynı çıktı. Eski tablo hâlâ ayakta olduğu için
+# bugün ölçülebilir; silindikten sonra ölçülemez. Arşiv YOK (None) ile BOŞ arşiv ({}) ayrı sonuçlardır.
+def kesim_sagla(cur) -> dict:
+    from evvel_yeni_cekirdek import arsiv_cift_oku, arsiv_sagla, tablo_var
+    ar = arsiv_cift_oku(cur, "kart", "eski_plan")
+    canli = None
+    if tablo_var(cur, "odeme_plani"):
+        try:
+            canli = _eski_plan(cur, arsivden=False)
+        except Exception:  # noqa: BLE001 — sağlama hiçbir ekranı düşürmez
+            canli = None
+    return arsiv_sagla(ar, canli, lambda v: int((v or {}).get("odenen") or 0))
+
+
 # ✂️ 1 KASIM SON AKTARIM (manifest 'kesim') — eski "Öde" ekranında ödenmişler BİR KEZ arşive; sonra takvim eski tabloyu okumaz.
 def kesim_dondur(cur, yazan: str, ay: str) -> dict:
     if not __import__("evvel_yeni_cekirdek").tablo_var(cur, "odeme_plani"):   # eski okuyucu hatayı yutup {} döner — boş arşiv yazılmasın

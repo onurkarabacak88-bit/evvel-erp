@@ -424,6 +424,47 @@ def arsiv_cift_oku(cur, modul: str, anahtar: str) -> Optional[dict]:
     return None if ar is None else {(a, b): v for a, b, v in ar}
 
 
+def arsiv_sagla(ar, canli, tutar) -> dict:
+    """PUBLIC — ✂️ ARŞİV SAĞLAMASI (YAZMAZ): 1 Kasım son aktarımının yazdığı arşiv ↔ eski tablodan ŞİMDİ hesaplanan aynı çıktı.
+
+    Faz B eski okuyucuları SİLMEDEN ÖNCE arşivin doğru yazıldığını KANITLAR (Codex 24 Kas: "arşivler doğrulanmadan son
+    kurtarma yolunu silme"). Eski tablolar hâlâ ayakta olduğu için karşılaştırma bugün yapılabilir — silindikten sonra yapılamaz.
+    `ar` None ise arşiv HİÇ yazılmamıştır (boş arşivden farklıdır: {} geçerli bir sonuçtur).
+    KARAR = TAM SÖZLÜK EŞİTLİĞİ (Codex L6: karar örnek listesinden ayrıldı — örnek kesilse de 'ayni' demez;
+    yalnız toplam + adet bakmak da yetmez, toplamı değiştirmeyen karşılıklı fark kaçardı).
+    tutar(deger) -> int kuruş; yalnız GÖSTERİM için. Dönüş: sonuc 'yok' / 'kaynaksiz' / 'ayni' / 'fark' + sayılar + ilk 5 örnek.
+    """
+    if ar is None:
+        return {"sonuc": "yok", "mesaj": "arşiv yazılmamış — bu adımın son aktarımı çalıştırılmamış görünüyor"}
+    a_top = sum(tutar(v) for v in ar.values())
+    if canli is None:
+        return {"sonuc": "kaynaksiz", "arsiv_kayit": len(ar), "arsiv_toplam": a_top,
+                "mesaj": "eski tablo okunamadı — arşiv karşılaştırılamadı (eski sistem kalkmış olabilir)"}
+    ayni = ar == canli           # KARAR burada: alan alan, kesintisiz
+    ornek = []
+    if not ayni:
+        for k in sorted(set(ar) | set(canli), key=lambda x: str(x)):
+            av, cv = ar.get(k), canli.get(k)
+            if av == cv:
+                continue
+            ornek.append({"anahtar": " · ".join(str(x) for x in k) if isinstance(k, tuple) else str(k),
+                          "arsiv": _sagla_yaz(av, tutar), "eski": _sagla_yaz(cv, tutar)})
+            if len(ornek) >= 5:
+                break
+    return {"sonuc": "ayni" if ayni else "fark", "arsiv_kayit": len(ar), "eski_kayit": len(canli),
+            "arsiv_toplam": a_top, "eski_toplam": sum(tutar(v) for v in canli.values()), "ornek": ornek}
+
+
+def _sagla_yaz(v, tutar):
+    """Örnek satırının okunur hâli — sözlük değerde HANGİ ALAN değiştiği görünür (Codex L6: yalnız 'odenen' gösterilince
+    ekstre farkında iki taraf aynı tutarmış gibi görünüyordu)."""
+    if v is None:
+        return None
+    if isinstance(v, dict):
+        return " · ".join(f"{a} {(b or 0) / 100:,.2f}".replace(",", " ") for a, b in sorted(v.items()))
+    return tutar(v)
+
+
 def arsiv_cift_yaz(cur, modul: str, anahtar: str, veri: dict, yazan: str) -> int:
     arsiv_yaz(cur, modul, anahtar, [[a, b, v] for (a, b), v in veri.items()], yazan)
     return len(veri)
@@ -686,7 +727,7 @@ def bekleyen_saglayicilar() -> List[str]:
 
 __all__ = ["TrTutar", "bugun", "saat_oku", "tr_saat", "tr_gun", "tr_duvar", "tr_tarih_saat", "simdi_tr", "is_gunu_zamani", "ay_gunu", "ay_kaydir", "tr_baslik", "tr_sira", "ad_anahtari", "json_ac", "kurus", "kurus_yuvarla", "tl_sayi", "tutar_oku", "adet_oku", "kalem_topla", "istek_dogrula", "MAKS_ADET", "tl", "kilit", "aktor", "merkez_aktor", "tablo_var", "kolon_var", "bir_kez", "ddl_kur", "ddl_bu_islemde", "lock_timeout_ayarla", "KuruGeriAl",
            "bekleyen_is_kaydet", "bekleyen_isler", "bekleyen_saglayicilar", "rozet_karti", "MAKS_KURUS", "KASA_KILIT", "datetime",
-           "ayar_oku", "ayar_yaz", "arsiv_oku", "arsiv_yaz", "arsiv_cift_oku", "arsiv_cift_yaz", "is_gunu", "panel_baslangic", "sube_baslangic", "en_erken_baslangic", "pilot_subeler", "pilot_baslangiclari", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik", "eski_panel_zinciri_acik_onbellekli", "eski_yazim_kapisi"]
+           "ayar_oku", "ayar_yaz", "arsiv_oku", "arsiv_yaz", "arsiv_cift_oku", "arsiv_cift_yaz", "arsiv_sagla", "is_gunu", "panel_baslangic", "sube_baslangic", "en_erken_baslangic", "pilot_subeler", "pilot_baslangiclari", "yeni_donem", "deneme_mi", "takvim_durumu", "eski_panel_zinciri_acik", "eski_panel_zinciri_acik_onbellekli", "eski_yazim_kapisi"]
 
 
 def takvim_durumu(beklenen, odenen, vade, bugun, once: bool = False, tolerans=100) -> str:

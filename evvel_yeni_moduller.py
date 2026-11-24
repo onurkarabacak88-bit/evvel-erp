@@ -132,6 +132,9 @@ def modulleri_yukle(app) -> None:
             k = m.get("kesim")
             if k and callable(getattr(mod, k["fn"], None)):   # tak-çıkar: yalnız YÜKLENEN modülün kesim adımı
                 KESIM[kod] = {"fn": getattr(mod, k["fn"]), "sira": int(k["sira"]), "baslik": k["baslik"], "bagli": list(k.get("bagli") or [])}
+                _sg = getattr(mod, "kesim_sagla", None)   # ✂️ arşiv sağlaması (24 Kas) — isteğe bağlı, yalnız yazan modülde
+                if callable(_sg):
+                    KESIM[kod]["sagla"] = _sg
         except Exception as e:  # noqa: BLE001 — izole: ana akış etkilenmez
             DURUM[kod] = "hata:" + str(e)[:200]
             log.warning("evvel_yeni %s modülü yüklenemedi (izole, ana akış etkilenmez): %s", kod, e)
@@ -457,6 +460,34 @@ def kesim_durum(x_evvel_oturum: Optional[str] = Header(default=None)):
                 "bagli": [_ad(b) for b in v.get("bagli") or [] if b in KESIM], "bagli_eksik": [_ad(b) for b in _bagli_eksik(cur, k)]}
                for k, v in sorted(KESIM.items(), key=lambda x: x[1]["sira"])]
         return {"ay": _kesim_ay(cur), "gercek_acik": acik, "baslangic": panel_baslangic(cur).isoformat(), "adimlar": out}
+
+
+@router.get("/kesim-sagla")
+def kesim_saglama(x_evvel_oturum: Optional[str] = Header(default=None)):
+    """✂️ ARŞİV SAĞLAMASI (24 Kas · Codex L4b D) — HİÇBİR ŞEY YAZMAZ.
+
+    Faz B (eski okuyucuların silinmesi) yayınlanmadan ÖNCE sorulan tek soru: 1 Kasım son aktarımının yazdığı arşiv,
+    eski tablodan BUGÜN hesaplanan çıktıyla aynı mı? Eski tablolar hâlâ ayakta olduğu için karşılaştırma şimdi yapılabilir.
+    'yok' = arşiv hiç yazılmamış (boş arşivden farklı) · 'fark' = yazılmış ama tutmuyor · 'ayni' = silmek güvenli."""
+    from database import db
+    from evvel_yeni_cekirdek import merkez_aktor
+    with db() as (conn, cur):
+        merkez_aktor(cur, x_evvel_oturum)   # para taşır — merkez oturumu
+        out = []
+        for k, v in sorted(KESIM.items(), key=lambda x: x[1]["sira"]):
+            fn = v.get("sagla")
+            if not callable(fn):   # Codex L6: sağlaması yazılmamış adım ATLANMAZ — kapı kapalı kalır
+                out.append({"kod": k, "ad": _ad(k), "son": _son(cur, k), "sonuc": "saglamasiz",
+                            "mesaj": "bu adımın sağlaması henüz yazılmadı — arşivi doğrulanmadan eski okuyucusu silinemez"})
+                continue
+            try:
+                r = fn(cur)
+            except Exception as e:  # noqa: BLE001 — sağlama ekranı düşmez
+                r = {"sonuc": "hata", "mesaj": str(e)[:200]}
+            out.append({"kod": k, "ad": _ad(k), "son": _son(cur, k), **r})
+        return {"ay": _kesim_ay(cur), "saglanan": out,
+                "hazir": [x["kod"] for x in out if x["sonuc"] == "ayni"],
+                "yapilmamis": [x["kod"] for x in out if x["sonuc"] != "ayni"]}
 
 
 class _KesimBody(__import__("pydantic").BaseModel):
