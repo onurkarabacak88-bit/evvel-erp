@@ -114,6 +114,12 @@ export default function KapanisSihirbazi({ d, subeId, tabletVar, kapat, bitti, u
       const n = tutarNum(v.nakit), p = tutarNum(v.pos), o = tutarNum(v.online);
       if (o > 0 && n > 0 && p > 0 && Math.abs(o - (n + p)) < 0.5) { setHata('Online alanı nakit+POS toplamına eşit olamaz. Online satış yoksa 0 bırakın.'); return; }
       if (n + p + o <= 0) { setHata('En az bir ciro tutarı girin'); return; }
+      // 💵 NAKİT / POS SIFIR (23 Kas · Codex L4b E): Tema 15 Kas'ta nakit 0 ₺ / POS 16.545 ₺ yazıldı → ertesi sayım 3.230 ₺ fazla
+      // verdi; 9 Kas'ta alanlar ters yazılmıştı. Engel DEĞİL, soru. Kasa derinliği sızmaz — yalnız personelin kendi yazdığı rakam.
+      const sifir = n === 0 && (p + o) > 0 ? ['Nakit', 'nakit satış', 'POS / online yazdın, nakit boş']
+        : (p === 0 && n > 0 ? ['POS', 'kart satışı', 'Nakit yazdın, POS boş'] : null);
+      if (sifir && !(await sor({ soru: sifir[0] + ' 0 ₺ girdin — bugün hiç ' + sifir[1] + ' olmadı mı?', vurgu: sifir[2],
+        tamam: 'Doğru, olmadı', iptal: 'Düzelteceğim' }))) return;
       git(2); return;
     }
     if (adim === 2) { if (zorunlu(bardaklar)) git(3); return; }

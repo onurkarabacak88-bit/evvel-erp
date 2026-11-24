@@ -35,12 +35,21 @@ function KapanisDuzelt({ subeId, gun, ciro, m, onBitti }) {
   const [f, setF] = useState({ nakit: '', pos: '', online: '', sebep: '' });
   const [mesgul, setMesgul] = useState(false);
   const [mesaj, setMesaj] = useState('');
+  const [sifirOnay, setSifirOnay] = useState(false);   // 💵 Codex L4b E (23 Kas): pozitif alan 0'a iniyorsa ikinci tık ister
   // Fable L6: panel BRÜT nakdi (Kasa'daki 'kartla ödenmiş' düzeltmesi düşülmeden) — sunucu düzeltmeyi kendisi düşer, çift düşüm olmasın
   const panelNakit = m?.z_nakit != null ? Math.round((m.z_nakit + (m.z_duzeltme || 0)) * 100) / 100 : null;
-  const ac = () => { setF({ nakit: tlYaz(panelNakit ?? ciro?.nakit), pos: tlYaz(ciro?.pos ?? ''), online: tlYaz(ciro?.online || 0), sebep: '' }); setMesaj(''); setAcik(true); };
+  const ac = () => { setF({ nakit: tlYaz(panelNakit ?? ciro?.nakit), pos: tlYaz(ciro?.pos ?? ''), online: tlYaz(ciro?.online || 0), sebep: '' }); setMesaj(''); setSifirOnay(false); setAcik(true); };
   const sayi = (t) => { const n = Number(String(t || '').replace(/\./g, '').replace(',', '.')); return Number.isFinite(n) ? n : 0; };
   const yeniTop = sayi(f.nakit) + sayi(f.pos) + sayi(f.online);
+  // 💵 pozitiften 0'a inen alan (23 Kas · Codex L4b E): Tema 15 Kas nakit 0 ₺ vakası — panelde soruluyor, merkezde de sorulur.
+  // Zaten 0 olan alan her kayıtta tekrar sormaz.
+  const sifirlanan = ['nakit', 'pos', 'online'].filter((k) => sayi(f[k]) === 0 && (ciro?.[k] || 0) > 0);
   const kaydet = async () => {
+    if (sifirlanan.length && !sifirOnay) {
+      setSifirOnay(true);
+      setMesaj('⚠ ' + sifirlanan.map((k) => ({ nakit: 'Nakit', pos: 'POS', online: 'Online' })[k]).join(' · ') + ' 0 ₺ olacak — onaylamak için "Düzelt"e bir daha bas');
+      return;
+    }
     setMesgul(true); setMesaj('');
     try {
       const r = await api('/evvel-yeni/panel/kapanis-duzelt', { method: 'POST', body: { sube_id: subeId, gun, nakit: f.nakit, pos: f.pos, online: f.online || '0', sebep: f.sebep } });
@@ -59,11 +68,11 @@ function KapanisDuzelt({ subeId, gun, ciro, m, onBitti }) {
         {panelNakit != null && Math.abs(panelNakit - (m.z_duzeltme || 0) - (ciro?.nakit || 0)) >= 1 ? <> · <span style={{ color: R.amber }}>panel kapanışındaki nakit <b>{fmt(panelNakit)}</b></span></> : null}
         {m?.kor_sayim != null ? <> · akşam kör sayım <b>{fmt(m.kor_sayim)}</b></> : null}</div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(110px, 1fr))', gap: 8 }}>
-        <label>Nakit<input style={alan} inputMode="decimal" value={f.nakit} onChange={(e) => setF({ ...f, nakit: e.target.value })} /></label>
-        <label>POS<input style={alan} inputMode="decimal" value={f.pos} onChange={(e) => setF({ ...f, pos: e.target.value })} /></label>
-        <label>Online<input style={alan} inputMode="decimal" value={f.online} onChange={(e) => setF({ ...f, online: e.target.value })} /></label>
+        <label>Nakit<input style={alan} inputMode="decimal" value={f.nakit} onChange={(e) => { setSifirOnay(false); setF({ ...f, nakit: e.target.value }); }} /></label>
+        <label>POS<input style={alan} inputMode="decimal" value={f.pos} onChange={(e) => { setSifirOnay(false); setF({ ...f, pos: e.target.value }); }} /></label>
+        <label>Online<input style={alan} inputMode="decimal" value={f.online} onChange={(e) => { setSifirOnay(false); setF({ ...f, online: e.target.value }); }} /></label>
       </div>
-      <div><Dugme kucuk onClick={() => setF({ ...f, nakit: f.pos, pos: f.nakit })}>⇄ Nakit ile POS'u ters çevir</Dugme></div>
+      <div><Dugme kucuk onClick={() => { setSifirOnay(false); setF({ ...f, nakit: f.pos, pos: f.nakit }); }}>⇄ Nakit ile POS'u ters çevir</Dugme></div>
       {ciro && Math.abs(yeniTop - (m?.z_duzeltme || 0) - (ciro.toplam || 0)) >= 1 && <div style={{ color: R.amber }}>Toplam ciro değişiyor: {fmt(ciro.toplam)} → {fmt(yeniTop)} ₺</div>}
       <input style={alan} placeholder="Neden? (en az 10 harf — ör. POS ile nakit ters yazılmış)" value={f.sebep} onChange={(e) => setF({ ...f, sebep: e.target.value })} />
       {mesaj && <div style={{ color: R.kirmizi }}>{mesaj}</div>}

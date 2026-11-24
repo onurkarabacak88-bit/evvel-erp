@@ -764,6 +764,16 @@ def _kapanis_uyarilari(cur, sube_id: str, gun, p: dict, b: "KapanisBody") -> tup
                 u.append("Kapanışta içeride kalan: " + ", ".join(kalan) + " (QR ile çıkış yapmazsa gece otomatik kapanır)")
         except Exception:  # noqa: BLE001
             log.warning("kapanış uyarısı: yoklama okunamadı", exc_info=True)
+    # 💵 NAKİT / POS SIFIR (23 Kas · Codex L4b E): Tema 15 Kas kapanışına nakit 0 ₺ / POS 16.545 ₺ girilmişti →
+    # ertesi sayım 3.230 ₺ FAZLA verdi (nakit satış oldu, deftere yazılmadı); 9 Kas'ta da alanlar ters yazılmıştı.
+    # Panel personele SORAR (KapanisSihirbazi); burada merkeze İZ düşer — panel bu satırı GÖRMEZ (kör sayım).
+    _n, _p, _o = _tl(b.nakit, "Nakit"), _tl(b.pos, "POS"), _tl(b.online, "Online")
+    if _n == 0 and (_p + _o) > 0:
+        ku.append("Nakit 0 ₺ girildi (POS / online var) — nakit satış gerçekten olmadı mı? "
+                  "Satış › Günlük döküm › 'Kapanış nakit / POS düzelt'")
+    elif _p == 0 and _n > 0:
+        ku.append("POS 0 ₺ girildi (nakit var) — kart satışı gerçekten olmadı mı? "
+                  "Satış › Günlük döküm › 'Kapanış nakit / POS düzelt'")
     ek["kasa_uyarilari"] = ku
     return u, ek
 
