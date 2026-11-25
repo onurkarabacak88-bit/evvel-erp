@@ -462,6 +462,163 @@ def kesim_durum(x_evvel_oturum: Optional[str] = Header(default=None)):
         return {"ay": _kesim_ay(cur), "gercek_acik": acik, "baslangic": panel_baslangic(cur).isoformat(), "adimlar": out}
 
 
+# 🗂️ ESKİ TABLO → EVVEL YENİ KARŞILIĞI (24 Kas · sahip "ben eskinin bir tane tablosu vs kalmasın" + "kaldırırken de yeni de
+# yerine yazılmış mı bak"). Kaynak: ESKI_TABLO_KARSILIK.md (28 Eki, koddan + kesim envanteri; Fable bağımsız denetimi 199 tablo).
+# Belge değil ÖLÇÜM: her satır canlıda sayılır — eski tabloda kaç kayıt var, Evvel Yeni karşılığında kaç kayıt var.
+# "cikarildi": sahip kararıyla Evvel Yeni'ye ALINMADI (ESKI_OZELLIK_ENVANTERI "Ç") — karşılığı aranmaz.
+ESKI_KARSILIK = [
+    ("kasa_hareketleri", [("ey_para_izi_hareket", "para_izi_hareket")], "Kasa defteri", None),
+    ("ciro", ["ey_sube_olay"], "Günlük ciro → panel kapanışı", None),
+    ("ciro_taslak", ["ey_sube_olay"], "Ciro taslağı → panel kapanışı", None),
+    ("kasa_teslim", [("ey_para_izi_hareket", "para_izi_hareket")], "Şubeden patrona teslim → Kasa teslim hareketi", None),
+    ("anlik_giderler", ["ey_fis_kontrol"], "Panel anlık gider → Kasa ödeme + fiş kontrolü", None),
+    ("odeme_plani", ["ey_kredi", "ey_kart_teyit", "ey_sube_kira"], "Vade motoru → Ödeme formu + konu defterleri", None),
+    ("sabit_giderler", ["ey_sube_kira"], "Kira tanımı (aidat / abonelik PLANI bilerek çıkarıldı — Ödeme'den elle)", None),
+    ("vadeli_alimlar", ["ey_toptanci", "ey_toptanci_teslim"], "Toptancı borcu", None),
+    ("tedarikci_fatura", [("ey_toptanci_belge", "ey_toptanci_teslim")], "Tedarikçi faturası", None),
+    ("tedarikci_fatura_kalem", ["ey_toptanci_teslim"], "Fatura kalemi", None),
+    ("tedarikciler", ["ey_toptanci"], "Toptancı tanımı", None),
+    ("kart_ekstre_donem", ["ey_kart_teyit"], "Kart ekstresi → kart teyidi", None),
+    ("kart_hareketleri", [("ey_para_izi_hareket", "para_izi_hareket")], "Kart hareketi → Kasa / Ödeme", None),
+    ("kartlar", ["ey_kart"], "Kart tanımı", None),
+    ("borc_envanteri", ["ey_kredi"], "Banka kredileri", None),
+    ("personel_avans", ["ey_avans_talep"], "Avans", None),
+    ("personel_aylik", ["ey_maas_ay"], "Maaş / bordro", None),
+    ("personel", ["ey_personel"], "Personel tanımı", None),
+    ("vardiya_atama", ["ey_vardiya_plan"], "Vardiya planı", None),
+    ("vardiya_slot", ["ey_vardiya_kalip"], "Vardiya kalıbı", None),
+    ("gorev_yoklama", ["ey_yoklama"], "QR giriş / çıkış", None),
+    ("sube_operasyon_event", ["ey_sube_olay"], "Açılış / kapanış / ürün aç olayları", None),
+    ("operasyon_defter", ["ey_sube_olay"], "Operasyon defteri", None),
+    ("sube_fire_bildirim", ["ey_sube_olay"], "Fire bildirimi", None),
+    ("siparis_talep", ["ey_siparis"], "Sipariş talebi", None),
+    ("siparis_urun", ["ey_urun"], "Ürün kataloğu", None),
+    ("stok_yolda", ["ey_stok_hareket"], "Yoldaki sevk", None),
+    ("sube_depo_stok", ["ey_stok_hareket"], "Şube / depo stoğu", None),
+    ("sube_depo_stok_hareket", ["ey_stok_hareket"], "Stok hareketi", None),
+    ("urun_alis_fiyat", [("ey_urun_fiyat", "ey_toptanci_fiyat")], "Alış fiyatı", None),
+    ("subeler", ["ey_sube"], "Şube tanımı", None),
+    ("kapanis_kayit", ["ey_devir"], "Kasa devir defteri", None),
+    ("sube_acilis", ["ey_sube_olay"], "Şube açılışı", None),
+    ("onay_kuyrugu", ["ey_panel_onay"], "Riskli işlem onayı", None),
+    ("sube_operasyon_uyari", ["ey_sube_olay"], "Panel uyarıları", None),
+    ("stok_sayim_gorev", ["ey_stok_sayim"], "Stok sayım görevi", None),
+    ("merkez_stok_kart", ["ey_urun"], "Merkez stok kartı", None),
+    ("toptanci_siparis", ["ey_siparis_yon"], "Toptancıya yönlendirme", None),
+    ("belge_talep", [("ey_toptanci_belge", "ey_toptanci_teslim")], "Belge talebi", None),
+    ("is_basvuru", ["is_basvuru"], "İş başvurusu — KALIR (küçük modül, sahip kararı)", "kalir"),
+    ("para_izi_hareket", ["para_izi_hareket"], "Kasa defteri — Evvel Yeni'nin KENDİ tablosu, eski değil", "kalir"),
+    ("truth_motor_kararlar", [], "Akıllı Denetim (Truth motor) — sahip kararıyla ÇIKARILDI", "cikarildi"),
+    ("duyu_olay", [], "Duyu omurgası — sahip kararıyla ÇIKARILDI", "cikarildi"),
+    ("finans_migration_log", [], "Eski göç günlüğü — ÇIKARILDI", "cikarildi"),
+]
+
+
+@router.get("/eski-tablolar")
+def eski_tablolar(x_evvel_oturum: Optional[str] = Header(default=None)):
+    """🗂️ ESKİ TABLOLAR — YERİNE YAZILDI MI? (24 Kas · sahip isteği). HİÇBİR ŞEY YAZMAZ, yalnız SAYAR.
+
+    ⚠ ÖN KONTROLDÜR, KALDIRMA İZNİ VERMEZ (Codex 24 Kas): kayıt sayısı taşındığın kanıtı değildir
+    (eski 500 ↔ yeni 3 de "dolu" görünür). Karşılığı BOŞ çıkan tablo ise kesin engeldir.
+    Her eski tablo için: canlıda var mı · kaç kayıt · Evvel Yeni karşılığı hangi tablo(lar) · orada kaç kayıt.
+    Haritada liste = HEPSİ gerekli; demet = SEÇENEK (aynı işin iki adı, biri dolu olması yeter).
+    Sonuç: yok · eski_bos · karsilik_dolu · bos_karsilik · sayim_hatasi · sayilmadi · cikarildi · kalir."""
+    import time
+    from database import db, savepoint
+    from evvel_yeni_cekirdek import merkez_aktor
+    SURE_BUTCESI = 20.0   # Codex L6: statement_timeout tek SORGU sınırıdır — toplam istek için ayrı bütçe
+    with db() as (conn, cur):
+        merkez_aktor(cur, x_evvel_oturum)
+        bellek, baslangic = {}, time.monotonic()
+
+        def kalan():
+            return SURE_BUTCESI - (time.monotonic() - baslangic)
+
+        def sinirli(cur, sql, sn_ust=8.0):
+            """Bütçeden kalan süreyi SORGUYA da uygular (Codex L6: 19,9. sn'de başlayan COUNT 8 sn daha sürebilirdi).
+            Bütçe bittiyse SQL HİÇ çalıştırılmaz. Her sorgu kendi savepoint'inde — hata işlemi zehirlemez.
+            `cur` kapanıştan DEĞİL parametreden gelir (kapı kuralı 4: savepoint canlı imleçle çağrılsın)."""
+            k = kalan()
+            if k <= 0.5:
+                return "sayilmadi", None
+            ms = int(min(sn_ust, k) * 1000)
+            try:
+                with savepoint(cur, "sp_eski_tablo"):
+                    cur.execute(f"SET LOCAL statement_timeout = {ms}")
+                    cur.execute(sql)
+                    r = cur.fetchone()
+                return "ok", (dict(r) if r else None)
+            except Exception:  # noqa: BLE001
+                return ("sayilmadi", None) if kalan() <= 0.5 else ("hata", None)
+
+        def say(t):
+            """-> (durum, kayit): 'yok' · 'ok' · 'hata' (sayılamadı) · 'sayilmadi' (süre bütçesi doldu)."""
+            if t in bellek:
+                return bellek[t]
+            d, r = sinirli(cur, "SELECT to_regclass('public.%s') IS NOT NULL AS var" % t, 2.0)
+            if d != "ok":
+                bellek[t] = (d, None)
+                return bellek[t]
+            if not (r or {}).get("var"):
+                bellek[t] = ("yok", None)
+                return bellek[t]
+            d, r = sinirli(cur, 'SELECT COUNT(*) AS n FROM "%s"' % t)   # ad sabit listeden gelir (kullanıcı girdisi değil)
+            bellek[t] = (d, int(r["n"]) if d == "ok" and r else None)
+            return bellek[t]
+
+        def satirlar(istek):
+            """Tek gereksinim: str ya da seçenek demeti -> (karsilandi, [gösterim satırları])."""
+            adlar = list(istek) if isinstance(istek, (tuple, list)) else [istek]
+            goster, dolu, bilinmez = [], False, False
+            for t in adlar:
+                d, n = say(t)
+                goster.append({"tablo": t, "durum": d, "kayit": n})
+                if d == "ok" and n > 0:
+                    dolu = True
+                elif d in ("hata", "sayilmadi"):
+                    bilinmez = True
+            return (True if dolu else (None if bilinmez else False)), goster
+
+        out = []
+        for eski, istekler, is_, ozel in ESKI_KARSILIK:
+            ed, en = say(eski)
+            y, karsilandi = [], True
+            for istek in istekler:
+                k, g = satirlar(istek)
+                y.extend(g)
+                if k is None:
+                    karsilandi = None if karsilandi is not False else False
+                elif k is False:
+                    karsilandi = False
+            if ozel:
+                sonuc = ozel   # sahip kararı; ÖLÇÜM durumu `eski_durum`da ayrı durur (Codex L6: özel karar hatayı örtmesin)
+            elif ed == "hata":
+                sonuc = "sayim_hatasi"
+            elif ed == "sayilmadi":
+                sonuc = "sayilmadi"
+            elif ed == "yok":
+                sonuc = "yok"
+            elif not istekler:
+                sonuc = "cikarildi"
+            elif en == 0:
+                sonuc = "eski_bos"
+            elif karsilandi is None:
+                sonuc = "sayim_hatasi"    # bilinmeyeni "geçti" saymayız (Codex L6 1. madde)
+            elif karsilandi:
+                sonuc = "karsilik_dolu"
+            else:
+                sonuc = "bos_karsilik"
+            out.append({"eski": eski, "eski_durum": ed, "eski_kayit": en, "is": is_, "yeni": y, "sonuc": sonuc})
+        kod = lambda d: [x["eski"] for x in out if x["sonuc"] == d]   # noqa: E731
+        return {"tablolar": out, "duran": kod("bos_karsilik"), "karsilik_dolu": kod("karsilik_dolu"),
+                "eski_bos": kod("eski_bos"), "yok": kod("yok"),
+                "belirsiz": kod("sayim_hatasi") + kod("sayilmadi"),
+                "sure_sn": round(time.monotonic() - baslangic, 1),
+                "not": "Bu ekran ÖN KONTROLdür, kaldırma izni vermez (Codex 24 Kas): kayıt sayısı taşındığın kanıtı değildir. "
+                       "Kaldırma sırası: arşiv sağlaması ✓ → eski yazıcılar durdurulur → son fark taşınır → Faz B dilimi yayınlanır "
+                       "→ canlı okumalar doğrulanır → yedek alınıp geri yükleme denenir → DROP TABLE … RESTRICT."}
+
+
 @router.get("/kesim-sagla")
 def kesim_saglama(x_evvel_oturum: Optional[str] = Header(default=None)):
     """✂️ ARŞİV SAĞLAMASI (24 Kas · Codex L4b D) — HİÇBİR ŞEY YAZMAZ.

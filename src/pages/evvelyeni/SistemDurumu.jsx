@@ -137,6 +137,66 @@ function ArsivSaglamasi() {
   );
 }
 
+// 🗂️ ESKİ TABLOLAR — YERİNE YAZILDI MI? (24 Kas · sahip "ben eskinin bir tane tablosu vs kalmasın" + "kaldırırken de yeni de
+// yerine yazılmış mı bak"). Belge değil ÖLÇÜM: her eski tablo canlıda sayılır, Evvel Yeni karşılığı da sayılır. HİÇBİR ŞEY YAZMAZ.
+const ESKI_SONUC = {
+  karsilik_dolu: { renk: 'yesil', isaret: '✓', soz: 'karşılığında kayıt VAR — ön kontrol geçti' },
+  eski_bos: { renk: 'yesil', isaret: '✓', soz: 'eski tablo boş — taşınacak kayıt yok' },
+  bos_karsilik: { renk: 'kirmizi', isaret: '✗', soz: 'eski dolu ama Evvel Yeni karşılığı BOŞ — KALDIRMA' },
+  yok: { renk: 'not', isaret: '—', soz: 'bu tablo canlıda zaten yok' },
+  cikarildi: { renk: 'not', isaret: '✂️', soz: 'sahip kararıyla çıkarıldı — karşılığı aranmaz' },
+  kalir: { renk: 'not', isaret: '📌', soz: 'kalır (Evvel Yeni kullanıyor)' },
+  sayim_hatasi: { renk: 'amber', isaret: '?', soz: 'sayılamadı — bilinmiyor, "geçti" sayılmaz' },
+  sayilmadi: { renk: 'amber', isaret: '⏱', soz: 'süre dolduğu için sayılmadı — yeniden say' },
+};
+const ESKI_DURUM = { yok: '(tablo yok)', hata: '(sayılamadı)', sayilmadi: '(sayılmadı)' };
+
+function EskiTablolar() {
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+  const [hepsi, setHepsi] = useState(false);
+  const bak = async () => {
+    setMesgul(true); setHata('');
+    try { setV(await api('/evvel-yeni/moduller/eski-tablolar')); } catch (e) { setHata(e?.message || 'Okunamadı'); }
+    setMesgul(false);
+  };
+  const ONCE = { bos_karsilik: 0, sayim_hatasi: 1, sayilmadi: 1 };   // engel ve bilinmeyen üstte
+  const liste = (v?.tablolar || []).filter((x) => hepsi || (x.sonuc !== 'yok' && x.sonuc !== 'cikarildi' && x.sonuc !== 'kalir'))
+    .sort((a, b) => (ONCE[a.sonuc] ?? 9) - (ONCE[b.sonuc] ?? 9));
+  return (
+    <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>🗂️ Eski tablolar — yerine yazıldı mı?</b>
+        <Cip>yazmaz · yalnız sayar</Cip>
+      </div>
+      <div style={{ fontSize: 12.5, color: R.not }}>Eski sistemin her tablosunda kaç kayıt var, Evvel Yeni'deki karşılığında kaç kayıt var — yan yana.</div>
+      <div style={{ fontSize: 12.5, color: R.amber }}>⚠ Bu ekran <b>ön kontroldür, kaldırma izni vermez</b>: kayıt sayısı taşındığın kanıtı değildir (eski 500 ↔ yeni 3 de "dolu" görünür). Karşılığı BOŞ çıkan tablo ise kesin engeldir. Kaldırma sırası: arşiv sağlaması ✓ → eski yazıcılar durdurulur → son fark taşınır → Faz B dilimi yayınlanır → canlı okumalar doğrulanır → yedek alınıp geri yükleme denenir → tablo silinir.</div>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <Dugme ana disabled={mesgul} onClick={bak}>{mesgul ? 'Sayılıyor…' : 'Eski tabloları say'}</Dugme>
+        {v && <Dugme kucuk onClick={() => setHepsi((x) => !x)}>{hepsi ? 'Yalnız iş kalanlar' : 'Hepsini göster'}</Dugme>}
+      </div>
+      {hata && <div style={{ color: R.kirmizi, fontSize: 13 }}>{hata}</div>}
+      {v && (
+        <div style={{ fontSize: 12.5, color: (v.duran || []).length ? R.kirmizi : R.yesil }}>
+          {(v.duran || []).length ? `✗ ${v.duran.length} tabloda karşılık BOŞ — kaldırma durmalı` : '✓ Karşılığı boş çıkan tablo yok'}
+          {' · '}{(v.karsilik_dolu || []).length} karşılığı dolu · {(v.eski_bos || []).length} eski boş · {(v.yok || []).length} zaten yok{(v.belirsiz || []).length ? ` · ${v.belirsiz.length} sayılamadı` : ''}{v.sure_sn != null ? ` · ${v.sure_sn} sn` : ''}
+        </div>)}
+      {liste.map((x) => {
+        const d = ESKI_SONUC[x.sonuc] || ESKI_SONUC.yok;
+        return (
+          <div key={x.eski} style={{ borderTop: `1px solid ${R.cizgi}`, paddingTop: 8, fontSize: 13 }}>
+            <div style={{ color: R[d.renk] }}><b>{d.isaret} {x.eski}</b>{x.eski_kayit != null ? <> · {x.eski_kayit.toLocaleString('tr-TR')} kayıt</> : (x.eski_durum && x.eski_durum !== 'yok' ? <> · {ESKI_DURUM[x.eski_durum]}</> : null)} — {d.soz}</div>
+            <div style={{ fontSize: 12, color: R.metin2 }}>{x.is}</div>
+            {(x.yeni || []).length > 0 && (
+              <div style={{ fontSize: 12, color: R.metin2 }}>yerine: {x.yeni.map((y) => `${y.tablo} ${y.kayit == null ? (ESKI_DURUM[y.durum] || '(yok)') : y.kayit.toLocaleString('tr-TR') + ' kayıt'}`).join(' · ')}</div>)}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 // 🧪 PİLOT ŞUBE (sahip 27 Eki · Fable L4b A): bir şube 1 Kasım'dan önce yeni panelde GERÇEK kayda geçer; eski panel o şube için kapanır.
 // Kaldırınca şube denemeye döner (yazılmış kayıtlar kalır). Sunucu: evvel_yeni_moduller /pilot.
 function PilotSube({ onToast }) {
@@ -322,6 +382,7 @@ export default function SistemDurumu({ onToast }) {
       )}
       <SonAktarim onToast={onToast} />
       <ArsivSaglamasi />
+      <EskiTablolar />
       <PilotSube onToast={onToast} />
       {m && (
         <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>
