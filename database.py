@@ -113,6 +113,43 @@ def savepoint(cur, ad: str = "sp"):
         cur.execute(f"RELEASE SAVEPOINT {_ad}")
 
 
+# 🚫 ESKİ YAZIM KAPISI (25 Kas · sahip "eskinin bir tane tablosu kalmasın" · Codex L4b A) — TEK KAPI burası.
+# Eski sistemin tabloları SİLİNMEDEN ÖNCE ona yazan her şey susmalı; yüzey çok geniş, bu yüzden tahmin yerine ÖLÇÜLÜR.
+# Öntanımlı GÖZLEM: kim yazıyor sayılır, hiçbir şey engellenmez. Railway `ESKI_YAZIM=zorla` → yazma hata verir.
+# Kural ve sayaç tek yerde: kilit_gozlem.eski_yazim_dene (bu dosya yalnız çağırır).
+class _KapiliImlec(psycopg2.extras.RealDictCursor):
+    def execute(self, query, vars=None):   # noqa: A002 — psycopg2 imzası
+        _eski_yazim_bak(self, query)
+        return super().execute(query, vars)
+
+    def executemany(self, query, vars_list):   # noqa: A002
+        _eski_yazim_bak(self, query)
+        return super().executemany(query, vars_list)
+
+
+def _eski_yazim_bak(cur, query) -> None:
+    """kilit_gozlem'e sorar. EskiYazimEngellendi YUTULMAZ (Codex: db() rollback'i çalışsın).
+    `psycopg2.sql.Composable` gerçek metne as_string(cur) ile çevrilir — str() garanti vermez (Codex L6)."""
+    try:
+        import kilit_gozlem as _kg
+    except Exception:  # noqa: BLE001 — modül yoksa akış yaşar
+        return
+    try:
+        if isinstance(query, str):
+            metin = query
+        elif isinstance(query, (bytes, bytearray)):
+            metin = query.decode("utf-8", "replace")
+        elif hasattr(query, "as_string"):
+            metin = query.as_string(cur)
+        else:
+            metin = str(query)
+        _kg.eski_yazim_dene(metin)
+    except _kg.EskiYazimEngellendi:
+        raise
+    except Exception:  # noqa: BLE001
+        return
+
+
 @contextmanager
 def db():
     """
@@ -125,7 +162,7 @@ def db():
     pool = _get_pool()
     conn = pool.getconn()
     # cursor_factory pool seviyesinde ayarlanmış değil, bağlantıda set et
-    conn.cursor_factory = psycopg2.extras.RealDictCursor
+    conn.cursor_factory = _KapiliImlec   # 🚫 eski yazım kapısı (gözlem / zorla) — tek kapı
     cur = conn.cursor()
     try:
         # CURRENT_DATE / NOW() / CURRENT_TIMESTAMP — İstanbul iş günü ile hizalı

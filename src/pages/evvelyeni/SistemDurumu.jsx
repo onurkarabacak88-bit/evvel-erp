@@ -197,6 +197,41 @@ function EskiTablolar() {
   );
 }
 
+// 🚫 ESKİ YAZIM GÖZLEMİ (25 Kas · sahip "eskinin bir tane tablosu kalmasın" · Codex L4b A): eski tabloları SİLMEDEN önce ona
+// YAZAN her şey susmalı. Tahmin yerine ölçüm — kim yazmaya çalışıyor, nereden. Öntanımlı gözlem (engel yok); Railway
+// ESKI_YAZIM=zorla ile yazma hata verir. Sayaç bellekte: yeniden başlatma sıfırlar, sayı DENEMEdir (yazılan satır değil).
+function EskiYazim() {
+  const [v, setV] = useState(null);
+  const [hata, setHata] = useState('');
+  const [mesgul, setMesgul] = useState(false);
+  const bak = useCallback(async () => {
+    setMesgul(true); setHata('');
+    try { setV(await api('/evvel-yeni/moduller/eski-yazim')); } catch (e) { setHata(e?.message || 'Okunamadı'); }
+    setMesgul(false);
+  }, []);
+  useEffect(() => { bak(); }, [bak]);
+  const zorla = v?.mod === 'zorla';
+  return (
+    <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+        <b>🚫 Eski sisteme hâlâ kim yazıyor?</b>
+        {v && (zorla ? <Cip tur="kirmizi">yazma KAPALI</Cip> : <Cip tur="sari">yalnız izliyor · engel yok</Cip>)}
+      </div>
+      <div style={{ fontSize: 12.5, color: R.not }}>Eski tablolar silinmeden önce ona yazan her şeyin susması gerekir. Bu liste tahmin değil ölçüm: hangi eski tabloya, nereden yazılmaya çalışıldı. Sayı DENEME sayısıdır. Sunucu yeniden başlayınca liste sıfırlanır — bir gün dolmadan "temiz" demek erken.</div>
+      <div><Dugme kucuk disabled={mesgul} onClick={bak}>{mesgul ? 'Okunuyor…' : 'Yenile'}</Dugme></div>
+      {hata && <div style={{ color: R.kirmizi, fontSize: 13 }}>{hata}</div>}
+      {v && !(v.satirlar || []).length && <div style={{ fontSize: 13, color: R.yesil }}>✓ Sunucu açıldığından beri eskiye yazma denemesi YOK.</div>}
+      {v && (v.satirlar || []).length > 0 && (
+        <div style={{ fontSize: 12.5, color: R.kirmizi }}>⚠ {v.tablo_sayisi} eski tabloya {v.toplam_deneme} yazma denemesi — tablolar bunlar susmadan silinmemeli.</div>)}
+      {(v?.satirlar || []).slice(0, 25).map((x, i) => (
+        <div key={i} style={{ borderTop: `1px solid ${R.cizgi}`, paddingTop: 6, fontSize: 13 }}>
+          <b>{x.tablo}</b> · {x.deneme.toLocaleString('tr-TR')} deneme{x.engellendi ? ` · ${x.engellendi} engellendi` : ''}
+          <div style={{ fontSize: 12, color: R.metin2 }}>{x.nereden}</div>
+        </div>))}
+    </div>
+  );
+}
+
 // 🧪 PİLOT ŞUBE (sahip 27 Eki · Fable L4b A): bir şube 1 Kasım'dan önce yeni panelde GERÇEK kayda geçer; eski panel o şube için kapanır.
 // Kaldırınca şube denemeye döner (yazılmış kayıtlar kalır). Sunucu: evvel_yeni_moduller /pilot.
 function PilotSube({ onToast }) {
@@ -383,6 +418,7 @@ export default function SistemDurumu({ onToast }) {
       <SonAktarim onToast={onToast} />
       <ArsivSaglamasi />
       <EskiTablolar />
+      <EskiYazim />
       <PilotSube onToast={onToast} />
       {m && (
         <div style={{ ...kart, padding: 14, display: 'flex', flexDirection: 'column', gap: 8 }}>

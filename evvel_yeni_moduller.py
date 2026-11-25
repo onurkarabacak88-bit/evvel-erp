@@ -514,6 +514,21 @@ ESKI_KARSILIK = [
 ]
 
 
+@router.get("/eski-yazim")
+def eski_yazim_gozlem(x_evvel_oturum: Optional[str] = Header(default=None)):
+    """🚫 ESKİ YAZIM GÖZLEMİ (25 Kas · sahip "eskinin bir tane tablosu kalmasın" · Codex L4b A) — SALT OKUR.
+
+    Eski sistem tablolarına kim hâlâ YAZMAYA ÇALIŞIYOR: tablo · çağıran (dosya:satır fonksiyon) · deneme sayısı.
+    Kapı `database.db()` imlecinde; öntanımlı mod 'gozlem' (engellemez, yalnız sayar), Railway `ESKI_YAZIM=zorla` ile
+    yazma hata verir (deploy'suz). Sayaç BELLEKTE — yeniden başlatma sıfırlar. Sayı DENEMEdir, yazılan satır değil."""
+    from database import db
+    from evvel_yeni_cekirdek import merkez_aktor
+    with db() as (conn, cur):
+        merkez_aktor(cur, x_evvel_oturum)
+    import kilit_gozlem as _kg
+    return _kg.eski_yazim_ozet()
+
+
 @router.get("/eski-tablolar")
 def eski_tablolar(x_evvel_oturum: Optional[str] = Header(default=None)):
     """🗂️ ESKİ TABLOLAR — YERİNE YAZILDI MI? (24 Kas · sahip isteği). HİÇBİR ŞEY YAZMAZ, yalnız SAYAR.

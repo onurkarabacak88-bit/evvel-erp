@@ -139,9 +139,130 @@ def imzasiz_okuma(yol: str, sube_id: str) -> None:
         pass
 
 
+# ── 🚫 ESKİ YAZIM KAPISI (25 Kas · sahip "ben eskinin bir tane tablosu vs kalmasın" · Codex L4b A) ──────────────
+# Eski sistemin tabloları SİLİNMEDEN ÖNCE ona YAZAN her şey susmalı (Codex: "tablo gidince hata verip geçer" güvenli
+# değil — işlem geri alınır, kuyruk yeniden dener, yutulan hata kayıp yaratır). Yüzey çok geniş (yalnız odeme_plani'na
+# yazan 53 fonksiyon) ve gece zincirinde KAPISIZ koşanlar var (fatura_api.gece_ap_selfheal / gece_ap_mutabakat …).
+# Tek tek tahmin etmek yerine ÖLÇÜYORUZ — projenin iki kez işe yaramış örüntüsü (EY_KAPI, EY_PANEL_OKUMA):
+#   gözlem (öntanımlı) → kim yazıyor SAYILIR, engel YOK   ·   Railway ESKI_YAZIM=zorla → yazma HATA verir.
+# Sayaç YAZMA GİRİŞİMİNİ gösterir, commit edilen satırı değil (Codex).
+_ESKI_TABLOLAR = frozenset("""
+odeme_plani kart_ekstre_donem kart_hareketleri kartlar borc_envanteri sabit_giderler vadeli_alimlar
+tedarikci_fatura tedarikci_fatura_kalem tedarikciler cari_odeme kasa_hareketleri kasa_teslim ciro ciro_taslak
+anlik_giderler personel_avans personel_aylik personel vardiya_atama vardiya_slot gorev_yoklama
+sube_operasyon_event sube_operasyon_uyari operasyon_defter sube_fire_bildirim sube_acilis kapanis_kayit
+siparis_talep siparis_urun siparis_kategori stok_yolda sube_depo_stok sube_depo_stok_hareket merkez_stok_kart
+merkez_stok_sevk urun_alis_fiyat subeler onay_kuyrugu stok_sayim_gorev toptanci_siparis belge_talep
+truth_motor_kararlar duyu_olay para_izi_cep_eski sube_ici_borc
+""".split())   # ⚠ ey_* ve Evvel Yeni'nin kendi tabloları (para_izi_hareket, is_basvuru) LİSTEDE YOK
+
+# Mod AÇILIŞTA bir kez okunur (Codex: her sorguda ortam değişkeni okuma). Railway'de değiştirmek zaten yeniden başlatır.
+ZORLA = (__import__("os").environ.get("ESKI_YAZIM") or "").strip().lower() == "zorla"
+
+_YAZ_ON = re.compile(r"\b(insert|update|delete|truncate|merge)\b", re.I)   # ucuz ön filtre
+# Codex L6: yorum ve METİN SABİTİ önce temizlenir — 'SELECT ...UPDATE odeme_plani...' bir YAZMA DEĞİLDİR (yanlış engel),
+# '/*yorum*/ UPDATE x' ise yazmadır (kaçmamalı). Şema öneki (public. / "public"."x") ad sayılmaz.
+_YORUM = re.compile(r"--[^\n]*|/\*.*?\*/", re.S)
+_METIN = re.compile(r"'(?:''|[^'])*'")
+_HEDEF = re.compile(r"\b(?:insert\s+into|update|delete\s+from|merge\s+into)\s+(?:only\s+)?((?:\w|\"|\.)+)", re.I)
+_TRUNC = re.compile(r"\btruncate\s+(?:table\s+)?((?:(?:only\s+)?(?:\w|\"|\.)+\s*,?\s*)+)", re.I)
+_SQL_BELLEK: Dict[str, frozenset] = {}
+_SQL_TAVAN = 2000
+_ESKI_YAZIM: Dict[Tuple[str, str], Dict[str, Any]] = {}
+
+
+class EskiYazimEngellendi(Exception):
+    """ESKI_YAZIM=zorla iken eski tabloya yazma denendi — YUTULMAZ (Codex: db() rollback'i çalışsın)."""
+
+
+def _sade_ad(ham: str) -> str:
+    """'"public"."odeme_plani"' -> 'odeme_plani' (şema öneki atılır, tırnak silinir)."""
+    son = ham.replace('"', "").replace("'", "").strip().rstrip(";").split(".")[-1]
+    return son.lower()
+
+
+def hedef_tablolar(sql: str) -> frozenset:
+    """SQL'in YAZDIĞI tabloların adı. 'WITH … UPDATE' gibi yazmaları da yakalar (ilk sözcüğe bakılmaz).
+    Yorumlar ve metin sabitleri önce temizlenir: metnin içinde geçen 'UPDATE …' yazma SAYILMAZ (Codex L6).
+    Çok tablolu TRUNCATE'in HEPSİ sayılır. Şema öneki ayıklanır."""
+    if not sql:
+        return frozenset()
+    d = _SQL_BELLEK.get(sql)
+    if d is not None:
+        return d
+    sade = _METIN.sub("''", _YORUM.sub(" ", sql))
+    adlar = {_sade_ad(m.group(1)) for m in _HEDEF.finditer(sade)}
+    for m in _TRUNC.finditer(sade):
+        for parca in m.group(1).split(","):
+            parca = re.sub(r"(?i)^\s*only\s+", "", parca).strip()
+            if parca:
+                adlar.add(_sade_ad(parca))
+    d = frozenset(a for a in adlar if a and not a.isdigit())
+    if len(_SQL_BELLEK) < _SQL_TAVAN:   # şablon sayısı sınırlı — bellek şişmesin
+        _SQL_BELLEK[sql] = d
+    return d
+
+
+def _cagiran() -> str:
+    """Eşleşme ANINDA (sıcak yolda değil) yığından ilk uygulama çağıranı: dosya:satır fonksiyon."""
+    try:
+        import sys as _sys
+        f = _sys._getframe(2)
+        atla = ("database.py", "kilit_gozlem.py")
+        for _ in range(14):
+            if f is None:
+                break
+            ad = (f.f_code.co_filename or "").replace("\\", "/").rsplit("/", 1)[-1]
+            if ad not in atla and not ad.startswith("<"):
+                return f"{ad}:{f.f_lineno} {f.f_code.co_name}"
+            f = f.f_back
+    except Exception:  # noqa: BLE001
+        pass
+    return "?"
+
+
+def eski_yazim_dene(sql: str) -> None:
+    """db() imleci her yazmadan ÖNCE çağırır. Gözlemde SAYAR, zorlada EskiYazimEngellendi fırlatır."""
+    try:
+        if not sql or not _YAZ_ON.search(sql):
+            return
+        vurgun = _ESKI_TABLOLAR & hedef_tablolar(sql)
+        if not vurgun:
+            return
+        nereden = _cagiran()
+        simdi = int(time.time())
+        for t in sorted(vurgun):
+            with _KILIT:
+                anahtar = (t, nereden)
+                if anahtar not in _ESKI_YAZIM and len(_ESKI_YAZIM) >= _TAVAN:
+                    continue
+                d = _ESKI_YAZIM.setdefault(anahtar, {"deneme": 0, "ilk": simdi, "son": simdi, "engellendi": 0})
+                d["deneme"] += 1
+                d["son"] = simdi
+                if ZORLA:
+                    d["engellendi"] += 1
+    except EskiYazimEngellendi:
+        raise
+    except Exception as e:  # noqa: BLE001
+        if ZORLA:   # Codex L6: zorlada denetim YAPILAMIYORSA sorgu GEÇMEZ (kapı açılmaz)
+            raise EskiYazimEngellendi('Eski yazım denetimi çalışmadı — zorla modunda sorgu durduruldu: ' + str(e)[:120])
+        return   # gözlemde gözlem işi bozamaz
+    if ZORLA:
+        raise EskiYazimEngellendi("Eski sistem tablosuna yazma kapalı (" + ", ".join(sorted(vurgun)) + ") — " + nereden)
+
+
+def eski_yazim_ozet() -> dict:
+    with _KILIT:
+        satir = [{"tablo": t, "nereden": n, **v} for (t, n), v in _ESKI_YAZIM.items()]
+    satir.sort(key=lambda x: -x["deneme"])
+    return {"mod": "zorla" if ZORLA else "gozlem", "tablo_sayisi": len({x["tablo"] for x in satir}),
+            "toplam_deneme": sum(x["deneme"] for x in satir), "satirlar": satir[:200]}
+
+
 def sifirla() -> int:
     with _KILIT:
         n = len(_SAYAC)
         _SAYAC.clear()
         _IMZASIZ.clear()
+        _ESKI_YAZIM.clear()
     return n
